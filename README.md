@@ -17,7 +17,7 @@
 
 Ferese combines a window manager and desktop shell with one configuration.
 
-![Ferese Blue desktop with Settings and Control Center](docs/images/screenshots/ferese-main-hero.png)
+![Ferese Blue dark desktop with Appearance settings](docs/images/screenshots/ferese-blue-dark.webp)
 
 [View more screenshots](docs/screenshots.md)
 
