@@ -38,22 +38,22 @@ impl Ferese {
     ) -> crate::presentation::WindowPresentation {
         let record = self.windows.record(id).expect("presentation has a window record");
         let mut bounds = overview.presented_bounds(id, geometry.visual);
-        if !overview.is_presenting() {
-            bounds.current.x += offset.0;
-            bounds.current.y += offset.1;
-            if let Some(workspace) = self.workspaces.workspace_for_window(id)
-                && let Some(output_id) = self.output_workspaces.output_for_workspace(workspace)
-                && let Some(slide) = self.workspace_slides.get(&output_id)
-                && let Some(item) = slide.items.iter().find(|item| item.workspace == workspace)
-                && let Some(area) = self
-                    .outputs_by_id
-                    .get(&output_id)
-                    .and_then(|output| self.space.output_geometry(output))
-            {
-                let (_, velocity) = slide.sample(item, delta);
-                bounds.velocity.x += velocity.x * f64::from(area.size.w);
-                bounds.velocity.y += velocity.y * f64::from(area.size.h);
-            }
+        bounds.current.x += offset.0;
+        bounds.current.y += offset.1;
+        if let Some(workspace) = self.workspaces.workspace_for_window(id)
+            && let Some((output_id, slide)) = self
+                .workspace_slides
+                .iter()
+                .find(|(_, slide)| slide.contains(workspace))
+            && let Some(item) = slide.items.iter().find(|item| item.workspace == workspace)
+            && let Some(area) = self
+                .outputs_by_id
+                .get(output_id)
+                .and_then(|output| self.space.output_geometry(output))
+        {
+            let (_, velocity) = slide.sample(item, delta);
+            bounds.velocity.x += velocity.x * f64::from(area.size.w);
+            bounds.velocity.y += velocity.y * f64::from(area.size.h);
         }
         let focused = if self.overview.is_active() {
             self.overview_selected(id)
@@ -338,6 +338,129 @@ fn predict_geometry(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[ignore = "requires a private XDG_RUNTIME_DIR and permission to bind test sockets"]
+    fn overview_strip_switch_slides_stable_grids_and_keeps_strip_fixed() {
+        let runtime = std::path::PathBuf::from(std::env::var_os("XDG_RUNTIME_DIR").unwrap());
+        assert!(runtime.starts_with(std::env::temp_dir()));
+        let mut event_loop = EventLoop::try_new().unwrap();
+        let mut state = Ferese::new(
+            &mut event_loop,
+            Display::new().unwrap(),
+            crate::config::Config::default().runtime_config().unwrap(),
+        )
+        .unwrap();
+        let output = Output::new(
+            "overview-slide-test".into(),
+            smithay::output::PhysicalProperties {
+                size: (0, 0).into(),
+                subpixel: smithay::output::Subpixel::Unknown,
+                make: "test".into(),
+                model: "test".into(),
+            },
+        );
+        output.change_current_state(
+            Some(smithay::output::Mode {
+                size: (1200, 800).into(),
+                refresh: 120_000,
+            }),
+            Some(smithay::utils::Transform::Normal),
+            None,
+            Some((0, 0).into()),
+        );
+        state.space.map_output(&output, (0, 0));
+        state.register_output(&output, "overview-slide-test".into());
+        let output_id = state.output_id(&output).unwrap();
+        let from = state.output_workspaces.active_workspace(output_id).unwrap();
+        let to = state.workspaces.create_workspace();
+        state.output_workspaces.assign_workspace(output_id, to).unwrap();
+        for (id, workspace) in [(WindowId(1), from), (WindowId(2), to)] {
+            let normal = Rect::new(100., 160., 640., 480.);
+            state
+                .workspaces
+                .insert_floating_window(id, workspace, normal, false)
+                .unwrap();
+            state.windows.records.insert(
+                id,
+                super::super::window_registry::WindowRecord {
+                    geometry: Some(WindowGeometry::new(normal, None)),
+                    ..Default::default()
+                },
+            );
+        }
+        state.set_overview_active(true);
+        state.advance_animations_by(Duration::from_secs(10));
+        let old = state.current_window_presentation(WindowId(1)).unwrap().bounds.current;
+        let cards = state.overview_workspace_cards(&output);
+        let card = cards.iter().find(|card| card.workspace == to).unwrap();
+        assert!(
+            state.click_overview_workspace(
+                (
+                    card.rect.x + card.rect.width * 0.5,
+                    card.rect.y + card.rect.height * 0.5
+                )
+                    .into()
+            )
+        );
+        assert!(state.workspace_slides.contains_key(&output_id));
+        assert!(state.window_belongs_to_output(WindowId(1), &output));
+        let incoming = state.current_window_presentation(WindowId(2)).unwrap().bounds.current;
+        assert_eq!(incoming.width, old.width);
+        assert_eq!(incoming.height, old.height);
+        assert!(incoming.x > old.x + 1000.);
+        let predicted = state.sample_frame(&output, Duration::from_millis(60));
+        assert!(predicted.windows[&WindowId(1)].presentation.bounds.current.x < old.x);
+        assert!(predicted.windows[&WindowId(2)].presentation.bounds.current.x < incoming.x);
+        assert_eq!(
+            predicted.windows[&WindowId(2)].presentation.bounds.current.width,
+            incoming.width
+        );
+        // Activation can add a trailing empty workspace. Once that layout is
+        // established, slide prediction must not translate the strip or previews.
+        let current_cards = state.overview_workspace_cards(&output);
+        let predicted_cards = state.overview_workspace_cards_for_frame(&output, Some(&predicted));
+        for (before, after) in current_cards.iter().zip(predicted_cards) {
+            assert_eq!(before.rect, after.rect);
+            assert_eq!(before.windows, after.windows);
+        }
+        state.advance_animations_by(Duration::from_millis(80));
+        let before = state.workspace_slides[&output_id].clone();
+        state.update_workspace_slide(output_id, output_id, Some(to), from, None);
+        let reversed = &state.workspace_slides[&output_id];
+        assert_eq!(reversed.speed, crate::overview::OVERVIEW_MOTION_SPEED);
+        for item in &before.items {
+            let after = reversed
+                .items
+                .iter()
+                .find(|other| other.workspace == item.workspace)
+                .unwrap();
+            assert_eq!(item.start, after.start);
+            assert_eq!(item.velocity, after.velocity);
+        }
+        // Finish on the selected workspace and retire all outgoing previews.
+        state.output_workspaces.switch_workspace(output_id, from).unwrap();
+        state.retarget_overview();
+        state.advance_animations_by(Duration::from_secs(10));
+        assert!(state.workspace_slides.is_empty());
+        assert!(!state.overview.has_window_preview(WindowId(2)));
+        assert!(!state.overview.needs_tick());
+        state.animations_enabled = false;
+        let card = state
+            .overview_workspace_cards(&output)
+            .into_iter()
+            .find(|card| card.workspace == to)
+            .unwrap();
+        state.click_overview_workspace(
+            (
+                card.rect.x + card.rect.width * 0.5,
+                card.rect.y + card.rect.height * 0.5,
+            )
+                .into(),
+        );
+        assert!(state.workspace_slides.is_empty());
+        assert!(!state.overview.needs_tick());
+    }
 
     #[test]
     #[ignore = "requires a private XDG_RUNTIME_DIR and permission to bind test sockets"]

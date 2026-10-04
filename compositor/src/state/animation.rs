@@ -500,6 +500,7 @@ impl Ferese {
             self.unmap_invisible_windows(&visible_windows);
             self.reconcile_workspaces(&visible);
             self.send_shell_snapshots();
+            self.retarget_overview();
             active_animation = true;
         }
         if !self.overview.is_active() {
