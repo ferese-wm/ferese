@@ -993,4 +993,54 @@ fn resize_dependencies_protocol_and_pixels() {
             "stacked replacement lost canonical presented source"
         );
     }
+    // Fullscreen geometry is output-owned. Keep its own configure barrier,
+    // but release it independently of a slow sibling in the same column.
+    state.set_window_fullscreen(d_id, true);
+    state.display_handle.flush_clients().unwrap();
+    ack_configure(&mut d_wire, 3);
+    dispatch(&mut events, &mut state);
+    assert!(
+        state.windows.transaction(&d_id).is_some(),
+        "fullscreen ack alone released its barrier"
+    );
+    let before = state.windows.geometry(&d_id).unwrap().visual.current;
+    state.advance_animations_at(Duration::from_millis(16), Duration::from_millis(10016));
+    assert_eq!(state.windows.geometry(&d_id).unwrap().visual.current, before);
+
+    request(&mut d_wire, 2, 1, &[6, 0, 0], None);
+    request(&mut d_wire, 2, 6, &[], None);
+    dispatch(&mut events, &mut state);
+    assert!(
+        state.windows.transaction(&d_id).is_none(),
+        "own fullscreen configure did not release after commit"
+    );
+    assert!(
+        state.windows.transaction(&b_id).is_some(),
+        "other tile must still be pending"
+    );
+    assert!(!state.presentation_dependencies.reflow_blocked(d_id, &state.windows));
+    assert!(state.windows.geometry(&d_id).unwrap().is_zooming());
+    // Consume the release tick without charging the preceding client wait.
+    state.advance_animations_at(Duration::ZERO, Duration::from_millis(10016));
+    state.advance_animations_at(Duration::from_millis(16), Duration::from_millis(10032));
+    assert_ne!(
+        state.windows.geometry(&d_id).unwrap().visual.current,
+        before,
+        "fullscreen zoom stayed held by an unrelated column resize after its own commit"
+    );
+
+    // Returning to the column needs its real reflow wait again, even after
+    // the returning client's own configure has committed.
+    state.set_window_fullscreen(d_id, false);
+    state.display_handle.flush_clients().unwrap();
+    ack_configure(&mut d_wire, 3);
+    request(&mut d_wire, 2, 1, &[6, 0, 0], None);
+    request(&mut d_wire, 2, 6, &[], None);
+    dispatch(&mut events, &mut state);
+    assert!(state.windows.transaction(&d_id).is_none());
+    assert!(state.windows.transaction(&b_id).is_some());
+    assert!(state.presentation_dependencies.reflow_blocked(d_id, &state.windows));
+    let returning = state.windows.geometry(&d_id).unwrap().visual.current;
+    state.advance_animations_at(Duration::from_millis(16), Duration::from_millis(10048));
+    assert_eq!(state.windows.geometry(&d_id).unwrap().visual.current, returning);
 }

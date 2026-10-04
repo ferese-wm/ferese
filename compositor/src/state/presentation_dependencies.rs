@@ -206,28 +206,53 @@ fn viewport_dependencies(
     owners.extend(inputs.iter().map(|input| input.commit));
     owners.sort_by_key(|owner| owner.window.0);
     owners.dedup();
-    let evaluate = |only: Option<ClientCommit>, exclude: Option<ClientCommit>| {
+    let evaluate = |only: Option<ClientCommit>, exclude: Option<ClientCommit>, retained: Option<&HashSet<WindowId>>| {
         let mut start = None;
         for step in &previous.steps {
             let widths = step
                 .inputs
                 .iter()
-                .filter(|input| only.is_none_or(|only| input.commit == only) && exclude != Some(input.commit))
+                .filter(|input| {
+                    only.is_none_or(|only| input.commit == only)
+                        && exclude != Some(input.commit)
+                        && retained.is_none_or(|owners| owners.contains(&input.commit.window))
+                })
                 .map(|input| (input.commit.window, input.width.0, input.width.1))
                 .collect::<Vec<_>>();
             start = Some(step.target.with_held_widths(&widths, start));
         }
         start.unwrap_or(layout.viewport_x())
     };
-    let held = evaluate(None, None);
+    let held = evaluate(None, None, None);
     previous.waits = owners
-        .into_iter()
+        .iter()
+        .copied()
         .filter(|owner| {
             previous.overflow
-                || (evaluate(Some(*owner), None) - layout.viewport_x()).abs() > 0.001
-                || (held - evaluate(None, Some(*owner))).abs() > 0.001
+                || (evaluate(Some(*owner), None, None) - layout.viewport_x()).abs() > 0.001
+                || (held - evaluate(None, Some(*owner), None)).abs() > 0.001
         })
         .collect();
+
+    // Page packing is nonlinear: all held widths can change the page even
+    // when neither a single input nor removing one input exposes the change.
+    // Retain a collective wait in that case, removing inputs that are not
+    // needed to keep the held target different from the requested target.
+    if previous.waits.is_empty() && (held - layout.viewport_x()).abs() > 0.001 {
+        let mut collective = owners.iter().map(|owner| owner.window).collect::<HashSet<_>>();
+        for owner in &owners {
+            collective.remove(&owner.window);
+            if (evaluate(None, None, Some(&collective)) - layout.viewport_x()).abs() <= 0.001 {
+                collective.insert(owner.window);
+            }
+        }
+
+        previous.waits = owners
+            .into_iter()
+            .filter(|owner| collective.contains(&owner.window))
+            .collect();
+    }
+
     // Keep a bounded recipe while any of its inputs is pending: a partial
     // commit can expose a page-packing dependency previously masked by others.
     if previous.steps.iter().all(|step| step.inputs.is_empty()) {
@@ -272,17 +297,25 @@ impl Ferese {
                     window: *slow,
                     serial: transaction.serial(),
                 };
+                // Fullscreen bounds come from the output, not a column. Its
+                // own configure still gates presentation; tiled reflow waits
+                // apply again when the window returns to normal geometry.
                 let linked = id == *slow
-                    || match &workspace.layout {
-                        WorkspaceLayout::Scrolling(layout) => own_column.is_some_and(|own| {
-                            layout
-                                .columns()
-                                .iter()
-                                .position(|column| column.windows.contains(slow))
-                                .is_some_and(|source| source == own || (source < own && transaction.width_changes()))
-                        }),
-                        WorkspaceLayout::Tree(_) => workspace.layout.contains(id) && workspace.layout.contains(*slow),
-                    };
+                    || (workspace.fullscreen != Some(id)
+                        && match &workspace.layout {
+                            WorkspaceLayout::Scrolling(layout) => own_column.is_some_and(|own| {
+                                layout
+                                    .columns()
+                                    .iter()
+                                    .position(|column| column.windows.contains(slow))
+                                    .is_some_and(|source| {
+                                        source == own || (source < own && transaction.width_changes())
+                                    })
+                            }),
+                            WorkspaceLayout::Tree(_) => {
+                                workspace.layout.contains(id) && workspace.layout.contains(*slow)
+                            }
+                        });
                 if linked {
                     waits.push(commit);
                 }
@@ -475,5 +508,105 @@ mod tests {
         assert!(dependencies.holds(&windows).1.is_empty());
         assert!(!dependencies.needs_tick());
         assert!(dependencies.reflow.is_empty() && dependencies.viewport.is_empty());
+    }
+
+    #[test]
+    fn collective_page_waits_survive_redundant_pending_widths() {
+        use ferese_layout::{ColumnWidth, ScrollingLayout};
+        let bounds = Rect::new(0.0, 0.0, 200.0, 100.0);
+        let gaps = GapConfig {
+            inner: 0.0,
+            outer: 0.0,
+            smart: false,
+        };
+        let mut layout = ScrollingLayout::with_default_width(ColumnWidth::Fixed(40.0));
+        layout.set_focus_strategy(ViewportFocusStrategy::Paged);
+        let ids = [
+            WindowId(1),
+            WindowId(2),
+            WindowId(3),
+            WindowId(4),
+            WindowId(5),
+            WindowId(6),
+        ];
+        for (i, id) in ids.iter().enumerate() {
+            layout.insert(*id, i.checked_sub(1).map(|j| ids[j])).unwrap();
+        }
+
+        for (id, width) in ids.into_iter().zip([40.0, 40.0, 80.0, 80.0, 40.0, 40.0]) {
+            layout.set_column_width(id, ColumnWidth::Fixed(width)).unwrap();
+        }
+
+        layout.focus(ids[4]).unwrap();
+        layout
+            .geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(ids[4]))
+            .unwrap();
+        assert_eq!(layout.viewport_x(), 160.0);
+        let widths = [
+            (ids[0], 120.0, 40.0),
+            (ids[1], 120.0, 40.0),
+            (ids[4], 80.0, 40.0),
+            (ids[5], 160.0, 40.0),
+        ];
+        let pending = widths
+            .into_iter()
+            .enumerate()
+            .map(|(i, (id, source, target))| {
+                (
+                    id,
+                    ResizeTransaction::new((i as u32 + 10).into(), Duration::ZERO)
+                        .with_column_width(Some(source), Some(target)),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(layout.viewport_target().unwrap().with_held_widths(&widths, None), 320.0);
+        let graph = viewport_dependencies(&layout, &pending, Default::default());
+        assert!(
+            !graph.waits.is_empty(),
+            "the collectively different page needs a commit wait"
+        );
+        assert!(
+            !graph.waits.iter().any(|wait| wait.window == ids[5]),
+            "a column after focus cannot own this page wait"
+        );
+        let reversed = pending.iter().copied().rev().collect::<Vec<_>>();
+        assert_eq!(
+            viewport_dependencies(&layout, &reversed, Default::default()).waits,
+            graph.waits
+        );
+
+        // Exercise every partial-commit order, including a redundant owner
+        // committing before an owner in the retained collective group.
+        for mask in 0..1 << pending.len() {
+            let remaining = pending
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| mask & (1 << index) != 0)
+                .map(|(_, input)| *input)
+                .collect::<Vec<_>>();
+            let held_widths = remaining
+                .iter()
+                .map(|(id, transaction)| {
+                    let (source, target) = transaction.column_width().unwrap();
+                    (*id, source, target)
+                })
+                .collect::<Vec<_>>();
+            let held = layout.viewport_target().unwrap().with_held_widths(&held_widths, None);
+            let partial = viewport_dependencies(&layout, &remaining, graph.clone());
+            if (held - layout.viewport_x()).abs() > 0.001 {
+                assert!(
+                    !partial.waits.is_empty(),
+                    "collective wait lost after partial commits: {mask}"
+                );
+            }
+
+            assert!(
+                !partial.waits.iter().any(|wait| wait.window == ids[5]),
+                "unrelated column blocked mask {mask}"
+            );
+            if remaining.is_empty() {
+                assert!(partial.steps.is_empty() && partial.waits.is_empty());
+            }
+        }
     }
 }
