@@ -60,18 +60,21 @@ struct Preview {
 
 impl Preview {
     fn request(&mut self, path: &str) -> bool {
+        if path.is_empty() {
+            self.path.clear();
+            self.requested = None;
+            self.handle = None;
+            self.error = None;
+            return false;
+        }
+
         if self.requested.is_some() || self.path == path {
             return false;
         }
 
-        self.handle = None;
+        // Keep the last decoded image while its replacement loads. A stale
+        // completion can then also return to that image without decoding again.
         self.error = None;
-        if path.is_empty() {
-            self.path.clear();
-            return false;
-        }
-
-        self.path.clear();
         self.requested = Some(path.to_owned());
         true
     }
@@ -317,25 +320,26 @@ impl App {
         let palette = visuals::Palette::from_resolved(&self.resolved.presented);
         let preview = &self.wallpaper.active;
         let mut body = column([]).spacing(8).push(self.label("Current wallpaper", 13.));
-        if let Some(handle) = &preview.handle {
-            body = body.push(
-                widget::container(
-                    widget::image(handle.clone())
-                        .border_radius(palette.radius.min(10.))
-                        .shape(cosmic::iced::border::Shape::Continuous)
-                        .width(Length::Shrink)
-                        .height(180)
-                        .content_fit(cosmic::iced::ContentFit::Contain),
-                )
-                .center_x(Length::Fill),
-            );
+        let current: Element<'_, Message> = if let Some(handle) = &preview.handle {
+            widget::image(handle.clone())
+                .border_radius(palette.radius.min(10.))
+                .shape(cosmic::iced::border::Shape::Continuous)
+                .width(Length::Shrink)
+                .height(180)
+                .content_fit(cosmic::iced::ContentFit::Contain)
+                .into()
         } else {
-            body = body.push(self.note(if preview.requested.is_some() {
-                "Loading wallpaper preview…"
-            } else {
-                preview.error.as_deref().unwrap_or("No wallpaper image selected.")
-            }));
-        }
+            self.wallpaper_placeholder(
+                if preview.requested.is_some() {
+                    "Loading preview…"
+                } else {
+                    preview.error.as_deref().unwrap_or("No wallpaper image selected.")
+                },
+                palette,
+                180.,
+            )
+        };
+        body = body.push(widget::container(current).height(180).center_x(Length::Fill));
 
         body = body.push(
             row([])
@@ -374,10 +378,7 @@ impl App {
                     .content_fit(cosmic::iced::ContentFit::Cover)
                     .into()
             } else {
-                widget::container(self.note(preview.error.as_deref().unwrap_or("Loading…")))
-                    .width(Length::Fill)
-                    .height(110)
-                    .into()
+                self.wallpaper_placeholder(preview.error.as_deref().unwrap_or("Loading preview…"), palette, 110.)
             };
             let label_color = if preview.handle.is_none() {
                 palette.text
@@ -421,11 +422,103 @@ impl App {
         .push(defaults)
         .into()
     }
+
+    fn wallpaper_placeholder<'a>(
+        &'a self,
+        message: &'a str,
+        palette: visuals::Palette,
+        height: f32,
+    ) -> Element<'a, Message> {
+        widget::container(
+            column([])
+                .spacing(8)
+                .align_x(Alignment::Center)
+                .push(visuals::action_icon(
+                    "M3 4h18v16H3z M3 15l5-5 5 5 3-3 5 5 M15 8h.01",
+                    palette.muted,
+                ))
+                .push(self.note(message)),
+        )
+        .padding(16)
+        .width(Length::Fill)
+        .height(height)
+        .center_x(Length::Fill)
+        .center_y(height)
+        .class(visuals::surface(palette.card, palette.radius.min(10.)))
+        .into()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn preview_slots_keep_their_size_while_loading_and_on_failure() {
+        use cosmic::Application;
+        use cosmic::iced::advanced::renderer::Headless;
+        use cosmic::iced::advanced::{layout, widget::Tree};
+        use cosmic::iced::{Font, Pixels, Size};
+
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let renderer = runtime
+            .block_on(<cosmic::Renderer as Headless>::new(
+                Font::default(),
+                Pixels(14.),
+                Some("tiny-skia"),
+            ))
+            .unwrap();
+
+        for width in [420., 760.] {
+            let mut app = App::init(
+                cosmic::app::Core::default(),
+                ("/preview/config.kdl".into(), Snapshot::parse(String::new()), None),
+            )
+            .0;
+            let dimensions = |app: &App| {
+                let mut view = app.wallpaper_controls();
+                let mut tree = Tree::new(view.as_widget());
+                view.as_widget_mut()
+                    .layout(
+                        &mut tree,
+                        &renderer,
+                        &layout::Limits::new(Size::ZERO, Size::new(width, f32::INFINITY)),
+                    )
+                    .size()
+            };
+            let initial = dimensions(&app);
+            assert!(app.wallpaper.active.request("/active.png"));
+
+            for preview in &mut app.wallpaper.defaults {
+                assert!(preview.request("/default.png"));
+            }
+
+            assert_eq!(dimensions(&app), initial);
+            let handle = widget::image::Handle::from_rgba(2, 1, vec![255; 8]);
+            app.wallpaper
+                .active
+                .finish("/active.png".into(), "/active.png", Ok(handle.clone()));
+
+            for index in 0..app.wallpaper.defaults.len() {
+                app.wallpaper.defaults[index].finish("/default.png".into(), "/default.png", Ok(handle.clone()));
+                assert_eq!(dimensions(&app), initial);
+            }
+
+            assert!(app.wallpaper.active.request("/missing.png"));
+            assert_eq!(dimensions(&app), initial);
+            app.wallpaper.active.finish(
+                "/missing.png".into(),
+                "/missing.png",
+                Err("Could not load this image.".into()),
+            );
+            assert_eq!(dimensions(&app), initial);
+            assert!(!app.wallpaper.active.request(""));
+            assert_eq!(dimensions(&app), initial);
+        }
+    }
 
     #[test]
     #[ignore = "release UI preview; requires headless renderer backends"]
@@ -564,14 +657,47 @@ mod tests {
     }
 
     #[test]
-    fn returning_to_a_previous_path_during_a_load_restarts_its_preview() {
+    fn returning_to_a_previous_path_during_a_load_reuses_its_preview() {
         let mut preview = Preview::default();
         let image = widget::image::Handle::from_rgba(1, 1, vec![0, 0, 0, 255]);
         assert!(preview.request("/first.png"));
         preview.finish("/first.png".into(), "/first.png", Ok(image.clone()));
         assert!(preview.request("/second.png"));
         preview.finish("/second.png".into(), "/first.png", Ok(image));
+        assert!(!preview.request("/first.png"));
+        assert!(preview.handle.is_some());
+        assert_eq!(preview.path, "/first.png");
+    }
+
+    #[test]
+    fn replacement_keeps_the_previous_image_until_it_is_ready() {
+        let mut preview = Preview::default();
+        let first = widget::image::Handle::from_rgba(1, 1, vec![0, 0, 0, 255]);
+        let second = widget::image::Handle::from_rgba(1, 1, vec![255, 255, 255, 255]);
         assert!(preview.request("/first.png"));
+        preview.finish("/first.png".into(), "/first.png", Ok(first.clone()));
+        assert!(preview.request("/second.png"));
+        assert_eq!(preview.handle.as_ref().unwrap().id(), first.id());
+        assert_eq!(preview.path, "/first.png");
+        assert!(!preview.request("/second.png"));
+        preview.finish("/second.png".into(), "/second.png", Ok(second.clone()));
+        assert_eq!(preview.handle.as_ref().unwrap().id(), second.id());
+        assert_eq!(preview.path, "/second.png");
+    }
+
+    #[test]
+    fn clearing_wallpaper_during_a_load_does_not_restore_the_old_image() {
+        let mut preview = Preview::default();
+        let image = widget::image::Handle::from_rgba(1, 1, vec![0, 0, 0, 255]);
+        assert!(preview.request("/first.png"));
+        preview.finish("/first.png".into(), "/first.png", Ok(image.clone()));
+        assert!(preview.request("/second.png"));
+        assert!(!preview.request(""));
+        assert!(preview.handle.is_none());
+        assert!(preview.requested.is_none());
+        preview.finish("/second.png".into(), "", Ok(image));
+        assert!(preview.handle.is_none());
+        assert!(preview.path.is_empty());
     }
 
     #[test]

@@ -16,6 +16,7 @@ mod note_store;
 mod notification_ui;
 mod notifications;
 mod recording;
+mod renderer;
 mod status;
 mod status_ui;
 mod system_modal;
@@ -109,13 +110,7 @@ impl From<ShellTheme> for BarMetrics {
 }
 
 fn main() -> cosmic::iced::Result {
-    // Small shell surfaces do not need a second GPU device and shader setup.
-    // Keep wgpu as a fallback and honor an explicit renderer preference.
-    if std::env::var_os("ICED_BACKEND").is_none() {
-        // SAFETY: this is the process entry point, before any worker or
-        // toolkit threads are started.
-        unsafe { std::env::set_var("ICED_BACKEND", "tiny-skia,wgpu") };
-    }
+    renderer::configure_shell();
 
     cosmic::iced::advanced::graphics::text::font_system()
         .write()
