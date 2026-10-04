@@ -1,45 +1,45 @@
 # Screenshots
 
-These screenshots were taken on September 30, 2026. Click an image to open it at full size.
+Click an image to open it at full size.
 
-## Ferese Blue
+## Ferese Blue dark
 
-Settings and Control Center with the previous default wallpaper.
+Appearance settings with the default dark wallpaper.
 
-[![Settings and Control Center with the previous default wallpaper.](images/screenshots/ferese-main-hero.png)](images/screenshots/ferese-main-hero.png)
+[![Ferese Blue dark desktop with Appearance settings.](images/screenshots/ferese-blue-dark.webp)](images/screenshots/ferese-blue-dark.webp)
 
-## Rosé Pine
+## Ferese Blue light
 
-Theme previews, Control Center and the desktop clock.
+Appearance settings and the calendar with the default light wallpaper.
 
-[![Theme previews, Control Center and the desktop clock.](images/screenshots/rose-pine-desktop.png)](images/screenshots/rose-pine-desktop.png)
+[![Ferese Blue light desktop with Appearance settings and the calendar.](images/screenshots/ferese-blue-light.webp)](images/screenshots/ferese-blue-light.webp)
 
 ## Workspace overview
 
-Windows and workspaces over a custom wallpaper.
+Terminal and Settings windows, with previews of three workspaces.
 
-[![Windows and workspaces over a custom wallpaper.](images/screenshots/rose-pine-overview.png)](images/screenshots/rose-pine-overview.png)
+[![Ferese Blue overview with a terminal, Settings and three workspace cards.](images/screenshots/ferese-blue-overview.webp)](images/screenshots/ferese-blue-overview.webp)
 
-## Power controls
+## Everforest
 
-Power controls for selecting a profile, restarting, powering off and suspending.
+Appearance settings and the calendar over a custom forest wallpaper.
 
-[![Power profiles and restart, power off and suspend actions.](images/screenshots/power-controls.png)](images/screenshots/power-controls.png)
+[![Everforest desktop with Appearance settings and the calendar.](images/screenshots/everforest-desktop.webp)](images/screenshots/everforest-desktop.webp)
 
-## Ferese Blue overview
+## Gruvbox
 
-Application previews and workspace selection.
+Appearance settings and the calendar over a custom landscape wallpaper.
 
-[![Application previews and workspace selection.](images/screenshots/ferese-blue-overview.png)](images/screenshots/ferese-blue-overview.png)
+[![Gruvbox desktop with Appearance settings and the calendar.](images/screenshots/gruvbox-desktop.webp)](images/screenshots/gruvbox-desktop.webp)
 
-## Shortcut guide
+## Rosé Pine dark
 
-The shortcut guide displayed at login, using the configured keyboard shortcuts.
+Theme previews, Control Center and a file manager.
 
-[![The login guide shows the configured keyboard shortcuts.](images/screenshots/shortcut-guide.png)](images/screenshots/shortcut-guide.png)
+[![Rosé Pine dark desktop with Settings, Control Center and a file manager.](images/screenshots/rose-pine-dark.webp)](images/screenshots/rose-pine-dark.webp)
 
-## Power confirmation
+## Rosé Pine light
 
-A centered confirmation dialog with background blur.
+Appearance settings and a file manager over the same custom wallpaper.
 
-[![A centered confirmation dialog with background blur.](images/screenshots/power-confirmation.png)](images/screenshots/power-confirmation.png)
+[![Rosé Pine light desktop with Settings and a file manager.](images/screenshots/rose-pine-light.webp)](images/screenshots/rose-pine-light.webp)

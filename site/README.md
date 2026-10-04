@@ -51,4 +51,7 @@ both the site root and the GitHub Pages project path.
 The light and dark wallpapers live in `assets/wallpapers`. Both are
 3840×2160 and are bundled by the installer. Ferese selects the matching image
 when no custom wallpaper is set. Settings keeps both defaults available below
-the current wallpaper preview. Existing screenshots show the previous artwork.
+the current wallpaper preview.
+
+Screenshots live in `docs/images/screenshots` and are shared by the README and
+website. They use lossless WebP at the original 2880×1800 resolution.

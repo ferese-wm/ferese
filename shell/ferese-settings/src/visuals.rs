@@ -84,7 +84,7 @@ pub fn choose_family(id: &str, appearance: Option<ferese_config::theme::Appearan
     let kinds: &[&str] = match appearance {
         Some(ferese_config::theme::Appearance::Light) => &["light"],
         Some(ferese_config::theme::Appearance::Dark) => &["dark"],
-        None => &[],
+        None => &["light", "dark"],
     };
     let mut edits = vec![set(
         &appearance.map_or_else(
@@ -331,6 +331,63 @@ mod tests {
         assert!(split(&snapshot));
         assert_eq!(family_selection(&snapshot, Some(Light)), "gruvbox");
         assert_eq!(family_selection(&snapshot, Some(Dark)), "catppuccin");
+    }
+
+    #[test]
+    fn shared_family_selection_clears_stale_scoped_gradients() {
+        let source = r##"theme {
+            family "ferese-blue"
+            border { style solid; }
+            light { family "gruvbox"; focus-ring { gradient { from "#3D7BE6"; to "#3D7BE6"; }; }; }
+            dark {
+                family "catppuccin"
+                colors { accent "#3D7BE6"; }
+                focus-ring { gradient { from "#3D7BE6"; to "#3D7BE6"; }; }
+                background { path "/wallpaper.png"; }
+            }
+        }"##;
+        for (id, _, _, _) in ferese_config::families::BUILTINS {
+            let mut snapshot = Snapshot::parse(source.into()).unwrap();
+            for edit in choose_family(id, None) {
+                snapshot.edit(&edit).unwrap();
+            }
+
+            assert_eq!(
+                family_selection(&snapshot, Some(ferese_config::theme::Appearance::Light)),
+                "gruvbox"
+            );
+            assert_eq!(
+                family_selection(&snapshot, Some(ferese_config::theme::Appearance::Dark)),
+                "catppuccin"
+            );
+            assert_eq!(snapshot.string("theme.dark.background.path", ""), "/wallpaper.png");
+            assert_eq!(snapshot.string("theme.border.style", ""), "solid");
+            for mode in ["light", "dark"] {
+                assert!(snapshot.item(&format!("theme.{mode}.focus_ring")).is_none());
+                snapshot.edit(&set("theme.mode", mode)).unwrap();
+                let reference = Snapshot::parse(format!(
+                    "theme {{ family \"{id}\"; mode \"{mode}\"; border {{ style solid; }}; }}"
+                ))
+                .unwrap();
+                let resolve = |snapshot: &Snapshot| {
+                    ferese_config::theme::resolve(
+                        &snapshot.doc,
+                        std::path::Path::new("/config"),
+                        "2026-10-04T12:00:00Z".parse().unwrap(),
+                        |_| unreachable!(),
+                    )
+                    .unwrap()
+                    .theme
+                };
+                let actual = resolve(&snapshot);
+                let expected = resolve(&reference);
+                assert_eq!(actual.tokens.focus_ring, expected.tokens.focus_ring, "{id}/{mode}");
+                assert_eq!(
+                    Palette::from_resolved(&actual).accent_gradient,
+                    Palette::from_resolved(&expected).accent_gradient
+                );
+            }
+        }
     }
 
     #[test]

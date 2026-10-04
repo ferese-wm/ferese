@@ -15,6 +15,9 @@ mod visuals;
 mod wallpaper_controls;
 mod watch;
 
+#[cfg(test)]
+mod scroll_tests;
+
 use std::collections::HashMap;
 use std::path::PathBuf;
 

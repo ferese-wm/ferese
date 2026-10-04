@@ -632,6 +632,7 @@ fn execute(action: &Action, settings: Option<&[String]>) -> Result<(), String> {
                 command.env("WAYLAND_DISPLAY", display);
             }
             command.env_remove("FERESE_PUBLIC_WAYLAND_DISPLAY");
+            crate::renderer::configure_app(&mut command);
             let mut child = command.spawn().map_err(|e| e.to_string())?;
             thread::spawn(move || {
                 let _ = child.wait();
