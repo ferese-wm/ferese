@@ -345,6 +345,7 @@ enum RequestState {
 }
 
 struct Request {
+    owner: u64,
     response_id: u64,
     reply: ReplySender<Response>,
     state: RequestState,
@@ -374,6 +375,8 @@ pub(crate) const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 pub(crate) struct Coordinator {
     requests: std::collections::HashMap<u64, Request>,
     next_id: u64,
+    deadline_changed: Option<Box<dyn Fn(Option<Instant>)>>,
+    notified_deadline: Option<Instant>,
 }
 
 impl Coordinator {
@@ -381,11 +384,29 @@ impl Coordinator {
         Self::default()
     }
 
+    pub(crate) fn set_deadline_observer(&mut self, observer: impl Fn(Option<Instant>) + 'static) {
+        self.notified_deadline = self.next_deadline();
+        observer(self.notified_deadline);
+        self.deadline_changed = Some(Box::new(observer));
+    }
+
     pub(crate) fn admit(
         &mut self,
+        owner: u64,
         response_id: u64,
         reply: ReplySender<Response>,
         specs: Vec<PartSpec>,
+    ) -> Result<u64, String> {
+        self.admit_at(owner, response_id, reply, specs, Instant::now())
+    }
+
+    fn admit_at(
+        &mut self,
+        owner: u64,
+        response_id: u64,
+        reply: ReplySender<Response>,
+        specs: Vec<PartSpec>,
+        now: Instant,
     ) -> Result<u64, String> {
         if specs.is_empty() {
             return Err("No outputs are enabled".into());
@@ -416,14 +437,16 @@ impl Coordinator {
         self.requests.insert(
             id,
             Request {
+                owner,
                 response_id,
                 reply,
                 state: RequestState::Collecting,
                 parts: specs.into_iter().map(|spec| (spec, PartState::Pending)).collect(),
                 received: 0,
-                deadline: Instant::now() + REQUEST_TIMEOUT,
+                deadline: now + REQUEST_TIMEOUT,
             },
         );
+        self.notify_deadline_change();
         Ok(id)
     }
 
@@ -516,7 +539,7 @@ impl Coordinator {
                 Err(_) => Action::None,
             };
         }
-        let entry = self.requests.remove(&request).expect("checked above");
+        let entry = self.remove_request(request).expect("checked above");
         match result {
             Ok(path) => {
                 reply(&entry, Ok(&path));
@@ -536,8 +559,7 @@ impl Coordinator {
     // Answers every request that outlived its deadline. The returned ids let the
     // caller drop readbacks that would otherwise publish into a request that no
     // longer exists.
-    pub(crate) fn expire(&mut self) -> Vec<u64> {
-        let now = Instant::now();
+    pub(crate) fn expire_at(&mut self, now: Instant) -> Vec<u64> {
         let expired: Vec<u64> = self
             .requests
             .iter()
@@ -550,13 +572,22 @@ impl Coordinator {
         expired
     }
 
-    // The remaining time before the earliest deadline, so the caller can sleep
-    // exactly that long instead of polling on a fixed tick.
-    pub(crate) fn next_deadline(&self) -> Option<Duration> {
-        self.requests
-            .values()
-            .map(|entry| entry.deadline.saturating_duration_since(Instant::now()))
-            .min()
+    // Absolute deadlines do not drift when unrelated work wakes the loop.
+    pub(crate) fn next_deadline(&self) -> Option<Instant> {
+        self.requests.values().map(|entry| entry.deadline).min()
+    }
+
+    pub(crate) fn terminate_owner(&mut self, owner: u64) -> Vec<u64> {
+        let ids: Vec<u64> = self
+            .requests
+            .iter()
+            .filter(|(_, entry)| entry.owner == owner)
+            .map(|(id, _)| *id)
+            .collect();
+        for id in &ids {
+            self.reject_inner(*id, "Screenshot cancelled: the client disconnected");
+        }
+        ids
     }
 
     pub(crate) fn terminate_all(&mut self) -> Vec<u64> {
@@ -572,8 +603,26 @@ impl Coordinator {
     }
 
     fn reject_inner(&mut self, request: u64, error: &str) {
-        if let Some(entry) = self.requests.remove(&request) {
+        if let Some(entry) = self.remove_request(request) {
             reply(&entry, Err(error));
+        }
+    }
+
+    // All terminal paths pass through here, including readback/encode failure,
+    // owner closure, cancellation and timeout, so none can leave a stale timer.
+    fn remove_request(&mut self, request: u64) -> Option<Request> {
+        let entry = self.requests.remove(&request)?;
+        self.notify_deadline_change();
+        Some(entry)
+    }
+
+    fn notify_deadline_change(&mut self) {
+        let deadline = self.next_deadline();
+        if deadline != self.notified_deadline {
+            self.notified_deadline = deadline;
+            if let Some(observer) = &self.deadline_changed {
+                observer(deadline);
+            }
         }
     }
 }
@@ -918,7 +967,7 @@ mod completion {
             let (reply, received) = sync_channel(8);
             let mut coordinator = Coordinator::new();
             coordinator
-                .admit(42, reply.clone(), (0..parts).map(|_| spec(2, 2)).collect())
+                .admit(1, 42, reply.clone(), (0..parts).map(|_| spec(2, 2)).collect())
                 .expect("admitted");
             Self { coordinator, received }
         }
@@ -1105,7 +1154,7 @@ mod completion {
         let id = harness.coordinator.next_id;
         harness.coordinator.requests.get_mut(&id).expect("tracked").deadline = Instant::now() - Duration::from_secs(1);
 
-        assert_eq!(harness.coordinator.expire(), vec![id]);
+        assert_eq!(harness.coordinator.expire_at(Instant::now()), vec![id]);
         let response = harness.response().expect("the caller is answered");
         assert_eq!(response.error.as_ref().unwrap().code, "screenshot_failed");
         assert!(
@@ -1126,10 +1175,14 @@ mod completion {
     fn a_live_request_is_not_expired_early() {
         let mut harness = Harness::new(1);
         let id = harness.coordinator.next_id;
-        assert!(harness.coordinator.expire().is_empty(), "not yet due");
+        assert!(harness.coordinator.expire_at(Instant::now()).is_empty(), "not yet due");
         assert!(harness.coordinator.is_live(id));
         assert!(harness.response().is_none(), "still unanswered, not failed");
-        let remaining = harness.coordinator.next_deadline().expect("still armed");
+        let remaining = harness
+            .coordinator
+            .next_deadline()
+            .expect("still armed")
+            .saturating_duration_since(Instant::now());
         assert!(
             remaining <= REQUEST_TIMEOUT && remaining > REQUEST_TIMEOUT - Duration::from_secs(1),
             "the timer re-arms to roughly the full timeout, got {remaining:?}"
@@ -1142,17 +1195,17 @@ mod completion {
         let mut coordinator = Coordinator::new();
         for _ in 0..MAX_OUTSTANDING {
             coordinator
-                .admit(42, reply.clone(), vec![spec(2, 2)])
+                .admit(1, 42, reply.clone(), vec![spec(2, 2)])
                 .expect("within the request cap");
         }
         for entry in coordinator.requests.values_mut() {
             entry.deadline = Instant::now() - Duration::from_secs(1);
         }
-        assert_eq!(coordinator.expire().len(), MAX_OUTSTANDING);
+        assert_eq!(coordinator.expire_at(Instant::now()).len(), MAX_OUTSTANDING);
         assert_eq!(coordinator.next_deadline(), None);
         // The cap is usable again rather than permanently degraded.
         coordinator
-            .admit(42, reply, vec![spec(2, 2)])
+            .admit(1, 42, reply, vec![spec(2, 2)])
             .expect("a slot was released");
     }
 
@@ -1162,10 +1215,10 @@ mod completion {
         let mut coordinator = Coordinator::new();
         for _ in 0..MAX_OUTSTANDING {
             coordinator
-                .admit(42, reply.clone(), vec![spec(2, 2)])
+                .admit(1, 42, reply.clone(), vec![spec(2, 2)])
                 .expect("within the request cap");
         }
-        let overflow = coordinator.admit(42, reply.clone(), vec![spec(2, 2)]);
+        let overflow = coordinator.admit(1, 42, reply.clone(), vec![spec(2, 2)]);
         assert!(overflow.is_err(), "outstanding requests are bounded");
 
         let huge = PartSpec {
@@ -1176,8 +1229,169 @@ mod completion {
         };
         let mut fresh = Coordinator::new();
         assert!(
-            fresh.admit(42, reply.clone(), vec![huge]).is_err(),
+            fresh.admit(1, 42, reply.clone(), vec![huge]).is_err(),
             "the byte budget is checked before any readback allocates"
+        );
+    }
+
+    fn observe_deadlines(coordinator: &mut Coordinator) -> std::rc::Rc<std::cell::RefCell<Vec<Option<Instant>>>> {
+        let changes = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let observed = changes.clone();
+        coordinator.set_deadline_observer(move |deadline| observed.borrow_mut().push(deadline));
+        changes
+    }
+
+    #[test]
+    fn deadline_admission_after_long_idle_and_earliest_removal_rearm_exactly() {
+        let now = Instant::now();
+        let (reply, _received) = sync_channel(8);
+        let mut coordinator = Coordinator::new();
+        let changes = observe_deadlines(&mut coordinator);
+        assert_eq!(&*changes.borrow(), &[None]);
+
+        // An idle period does not establish a polling epoch. Every request gets
+        // exactly the timeout measured from its own admission.
+        let late = now + Duration::from_secs(3600);
+        let first = coordinator
+            .admit_at(1, 42, reply.clone(), vec![spec(2, 2)], late)
+            .unwrap();
+        let second = coordinator
+            .admit_at(2, 43, reply.clone(), vec![spec(2, 2)], late + Duration::from_secs(5))
+            .unwrap();
+        assert_eq!(
+            changes.borrow().len(),
+            2,
+            "a later request does not rearm the earliest timer"
+        );
+        assert!(coordinator.admit_at(1, 44, reply, Vec::new(), late).is_err());
+        assert_eq!(changes.borrow().len(), 2, "rejected admission does not touch the timer");
+        assert_eq!(coordinator.terminate_owner(1), vec![first]);
+        assert!(coordinator.is_live(second));
+        assert_eq!(coordinator.terminate_owner(99), Vec::<u64>::new());
+        coordinator.reject(second, "encoding queue is full");
+        assert_eq!(
+            &*changes.borrow(),
+            &[
+                None,
+                Some(late + REQUEST_TIMEOUT),
+                Some(late + Duration::from_secs(5) + REQUEST_TIMEOUT),
+                None,
+            ]
+        );
+    }
+
+    #[test]
+    fn deadline_survives_readback_and_encoding_then_disarms_on_completion() {
+        for result in [Ok(PathBuf::from("/tmp/shot.png")), Err("encoder failed".into())] {
+            let mut harness = Harness::new(2);
+            let changes = observe_deadlines(&mut harness.coordinator);
+            let id = harness.coordinator.next_id;
+            let deadline = harness.coordinator.next_deadline();
+            harness.coordinator.on_part(id, 0, Ok(buffer(2, 2)));
+            assert!(matches!(
+                harness.coordinator.on_part(id, 1, Ok(buffer(2, 2))),
+                Action::Encode { .. }
+            ));
+            assert_eq!(&*changes.borrow(), &[deadline], "encoding keeps the original deadline");
+            harness.coordinator.on_encoded(id, result);
+            assert_eq!(&*changes.borrow(), &[deadline, None]);
+            harness.coordinator.on_part(id, 0, Err("late readback".into()));
+            harness.coordinator.on_encoded(id, Err("late encode".into()));
+            assert_eq!(
+                changes.borrow().len(),
+                2,
+                "late results cannot rearm an empty coordinator"
+            );
+        }
+    }
+
+    #[test]
+    fn deadline_cancellations_disarm_collecting_and_encoding_requests() {
+        for encoding in [false, true] {
+            for cancellation in [
+                "output was removed",
+                "session locked",
+                "privacy changed",
+                "client closed",
+            ] {
+                // Topology failures arrive as parts while collecting. Once
+                // encoding begins its snapshotted frames remain valid.
+                if encoding && cancellation == "output was removed" {
+                    continue;
+                }
+                let mut harness = Harness::new(1);
+                let changes = observe_deadlines(&mut harness.coordinator);
+                let id = harness.coordinator.next_id;
+                if encoding {
+                    harness.coordinator.on_part(id, 0, Ok(buffer(2, 2)));
+                }
+                match cancellation {
+                    "output was removed" => {
+                        harness.coordinator.on_part(id, 0, Err(cancellation.into()));
+                    }
+                    "session locked" => {
+                        harness.coordinator.terminate_all();
+                    }
+                    "privacy changed" => {
+                        harness.coordinator.terminate_all_with_reason(cancellation);
+                    }
+                    "client closed" => {
+                        harness.coordinator.terminate_owner(1);
+                    }
+                    _ => unreachable!(),
+                }
+                assert_eq!(changes.borrow().last(), Some(&None), "{cancellation} must disarm");
+                assert_eq!(changes.borrow().len(), 2);
+                assert!(harness.response().unwrap().error.is_some());
+                assert!(!harness.coordinator.is_live(id));
+            }
+        }
+    }
+
+    #[test]
+    fn deadline_expiry_moves_to_next_request_and_frees_encoding_slots() {
+        let now = Instant::now();
+        let (reply, received) = sync_channel(8);
+        let mut coordinator = Coordinator::new();
+        let changes = observe_deadlines(&mut coordinator);
+        let first = coordinator
+            .admit_at(1, 42, reply.clone(), vec![spec(2, 2)], now)
+            .unwrap();
+        let second = coordinator
+            .admit_at(2, 43, reply.clone(), vec![spec(2, 2)], now + Duration::from_secs(5))
+            .unwrap();
+        coordinator.on_part(first, 0, Ok(buffer(2, 2)));
+        assert!(
+            coordinator
+                .expire_at(now + REQUEST_TIMEOUT - Duration::from_nanos(1))
+                .is_empty()
+        );
+        assert_eq!(coordinator.expire_at(now + REQUEST_TIMEOUT), vec![first]);
+        assert!(coordinator.is_live(second));
+        assert_eq!(
+            coordinator.expire_at(now + REQUEST_TIMEOUT + Duration::from_secs(5)),
+            vec![second]
+        );
+        assert_eq!(
+            &*changes.borrow(),
+            &[
+                None,
+                Some(now + REQUEST_TIMEOUT),
+                Some(now + REQUEST_TIMEOUT + Duration::from_secs(5)),
+                None,
+            ]
+        );
+        assert_eq!(received.try_iter().count(), 2, "both timeouts answer once");
+        assert!(matches!(
+            coordinator.on_encoded(first, Ok(PathBuf::from("/tmp/late.png"))),
+            Action::DiscardFile(_)
+        ));
+        coordinator
+            .admit_at(3, 44, reply, vec![spec(2, 2)], now + Duration::from_secs(3600))
+            .unwrap();
+        assert_eq!(
+            changes.borrow().last(),
+            Some(&Some(now + Duration::from_secs(3600) + REQUEST_TIMEOUT))
         );
     }
 

@@ -1,11 +1,13 @@
+use std::cell::RefCell;
 use std::os::fd::AsRawFd;
 use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{SyncSender, sync_channel};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use std::{env, fs, io, thread};
 
 use ferese_core::LayoutMode;
@@ -13,7 +15,7 @@ use ferese_ipc::{Request, Response, VERSION, read_frame, write_frame};
 use ferese_layout::Direction;
 use serde_json::{Value, json};
 use smithay::output::Output;
-use smithay::reexports::calloop::{EventLoop, LoopSignal, channel, timer};
+use smithay::reexports::calloop::{EventLoop, LoopHandle, LoopSignal, RegistrationToken, channel, timer};
 use smithay::utils::Transform;
 
 use crate::Ferese;
@@ -34,10 +36,6 @@ const _: () = assert!(
     "the result queue must outsize the job queue plus the in-flight job"
 );
 const SWEEP_INTERVAL: Duration = crate::handlers::screenshot_worker::SWEEP_INTERVAL;
-// Only consulted when no request is outstanding, so it bounds how late a newly
-// admitted request can be noticed. With a request pending the timer re-arms to
-// the exact remaining time instead.
-const DEADLINE_IDLE: Duration = Duration::from_secs(1);
 
 #[derive(Debug)]
 struct IpcCall {
@@ -110,6 +108,11 @@ pub(crate) fn init(event_loop: &mut EventLoop<'static, Ferese>) -> Result<Screen
             let call = match event {
                 IpcEvent::Call(call) => call,
                 IpcEvent::Closed(owner) => {
+                    for request in state.screenshot.terminate_owner(owner) {
+                        state
+                            .pending_screencopies
+                            .retain(|capture| capture.request_id() != Some(request));
+                    }
                     let captured = state.input_capture.active();
                     state.input_capture.remove_owner(owner);
                     if captured && !state.input_capture.active() {
@@ -191,11 +194,11 @@ pub(crate) fn init(event_loop: &mut EventLoop<'static, Ferese>) -> Result<Screen
                     tracing::warn!(%error, "cannot queue configuration reload");
                 }
             } else if call.request.command == "screenshot-window" {
-                state.start_window_screenshot(call.request, call.response);
+                state.start_window_screenshot(call.owner, call.request, call.response);
             } else if call.request.command == "screenshot" {
                 // Deferred: this path answers the caller itself, exactly
                 // once, whenever the request finishes or is terminated.
-                state.start_screenshot(call.request, call.response);
+                state.start_screenshot(call.owner, call.request, call.response);
             } else {
                 let response = state.handle_ipc_request(call.owner, call.request);
                 let _ = call.response.send(response);
@@ -236,23 +239,15 @@ pub(crate) fn init(event_loop: &mut EventLoop<'static, Ferese>) -> Result<Screen
             timer::TimeoutAction::ToDuration(SWEEP_INTERVAL)
         })?;
 
-    // Readbacks are published by the render path, so a request whose outputs
-    // are not redrawn would otherwise wait forever. This re-arms to the exact
-    // remaining time whenever a request is outstanding, and idles otherwise.
-    event_loop
-        .handle()
-        .insert_source(timer::Timer::from_duration(DEADLINE_IDLE), |_, _, state| {
-            // Abandoned requests have already been answered, so their
-            // readbacks are simply dropped: they are not failed, because
-            // that would publish into a request that no longer exists.
-            for request in state.screenshot.expire() {
-                state
-                    .pending_screencopies
-                    .retain(|capture| capture.request_id() != Some(request));
-            }
-            let next = state.screenshot.next_deadline().unwrap_or(DEADLINE_IDLE);
-            timer::TimeoutAction::ToDuration(next)
-        })?;
+    // Admission and every terminal coordinator transition update this one-shot
+    // source. No deadline source is registered when there are no requests.
+    let deadline_timer = DeadlineTimer::new(event_loop.handle(), |state: &mut Ferese, now| {
+        for request in state.screenshot.expire_at(now) {
+            state
+                .pending_screencopies
+                .retain(|capture| capture.request_id() != Some(request));
+        }
+    });
 
     tracing::info!(path = %path.display(), "Ferese IPC is accepting connections");
 
@@ -262,6 +257,7 @@ pub(crate) fn init(event_loop: &mut EventLoop<'static, Ferese>) -> Result<Screen
     Ok(ScreenshotInit {
         parts,
         worker,
+        deadline_timer,
         _guard: guard,
     })
 }
@@ -269,7 +265,60 @@ pub(crate) fn init(event_loop: &mut EventLoop<'static, Ferese>) -> Result<Screen
 pub(crate) struct ScreenshotInit {
     pub(crate) parts: PartSender,
     pub(crate) worker: Worker,
+    pub(crate) deadline_timer: DeadlineTimer<Ferese>,
     pub(crate) _guard: IpcSocketGuard,
+}
+
+// The timer callback clears its registration before expiring requests, allowing
+// the coordinator observer to arm the next deadline during the same dispatch.
+// Keeping absolute Instants also avoids pushing a timeout later on each rearm.
+pub(crate) struct DeadlineTimer<Data: 'static> {
+    handle: LoopHandle<'static, Data>,
+    armed: Rc<RefCell<Option<(Instant, RegistrationToken)>>>,
+    expire: fn(&mut Data, Instant),
+}
+
+impl<Data: 'static> DeadlineTimer<Data> {
+    fn new(handle: LoopHandle<'static, Data>, expire: fn(&mut Data, Instant)) -> Self {
+        Self {
+            handle,
+            armed: Rc::new(RefCell::new(None)),
+            expire,
+        }
+    }
+
+    pub(crate) fn update(&self, deadline: Option<Instant>) {
+        if self.armed.borrow().as_ref().map(|(deadline, _)| *deadline) == deadline {
+            return;
+        }
+        if let Some((_, token)) = self.armed.borrow_mut().take() {
+            self.handle.remove(token);
+        }
+        let Some(deadline) = deadline else {
+            return;
+        };
+        let armed = self.armed.clone();
+        let expire = self.expire;
+        // calloop's Timer registers only in its in-memory wheel and always
+        // returns Ok; a failure here would break that infrastructure invariant.
+        let token = self
+            .handle
+            .insert_source(timer::Timer::from_deadline(deadline), move |_, _, state| {
+                armed.borrow_mut().take();
+                expire(state, Instant::now());
+                timer::TimeoutAction::Drop
+            })
+            .expect("could not register screenshot deadline timer");
+        *self.armed.borrow_mut() = Some((deadline, token));
+    }
+}
+
+impl<Data: 'static> Drop for DeadlineTimer<Data> {
+    fn drop(&mut self) {
+        if let Some((_, token)) = self.armed.borrow_mut().take() {
+            self.handle.remove(token);
+        }
+    }
 }
 
 fn accept_connections(listener: UnixListener, sender: channel::SyncSender<IpcEvent>, signal: LoopSignal) {
@@ -777,7 +826,7 @@ impl Ferese {
 
     // Screenshot replies are deferred: this either answers the caller now, or
     // hands the reply to the coordinator, which answers exactly once.
-    pub(crate) fn start_screenshot(&mut self, request: Request, response: SyncSender<Response>) {
+    pub(crate) fn start_screenshot(&mut self, owner: u64, request: Request, response: SyncSender<Response>) {
         // A macro rather than a closure: the message may be a borrowed str or an
         // owned String, and Response::error already accepts either.
         macro_rules! reject {
@@ -849,7 +898,7 @@ impl Ferese {
         // admit stores the reply only on success, so a clone survives the
         // rejection path and every caller is answered exactly once.
         let fallback = response.clone();
-        let id = match self.screenshot.admit(request.id, response, specs) {
+        let id = match self.screenshot.admit(owner, request.id, response, specs) {
             Ok(id) => id,
             Err(message) => {
                 let _ = fallback.try_send(Response::error(request.id, "screenshot_rejected", message));
@@ -878,7 +927,7 @@ impl Ferese {
         crate::backends::direct::render_on(self, &outputs);
     }
 
-    fn start_window_screenshot(&mut self, request: Request, response: SyncSender<Response>) {
+    fn start_window_screenshot(&mut self, owner: u64, request: Request, response: SyncSender<Response>) {
         let reject = |message: String| {
             let _ = response.try_send(Response::error(request.id, "window_capture_failed", message));
         };
@@ -936,7 +985,7 @@ impl Ferese {
             buffer_height: size.h,
         };
         let fallback = response.clone();
-        let capture = match self.screenshot.admit(request.id, response, vec![spec]) {
+        let capture = match self.screenshot.admit(owner, request.id, response, vec![spec]) {
             Ok(capture) => capture,
             Err(error) => {
                 let _ = fallback.try_send(Response::error(request.id, "screenshot_rejected", error));
@@ -1391,6 +1440,115 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
 
     use super::*;
+
+    #[derive(Default)]
+    struct DeadlineState {
+        fired: usize,
+        next: Option<Instant>,
+        timer: Option<DeadlineTimer<DeadlineState>>,
+    }
+
+    fn deadline_loop() -> (EventLoop<'static, DeadlineState>, DeadlineState) {
+        let event_loop = EventLoop::try_new().unwrap();
+        let timer = DeadlineTimer::new(event_loop.handle(), |state: &mut DeadlineState, _| {
+            state.fired += 1;
+            state.timer.as_ref().unwrap().update(state.next.take());
+        });
+        (
+            event_loop,
+            DeadlineState {
+                timer: Some(timer),
+                ..Default::default()
+            },
+        )
+    }
+
+    #[test]
+    fn screenshot_deadline_idle_has_no_timer_and_admission_arms_immediately() {
+        let (mut event_loop, mut state) = deadline_loop();
+        let timer = state.timer.as_ref().unwrap();
+        timer.update(None);
+        assert!(timer.armed.borrow().is_none(), "idle registers no timeout source");
+        event_loop.dispatch(Duration::ZERO, &mut state).unwrap();
+        assert_eq!(state.fired, 0);
+
+        let deadline = Instant::now() + Duration::from_secs(3600);
+        let timer = state.timer.as_ref().unwrap();
+        timer.update(Some(deadline));
+        assert_eq!(
+            timer.armed.borrow().as_ref().map(|(deadline, _)| *deadline),
+            Some(deadline)
+        );
+        timer.update(None);
+        assert!(timer.armed.borrow().is_none());
+        event_loop.dispatch(Duration::ZERO, &mut state).unwrap();
+        assert_eq!(state.fired, 0);
+    }
+
+    #[test]
+    fn screenshot_deadline_replacement_and_cancellation_remove_old_sources() {
+        let (mut event_loop, mut state) = deadline_loop();
+        let due = Instant::now() - Duration::from_secs(1);
+        let future = Instant::now() + Duration::from_secs(3600);
+        let timer = state.timer.as_ref().unwrap();
+        timer.update(Some(due));
+        let original = timer.armed.borrow().as_ref().unwrap().1;
+        timer.update(Some(due));
+        assert_eq!(
+            timer.armed.borrow().as_ref().unwrap().1,
+            original,
+            "unchanged deadline keeps its source"
+        );
+        timer.update(Some(future));
+        event_loop.dispatch(Duration::ZERO, &mut state).unwrap();
+        assert_eq!(state.fired, 0, "the replaced due timer must never fire");
+        state.timer.as_ref().unwrap().update(Some(due));
+        state.timer.as_ref().unwrap().update(None);
+        event_loop.dispatch(Duration::ZERO, &mut state).unwrap();
+        assert_eq!(state.fired, 0, "cancelling the due timer removes its wakeup");
+        assert!(state.timer.as_ref().unwrap().armed.borrow().is_none());
+    }
+
+    #[test]
+    fn screenshot_deadline_drop_removes_a_registered_due_source() {
+        let (mut event_loop, mut state) = deadline_loop();
+        state
+            .timer
+            .as_ref()
+            .unwrap()
+            .update(Some(Instant::now() - Duration::from_secs(1)));
+        drop(state.timer.take());
+        event_loop.dispatch(Duration::ZERO, &mut state).unwrap();
+        assert_eq!(state.fired, 0, "dropping the observer removes its timer callback");
+    }
+
+    #[test]
+    fn screenshot_deadline_expiry_can_rearm_during_dispatch_then_returns_to_idle() {
+        let (mut event_loop, mut state) = deadline_loop();
+        let due = Instant::now() - Duration::from_secs(1);
+        let future = Instant::now() + Duration::from_secs(3600);
+        state.next = Some(future);
+        state.timer.as_ref().unwrap().update(Some(due));
+        event_loop.dispatch(Duration::ZERO, &mut state).unwrap();
+        assert_eq!(state.fired, 1);
+        assert_eq!(
+            state
+                .timer
+                .as_ref()
+                .unwrap()
+                .armed
+                .borrow()
+                .as_ref()
+                .map(|(deadline, _)| *deadline),
+            Some(future)
+        );
+        state.timer.as_ref().unwrap().update(Some(due));
+        event_loop.dispatch(Duration::ZERO, &mut state).unwrap();
+        assert_eq!(state.fired, 2);
+        assert!(state.timer.as_ref().unwrap().armed.borrow().is_none());
+        event_loop.dispatch(Duration::ZERO, &mut state).unwrap();
+        assert_eq!(state.fired, 2, "an empty queue has no repeat wakeup");
+    }
 
     fn request(version: u32, kind: &str) -> Request {
         Request {

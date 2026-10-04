@@ -767,6 +767,9 @@ impl Ferese {
         };
         state.config_worker = Some(crate::reload::Worker::new(event_loop)?);
         let screenshot = crate::ipc::init(event_loop)?;
+        state
+            .screenshot
+            .set_deadline_observer(move |deadline| screenshot.deadline_timer.update(deadline));
         state.screenshot_parts = Some(screenshot.parts);
         state.screenshot_worker = Some(screenshot.worker);
         state._ipc_socket = Some(screenshot._guard);
