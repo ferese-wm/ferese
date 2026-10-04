@@ -1,4 +1,12 @@
 @font-face {
+  font-family: "Figtree";
+  src: url("assets/fonts/Figtree-Variable.ttf") format("truetype");
+  font-style: normal;
+  font-weight: 300 900;
+  font-display: swap;
+}
+
+@font-face {
   font-family: "JetBrains Mono";
   src: url("assets/fonts/JetBrainsMono-Regular.ttf") format("truetype");
   font-style: normal;
@@ -16,7 +24,7 @@
   --soft: #1c2838;
   --mono:
     "JetBrains Mono", ui-monospace, "SFMono-Regular", Consolas, monospace;
-  --sans: var(--mono);
+  --sans: "Figtree", system-ui, -apple-system, "Segoe UI", sans-serif;
   color-scheme: dark;
 }
 * {
@@ -30,7 +38,7 @@ body {
   margin: 0;
   background: var(--paper);
   color: var(--ink);
-  font: 16px/1.65 var(--sans);
+  font: 17px/1.65 var(--sans);
   -webkit-font-smoothing: antialiased;
 }
 a {
@@ -84,6 +92,15 @@ dl {
   display: inline-flex;
   align-items: center;
 }
+.site-header .brand {
+  gap: 8px;
+  flex-shrink: 0;
+}
+.brand-name {
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
 .brand-icon {
   width: 56px;
   height: auto;
@@ -92,11 +109,12 @@ dl {
   display: flex;
   gap: 36px;
   align-items: center;
-  font-size: 13px;
+  font-size: 14px;
 }
 .site-header nav a {
   padding: 10px 0;
   position: relative;
+  white-space: nowrap;
 }
 .site-header nav a[aria-current="page"]:after {
   content: "";
@@ -164,7 +182,7 @@ h1 span {
   background: var(--ink);
   color: #fff;
   padding: 13px 19px;
-  font-size: 13px;
+  font-size: 14px;
   transition: background 0.15s;
 }
 .button:hover {
@@ -402,12 +420,12 @@ kbd {
   padding-block: 35px;
 }
 .site-footer p {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--muted);
 }
 .site-footer > a:last-child {
   margin-left: auto;
-  font-size: 11px;
+  font-size: 12px;
 }
 .skip {
   position: fixed;
@@ -466,7 +484,7 @@ kbd {
   gap: 3px;
 }
 .docs-sidebar nav a {
-  font-size: 13px;
+  font-size: 14px;
   padding: 8px 12px;
   border-left: 2px solid transparent;
 }
@@ -505,7 +523,7 @@ kbd {
   line-height: 1.15;
 }
 .prose {
-  font-size: 14px;
+  font-size: 16px;
   line-height: 1.9;
 }
 .prose > p {
@@ -513,7 +531,7 @@ kbd {
   color: #c2ccd9;
 }
 .prose > p:first-of-type {
-  font-size: 16px;
+  font-size: 17px;
   line-height: 1.85;
   color: var(--muted);
 }
@@ -628,7 +646,7 @@ kbd {
   gap: 12px;
 }
 .docs-toc a {
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.5;
   color: var(--muted);
   border-left: 1px solid var(--line);
@@ -751,15 +769,15 @@ kbd {
   }
   .header-inner {
     height: 74px;
-    gap: 18px;
+    gap: 12px;
   }
   .brand-icon {
     width: 48px;
     height: auto;
   }
   .site-header nav {
-    gap: 18px;
-    font-size: 11px;
+    gap: 12px;
+    font-size: 12px;
   }
   .site-header nav a:first-child {
     display: none;
@@ -907,10 +925,10 @@ kbd {
     padding-block: 26px;
   }
   .site-footer p {
-    font-size: 10px;
+    font-size: 12px;
   }
   .site-footer > a:last-child {
-    font-size: 10px;
+    font-size: 12px;
   }
   .docs-layout {
     width: calc(100% - 36px);
@@ -938,7 +956,7 @@ kbd {
     gap: 0;
   }
   .docs-sidebar nav a {
-    font-size: 12px;
+    font-size: 13px;
     padding: 6px 10px;
   }
   .sidebar-links {
@@ -955,7 +973,7 @@ kbd {
     letter-spacing: -1px;
   }
   .prose {
-    font-size: 14px;
+    font-size: 16px;
   }
   .prose h2 {
     font-size: 25px;
@@ -969,6 +987,19 @@ kbd {
   .prose h2,
   .prose h3 {
     scroll-margin-top: 20px;
+  }
+}
+@media (max-width: 480px) {
+  .header-inner {
+    height: auto;
+    min-height: 74px;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding-block: 10px;
+  }
+  .site-header nav {
+    width: 100%;
+    justify-content: space-between;
   }
 }
 @media (max-width: 380px) {
@@ -1018,7 +1049,7 @@ kbd {
   margin: 0 auto;
 }
 .product-tagline {
-  font-size: 18px;
+  font-size: 20px;
   font-weight: 400;
   letter-spacing: normal;
   line-height: 1.5;
@@ -1027,7 +1058,7 @@ kbd {
   color: var(--muted);
   max-width: 600px;
   margin: 13px auto 0;
-  font-size: 15px;
+  font-size: 17px;
 }
 .product-links {
   display: flex;
@@ -1054,7 +1085,7 @@ kbd {
   background: var(--soft);
 }
 .source-link {
-  font-size: 13px;
+  font-size: 14px;
   color: var(--muted);
   margin-left: 5px;
 }
@@ -1066,7 +1097,7 @@ kbd {
 .product-screenshot figcaption {
   justify-content: center;
   padding-top: 10px;
-  font-size: 11px;
+  font-size: 12px;
 }
 .product-features {
   display: grid;
@@ -1077,7 +1108,7 @@ kbd {
 .product-features h2,
 .product-motion h2,
 .product-getting-started h2 {
-  font-size: 20px;
+  font-size: 22px;
   font-weight: 600;
   letter-spacing: -0.4px;
   line-height: 1.4;
@@ -1085,7 +1116,7 @@ kbd {
 .product-features p,
 .product-motion p,
 .product-getting-started p {
-  font-size: 14px;
+  font-size: 16px;
   color: var(--muted);
   margin-top: 12px;
   line-height: 1.8;
@@ -1093,7 +1124,7 @@ kbd {
 .product-features a,
 .product-motion a {
   display: inline-block;
-  font-size: 12px;
+  font-size: 14px;
   color: var(--blue);
   margin-top: 12px;
 }
@@ -1116,20 +1147,20 @@ kbd {
     padding-block: 35px 27px;
   }
   .product-tagline {
-    font-size: 17px;
+    font-size: 19px;
   }
   .product-description {
-    font-size: 14px;
+    font-size: 16px;
   }
   .product-links {
     gap: 10px;
   }
   .product-links .button {
     padding: 10px 15px;
-    font-size: 12px;
+    font-size: 13px;
   }
   .source-link {
-    font-size: 12px;
+    font-size: 13px;
   }
   .product-features {
     grid-template-columns: 1fr;
