@@ -2,11 +2,14 @@ use cosmic::iced::advanced::widget::Id;
 use cosmic::iced::advanced::widget::operation::{Operation, Scrollable};
 use cosmic::iced::{Rectangle, Vector};
 
-pub(super) fn gallery_list(appearance: Option<ferese_config::theme::Appearance>) -> &'static str {
-    match appearance {
-        Some(ferese_config::theme::Appearance::Light) => "theme-light",
-        Some(ferese_config::theme::Appearance::Dark) => "theme-dark",
-        None => "theme",
+pub(super) fn gallery_list(appearance: Option<ferese_config::theme::Appearance>, custom: bool) -> &'static str {
+    match (appearance, custom) {
+        (Some(ferese_config::theme::Appearance::Light), false) => "theme-light",
+        (Some(ferese_config::theme::Appearance::Dark), false) => "theme-dark",
+        (None, false) => "theme",
+        (Some(ferese_config::theme::Appearance::Light), true) => "theme-custom-light",
+        (Some(ferese_config::theme::Appearance::Dark), true) => "theme-custom-dark",
+        (None, true) => "theme-custom",
     }
 }
 

@@ -7,14 +7,38 @@ fn fixture() -> Value {
 }
 
 #[test]
-fn default_snapshot_preserves_wire_values_and_environment_wallpaper() {
+fn default_snapshot_resolves_gradients_and_preserves_other_wire_values() {
     let mut snapshot = fallback();
     let wallpaper = Some(ferese_config::default_wallpaper().into());
     assert_eq!(snapshot.theme.tokens.background.path, wallpaper);
     assert_eq!(snapshot.presented.tokens.background.path, wallpaper);
     snapshot.theme.tokens.background.path = Some("<wallpaper>".into());
     snapshot.presented.tokens.background.path = Some("<wallpaper>".into());
+    for theme in [&mut snapshot.theme, &mut snapshot.presented] {
+        let focus = theme.tokens.focus_ring.gradient.take().unwrap();
+        assert_eq!(focus.from, theme.tokens.colors.accent);
+        assert_ne!(focus.from, focus.to);
+        assert_eq!(focus.angle, 135.);
+        let border = theme.tokens.border.gradient.take().unwrap();
+        assert_eq!(border.from, theme.tokens.colors.border);
+        assert_eq!(
+            ferese_config::theme::rgba(&border.from).unwrap()[3],
+            ferese_config::theme::rgba(&border.to).unwrap()[3],
+        );
+    }
+
     assert_eq!(serde_json::to_value(snapshot).unwrap(), fixture());
+}
+
+#[test]
+fn explicit_solid_style_round_trips_without_resolving_published_values() {
+    let mut value = fixture();
+    for key in ["theme", "presented"] {
+        value[key]["tokens"]["focus_ring"]["style"] = json!("solid");
+    }
+
+    let snapshot = Snapshot::decode(value.clone(), || panic!("unexpected catalog resolution")).unwrap();
+    assert_eq!(serde_json::to_value(snapshot).unwrap(), value);
 }
 
 #[test]

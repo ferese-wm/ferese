@@ -1075,6 +1075,7 @@ kbd {
   padding-block: 40px;
 }
 .product-features h2,
+.product-motion h2,
 .product-getting-started h2 {
   font-size: 20px;
   font-weight: 600;
@@ -1082,18 +1083,21 @@ kbd {
   line-height: 1.4;
 }
 .product-features p,
+.product-motion p,
 .product-getting-started p {
   font-size: 14px;
   color: var(--muted);
   margin-top: 12px;
   line-height: 1.8;
 }
-.product-features a {
+.product-features a,
+.product-motion a {
   display: inline-block;
   font-size: 12px;
   color: var(--blue);
   margin-top: 12px;
 }
+.product-motion,
 .product-getting-started {
   border-top: 1px solid var(--line);
   padding-block: 28px 42px;

@@ -1,4 +1,4 @@
-use crate::ResolvedTheme;
+use crate::{Gradient, Paint, PaintStyle, ResolvedTheme};
 
 pub fn rgba(s: &str) -> Result<[f64; 4], String> {
     let hex = s.strip_prefix('#').ok_or_else(|| format!("Invalid color: {s}"))?;
@@ -123,6 +123,59 @@ fn material_foreground(preferred: [f64; 4], backgrounds: [[f64; 4]; 2]) -> [f64;
     }
 }
 
+fn transition_paint(from: &Paint, to: &Paint, from_solid: &str, to_solid: &str, p: f64) -> Paint {
+    if from.effective_gradient().is_none() && to.effective_gradient().is_none() {
+        return to.clone();
+    }
+
+    let endpoints = |paint: &Paint, solid: &str| {
+        paint.effective_gradient().map_or_else(
+            || (solid.to_owned(), solid.to_owned()),
+            |gradient| (gradient.from.clone(), gradient.to.clone()),
+        )
+    };
+    let (a, b) = endpoints(from, from_solid);
+    let (c, d) = endpoints(to, to_solid);
+    let color = |a: &str, b: &str| {
+        let mut a = rgba(a).unwrap();
+        let mut b = rgba(b).unwrap();
+        for channel in 0..3 {
+            a[channel] *= a[3];
+            b[channel] *= b[3];
+        }
+
+        let mut c = blend(a, b, p);
+        if c[3] > 0. {
+            for channel in 0..3 {
+                c[channel] /= c[3];
+            }
+        }
+
+        hex(c)
+    };
+    let from_angle = from
+        .effective_gradient()
+        .or(to.effective_gradient())
+        .unwrap()
+        .angle
+        .rem_euclid(360.);
+    let to_angle = to
+        .effective_gradient()
+        .or(from.effective_gradient())
+        .unwrap()
+        .angle
+        .rem_euclid(360.);
+    let delta = (to_angle - from_angle + 180.).rem_euclid(360.) - 180.;
+    Paint {
+        style: PaintStyle::Auto,
+        gradient: Some(Gradient {
+            from: color(&a, &c),
+            to: color(&b, &d),
+            angle: (from_angle + delta * p).rem_euclid(360.),
+        }),
+    }
+}
+
 impl ResolvedTheme {
     /// Bound contrast across all backdrops instead of interpolating foregrounds.
     pub fn transition(&self, to: &Self, progress: f64) -> Self {
@@ -145,6 +198,20 @@ impl ResolvedTheme {
         frame.tokens.colors.accent = mix(&self.tokens.colors.accent, &to.tokens.colors.accent);
         frame.tokens.colors.border = mix(&self.tokens.colors.border, &to.tokens.colors.border);
         frame.tokens.colors.shadow = mix(&self.tokens.colors.shadow, &to.tokens.colors.shadow);
+        frame.tokens.focus_ring = transition_paint(
+            &self.tokens.focus_ring,
+            &to.tokens.focus_ring,
+            &self.tokens.colors.accent,
+            &to.tokens.colors.accent,
+            p,
+        );
+        frame.tokens.border = transition_paint(
+            &self.tokens.border,
+            &to.tokens.border,
+            &self.tokens.colors.border,
+            &to.tokens.colors.border,
+            p,
+        );
         frame.tokens.surface.bar.background =
             mix(&self.tokens.surface.bar.background, &to.tokens.surface.bar.background);
         frame.tokens.material.opacity =

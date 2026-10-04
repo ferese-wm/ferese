@@ -137,6 +137,21 @@ pub fn toggle_split(snapshot: &Snapshot, enabled: bool, active: ferese_config::t
     edits
 }
 
+pub fn paint_style_overrides(snapshot: &Snapshot, edit: &Edit) -> Vec<Edit> {
+    let Edit::Set(path, _) = edit else { return vec![] };
+    let section = match path.as_str() {
+        "theme.focus_ring.style" => "focus_ring",
+        "theme.border.style" => "border",
+        _ => return vec![],
+    };
+    ["light", "dark"]
+        .into_iter()
+        .map(|kind| format!("theme.{kind}.{section}.style"))
+        .filter(|path| snapshot.item(path).is_some())
+        .map(Edit::Unset)
+        .collect()
+}
+
 #[cfg(test)]
 pub fn preset(index: usize) -> Vec<Edit> {
     let Some(preset) = PRESETS.get(index) else {
@@ -242,6 +257,44 @@ mod tests {
             snapshot.edit(&edit).unwrap();
         }
         snapshot
+    }
+
+    #[test]
+    fn shared_style_controls_replace_scoped_styles_without_deleting_endpoints() {
+        let mut snapshot = Snapshot::parse(
+            r##"theme {
+            family catppuccin
+            light { focus-ring { style solid; gradient { from "#123456"; to "#654321"; }; }; }
+            dark { focus-ring { style solid; gradient { from "#ABCDEF"; to "#FEDCBA"; }; }; }
+        }"##
+            .into(),
+        )
+        .unwrap();
+        for (style, enabled) in [("auto", true), ("solid", false), ("auto", true)] {
+            let edit = set("theme.focus_ring.style", style);
+            for unset in paint_style_overrides(&snapshot, &edit) {
+                snapshot.edit(&unset).unwrap();
+            }
+
+            snapshot.edit(&edit).unwrap();
+            for (mode, from) in [("light", "#123456"), ("dark", "#ABCDEF")] {
+                snapshot.edit(&set("theme.mode", mode)).unwrap();
+                let theme = ferese_config::theme::resolve(
+                    &snapshot.doc,
+                    std::path::Path::new("/config"),
+                    "2026-09-30T12:00:00Z".parse().unwrap(),
+                    |_| unreachable!(),
+                )
+                .unwrap()
+                .theme;
+                assert_eq!(theme.tokens.focus_ring.gradient.is_some(), enabled);
+                if enabled {
+                    assert_eq!(theme.tokens.focus_ring.gradient.unwrap().from, from);
+                }
+
+                assert!(snapshot.item(&format!("theme.{mode}.focus_ring.gradient")).is_some());
+            }
+        }
     }
 
     fn contrast(a: Color, b: Color) -> f32 {

@@ -176,10 +176,16 @@ fn styled_button(p: Palette, selected: bool, navigation: bool, opacity: f32, foc
             opacity
         };
 
+        let fill = if selected {
+            p.selected_background(if hover { 0.24 } else { 0.17 }, background.a, on, background)
+        } else {
+            Background::Color(background)
+        };
+
         button::Style {
             shape: Some(BorderShape::Continuous),
             outline: None,
-            background: Some(Background::Color(background)),
+            background: Some(fill),
             text_color: Some(on),
             icon_color: Some(on),
             border_radius: p.radius.min(9.).into(),
@@ -445,6 +451,7 @@ mod tests {
             sidebar: Color::from_rgb8(17, 24, 33),
             card: Color::from_rgb8(17, 24, 33),
             accent: Color::from_rgb8(61, 123, 230),
+            accent_gradient: None,
             on_accent: Color::from_rgb8(17, 24, 33),
             text: Color::from_rgb8(244, 247, 251),
             muted: Color::from_rgb8(135, 147, 162),

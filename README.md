@@ -29,7 +29,7 @@ Ferese combines a window manager and desktop shell with one configuration.
 - [Continuum motion](docs/configuration.md#animations): interruptible springs, gesture momentum and motion settings shared by the compositor and shell
 - Multiple monitors with fractional scaling and automatic refresh-rate switching on low battery
 - Themes, wallpapers and blur that update live, with Light/Dark/Auto modes and custom KDL themes
-- Squircle window and shell corners with matching borders, shadows and blur masks
+- Continuous corners across windows and shell
 - Desktop widgets, including a clock and sticky notes
 - Screenshots with annotation, screen sharing and built-in recording
 - A built-in lock screen and authentication dialogs
@@ -47,6 +47,7 @@ compares current upstream features and names separate tools where they are neede
 | Floating windows | Built in | Built in | Built in |
 | Workspace overview | Built in | Plugins such as [HyprExpo](https://github.com/sandwichfarm/hyprexpo) | Built in |
 | Animations | [Continuum](docs/animation-model.md): interruptible springs, gesture momentum; speed and reduced-motion settings shared by the compositor and shell | Bézier and spring curves | [Spring and easing animations; custom shaders](https://niri-wm.github.io/niri/Configuration:-Animations.html) |
+| Corner shapes | Continuous corners across windows and shell | [Rounded corners and squircles](https://wiki.hypr.land/configuring/core/config-options/#decoration) | [Rounded corners with optional clipping](https://niri-wm.github.io/niri/Configuration:-Window-Rules.html#geometry-corner-radius) |
 | Live configuration reload | Yes | Yes | Yes |
 | Monitor mirroring | Built in | [Built in](https://wiki.hypr.land/configuring/core/monitors/) | Separate tool, such as [wl-mirror](https://niri-wm.github.io/niri/Screencasting.html#screen-mirroring) |
 | Desktop controls | Included Settings and Control Center | [Separate utilities](https://wiki.hypr.land/hypr-ecosystem/) or a desktop shell | [Separate desktop shell or tools](https://niri-wm.github.io/niri/Integrating-niri.html#desktop-components) |

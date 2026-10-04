@@ -59,6 +59,7 @@ impl Appearance {
             text: self.text,
             muted: self.muted,
             accent: self.accent,
+            accent_gradient: None,
             on_accent: self.on_accent,
             radius: self.radius,
             error: Color::from_rgb8(235, 98, 98),

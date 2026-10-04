@@ -51,6 +51,7 @@ pub(crate) struct ShellTheme {
     pub(crate) text_primary: [u8; 4],
     pub(crate) text_muted: [u8; 4],
     pub(crate) accent: [u8; 4],
+    pub(crate) accent_gradient: Option<cosmic::iced::gradient::Linear>,
     pub(crate) on_accent: [u8; 4],
     pub(crate) border: [u8; 4],
     pub(crate) shadow: [u8; 4],
@@ -80,6 +81,7 @@ impl Default for ShellTheme {
             text_primary: [244, 247, 251, 255],
             text_muted: [135, 147, 162, 255],
             accent: [61, 123, 230, 255],
+            accent_gradient: None,
             on_accent: [244, 247, 251, 255],
             border: [255, 255, 255, 24],
             shadow: [0, 0, 0, 85],
@@ -111,6 +113,7 @@ impl ShellTheme {
             text: color(self.text_primary),
             muted: color(self.text_muted),
             accent: color(self.accent),
+            accent_gradient: self.accent_gradient,
             on_accent: color(self.on_accent),
             radius: self.material_radius,
             error: cosmic::iced::Color::from_rgb8(235, 98, 98),
@@ -401,6 +404,7 @@ impl ShellConfig {
         self.theme = shell_theme(&config);
         self.theme.appearance = theme.appearance;
         self.theme.high_contrast = theme.accessibility.increase_contrast;
+        self.theme.accent_gradient = ferese_theme::Palette::from_resolved(theme).accent_gradient;
         self.theme.material_radius = theme.tokens.geometry.shell_radius as f32;
         self.theme.bar_radius = self.theme.material_radius;
         self.font_family = Some(theme.tokens.typography.font_family.clone());
@@ -447,6 +451,7 @@ fn shell_theme(theme: &ThemeConfig) -> ShellTheme {
         text_primary: parse_color(&theme.colors.text_primary).unwrap_or(defaults.text_primary),
         text_muted: parse_color(&theme.colors.text_muted).unwrap_or(defaults.text_muted),
         accent: parse_color(&theme.colors.accent).unwrap_or(defaults.accent),
+        accent_gradient: defaults.accent_gradient,
         on_accent: parse_color(&theme.colors.on_accent).unwrap_or(defaults.on_accent),
         border: parse_color(&theme.colors.border).unwrap_or(defaults.border),
         shadow: parse_color(&theme.colors.shadow).unwrap_or(defaults.shadow),

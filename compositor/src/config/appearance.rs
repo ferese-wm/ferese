@@ -165,6 +165,8 @@ pub struct BorderGradient {
 
 #[derive(Debug, Default, Deserialize)]
 pub(super) struct BorderPaintConfig {
+    #[serde(default)]
+    pub(super) style: ferese_config::theme::PaintStyle,
     pub(super) gradient: Option<BorderGradientConfig>,
 }
 
@@ -187,7 +189,8 @@ impl BorderPaintConfig {
         } else {
             ("border.gradient.from", "border.gradient.to", "border.gradient.angle")
         };
-        self.gradient
+        let gradient = self
+            .gradient
             .as_ref()
             .map(|gradient| {
                 Ok(BorderGradient {
@@ -196,7 +199,13 @@ impl BorderPaintConfig {
                     angle: finite_theme_value(gradient.angle, angle_name)?.rem_euclid(360.0),
                 })
             })
-            .transpose()
+            .transpose()?;
+
+        Ok(if self.style == ferese_config::theme::PaintStyle::Solid {
+            None
+        } else {
+            gradient
+        })
     }
 }
 
