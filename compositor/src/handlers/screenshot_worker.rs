@@ -115,7 +115,7 @@ fn encode_png(canvas: &Canvas) -> Result<Vec<u8>, String> {
     if width == 0 || height == 0 {
         return Err("Screenshot is empty".into());
     }
-    let image = image::RgbaImage::from_raw(width, height, canvas.pixels.clone())
+    let image = image::ImageBuffer::<image::Rgba<u8>, _>::from_raw(width, height, canvas.pixels.as_slice())
         .ok_or("Screenshot buffer does not match its dimensions")?;
     let mut out = Vec::new();
     let encoder = image::codecs::png::PngEncoder::new_with_quality(
@@ -210,7 +210,11 @@ mod tests {
             request: 1,
             frames: vec![frame(4, 3)],
         };
-        let canvas = compose(&job.frames).unwrap();
+        let mut canvas = compose(&job.frames).unwrap();
+        for (index, pixel) in canvas.pixels.chunks_exact_mut(4).enumerate() {
+            pixel[..3].copy_from_slice(&[index as u8, 137, 241]);
+        }
+
         let png = encode_png(&canvas).expect("png");
         assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n", "png signature");
 
@@ -218,6 +222,7 @@ mod tests {
             .expect("decodes back")
             .to_rgba8();
         assert_eq!(decoded.dimensions(), (4, 3));
+        assert_eq!(decoded.as_raw(), &canvas.pixels, "encoding changed the pixel data");
         // The opaque alpha we force is preserved through the round trip.
         assert_eq!(decoded.get_pixel(0, 0)[3], 255);
     }

@@ -6,6 +6,7 @@ use bar::*;
 use desktop_widgets::*;
 use surfaces::*;
 
+mod clock;
 mod compositor_ipc;
 mod config;
 mod control;
@@ -169,6 +170,7 @@ struct FereseShell {
     snapshot: ShellSnapshot,
     overview_active: bool,
     clock: String,
+    clock_service: clock::Service,
     desktop_clock: (String, String),
     outputs: Vec<OutputSurfaces>,
     notifications: notifications::Center,
@@ -239,7 +241,9 @@ enum Message {
     WallpaperLoaded(Result<image::Handle, String>),
     Event(Event, window::Id),
     NativeSurface(window::Id, Result<(Connection, wl_surface::WlSurface), String>),
-    Tick,
+    ClockChanged(clock::Labels),
+    RecorderEvent(recording::Event),
+    RecorderElapsed,
     ControlReady,
     ActivateWorkspace(u64),
     ToggleOverview,
@@ -327,6 +331,7 @@ impl cosmic::Application for FereseShell {
             note_inflight: Vec::new(),
             note_saving: false,
             note_error: None,
+            clock_service: clock::Service::new(&config.desktop_widgets.clock),
             config,
             wallpaper: None,
             control: ShellControl::connect()
@@ -378,7 +383,16 @@ impl cosmic::Application for FereseShell {
                 )) => Some(Message::Event(event, id)),
                 _ => None,
             }),
-            cosmic::iced::time::every(Duration::from_millis(500)).map(|_| Message::Tick),
+            self.clock_service
+                .subscription(
+                    self.outputs.iter().any(|output| !output.hidden),
+                    self.outputs.iter().any(|output| {
+                        output.clock.is_some() && self.config.desktop_widgets.clock.on_output(output.name.as_deref())
+                    }),
+                )
+                .map(Message::ClockChanged),
+            self.recorder.subscription().map(Message::RecorderEvent),
+            self.recorder.elapsed_subscription().map(|_| Message::RecorderElapsed),
             self.status_service.subscription().map(Message::StatusUpdated),
             if self.config.desktop_widgets.clock.enabled
                 || self
@@ -729,21 +743,16 @@ impl cosmic::Application for FereseShell {
                 Task::none()
             }
             Message::Event(event, id) => self.handle_event(event, id),
-            Message::Tick => {
-                self.recorder.poll();
-                self.clock = current_time();
-
-                if self.config.desktop_widgets.clock.enabled {
-                    self.desktop_clock = self
-                        .config
-                        .desktop_widgets
-                        .clock
-                        .labels(&Zoned::now())
-                        .unwrap_or_default();
-                }
-
+            Message::ClockChanged(labels) => {
+                self.clock = labels.bar;
+                self.desktop_clock = labels.desktop;
                 Task::none()
             }
+            Message::RecorderEvent(event) => {
+                self.recorder.handle(event);
+                Task::none()
+            }
+            Message::RecorderElapsed => Task::none(),
             Message::ControlReady => {
                 let mut reload_task = Task::none();
                 if let Some(control) = &self.control {
@@ -895,6 +904,7 @@ impl FereseShell {
             || old.bar_margin_horizontal != theme.bar_margin_horizontal
             || old.bar_window_gap != theme.bar_window_gap;
         self.notifications.configure(config.notifications.clone());
+        self.clock_service.configure(&config.desktop_widgets.clock);
         self.config = config;
         self.desktop_clock = self
             .config
