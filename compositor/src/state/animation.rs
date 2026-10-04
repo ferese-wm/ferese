@@ -160,12 +160,11 @@ impl Ferese {
             .focus_swipe
             .as_ref()
             .is_some_and(|swipe| !self.focus_swipe_is_current(swipe))
+            && let Some(swipe) = self.focus_swipe.take()
         {
-            if let Some(swipe) = self.focus_swipe.take() {
-                self.presentation_dependencies
-                    .restore_viewport(swipe.workspace, swipe.dependencies);
-                self.release_presentation_dependencies();
-            }
+            self.presentation_dependencies
+                .restore_viewport(swipe.workspace, swipe.dependencies);
+            self.release_presentation_dependencies();
         }
 
         let mut active_animation = false;

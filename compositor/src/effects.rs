@@ -590,7 +590,7 @@ mod tests {
         assert_eq!(decode_region_opacities(&[]), Some(vec![]));
         assert!(decode_region_opacities(&bytes[..11]).is_none());
         assert!(decode_region_opacities(&1001u32.to_ne_bytes()).is_none());
-        assert!(decode_region_opacities(&vec![0; 33 * 4]).is_none());
+        assert!(decode_region_opacities(&[0; 33 * 4]).is_none());
     }
 
     #[test]

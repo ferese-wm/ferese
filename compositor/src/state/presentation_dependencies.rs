@@ -330,7 +330,7 @@ impl Ferese {
                 .as_ref()
                 .filter(|swipe| swipe.workspace == workspace.id)
                 .and_then(|swipe| swipe.layout.as_ref())
-                .or_else(|| match &workspace.layout {
+                .or(match &workspace.layout {
                     WorkspaceLayout::Scrolling(layout) => Some(layout),
                     _ => None,
                 });

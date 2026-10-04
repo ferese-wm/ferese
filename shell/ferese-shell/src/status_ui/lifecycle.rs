@@ -153,10 +153,11 @@ impl FereseShell {
     }
 
     pub fn animate_menu(&mut self) -> Task<Message> {
-        if let Some(menu) = &self.menu {
-            if menu.motion.closing() && !menu.animating() {
-                return self.destroy_menu();
-            }
+        if let Some(menu) = &self.menu
+            && menu.motion.closing()
+            && !menu.animating()
+        {
+            return self.destroy_menu();
         }
         Task::none()
     }

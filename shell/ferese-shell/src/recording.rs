@@ -159,10 +159,8 @@ impl Recorder {
         match event {
             Event::Update(update) => match update.state.as_str() {
                 "selecting" if self.control.is_some() => self.state = State::Selecting,
-                "recording" if self.control.is_some() => {
-                    if !matches!(self.state, State::Recording(_)) {
-                        self.state = State::Recording(Instant::now());
-                    }
+                "recording" if self.control.is_some() && !matches!(self.state, State::Recording(_)) => {
+                    self.state = State::Recording(Instant::now());
                 }
                 "saving" => self.state = State::Saving,
                 "saved" => {
