@@ -10,7 +10,7 @@ jiff.workspace = true
 ferese-theme-model = { path = "../ferese-theme-model" }
 libcosmic = { workspace = true, features = ["a11y"] }
 
-iced_accessibility = { git = "https://github.com/ferese-wm/libcosmic", rev = "1e28a24acab159a8509dcecd59d9cd4bafe8baa0" }
+iced_accessibility = { git = "https://github.com/ferese-wm/libcosmic", tag = "ferese-v0.1.0" }
 
 [dev-dependencies]
 ferese-config = { path = "../ferese-config" }
