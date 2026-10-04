@@ -75,6 +75,7 @@ impl FereseShell {
         let bar_surface_id = window::Id::unique();
         let wallpaper_surface_id = window::Id::unique();
         let shell_theme = self.config.theme;
+        let bar_layout = self.config.status.bar_layout;
         let bar = BarMetrics::from(shell_theme);
         let wallpaper_output = output.clone();
         let bar_output = output.clone();
@@ -94,6 +95,7 @@ impl FereseShell {
                 .is_none()
                 .then_some(wallpaper_surface_id),
             effects: None,
+            bar_regions: Vec::new(),
             clock: None,
             notes: Vec::new(),
             size,
@@ -122,7 +124,7 @@ impl FereseShell {
             |_| Default::default(),
             move |_| SctkLayerSurfaceSettings {
                 id: bar_surface_id,
-                input_zone: hidden.then(Vec::new),
+                input_zone: super::bar::input_region(bar_layout, hidden, &[]),
                 layer: Layer::Top,
                 keyboard_interactivity: KeyboardInteractivity::None,
                 anchor: Anchor::TOP | Anchor::LEFT | Anchor::RIGHT,
@@ -394,6 +396,7 @@ impl FereseShell {
 
     pub(super) fn attach_effects(&mut self, id: window::Id, surface: &wl_surface::WlSurface) {
         let hidden = self.bar_hidden(id);
+        let islands = self.config.status.bar_layout == ferese_config::BarLayout::Islands;
         let Some(entry) = self.outputs.iter_mut().find(|entry| entry.bar == id) else {
             return;
         };
@@ -404,7 +407,14 @@ impl FereseShell {
 
         EFFECT_FRAME_PENDING.store(false, Ordering::Relaxed);
 
-        match EffectsBinding::attach(surface, !hidden) {
+        let binding = if islands {
+            // Wait for measured island bounds rather than briefly painting the full bar.
+            EffectsBinding::attach_role(surface, None, 1.0)
+        } else {
+            EffectsBinding::attach(surface, !hidden)
+        };
+
+        match binding {
             Ok(binding) => entry.effects = Some(binding),
             Err(error) => eprintln!("ferese-shell: panel material unavailable: {error}"),
         }

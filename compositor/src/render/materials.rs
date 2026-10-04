@@ -49,7 +49,13 @@ pub(super) fn append_material_surface(
                     geometry: *rect,
                     corners: *corners,
                     index,
-                    capture_geometry: geometry,
+                    capture_geometry: if crate::effects::surface_role(surface)
+                        .is_some_and(|(role, _)| role == crate::effects::SemanticRole::Panel)
+                    {
+                        *rect
+                    } else {
+                        geometry
+                    },
                     alpha: *alpha,
                 },
             )

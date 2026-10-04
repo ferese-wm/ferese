@@ -13,6 +13,29 @@ use serde_json::{Map, Value};
 
 pub const DEFAULT_MATERIAL_OPACITY: f64 = 0.78;
 
+#[derive(Clone, Copy, Debug, Default, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum BarLayout {
+    #[default]
+    Continuous,
+    Islands,
+}
+
+pub const fn default_bar_island_padding() -> f32 {
+    4.0
+}
+
+pub fn deserialize_bar_island_padding<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<f32, D::Error> {
+    let padding = <f32 as serde::Deserialize>::deserialize(deserializer)?;
+    if !padding.is_finite() || !(0.0..=32.0).contains(&padding) {
+        return Err(serde::de::Error::custom(
+            "bar-island-padding must be between 0 and 32 logical pixels",
+        ));
+    }
+
+    Ok(padding)
+}
+
 #[derive(Debug)]
 pub struct Error(String);
 

@@ -781,11 +781,26 @@ intentionally turning off the last working one.
 
 | `status` key | Type | Default | Meaning |
 | --- | --- | --- | --- |
+| `bar-layout` | `"continuous"` or `"islands"` | `"continuous"` | One bar background or separate backgrounds around its sections |
+| `bar-island-padding` | number 0–32 | `4` | Horizontal space on each side between an island's background and its bordered controls, in logical pixels |
 | `keybinding-guide` | boolean | `true` | Show the active shortcut guide at login until disabled in Settings → Shortcuts. |
 | `window-title` | boolean | `true` | Focused window title in the bar center when space allows |
 | `battery-percentage` | boolean | `true` | Show percentage beside icon |
 | `low-battery-threshold` | integer 0–100 | `20` | Warning-color threshold |
 | `settings-command` | argument array | `["ferese-settings"]` | Settings launcher; `[]` hides the action |
+
+Choose **Islands** in Settings → Bar, or set it in KDL:
+
+```kdl
+status {
+    bar-layout "islands"
+    bar-island-padding 4
+}
+```
+
+The gaps between islands are transparent and let clicks pass through. Each island uses the bar background around the existing section's border and fill, with the theme's bar radius and material opacity. Changing the bar layout leaves modal transparency unchanged; there is no need to set the shared opacity to zero. The bar reserves the same space above windows in either layout.
+
+Use **Island side padding** in Settings → Bar to tighten the space around each section. It applies only to islands; continuous bars keep their existing padding.
 
 ## Login items and locking
 

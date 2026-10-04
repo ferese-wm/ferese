@@ -223,11 +223,13 @@ struct OutputSurfaces {
     notes: Vec<(String, window::Id)>,
     size: Option<(i32, i32)>,
     effects: Option<EffectsBinding>,
+    bar_regions: Vec<[f32; 5]>,
     hidden: bool,
 }
 
 #[derive(Clone, Debug)]
 enum Message {
+    BarRegionsChanged(window::Id, Vec<[f32; 5]>),
     ThemeChanged(Box<ferese_ipc::theme::Snapshot>),
     ThemeMode(ferese_config::theme::Mode),
     ThemeModeSet(Result<(), String>),
@@ -413,6 +415,18 @@ impl cosmic::Application for FereseShell {
 
     fn update(&mut self, message: Self::Message) -> Task<Self::Message> {
         match message {
+            Message::BarRegionsChanged(id, regions) => {
+                let Some(output) = self.outputs.iter_mut().find(|output| output.bar == id) else {
+                    return Task::none();
+                };
+
+                output.bar_regions = regions;
+                set_input_zone(
+                    id,
+                    bar::input_region(self.config.status.bar_layout, output.hidden, &output.bar_regions),
+                )
+            }
+
             Message::ThemeChanged(snapshot) => {
                 let mut config = self.config.clone();
                 config.apply_theme(&snapshot.presented);
@@ -793,7 +807,10 @@ impl cosmic::Application for FereseShell {
                             {
                                 eprintln!("ferese-shell: could not update panel material: {error}");
                             }
-                            tasks.push(set_input_zone(entry.bar, if hidden { Some(Vec::new()) } else { None }));
+                            tasks.push(set_input_zone(
+                                entry.bar,
+                                bar::input_region(self.config.status.bar_layout, hidden, &entry.bar_regions),
+                            ));
                         }
                         if self.bar_hidden(self.bar_surface_id) {
                             tasks.push(self.destroy_menu());
@@ -1116,7 +1133,7 @@ mod tests {
     fn startup_surface_clear_is_transparent_and_bar_fallback_is_dark() {
         let theme = ShellTheme::default();
         assert_eq!(shell_surface_style(theme).background_color, Color::TRANSPARENT);
-        let Some(Background::Color(background)) = bar_style(theme.for_bar(), false).background else {
+        let Some(Background::Color(background)) = bar_style(theme.for_bar(), false, false).background else {
             panic!("first frame needs a fallback fill before material attachment");
         };
         assert!(background.r < 0.15 && background.g < 0.15 && background.b < 0.20);
@@ -1127,7 +1144,7 @@ mod tests {
     #[test]
     fn bar_fallback_uses_the_matching_dark_palette_and_geometry() {
         let theme = ShellTheme::default().for_bar();
-        let style = bar_style(theme, false);
+        let style = bar_style(theme, false, false);
         assert_eq!(style.background, Some(Background::Color(color(theme.bar_background))));
         assert_eq!(style.text_color, Some(color(theme.bar_text_primary)));
         assert_eq!(style.border.radius, theme.bar_radius.into());
@@ -1137,7 +1154,7 @@ mod tests {
     #[test]
     fn bar_does_not_cover_the_selected_compositor_material() {
         let theme = ShellTheme::default().for_bar();
-        let style = bar_style(theme, true);
+        let style = bar_style(theme, true, false);
         assert_eq!(style.background, None);
         assert_eq!(style.text_color, Some(color(theme.bar_text_primary)));
         assert_eq!(style.border.radius, theme.bar_radius.into());

@@ -1,6 +1,7 @@
 """Exercise real shell frame-driven motion on a private nested desktop and bus.
 
 FERESE_TEST_SHELL_MOTION=1 python3 scripts/tests/test_shell_motion_isolated.py
+Set FERESE_TEST_BAR_LAYOUT=islands to also test island masks and live switching.
 Uses release binaries by default. Requires a Wayland host, dbus-daemon and gdbus.
 Protocol traces contain only this test's shell traffic, never the host desktop.
 """
@@ -28,8 +29,12 @@ class ShellMotionTest(unittest.TestCase):
             runtime.mkdir(mode=0o700)
             config = root / "config/ferese"
             config.mkdir(parents=True)
-            (config / "config.kdl").write_text(
-                'animations { speed 0.5; }\nstatus { keybinding-guide #false; }\n')
+            bar_layout = os.environ.get("FERESE_TEST_BAR_LAYOUT", "continuous")
+            self.assertIn(bar_layout, ("continuous", "islands"))
+            config_file = config / "config.kdl"
+            config_file.write_text(
+                'animations { speed 0.5; }\n'
+                f'status {{ keybinding-guide #false; bar-layout "{bar_layout}"; bar-island-padding 12; }}\n')
             display = Path(os.environ["WAYLAND_DISPLAY"])
             if not display.is_absolute():
                 display = Path(os.environ["XDG_RUNTIME_DIR"]) / display
@@ -88,6 +93,37 @@ class ShellMotionTest(unittest.TestCase):
                 identity, start = surface
                 return re.search(r'wl_surface[@#]' + identity + r'\.destroy\(', log_path.read_text()[start:]) is not None
 
+            def bar_region_count(surface):
+                identity, start = surface
+                trace = log_path.read_text()[start:]
+                effects = re.findall(
+                    r'get_surface_effects\(new id ferese_surface_effects_v1[@#](\d+), wl_surface[@#]'
+                    + identity + r'\)', trace)
+                if not effects:
+                    return None
+
+                updates = re.findall(
+                    r'ferese_surface_effects_v1[@#]' + effects[-1] + r'\.set_regions\(array\[(\d+)\]\)', trace)
+                return int(updates[-1]) // 20 if updates else None
+
+            def bar_input_rectangles(surface):
+                identity, start = surface
+                trace = log_path.read_text()[start:]
+                updates = list(re.finditer(
+                    r'wl_surface[@#]' + identity + r'\.set_input_region\(wl_region[@#](\d+)\)', trace))
+                if not updates:
+                    return []
+
+                update = updates[-1]
+                region = update.group(1)
+                creations = list(re.finditer(r'create_region\(new id wl_region[@#]' + region + r'\)', trace[:update.start()]))
+                if not creations:
+                    return []
+
+                return [tuple(map(int, values)) for values in re.findall(
+                    r'wl_region[@#]' + region + r'\.add\((-?\d+), (-?\d+), (\d+), (\d+)\)',
+                    trace[creations[-1].start():update.start()])]
+
             with log_path.open("w") as log:
                 try:
                     bus = launch(["dbus-daemon", "--config-file=" + str(bus_config), "--nofork", "--print-address=1"],
@@ -98,7 +134,10 @@ class ShellMotionTest(unittest.TestCase):
                                         stdout=log, stderr=log)
                     wait_for(lambda: (runtime / "ferese/control.sock").is_socket())
                     wait_for(lambda: dbus("GetServerInformation", check=False).returncode == 0)
-                    wait_for(lambda: layer_surface("ferese-shell-top-bar"))
+                    bar = wait_for(lambda: layer_surface("ferese-shell-top-bar"))
+                    if bar_layout == "islands":
+                        wait_for(lambda: bar_region_count(bar) == 2)
+                        original_input = wait_for(lambda: bar_input_rectangles(bar))
                     time.sleep(.5)
                     reply = dbus("Notify", "Ferese motion test", "0", "", "Frame cadence", "Synthetic test notification", "[]", "{}", "0").stdout
                     notice = re.search(r'uint32 (\d+)', reply).group(1)
@@ -136,6 +175,29 @@ class ShellMotionTest(unittest.TestCase):
                     self.assertIsNone(compositor.poll(), log_path.read_text()[-8000:])
                     self.assertNotIn("panicked at", log_path.read_text())
                     print(f"Modal: {frames(modal)} callbacks; interrupted opening closed and destroyed", flush=True)
+
+                    if bar_layout == "islands":
+                        for layout_name, expected_count in [("continuous", 1), ("islands", None)]:
+                            source = config_file.read_text()
+                            config_file.write_text(re.sub(
+                                r'bar-layout "[^"]+"', f'bar-layout "{layout_name}"', source))
+                            subprocess.run([str(ctl), "reload-config"], env=env, check=True, capture_output=True)
+                            wait_for(lambda: bar_region_count(bar) == (expected_count or 2))
+
+                        self.assertIsNone(compositor.poll(), log_path.read_text()[-8000:])
+                        self.assertNotIn("panicked at", log_path.read_text())
+                        print("Bar: separate material regions; continuous/islands live switches passed", flush=True)
+
+                        for padding in [4, 0]:
+                            source = config_file.read_text()
+                            config_file.write_text(re.sub(
+                                r'bar-island-padding \d+', f'bar-island-padding {padding}', source))
+                            subprocess.run([str(ctl), "reload-config"], env=env, check=True, capture_output=True)
+                            expected_width = original_input[0][2] - 2 * (12 - padding)
+                            wait_for(lambda: len(bar_input_rectangles(bar)) == 2
+                                     and bar_input_rectangles(bar)[0][2] == expected_width)
+
+                        print("Bar: live padding reductions updated the input regions", flush=True)
                 finally:
                     for child in reversed(children):
                         if child.poll() is None:

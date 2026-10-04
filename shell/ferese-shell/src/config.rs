@@ -20,6 +20,9 @@ pub(crate) struct ShellConfig {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(default)]
 pub(crate) struct StatusConfig {
+    pub(crate) bar_layout: ferese_config::BarLayout,
+    #[serde(deserialize_with = "ferese_config::deserialize_bar_island_padding")]
+    pub(crate) bar_island_padding: f32,
     pub(crate) keybinding_guide: bool,
     pub(crate) battery_percentage: bool,
     pub(crate) window_title: bool,
@@ -30,6 +33,8 @@ pub(crate) struct StatusConfig {
 impl Default for StatusConfig {
     fn default() -> Self {
         Self {
+            bar_layout: ferese_config::BarLayout::Continuous,
+            bar_island_padding: ferese_config::default_bar_island_padding(),
             keybinding_guide: true,
             battery_percentage: true,
             window_title: true,
@@ -632,6 +637,47 @@ mod tests {
                 .status
                 .keybinding_guide
         );
+    }
+
+    #[test]
+    fn island_layout_is_opt_in_and_does_not_change_modal_opacity() {
+        assert_eq!(
+            parse_test_source("").unwrap().status.bar_layout,
+            ferese_config::BarLayout::Continuous
+        );
+        let normal = parse_test_source("theme { material { style \"translucent\"; opacity 0.7; }; }").unwrap();
+        let islands = parse_test_source(
+            "status { bar-layout \"islands\"; }\ntheme { material { style \"translucent\"; opacity 0.7; }; }",
+        )
+        .unwrap();
+        assert_eq!(islands.status.bar_layout, ferese_config::BarLayout::Islands);
+        assert_eq!(islands.theme.surface_popover, normal.theme.surface_popover);
+        assert_eq!(islands.theme.surface_base, normal.theme.surface_base);
+        assert_eq!(islands.theme.bar_background, normal.theme.bar_background);
+        assert!(parse_test_source("status { bar-layout \"invalid\"; }").is_err());
+    }
+
+    #[test]
+    fn island_padding_accepts_compact_and_fractional_values_without_changing_panel_padding() {
+        let defaults = parse_test_source("").unwrap();
+        assert_eq!(defaults.status.bar_island_padding, 4.);
+        assert_eq!(
+            parse_test_source("status { bar-layout \"islands\"; }")
+                .unwrap()
+                .status
+                .bar_island_padding,
+            4.
+        );
+        for padding in [0., 4., 4.5, 32.] {
+            let source = format!("status {{ bar-island-padding {padding}; }}");
+            let config = parse_test_source(&source).unwrap();
+            assert_eq!(config.status.bar_island_padding, padding);
+            assert_eq!(config.theme.panel_padding, defaults.theme.panel_padding);
+        }
+
+        for value in ["-1", "32.5", "\"small\""] {
+            assert!(parse_test_source(&format!("status {{ bar-island-padding {value}; }}")).is_err());
+        }
     }
 
     #[test]

@@ -80,6 +80,12 @@ pub(crate) struct DaemonConfig {
 #[derive(Debug, Default, Deserialize)]
 #[allow(dead_code)]
 struct ShellStatusConfig {
+    bar_layout: Option<ferese_config::BarLayout>,
+    #[serde(
+        default = "ferese_config::default_bar_island_padding",
+        deserialize_with = "ferese_config::deserialize_bar_island_padding"
+    )]
+    bar_island_padding: f32,
     battery_percentage: Option<bool>,
     low_battery_threshold: Option<u8>,
     settings_command: Option<Vec<String>>,
@@ -359,6 +365,29 @@ pub(crate) fn config_path() -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn bar_layout_is_validated_before_live_publication() {
+        for layout in ["continuous", "islands"] {
+            let source = format!("status {{ bar-layout \"{layout}\"; }}");
+            Config::parse_source(&source).unwrap().runtime_config().unwrap();
+        }
+
+        assert!(Config::parse_source("status { bar-layout \"invalid\"; }").is_err());
+    }
+
+    #[test]
+    fn island_padding_is_validated_before_live_publication() {
+        for padding in ["0", "4.5", "12", "32"] {
+            let source = format!("status {{ bar-island-padding {padding}; }}");
+            Config::parse_source(&source).unwrap().runtime_config().unwrap();
+        }
+
+        for padding in ["-1", "32.5", "\"small\""] {
+            let source = format!("status {{ bar-island-padding {padding}; }}");
+            assert!(Config::parse_source(&source).is_err());
+        }
+    }
+
     #[test]
     fn rejects_removed_physics_keys_before_publication() {
         for property in ["spring", "viewport-spring"] {

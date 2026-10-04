@@ -3,6 +3,9 @@ use super::{
     bar_icon, button, color, color_with_opacity, container, control, motion, row, status_ui, text, theme, window,
 };
 use cosmic::iced::border::Shape as BorderShape;
+use ferese_config::BarLayout;
+
+pub(super) mod presentation;
 
 impl FereseShell {
     pub(super) fn output_for_bar(&self, id: window::Id) -> Option<&control::OutputSnapshot> {
@@ -22,22 +25,38 @@ impl FereseShell {
         let focused_output = self.output_for_bar(id);
         let shell_theme = self.config.theme.for_bar();
         let bar = BarMetrics::from(shell_theme);
+        let mode = self.config.status.bar_layout;
+        let islands = mode == BarLayout::Islands;
+        let output = self.outputs.iter().find(|output| output.bar == id);
+        let effects = output.and_then(|output| output.effects.as_ref());
+        let compositor_material = effects.is_some();
+        let control_height = if islands {
+            bar.group_item_height
+        } else {
+            bar.control_height
+        };
+        let control_metrics = BarMetrics { control_height, ..bar };
         let mut workspace_row = row::with_capacity(self.snapshot.workspaces.len() + 1)
-            .spacing(3)
+            .spacing(if islands { 8 } else { 3 })
             .align_y(cosmic::iced::Alignment::Center);
 
-        workspace_row = workspace_row.push(motion::button(
-            button::custom(overview_control(bar, color(shell_theme.accent)))
-                .height(bar.control_height)
+        let overview = motion::button(
+            button::custom(overview_control(control_metrics, color(shell_theme.accent)))
+                .height(control_height)
                 .padding([0, 7])
                 .on_press(cosmic::Action::App(Message::ToggleOverview)),
             color(shell_theme.text_primary),
             self.overview_active,
             1.0,
-        ));
-        let mut workspace_buttons = row::with_capacity(self.snapshot.workspaces.len())
+        );
+        let mut workspace_buttons = row::with_capacity(self.snapshot.workspaces.len() + usize::from(islands))
             .spacing(1)
             .align_y(cosmic::iced::Alignment::Center);
+        if islands {
+            workspace_buttons = workspace_buttons.push(overview);
+        } else {
+            workspace_row = workspace_row.push(overview);
+        }
 
         for workspace in self
             .snapshot
@@ -88,12 +107,17 @@ impl FereseShell {
             // accessible button name, without an overlay stealing its target.
             workspace_buttons = workspace_buttons.push(selector);
         }
-        workspace_row = workspace_row.push(
+        workspace_row = workspace_row.push(island(
             container(workspace_buttons)
                 .padding([2, 3])
                 .height(bar.group_height)
-                .class(theme::Container::custom(move |_| bar_group_style(shell_theme))),
-        );
+                .class(theme::Container::custom(move |_| bar_group_style(shell_theme)))
+                .into(),
+            shell_theme,
+            self.config.status.bar_island_padding,
+            islands,
+            compositor_material,
+        ));
 
         let foreground = color(shell_theme.text_primary);
         let left = cosmic::iced::widget::scrollable(workspace_row)
@@ -103,9 +127,9 @@ impl FereseShell {
                     .scroller_width(0),
             ))
             .width(Length::Fill)
-            .height(bar.group_height);
+            .height(if islands { bar.height } else { bar.group_height });
         let (date, time) = self.clock.split_once(", ").unwrap_or(("", &self.clock));
-        let clock = container(motion::button(
+        let clock = motion::button(
             button::custom(
                 container(
                     row![
@@ -137,11 +161,17 @@ impl FereseShell {
                 .as_ref()
                 .is_some_and(|menu| menu.kind == status_ui::Menu::Calendar),
             1.0,
-        ))
-        .padding([2, 3])
-        .height(bar.group_height)
-        .align_y(alignment::Vertical::Center)
-        .class(theme::Container::custom(move |_| bar_group_style(shell_theme)));
+        );
+        let clock: Element<'_, cosmic::Action<Message>> = if islands {
+            clock
+        } else {
+            container(clock)
+                .padding([2, 3])
+                .height(bar.group_height)
+                .align_y(alignment::Vertical::Center)
+                .class(theme::Container::custom(move |_| bar_group_style(shell_theme)))
+                .into()
+        };
         let mut right = row![
             self.view_status_bar().map(move |action| match action {
                 cosmic::Action::App(Message::OpenMenu(kind, anchor)) =>
@@ -153,13 +183,13 @@ impl FereseShell {
         .spacing(8)
         .align_y(cosmic::iced::Alignment::Center);
         if self.display_mode.external_connected() {
-            right = right.push(motion::button(
+            let display = motion::button(
                 button::custom(bar_content(
                     bar_icon(ferese_theme::icons::DISPLAY, bar.icon_size, foreground),
-                    bar.control_height,
+                    control_height,
                 ))
                 .name("Display mode")
-                .height(bar.control_height)
+                .height(control_height)
                 .padding([0, 7])
                 .on_press(cosmic::Action::App(Message::OpenDisplays(
                     self.outputs
@@ -170,8 +200,24 @@ impl FereseShell {
                 foreground,
                 self.display_mode.open,
                 1.0,
-            ));
+            );
+            right = right.push(display);
         }
+        let right: Element<'_, cosmic::Action<Message>> = if islands {
+            island(
+                container(right)
+                    .padding([2, 3])
+                    .height(bar.group_height)
+                    .class(theme::Container::custom(move |_| bar_group_style(shell_theme)))
+                    .into(),
+                shell_theme,
+                self.config.status.bar_island_padding,
+                true,
+                compositor_material,
+            )
+        } else {
+            right.into()
+        };
         let available = self
             .outputs
             .iter()
@@ -188,7 +234,7 @@ impl FereseShell {
         let center = text(title)
             .size(bar.text_size)
             .width(title_width)
-            .height(bar.control_height)
+            .height(control_height)
             .align_x(alignment::Horizontal::Center)
             .align_y(alignment::Vertical::Center)
             .wrapping(cosmic::iced::widget::text::Wrapping::None)
@@ -196,6 +242,21 @@ impl FereseShell {
                 cosmic::iced::advanced::text::EllipsizeHeightLimit::Lines(1),
             ))
             .class(theme::Text::Color(foreground));
+        let center: Element<'_, cosmic::Action<Message>> = if islands && !title.is_empty() {
+            island(
+                container(center)
+                    .height(bar.group_height)
+                    .align_y(alignment::Vertical::Center)
+                    .class(theme::Container::custom(move |_| bar_group_style(shell_theme)))
+                    .into(),
+                shell_theme,
+                self.config.status.bar_island_padding,
+                true,
+                compositor_material,
+            )
+        } else {
+            center.into()
+        };
         let right = cosmic::iced::widget::scrollable(container(right).width(Length::Shrink))
             .direction(cosmic::iced::widget::scrollable::Direction::Horizontal(
                 cosmic::iced::widget::scrollable::Scrollbar::default()
@@ -204,7 +265,7 @@ impl FereseShell {
             ))
             .anchor_right()
             .width(Length::Shrink)
-            .height(bar.group_height);
+            .height(if islands { bar.height } else { bar.group_height });
         let content = row![
             container(left).width(Length::Fill),
             center,
@@ -216,18 +277,28 @@ impl FereseShell {
         .align_y(cosmic::iced::Alignment::Center)
         .height(Length::Fill);
 
-        let compositor_material = self
-            .outputs
-            .iter()
-            .any(|entry| entry.bar == id && entry.effects.is_some());
-        container(content)
+        let content = container(content)
             .width(Length::Fill)
             .height(Length::Fill)
             .padding([0, shell_theme.panel_padding.round() as u16])
             .class(theme::Container::custom(move |_| {
-                bar_style(shell_theme, compositor_material)
+                bar_style(shell_theme, compositor_material, islands)
             }))
-            .into()
+            .into();
+        presentation::frame(
+            content,
+            mode,
+            shell_theme.bar_radius,
+            move |regions| {
+                if let Some(effects) = effects
+                    && let Err(error) =
+                        effects.set_material_regions(regions, super::ferese_surface_effects_v1::Role::Panel)
+                {
+                    eprintln!("ferese-shell: could not update bar material: {error}");
+                }
+            },
+            move |regions| cosmic::Action::App(Message::BarRegionsChanged(id, regions)),
+        )
     }
 }
 
@@ -356,8 +427,12 @@ pub(super) fn workspace_selector_style(
     }
 }
 
-pub(super) fn bar_style(theme: ShellTheme, compositor_material: bool) -> container::Style {
-    let mut style = ferese_theme::controls::surface_appearance(color(theme.bar_background), theme.bar_radius);
+pub(super) fn bar_style(theme: ShellTheme, compositor_material: bool, islands: bool) -> container::Style {
+    let mut style = if islands {
+        container::Style::default()
+    } else {
+        ferese_theme::controls::surface_appearance(color(theme.bar_background), theme.bar_radius)
+    };
     if compositor_material {
         style.background = None;
     }
@@ -365,6 +440,60 @@ pub(super) fn bar_style(theme: ShellTheme, compositor_material: bool) -> contain
     style.icon_color = style.text_color;
     style.snap = true;
     style
+}
+
+pub(super) fn island<'a>(
+    content: Element<'a, cosmic::Action<Message>>,
+    theme: ShellTheme,
+    horizontal_padding: f32,
+    islands: bool,
+    compositor_material: bool,
+) -> Element<'a, cosmic::Action<Message>> {
+    if !islands {
+        return content;
+    }
+
+    let bar = BarMetrics::from(theme);
+    container(content)
+        .id(presentation::island_id())
+        .padding(cosmic::iced::Padding {
+            top: (bar.height - bar.group_height) * 0.5,
+            bottom: (bar.height - bar.group_height) * 0.5,
+            left: horizontal_padding,
+            right: horizontal_padding,
+        })
+        .height(bar.height)
+        .align_y(alignment::Vertical::Center)
+        .class(cosmic::theme::Container::custom(move |_| {
+            bar_style(theme, compositor_material, false)
+        }))
+        .into()
+}
+
+pub(super) fn input_region(
+    mode: BarLayout,
+    hidden: bool,
+    regions: &[[f32; 5]],
+) -> Option<Vec<cosmic::iced::Rectangle>> {
+    if hidden {
+        return Some(Vec::new());
+    }
+
+    if mode == BarLayout::Continuous {
+        return None;
+    }
+
+    Some(
+        regions
+            .iter()
+            .map(|r| cosmic::iced::Rectangle {
+                x: r[0].floor(),
+                y: r[1].floor(),
+                width: (r[0] + r[2]).ceil() - r[0].floor(),
+                height: (r[1] + r[3]).ceil() - r[1].floor(),
+            })
+            .collect(),
+    )
 }
 
 pub(super) fn bar_group_style(theme: ShellTheme) -> container::Style {
@@ -378,5 +507,47 @@ pub(super) fn bar_group_style(theme: ShellTheme) -> container::Style {
             ..Default::default()
         },
         ..Default::default()
+    }
+}
+
+#[cfg(test)]
+mod island_tests {
+    use super::*;
+
+    #[test]
+    fn island_gaps_are_click_through_and_fullscreen_disables_every_input_region() {
+        let regions = [[12.25, 2.5, 80.5, 24., 14.], [400., 2., 160., 24., 14.]];
+        let input = input_region(BarLayout::Islands, false, &regions).unwrap();
+        assert_eq!(input.len(), 2);
+        assert_eq!(
+            input[0],
+            cosmic::iced::Rectangle::new((12., 2.).into(), (81., 25.).into())
+        );
+        assert!(!input.iter().any(|region| region.contains((240., 14.).into())));
+        assert_eq!(input_region(BarLayout::Islands, true, &regions), Some(Vec::new()));
+        assert_eq!(input_region(BarLayout::Continuous, false, &regions), None);
+        assert_eq!(input_region(BarLayout::Continuous, true, &regions), Some(Vec::new()));
+    }
+
+    #[test]
+    fn islands_reuse_the_bar_background_without_replacing_the_inner_section_style() {
+        let theme = ShellTheme {
+            bar_background: [12, 24, 36, 153],
+            ..Default::default()
+        };
+        let frame = bar_style(theme, false, true);
+        assert!(frame.background.is_none());
+        assert_eq!(frame.border.width, 0.);
+        assert_eq!(frame.shadow.color.a, 0.);
+        let outer = bar_style(theme, false, false);
+        assert_eq!(outer.background, Some(Background::Color(color(theme.bar_background))));
+        assert_eq!(outer.border.radius, theme.bar_radius.into());
+        assert!(bar_style(theme, true, false).background.is_none());
+        let inner = bar_group_style(theme);
+        assert_eq!(
+            inner.background,
+            Some(Background::Color(color_with_opacity(theme.border, 0.25)))
+        );
+        assert_eq!(inner.border.width, 1.);
     }
 }

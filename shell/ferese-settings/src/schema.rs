@@ -853,6 +853,26 @@ pub fn fields(page: Page) -> Vec<Field> {
             ),
         ],
         Page::Bar => vec![
+            choice(
+                "status.bar_layout",
+                "Layout",
+                "Use one continuous background or separate islands around the controls.",
+                "continuous",
+                &[("continuous", "Continuous"), ("islands", "Islands")],
+            ),
+            range(
+                "status.bar_island_padding",
+                "Island side padding",
+                "Space on each side between the island background and its bordered controls.",
+                RangeSpec {
+                    default: f64::from(ferese_config::default_bar_island_padding()),
+                    min: 0.0,
+                    max: 32.0,
+                    step: 1.0,
+                    suffix: " px",
+                    integer: false,
+                },
+            ),
             toggle(
                 "status.window_title",
                 "Focused window title",

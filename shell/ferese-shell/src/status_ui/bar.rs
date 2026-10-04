@@ -5,13 +5,12 @@ use cosmic::{Element, theme};
 
 use super::Menu;
 use crate::status::Snapshot;
-use crate::{
-    BarMetrics, FereseShell, Message, accented_icon, bar_content, bar_group_style, color, motion, recording, text,
-};
+use crate::{BarMetrics, FereseShell, Message, accented_icon, bar_content, color, motion, recording, text};
 
 impl FereseShell {
     pub fn view_status_bar(&self) -> Element<'_, cosmic::Action<Message>> {
         let theme = self.config.theme.for_bar();
+        let islands = self.config.status.bar_layout == ferese_config::BarLayout::Islands;
         let metrics = BarMetrics::from(theme);
         let mut controls = row::with_capacity(6).spacing(1).align_y(Alignment::Center);
         for kind in [
@@ -125,10 +124,14 @@ impl FereseShell {
                 });
             controls = controls.push(motion::button(control, foreground, selected, 1.0));
         }
+        if islands {
+            return controls.into();
+        }
+
         container(controls)
             .padding([2, 3])
             .height(metrics.group_height)
-            .class(theme::Container::custom(move |_| bar_group_style(theme)))
+            .class(theme::Container::custom(move |_| crate::bar::bar_group_style(theme)))
             .into()
     }
 }
