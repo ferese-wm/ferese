@@ -52,3 +52,9 @@ They are rendered from the canonical gradient SVG and centered in square canvase
 without stretching the orbit. These checked-in assets are copied by the normal
 site build; icon generation adds no build dependency. Keep homepage and handbook
 favicon references relative so they resolve under the GitHub Pages project path.
+
+`assets/wallpapers/ferese.png` is the supplied 1672×941 RGB orbit wallpaper,
+stored without resizing or re-encoding. The installer bundles it at
+`wallpapers/ferese.png`; the desktop default and lock-screen fallback use this
+PNG. Custom desktop and lock-screen wallpaper paths continue to take precedence.
+Existing screenshots retain the previous artwork.

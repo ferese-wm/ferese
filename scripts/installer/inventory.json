@@ -101,11 +101,6 @@
       "mode": "0644"
     },
     {
-      "source": "assets/wallpapers/ferese.svg",
-      "target": "wallpapers/ferese.svg",
-      "mode": "0644"
-    },
-    {
       "source": "packaging/ferese.desktop",
       "target": "integration/usr/share/wayland-sessions/ferese.desktop",
       "mode": "0644",

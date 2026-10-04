@@ -4,9 +4,9 @@ These screenshots were taken on September 30, 2026. Click an image to open it at
 
 ## Ferese Blue
 
-Settings and Control Center with the default wallpaper.
+Settings and Control Center with the previous default wallpaper.
 
-[![Settings and Control Center with the default wallpaper.](images/screenshots/ferese-main-hero.png)](images/screenshots/ferese-main-hero.png)
+[![Settings and Control Center with the previous default wallpaper.](images/screenshots/ferese-main-hero.png)](images/screenshots/ferese-main-hero.png)
 
 ## Rosé Pine
 
