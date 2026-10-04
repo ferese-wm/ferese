@@ -38,13 +38,17 @@ documentation](https://docs.github.com/en/pages/getting-started-with-github-page
 
 ## Brand assets
 
-`docs/images/ferese-icon.svg` is the supplied transparent, blue-gradient Ferese
-orbit SVG, identical to `packaging/icons/ferese.svg`. The white and dark variants
-retain its native paths and 1058:650 aspect ratio. The homepage intro uses the
-gradient; site and handbook headers and footers use white on their dark
-background. The README selects white or dark with the reader's color scheme,
-with the gradient as its fallback. The shell's symbolic SVG uses the same paths
-with `currentColor` for the selected desktop theme.
+`docs/images/ferese-icon-glow.svg` is the supplied transparent orbit logo with
+cyan-to-blue gradients, edge highlights and three SVG drop-shadow passes. The
+website intro, headers and footers, handbook and README use this self-contained
+SVG on its original 1024×1024 canvas. Display it square so the native paths and
+glow margins remain intact; do not crop it to the flat logo's viewBox.
+
+`docs/images/ferese-icon.svg` retains the flat blue-gradient orbit, identical to
+`packaging/icons/ferese.svg`. Its white and dark variants retain the 1058:650
+aspect ratio. The shell's symbolic SVG uses the same paths with `currentColor`
+for the selected desktop theme. The glow variant is specific to the site and
+README; desktop icons and favicons keep the flat variant.
 
 `site/assets/favicon-32.png` is a transparent 32×32 PNG, and
 `site/assets/favicon.ico` contains transparent 16×16, 32×32 and 48×48 images.

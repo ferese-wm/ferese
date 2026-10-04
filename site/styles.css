@@ -85,7 +85,7 @@ dl {
   align-items: center;
 }
 .brand-icon {
-  width: 48px;
+  width: 56px;
   height: auto;
 }
 .site-header nav {
@@ -754,7 +754,7 @@ kbd {
     gap: 18px;
   }
   .brand-icon {
-    width: 44px;
+    width: 48px;
     height: auto;
   }
   .site-header nav {
@@ -1010,12 +1010,12 @@ kbd {
 }
 .product-intro {
   text-align: center;
-  padding-block: 48px 34px;
+  padding-block: 24px 34px;
 }
 .intro-icon {
-  width: 112px;
+  width: 128px;
   height: auto;
-  margin: 0 auto 24px;
+  margin: 0 auto;
 }
 .product-tagline {
   font-size: 18px;
