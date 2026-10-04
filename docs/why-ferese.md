@@ -12,6 +12,8 @@ Settings and `~/.config/ferese/config.kdl` are two ways to edit the same configu
 
 The shared settings have a defined scope. Ferese can coordinate the surfaces it draws and the transitions it manages; it does not control every animation an application draws inside its own window. That distinction matters when describing a consistent desktop: consistency between Ferese’s components should not be confused with taking over application behaviour.
 
+[![Rosé Pine dark desktop with Settings, Control Center and a file manager.](images/screenshots/rose-pine-dark.webp)](images/screenshots/rose-pine-dark.webp)
+
 ## Different work needs different arrangements
 
 A scrolling layout is useful when several windows need more space than can comfortably fit on one screen. Instead of shrinking everything to remain visible, the desktop can show part of a wider arrangement and move the viewport as focus changes. Tree tiling serves a different situation: the available screen is divided between windows so they can remain visible together.
@@ -19,6 +21,8 @@ A scrolling layout is useful when several windows need more space than can comfo
 Ferese supports both, with the layout selected per workspace. Floating windows are also available and remember their size and placement. A workspace can therefore use scrolling columns for a sequence of wide windows, while another uses tree tiling for a smaller set that needs to be viewed together.
 
 Even within scrolling, moving focus does not always need to move the desktop. Ferese’s minimal focus strategy leaves a fully visible column where it is and scrolls only far enough to reveal a hidden edge. Other strategies centre the focused column or arrange columns into viewport-sized pages. These choices affect how much the desktop moves while you work, so they belong in the layout’s behaviour rather than being treated as visual decoration.
+
+[![Ferese Blue overview with a terminal, Settings and three workspace previews.](images/screenshots/ferese-blue-overview.webp)](images/screenshots/ferese-blue-overview.webp)
 
 ## Movement that responds to what you do next
 
