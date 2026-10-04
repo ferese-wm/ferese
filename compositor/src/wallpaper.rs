@@ -18,6 +18,9 @@ use smithay::utils::{Buffer, Physical, Rectangle, Size};
 
 use crate::presentation::NativeTextureElement;
 
+mod pixels;
+use pixels::Pixels;
+
 const UPLOAD_RETRY_DELAY: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
@@ -59,8 +62,8 @@ pub(crate) struct WallpaperState {
     commit: CommitCounter,
     owned: bool,
     mode: WallpaperMode,
-    receiver: Option<mpsc::Receiver<Result<image::RgbaImage, String>>>,
-    pixels: Option<image::RgbaImage>,
+    receiver: Option<mpsc::Receiver<Result<Pixels, String>>>,
+    pixels: Option<Pixels>,
     textures: HashMap<ErasedContextId, WallpaperTexture>,
     upload_retries: HashMap<ErasedContextId, Instant>,
     wakeup: Option<smithay::reexports::calloop::LoopSignal>,
@@ -82,25 +85,7 @@ impl WallpaperState {
             let path = config.path.unwrap();
             let wakeup = wakeup.clone();
             std::thread::spawn(move || {
-                let load = || -> Result<image::RgbaImage, String> {
-                    use image::ImageDecoder;
-                    let mut reader = image::ImageReader::open(&path)
-                        .map_err(|e| e.to_string())?
-                        .with_guessed_format()
-                        .map_err(|e| e.to_string())?;
-                    let mut limits = image::Limits::default();
-                    limits.max_alloc = Some(256 * 1024 * 1024);
-                    reader.limits(limits);
-                    let decoder = reader.into_decoder().map_err(|e| e.to_string())?;
-                    let (width, height) = decoder.dimensions();
-                    if u64::from(width) * u64::from(height) * 4 > 256 * 1024 * 1024 {
-                        return Err("wallpaper exceeds the 256 MiB decode limit".into());
-                    }
-                    image::DynamicImage::from_decoder(decoder)
-                        .map(|image| image.into_rgba8())
-                        .map_err(|e| e.to_string())
-                };
-                let _ = sender.send(load());
+                let _ = sender.send(pixels::load(&path));
                 if let Some(wakeup) = wakeup {
                     wakeup.wakeup();
                 }
@@ -356,7 +341,8 @@ mod tests {
                 .recv_timeout(Duration::from_secs(5))
                 .unwrap()
                 .unwrap();
-            assert_eq!(decoded, expected);
+            assert_eq!(decoded.dimensions(), expected.dimensions());
+            assert_eq!(&decoded.as_raw()[..], expected.as_raw());
         }
     }
 
@@ -439,7 +425,9 @@ mod tests {
         state.upload_retries.insert(context.clone(), now + UPLOAD_RETRY_DELAY);
         let (sender, receiver) = mpsc::channel();
         state.receiver = Some(receiver);
-        sender.send(Ok(image::RgbaImage::new(2, 2))).unwrap();
+        sender
+            .send(Ok(pixels::from_rgba(image::RgbaImage::new(2, 2)).unwrap()))
+            .unwrap();
         assert!(state.poll());
         assert!(state.upload_ready(&context, now));
     }
@@ -454,7 +442,9 @@ mod tests {
         });
         assert!(state.receiver.is_some());
         let before = state.commit;
-        sender.send(Ok(image::RgbaImage::new(2, 2))).unwrap();
+        sender
+            .send(Ok(pixels::from_rgba(image::RgbaImage::new(2, 2)).unwrap()))
+            .unwrap();
         assert!(state.poll());
         assert_eq!(state.mode, WallpaperMode::Fit);
         assert!(state.pixels.is_some());
@@ -468,7 +458,7 @@ mod tests {
     #[test]
     fn reverting_a_pending_reload_keeps_latest_request_and_failed_decode_keeps_pixels() {
         let mut state = WallpaperState::new(WallpaperConfig::default());
-        state.pixels = Some(image::RgbaImage::new(2, 2));
+        state.pixels = Some(pixels::from_rgba(image::RgbaImage::new(2, 2)).unwrap());
         let (sender, receiver) = mpsc::channel();
         state.receiver = Some(receiver);
         state.reload(WallpaperConfig {

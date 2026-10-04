@@ -1661,6 +1661,7 @@ dependencies = [
  "image",
  "jiff",
  "libc",
+ "memmap2 0.9.11",
  "notify",
  "serde",
  "serde_json",
