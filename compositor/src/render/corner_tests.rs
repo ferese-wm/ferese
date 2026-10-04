@@ -572,3 +572,57 @@ fn measured_uikit_profile_has_flat_shoulders_but_small_internal_join_discontinui
         assert!((curvature_jump - 0.354_989_57).abs() < 1.0e-6);
     }
 }
+
+#[test]
+#[ignore = "manual EGL timing; optional FERESE_CORNER_REFERENCE_SHADER path"]
+fn corner_heavy_shader_timing_sample() {
+    use smithay::backend::renderer::gles::{UniformName, UniformType};
+    let mut renderer = renderer();
+    let reference = std::env::var_os("FERESE_CORNER_REFERENCE_SHADER")
+        .map(|path| std::fs::read_to_string(path).expect("reference GLSL"));
+    let current = include_str!("shaders/window_corners.glsl");
+    let size = (1024, 768).into();
+    let rect = Rectangle::<i32, Physical>::from_size(size);
+    let mut texture: GlesTexture = renderer.create_buffer(Fourcc::Abgr8888, (1024, 768).into()).unwrap();
+    let body = "\nvoid main() { float d = rounded_rect_distance(mod(gl_FragCoord.xy, vec2(64.0)), vec4(0.0, 0.0, 64.0, 64.0), radius); gl_FragColor = vec4(edge_coverage(d)); }";
+    for (name, source) in reference
+        .as_deref()
+        .map(|s| ("reference", s))
+        .into_iter()
+        .chain([("optimized", current)])
+    {
+        let shader = format!("precision highp float; uniform float radius;\n{source}{body}");
+        let program = renderer
+            .compile_custom_pixel_shader(shader, &[UniformName::new("radius", UniformType::_1f)])
+            .unwrap();
+        for radius in [8.0f32, 16.0, 24.0] {
+            let mut samples = Vec::new();
+            for i in 0..110 {
+                let start = std::time::Instant::now();
+                let mut target = renderer.bind(&mut texture).unwrap();
+                let mut frame = renderer.render(&mut target, size, Transform::Normal).unwrap();
+                frame.clear(Color32F::TRANSPARENT, &[rect]).unwrap();
+                frame
+                    .render_pixel_shader_to(
+                        &program,
+                        Rectangle::from_size((1024.0, 768.0).into()),
+                        rect,
+                        (1024, 768).into(),
+                        Some(&[rect]),
+                        1.0,
+                        &[Uniform::new("radius", radius)],
+                    )
+                    .unwrap();
+                frame.finish().unwrap().wait().unwrap();
+                if i >= 10 {
+                    samples.push(start.elapsed());
+                }
+            }
+            samples.sort_unstable();
+            eprintln!(
+                "corner-heavy {name} radius={radius}: median={:?}, p95={:?}",
+                samples[50], samples[95]
+            );
+        }
+    }
+}
