@@ -249,7 +249,7 @@ prevent popup cleanup.
 
 Settings → Appearance offers six paired themes: **Ferese Blue** (default),
 **Catppuccin**, **Gruvbox**, **Rosé Pine**, **Tokyo Night**, and **Everforest**.
-Ferese Blue uses the logo accent, `#3D7BE6`, and has light and dark variants.
+Ferese Blue uses the default accent, `#3D7BE6`, and has light and dark variants.
 Choose Light, Dark, or Auto in Settings or Control Center. Auto follows local
 07:00 and 19:00 boundaries unless you change its schedule.
 
@@ -278,12 +278,33 @@ one appearance.
 | `appearance.inactive-dim.amount` | number 0–1 | `0.15` | Darkening strength |
 | `appearance.inactive-dim.duration-ms` | number ≥ 0 | `150` | Dimming transition; 0 snaps |
 | `theme.typography.font-family` | string | `"Inter"` | Shell, Settings and overview font |
-| `theme.background.path` | string | bundled Ferese wallpaper | Wallpaper image path; an existing selection overrides the default |
+| `theme.background.path` | string | matching light/dark wallpaper | Shared wallpaper; an explicit path overrides both bundled defaults |
+| `theme.light.background.path`, `theme.dark.background.path` | string | shared path, or matching default | Wallpaper for one appearance; overrides the shared path |
 | `theme.background.mode` | `"fill"`, `"fit"` | `"fill"` | Crop or letterbox |
+| `theme.light.background.mode`, `theme.dark.background.mode` | `"fill"`, `"fit"` | shared placement | Image placement for one appearance |
 | `theme.material.style` | `"solid"`, `"translucent"` | `"solid"` | Shell background material |
 | `theme.material.opacity` | number 0–1 | `0.78` | Shared shell background opacity for bars, menus, popovers, notifications and themed dialogs. Text/icons stay opaque; 0 hides the material. Solid mode is always opaque |
 | `theme.material.tint-strength` | number 0–1 | Dark `0.5`, light `1` | Color strength over the blurred backdrop |
 | `theme.material.blur-radius` | number ≥ 0 | `12` | Translucent backdrop blur, capped at 32; 0 disables |
+
+Settings → Wallpaper shows the current image and both bundled defaults. Use
+**Apply to** to change both modes or just one. **Match appearance** restores the
+bundled light and dark pair. Custom images can also be selected separately in KDL:
+
+```kdl
+theme {
+    light {
+        background { path "~/Pictures/day.png"; }
+    }
+    dark {
+        background { path "~/Pictures/night.jpg"; }
+    }
+}
+```
+
+The wallpaper follows manual light/dark changes and automatic appearance changes.
+A shared `theme.background.path` applies to both modes unless a per-mode path
+is set.
 
 | `theme.colors` key | Default | Meaning |
 | --- | --- | --- |

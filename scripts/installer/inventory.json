@@ -101,8 +101,13 @@
       "mode": "0644"
     },
     {
-      "source": "assets/wallpapers/ferese.svg",
-      "target": "wallpapers/ferese.svg",
+      "source": "assets/wallpapers/ferese-wallpaper-dark.jpg",
+      "target": "wallpapers/ferese-wallpaper-dark.jpg",
+      "mode": "0644"
+    },
+    {
+      "source": "assets/wallpapers/ferese-wallpaper-light.png",
+      "target": "wallpapers/ferese-wallpaper-light.png",
       "mode": "0644"
     },
     {

@@ -312,7 +312,7 @@ mod tests {
             (
                 "/unused/connections-test.kdl".into(),
                 crate::store::Snapshot::parse(String::new()),
-                Some(super::super::Tab::Bluetooth),
+                Some(crate::InitialPage::Connections(super::super::Tab::Bluetooth)),
             ),
         );
         assert_eq!(app.page, crate::schema::Page::Connections);

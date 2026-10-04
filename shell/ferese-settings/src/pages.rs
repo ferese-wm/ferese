@@ -179,30 +179,13 @@ impl App {
             }
 
             if self.page == Page::Wallpaper {
-                if let Some(handle) = &self.thumbnail {
-                    body = body.push(
-                        widget::image(handle.clone())
-                            .width(Length::Fill)
-                            .height(160)
-                            .content_fit(cosmic::iced::ContentFit::Contain),
-                    );
-                } else {
-                    body = body.push(self.note(if self.thumbnail_loading {
-                        "Loading wallpaper preview…"
-                    } else {
-                        self.thumbnail_error
-                            .as_deref()
-                            .unwrap_or("Choose an image to preview your wallpaper.")
-                    }));
-                }
-                body = body.push(self.settings_button(
-                    "Choose image…",
-                    "M3 4h18v16H3z M3 15l5-5 5 5 3-3 5 5 M15 8h.01",
-                    Some(Message::PickWallpaper),
-                    false,
-                ));
+                body = body.push(self.wallpaper_controls());
             }
-            let fields = schema::fields(self.page);
+            let fields = if self.page == Page::Wallpaper {
+                self.wallpaper_fields()
+            } else {
+                schema::fields(self.page)
+            };
 
             if !fields.is_empty() {
                 let mut group = column([]).spacing(1);

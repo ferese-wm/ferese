@@ -12,6 +12,7 @@ mod fonts;
 mod schema;
 mod store;
 mod visuals;
+mod wallpaper_controls;
 mod watch;
 
 use std::collections::HashMap;
@@ -28,7 +29,7 @@ use store::{Edit, Snapshot, set};
 fn main() -> cosmic::iced::Result {
     let mut args = std::env::args_os().skip(1);
     let mut path = store::config_path();
-    let mut connection_tab = None;
+    let mut initial_page = None;
     while let Some(arg) = args.next() {
         match arg.to_str() {
             Some("--config") => {
@@ -39,17 +40,18 @@ fn main() -> cosmic::iced::Result {
                 path = PathBuf::from(value);
             }
             Some("--page") => {
-                connection_tab = match args.next().as_deref().and_then(|s| s.to_str()) {
-                    Some("connections" | "wifi") => Some(connections::Tab::Wifi),
-                    Some("bluetooth") => Some(connections::Tab::Bluetooth),
+                initial_page = match args.next().as_deref().and_then(|s| s.to_str()) {
+                    Some("connections" | "wifi") => Some(InitialPage::Connections(connections::Tab::Wifi)),
+                    Some("bluetooth") => Some(InitialPage::Connections(connections::Tab::Bluetooth)),
+                    Some("wallpaper") => Some(InitialPage::Wallpaper),
                     _ => {
-                        eprintln!("--page accepts connections, wifi, or bluetooth");
+                        eprintln!("--page accepts connections, wifi, bluetooth, or wallpaper");
                         return Ok(());
                     }
                 };
             }
             _ => {
-                eprintln!("Usage: ferese-settings [--config PATH] [--page connections|wifi|bluetooth]");
+                eprintln!("Usage: ferese-settings [--config PATH] [--page connections|wifi|bluetooth|wallpaper]");
                 return Ok(());
             }
         }
@@ -65,8 +67,14 @@ fn main() -> cosmic::iced::Result {
             .is_daemon(false)
             .antialiasing(true)
             .default_text_size(14.),
-        (path, initial, connection_tab),
+        (path, initial, initial_page),
     )
+}
+
+#[derive(Clone, Copy)]
+enum InitialPage {
+    Connections(connections::Tab),
+    Wallpaper,
 }
 
 #[derive(Clone, Debug)]
@@ -109,12 +117,16 @@ enum Message {
     ThemeImported(Result<Option<(String, String)>, String>),
     ExpireUndo(u64),
     PickWallpaper,
+    WallpaperTarget(wallpaper_controls::Target),
+    UseDefaultWallpaper(ferese_config::theme::Appearance),
+    RestoreDefaultWallpapers,
+    DefaultWallpaperThumbnail(ferese_config::theme::Appearance, Result<widget::image::Handle, String>),
     PreviewLock,
     LockPreviewStarted(Result<(), String>),
     AddNote,
     NoteAction(String, widget::text_editor::Action),
     SaveNote(String, u64),
-    WallpaperPicked(Result<Option<String>, String>),
+    WallpaperPicked(wallpaper_controls::Target, Result<Option<String>, String>),
     NewCommand(String),
     AddCommand,
     AddSwipe(&'static str),
@@ -157,10 +169,7 @@ struct App {
     auto_details: bool,
     advanced_theme: bool,
     theme_file_target: usize,
-    thumbnail: Option<widget::image::Handle>,
-    thumbnail_path: String,
-    thumbnail_loading: bool,
-    thumbnail_error: Option<String>,
+    wallpaper: wallpaper_controls::State,
 }
 
 fn initial_visible_rows() -> std::collections::HashSet<(&'static str, usize)> {
@@ -197,7 +206,7 @@ struct NoteEditor {
 
 impl cosmic::Application for App {
     type Executor = cosmic::executor::Default;
-    type Flags = (PathBuf, Result<Snapshot, String>, Option<connections::Tab>);
+    type Flags = (PathBuf, Result<Snapshot, String>, Option<InitialPage>);
     type Message = Message;
     const APP_ID: &'static str = "dev.ferese.Settings";
 
@@ -209,7 +218,7 @@ impl cosmic::Application for App {
         &mut self.core
     }
 
-    fn init(mut core: Core, (path, initial, connection_tab): Self::Flags) -> (Self, Task<Message>) {
+    fn init(mut core: Core, (path, initial, initial_page): Self::Flags) -> (Self, Task<Message>) {
         core.window.show_headerbar = false;
 
         let status = if path == store::config_path() {
@@ -226,7 +235,10 @@ impl cosmic::Application for App {
         let family_sections = theme_controls::FamilySections::new(&resolved.families, &current);
         let mut app = Self {
             connections: connections::State {
-                tab: connection_tab.unwrap_or_default(),
+                tab: match initial_page {
+                    Some(InitialPage::Connections(tab)) => tab,
+                    _ => connections::Tab::default(),
+                },
                 ..connections::State::default()
             },
             displays: vec![],
@@ -243,10 +255,10 @@ impl cosmic::Application for App {
             saving_previous: String::new(),
             error,
             status,
-            page: if connection_tab.is_some() {
-                Page::Connections
-            } else {
-                Page::Appearance
+            page: match initial_page {
+                Some(InitialPage::Connections(_)) => Page::Connections,
+                Some(InitialPage::Wallpaper) => Page::Wallpaper,
+                None => Page::Appearance,
             },
             profile_pages: std::env::var_os("FERESE_PROFILE_SETTINGS").is_some(),
             page_transition: None,
@@ -266,10 +278,7 @@ impl cosmic::Application for App {
             auto_details: false,
             advanced_theme: false,
             theme_file_target: 0,
-            thumbnail: None,
-            thumbnail_path: String::new(),
-            thumbnail_loading: false,
-            thumbnail_error: None,
+            wallpaper: Default::default(),
         };
         let task = app
             .core
@@ -283,7 +292,8 @@ impl cosmic::Application for App {
         } else {
             Task::none()
         };
-        (app, Task::batch([task, connections]))
+        let thumbnails = app.load_thumbnail();
+        (app, Task::batch([task, connections, thumbnails]))
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
@@ -321,6 +331,8 @@ impl cosmic::Application for App {
                 return self.edit_many(displays::edits(&prefix, mode, automatic));
             }
             Message::ThemeChanged(snapshot) => {
+                let wallpaper_changed =
+                    self.resolved.presented.tokens.background.path != snapshot.presented.tokens.background.path;
                 let font_changed = self.resolved.presented.tokens.typography.font_family
                     != snapshot.presented.tokens.typography.font_family;
                 if self.resolved.families != snapshot.families {
@@ -333,7 +345,12 @@ impl cosmic::Application for App {
                     self.font = ferese_theme::font(Some(&self.resolved.presented.tokens.typography.font_family));
                 }
 
-                return self.update_theme();
+                let theme = self.update_theme();
+                return if wallpaper_changed {
+                    Task::batch([theme, self.load_thumbnail()])
+                } else {
+                    theme
+                };
             }
             Message::NoteAction(id, action) => {
                 if let Some(editor) = self.note_editors.get_mut(&id) {
@@ -739,7 +756,8 @@ impl cosmic::Application for App {
             Message::ThemeImported(Err(error)) => self.error = Some(error),
             Message::ExpireUndo(revision) if revision == self.undo_revision => self.undo = None,
             Message::PickWallpaper => {
-                return cosmic::task::future(async {
+                let target = self.wallpaper.target;
+                return cosmic::task::future(async move {
                     let result = tokio::task::spawn_blocking(|| {
                         store::pick_file(
                             "Choose a wallpaper",
@@ -748,33 +766,30 @@ impl cosmic::Application for App {
                     })
                     .await
                     .unwrap_or_else(|e| Err(e.to_string()));
-                    Message::WallpaperPicked(result)
+                    Message::WallpaperPicked(target, result)
                 });
             }
-            Message::WallpaperPicked(Ok(Some(path))) => {
-                return self.change(set("theme.background.path", path));
+            Message::WallpaperPicked(target, Ok(Some(path))) => {
+                return self.apply_wallpaper_edits(wallpaper_controls::edits(target, "path", path));
             }
-            Message::WallpaperPicked(Err(error)) => self.error = Some(error),
+            Message::WallpaperPicked(_, Err(error)) => self.error = Some(error),
             Message::Thumbnail(path, result) => {
-                self.thumbnail_loading = false;
-                if path
-                    == self
-                        .current
-                        .string("theme.background.path", ferese_config::default_wallpaper())
-                {
-                    self.thumbnail_path = path;
-                    match result {
-                        Ok(handle) => {
-                            self.thumbnail = Some(handle);
-                            self.thumbnail_error = None;
-                        }
-                        Err(error) => {
-                            self.thumbnail = None;
-                            self.thumbnail_error = Some(error);
-                        }
-                    }
-                }
+                self.wallpaper_thumbnail(path, result);
                 return self.load_thumbnail();
+            }
+            Message::DefaultWallpaperThumbnail(appearance, result) => {
+                self.default_wallpaper_thumbnail(appearance, result);
+            }
+            Message::WallpaperTarget(target) => self.wallpaper.target = target,
+            Message::UseDefaultWallpaper(appearance) => {
+                return self.apply_wallpaper_edits(wallpaper_controls::edits(
+                    self.wallpaper.target,
+                    "path",
+                    ferese_config::default_wallpaper_for(appearance),
+                ));
+            }
+            Message::RestoreDefaultWallpapers => {
+                return self.apply_wallpaper_edits(wallpaper_controls::restore_defaults());
             }
             Message::NewCommand(value) => self.new_command = value,
             Message::AddCommand if !self.saving => match shlex::split(&self.new_command).filter(|a| !a.is_empty()) {
@@ -887,57 +902,6 @@ impl App {
         self.note_editors.retain(|id, _| ids.contains(id));
     }
 
-    fn load_thumbnail(&mut self) -> Task<Message> {
-        let path = self
-            .current
-            .string("theme.background.path", ferese_config::default_wallpaper());
-        if self.page != Page::Wallpaper || self.thumbnail_loading || path == self.thumbnail_path {
-            return Task::none();
-        }
-        if path.is_empty() {
-            self.thumbnail = None;
-            self.thumbnail_path.clear();
-            self.thumbnail_error = None;
-            return Task::none();
-        }
-
-        self.thumbnail_loading = true;
-        cosmic::task::future(async move {
-            let (send, receive) = cosmic::iced::futures::channel::oneshot::channel();
-            let file = path.clone();
-            std::thread::spawn(move || {
-                let result = (|| -> Result<_, String> {
-                    let mut reader = image::ImageReader::open(&file)
-                        .map_err(|e| e.to_string())?
-                        .with_guessed_format()
-                        .map_err(|e| e.to_string())?;
-                    let mut limits = image::Limits::default();
-                    limits.max_alloc = Some(256 * 1024 * 1024);
-                    limits.max_image_width = Some(16384);
-                    limits.max_image_height = Some(16384);
-                    reader.limits(limits);
-                    let pixels = reader
-                        .decode()
-                        .map_err(|e| e.to_string())?
-                        .thumbnail(1000, 500)
-                        .into_rgba8();
-                    Ok(widget::image::Handle::from_rgba(
-                        pixels.width(),
-                        pixels.height(),
-                        pixels.into_raw(),
-                    ))
-                })();
-                let _ = send.send(result);
-            });
-            Message::Thumbnail(
-                path,
-                receive
-                    .await
-                    .unwrap_or_else(|_| Err("Could not load wallpaper preview.".into())),
-            )
-        })
-    }
-
     fn edit_many(&mut self, edits: Vec<Edit>) -> Task<Message> {
         for edit in edits {
             if let Err(error) = self.draft.edit(&edit) {
@@ -960,6 +924,16 @@ impl App {
     }
 
     fn change(&mut self, edit: Edit) -> Task<Message> {
+        if let Edit::Set(path, value) = &edit
+            && matches!(path.as_str(), "theme.background.path" | "theme.background.mode")
+        {
+            return self.apply_wallpaper_edits(wallpaper_controls::edits(
+                wallpaper_controls::Target::Both,
+                path.rsplit('.').next().unwrap(),
+                value.clone(),
+            ));
+        }
+
         match self.draft.edit(&edit) {
             Ok(()) => {
                 // A shared style selection applies to both appearances while
@@ -1059,6 +1033,66 @@ mod tests {
 
     fn tree_nodes(tree: &cosmic::iced::advanced::widget::Tree) -> usize {
         1 + tree.children.iter().map(tree_nodes).sum::<usize>()
+    }
+
+    #[test]
+    fn wallpaper_preview_uses_presented_state_and_tracks_mode_changes() {
+        let mut app = app();
+        app.path = store::config_path();
+        app.current = Snapshot::parse("theme { background { path \"/saved.png\"; }; }".into()).unwrap();
+        app.resolved.presented.tokens.background.path = Some("/active.png".into());
+        assert_eq!(app.active_wallpaper_path(), "/active.png");
+
+        app.page = Page::Wallpaper;
+        let mut snapshot = app.resolved.clone();
+        snapshot.presented.tokens.background.path =
+            Some(ferese_config::default_wallpaper_for(ferese_config::theme::Appearance::Light).into());
+        let task = app.update(Message::ThemeChanged(Box::new(snapshot)));
+        assert!(task.units() > 0);
+        assert_eq!(
+            app.active_wallpaper_path(),
+            ferese_config::default_wallpaper_for(ferese_config::theme::Appearance::Light)
+        );
+    }
+
+    #[test]
+    fn wallpaper_preview_config_preserves_its_mode_and_relative_paths() {
+        let mut app = app();
+        app.path = PathBuf::from("/preview/config.kdl");
+        app.current = Snapshot::parse("theme { mode \"light\"; background { path \"shared.png\"; }; light { background { path \"light.png\"; }; }; }".into()).unwrap();
+        assert_eq!(app.active_wallpaper_path(), "/preview/light.png");
+        app.wallpaper.target = wallpaper_controls::Target::Dark;
+        assert_eq!(app.active_wallpaper_path(), "/preview/light.png");
+    }
+
+    #[test]
+    fn choosing_a_default_clears_old_input_and_keeps_the_other_mode() {
+        let mut app = app();
+        app.saving = true;
+        app.wallpaper.target = wallpaper_controls::Target::Light;
+        app.draft = Snapshot::parse("theme { dark { background { path \"/custom-dark.png\"; }; }; }".into()).unwrap();
+        app.inputs
+            .insert("theme.light.background.path".into(), "/unfinished.png".into());
+        let _ = app.update(Message::UseDefaultWallpaper(ferese_config::theme::Appearance::Light));
+        assert!(!app.inputs.contains_key("theme.light.background.path"));
+        assert_eq!(
+            app.draft.string("theme.light.background.path", ""),
+            ferese_config::default_wallpaper_for(ferese_config::theme::Appearance::Light)
+        );
+        assert_eq!(app.draft.string("theme.dark.background.path", ""), "/custom-dark.png");
+    }
+
+    #[test]
+    fn wallpaper_picker_keeps_its_target_when_selection_changes() {
+        let mut app = app();
+        app.saving = true;
+        app.wallpaper.target = wallpaper_controls::Target::Dark;
+        let _ = app.update(Message::WallpaperPicked(
+            wallpaper_controls::Target::Light,
+            Ok(Some("/chosen.png".into())),
+        ));
+        assert_eq!(app.draft.string("theme.light.background.path", ""), "/chosen.png");
+        assert!(app.draft.item("theme.dark.background.path").is_none());
     }
 
     #[test]

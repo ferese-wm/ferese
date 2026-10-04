@@ -575,6 +575,7 @@ pub fn preset(name: &str, appearance: Appearance) -> Result<Tokens, String> {
             return Err(format!("Preset {name} does not support {appearance:?}"));
         }
         let mut tokens = default_tokens();
+        tokens.background.path = Some(crate::default_wallpaper_for(appearance).into());
         tokens.colors.surface_base = preset.base.into();
         tokens.colors.surface_raised = preset.raised.into();
         tokens.colors.application_background = preset.application_background.into();
@@ -601,6 +602,7 @@ pub fn preset(name: &str, appearance: Appearance) -> Result<Tokens, String> {
         return Ok(tokens);
     }
     let mut t = default_tokens();
+    t.background.path = Some(crate::default_wallpaper_for(appearance).into());
     let (base, text, muted, accent, border) = match name {
         "monochrome" => ("#101012", "#EDEDF0", "#97979F", "#E5E5E5", "#FFFFFF18"),
         "dracula" => ("#282A36", "#F8F8F2", "#A4ADCD", "#BD93F9", "#44475A"),
@@ -960,6 +962,62 @@ mod tests {
             "2026-09-30T12:00:00Z".parse().unwrap(),
             |_| Err("unexpected file read".into()),
         )
+    }
+
+    #[test]
+    fn wallpapers_follow_appearance_unless_explicitly_selected() {
+        for (mode, appearance) in [("light", Appearance::Light), ("dark", Appearance::Dark)] {
+            let default = candidate(&format!("theme {{ mode \"{mode}\"; }}")).unwrap();
+            assert_eq!(
+                default.theme.tokens.background.path.as_deref(),
+                Some(Path::new(crate::default_wallpaper_for(appearance)))
+            );
+
+            let shared = candidate(&format!(
+                "theme {{ mode \"{mode}\"; background {{ path \"shared.png\"; }}; }}"
+            ))
+            .unwrap();
+            assert_eq!(
+                shared.theme.tokens.background.path.as_deref(),
+                Some(Path::new("/config/ferese/shared.png"))
+            );
+
+            let separate = candidate(&format!("theme {{ mode \"{mode}\"; background {{ path \"shared.png\"; }}; light {{ background {{ path \"light.png\"; }}; }}; dark {{ background {{ path \"dark.jpg\"; }}; }}; }}")).unwrap();
+            assert_eq!(
+                separate.theme.tokens.background.path.as_deref(),
+                Some(Path::new(&format!(
+                    "/config/ferese/{}",
+                    if appearance == Appearance::Light {
+                        "light.png"
+                    } else {
+                        "dark.jpg"
+                    }
+                )))
+            );
+        }
+
+        let auto = candidate("theme { mode \"auto\"; schedule { timezone \"UTC\"; }; }").unwrap();
+        assert_eq!(auto.theme.appearance, Appearance::Light);
+        assert_eq!(
+            auto.theme.tokens.background.path.as_deref(),
+            Some(Path::new(crate::default_wallpaper_for(Appearance::Light)))
+        );
+    }
+
+    #[test]
+    fn imported_theme_wallpaper_is_not_overwritten_by_bundled_defaults() {
+        let source = "theme { mode \"light\"; family \"custom\"; custom-themes { custom { file \"custom.kdl\"; }; }; }";
+        let result = resolve(
+            &Document::parse(source).unwrap(),
+            Path::new("/config/ferese"),
+            "2026-09-30T12:00:00Z".parse().unwrap(),
+            |_| Ok("light { background { path \"authored.png\"; }; }".into()),
+        )
+        .unwrap();
+        assert_eq!(
+            result.theme.tokens.background.path.as_deref(),
+            Some(Path::new("/config/ferese/authored.png"))
+        );
     }
 
     #[test]

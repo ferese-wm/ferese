@@ -35,3 +35,20 @@ The site uses relative links, including for handbook search, so it also works un
 
 For deployment setup, follow [GitHub’s custom workflow
 documentation](https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages).
+
+## Brand assets
+
+The Ferese symbols live in `assets/branding`. The website uses
+`ferese-blue-dark.svg`. The README chooses the light or dark SVG to match
+the reader's appearance and uses the flat blue SVG as its fallback. Keep their
+1024×1024 canvas square so the symbol and glow are not stretched or cropped.
+
+The favicon uses the flat blue symbol. `site/assets/favicon-32.png` is 32×32;
+`site/assets/favicon.ico` contains 16×16, 32×32 and 48×48 images. These files are
+checked in, so building the site needs no icon renderer. Their links work at
+both the site root and the GitHub Pages project path.
+
+The light and dark wallpapers live in `assets/wallpapers`. Both are
+3840×2160 and are bundled by the installer. Ferese selects the matching image
+when no custom wallpaper is set. Settings keeps both defaults available below
+the current wallpaper preview. Existing screenshots show the previous artwork.

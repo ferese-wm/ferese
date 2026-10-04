@@ -127,6 +127,31 @@ m.main()
         self.assertEqual(os.readlink(self.base / 'previous'), 'releases/second')
         self.assertEqual([(self.root / path).read_bytes() for path in (PORTAL, UNIT, DESKTOP)], first)
 
+    def test_upgrade_and_rollback_accept_retired_wallpaper_svg_with_verified_checksum(self):
+        legacy = Path(self.temporary.name) / 'legacy'
+        shutil.copytree(self.bundles[0], legacy)
+        svg = legacy / 'wallpapers/ferese.svg'
+        svg.write_text('<svg xmlns="http://www.w3.org/2000/svg"/>\n')
+        svg.chmod(0o644)
+        manifest_path = legacy / 'manifest.json'
+        manifest = json.loads(manifest_path.read_text())
+        manifest['files'].append({'target': 'wallpapers/ferese.svg', 'mode': '0644',
+                                  'sha256': installer.digest(svg)})
+        manifest_path.write_text(json.dumps(manifest))
+
+        self.run_command('install', legacy)
+        self.assertTrue((self.base / 'current/wallpapers/ferese.svg').is_file())
+        self.install(1)
+        self.assertEqual(os.readlink(self.base / 'current'), 'releases/second')
+        self.assertFalse((self.base / 'current/wallpapers/ferese.svg').exists())
+        self.run_command('rollback')
+        self.assertEqual(os.readlink(self.base / 'current'), 'releases/first')
+        self.assertEqual((self.base / 'current/wallpapers/ferese.svg').read_bytes(), svg.read_bytes())
+
+        svg.write_text('corrupt legacy wallpaper')
+        with self.assertRaisesRegex(ValueError, 'Checksum mismatch: wallpapers/ferese.svg'):
+            installer.validate_bundle(legacy)
+
     def test_upgrade_uses_previous_installer_ownership_receipts(self):
         self.install()
         release = self.base / 'releases/first'
