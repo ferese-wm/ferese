@@ -38,14 +38,17 @@ documentation](https://docs.github.com/en/pages/getting-started-with-github-page
 
 ## Brand assets
 
-`docs/images/ferese-icon.svg` is the transparent, icon-only vector trace of the
-supplied curved blue Ferese mark. The README, homepage header, intro and footer,
-and handbook headers and footers share this asset. It contains paths and gradients,
-with no font or embedded bitmap.
+`docs/images/ferese-icon.svg` is the supplied transparent, blue-gradient Ferese
+orbit SVG, identical to `packaging/icons/ferese.svg`. The white and dark variants
+retain its native paths and 1058:650 aspect ratio. The homepage intro uses the
+gradient; site and handbook headers and footers use white on their dark
+background. The README selects white or dark with the reader's color scheme,
+with the gradient as its fallback. The shell's symbolic SVG uses the same paths
+with `currentColor` for the selected desktop theme.
 
-The favicons are derived from the supplied PNG after background removal and
-cropping to the same square bounds as the SVG: `site/assets/favicon-32.png`
-is a transparent 32×32 PNG, and `site/assets/favicon.ico` contains transparent
-16×16, 32×32 and 48×48 images. These are copied by the normal site build; icon
-generation adds no build dependency. Keep both homepage and handbook favicon
-references relative so they resolve under the GitHub Pages project path.
+`site/assets/favicon-32.png` is a transparent 32×32 PNG, and
+`site/assets/favicon.ico` contains transparent 16×16, 32×32 and 48×48 images.
+They are rendered from the canonical gradient SVG and centered in square canvases
+without stretching the orbit. These checked-in assets are copied by the normal
+site build; icon generation adds no build dependency. Keep homepage and handbook
+favicon references relative so they resolve under the GitHub Pages project path.

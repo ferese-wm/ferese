@@ -1,15 +1,18 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="314 307 640 640" role="img" aria-labelledby="title">
-  <title id="title">Ferese</title>
+<svg xmlns="http://www.w3.org/2000/svg" width="1058" height="650" viewBox="105 314 1058 650" role="img" aria-labelledby="title desc">
+  <title id="title">Ferese orbit — gradient</title>
+  <desc id="desc">Open, tilted orbit symbol. Smooth cubic Bezier vector paths; transparent background.</desc>
   <defs>
-    <linearGradient id="upper" gradientUnits="userSpaceOnUse" x1="469" y1="533" x2="914" y2="142">
-      <stop stop-color="#2880fc"/>
-      <stop offset="1" stop-color="#89d5fb"/>
+    <linearGradient id="ferese-orbit-left" gradientUnits="userSpaceOnUse" x1="174" y1="741" x2="728" y2="389">
+      <stop offset="0" stop-color="#70DEF1"/>
+      <stop offset="0.53" stop-color="#30ADFF"/>
+      <stop offset="1" stop-color="#087CFF"/>
     </linearGradient>
-    <linearGradient id="lower" gradientUnits="userSpaceOnUse" x1="353" y1="925" x2="766" y2="560">
-      <stop stop-color="#166afb"/>
-      <stop offset="1" stop-color="#6bbbfc"/>
+    <linearGradient id="ferese-orbit-right" gradientUnits="userSpaceOnUse" x1="356" y1="857" x2="1073" y2="410">
+      <stop offset="0" stop-color="#22BCF5"/>
+      <stop offset="0.48" stop-color="#087FFF"/>
+      <stop offset="1" stop-color="#093CE2"/>
     </linearGradient>
   </defs>
-  <path fill="url(#upper)" d="M674 329H904C911 329 915 333 913 341C891.5 467.1 790 468 787 468H674C604.7 468 595.1 533 558 533H479C471 533 466 528 469 518L482 469C501.6 401.6 572.9 329 674 329Z"/>
-  <path fill="url(#lower)" d="M615 560H756C763 560 767 565 765 573C751.9 699 645 699 642 699H601C541.4 699 498 743.1 498 801V900C498 917 488 926 476 926H363C357 926 354 921 354 915V802C354 668.7 484.4 560 615 560Z"/>
+  <path id="sweep-left" fill="url(#ferese-orbit-left)" d="M 698 380 C 585 378 397 451 280 530 C 197 586 145 655 145 724 C 145 811 227 867 355 857 C 299 803 295 755 325 689 C 367 598 462 520 567 467 C 620 440 670 423 712 407 C 732 399 736 391 721 385 C 715 382 707 380 698 380 Z"/>
+  <path id="sweep-right" fill="url(#ferese-orbit-right)" d="M 795 373 C 849 354 922 351 982 358 C 1071 368 1123 404 1123 461 C 1123 552 1027 681 906 780 C 782 881 643 927 524 921 C 453 918 397 898 355 857 C 496 845 671 797 807 720 C 932 649 992 573 986 516 C 980 456 928 423 844 408 C 821 404 799 401 787 395 C 774 389 780 379 795 373 Z"/>
 </svg>

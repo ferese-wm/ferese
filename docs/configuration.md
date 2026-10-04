@@ -249,7 +249,7 @@ prevent popup cleanup.
 
 Settings → Appearance offers six paired themes: **Ferese Blue** (default),
 **Catppuccin**, **Gruvbox**, **Rosé Pine**, **Tokyo Night**, and **Everforest**.
-Ferese Blue uses the logo accent, `#3D7BE6`, and has light and dark variants.
+Ferese Blue uses the default accent, `#3D7BE6`, and has light and dark variants.
 Choose Light, Dark, or Auto in Settings or Control Center. Auto follows local
 07:00 and 19:00 boundaries unless you change its schedule.
 
