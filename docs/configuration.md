@@ -193,7 +193,7 @@ Live windows, overview thumbnails and retained images share a window identity
 and presentation state. Entering overview inherits the window's visible position
 and velocity, including motion from a workspace slide. Resize images use the same
 content mapping in overview and remain visible if the window closes during a resize.
-Content, clipping and borders use the same rounded rectangle at the output's scale.
+Content, clipping and borders use the same squircle outline at the output's scale.
 
 ### Spring tuning
 
@@ -837,7 +837,10 @@ Text input is available by default; Ctrl+Alt+Escape releases an active shortcut
 inhibitor. Use `feresectl --help` for runtime control commands.
 
 Shell rounding is controlled in Settings → Appearance → Shell corner radius.
-Small controls cap the radius to fit their size. Window rounding remains under
+The shell and compositor use the same squircle profile for fills, borders, shadows
+and blur masks. Small controls cap the radius to fit their size; circles and pills
+keep circular outlines. The measured profile has small tangent and curvature
+discontinuities at its internal segment joins. Window rounding remains under
 Settings → Windows. `theme.geometry.shell-radius` takes precedence over the old
 `appearance.corner-radius` and then `theme.geometry.top-bar-radius` keys; when
 none are set, the shell uses 14 px. Legacy clock/note radius fields no longer

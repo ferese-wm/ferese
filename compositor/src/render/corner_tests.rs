@@ -153,28 +153,50 @@ fn coverage(distance: f64) -> f64 {
 }
 
 #[test]
-fn shell_roles_and_shader_sources_keep_circular_corners() {
-    use crate::effects::SemanticRole::*;
+fn shared_geometry_matches_the_existing_window_profile() {
+    let bounds = [1.25, 2.5, 61.5, 59.0];
 
-    for role in [Panel, PanelElevated, Popover, Menu, Notification, Hud, Modal] {
-        assert_eq!(corner_shape_for_role(Some(role)), CornerShape::Circular);
+    for shape in [CornerShape::Circular, CornerShape::Continuous] {
+        for radius in [0.0, 0.375, 8.25, 12.375, 24.0, 29.49, 29.5] {
+            let outline = ferese_shape::Outline::new(bounds, [radius; 4], shape).unwrap();
+
+            for y in 0..64 {
+                for x in 0..64 {
+                    let point = [x as f64 + 0.5, y as f64 + 0.5];
+                    let expected = reference_distance(point, bounds, radius, shape);
+                    let actual = outline.signed_distance(point);
+                    assert!(
+                        (actual - expected).abs() < 0.01,
+                        "{shape:?} radius={radius} point={point:?}"
+                    );
+                    assert!((coverage(actual) - coverage(expected)).abs() <= 2.0 / 255.0);
+                }
+            }
+        }
     }
+}
 
-    assert_eq!(corner_shape_for_role(None), CornerShape::Continuous);
-
+#[test]
+fn shell_masks_match_the_shared_squircle_profile() {
     for source in [BLUR_SHADER, MATERIAL_SHADER, ROUNDED_TEXTURE_SHADER] {
         assert_eq!(
             corner_shader(source),
-            source.replace("//_CORNERS_", include_str!("shaders/corners.glsl"))
+            corner_shader_for(source, CornerShape::Continuous)
         );
-        assert!(!corner_shader(source).contains("CORNER_EXTENT"));
+        assert!(corner_shader(source).contains("CORNER_EXTENT"));
+        assert!(!corner_shader_for(source, CornerShape::Circular).contains("CORNER_EXTENT"));
     }
 }
 
 fn renderer() -> GlesRenderer {
     use smithay::backend::egl::{EGLContext, EGLDevice, EGLDisplay};
 
-    let device = EGLDevice::enumerate().unwrap().last().expect("an EGL device");
+    let devices = EGLDevice::enumerate().unwrap().collect::<Vec<_>>();
+    let software = std::env::var_os("FERESE_TEST_EGL_SOFTWARE").is_some();
+    let device = devices
+        .into_iter()
+        .find(|device| device.is_software() == software)
+        .expect("the requested EGL device");
     let display = unsafe { EGLDisplay::new(device).unwrap() };
     unsafe { GlesRenderer::new(EGLContext::new(&display).unwrap()).unwrap() }
 }
@@ -334,12 +356,12 @@ fn apple_window_fill_and_inset_border_match_path_reference_at_fractional_scales(
 
 #[test]
 #[ignore = "requires an EGL rendering device"]
-fn window_programs_do_not_change_cached_shell_materials_and_blur() {
+fn circular_and_squircle_programs_keep_independent_caches() {
     let mut renderer = renderer();
     let mut resources = RenderResources::default();
     let context = renderer.context_id().erased();
-    let circular = rounded_clip_program(&mut resources, &mut renderer).unwrap();
-    material_program(&mut resources, &mut renderer).unwrap();
+    let circular = corner_program(&mut resources, &mut renderer, CornerShape::Circular).unwrap();
+    material_program_for_corners(&mut resources, &mut renderer, CornerShape::Circular).unwrap();
     blur_program(&mut resources, &mut renderer).unwrap();
     let uniforms = [
         Uniform::new("clip_rect", [0.0f32, 0.0, 64.0, 64.0]),
@@ -349,7 +371,7 @@ fn window_programs_do_not_change_cached_shell_materials_and_blur() {
     let before = rasterize(&mut renderer, &circular.solid, &uniforms);
     corner_program(&mut resources, &mut renderer, CornerShape::Continuous).unwrap();
     material_program_for_corners(&mut resources, &mut renderer, CornerShape::Continuous).unwrap();
-    let circular = rounded_clip_program(&mut resources, &mut renderer).unwrap();
+    let circular = corner_program(&mut resources, &mut renderer, CornerShape::Circular).unwrap();
     let after = rasterize(&mut renderer, &circular.solid, &uniforms);
     assert_eq!(before, after);
     let cache = &resources.contexts[&context];
@@ -548,5 +570,59 @@ fn measured_uikit_profile_has_flat_shoulders_but_small_internal_join_discontinui
         // passing a continuity test, or silently changing the source profile.
         assert!((angle - 2.453_166_93).abs() < 1.0e-6);
         assert!((curvature_jump - 0.354_989_57).abs() < 1.0e-6);
+    }
+}
+
+#[test]
+#[ignore = "manual EGL timing; optional FERESE_CORNER_REFERENCE_SHADER path"]
+fn corner_heavy_shader_timing_sample() {
+    use smithay::backend::renderer::gles::{UniformName, UniformType};
+    let mut renderer = renderer();
+    let reference = std::env::var_os("FERESE_CORNER_REFERENCE_SHADER")
+        .map(|path| std::fs::read_to_string(path).expect("reference GLSL"));
+    let current = include_str!("shaders/window_corners.glsl");
+    let size = (1024, 768).into();
+    let rect = Rectangle::<i32, Physical>::from_size(size);
+    let mut texture: GlesTexture = renderer.create_buffer(Fourcc::Abgr8888, (1024, 768).into()).unwrap();
+    let body = "\nvoid main() { float d = rounded_rect_distance(mod(gl_FragCoord.xy, vec2(64.0)), vec4(0.0, 0.0, 64.0, 64.0), radius); gl_FragColor = vec4(edge_coverage(d)); }";
+    for (name, source) in reference
+        .as_deref()
+        .map(|s| ("reference", s))
+        .into_iter()
+        .chain([("optimized", current)])
+    {
+        let shader = format!("precision highp float; uniform float radius;\n{source}{body}");
+        let program = renderer
+            .compile_custom_pixel_shader(shader, &[UniformName::new("radius", UniformType::_1f)])
+            .unwrap();
+        for radius in [8.0f32, 16.0, 24.0] {
+            let mut samples = Vec::new();
+            for i in 0..110 {
+                let start = std::time::Instant::now();
+                let mut target = renderer.bind(&mut texture).unwrap();
+                let mut frame = renderer.render(&mut target, size, Transform::Normal).unwrap();
+                frame.clear(Color32F::TRANSPARENT, &[rect]).unwrap();
+                frame
+                    .render_pixel_shader_to(
+                        &program,
+                        Rectangle::from_size((1024.0, 768.0).into()),
+                        rect,
+                        (1024, 768).into(),
+                        Some(&[rect]),
+                        1.0,
+                        &[Uniform::new("radius", radius)],
+                    )
+                    .unwrap();
+                frame.finish().unwrap().wait().unwrap();
+                if i >= 10 {
+                    samples.push(start.elapsed());
+                }
+            }
+            samples.sort_unstable();
+            eprintln!(
+                "corner-heavy {name} radius={radius}: median={:?}, p95={:?}",
+                samples[50], samples[95]
+            );
+        }
     }
 }

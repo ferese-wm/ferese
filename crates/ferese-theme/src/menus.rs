@@ -1,5 +1,6 @@
 //! Shared menu layouts and paint; callers own actions and animation timing.
 use cosmic::Element;
+use cosmic::iced::border::Shape as BorderShape;
 use cosmic::iced::{Alignment, Color, Length};
 use cosmic::widget::{button, container, row as iced_row};
 
@@ -115,11 +116,13 @@ pub fn slider(foreground: Color, opacity: f32) -> cosmic::theme::iced::Slider {
                 ),
                 width: 4.,
                 border: cosmic::iced::Border {
+                    shape: BorderShape::Continuous,
                     radius: 2.into(),
                     ..Default::default()
                 },
             },
             handle: Handle {
+                corner_shape: BorderShape::Circular,
                 shape: HandleShape::Circle { radius: 6. },
                 background: foreground.into(),
                 border_width: 0.,

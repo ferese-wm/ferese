@@ -1,3 +1,4 @@
+use cosmic::iced::border::Shape as BorderShape;
 use cosmic::iced::widget::Space;
 use cosmic::widget::column;
 
@@ -620,9 +621,11 @@ impl FereseShell {
                     text_color: Some(palette.text),
                     icon_color: Some(palette.text),
                     border: Border {
+                        shape: BorderShape::Continuous,
                         color: palette.muted.scale_alpha(0.16),
                         width: 1.0,
                         radius: theme.material_radius.into(),
+                        ..Default::default()
                     },
                     snap: true,
                     ..Default::default()

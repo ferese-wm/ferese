@@ -1131,6 +1131,120 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "release scroll/render sample; requires both renderer backends"]
+    fn profile_dense_pages_on_both_renderers() {
+        use cosmic::iced::advanced::renderer::{Headless, Renderer as _};
+        use cosmic::iced::advanced::{Layout, Shell, clipboard, layout, mouse, renderer, widget::Tree};
+        use cosmic::iced::{Color, Event, Font, Pixels, Point, Rectangle, Size};
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let bounds = Rectangle::with_size(Size::new(1000.0, 780.0));
+        let scale = 1.25;
+        let size = Size::new(1250, 975);
+
+        for backend in ["wgpu", "tiny-skia"] {
+            let mut renderer = runtime
+                .block_on(<cosmic::Renderer as Headless>::new(
+                    Font::default(),
+                    Pixels(14.0),
+                    Some(backend),
+                ))
+                .expect("requested renderer");
+            eprintln!("renderer={}", Headless::name(&renderer));
+
+            for page in [Page::Shortcuts, Page::Appearance] {
+                let mut app = shortcuts(500);
+                app.page = page;
+                let theme = app.native_palette.native_theme();
+                let mut tree: Option<Tree> = None;
+                let mut samples = Vec::new();
+
+                for frame in 0..48 {
+                    let mut messages = Vec::new();
+                    let mut clipboard = clipboard::Null;
+                    let mut shell = Shell::new(&mut messages);
+                    let cursor = mouse::Cursor::Available(Point::new(700.0, 450.0));
+                    let started = std::time::Instant::now();
+                    let mut view = app.page_view();
+                    let tree = tree.get_or_insert_with(|| Tree::new(view.as_widget()));
+                    tree.diff(view.as_widget_mut());
+                    let node =
+                        view.as_widget_mut()
+                            .layout(tree, &renderer, &layout::Limits::new(Size::ZERO, bounds.size()));
+                    view.as_widget_mut().update(
+                        tree,
+                        &Event::Mouse(mouse::Event::WheelScrolled {
+                            delta: mouse::ScrollDelta::Lines {
+                                x: 0.0,
+                                y: if frame < 24 { -1.0 } else { 1.0 },
+                            },
+                        }),
+                        Layout::new(&node),
+                        cursor,
+                        &renderer,
+                        &mut clipboard,
+                        &mut shell,
+                        &bounds,
+                    );
+                    let layout_elapsed = started.elapsed();
+                    renderer.reset(bounds);
+                    let draw_started = std::time::Instant::now();
+                    view.as_widget().draw(
+                        tree,
+                        &mut renderer,
+                        &theme,
+                        &renderer::Style {
+                            text_color: Color::WHITE,
+                            icon_color: Color::WHITE,
+                            scale_factor: scale as f64,
+                        },
+                        Layout::new(&node),
+                        cursor,
+                        &bounds,
+                    );
+                    let draw_elapsed = draw_started.elapsed();
+                    drop(view);
+                    let render_started = std::time::Instant::now();
+                    let pixels = Headless::screenshot(&mut renderer, size, scale, theme.cosmic().bg_color().into());
+                    std::hint::black_box(pixels);
+                    let render_elapsed = render_started.elapsed();
+
+                    for message in messages {
+                        let _ = app.update(message);
+                    }
+
+                    if frame >= 8 {
+                        samples.push((
+                            layout_elapsed.as_micros(),
+                            draw_elapsed.as_micros(),
+                            render_elapsed.as_micros(),
+                        ));
+                    }
+                }
+
+                for (stage, index) in [("layout", 0), ("draw_queue", 1), ("render_and_readback", 2)] {
+                    let mut times = samples
+                        .iter()
+                        .map(|sample| match index {
+                            0 => sample.0,
+                            1 => sample.1,
+                            _ => sample.2,
+                        })
+                        .collect::<Vec<_>>();
+                    times.sort_unstable();
+                    eprintln!(
+                        "backend={backend} page={page:?} stage={stage} median_us={} p95_us={}",
+                        times[times.len() / 2],
+                        times[times.len() * 95 / 100]
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn disabling_auto_keeps_the_effective_appearance() {
         for appearance in [
             ferese_config::theme::Appearance::Light,

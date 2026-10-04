@@ -1,4 +1,5 @@
 //! Date/time labels and a calendar grid; callers own navigation and popup behavior.
+use cosmic::iced::border::Shape as BorderShape;
 use cosmic::iced::{Alignment, Background, Border, Length};
 use cosmic::widget::{column, container, row};
 use cosmic::{Element, theme};
@@ -124,6 +125,7 @@ pub fn grid<'a, M: Clone + 'a>(
                 .class(theme::Container::custom(move |_| container::Style {
                     background: is_today.then_some(Background::Color(palette.accent.scale_alpha(0.2 * opacity))),
                     border: Border {
+                        shape: BorderShape::Continuous,
                         radius: palette.radius.min(12.).into(),
                         ..Default::default()
                     },

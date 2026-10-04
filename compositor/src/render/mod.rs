@@ -119,7 +119,7 @@ const MATERIAL_SHADER: &str = include_str!("shaders/material_shader.frag");
 const BLUR_SHADER: &str = include_str!("shaders/blur_shader.frag");
 
 fn corner_shader(source: &str) -> String {
-    corner_shader_for(source, CornerShape::Circular)
+    corner_shader_for(source, CornerShape::Continuous)
 }
 
 fn corner_shader_for(source: &str, shape: CornerShape) -> String {
@@ -137,21 +137,9 @@ fn corner_shader_for(source: &str, shape: CornerShape) -> String {
     }
 }
 
-pub(crate) fn window_corner_shape(window: &smithay::desktop::Window) -> CornerShape {
-    // Semantic shell surfaces keep their client-matching circular outlines.
-    corner_shape_for_role(
-        window
-            .toplevel()
-            .and_then(|toplevel| crate::effects::surface_role(toplevel.wl_surface()).map(|(role, _)| role)),
-    )
-}
-
-fn corner_shape_for_role(role: Option<crate::effects::SemanticRole>) -> CornerShape {
-    if role.is_some() {
-        CornerShape::Circular
-    } else {
-        CornerShape::Continuous
-    }
+pub(crate) fn window_corner_shape(_window: &smithay::desktop::Window) -> CornerShape {
+    // Shell surfaces and application windows use the same shared squircle profile.
+    CornerShape::Continuous
 }
 
 #[derive(Clone, Debug)]

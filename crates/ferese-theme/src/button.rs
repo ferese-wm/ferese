@@ -1,3 +1,4 @@
+use cosmic::iced::border::Shape as BorderShape;
 use cosmic::iced::{Background, Color};
 use cosmic::theme;
 use cosmic::widget::button;
@@ -27,6 +28,8 @@ pub(crate) fn accent_button_style(theme: &cosmic::Theme, state: State, focused: 
     let background = composite(fill, native.primary(false).base.into());
     let foreground = foreground(background, component.on.into());
     button::Style {
+        shape: Some(BorderShape::Continuous),
+        outline: None,
         background: Some(Background::Color(background)),
         text_color: Some(foreground),
         icon_color: Some(foreground),
