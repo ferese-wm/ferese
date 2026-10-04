@@ -11,6 +11,7 @@ pub struct TileOptions {
     pub variant: Option<Appearance>,
     pub active: Option<Appearance>,
     pub selected: bool,
+    pub tab_stop: bool,
     pub palette: crate::Palette,
     pub font: cosmic::font::Font,
     pub id: Id,
@@ -26,6 +27,7 @@ pub fn tile<M: Clone + 'static>(
         variant,
         active,
         selected,
+        tab_stop,
         palette,
         font,
         id,
@@ -61,7 +63,7 @@ pub fn tile<M: Clone + 'static>(
         .padding(8)
         .class(tile_style(palette, selected))
         .on_press(on_select);
-    radio(tile, id, selected, navigate)
+    radio_with_tab_stop(tile, id, selected, tab_stop, navigate)
 }
 
 fn tile_style(palette: crate::Palette, selected: bool) -> cosmic::theme::Button {
@@ -247,6 +249,7 @@ pub struct Radio<'a, M> {
     content: Element<'a, M>,
     id: Id,
     selected: bool,
+    tab_stop: bool,
     group: bool,
     label: String,
     navigate: Option<Navigation<'a, M>>,
@@ -258,10 +261,21 @@ pub fn radio<'a, M: Clone + 'a>(
     selected: bool,
     navigate: impl Fn(&keyboard::key::Named) -> Option<M> + 'a,
 ) -> Element<'a, M> {
+    radio_with_tab_stop(content, id, selected, selected, navigate)
+}
+
+fn radio_with_tab_stop<'a, M: Clone + 'a>(
+    content: impl Into<Element<'a, M>>,
+    id: Id,
+    selected: bool,
+    tab_stop: bool,
+    navigate: impl Fn(&keyboard::key::Named) -> Option<M> + 'a,
+) -> Element<'a, M> {
     Element::new(Radio {
         content: content.into(),
         id,
         selected,
+        tab_stop,
         group: false,
         label: String::new(),
         navigate: Some(Box::new(navigate)),
@@ -273,6 +287,7 @@ pub fn group<'a, M: Clone + 'a>(content: impl Into<Element<'a, M>>, id: Id, labe
         content: content.into(),
         id,
         selected: false,
+        tab_stop: false,
         group: true,
         label: label.into(),
         navigate: None,
@@ -305,7 +320,7 @@ impl<M: Clone> Widget<M, Theme, Renderer> for Radio<'_, M> {
             self.content
                 .as_widget_mut()
                 .operate(&mut tree.children[0], layout, renderer, operation);
-        } else if self.selected {
+        } else if self.tab_stop {
             operation.focusable(Some(&self.id), layout.bounds(), tree.state.downcast_mut::<Focus>());
         } else {
             tree.state.downcast_mut::<Focus>().0 = false;
@@ -339,10 +354,10 @@ impl<M: Clone> Widget<M, Theme, Renderer> for Radio<'_, M> {
                 }
             }
             if matches!(event, Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))) {
-                tree.state.downcast_mut::<Focus>().0 = self.selected && cursor.is_over(layout.bounds());
+                tree.state.downcast_mut::<Focus>().0 = self.tab_stop && cursor.is_over(layout.bounds());
             }
         }
-        if !self.group && self.selected && tree.state.downcast_ref::<Focus>().0 {
+        if !self.group && self.tab_stop && tree.state.downcast_ref::<Focus>().0 {
             if let Event::Keyboard(keyboard::Event::KeyPressed {
                 key: keyboard::Key::Character(key),
                 ..
@@ -392,7 +407,7 @@ impl<M: Clone> Widget<M, Theme, Renderer> for Radio<'_, M> {
         self.content
             .as_widget()
             .draw(&tree.children[0], renderer, theme, style, layout, cursor, viewport);
-        if !self.group && self.selected && tree.state.downcast_ref::<Focus>().0 {
+        if !self.group && self.tab_stop && tree.state.downcast_ref::<Focus>().0 {
             use renderer::Renderer as _;
             renderer.fill_quad(
                 renderer::Quad {

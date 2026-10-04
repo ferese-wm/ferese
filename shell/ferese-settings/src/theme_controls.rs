@@ -3,6 +3,39 @@ use super::{
     schema, set, text_input, visuals, widget,
 };
 
+#[derive(Clone, Default)]
+pub(super) struct FamilySections {
+    built_in: std::sync::Arc<Vec<usize>>,
+    custom: std::sync::Arc<Vec<usize>>,
+}
+
+impl FamilySections {
+    pub(super) fn new(families: &[ferese_config::families::Family], snapshot: &crate::store::Snapshot) -> Self {
+        let (custom, built_in) = (0..families.len()).partition(|&index| {
+            snapshot
+                .item(&format!("theme.custom_themes.{}", families[index].id))
+                .is_some()
+        });
+        Self {
+            built_in: std::sync::Arc::new(built_in),
+            custom: std::sync::Arc::new(custom),
+        }
+    }
+
+    fn indices(&self, custom: bool) -> &std::sync::Arc<Vec<usize>> {
+        if custom { &self.custom } else { &self.built_in }
+    }
+
+    pub(super) fn position(&self, index: usize) -> Option<(bool, usize)> {
+        [false, true].into_iter().find_map(|custom| {
+            self.indices(custom)
+                .iter()
+                .position(|&family| family == index)
+                .map(|position| (custom, position))
+        })
+    }
+}
+
 impl App {
     pub(super) fn theme_file_picker(&self) -> Element<'static, Message> {
         let palette = visuals::Palette::from_resolved(&self.resolved.presented);
@@ -158,7 +191,6 @@ impl App {
 
     pub(super) fn theme_gallery(&self, appearance: Option<ferese_config::theme::Appearance>) -> Element<'_, Message> {
         use ferese_config::theme::Appearance::{Dark, Light};
-        let choices = &self.resolved.families;
         let mut heading = row([]).align_y(Alignment::Center).spacing(6).push(
             self.label(
                 match appearance {
@@ -170,30 +202,57 @@ impl App {
             )
             .width(Length::Fill),
         );
+        if appearance != Some(Dark) && self.undo.is_some() {
+            heading = heading.push(self.settings_icon_button(
+                "Undo",
+                "M4 10h8 M4 10V3 M4 10c3-7 16-6 16 3a7 7 0 0 1-7 7",
+                (!self.saving).then_some(Message::Undo),
+            ));
+        }
+        let mut custom_heading = row([])
+            .align_y(Alignment::Center)
+            .spacing(6)
+            .push(self.label("Custom themes", 14.).width(Length::Fill));
         if appearance != Some(Dark) {
-            if self.undo.is_some() {
-                heading = heading.push(self.settings_icon_button(
-                    "Undo",
-                    "M4 10h8 M4 10V3 M4 10c3-7 16-6 16 3a7 7 0 0 1-7 7",
-                    (!self.saving).then_some(Message::Undo),
-                ));
-            }
-            heading = heading.push(self.settings_button(
+            custom_heading = custom_heading.push(self.settings_button(
                 "Import…",
                 "M3 7V5h6l2 2h10v13H3z M12 10v7 M9 14l3 3 3-3",
                 Some(Message::ImportTheme),
                 false,
             ));
         }
-        let mut gallery = column([]).spacing(6).push(heading);
-        let list = crate::navigation::gallery_list(appearance);
-        for chunk in 0..choices.len().div_ceil(3) {
+
+        let mut sections = column([]).spacing(12).push(
+            column([])
+                .spacing(6)
+                .push(heading)
+                .push(self.theme_gallery_grid(appearance, false)),
+        );
+        if appearance != Some(Dark) || !self.family_sections.custom.is_empty() {
+            sections = sections.push(
+                column([])
+                    .spacing(6)
+                    .push(custom_heading)
+                    .push(self.theme_gallery_grid(appearance, true)),
+            );
+        }
+
+        sections.into()
+    }
+
+    fn theme_gallery_grid(
+        &self,
+        appearance: Option<ferese_config::theme::Appearance>,
+        custom: bool,
+    ) -> Element<'_, Message> {
+        let mut rows = column([]).spacing(6);
+        let list = crate::navigation::gallery_list(appearance, custom);
+        for chunk in 0..self.family_sections.indices(custom).len().div_ceil(3) {
             let content = widget::responsive(move |size| {
                 // Three previews: 200:126 image, caption, and tile padding.
                 let height = ((size.width - 12.) / 3. - 16.).max(0.) * 126. / 200. + 34.;
                 let content: Element<'_, Message> = if self.visible_rows.contains(&(list, chunk)) {
-                    // Rebuild only mounted rows; responsive owns their actual layout width.
-                    self.theme_gallery_row(chunk, appearance)
+                    self.theme_gallery_row(chunk, appearance, custom)
                 } else {
                     widget::Space::new().height(height).width(Length::Fill).into()
                 };
@@ -209,30 +268,51 @@ impl App {
                 .into()
             })
             .height(Length::Shrink);
-            gallery = gallery.push(content);
+            rows = rows.push(content);
         }
+
         gallery::group(
-            container(gallery).width(Length::Fill),
-            cosmic::iced::advanced::widget::Id::new(format!("theme-gallery-{appearance:?}")),
-            match appearance {
-                Some(Light) => "Light theme",
-                Some(Dark) => "Dark theme",
-                None => "Theme",
+            container(rows).width(Length::Fill),
+            cosmic::iced::advanced::widget::Id::new(format!("{list}-gallery")),
+            if custom {
+                "Custom themes"
+            } else {
+                match appearance {
+                    Some(ferese_config::theme::Appearance::Light) => "Light theme",
+                    Some(ferese_config::theme::Appearance::Dark) => "Dark theme",
+                    None => "Theme",
+                }
             },
         )
+    }
+
+    pub(super) fn gallery_position(
+        &self,
+        id: &str,
+        appearance: Option<ferese_config::theme::Appearance>,
+    ) -> Option<(&'static str, usize)> {
+        let index = self.family_ids.iter().position(|family| family == id)?;
+        let (custom, position) = self.family_sections.position(index)?;
+        Some((crate::navigation::gallery_list(appearance, custom), position / 3))
     }
 
     fn theme_gallery_row(
         &self,
         chunk: usize,
         appearance: Option<ferese_config::theme::Appearance>,
+        custom: bool,
     ) -> Element<'static, Message> {
         let palette = visuals::Palette::from_resolved(&self.resolved.presented);
         let selected_id = visuals::family_selection(&self.draft, appearance);
-        let families = &self.resolved.families[chunk * 3..self.resolved.families.len().min(chunk * 3 + 3)];
+        let indices = self.family_sections.indices(custom);
+        let families = &indices[chunk * 3..indices.len().min(chunk * 3 + 3)];
+        let has_selection = indices
+            .iter()
+            .any(|&index| self.resolved.families[index].id == selected_id);
         let ids = &self.family_ids;
         let mut tiles = row([]).spacing(6);
-        for (offset, family) in families.iter().enumerate() {
+        for (offset, &family_index) in families.iter().enumerate() {
+            let family = &self.resolved.families[family_index];
             let selected = family.id == selected_id;
             let index = chunk * 3 + offset;
             let id = family.id.clone();
@@ -241,20 +321,22 @@ impl App {
                 .filter(|a| appearance.is_none_or(|variant| variant == *a));
             let tile_id = gallery_id(&id, appearance);
             let ids = ids.clone();
+            let indices = indices.clone();
             tiles = tiles.push(gallery::tile(
                 family,
                 gallery::TileOptions {
                     variant: appearance,
                     active,
                     selected,
+                    tab_stop: selected || (!has_selection && index == 0),
                     palette,
                     font: self.font,
                     id: tile_id,
                 },
                 Message::Family(id, appearance),
                 move |key| {
-                    gallery::neighbor(index, ids.len(), key)
-                        .map(|index| Message::Family(ids[index].clone(), appearance))
+                    gallery::neighbor(index, indices.len(), key)
+                        .map(|index| Message::Family(ids[indices[index]].clone(), appearance))
                 },
             ));
         }
@@ -271,4 +353,31 @@ pub(super) fn gallery_id(
     appearance: Option<ferese_config::theme::Appearance>,
 ) -> cosmic::iced::advanced::widget::Id {
     cosmic::iced::advanced::widget::Id::new(format!("theme-{appearance:?}-{id}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sections_use_registered_imports_not_id_prefixes_or_catalog_position() {
+        let snapshot = crate::store::Snapshot::parse(
+            "theme { custom-themes { sunset { file \"sunset.kdl\"; }; dracula { file \"mine.kdl\"; }; }; }".into(),
+        )
+        .unwrap();
+        let mut families = ferese_config::families::builtins();
+        let mut imported = families[0].clone();
+        imported.id = "sunset".into();
+        families.insert(1, imported.clone());
+        imported.id = "dracula".into();
+        families.push(imported);
+        let mut legacy = families[0].clone();
+        legacy.id = "monokai".into();
+        families.push(legacy);
+        let sections = FamilySections::new(&families, &snapshot);
+        assert_eq!(sections.custom.as_slice(), &[1, 7]);
+        assert_eq!(sections.built_in.as_slice(), &[0, 2, 3, 4, 5, 6, 8]);
+        assert_eq!(sections.position(7), Some((true, 1)));
+        assert_eq!(sections.position(8), Some((false, 6)));
+    }
 }

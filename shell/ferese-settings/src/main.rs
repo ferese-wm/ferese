@@ -150,6 +150,7 @@ struct App {
     font: cosmic::font::Font,
     native_palette: visuals::Palette,
     family_ids: std::sync::Arc<Vec<String>>,
+    family_sections: theme_controls::FamilySections,
     gallery_focus: Option<(String, Option<ferese_config::theme::Appearance>)>,
     resolved: ferese_ipc::theme::Snapshot,
     undo_revision: u64,
@@ -171,6 +172,11 @@ fn initial_visible_rows() -> std::collections::HashSet<(&'static str, usize)> {
             ["theme", "theme-light", "theme-dark"]
                 .into_iter()
                 .flat_map(|list| (0..3).map(move |index| (list, index))),
+        )
+        .chain(
+            ["theme-custom", "theme-custom-light", "theme-custom-dark"]
+                .into_iter()
+                .map(|list| (list, 0)),
         )
         .collect()
 }
@@ -217,6 +223,7 @@ impl cosmic::Application for App {
         let resolved = ferese_theme_client::service::current();
         let font = ferese_theme::font(Some(&resolved.presented.tokens.typography.font_family));
         let native_palette = visuals::Palette::from_resolved(&resolved.presented);
+        let family_sections = theme_controls::FamilySections::new(&resolved.families, &current);
         let mut app = Self {
             connections: connections::State {
                 tab: connection_tab.unwrap_or_default(),
@@ -252,6 +259,7 @@ impl cosmic::Application for App {
             font,
             native_palette,
             gallery_focus: None,
+            family_sections,
             family_ids: std::sync::Arc::new(resolved.families.iter().map(|family| family.id.clone()).collect()),
             resolved,
             undo_revision: 0,
@@ -318,6 +326,7 @@ impl cosmic::Application for App {
                 if self.resolved.families != snapshot.families {
                     self.family_ids =
                         std::sync::Arc::new(snapshot.families.iter().map(|family| family.id.clone()).collect());
+                    self.family_sections = theme_controls::FamilySections::new(&snapshot.families, &self.draft);
                 }
                 self.resolved = *snapshot;
                 if font_changed {
@@ -394,6 +403,8 @@ impl cosmic::Application for App {
                     } else {
                         self.current = snapshot.clone();
                         self.draft = snapshot;
+                        self.family_sections =
+                            theme_controls::FamilySections::new(&self.resolved.families, &self.draft);
                         self.sync_notes();
                         self.font = ferese_theme::font(Some(&self.resolved.presented.tokens.typography.font_family));
                         self.undo = None;
@@ -486,12 +497,7 @@ impl cosmic::Application for App {
                         self.hidden_binding_rows.remove(&index);
                     }
                     if let Some((id, appearance)) = &self.gallery_focus
-                        && navigation::gallery_list(*appearance) == list
-                        && self
-                            .family_ids
-                            .iter()
-                            .position(|family| family == id)
-                            .is_some_and(|position| position / 3 == index)
+                        && self.gallery_position(id, *appearance) == Some((list, index))
                     {
                         let (id, appearance) = self.gallery_focus.take().unwrap();
                         return cosmic::iced::advanced::widget::operate(
@@ -579,6 +585,8 @@ impl cosmic::Application for App {
                             }
                         }
 
+                        self.family_sections =
+                            theme_controls::FamilySections::new(&self.resolved.families, &self.draft);
                         self.sync_notes();
                         self.status = if live {
                             "Saved · desktop updated"
@@ -609,6 +617,7 @@ impl cosmic::Application for App {
                 Ok(snapshot) => {
                     self.current = snapshot.clone();
                     self.draft = snapshot;
+                    self.family_sections = theme_controls::FamilySections::new(&self.resolved.families, &self.draft);
                     self.note_editors.clear();
                     self.sync_notes();
                     self.font = ferese_theme::font(Some(&self.resolved.presented.tokens.typography.font_family));
@@ -629,15 +638,14 @@ impl cosmic::Application for App {
                 }
             }
             Message::Family(id, appearance) => {
-                let reveal = if let Some(index) = self.family_ids.iter().position(|family| family == &id) {
-                    let list = navigation::gallery_list(appearance);
-                    if !self.visible_rows.insert((list, index / 3)) {
+                let reveal = if let Some((list, row)) = self.gallery_position(&id, appearance) {
+                    if !self.visible_rows.insert((list, row)) {
                         self.gallery_focus = None;
                     } else {
                         // Focus after the sensor observes the newly mounted row.
                         self.gallery_focus = Some((id.clone(), appearance));
                     }
-                    cosmic::iced::advanced::widget::operate(navigation::RevealRow::new(list, index / 3))
+                    cosmic::iced::advanced::widget::operate(navigation::RevealRow::new(list, row))
                         .map(cosmic::Action::App)
                 } else {
                     Task::none()
@@ -1098,6 +1106,44 @@ mod tests {
         let task = app.update(Message::RowVisibility("theme", row, true));
         assert!(task.units() > 0);
         assert!(app.gallery_focus.is_none());
+    }
+
+    #[test]
+    fn custom_theme_focus_waits_for_its_own_grid_in_linked_and_split_modes() {
+        for appearance in [
+            None,
+            Some(ferese_config::theme::Appearance::Light),
+            Some(ferese_config::theme::Appearance::Dark),
+        ] {
+            let mut app = app();
+            let registrations = (0..7)
+                .map(|index| format!("personal-{index} {{ file \"unused.kdl\"; }}\n"))
+                .collect::<String>();
+            app.draft = Snapshot::parse(format!("theme {{ custom-themes {{ {registrations} }} }}")).unwrap();
+            let mut snapshot = app.resolved.clone();
+            for index in 0..7 {
+                let mut family = snapshot.families[0].clone();
+                family.id = format!("personal-{index}");
+                snapshot.families.push(family);
+            }
+            let _ = app.update(Message::ThemeChanged(Box::new(snapshot)));
+            let id = "personal-6".to_owned();
+            let list = navigation::gallery_list(appearance, true);
+            assert_eq!(app.gallery_position(&id, appearance), Some((list, 2)));
+            app.visible_rows.remove(&(list, 2));
+            let _ = app.update(Message::Family(id.clone(), appearance));
+            assert_eq!(app.gallery_focus, Some((id.clone(), appearance)));
+            let _ = app.update(Message::RowVisibility(
+                navigation::gallery_list(appearance, false),
+                2,
+                true,
+            ));
+            assert!(app.gallery_focus.is_some(), "built-in row must not claim custom focus");
+            let task = app.update(Message::RowVisibility(list, 2, true));
+            assert!(task.units() > 0);
+            assert!(app.gallery_focus.is_none());
+            assert_eq!(visuals::family_selection(&app.draft, appearance), id);
+        }
     }
 
     #[test]
