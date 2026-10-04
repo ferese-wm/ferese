@@ -1,11 +1,13 @@
 use cosmic::iced::border::Shape as BorderShape;
-use cosmic::iced::{Alignment, Background, Border, Rectangle, alignment};
+use cosmic::iced::{Alignment, Background, Border, Rectangle};
 use cosmic::widget::{button, container, row};
 use cosmic::{Element, theme};
 
 use super::Menu;
 use crate::status::Snapshot;
-use crate::{BarMetrics, FereseShell, Message, accented_icon, bar_group_style, color, motion, recording, text};
+use crate::{
+    BarMetrics, FereseShell, Message, accented_icon, bar_content, bar_group_style, color, motion, recording, text,
+};
 
 impl FereseShell {
     pub fn view_status_bar(&self) -> Element<'_, cosmic::Action<Message>> {
@@ -91,13 +93,7 @@ impl FereseShell {
                     },
                 )));
             }
-            // A fixed button height does not center its child in libcosmic.
-            // center_y/center_x wrap the content in a centering layout, so use
-            // those rather than align_y/align_x on a fixed-size container.
-            let content = container(content)
-                .align_x(alignment::Horizontal::Center)
-                .height(metrics.control_height)
-                .center_y(metrics.control_height);
+            let content = bar_content(content, metrics.group_item_height);
             let recording_busy = kind == Menu::Recording && self.recorder.busy();
             let control = button::custom(content)
                 .name(if recording_busy {
@@ -108,7 +104,7 @@ impl FereseShell {
                     status_label(kind, &self.status)
                 })
                 .padding([0.0, ((metrics.height - f32::from(metrics.icon_size)) * 0.5).max(4.0)])
-                .height(metrics.control_height)
+                .height(metrics.group_item_height)
                 .on_press_with_rectangle(move |offset, bounds| {
                     if kind == Menu::Recording {
                         return cosmic::Action::App(if recording_busy {
@@ -130,7 +126,8 @@ impl FereseShell {
             controls = controls.push(motion::button(control, foreground, selected, 1.0));
         }
         container(controls)
-            .padding([0, 3])
+            .padding([2, 3])
+            .height(metrics.group_height)
             .class(theme::Container::custom(move |_| bar_group_style(theme)))
             .into()
     }

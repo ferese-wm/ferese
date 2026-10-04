@@ -82,11 +82,17 @@ struct BarMetrics {
     icon_size: u16,
     overview_icon_size: u16,
     control_height: f32,
+    group_height: f32,
+    group_item_height: f32,
 }
 
 impl From<ShellTheme> for BarMetrics {
     fn from(theme: ShellTheme) -> Self {
         let height = theme.bar_height;
+        let control_height = (height - 4.0).max(21.0).min(height);
+        // Leave two logical pixels inside the group border on each side,
+        // including compact bars with 20 px icons.
+        let group_height = control_height.max(24.0).min(height);
 
         Self {
             height,
@@ -95,7 +101,9 @@ impl From<ShellTheme> for BarMetrics {
             text_size: 14,
             icon_size: 20,
             overview_icon_size: 20,
-            control_height: (height - 4.0).max(21.0).min(height),
+            control_height,
+            group_height,
+            group_item_height: (group_height - 4.0).max(0.0),
         }
     }
 }

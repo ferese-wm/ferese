@@ -69,7 +69,7 @@ impl FereseShell {
                     },
                     owner.map_or(String::new(), |output| format!(", on {}", output.name))
                 ))
-                .height(bar.control_height)
+                .height(bar.group_item_height)
                 .padding(0)
                 .on_press(cosmic::Action::App(Message::ActivateWorkspace(workspace.id)));
 
@@ -90,7 +90,8 @@ impl FereseShell {
         }
         workspace_row = workspace_row.push(
             container(workspace_buttons)
-                .padding([0, 3])
+                .padding([2, 3])
+                .height(bar.group_height)
                 .class(theme::Container::custom(move |_| bar_group_style(shell_theme))),
         );
 
@@ -102,19 +103,22 @@ impl FereseShell {
                     .scroller_width(0),
             ))
             .width(Length::Fill)
-            .height(bar.control_height);
+            .height(bar.group_height);
         let (date, time) = self.clock.split_once(", ").unwrap_or(("", &self.clock));
         let clock = container(motion::button(
             button::custom(
-                row![
-                    text(date).size(12).class(theme::Text::Color(foreground)),
-                    text(time).size(bar.text_size).class(theme::Text::Color(foreground)),
-                ]
-                .spacing(8)
-                .align_y(cosmic::iced::Alignment::Center),
+                container(
+                    row![
+                        text(date).size(12).class(theme::Text::Color(foreground)),
+                        text(time).size(bar.text_size).class(theme::Text::Color(foreground)),
+                    ]
+                    .spacing(8)
+                    .align_y(cosmic::iced::Alignment::Center),
+                )
+                .center_y(bar.group_item_height),
             )
-            .padding([4, 8])
-            .height(bar.control_height)
+            .padding([0, 8])
+            .height(bar.group_item_height)
             .name("Open calendar")
             .on_press_with_rectangle(move |offset, bounds| {
                 cosmic::Action::App(Message::OpenMenuOn(
@@ -134,7 +138,8 @@ impl FereseShell {
                 .is_some_and(|menu| menu.kind == status_ui::Menu::Calendar),
             1.0,
         ))
-        .height(bar.control_height)
+        .padding([2, 3])
+        .height(bar.group_height)
         .align_y(alignment::Vertical::Center)
         .class(theme::Container::custom(move |_| bar_group_style(shell_theme)));
         let mut right = row![
@@ -149,16 +154,19 @@ impl FereseShell {
         .align_y(cosmic::iced::Alignment::Center);
         if self.display_mode.external_connected() {
             right = right.push(motion::button(
-                button::custom(bar_icon(ferese_theme::icons::DISPLAY, bar.icon_size, foreground))
-                    .name("Display mode")
-                    .height(bar.control_height)
-                    .padding([0, 7])
-                    .on_press(cosmic::Action::App(Message::OpenDisplays(
-                        self.outputs
-                            .iter()
-                            .find(|output| output.bar == id)
-                            .and_then(|output| output.name.clone()),
-                    ))),
+                button::custom(bar_content(
+                    bar_icon(ferese_theme::icons::DISPLAY, bar.icon_size, foreground),
+                    bar.control_height,
+                ))
+                .name("Display mode")
+                .height(bar.control_height)
+                .padding([0, 7])
+                .on_press(cosmic::Action::App(Message::OpenDisplays(
+                    self.outputs
+                        .iter()
+                        .find(|output| output.bar == id)
+                        .and_then(|output| output.name.clone()),
+                ))),
                 foreground,
                 self.display_mode.open,
                 1.0,
@@ -196,7 +204,7 @@ impl FereseShell {
             ))
             .anchor_right()
             .width(Length::Shrink)
-            .height(bar.control_height);
+            .height(bar.group_height);
         let content = row![
             container(left).width(Length::Fill),
             center,
@@ -223,16 +231,27 @@ impl FereseShell {
     }
 }
 
+pub(super) fn bar_content<'a>(
+    content: impl Into<Element<'a, cosmic::Action<Message>>>,
+    height: f32,
+) -> cosmic::widget::Container<'a, cosmic::Action<Message>, cosmic::Theme, cosmic::Renderer> {
+    // A one-pixel optical offset below the geometric center. Compact bars
+    // reduce the offset so the 20 px icons keep their full size.
+    container(content)
+        .padding(cosmic::iced::Padding {
+            top: (height - 20.0).clamp(0.0, 2.0),
+            ..Default::default()
+        })
+        .center_y(height)
+}
+
 pub(super) fn overview_control(bar: BarMetrics, foreground: Color) -> Element<'static, cosmic::Action<Message>> {
-    container(bar_icon(
-        ferese_theme::icons::FERESE,
-        bar.overview_icon_size,
-        foreground,
-    ))
+    bar_content(
+        bar_icon(ferese_theme::icons::FERESE, bar.overview_icon_size, foreground),
+        bar.control_height,
+    )
     .width(bar.overview_icon_size)
-    .height(bar.control_height)
     .align_x(alignment::Horizontal::Center)
-    .align_y(alignment::Vertical::Center)
     .into()
 }
 
@@ -277,15 +296,14 @@ pub(super) fn workspace_indicator(
     } else {
         shell_theme.text_muted
     };
-    container(
+    bar_content(
         text(name.to_owned())
             .size(12)
             .class(theme::Text::Color(color(foreground))),
+        bar.group_item_height,
     )
     .width(24)
-    .height(bar.control_height)
     .align_x(alignment::Horizontal::Center)
-    .align_y(alignment::Vertical::Center)
     .class(theme::Container::custom(move |_| {
         workspace_selector_style(active, active_elsewhere, occupied, shell_theme)
     }))
