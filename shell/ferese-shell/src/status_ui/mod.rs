@@ -11,6 +11,7 @@ mod system;
 
 use bar::status_icon;
 use controls::{control_card, menu_button, toggle_row};
+use cosmic::iced::border::Shape as BorderShape;
 use cosmic::widget::column;
 use status::{Action, Snapshot};
 
@@ -242,9 +243,11 @@ impl FereseShell {
                 text_color: Some(primary),
                 icon_color: Some(primary),
                 border: Border {
+                    shape: BorderShape::Continuous,
                     color: color_with_opacity(theme.border, p),
                     width: 1.0,
                     radius: theme.material_radius.into(),
+                    ..Default::default()
                 },
                 snap: true,
                 ..Default::default()

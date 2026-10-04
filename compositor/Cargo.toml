@@ -6,6 +6,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+ferese-shape.workspace = true
 ferese-config = { path = "../crates/ferese-config" }
 ab_glyph = "0.2.32"
 fontdb = "0.23.0"

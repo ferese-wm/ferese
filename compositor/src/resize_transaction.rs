@@ -1,6 +1,5 @@
 //! A presentation barrier, not an event-loop or client-commit blocker.
-//! Grouping barriers by workspace keeps viewport and neighboring tiles on the
-//! same clock. A serial identifies readiness even for cell-grid clients whose
+//! Presentation properties bind to the configure they actually depend on. A serial identifies readiness even for cell-grid clients whose
 //! committed size is smaller than the configure, and after rapid reversals.
 use std::time::Duration;
 
@@ -13,6 +12,7 @@ pub(crate) struct ResizeTransaction {
     serial: Serial,
     started: Duration,
     source_geometry: Option<Rectangle<i32, Logical>>,
+    column_width: Option<(f64, f64)>,
 }
 
 impl ResizeTransaction {
@@ -21,7 +21,26 @@ impl ResizeTransaction {
             serial,
             started,
             source_geometry: None,
+            column_width: None,
         }
+    }
+
+    pub(crate) fn serial(self) -> Serial {
+        self.serial
+    }
+
+    pub(crate) fn with_column_width(mut self, source: Option<f64>, target: Option<f64>) -> Self {
+        self.column_width = source.zip(target);
+        self
+    }
+
+    pub(crate) fn column_width(self) -> Option<(f64, f64)> {
+        self.column_width
+    }
+
+    pub(crate) fn width_changes(self) -> bool {
+        self.column_width
+            .is_some_and(|(source, target)| (source - target).abs() > 0.001)
     }
 
     pub(crate) fn with_source_geometry(mut self, geometry: Rectangle<i32, Logical>) -> Self {

@@ -59,7 +59,7 @@ fn dispatch(events: &mut EventLoop<'static, Ferese>, state: &mut Ferese) {
     state.display_handle.flush_clients().unwrap();
 }
 
-fn ack_configure(wire: &mut UnixStream, xdg: u32) {
+fn ack_configure(wire: &mut UnixStream, xdg: u32) -> u32 {
     wire.set_nonblocking(true).unwrap();
     let mut bytes = Vec::new();
     let _ = wire.read_to_end(&mut bytes);
@@ -76,6 +76,7 @@ fn ack_configure(wire: &mut UnixStream, xdg: u32) {
     }
     assert!(serial.is_some(), "missing configure for {xdg}: {bytes:?}");
     request(wire, xdg, 4, &[serial.unwrap()], None);
+    serial.unwrap()
 }
 
 fn window(state: &mut Ferese, events: &mut EventLoop<'static, Ferese>, color: u32) -> (Window, UnixStream) {
@@ -592,4 +593,454 @@ fn capture_privacy_pixels_and_policy_transitions() {
         true,
         &mut capture_texture
     )));
+}
+
+#[test]
+#[ignore = "requires private Wayland sockets and an offscreen EGL device"]
+fn resize_dependencies_protocol_and_pixels() {
+    if std::env::var_os("FERESE_RESIZE_TEST_CHILD").is_none() {
+        let runtime = tempfile::tempdir().unwrap();
+        let result = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "state::capture_privacy::tests::resize_dependencies_protocol_and_pixels",
+                "--ignored",
+                "--nocapture",
+            ])
+            .env("FERESE_RESIZE_TEST_CHILD", "1")
+            .env("FERESE_ENABLE_SCREENCOPY", "1")
+            .env("XDG_RUNTIME_DIR", runtime.path())
+            .env("XDG_CONFIG_HOME", runtime.path())
+            .env("XDG_STATE_HOME", runtime.path())
+            .env_remove("FERESE_SOCKET")
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr)
+        );
+        return;
+    }
+    use crate::gestures::SwipeDirection;
+    use ferese_core::WorkspaceLayout;
+    use ferese_layout::{ColumnWidth, Direction, Rect, ViewportFocusStrategy};
+    let mut events = EventLoop::try_new().unwrap();
+    let config = crate::config::Config::parse_source("animations { enabled #false; }\nlayout { inner-gap 0; outer-gap 0; }\ntheme { geometry { window-radius 0; border-width 0; focus-ring-width 0; }; }\nwindow-rule app-id=\"resize.secret\" block-out-from-screencasts=#true\n").unwrap().runtime_config().unwrap();
+    let mut state = Ferese::new(&mut events, Display::new().unwrap(), config).unwrap();
+    state.animation_test_time = Some(Duration::ZERO);
+    let output = Output::new(
+        "resize".into(),
+        PhysicalProperties {
+            size: (0, 0).into(),
+            subpixel: Subpixel::Unknown,
+            make: "test".into(),
+            model: "test".into(),
+        },
+    );
+    output.change_current_state(
+        Some(Mode {
+            size: (320, 240).into(),
+            refresh: 60_000,
+        }),
+        Some(Transform::Normal),
+        None,
+        None,
+    );
+    state.space.map_output(&output, (0, 0));
+    state.register_output(&output, "resize".into());
+    let (a, mut a_wire) = window(&mut state, &mut events, 0xffff0000);
+    let (b, mut b_wire) = window(&mut state, &mut events, 0xff00ff00);
+    let (c, mut c_wire) = window(&mut state, &mut events, 0xff0000ff);
+    let a_id = state.windows.ids()[&a];
+    let b_id = state.windows.ids()[&b];
+    let c_id = state.windows.ids()[&c];
+    let workspace = state.workspaces.workspace_for_window(a_id).unwrap();
+    state.focused_window = Some(a_id);
+    state.workspaces.focus_window(a_id).unwrap();
+    state.relayout();
+    state.animations_enabled = true;
+    for (_, record) in state.windows.records_mut() {
+        record.opening = None;
+    }
+    let set_width = |state: &mut Ferese, id, width| {
+        let ferese_core::WorkspaceLayout::Scrolling(layout) =
+            &mut state.workspaces.workspace_mut(workspace).unwrap().layout
+        else {
+            panic!()
+        };
+        layout.set_column_width(id, ColumnWidth::Fixed(width)).unwrap();
+        state.relayout();
+        state.display_handle.flush_clients().unwrap();
+    };
+    set_width(&mut state, b_id, 240.0);
+    let b_serial = ack_configure(&mut b_wire, 3);
+    dispatch(&mut events, &mut state);
+    assert!(state.windows.transaction(&b_id).is_some(), "ack alone must not release");
+    // This target uses the first column, independently of the pending later width.
+    let bounds = Rect::new(0.0, 0.0, 320.0, 240.0);
+    state
+        .workspaces
+        .center_window(a_id, bounds, state.gap_config, &state.window_constraints())
+        .unwrap();
+    state.relayout();
+    let before = state.viewport_animations[&workspace].current;
+    let held_size = state.windows.geometry(&b_id).unwrap().visual.current.width;
+    let held_world = state.windows.record(b_id).unwrap().world_x.unwrap().1;
+    state.advance_animations_at(Duration::from_millis(16), Duration::ZERO);
+    assert_ne!(
+        state.viewport_animations[&workspace].current, before,
+        "independent viewport stalled before delayed buffer commit"
+    );
+    assert_eq!(state.windows.geometry(&b_id).unwrap().visual.current.width, held_size);
+    assert_eq!(state.windows.record(b_id).unwrap().world_x.unwrap().1, held_world);
+    // BASELINE_REPRO_END: the stage above also runs against the reviewed base.
+    assert!(
+        !state
+            .presentation_dependencies
+            .viewport_blocked(workspace, &state.windows)
+    );
+    assert!(state.presentation_dependencies.reflow_blocked(b_id, &state.windows));
+    assert!(state.presentation_dependencies.reflow_blocked(c_id, &state.windows));
+    assert!(!state.presentation_dependencies.reflow_blocked(a_id, &state.windows));
+    let geometry = *state.windows.geometry(&b_id).unwrap();
+    let position = state.space.element_location(&b).unwrap();
+    assert_eq!(position.x, geometry.visual.current.x.round() as i32);
+    let point = (geometry.visual.current.x + 5.0, geometry.visual.current.y + 5.0).into();
+    let (hit, origin) = state.window_surface_under(point).unwrap();
+    assert_eq!(hit, *b.toplevel().unwrap().wl_surface());
+    assert!((origin.x - geometry.visual.current.x).abs() < 0.001);
+    let forecast = state.sample_frame(&output, Duration::from_millis(8));
+    let predicted = &forecast.windows[&b_id];
+    let mut viewport = state.viewport_animations[&workspace];
+    viewport.advance(
+        Duration::from_millis(8).mul_f64(state.animation_speed),
+        state.viewport_spring_config,
+    );
+    assert_eq!(
+        predicted.geometry.visual.current.x,
+        held_world.current - viewport.current
+    );
+    assert_eq!(predicted.geometry.visual.current.width, held_size);
+    assert_eq!(
+        predicted.presentation.bounds.current.x,
+        predicted.geometry.visual.current.x
+    );
+    assert_eq!(predicted.presentation.bounds.velocity.x, -viewport.velocity);
+    assert_eq!(
+        *state.windows.geometry(&b_id).unwrap(),
+        geometry,
+        "sampling mutated authoritative state"
+    );
+    let device = EGLDevice::enumerate().unwrap().last().expect("EGL device");
+    let display = unsafe { EGLDisplay::new(device).unwrap() };
+    let context = EGLContext::new(&display).unwrap();
+    let mut renderer = unsafe { GlesRenderer::new(context).unwrap() };
+    let mut display_texture =
+        Offscreen::<GlesTexture>::create_buffer(&mut renderer, Fourcc::Abgr8888, (320, 240).into()).unwrap();
+    let mut capture_texture =
+        Offscreen::<GlesTexture>::create_buffer(&mut renderer, Fourcc::Abgr8888, (320, 240).into()).unwrap();
+    // Offscreen fixture explicitly captures the existing native frame; production
+    // capture-before-commit is exercised separately in the privacy regression.
+    let snapshot =
+        crate::render::capture_resize_snapshot(&mut renderer, &b, b.geometry(), 1.0, 16 * 1024 * 1024).unwrap();
+    state.render.set_snapshot(b_id, snapshot.expect("native snapshot"));
+    app_id(&mut state, &b, "resize.secret");
+    state.refresh_capture_privacy();
+    state.advance_animations_at(Duration::from_millis(16), Duration::from_millis(16));
+    let actual = state.windows.geometry(&b_id).unwrap().visual.current;
+    let displayed = pixels(&mut state, &mut renderer, &output, false, &mut display_texture);
+    let at = ((actual.y.round() as usize + 5) * 320 + actual.x.round() as usize + 5) * 4;
+    assert_eq!(
+        &displayed[at..at + 4],
+        &[0, 255, 0, 255],
+        "live/snapshot pixels did not translate with geometry"
+    );
+    let captured = pixels(&mut state, &mut renderer, &output, true, &mut capture_texture);
+    assert!(
+        !captured.chunks_exact(4).any(|pixel| pixel == [0, 255, 0, 255]),
+        "translated protected snapshot leaked into capture"
+    );
+    assert!(state.render.snapshot(&b_id).is_some());
+    // A second slow client has an independent serial owner.
+    set_width(&mut state, c_id, 128.0);
+    ack_configure(&mut c_wire, 3);
+    dispatch(&mut events, &mut state);
+    assert!(state.windows.transaction(&c_id).is_some());
+    state.focused_window = Some(c_id);
+    state.workspaces.focus_window(c_id).unwrap();
+    // Centering a later column now genuinely uses both pending allocated widths.
+    state
+        .workspaces
+        .center_window(c_id, bounds, state.gap_config, &state.window_constraints())
+        .unwrap();
+    state.relayout();
+    assert!(
+        state
+            .presentation_dependencies
+            .viewport_blocked(workspace, &state.windows)
+    );
+    let frozen = state.viewport_animations[&workspace];
+    state.advance_animations_at(Duration::from_millis(16), Duration::from_millis(32));
+    assert_eq!(state.viewport_animations[&workspace], frozen);
+    // Supersede the acknowledged size, then commit the older acknowledgement.
+    set_width(&mut state, b_id, 96.0);
+    let latest = *state.windows.transaction(&b_id).unwrap();
+    assert!(!latest.accepts(Some(b_serial.into())));
+    request(&mut b_wire, 2, 1, &[6, 0, 0], None);
+    request(&mut b_wire, 2, 6, &[], None);
+    dispatch(&mut events, &mut state);
+    assert_eq!(
+        state.windows.transaction(&b_id).unwrap().serial(),
+        latest.serial(),
+        "obsolete commit released replacement"
+    );
+    ack_configure(&mut b_wire, 3);
+    dispatch(&mut events, &mut state);
+    assert!(
+        state.windows.transaction(&b_id).is_some(),
+        "latest ack without commit released resize"
+    );
+    state.focused_window = Some(a_id);
+    state.workspaces.focus_window(a_id).unwrap();
+    // Rapid reversal to the independent first-column target retires viewport waits.
+    state
+        .workspaces
+        .center_window(a_id, bounds, state.gap_config, &state.window_constraints())
+        .unwrap();
+    state.relayout();
+    assert!(
+        !state
+            .presentation_dependencies
+            .viewport_blocked(workspace, &state.windows)
+    );
+    let frozen = state.viewport_animations[&workspace].current;
+    state.advance_animations_at(Duration::from_millis(16), Duration::from_millis(48));
+    assert_ne!(state.viewport_animations[&workspace].current, frozen);
+    let client = b.toplevel().unwrap().wl_surface().client().unwrap();
+    let shm = client
+        .create_resource::<WlShm, (), Ferese>(&state.display_handle, 1, ())
+        .unwrap();
+    let mut resized = tempfile::tempfile().unwrap();
+    resized.write_all(&0xff00ff00u32.to_ne_bytes().repeat(32 * 48)).unwrap();
+    request(
+        &mut b_wire,
+        shm.id().protocol_id(),
+        0,
+        &[7, 32 * 48 * 4],
+        Some(resized.as_raw_fd()),
+    );
+    request(&mut b_wire, 7, 0, &[8, 0, 32, 48, 32 * 4, 0], None);
+    request(&mut b_wire, 3, 3, &[0, 0, 32, 48], None);
+    request(&mut b_wire, 2, 1, &[8, 0, 0], None);
+    request(&mut b_wire, 2, 6, &[], None);
+    dispatch(&mut events, &mut state);
+    assert_eq!(b.geometry().size.w, 32, "resized raster was not committed");
+    assert!(
+        state.windows.transaction(&b_id).is_none(),
+        "latest surface commit did not release"
+    );
+    assert!(
+        state.windows.transaction(&c_id).is_some(),
+        "one client released another owner"
+    );
+    // A hidden workspace must not impose its viewport wait on its replacement.
+    let other = state.workspaces.create_workspace();
+    let output_id = state.output_id(&output).unwrap();
+    state.output_workspaces.assign_workspace(output_id, other).unwrap();
+    state.workspaces.activate(other).unwrap();
+    state.relayout();
+    assert!(!state.presentation_dependencies.viewport_blocked(other, &state.windows));
+    state.output_workspaces.assign_workspace(output_id, workspace).unwrap();
+    state.workspaces.activate(workspace).unwrap();
+    state.focused_window = Some(a_id);
+    state.relayout();
+    request(&mut c_wire, 2, 1, &[0, 0, 0], None);
+    request(&mut c_wire, 2, 6, &[], None);
+    dispatch(&mut events, &mut state);
+    assert!(
+        state.windows.transaction(&c_id).is_none(),
+        "unmap kept a configure owner"
+    );
+    // Deliberately unresponsive final configure expires without charging the wait.
+    set_width(&mut state, b_id, 112.0);
+    ack_configure(&mut b_wire, 3);
+    dispatch(&mut events, &mut state);
+    assert!(state.windows.transaction(&b_id).is_some());
+    state.advance_animations_at(Duration::from_millis(300), Duration::from_secs(1));
+    assert!(state.windows.transaction(&b_id).is_none());
+    for tick in 1..=160 {
+        state.advance_animations_at(
+            Duration::from_millis(16),
+            Duration::from_secs(1) + Duration::from_millis(tick * 16),
+        );
+    }
+    assert!(
+        state.render.snapshot(&b_id).is_none(),
+        "resize snapshot outlived settled handoff"
+    );
+    // Aborting a preview must restore the original recipe, not append a
+    // reversal to the candidate recipe (oversized columns expose the difference).
+    state.animations_enabled = false;
+    set_width(&mut state, a_id, 400.0);
+    set_width(&mut state, b_id, 100.0);
+    state.focused_window = Some(a_id);
+    state.workspaces.focus_window(a_id).unwrap();
+    state
+        .workspaces
+        .center_window(a_id, bounds, state.gap_config, &state.window_constraints())
+        .unwrap();
+    state.relayout();
+    state.animations_enabled = true;
+    set_width(&mut state, b_id, 150.0);
+    ack_configure(&mut b_wire, 3);
+    dispatch(&mut events, &mut state);
+    assert!(
+        !state
+            .presentation_dependencies
+            .viewport_blocked(workspace, &state.windows)
+    );
+    state.preview_focus_swipe(Direction::Right, SwipeDirection::Left, 0.5);
+    assert!(state.focus_swipe.is_some());
+    assert!(
+        state
+            .presentation_dependencies
+            .viewport_blocked(workspace, &state.windows)
+    );
+    assert!(state.finish_focus_swipe(None));
+    assert!(
+        !state
+            .presentation_dependencies
+            .viewport_blocked(workspace, &state.windows),
+        "cancelled preview contaminated restored target"
+    );
+
+    // Two shrinking prefixes can jointly cross a page boundary although
+    // neither source width does so alone. A normal partial commit must rebuild
+    // the remaining graph immediately, without an explicit relayout.
+    state.animations_enabled = false;
+    state.advance_animations_at(Duration::ZERO, Duration::from_secs(5));
+    state.focused_window = Some(b_id);
+    state.workspaces.focus_window(b_id).unwrap();
+    let (d, mut d_wire) = window(&mut state, &mut events, 0xffffffff);
+    let d_id = state.windows.ids()[&d];
+    set_width(&mut state, a_id, 160.0);
+    set_width(&mut state, b_id, 160.0);
+    set_width(&mut state, d_id, 64.0);
+    state.focused_window = Some(d_id);
+    {
+        let WorkspaceLayout::Scrolling(layout) = &mut state.workspaces.workspace_mut(workspace).unwrap().layout else {
+            panic!()
+        };
+        layout.set_focus_strategy(ViewportFocusStrategy::Paged);
+        layout.focus(a_id).unwrap();
+        layout.focus(d_id).unwrap();
+    }
+    state.relayout();
+    state.animations_enabled = true;
+    set_width(&mut state, a_id, 64.0);
+    set_width(&mut state, b_id, 64.0);
+    ack_configure(&mut a_wire, 3);
+    ack_configure(&mut b_wire, 3);
+    dispatch(&mut events, &mut state);
+    assert!(
+        state
+            .presentation_dependencies
+            .viewport_blocked(workspace, &state.windows),
+        "joint page dependency was lost: layout={:?} a={:?} b={:?}",
+        state.workspaces.workspace(workspace).unwrap().layout,
+        state.windows.transaction(&a_id),
+        state.windows.transaction(&b_id)
+    );
+    request(&mut a_wire, 2, 1, &[6, 0, 0], None);
+    request(&mut a_wire, 2, 6, &[], None);
+    dispatch(&mut events, &mut state);
+    assert!(state.windows.transaction(&a_id).is_none());
+    assert!(state.windows.transaction(&b_id).is_some());
+    assert!(
+        !state
+            .presentation_dependencies
+            .viewport_blocked(workspace, &state.windows),
+        "partial commit failed to retire collective page wait"
+    );
+
+    // A sibling that commits early still shares the held source width when
+    // a stacked column is retargeted. Input ordering must not choose its source.
+    state.animations_enabled = false;
+    state.advance_animations_at(Duration::ZERO, Duration::from_secs(10));
+    {
+        let WorkspaceLayout::Scrolling(layout) = &mut state.workspaces.workspace_mut(workspace).unwrap().layout else {
+            panic!()
+        };
+        layout.move_into_column(d_id, b_id).unwrap();
+    }
+    set_width(&mut state, b_id, 100.0);
+    state.animations_enabled = true;
+    set_width(&mut state, b_id, 200.0);
+    ack_configure(&mut b_wire, 3);
+    ack_configure(&mut d_wire, 3);
+    dispatch(&mut events, &mut state);
+    request(&mut d_wire, 2, 1, &[6, 0, 0], None);
+    request(&mut d_wire, 2, 6, &[], None);
+    dispatch(&mut events, &mut state);
+    assert!(state.windows.transaction(&d_id).is_none());
+    set_width(&mut state, b_id, 150.0);
+    for id in [b_id, d_id] {
+        assert_eq!(
+            state.windows.transaction(&id).unwrap().column_width(),
+            Some((100.0, 150.0)),
+            "stacked replacement lost canonical presented source"
+        );
+    }
+    // Fullscreen geometry is output-owned. Keep its own configure barrier,
+    // but release it independently of a slow sibling in the same column.
+    state.set_window_fullscreen(d_id, true);
+    state.display_handle.flush_clients().unwrap();
+    ack_configure(&mut d_wire, 3);
+    dispatch(&mut events, &mut state);
+    assert!(
+        state.windows.transaction(&d_id).is_some(),
+        "fullscreen ack alone released its barrier"
+    );
+    let before = state.windows.geometry(&d_id).unwrap().visual.current;
+    state.advance_animations_at(Duration::from_millis(16), Duration::from_millis(10016));
+    assert_eq!(state.windows.geometry(&d_id).unwrap().visual.current, before);
+
+    request(&mut d_wire, 2, 1, &[6, 0, 0], None);
+    request(&mut d_wire, 2, 6, &[], None);
+    dispatch(&mut events, &mut state);
+    assert!(
+        state.windows.transaction(&d_id).is_none(),
+        "own fullscreen configure did not release after commit"
+    );
+    assert!(
+        state.windows.transaction(&b_id).is_some(),
+        "other tile must still be pending"
+    );
+    assert!(!state.presentation_dependencies.reflow_blocked(d_id, &state.windows));
+    assert!(state.windows.geometry(&d_id).unwrap().is_zooming());
+    // Consume the release tick without charging the preceding client wait.
+    state.advance_animations_at(Duration::ZERO, Duration::from_millis(10016));
+    state.advance_animations_at(Duration::from_millis(16), Duration::from_millis(10032));
+    assert_ne!(
+        state.windows.geometry(&d_id).unwrap().visual.current,
+        before,
+        "fullscreen zoom stayed held by an unrelated column resize after its own commit"
+    );
+
+    // Returning to the column needs its real reflow wait again, even after
+    // the returning client's own configure has committed.
+    state.set_window_fullscreen(d_id, false);
+    state.display_handle.flush_clients().unwrap();
+    ack_configure(&mut d_wire, 3);
+    request(&mut d_wire, 2, 1, &[6, 0, 0], None);
+    request(&mut d_wire, 2, 6, &[], None);
+    dispatch(&mut events, &mut state);
+    assert!(state.windows.transaction(&d_id).is_none());
+    assert!(state.windows.transaction(&b_id).is_some());
+    assert!(state.presentation_dependencies.reflow_blocked(d_id, &state.windows));
+    let returning = state.windows.geometry(&d_id).unwrap().visual.current;
+    state.advance_animations_at(Duration::from_millis(16), Duration::from_millis(10048));
+    assert_eq!(state.windows.geometry(&d_id).unwrap().visual.current, returning);
 }

@@ -111,6 +111,42 @@ impl Ferese {
         self.advance_animations(Instant::now());
         self.stacking_cache.invalidate();
         self.arrange_layers();
+        let source_column_widths = self
+            .windows
+            .records()
+            .filter_map(|(&id, record)| {
+                let layout = &self
+                    .workspaces
+                    .workspace(self.workspaces.workspace_for_window(id)?)?
+                    .layout;
+                let WorkspaceLayout::Scrolling(layout) = layout else {
+                    return None;
+                };
+                Some((
+                    id,
+                    record
+                        .resize
+                        .and_then(|transaction| transaction.column_width().map(|(source, _)| source))
+                        .or_else(|| {
+                            // A sibling may have committed while this column is still
+                            // held. Replacement configures must share that cohort's
+                            // presented source, rather than its latest allocated width.
+                            layout
+                                .columns()
+                                .iter()
+                                .find(|column| column.windows.contains(&id))
+                                .and_then(|column| {
+                                    column.windows.iter().find_map(|sibling| {
+                                        self.windows.transaction(sibling).and_then(|transaction| {
+                                            transaction.column_width().map(|(source, _)| source)
+                                        })
+                                    })
+                                })
+                        })
+                        .or_else(|| layout.allocated_column_width(id))?,
+                ))
+            })
+            .collect::<HashMap<_, _>>();
         let mut previous_scrolling_world_x = self.windows.take_world_positions();
         let pending_column_width_cycles = self.windows.take_column_width_requests();
         let outputs = self.space.outputs().cloned().collect::<Vec<_>>();
@@ -261,7 +297,7 @@ impl Ferese {
 
         self.unmap_invisible_windows(&visible);
 
-        let now = self.start_time.elapsed();
+        let now = self.presentation_now();
 
         placements.sort_by_key(|(_, id, ..)| self.window_stack.rank(*id));
 
@@ -408,7 +444,6 @@ impl Ferese {
                     && had_geometry
                     && self.animations_enabled
                 {
-                    self.paused_workspaces.extend(self.workspaces.workspace_for_window(id));
                     #[cfg(feature = "resize-metrics")]
                     self.resize_metrics.begin(
                         id,
@@ -419,12 +454,23 @@ impl Ferese {
                     self.windows.set_transaction(
                         id,
                         crate::resize_transaction::ResizeTransaction::new(serial, now)
-                            .with_source_geometry(window.geometry()),
+                            .with_source_geometry(window.geometry())
+                            .with_column_width(
+                                source_column_widths.get(&id).copied(),
+                                self.workspaces
+                                    .workspace_for_window(id)
+                                    .and_then(|workspace| self.workspaces.workspace(workspace))
+                                    .and_then(|workspace| match &workspace.layout {
+                                        WorkspaceLayout::Scrolling(layout) => layout.allocated_column_width(id),
+                                        _ => None,
+                                    }),
+                            ),
                     );
                 }
             }
         }
 
+        self.rebuild_presentation_dependencies();
         self.sync_window_stacking();
         self.retarget_overview();
         if !finalize {

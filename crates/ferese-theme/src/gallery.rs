@@ -1,5 +1,6 @@
 use cosmic::iced::advanced::widget::{Id, Operation, Tree, tree};
 use cosmic::iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, renderer};
+use cosmic::iced::border::Shape as BorderShape;
 use cosmic::iced::{Event, Length, Rectangle, Size, keyboard};
 use cosmic::{Element, Renderer, Theme};
 use ferese_theme_model::Appearance;
@@ -65,6 +66,8 @@ pub fn tile<M: Clone + 'static>(
 
 fn tile_style(palette: crate::Palette, selected: bool) -> cosmic::theme::Button {
     let style = move |focused: bool, hovered: bool| cosmic::widget::button::Style {
+        shape: Some(BorderShape::Continuous),
+        outline: None,
         background: Some(if hovered { palette.sidebar } else { palette.card }.into()),
         border_width: if selected { 2. } else { 0. },
         border_color: palette.accent,
@@ -395,9 +398,11 @@ impl<M: Clone> Widget<M, Theme, Renderer> for Radio<'_, M> {
                 renderer::Quad {
                     bounds: layout.bounds(),
                     border: cosmic::iced::Border {
+                        shape: BorderShape::Continuous,
                         color: style.text_color,
                         width: 2.,
                         radius: 10.into(),
+                        ..Default::default()
                     },
                     ..Default::default()
                 },

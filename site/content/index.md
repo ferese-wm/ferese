@@ -42,6 +42,7 @@ group windows, resize them and move between workspaces.
 - [Lock screen](locking.md): appearance, automatic locking, and display sleep.
 - [Screen sharing and recording](screen-sharing.md): share an app or display, or save a video.
 - [Desktop portals](portals.md): integration with applications.
+- [Animation model](animation-model.md): spring motion, geometry ownership, and resize presentation.
 
 Configure the desktop in Settings or edit `~/.config/ferese/config.kdl` directly.
 Changes apply live. Invalid edits leave the last working configuration in place.

@@ -1,4 +1,4 @@
-/// Radius of a concentric inset, in the same units as the outer radius.
+/// Radius of a circular inset. Squircle insets retain an `Outline` and its distance offset.
 pub fn inner_radius(outer: f32, padding: f32) -> f32 {
     (outer - padding).max(0.0)
 }

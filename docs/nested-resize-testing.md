@@ -34,3 +34,35 @@ up to about 200 ms.
 
 Repeat on the current build. A nested result does not establish direct-session
 resize or frame-pacing behavior.
+
+## Controlled slow client
+
+Build the compositor and control tool, then run on a Wayland host:
+
+```sh
+cargo build --release --locked -p ferese -p feresectl
+FERESE_TEST_RESIZE=1 FERESE_TEST_BINARY=target/release/ferese \
+  FERESE_TEST_CTL=target/release/feresectl \
+  python3 scripts/tests/test_resize_dependencies_isolated.py
+```
+
+The test creates a private nested desktop and two SHM clients. One acknowledges
+a resize immediately but withholds its new buffer until instructed. It checks
+that an independent first-column viewport target moves both windows together
+before the 300 ms deadline, while the slow client's raster and presented size
+stay held, then commits an actually resized raster. This is a state/coordinate
+check on the selected host renderer, not a smoothness or hardware benchmark.
+
+For deterministic commit, supersession, multiple-client, timeout, unmap,
+workspace, swipe-cancel, stacked-column, prediction, hit-testing, snapshot and
+capture privacy coverage without a host desktop:
+
+```sh
+cargo test --locked -p ferese resize_dependencies_protocol_and_pixels -- --ignored
+```
+
+That test requires an offscreen EGL device, including a software device. Layout
+and dependency unit tests run without EGL in the ordinary workspace test suite.
+Viewport dependencies retain at most 32 relative target recipes; a longer burst
+falls back to a conservative linked wait until commit, deadline, or an absolute
+retarget. Existing resize snapshots and their handoff lifetime are reused.

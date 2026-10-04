@@ -1,3 +1,4 @@
+use cosmic::iced::border::Shape as BorderShape;
 use cosmic::iced::{Background, Border, Color, Vector};
 use cosmic::widget::{button, container};
 use cosmic::{theme, widget};
@@ -66,6 +67,8 @@ pub fn text_button<'a, M: Clone + 'a>(
 
 pub fn switch<'a, M: Clone + 'a>(enabled: bool, palette: Palette) -> button::Button<'a, M> {
     let paint = move |focused| button::Style {
+        shape: Some(BorderShape::Continuous),
+        outline: None,
         background: None,
         text_color: Some(palette.text),
         icon_color: Some(palette.text),
@@ -100,6 +103,8 @@ pub fn navigation_style(p: Palette, selected: bool) -> theme::Button {
 
 pub fn settings_input(p: Palette) -> theme::TextInput {
     let appearance = move |focused: bool, hovered: bool| cosmic::widget::text_input::Appearance {
+        shape: Some(BorderShape::Continuous),
+        outline: None,
         background: mix(p.card, p.text, if hovered { 0.06 } else { 0.035 }).into(),
         border_radius: p.radius.min(7.).into(),
         border_width: 1.,
@@ -133,9 +138,11 @@ pub fn select<'a, M: 'a>(
     widget::container(content).class(theme::Container::custom(move |_| container::Style {
         background: Some(mix(p.card, p.text, 0.035).into()),
         border: Border {
+            shape: BorderShape::Continuous,
             width: 1.,
             color: mix(p.card, p.text, 0.18),
             radius: p.radius.min(7.).into(),
+            ..Default::default()
         },
         ..Default::default()
     }))
@@ -170,6 +177,8 @@ fn styled_button(p: Palette, selected: bool, navigation: bool, opacity: f32, foc
         };
 
         button::Style {
+            shape: Some(BorderShape::Continuous),
+            outline: None,
             background: Some(Background::Color(background)),
             text_color: Some(on),
             icon_color: Some(on),
@@ -208,6 +217,8 @@ pub fn authentication_button(palette: Palette) -> theme::Button {
             (crate::composite(palette.card, palette.background), palette.muted)
         };
         button::Style {
+            shape: Some(BorderShape::Continuous),
+            outline: None,
             background: Some(Background::Color(fill)),
             text_color: Some(foreground),
             icon_color: Some(foreground),
@@ -231,6 +242,8 @@ pub fn authentication_input(palette: Palette) -> theme::TextInput {
     let accent = palette.accent;
     let radius = palette.radius.min(10.);
     let appearance = move |focused: bool| widget::text_input::Appearance {
+        shape: Some(BorderShape::Continuous),
+        outline: None,
         background: Color::from_rgba(text.r, text.g, text.b, 0.045).into(),
         border_radius: radius.into(),
         border_width: 1.,
@@ -258,6 +271,8 @@ pub fn authentication_input(palette: Palette) -> theme::TextInput {
 
 pub fn lock_input(radius: f32, accent: cosmic::iced::Color, surface: cosmic::iced::Color) -> theme::TextInput {
     let appearance = move |focused: bool| widget::text_input::Appearance {
+        shape: Some(BorderShape::Continuous),
+        outline: None,
         background: cosmic::iced::Color::from_rgba(
             (surface.r + 1.) * 0.5,
             (surface.g + 1.) * 0.5,
@@ -299,6 +314,8 @@ pub fn shell_button(
     pressed: bool,
 ) -> button::Style {
     button::Style {
+        shape: Some(BorderShape::Continuous),
+        outline: None,
         text_color: Some(foreground),
         icon_color: Some(foreground),
         border_radius: radius.into(),
@@ -318,6 +335,7 @@ pub fn surface_appearance(background: Color, radius: f32) -> container::Style {
     container::Style {
         background: Some(Background::Color(background)),
         border: Border {
+            shape: BorderShape::Continuous,
             radius: radius.into(),
             ..Default::default()
         },
@@ -327,6 +345,8 @@ pub fn surface_appearance(background: Color, radius: f32) -> container::Style {
 
 pub fn notification_button(foreground: Color, hover: Color, radius: f32, filled: bool) -> theme::Button {
     let style = move |active: bool| button::Style {
+        shape: Some(BorderShape::Continuous),
+        outline: None,
         text_color: Some(foreground),
         icon_color: Some(foreground),
         background: (active || filled).then_some(Background::Color(hover)),
@@ -343,6 +363,8 @@ pub fn notification_button(foreground: Color, hover: Color, radius: f32, filled:
 
 pub fn filled_button(fill: Color, foreground: Color, radius: f32, opacity: f32) -> theme::Button {
     let paint = move |outline| button::Style {
+        shape: Some(BorderShape::Continuous),
+        outline: None,
         background: Some(Color { a: opacity, ..fill }.into()),
         text_color: Some(foreground),
         icon_color: Some(foreground),

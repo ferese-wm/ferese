@@ -4,7 +4,7 @@ pub(super) fn rounded_clip_program(
     resources: &mut RenderResources,
     renderer: &mut GlesRenderer,
 ) -> Option<RoundedClipPrograms> {
-    corner_program(resources, renderer, CornerShape::Circular)
+    corner_program(resources, renderer, CornerShape::Continuous)
 }
 
 pub(super) fn corner_program(

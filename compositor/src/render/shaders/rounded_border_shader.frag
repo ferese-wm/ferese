@@ -26,7 +26,7 @@ void main() {
 
 #ifdef CONTINUOUS_WINDOW_CORNERS
     // Inset the outer distance field along its normals, rather than shrinking
-    // the quartic's bounding box/radius and changing border thickness.
+    // the profile's bounding box/radius and changing border thickness.
     float inner_coverage = edge_coverage(signed_distance + border_width);
 #else
     vec2 inner_size = max(clip_rect.zw - vec2(2.0 * border_width), vec2(0.0));

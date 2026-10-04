@@ -69,6 +69,86 @@ impl Column {
     }
 }
 
+// The last calculation that selected the viewport target. Keep it separate
+// from pending focus requests so an unrelated relayout cannot lose provenance.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ViewportTarget {
+    columns: Vec<(Vec<WindowId>, f64)>,
+    inner: f64,
+    viewport_width: f64,
+    strategy: ViewportFocusStrategy,
+    start: f64,
+    request: ViewportRequest,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum ViewportRequest {
+    Reveal(usize),
+    WidthCycle(usize),
+    Slide(usize, usize),
+    Center(usize, Option<f64>),
+}
+
+impl ViewportTarget {
+    fn target(&self, replacements: &HashMap<usize, f64>, start: Option<f64>) -> f64 {
+        let start = start.unwrap_or(self.start);
+        let mut x = 0.0;
+        let positions = self
+            .columns
+            .iter()
+            .enumerate()
+            .map(|(index, (_, width))| {
+                let width = replacements.get(&index).copied().unwrap_or(*width);
+                let position = (x, width);
+                x += width + self.inner;
+                position
+            })
+            .collect::<Vec<_>>();
+        let mut layout = ScrollingLayout {
+            viewport_x: start,
+            focus_strategy: self.strategy,
+            ..Default::default()
+        };
+        match self.request {
+            ViewportRequest::Reveal(active) => layout.reveal_column(&positions, self.viewport_width, active),
+            ViewportRequest::WidthCycle(active) => {
+                layout.active_column = Some(active);
+                layout.retarget_after_width_cycle(&positions, self.viewport_width);
+            }
+            ViewportRequest::Slide(from, to) => {
+                let (last, width) = positions.last().copied().unwrap_or_default();
+                layout.viewport_x = (start + positions[to].0 - positions[from].0)
+                    .clamp(0.0, (last + width - self.viewport_width).max(0.0));
+            }
+            ViewportRequest::Center(active, maximum) => {
+                let width = maximum.map_or(positions[active].1, |maximum| positions[active].1.min(maximum));
+                layout.viewport_x = positions[active].0 + width / 2.0 - self.viewport_width / 2.0
+            }
+        }
+        layout.viewport_x
+    }
+
+    /// Re-evaluate the same target with pending allocated widths held back.
+    /// A start-relative request can also use the previous held target.
+    pub fn with_held_widths(&self, widths: &[(WindowId, f64, f64)], start: Option<f64>) -> f64 {
+        let replacements = widths
+            .iter()
+            .filter_map(|(window, source, target)| {
+                self.columns
+                    .iter()
+                    .position(|(windows, width)| windows.contains(window) && (*width - target).abs() < 0.001)
+                    .map(|index| (index, *source))
+            })
+            .collect::<HashMap<_, _>>();
+        self.target(&replacements, start)
+    }
+
+    pub fn uses_previous_target(&self) -> bool {
+        matches!(self.request, ViewportRequest::Slide(..))
+            || (matches!(self.request, ViewportRequest::Reveal(..)) && self.strategy == ViewportFocusStrategy::Minimal)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct ScrollingLayout {
     columns: Vec<Column>,
@@ -80,6 +160,8 @@ pub struct ScrollingLayout {
     swipe_focus_pending: Option<(WindowId, WindowId)>,
     width_cycle_pending: bool,
     last_viewport_width: Option<f64>,
+    allocated_widths: HashMap<WindowId, f64>,
+    viewport_basis: Option<ViewportTarget>,
 }
 
 impl Default for ScrollingLayout {
@@ -94,6 +176,8 @@ impl Default for ScrollingLayout {
             swipe_focus_pending: None,
             width_cycle_pending: false,
             last_viewport_width: None,
+            allocated_widths: HashMap::new(),
+            viewport_basis: None,
         }
     }
 }
@@ -135,6 +219,48 @@ impl ScrollingLayout {
 
     pub fn viewport_x(&self) -> f64 {
         self.viewport_x
+    }
+
+    pub fn allocated_column_width(&self, window: WindowId) -> Option<f64> {
+        self.allocated_widths.get(&window).copied()
+    }
+
+    /// Whether this target changes when the pending column width is held back.
+    /// Allocated widths, rather than cell-grid/native buffer sizes, own the strip.
+    pub fn viewport_depends_on_width(&self, window: WindowId, source: f64, target: f64) -> bool {
+        (source - target).abs() > 0.001
+            && self
+                .viewport_basis
+                .as_ref()
+                .map(|basis| basis.with_held_widths(&[(window, source, target)], None))
+                .is_some_and(|held| (held - self.viewport_x).abs() > 0.001)
+    }
+
+    pub fn viewport_target(&self) -> Option<&ViewportTarget> {
+        self.viewport_basis.as_ref()
+    }
+
+    fn record_viewport_basis(
+        &mut self,
+        positions: &[(f64, f64)],
+        inner: f64,
+        viewport_width: f64,
+        request: ViewportRequest,
+    ) {
+        let next = ViewportTarget {
+            columns: self
+                .columns
+                .iter()
+                .zip(positions)
+                .map(|(column, (_, width))| (column.windows.clone(), *width))
+                .collect(),
+            inner,
+            viewport_width,
+            strategy: self.focus_strategy,
+            start: self.viewport_x,
+            request,
+        };
+        self.viewport_basis = Some(next);
     }
 
     pub fn contains(&self, window: WindowId) -> bool {
@@ -313,6 +439,43 @@ impl ScrollingLayout {
         let viewport_center = bounds.x + bounds.width / 2.0;
         let window_center = rect.x + rect.width / 2.0;
         self.viewport_x += window_center - viewport_center;
+        let active = self.window_location(window).unwrap().0;
+        let inner = finite_nonnegative(gaps.inner);
+        let positions = self
+            .columns
+            .iter()
+            .scan(0.0, |x, column| {
+                let width = self.allocated_widths[&column.windows[0]];
+                let position = (*x, width);
+                *x += width + inner;
+                Some(position)
+            })
+            .collect::<Vec<_>>();
+        let viewport_width = self.last_viewport_width.unwrap();
+        self.record_viewport_basis(
+            &positions,
+            inner,
+            viewport_width,
+            ViewportRequest::Center(
+                active,
+                constraints
+                    .get(&window)
+                    .copied()
+                    .map(normalized_constraints)
+                    .unwrap_or_default()
+                    .max_width
+                    .map(|maximum| {
+                        maximum.max(
+                            constraints
+                                .get(&window)
+                                .copied()
+                                .map(normalized_constraints)
+                                .unwrap_or_default()
+                                .min_width,
+                        )
+                    }),
+            ),
+        );
         self.geometry_with_constraints(bounds, gaps, constraints, Some(window))?;
 
         Ok(self.viewport_x != before)
@@ -445,15 +608,35 @@ impl ScrollingLayout {
             column_positions.push((next_column_x, width));
             next_column_x += width + inner;
         }
+        self.allocated_widths = self
+            .columns
+            .iter()
+            .zip(&column_positions)
+            .flat_map(|(column, (_, width))| column.windows.iter().map(move |id| (*id, *width)))
+            .collect();
         let viewport_resized = self.last_viewport_width != Some(viewport_width);
         self.last_viewport_width = Some(viewport_width);
         if self.width_cycle_pending {
+            if let Some(active) = self.active_column {
+                self.record_viewport_basis(
+                    &column_positions,
+                    inner,
+                    viewport_width,
+                    ViewportRequest::WidthCycle(active),
+                );
+            }
             self.retarget_after_width_cycle(&column_positions, viewport_width);
             self.width_cycle_pending = false;
             self.reveal_pending = None;
             self.swipe_focus_pending = None;
         } else if let Some((previous, focused)) = self.swipe_focus_pending.take() {
             if let (Some((from, _)), Some((to, _))) = (self.window_location(previous), self.window_location(focused)) {
+                self.record_viewport_basis(
+                    &column_positions,
+                    inner,
+                    viewport_width,
+                    ViewportRequest::Slide(from, to),
+                );
                 let last_end = column_positions
                     .last()
                     .map(|(start, width)| start + width)
@@ -470,6 +653,12 @@ impl ScrollingLayout {
                     .flatten()
             });
             if let Some((column, _)) = reveal.and_then(|window| self.window_location(window)) {
+                self.record_viewport_basis(
+                    &column_positions,
+                    inner,
+                    viewport_width,
+                    ViewportRequest::Reveal(column),
+                );
                 self.reveal_column(&column_positions, viewport_width, column);
             }
         }
@@ -721,6 +910,121 @@ mod tests {
 
     fn window(id: u64) -> WindowId {
         WindowId(id)
+    }
+
+    #[test]
+    fn explicit_center_replays_maximum_even_when_only_held_width_crosses_it() {
+        let bounds = Rect::new(0.0, 0.0, 200.0, 100.0);
+        let gaps = GapConfig {
+            inner: 0.0,
+            outer: 0.0,
+            smart: false,
+        };
+        let id = WindowId(1);
+        let mut layout = ScrollingLayout::with_default_width(ColumnWidth::Fixed(100.0));
+        layout.insert(id, None).unwrap();
+        let constraints = HashMap::from([(
+            id,
+            SizeConstraints {
+                max_width: Some(200.0),
+                ..Default::default()
+            },
+        )]);
+        layout.center_window(id, bounds, gaps, &constraints).unwrap();
+        assert_eq!(layout.viewport_x(), -50.0);
+        assert_eq!(
+            layout
+                .viewport_target()
+                .unwrap()
+                .with_held_widths(&[(id, 300.0, 100.0)], None),
+            0.0
+        );
+        let constraints = HashMap::from([(
+            id,
+            SizeConstraints {
+                max_width: Some(40.0),
+                ..Default::default()
+            },
+        )]);
+        layout.set_column_width(id, ColumnWidth::Fixed(150.0)).unwrap();
+        layout.center_window(id, bounds, gaps, &constraints).unwrap();
+        assert!(!layout.viewport_depends_on_width(id, 100.0, 150.0));
+    }
+
+    #[test]
+    fn viewport_dependencies_follow_allocated_widths_and_target_derivation() {
+        let bounds = Rect::new(0.0, 0.0, 200.0, 100.0);
+        let gaps = GapConfig {
+            inner: 0.0,
+            outer: 0.0,
+            smart: false,
+        };
+        let a = WindowId(1);
+        let b = WindowId(2);
+        let c = WindowId(3);
+        for strategy in [
+            ViewportFocusStrategy::Minimal,
+            ViewportFocusStrategy::Center,
+            ViewportFocusStrategy::Paged,
+        ] {
+            let mut layout = ScrollingLayout::with_default_width(ColumnWidth::Fixed(100.0));
+            layout.set_focus_strategy(strategy);
+            layout.insert(a, None).unwrap();
+            layout.insert(b, Some(a)).unwrap();
+            layout.insert(c, Some(b)).unwrap();
+            layout
+                .geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(c))
+                .unwrap();
+            layout.set_column_width(b, ColumnWidth::Fixed(150.0)).unwrap();
+            layout
+                .geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(c))
+                .unwrap();
+            assert!(layout.viewport_depends_on_width(b, 100.0, 150.0), "{strategy:?}");
+            assert!(
+                !layout.viewport_depends_on_width(b, 150.0, 150.0),
+                "height-only size change"
+            );
+            // An unrelated relayout does not erase the last calculation.
+            layout
+                .geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(c))
+                .unwrap();
+            assert!(layout.viewport_depends_on_width(b, 100.0, 150.0));
+            layout.focus_and_reveal(a).unwrap();
+            layout
+                .geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(a))
+                .unwrap();
+            assert!(
+                !layout.viewport_depends_on_width(b, 100.0, 150.0),
+                "independent reversal {strategy:?}"
+            );
+            layout.center_window(b, bounds, gaps, &HashMap::new()).unwrap();
+            assert!(
+                layout.viewport_depends_on_width(b, 100.0, 150.0),
+                "explicit centering {strategy:?}"
+            );
+            assert!(
+                !layout.viewport_depends_on_width(b, 150.0, 100.0),
+                "obsolete width generation"
+            );
+        }
+        let mut layout = ScrollingLayout::with_default_width(ColumnWidth::Fixed(100.0));
+        layout.insert(a, None).unwrap();
+        layout.insert(b, Some(a)).unwrap();
+        layout.insert(c, Some(b)).unwrap();
+        let constraints = HashMap::from([(
+            b,
+            SizeConstraints {
+                min_width: 150.0,
+                max_width: Some(40.0),
+                ..Default::default()
+            },
+        )]);
+        let result = layout
+            .geometry_with_constraints(bounds, gaps, &constraints, Some(c))
+            .unwrap();
+        assert_eq!(layout.allocated_column_width(b), Some(150.0));
+        assert_eq!(result.geometry[&b].width, 150.0, "minimum wins inconsistent maximum");
+        assert!(layout.viewport_depends_on_width(b, 100.0, 150.0));
     }
 
     #[test]

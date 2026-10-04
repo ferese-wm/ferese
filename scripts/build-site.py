@@ -17,6 +17,7 @@ PAGES = [
     ('why-ferese', 'Why Ferese', ROOT / 'docs/why-ferese.md'),
     ('installation', 'Installation', ROOT / 'docs/installation.md'),
     ('configuration', 'Configuration', ROOT / 'docs/configuration.md'),
+    ('animation-model', 'Animation model', ROOT / 'docs/animation-model.md'),
     ('shortcuts', 'Shortcuts and gestures', ROOT / 'docs/shortcuts.md'),
     ('locking', 'Lock screen', ROOT / 'docs/locking.md'),
     ('screen-sharing', 'Screen sharing', ROOT / 'docs/screen-sharing.md'),
@@ -89,7 +90,7 @@ for page_number, (slug, title, source) in enumerate(PAGES):
     search_index.extend(sections)
     body = md.renderer.render(tokens, md.options, {})
     body = body.replace('<table>', '<div class="table-scroll" tabindex="0" role="region" aria-label="Reference table"><table>').replace('</table>', '</table></div>')
-    navigation = ''.join(f'<a href="{s}.html"' + (' aria-current="page"' if s == slug else '') + f'>{escape(t)}</a>' for s, t, _ in PAGES)
+    navigation = ''.join(f'<a href="{s}.html"' + (' aria-current="page"' if s == slug else '') + f'>{escape(t)}</a>' for s, t, _ in PAGES if s != 'animation-model')
     contents = ''.join(f'<a href="#{anchor}">{escape(heading)}</a>' for anchor, heading in toc)
     pager = ''
     if page_number:

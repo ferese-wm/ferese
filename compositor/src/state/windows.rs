@@ -432,7 +432,7 @@ impl Ferese {
         self.focus_history.remove(id);
         #[cfg(feature = "resize-metrics")]
         self.resize_metrics
-            .end(id, self.start_time.elapsed(), crate::resize_metrics::End::Cancelled);
+            .end(id, self.presentation_now(), crate::resize_metrics::End::Cancelled);
         self.render.remove_window(id);
         self.capture_render.remove_window(id);
         self.window_stack.remove(id);
@@ -554,11 +554,12 @@ impl Ferese {
         {
             #[cfg(feature = "resize-metrics")]
             {
-                self.measure_resize_pauses(self.start_time.elapsed());
+                self.measure_resize_pauses(self.presentation_now());
                 self.resize_metrics
-                    .end(id, self.start_time.elapsed(), crate::resize_metrics::End::Commit);
+                    .end(id, self.presentation_now(), crate::resize_metrics::End::Commit);
             }
             self.windows.clear_transaction(&id);
+            self.release_presentation_dependencies();
         }
 
         let Some(size) = client_size(window) else {
@@ -611,7 +612,7 @@ impl Ferese {
                 self.windows.set_geometry(id, WindowGeometry::new(rect, Some(size)));
                 #[cfg(feature = "resize-metrics")]
                 self.resize_metrics
-                    .end(id, self.start_time.elapsed(), crate::resize_metrics::End::Cancelled);
+                    .end(id, self.presentation_now(), crate::resize_metrics::End::Cancelled);
                 self.windows.clear_transaction(&id);
                 self.relayout();
             }
@@ -650,7 +651,7 @@ impl Ferese {
                 self.windows.set_geometry(id, WindowGeometry::new(rect, Some(size)));
                 #[cfg(feature = "resize-metrics")]
                 self.resize_metrics
-                    .end(id, self.start_time.elapsed(), crate::resize_metrics::End::Cancelled);
+                    .end(id, self.presentation_now(), crate::resize_metrics::End::Cancelled);
                 self.windows.clear_transaction(&id);
                 self.render.clear_snapshot(&id);
                 self.relayout();
