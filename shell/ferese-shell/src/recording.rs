@@ -2,7 +2,7 @@
 //! Encoding and portal negotiation run in the separate ferese-record process.
 use std::io::{BufRead, BufReader, Read};
 use std::path::PathBuf;
-use std::process::{ChildStdin, Command, Stdio};
+use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -94,32 +94,11 @@ impl Recorder {
         {
             Ok(mut child) => {
                 self.control = child.stdin.take();
-                let output = child.stdout.take().unwrap();
                 let (send, receive) = tokio::sync::mpsc::channel(8);
                 self.updates = Some(Events(Arc::new(tokio::sync::Mutex::new(receive))));
                 self.state = State::Selecting;
 
-                std::thread::spawn(move || {
-                    let mut output = BufReader::new(output);
-
-                    loop {
-                        let mut line = String::new();
-                        match output.by_ref().take(65537).read_line(&mut line) {
-                            Ok(0) | Err(_) => break,
-                            Ok(_) if line.len() > 65536 => break,
-                            Ok(_) => {
-                                if let Ok(update) = serde_json::from_str::<Update>(&line)
-                                    && send.blocking_send(Event::Update(update)).is_err()
-                                {
-                                    break;
-                                }
-                            }
-                        }
-                    }
-
-                    let _ = child.wait();
-                    let _ = send.blocking_send(Event::Exited);
-                });
+                std::thread::spawn(move || read_events(child, send));
             }
             Err(error) => {
                 let message = format!("Cannot start recorder: {error}");
@@ -209,6 +188,31 @@ impl Recorder {
     }
 }
 
+fn read_events(mut child: Child, send: tokio::sync::mpsc::Sender<Event>) {
+    let mut output = BufReader::new(child.stdout.take().expect("piped recorder output"));
+
+    loop {
+        let mut line = String::new();
+        match output.by_ref().take(65537).read_line(&mut line) {
+            Ok(0) | Err(_) => break,
+            Ok(_) if line.len() > 65536 => break,
+            Ok(_) => {
+                if let Ok(update) = serde_json::from_str::<Update>(&line)
+                    && send.blocking_send(Event::Update(update)).is_err()
+                {
+                    break;
+                }
+            }
+        }
+    }
+
+    // A rejected status line may leave the child blocked writing into stdout.
+    // Close our reader before waiting so that writer can observe the disconnect.
+    drop(output);
+    let _ = child.wait();
+    let _ = send.blocking_send(Event::Exited);
+}
+
 // Use the normal notification center for results, without an extra recording menu.
 fn notify(title: &'static str, body: String) {
     std::thread::spawn(move || {
@@ -247,6 +251,37 @@ fn notify(title: &'static str, body: String) {
 mod tests {
     use super::*;
     use cosmic::iced::futures::{FutureExt, StreamExt};
+
+    #[test]
+    fn oversized_status_closes_stdout_before_waiting_for_exit() {
+        let child = Command::new("head")
+            .args(["-c", "16777216", "/dev/zero"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+        let (send, mut receive) = tokio::sync::mpsc::channel(8);
+        let (done_send, done_receive) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            read_events(child, send);
+            done_send.send(()).unwrap();
+        });
+        let done = done_receive.recv_timeout(Duration::from_secs(2));
+
+        if done.is_err() {
+            // Reap a stuck test child before reporting a failure. The reader
+            // still owns Child, so this PID cannot have been reused.
+            unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
+        }
+
+        worker.join().unwrap();
+        assert!(
+            done.is_ok(),
+            "reader kept the output pipe open while waiting for a blocked writer"
+        );
+        assert!(matches!(receive.try_recv(), Ok(Event::Exited)));
+    }
 
     fn update(state: &str, path: Option<PathBuf>) -> Event {
         Event::Update(Update {
