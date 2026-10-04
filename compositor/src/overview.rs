@@ -16,7 +16,7 @@ use crate::Ferese;
 const OVERVIEW_MARGIN: f64 = 48.0;
 const OVERVIEW_GAP: f64 = 40.0;
 // Applied after the configured animation speed, in both live and predicted motion.
-const OVERVIEW_MOTION_SPEED: f64 = 0.6;
+pub(crate) const OVERVIEW_MOTION_SPEED: f64 = 0.6;
 const WORKSPACE_CARD_GAP: f64 = 8.0;
 const MAX_PREVIEW_SCALE: f64 = 0.82;
 
@@ -804,11 +804,15 @@ impl Ferese {
                 return true;
             };
 
-            if self
-                .output_workspaces
-                .switch_workspace(output_id, card.workspace)
-                .is_ok()
+            // Consume idle time before creating the new slide. Subsequent
+            // clicks then retarget the motion currently visible on this output.
+            self.advance_animations(std::time::Instant::now());
+            let previous = self.output_workspaces.active_workspace(output_id);
+            if let Ok(
+                ferese_core::WorkspaceSwitch::Activated(owner) | ferese_core::WorkspaceSwitch::FocusedExisting(owner),
+            ) = self.output_workspaces.switch_workspace(output_id, card.workspace)
             {
+                self.update_workspace_slide(output_id, owner, previous, card.workspace, None);
                 // Existing monitor ownership wins; never steal another output's workspace.
                 self.restore_output_focus();
                 self.overview.strip_offsets.clear();
@@ -881,22 +885,30 @@ impl Ferese {
                 }
                 continue;
             }
-            let Some(workspace) = self.workspaces.workspace(workspace) else {
-                continue;
-            };
-            let windows = workspace
-                .layout
-                .window_ids()
-                .chain(workspace.floating.iter().copied())
-                .filter_map(|id| {
-                    let normal = self.windows.geometry(&id)?.visual.current;
-                    Some((id, normal))
-                })
-                .collect::<Vec<_>>();
+            let mut visible = vec![workspace];
+            let sliding = self.workspace_slide_workspaces(output_id).collect::<Vec<_>>();
+            visible.extend(sliding.iter().copied().filter(|id| *id != workspace));
+            for workspace in visible {
+                let Some(workspace) = self.workspaces.workspace(workspace) else {
+                    continue;
+                };
+                let windows = workspace
+                    .layout
+                    .window_ids()
+                    .chain(workspace.floating.iter().copied())
+                    .filter_map(|id| {
+                        let normal = self.windows.geometry(&id)?.visual.current;
+                        Some((id, normal))
+                    })
+                    .collect::<Vec<_>>();
 
-            for (id, target) in overview_layout(window_area(bounds), &windows) {
-                let normal = self.windows.geometry(&id).unwrap().visual.current;
-                targets.insert(id, (normal, target));
+                for (id, target) in overview_layout(window_area(bounds), &windows) {
+                    let normal = self.windows.geometry(&id).unwrap().visual.current;
+                    // Incoming grids start at their overview size. Translation
+                    // belongs to the workspace slide, not a second desktop zoom.
+                    let source = if !sliding.is_empty() { target } else { normal };
+                    targets.insert(id, (source, target));
+                }
             }
         }
 

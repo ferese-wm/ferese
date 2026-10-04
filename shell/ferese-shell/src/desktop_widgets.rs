@@ -4,6 +4,7 @@ use super::{
     configured_font, container, destroy_layer_surface, format_bar_time, motion, note_store, row, set_anchor,
     set_margin, stacked_clock_digits, text, theme, window,
 };
+use cosmic::iced::border::Shape as BorderShape;
 
 impl FereseShell {
     pub(super) fn flush_note_changes(&mut self) -> Task<Message> {
@@ -398,6 +399,7 @@ impl FereseShell {
             .class(theme::Container::custom(move |_| container::Style {
                 background,
                 border: Border {
+                    shape: BorderShape::Continuous,
                     radius: radius.into(),
                     ..Default::default()
                 },
@@ -613,6 +615,7 @@ impl FereseShell {
             .class(theme::Container::custom(move |_| container::Style {
                 background,
                 border: Border {
+                    shape: BorderShape::Continuous,
                     radius: radius.into(),
                     ..Default::default()
                 },

@@ -44,7 +44,11 @@ float corner_nearest(vec2 query, float t, vec2 a, vec2 b, vec2 c, vec2 d) {
         vec2 error = point - query;
         float speed_squared = dot(tangent, tangent);
         float denominator = max(speed_squared + dot(error, acceleration), speed_squared * 0.25);
-        t = clamp(t - clamp(dot(error, tangent) / denominator, -0.25, 0.25), 0.0, 1.0);
+        float next = clamp(t - clamp(dot(error, tangent) / denominator, -0.25, 0.25), 0.0, 1.0);
+        if (next == t) {
+            break;
+        }
+        t = next;
     }
 
     return t;
@@ -71,13 +75,23 @@ float rounded_rect_distance(vec2 point, vec4 rect, float radius) {
         return -min(inset.x, inset.y);
     }
 
-    vec2 query = inset / radius;
+    // Reflect onto the first half of the symmetric corner. The opposite
+    // shoulder cannot be nearer than its reflection, so omit segment 2.
+    vec2 query = vec2(min(inset.x, inset.y), max(inset.x, inset.y)) / radius;
     float best_squared = 1.0e20;
     float side = 1.0;
 
-    for (int segment = 0; segment < 3; segment++) {
+    for (int segment = 0; segment < 2; segment++) {
         vec2 a, b, c, d;
         corner_controls(segment, blend, a, b, c, d);
+        // The cubic stays inside its control hull. Reject only when even
+        // that hull's box cannot improve the closest point found so far.
+        vec2 low = min(min(a, b), min(c, d));
+        vec2 high = max(max(a, b), max(c, d));
+        vec2 delta = max(max(low - query, query - high), 0.0);
+        if (dot(delta, delta) > best_squared) {
+            continue;
+        }
 
         for (int seed = 0; seed < 2; seed++) {
             float t = corner_nearest(query, float(seed), a, b, c, d);

@@ -516,7 +516,14 @@ impl Ferese {
         true
     }
 
-    pub(super) fn update_workspace_slide(
+    pub(crate) fn workspace_slide_workspaces(&self, output: OutputId) -> impl Iterator<Item = WorkspaceId> + '_ {
+        self.workspace_slides
+            .get(&output)
+            .into_iter()
+            .flat_map(|slide| slide.items.iter().map(|item| item.workspace))
+    }
+
+    pub(crate) fn update_workspace_slide(
         &mut self,
         requested_output: OutputId,
         owner: OutputId,
@@ -553,7 +560,13 @@ impl Ferese {
                 .collect::<Vec<_>>();
             let from = ids.iter().position(|id| *id == from)?;
             let to = ids.iter().position(|id| *id == workspace)?;
-            Some(if to > from {
+            Some(if self.overview.is_active() {
+                if to > from {
+                    SwipeDirection::Left
+                } else {
+                    SwipeDirection::Right
+                }
+            } else if to > from {
                 SwipeDirection::Up
             } else {
                 SwipeDirection::Down
@@ -563,10 +576,15 @@ impl Ferese {
             && let (Some(from), Some(direction)) = (previous, slide_direction)
             && from != workspace
             && self.animations_enabled
-            && !self.overview.is_presenting()
+            && (!self.overview.is_presenting() || self.overview.is_active())
         {
             self.last_animation_tick = Instant::now();
             let mut slide = WorkspaceSlide::new(previous_slide, from, workspace, direction);
+            slide.speed = if self.overview.is_active() {
+                crate::overview::OVERVIEW_MOTION_SPEED
+            } else {
+                1.0
+            };
             slide.spring = SpringConfig {
                 position_tolerance: 0.00001,
                 velocity_tolerance: 0.00001,

@@ -1,3 +1,4 @@
+use cosmic::iced::border::Shape as BorderShape;
 use cosmic::iced::{Alignment, Background, Border, Rectangle, alignment};
 use cosmic::widget::{button, container, row};
 use cosmic::{Element, theme};
@@ -82,6 +83,7 @@ impl FereseShell {
                     move |_| container::Style {
                         background: Some(Background::Color(foreground)),
                         border: Border {
+                            shape: BorderShape::Continuous,
                             radius: motion::radius(2.0).into(),
                             ..Default::default()
                         },

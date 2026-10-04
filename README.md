@@ -25,7 +25,7 @@ Ferese combines a window manager and desktop shell with one configuration.
 - [Continuum motion](docs/configuration.md#animations): interruptible springs, gesture momentum and motion settings shared by the compositor and shell
 - Multiple monitors with fractional scaling and automatic refresh-rate switching on low battery
 - Themes, wallpapers and blur that update live, with Light/Dark/Auto modes and custom KDL themes
-- Squircle window corners with matching borders and shadows
+- Squircle window and shell corners with matching borders, shadows and blur masks
 - Desktop widgets, including a clock and sticky notes
 - Screenshots with annotation, screen sharing and built-in recording
 - A built-in lock screen and authentication dialogs

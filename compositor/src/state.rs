@@ -209,6 +209,7 @@ struct WorkspaceSlideItem {
 
 #[derive(Clone)]
 struct WorkspaceSlide {
+    speed: f64,
     items: Vec<WorkspaceSlideItem>,
     spring: SpringConfig,
     held_progress: Option<f64>,
@@ -256,6 +257,7 @@ impl WorkspaceSlide {
         }
 
         Self {
+            speed: 1.0,
             items,
             spring: SpringConfig {
                 stiffness: 320.0,
@@ -274,6 +276,7 @@ impl WorkspaceSlide {
     }
 
     fn sample(&self, item: &WorkspaceSlideItem, delta: Duration) -> (SlideOffset, SlideOffset) {
+        let delta = delta.mul_f64(self.speed);
         if let Some(progress) = self.held_progress {
             return (item.start.between(item.target, progress), item.velocity);
         }
@@ -295,8 +298,8 @@ impl WorkspaceSlide {
                 y: y.current,
             },
             SlideOffset {
-                x: x.velocity,
-                y: y.velocity,
+                x: x.velocity * self.speed,
+                y: y.velocity * self.speed,
             },
         )
     }
@@ -335,6 +338,7 @@ impl WorkspaceSlide {
     }
 
     fn advance(&mut self, delta: Duration) -> bool {
+        let delta = delta.mul_f64(self.speed);
         if self.held_progress.is_some() {
             return true;
         }
@@ -1145,6 +1149,26 @@ impl ClientData for ClientState {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn overview_slide_prediction_uses_the_same_clock_as_live_motion() {
+        let mut slide = WorkspaceSlide::new(None, WorkspaceId(1), WorkspaceId(2), SwipeDirection::Left);
+        slide.speed = crate::overview::OVERVIEW_MOTION_SPEED;
+        for delta in [
+            Duration::from_millis(8),
+            Duration::from_millis(100),
+            Duration::from_secs(2),
+        ] {
+            let mut advanced = slide.clone();
+            advanced.advance(delta);
+            for (item, after) in slide.items.iter().zip(&advanced.items) {
+                let (position, velocity) = slide.sample(item, delta);
+                assert_eq!(position, after.start);
+                assert_eq!(velocity.x, after.velocity.x * slide.speed);
+                assert_eq!(velocity.y, after.velocity.y * slide.speed);
+            }
+        }
+    }
+
     #[test]
     fn slide_item_sampling_matches_advance_without_mutating_the_slide() {
         let mut slide = WorkspaceSlide::new(None, WorkspaceId(1), WorkspaceId(2), SwipeDirection::Up);

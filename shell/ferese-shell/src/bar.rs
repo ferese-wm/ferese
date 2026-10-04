@@ -2,6 +2,7 @@ use super::{
     Background, BarMetrics, Border, Color, Element, FereseShell, Length, Message, ShellSnapshot, ShellTheme, alignment,
     bar_icon, button, color, color_with_opacity, container, control, motion, row, status_ui, text, theme, window,
 };
+use cosmic::iced::border::Shape as BorderShape;
 
 impl FereseShell {
     pub(super) fn output_for_bar(&self, id: window::Id) -> Option<&control::OutputSnapshot> {
@@ -327,9 +328,11 @@ pub(super) fn workspace_selector_style(
             None
         },
         border: Border {
+            shape: BorderShape::Continuous,
             color: color_with_opacity(shell_theme.accent, 0.55),
             width: if active_elsewhere { 1.0 } else { 0.0 },
             radius: shell_theme.material_radius.min(14.0).into(),
+            ..Default::default()
         },
         ..Default::default()
     }
@@ -350,9 +353,11 @@ pub(super) fn bar_group_style(theme: ShellTheme) -> container::Style {
     container::Style {
         background: Some(Background::Color(color_with_opacity(theme.border, 0.25))),
         border: Border {
+            shape: BorderShape::Continuous,
             color: color(theme.border),
             width: 1.0,
             radius: theme.material_radius.min(16.0).into(),
+            ..Default::default()
         },
         ..Default::default()
     }

@@ -1,4 +1,5 @@
 use cosmic::iced::Color;
+use cosmic::iced::border::Shape as BorderShape;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Palette {
@@ -68,8 +69,9 @@ impl Palette {
             .text_tint(rgba(self.text).color)
             .accent(rgba(self.accent).color)
             .build();
+
         crate::apply(&mut native, self.on_accent);
-        cosmic::Theme::custom(std::sync::Arc::new(native))
+        cosmic::Theme::custom(std::sync::Arc::new(native)).corner_shape(BorderShape::Continuous)
     }
 
     pub fn application_style(self, background: Color) -> cosmic::iced::theme::Style {
@@ -135,7 +137,9 @@ mod tests {
                 resolved.accessibility.increase_contrast = high_contrast;
                 let palette = Palette::from_resolved(&resolved);
                 assert_eq!(palette.high_contrast, high_contrast);
-                assert_eq!(palette.native_theme().cosmic().is_high_contrast, high_contrast);
+                let native = palette.native_theme();
+                assert_eq!(native.cosmic().is_high_contrast, high_contrast);
+                assert_eq!(native.corner_shape, BorderShape::Continuous);
             }
         }
     }

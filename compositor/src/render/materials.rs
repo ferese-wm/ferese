@@ -428,7 +428,7 @@ pub(super) fn material_program(
     resources: &mut RenderResources,
     renderer: &mut GlesRenderer,
 ) -> Option<MaterialProgram> {
-    material_program_for_corners(resources, renderer, CornerShape::Circular)
+    material_program_for_corners(resources, renderer, CornerShape::Continuous)
 }
 
 pub(super) fn material_program_for_corners(

@@ -1,3 +1,4 @@
+use cosmic::iced::border::Shape as BorderShape;
 use cosmic::iced::{Alignment, Background, Border, Color, Length};
 use cosmic::widget::{button, column, container, row, slider};
 use cosmic::{Element, theme};
@@ -32,6 +33,7 @@ pub(super) fn status_summary<'a>(
                 ..badge_color
             })),
             border: Border {
+                shape: BorderShape::Continuous,
                 radius: motion::radius(16.0).into(),
                 ..Default::default()
             },
@@ -79,6 +81,7 @@ pub(super) fn level_meter(value: u8, foreground: Color, opacity: f32) -> Element
                     }
                 })),
                 border: Border {
+                    shape: BorderShape::Continuous,
                     radius: motion::radius(2.5).into(),
                     ..Default::default()
                 },

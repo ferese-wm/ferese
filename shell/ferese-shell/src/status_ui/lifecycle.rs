@@ -9,6 +9,16 @@ use super::{Menu, OpenMenu};
 use crate::status::Action;
 use crate::{FereseShell, Message};
 
+impl OpenMenu {
+    fn switch_panel(&mut self, kind: Menu, settings: crate::motion::Settings, now: Instant) {
+        self.kind = kind;
+        // Keep the Wayland popup and its material binding, but give the new
+        // panel its own entrance instead of reusing the settled old panel.
+        self.motion = crate::motion::PopupMotion::new(settings);
+        self.motion.begin(now);
+    }
+}
+
 impl FereseShell {
     pub fn open_menu(&mut self, kind: Menu, anchor: Rectangle<i32>) -> Task<Message> {
         if self.menu.as_ref().is_some_and(|menu| menu.kind == kind) {
@@ -77,8 +87,7 @@ impl FereseShell {
             ..Default::default()
         };
         if let Some(menu) = &mut self.menu {
-            menu.kind = kind;
-            menu.motion.retarget(1.0, Instant::now());
+            menu.switch_panel(kind, self.config.animations, Instant::now());
             return Task::batch([
                 notifications,
                 cosmic::iced::platform_specific::shell::commands::popup::reposition(menu.id, positioner),
@@ -182,5 +191,94 @@ impl FereseShell {
             }
             _ => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::motion::{PopupMotion, Settings};
+    use std::time::Duration;
+
+    #[test]
+    fn switching_panels_replays_entrance_on_the_same_surface() {
+        let now = Instant::now();
+        let settings = Settings::default();
+        let mut menu = OpenMenu {
+            id: window::Id::unique(),
+            kind: Menu::Battery,
+            motion: PopupMotion::new(settings),
+            effects: None,
+            regions: Default::default(),
+        };
+        let id = menu.id;
+        let regions = menu.regions.clone();
+        menu.motion.begin(now);
+        for (index, kind) in [
+            Menu::Network,
+            Menu::Bluetooth,
+            Menu::Audio,
+            Menu::Calendar,
+            Menu::Recording,
+            Menu::Notifications,
+            Menu::System,
+            Menu::Battery,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let at = now + Duration::from_secs(10 * (index as u64 + 1));
+            assert_eq!(menu.motion.progress_at(at), 1.0);
+            menu.switch_panel(kind, settings, at);
+            assert_eq!(menu.kind, kind);
+            assert_eq!(menu.id, id);
+            assert!(std::sync::Arc::ptr_eq(&regions, &menu.regions));
+            assert_eq!(menu.motion.progress_at(at), 0.0);
+            assert!(menu.motion.frame_active(at));
+            let progress = menu.motion.progress_at(at + Duration::from_millis(30));
+            assert!(progress > 0.0 && progress < 1.0);
+        }
+        let at = now + Duration::from_secs(90);
+        menu.motion.retarget(0.0, at);
+        menu.switch_panel(Menu::Network, settings, at + Duration::from_millis(30));
+        assert!(!menu.motion.closing());
+        assert!(menu.motion.frame_active(at + Duration::from_millis(30)));
+    }
+
+    #[test]
+    fn panel_switch_respects_reduced_motion_and_speed() {
+        let now = Instant::now();
+        let mut menu = OpenMenu {
+            id: window::Id::unique(),
+            kind: Menu::Battery,
+            motion: PopupMotion::new(Settings::default()),
+            effects: None,
+            regions: Default::default(),
+        };
+        for settings in [
+            Settings {
+                reduced_motion: true,
+                ..Default::default()
+            },
+            Settings {
+                enabled: false,
+                ..Default::default()
+            },
+        ] {
+            menu.switch_panel(Menu::Network, settings, now);
+            assert_eq!(menu.motion.progress_at(now), 1.0);
+            assert!(!menu.motion.frame_active(now));
+        }
+        menu.switch_panel(Menu::Battery, Settings::default(), now);
+        let normal = menu.motion.progress_at(now + Duration::from_millis(30));
+        menu.switch_panel(
+            Menu::Network,
+            Settings {
+                speed: 0.5,
+                ..Default::default()
+            },
+            now,
+        );
+        assert_eq!(menu.motion.progress_at(now + Duration::from_millis(60)), normal);
     }
 }

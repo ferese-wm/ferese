@@ -26,11 +26,12 @@ license = "MIT"
 rust-version = "1.95"
 
 [workspace.dependencies]
+ferese-shape = { git = "https://github.com/ferese-wm/ferese-shape", tag = "v0.1.0" }
 bitflags = "2.9.4"
 calloop = { version = "0.14.4", features = ["signals"] }
 jiff = "0.2.37"
 libc = "0.2.176"
-libcosmic = { git = "https://github.com/pop-os/libcosmic", rev = "03d7dcb832bc6d15bc1bb07327a1aa426b2d5bc0", default-features = false, features = ["multi-window", "tokio", "wayland"] }
+libcosmic = { git = "https://github.com/ferese-wm/libcosmic", tag = "ferese-v0.1.0", default-features = false, features = ["multi-window", "tokio", "wayland"] }
 smithay = { version = "0.7.0", default-features = false, features = [
     "backend_drm",
     "backend_gbm",

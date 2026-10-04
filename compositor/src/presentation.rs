@@ -146,12 +146,7 @@ pub(crate) fn physical_rect(
     )
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) enum CornerShape {
-    #[default]
-    Circular,
-    Continuous,
-}
+pub(crate) use ferese_shape::Shape as CornerShape;
 
 /// Conservative extent of the corner shoulders, in physical pixels.
 pub(crate) fn corner_extent(radius: f32, size: smithay::utils::Size<i32, Physical>, shape: CornerShape) -> f32 {
