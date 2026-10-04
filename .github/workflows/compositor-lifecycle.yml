@@ -1,0 +1,46 @@
+name: Compositor lifecycle and capture tests
+on:
+  pull_request:
+    paths:
+      - "compositor/**"
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/compositor-lifecycle.yml"
+  push:
+    branches: [main]
+    paths:
+      - "compositor/**"
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/compositor-lifecycle.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: compositor-lifecycle-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  protocol:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install compositor build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config dbus-daemon libwayland-dev \
+            libxkbcommon-dev xkb-data libinput-dev libudev-dev libseat-dev libgbm-dev \
+            libegl-dev libegl-mesa0 libgl1-mesa-dri libdrm-dev libfontconfig1-dev libfreetype-dev libexpat1-dev
+      - name: Install Rust
+        run: rustup toolchain install 1.95.0 --profile minimal
+      - name: Test compositor policies, protocols and worker lifecycles
+        run: cargo +1.95.0 test --locked -p ferese -- --nocapture
+      - name: Test capture privacy, resize dependencies and cursor composition
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          EGL_PLATFORM: surfaceless
+        run: |
+          cargo +1.95.0 test --locked -p ferese state::capture_privacy::tests -- --ignored --nocapture
+          cargo +1.95.0 test --locked -p ferese backends::direct::capture::tests::capture_recomposes_cursor_without_touching_the_display_target -- --ignored --nocapture

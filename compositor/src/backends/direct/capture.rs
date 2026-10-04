@@ -3,6 +3,7 @@ use smithay::backend::renderer::element::RenderElement;
 use smithay::backend::renderer::gles::{GlesError, GlesRenderer, GlesTarget, GlesTexture};
 use smithay::backend::renderer::{Bind, Offscreen, Texture};
 use smithay::output::Output;
+use std::fmt::Display;
 
 use crate::Ferese;
 use crate::render::{capture_output_elements, redraw_output};
@@ -14,7 +15,7 @@ pub(crate) fn capture_output(
     texture: &mut Option<GlesTexture>,
     output: &Output,
     scene: &FrameScene,
-) -> Result<(), GlesError> {
+) {
     for include_cursor in [true, false] {
         if !state.has_pending_screencopy(output, include_cursor) {
             continue;
@@ -23,11 +24,13 @@ pub(crate) fn capture_output(
         // Sample the same scene into an independent target: the displayed
         // primary buffer may omit both a scanned-out client and hardware cursor.
         let elements = capture_output_elements(state, renderer, output, include_cursor, scene);
-        let target = render_capture(renderer, texture, output, &elements)?;
+        let Some(target) = capture_request(state, output, include_cursor, || {
+            render_capture(renderer, texture, output, &elements)
+        }) else {
+            continue;
+        };
         state.process_screencopies(renderer, &target, output, include_cursor);
     }
-
-    Ok(())
 }
 
 pub(super) fn capture_mirror(
@@ -36,7 +39,7 @@ pub(super) fn capture_mirror(
     source: &Output,
     scene: &FrameScene,
     output: &mut super::DirectOutput,
-) -> Result<(), GlesError> {
+) {
     for include_cursor in [true, false] {
         if !state.has_pending_screencopy(&output.output, include_cursor) {
             continue;
@@ -44,17 +47,46 @@ pub(super) fn capture_mirror(
         let elements = capture_output_elements(state, renderer, source, include_cursor, scene);
         // Never sample mirror_texture: it contains the unfiltered display.
         let canvas = output.mirror_canvas.as_ref().expect("mirror display composed");
-        super::mirror::compose(renderer, &mut output.mirror_capture_texture, canvas, source, &elements)?;
+        let Some(()) = capture_request(state, &output.output, include_cursor, || {
+            super::mirror::compose(renderer, &mut output.mirror_capture_texture, canvas, source, &elements)
+        }) else {
+            continue;
+        };
         let element = super::mirror::fitted_texture(
             output.mirror_capture_texture.as_ref().unwrap().clone(),
             &output.output,
             smithay::backend::renderer::element::Id::new(),
             Default::default(),
         );
-        let target = render_capture(renderer, &mut output.capture_texture, &output.output, &[element])?;
+        let Some(target) = capture_request(state, &output.output, include_cursor, || {
+            render_capture(renderer, &mut output.capture_texture, &output.output, &[element])
+        }) else {
+            continue;
+        };
         state.process_screencopies(renderer, &target, &output.output, include_cursor);
     }
-    Ok(())
+}
+
+fn capture_request<T, E: Display>(
+    state: &mut Ferese,
+    output: &Output,
+    include_cursor: bool,
+    render: impl FnOnce() -> Result<T, E>,
+) -> Option<T> {
+    match render() {
+        Ok(target) => Some(target),
+        Err(error) => {
+            tracing::warn!(?output, include_cursor, %error, "screencopy render failed");
+            state.fail_screencopies(output, include_cursor);
+            None
+        }
+    }
+}
+
+pub(super) fn after_queue<T, E>(queued: Result<T, E>, capture: impl FnOnce()) -> Result<T, E> {
+    let queued = queued?;
+    capture();
+    Ok(queued)
 }
 
 pub(super) fn render_capture<'a, E: RenderElement<GlesRenderer>>(
@@ -176,5 +208,95 @@ mod tests {
         );
         let _ = render_capture::<SolidColorRenderElement>(&mut renderer, &mut capture, &output, &[]).unwrap();
         assert_eq!(capture.as_ref().unwrap().size(), (48, 16).into());
+    }
+}
+
+#[cfg(test)]
+mod failure_tests {
+    use std::cell::Cell;
+
+    use calloop::channel::channel;
+    use smithay::output::Output;
+    use smithay::utils::{Buffer, Rectangle};
+
+    use super::*;
+
+    #[test]
+    fn capture_allocation_failure_fails_one_request_after_display_submission() {
+        if !crate::startup_tests::private_runtime(
+            "backends::direct::capture::failure_tests::capture_allocation_failure_fails_one_request_after_display_submission",
+        ) {
+            return;
+        }
+
+        let mut events = calloop::EventLoop::try_new().unwrap();
+        let mut state = crate::startup_tests::state(&mut events);
+        let output = Output::new(
+            "capture-failure".into(),
+            smithay::output::PhysicalProperties {
+                size: (0, 0).into(),
+                subpixel: smithay::output::Subpixel::Unknown,
+                make: "test".into(),
+                model: "test".into(),
+            },
+        );
+        let (sender, receiver) = channel();
+        state
+            .pending_screencopies
+            .push(crate::handlers::screencopy::PendingScreencopy::owned(
+                41,
+                0,
+                sender,
+                output.clone(),
+                Rectangle::<i32, Buffer>::from_size((16, 16).into()),
+            ));
+        let other_output = Output::new(
+            "other-capture".into(),
+            smithay::output::PhysicalProperties {
+                size: (0, 0).into(),
+                subpixel: smithay::output::Subpixel::Unknown,
+                make: "test".into(),
+                model: "test".into(),
+            },
+        );
+        let (other_sender, other_receiver) = channel();
+        state
+            .pending_screencopies
+            .push(crate::handlers::screencopy::PendingScreencopy::owned(
+                42,
+                0,
+                other_sender,
+                other_output.clone(),
+                Rectangle::<i32, Buffer>::from_size((16, 16).into()),
+            ));
+
+        let submitted = Cell::new(false);
+        let queued = {
+            submitted.set(true);
+            Ok::<(), ()>(())
+        };
+        after_queue(queued, || {
+            assert!(submitted.get(), "capture must run after the display queue succeeds");
+            assert!(
+                capture_request(&mut state, &output, false, || Err::<(), _>(
+                    "injected allocation failure"
+                ))
+                .is_none()
+            );
+        })
+        .unwrap();
+
+        assert!(submitted.get(), "capture failure must not undo queued display work");
+        assert_eq!(state.pending_screencopies.len(), 1);
+        assert_eq!(state.pending_screencopies[0].output, other_output);
+        let outcome = receiver.try_recv().unwrap();
+        assert_eq!(outcome.request, 41);
+        assert_eq!(outcome.part, 0);
+        assert!(outcome.result.is_err());
+        assert!(receiver.try_recv().is_err(), "request should fail exactly once");
+        assert!(
+            other_receiver.try_recv().is_err(),
+            "other output's request must stay pending"
+        );
     }
 }

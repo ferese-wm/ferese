@@ -8,6 +8,7 @@ pub(super) struct Probe {
     serial: u64,
     revision: u64,
     reactivate: bool,
+    wake: bool,
 }
 
 #[derive(Default)]
@@ -33,12 +34,13 @@ impl LidState {
         changed
     }
 
-    fn begin(&mut self, reactivate: bool) -> Probe {
+    fn begin(&mut self, reactivate: bool, wake: bool) -> Probe {
         self.serial = self.serial.wrapping_add(1);
         let probe = Probe {
             serial: self.serial,
             revision: self.revision,
             reactivate: reactivate || self.pending.is_some_and(|pending| pending.reactivate),
+            wake: wake || self.pending.is_some_and(|pending| pending.wake),
         };
         self.pending = Some(probe);
         probe
@@ -269,6 +271,15 @@ impl Reader {
 }
 
 pub(super) fn request_refresh(state: &mut Ferese, reactivate: bool) {
+    request(state, reactivate, true);
+}
+
+/// Listener recovery reconciles hardware without resetting idle activity.
+pub(super) fn request_reconcile(state: &mut Ferese) {
+    request(state, false, false);
+}
+
+fn request(state: &mut Ferese, reactivate: bool, wake: bool) {
     let Some(backend) = state.direct_backend.as_mut() else {
         return;
     };
@@ -289,7 +300,7 @@ pub(super) fn request_refresh(state: &mut Ferese, reactivate: bool) {
     }
     backend.lid_reader.suspend_requested = false;
     backend.lid_reader.lease.lock().unwrap().suspend = false;
-    let probe = backend.lid.begin(reactivate);
+    let probe = backend.lid.begin(reactivate, wake);
     let sent = backend.lid_reader.requests.send(probe).is_ok();
     let timer = state
         .loop_handle
@@ -329,10 +340,13 @@ fn complete_refresh(state: &mut Ferese, probe: Probe, value: Option<bool>) {
     // Waking a locked session may request redraws. Hold them until the fresh
     // device/connector snapshot has been reconciled.
     backend.lid_reader.suspend_requested = false;
-    backend.topology.reconciling = true;
-    state.reset_animation_clock();
-    state.lock_input_activity();
-    state.direct_backend.as_mut().unwrap().topology.reconciling = false;
+    if probe.wake {
+        backend.topology.reconciling = true;
+        state.reset_animation_clock();
+        state.lock_input_activity();
+        state.direct_backend.as_mut().unwrap().topology.reconciling = false;
+    }
+
     reconcile_outputs(state, reactivate);
 }
 
@@ -431,7 +445,7 @@ mod tests {
     fn newer_input_wins_over_a_delayed_resume_read() {
         let mut lid = LidState::default();
         lid.observe(true);
-        let probe = lid.begin(true);
+        let probe = lid.begin(true, true);
         lid.observe(false);
         assert_eq!(lid.complete(probe, Some(true)), Some(true));
         assert!(!lid.closed());
@@ -440,11 +454,11 @@ mod tests {
     #[test]
     fn failed_reads_preserve_known_state_and_unknown_is_not_an_open_observation() {
         let mut lid = LidState::default();
-        let probe = lid.begin(false);
+        let probe = lid.begin(false, true);
         lid.complete(probe, None);
         assert_eq!(lid.value, None);
         lid.observe(true);
-        let probe = lid.begin(true);
+        let probe = lid.begin(true, true);
         lid.complete(probe, None);
         assert_eq!(lid.value, Some(true));
     }
@@ -452,10 +466,10 @@ mod tests {
     #[test]
     fn pause_and_newer_resume_invalidate_old_replies() {
         let mut lid = LidState::default();
-        let old = lid.begin(true);
+        let old = lid.begin(true, true);
         lid.pause();
         assert_eq!(lid.complete(old, Some(true)), None);
-        let current = lid.begin(true);
+        let current = lid.begin(true, true);
         assert_eq!(lid.complete(old, Some(true)), None);
         assert!(lid.pending());
         assert_eq!(lid.complete(current, Some(false)), Some(true));
@@ -463,10 +477,28 @@ mod tests {
     }
 
     #[test]
+    fn listener_recovery_does_not_request_idle_wake_or_reactivation() {
+        let mut lid = LidState::default();
+        let recovery = lid.begin(false, false);
+        assert!(!recovery.wake);
+        assert_eq!(lid.complete(recovery, Some(false)), Some(false));
+    }
+
+    #[test]
+    fn listener_recovery_preserves_a_pending_real_wake() {
+        let mut lid = LidState::default();
+        let resume = lid.begin(true, true);
+        let recovery = lid.begin(false, false);
+        assert!(recovery.wake);
+        assert_eq!(lid.complete(resume, Some(false)), None);
+        assert_eq!(lid.complete(recovery, Some(false)), Some(true));
+    }
+
+    #[test]
     fn system_wake_cannot_cancel_pending_session_reactivation() {
         let mut lid = LidState::default();
-        lid.begin(true);
-        let probe = lid.begin(false);
+        lid.begin(true, true);
+        let probe = lid.begin(false, true);
         assert_eq!(lid.complete(probe, Some(false)), Some(true));
     }
 }

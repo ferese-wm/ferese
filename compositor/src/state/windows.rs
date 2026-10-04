@@ -1,6 +1,20 @@
 use super::*;
 
 impl Ferese {
+    pub(crate) fn window_for_surface(&self, surface: &WlSurface) -> Option<Window> {
+        self.windows
+            .id_for_surface(surface)
+            .and_then(|id| self.windows.window(id))
+            .or_else(|| {
+                self.space.elements().find(|window| {
+                    window
+                        .toplevel()
+                        .is_some_and(|toplevel| toplevel.wl_surface() == surface)
+                })
+            })
+            .cloned()
+    }
+
     pub(crate) fn restore_initial_floating_size(&mut self, window: &Window) {
         let Some(toplevel) = window.toplevel() else { return };
         let (app_id, title, transient) = with_states(toplevel.wl_surface(), |states| {
@@ -449,17 +463,10 @@ impl Ferese {
     }
 
     pub(crate) fn capture_resize_before_commit(&mut self, surface: &WlSurface) {
-        let Some((window, id)) = self
-            .windows
-            .ids()
-            .iter()
-            .find(|(window, _)| {
-                window
-                    .toplevel()
-                    .is_some_and(|toplevel| toplevel.wl_surface() == surface)
-            })
-            .map(|(window, id)| (window.clone(), *id))
-        else {
+        let Some(id) = self.windows.id_for_surface(surface) else {
+            return;
+        };
+        let Some(window) = self.windows.window(id).cloned() else {
             return;
         };
 

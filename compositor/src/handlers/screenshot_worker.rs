@@ -20,6 +20,7 @@ const FILE_MODE: u32 = 0o600;
 pub(crate) struct Job {
     pub(crate) request: u64,
     pub(crate) frames: Vec<OutputFrame>,
+    pub(crate) _permit: Option<super::screenshot::BudgetPermit>,
 }
 
 pub(crate) struct Encoded {
@@ -54,17 +55,13 @@ impl Worker {
 fn run(receiver: Receiver<Job>, results: channel::SyncSender<Encoded>) {
     while let Ok(job) = receiver.recv() {
         let result = encode(&job);
+        let request = job.request;
+        drop(job);
         // This send cannot block. Each request produces exactly one Encode, so at
         // most QUEUE_CAPACITY jobs can be queued while one more is being encoded,
         // and RESULT_QUEUE_CAPACITY is asserted to exceed that. Blocking here
         // would stall the worker with no way for the loop to recover it.
-        if results
-            .send(Encoded {
-                request: job.request,
-                result,
-            })
-            .is_err()
-        {
+        if results.send(Encoded { request, result }).is_err() {
             return;
         }
     }
@@ -131,25 +128,51 @@ fn encode_png(canvas: &Canvas) -> Result<Vec<u8>, String> {
 
 // The client is told to open this path and unlink it immediately, so the
 // directory is ours, private, and files are created with the final mode.
+struct StagedFile {
+    path: PathBuf,
+    keep: bool,
+}
+
+impl Drop for StagedFile {
+    fn drop(&mut self) {
+        if !self.keep {
+            let _ = fs::remove_file(&self.path);
+        }
+    }
+}
+
 fn write_private_file(png: &[u8]) -> Result<PathBuf, String> {
-    let directory = private_directory()?;
-    for attempt in 0..64u32 {
-        let path = directory.join(format!("shot-{}-{attempt}.png", std::process::id()));
-        let mut options = fs::OpenOptions::new();
-        options.write(true).create_new(true).mode(FILE_MODE);
-        match options.open(&path) {
-            Ok(mut file) => {
-                use io::Write;
-                file.write_all(png)
-                    .and_then(|()| file.sync_all())
-                    .map_err(|error| format!("Could not write screenshot: {error}"))?;
-                return Ok(path);
-            }
+    write_private_file_in(&private_directory()?, png, |file, bytes| {
+        use io::Write;
+        file.write_all(bytes)?;
+        file.sync_all()
+    })
+}
+
+fn write_private_file_in(
+    directory: &std::path::Path,
+    png: &[u8],
+    write: impl FnOnce(&mut fs::File, &[u8]) -> io::Result<()>,
+) -> Result<PathBuf, String> {
+    static NEXT_FILE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let (mut file, mut staged) = loop {
+        let sequence = NEXT_FILE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let path = directory.join(format!("shot-{}-{sequence}.png", std::process::id()));
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(FILE_MODE)
+            .open(&path)
+        {
+            Ok(file) => break (file, StagedFile { path, keep: false }),
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
             Err(error) => return Err(format!("Could not write screenshot: {error}")),
         }
-    }
-    Err("Could not find an unused screenshot filename".into())
+    };
+
+    write(&mut file, png).map_err(|error| format!("Could not write screenshot: {error}"))?;
+    staged.keep = true;
+    Ok(std::mem::take(&mut staged.path))
 }
 
 fn private_directory() -> Result<PathBuf, String> {
@@ -209,6 +232,7 @@ mod tests {
         let job = Job {
             request: 1,
             frames: vec![frame(4, 3)],
+            _permit: None,
         };
         let mut canvas = compose(&job.frames).unwrap();
         for (index, pixel) in canvas.pixels.chunks_exact_mut(4).enumerate() {
@@ -225,6 +249,26 @@ mod tests {
         assert_eq!(decoded.as_raw(), &canvas.pixels, "encoding changed the pixel data");
         // The opaque alpha we force is preserved through the round trip.
         assert_eq!(decoded.get_pixel(0, 0)[3], 255);
+    }
+
+    #[test]
+    fn staging_has_no_fixed_filename_capacity_and_cleans_partial_writes() {
+        let directory = tempfile::tempdir().unwrap();
+        for _ in 0..100 {
+            write_private_file_in(directory.path(), b"png", |file, bytes| {
+                use io::Write;
+                file.write_all(bytes)
+            })
+            .unwrap();
+        }
+        assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 100);
+        let result = write_private_file_in(directory.path(), b"partial", |file, bytes| {
+            use io::Write;
+            file.write_all(bytes)?;
+            Err(io::Error::other("injected write/sync failure"))
+        });
+        assert!(result.is_err());
+        assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 100);
     }
 
     #[test]

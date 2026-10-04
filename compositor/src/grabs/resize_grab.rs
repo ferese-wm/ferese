@@ -1,5 +1,3 @@
-use std::cell::RefCell;
-
 use smithay::desktop::Window;
 use smithay::input::pointer::{
     AxisFrame, ButtonEvent, GestureHoldBeginEvent, GestureHoldEndEvent, GesturePinchBeginEvent, GesturePinchEndEvent,
@@ -98,10 +96,6 @@ impl ResizeSurfaceGrab {
         edges: ResizeEdge,
         initial_rect: Rectangle<i32, Logical>,
     ) -> Self {
-        ResizeState::with(
-            window.toplevel().expect("managed window has a toplevel").wl_surface(),
-            |state| *state = ResizeState::Resizing { edges, initial_rect },
-        );
         Self {
             start_data,
             window,
@@ -128,8 +122,8 @@ impl PointerGrab<Ferese> for ResizeSurfaceGrab {
         let initial = self.initial_rect;
         let raw_left = initial.loc.x as f64 + if self.edges.left() { delta.x } else { 0. };
         let raw_top = initial.loc.y as f64 + if self.edges.top() { delta.y } else { 0. };
-        let raw_right = (initial.loc.x + initial.size.w) as f64 + if self.edges.right() { delta.x } else { 0. };
-        let raw_bottom = (initial.loc.y + initial.size.h) as f64 + if self.edges.bottom() { delta.y } else { 0. };
+        let raw_right = initial.loc.x as f64 + initial.size.w as f64 + if self.edges.right() { delta.x } else { 0. };
+        let raw_bottom = initial.loc.y as f64 + initial.size.h as f64 + if self.edges.bottom() { delta.y } else { 0. };
         let raw = ferese_layout::Rect::new(
             raw_left,
             raw_top,
@@ -203,12 +197,6 @@ impl PointerGrab<Ferese> for ResizeSurfaceGrab {
                 state.size = Some(self.last_size);
             });
             surface.send_pending_configure();
-            ResizeState::with(surface.wl_surface(), |state| {
-                *state = ResizeState::WaitingForFinalCommit {
-                    edges: self.edges,
-                    initial_rect: self.initial_rect,
-                };
-            });
         }
     }
 
@@ -307,55 +295,8 @@ impl PointerGrab<Ferese> for ResizeSurfaceGrab {
             state.size = Some(self.initial_rect.size);
         });
         surface.send_pending_configure();
-        ResizeState::with(surface.wl_surface(), |state| *state = ResizeState::Idle);
         data.set_floating_window_geometry(&self.window, self.initial_rect.loc, self.initial_rect.size);
     }
-}
-
-#[derive(Clone, Copy, Debug, Default)]
-enum ResizeState {
-    #[default]
-    Idle,
-    Resizing {
-        edges: ResizeEdge,
-        initial_rect: Rectangle<i32, Logical>,
-    },
-    WaitingForFinalCommit {
-        edges: ResizeEdge,
-        initial_rect: Rectangle<i32, Logical>,
-    },
-}
-
-impl ResizeState {
-    fn with<T>(surface: &WlSurface, callback: impl FnOnce(&mut Self) -> T) -> T {
-        with_states(surface, |states| {
-            states.data_map.insert_if_missing(RefCell::<Self>::default);
-            callback(
-                &mut states
-                    .data_map
-                    .get::<RefCell<Self>>()
-                    .expect("resize state was inserted")
-                    .borrow_mut(),
-            )
-        })
-    }
-
-    fn commit(&mut self) -> Option<(ResizeEdge, Rectangle<i32, Logical>)> {
-        match *self {
-            Self::Idle => None,
-            Self::Resizing { edges, initial_rect } => Some((edges, initial_rect)),
-            Self::WaitingForFinalCommit { edges, initial_rect } => {
-                *self = Self::Idle;
-                Some((edges, initial_rect))
-            }
-        }
-    }
-}
-
-pub fn handle_resize_commit(surface: &WlSurface) {
-    // The compositor's visual rect owns the anchored edge. A delayed client
-    // commit must not move the window or change its stacking order.
-    ResizeState::with(surface, ResizeState::commit);
 }
 
 fn constrained_size(
@@ -368,21 +309,34 @@ fn constrained_size(
     let mut width = initial.w;
     let mut height = initial.h;
     if edges.left() {
-        width -= delta.x as i32;
+        width = width.saturating_sub(delta.x as i32);
     } else if edges.right() {
-        width += delta.x as i32;
-    }
-    if edges.top() {
-        height -= delta.y as i32;
-    } else if edges.bottom() {
-        height += delta.y as i32;
+        width = width.saturating_add(delta.x as i32);
     }
 
-    let maximum_width = if maximum.w == 0 { i32::MAX } else { maximum.w };
-    let maximum_height = if maximum.h == 0 { i32::MAX } else { maximum.h };
+    if edges.top() {
+        height = height.saturating_sub(delta.y as i32);
+    } else if edges.bottom() {
+        height = height.saturating_add(delta.y as i32);
+    }
+
+    // Protocol validation rejects these ranges, but a grab may still be alive
+    // when its client is disconnected. Keep this path safe for any cached state.
+    let minimum_width = minimum.w.max(1);
+    let minimum_height = minimum.h.max(1);
+    let maximum_width = if maximum.w <= 0 {
+        i32::MAX
+    } else {
+        maximum.w.max(minimum_width)
+    };
+    let maximum_height = if maximum.h <= 0 {
+        i32::MAX
+    } else {
+        maximum.h.max(minimum_height)
+    };
     (
-        width.clamp(minimum.w.max(1), maximum_width),
-        height.clamp(minimum.h.max(1), maximum_height),
+        width.clamp(minimum_width, maximum_width),
+        height.clamp(minimum_height, maximum_height),
     )
         .into()
 }
@@ -395,10 +349,11 @@ fn resized_rect(
     let mut location = initial.loc;
 
     if edges.left() {
-        location.x += initial.size.w - size.w;
+        location.x = location.x.saturating_add(initial.size.w.saturating_sub(size.w));
     }
+
     if edges.top() {
-        location.y += initial.size.h - size.h;
+        location.y = location.y.saturating_add(initial.size.h.saturating_sub(size.h));
     }
 
     Rectangle::new(location, size)
@@ -467,6 +422,32 @@ mod tests {
             (1_024, 768).into(),
         );
         assert_eq!(size, (1_024, 768).into());
+    }
+
+    #[test]
+    fn invalid_and_extreme_client_limits_cannot_panic_or_overflow() {
+        for (minimum, maximum) in [
+            ((800, 700), (400, 300)),
+            ((-1, -2), (-3, -4)),
+            ((i32::MAX, i32::MAX), (1, 1)),
+            ((0, 0), (0, 0)),
+        ] {
+            for delta in [(f64::MAX, f64::MAX), (-f64::MAX, -f64::MAX), (0.0, 0.0)] {
+                let size = constrained_size(
+                    (800, 600).into(),
+                    delta.into(),
+                    ResizeEdge(xdg_toplevel::ResizeEdge::BottomRight),
+                    minimum.into(),
+                    maximum.into(),
+                );
+                assert!(size.w >= 1 && size.h >= 1);
+                let _ = resized_rect(
+                    Rectangle::new((100, 80).into(), (800, 600).into()),
+                    size,
+                    ResizeEdge(xdg_toplevel::ResizeEdge::TopLeft),
+                );
+            }
+        }
     }
 
     #[test]

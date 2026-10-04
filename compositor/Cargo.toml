@@ -36,3 +36,5 @@ tempfile.workspace = true
 [features]
 # Opt-in counters/histograms with a per-client exit summary.
 resize-metrics = []
+# One-shot KMS recovery checks; never enabled by the installer.
+drm-fault-injection = []

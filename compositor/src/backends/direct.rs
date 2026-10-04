@@ -10,6 +10,7 @@ mod lid;
 mod mirror;
 mod output_power;
 mod planes;
+mod recovery;
 mod redraw;
 mod scheduling;
 mod topology;
@@ -260,6 +261,8 @@ struct DirectOutput {
     capture_texture: Option<GlesTexture>,
     render_metrics: RenderMetrics,
     frame_pending: bool,
+    completion: recovery::Completion,
+    completion_timer: Option<RegistrationToken>,
     animation_fallback: AnimationFallback,
     cursor_visible: bool,
     scheduler: crate::frame_scheduler::FrameScheduler,
@@ -800,23 +803,43 @@ fn open_device(state: &mut Ferese, path: &Path) -> Result<DrmNode, Box<dyn Error
         .loop_handle
         .insert_source(notifier, move |event, metadata, state| match event {
             DrmEvent::VBlank(crtc) => {
+                #[cfg(feature = "drm-fault-injection")]
+                if state
+                    .direct_backend
+                    .as_ref()
+                    .and_then(|backend| backend.devices.get(&node))
+                    .and_then(|device| device.outputs.get(&crtc))
+                    .is_some_and(|output| output.frame_pending)
+                    && recovery::inject("missing-completion")
+                {
+                    tracing::warn!(?node, ?crtc, "injecting missing DRM completion");
+                    return;
+                }
+
                 if let Some(metadata) = metadata {
                     let mut retired = false;
+                    let mut retirement_failed = false;
                     let feedback = state
                         .direct_backend
                         .as_mut()
                         .and_then(|backend| backend.devices.get_mut(&node))
                         .and_then(|device| device.outputs.get_mut(&crtc))
-                        .and_then(|output| match output.surface.frame_submitted() {
-                            Ok(feedback) => {
-                                retired = feedback.is_some();
-                                feedback
+                        .and_then(|output| {
+                            #[cfg(feature = "drm-fault-injection")]
+                            if output.frame_pending && recovery::inject("retirement") {
+                                tracing::warn!(?node, ?crtc, "injecting DRM retirement failure");
+                                retirement_failed = true;
+                                return None;
                             }
 
-                            Err(error) => {
+                            let (feedback, completed, error) = recovery::retirement(output.surface.frame_submitted());
+                            retired = completed;
+                            if let Some(error) = error {
                                 tracing::error!(?node, ?crtc, %error, "failed to retire DRM frame");
-                                None
+                                retirement_failed = true;
                             }
+
+                            feedback
                         });
 
                     if let (Some(mut feedback), DrmEventTime::Monotonic(time)) = (feedback, metadata.time) {
@@ -852,6 +875,7 @@ fn open_device(state: &mut Ferese, path: &Path) -> Result<DrmNode, Box<dyn Error
                         .and_then(|device| device.outputs.get_mut(&crtc))
                         && retired
                     {
+                        output.completion.retired();
                         output.frame_pending = false;
                         output.power.presented();
                         if let DrmEventTime::Monotonic(timestamp) = metadata.time {
@@ -884,6 +908,11 @@ fn open_device(state: &mut Ferese, path: &Path) -> Result<DrmNode, Box<dyn Error
                             state.display_presentation.presented(&output.output);
                         }
                         state.refresh_idle_inhibition();
+                    }
+
+                    if retirement_failed {
+                        recovery::reconcile_device(state, node);
+                        return;
                     }
 
                     apply_output_power(state);
@@ -1168,6 +1197,10 @@ pub(crate) fn system_resumed(state: &mut Ferese) {
     lid::request_refresh(state, true);
 }
 
+pub(crate) fn reconcile_after_monitor_recovery(state: &mut Ferese) {
+    lid::request_reconcile(state);
+}
+
 fn internal_connector(interface: connector::Interface) -> bool {
     matches!(
         interface,
@@ -1268,19 +1301,19 @@ fn render_output(
                 primary.sync.wait()?;
             }
 
-            if output.mirror_source.is_some() {
-                capture::capture_mirror(state, &mut device.renderer, &scene_output, &frame, &mut output)?;
-            } else {
-                capture::capture_output(
-                    state,
-                    &mut device.renderer,
-                    &mut output.capture_texture,
-                    &output.output,
-                    &frame,
-                )?;
-            }
-
             if result.is_empty {
+                if output.mirror_source.is_some() {
+                    capture::capture_mirror(state, &mut device.renderer, &scene_output, &frame, &mut output);
+                } else {
+                    capture::capture_output(
+                        state,
+                        &mut device.renderer,
+                        &mut output.capture_texture,
+                        &output.output,
+                        &frame,
+                    );
+                }
+
                 output
                     .render_metrics
                     .record_no_damage(render_started.elapsed(), missed_deadlines);
@@ -1327,16 +1360,35 @@ fn render_output(
             };
             let visibility = result.states.clone();
             drop(result);
-            output.surface.queue_frame(presentation)?;
-            if output.mirror_source.is_none() {
-                state.display_presentation.queued(&output.output, &visibility);
-            }
-            output.primary_commit = primary_commit;
-            output
-                .render_metrics
-                .record_frame(render_started.elapsed(), &damage, missed_deadlines, effects);
-            output.frame_pending = true;
-            output.lock_frame_pending = state.session_lock.active();
+
+            capture::after_queue(output.surface.queue_frame(presentation), || {
+                if output.mirror_source.is_none() {
+                    state.display_presentation.queued(&output.output, &visibility);
+                }
+                output.primary_commit = primary_commit;
+                output
+                    .render_metrics
+                    .record_frame(render_started.elapsed(), &damage, missed_deadlines, effects);
+                output.frame_pending = true;
+                if !recovery::arm_completion(&state.loop_handle, node, crtc, &mut output) {
+                    recovery::reconcile_device(state, node);
+                }
+
+                output.lock_frame_pending = state.session_lock.active();
+
+                if output.mirror_source.is_some() {
+                    capture::capture_mirror(state, &mut device.renderer, &scene_output, &frame, &mut output);
+                } else {
+                    capture::capture_output(
+                        state,
+                        &mut device.renderer,
+                        &mut output.capture_texture,
+                        &output.output,
+                        &frame,
+                    );
+                }
+            })?;
+
             Ok(true)
         })()
     };
@@ -2042,6 +2094,8 @@ fn create_direct_output(
         capture_texture: None,
         render_metrics,
         frame_pending: false,
+        completion: Default::default(),
+        completion_timer: None,
         animation_fallback: AnimationFallback::default(),
         cursor_visible: false,
         power: OutputPower::default(),

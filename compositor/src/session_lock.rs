@@ -111,7 +111,7 @@ pub(crate) struct Lock {
     pub(crate) idle_opacity: f32,
     pub(crate) sleeping: bool,
     pub(crate) idle_overlays: HashMap<Output, smithay::backend::renderer::element::solid::SolidColorBuffer>,
-    idle_timer: Option<RegistrationToken>,
+    idle_timer: Option<(RegistrationToken, Instant)>,
 }
 
 impl Lock {
@@ -130,6 +130,8 @@ impl Lock {
     pub(crate) fn output_removed(&mut self, output: &Output) {
         self.presented.remove(output);
         self.idle_overlays.remove(output);
+        self.surfaces.remove(output);
+        self.backgrounds.remove(output);
     }
 
     fn activity(&mut self, now: Instant) -> bool {
@@ -167,7 +169,11 @@ impl Ferese {
             crate::backends::direct::wake_locked_outputs(self);
             self.cursor_redraw_pending = true;
         }
-        self.rearm_lock_idle();
+        // Activity moves the deadline later. Keep the existing source and let
+        // it recheck idle_since when it fires. Sleeping outputs have no timer.
+        if self.session_lock.idle_timer.is_none() {
+            self.rearm_lock_idle();
+        }
     }
 
     pub(crate) fn refresh_lock_idle_policy(&mut self) {
@@ -175,32 +181,52 @@ impl Ferese {
         self.rearm_lock_idle();
     }
 
-    fn rearm_lock_idle(&mut self) {
-        if let Some(token) = self.session_lock.idle_timer.take() {
-            self.loop_handle.remove(token);
-        }
+    fn lock_idle_deadline(&self, now: Instant) -> Option<Instant> {
         if !self.lock_outputs_protected() {
-            return;
+            return None;
         }
 
         let elapsed = self
             .session_lock
             .idle_since
-            .map_or(Duration::ZERO, |since| since.elapsed());
-        let Some(delay) = self
-            .lock_idle
+            .map_or(Duration::ZERO, |since| now.saturating_duration_since(since));
+        self.lock_idle
             .next_deadline(elapsed, self.animation_duration(Duration::from_millis(500)))
-        else {
+            .map(|delay| now + delay)
+    }
+
+    fn rearm_lock_idle(&mut self) {
+        let deadline = self.lock_idle_deadline(Instant::now());
+        if let Some((_, armed)) = self.session_lock.idle_timer
+            && deadline.is_some_and(|deadline| armed <= deadline)
+        {
+            return;
+        }
+
+        if let Some((token, _)) = self.session_lock.idle_timer.take() {
+            self.loop_handle.remove(token);
+        }
+
+        let Some(deadline) = deadline else {
             return;
         };
         match self
             .loop_handle
-            .insert_source(Timer::from_duration(delay), |_, _, state| {
-                state.session_lock.idle_timer = None;
-                state.refresh_lock_idle_policy();
-                TimeoutAction::Drop
+            .insert_source(Timer::from_deadline(deadline), |_, _, state| {
+                let now = Instant::now();
+                state.update_lock_idle(now);
+                if let Some(deadline) = state.lock_idle_deadline(now) {
+                    if let Some((_, armed)) = state.session_lock.idle_timer.as_mut() {
+                        *armed = deadline;
+                    }
+
+                    TimeoutAction::ToInstant(deadline)
+                } else {
+                    state.session_lock.idle_timer = None;
+                    TimeoutAction::Drop
+                }
             }) {
-            Ok(token) => self.session_lock.idle_timer = Some(token),
+            Ok(token) => self.session_lock.idle_timer = Some((token, deadline)),
             Err(error) => tracing::warn!(%error, "could not arm lock idle deadline"),
         }
     }
@@ -251,8 +277,17 @@ impl Ferese {
         let surface = self
             .focused_output()
             .and_then(|output| self.session_lock.surfaces.get(output))
-            .or_else(|| self.session_lock.surfaces.values().find(|surface| surface.alive()))
             .filter(|surface| surface.alive())
+            .or_else(|| {
+                // Stable output IDs keep fallback focus independent of HashMap order.
+                self.session_lock
+                    .surfaces
+                    .iter()
+                    .filter(|(_, surface)| surface.alive())
+                    .filter_map(|(output, surface)| self.output_id(output).map(|id| (id, surface)))
+                    .min_by_key(|(id, _)| *id)
+                    .map(|(_, surface)| surface)
+            })
             .map(|surface| surface.wl_surface().clone());
         self.seat
             .get_keyboard()
@@ -378,7 +413,7 @@ impl SessionLockHandler for Ferese {
     }
 
     fn unlock(&mut self) {
-        if let Some(timer) = self.session_lock.idle_timer.take() {
+        if let Some((timer, _)) = self.session_lock.idle_timer.take() {
             self.loop_handle.remove(timer);
         }
         let sleeping = self.session_lock.sleeping;
@@ -456,346 +491,4 @@ smithay::reexports::wayland_server::delegate_dispatch!(Ferese: [ExtSessionLockMa
 smithay::reexports::wayland_server::delegate_dispatch!(Ferese: [ExtSessionLockSurfaceV1: smithay::wayland::session_lock::ExtLockSurfaceUserData] => SessionLockManagerState);
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    #[ignore = "requires a private XDG_RUNTIME_DIR and permission to bind test sockets"]
-    fn zero_outputs_confirm_and_dead_owner_can_be_replaced_without_unlocking() {
-        use std::io::{Read, Write};
-        use std::os::unix::net::UnixStream;
-        use std::sync::Arc;
-
-        use smithay::reexports::calloop::EventLoop;
-        use smithay::reexports::wayland_server::Display;
-
-        let runtime = std::path::PathBuf::from(std::env::var_os("XDG_RUNTIME_DIR").unwrap());
-        assert!(runtime.starts_with(std::env::temp_dir()));
-        let mut event_loop = EventLoop::try_new().unwrap();
-        let config = crate::config::Config::default().runtime_config().unwrap();
-        let mut state = Ferese::new(&mut event_loop, Display::new().unwrap(), config).unwrap();
-        let capture_epoch = state.capture_epoch;
-
-        let acquire = |state: &mut Ferese| {
-            let (server, mut wire) = UnixStream::pair().unwrap();
-            let client = state
-                .display_handle
-                .insert_client(server, Arc::new(crate::state::ClientState::default()))
-                .unwrap();
-            let manager = client
-                .create_resource::<ExtSessionLockManagerV1, (), Ferese>(&state.display_handle, 1, ())
-                .unwrap();
-            // ext_session_lock_manager_v1.lock(new_id=2).
-            for word in [manager.id().protocol_id(), (12u32 << 16) | 1, 2] {
-                wire.write_all(&word.to_ne_bytes()).unwrap();
-            }
-            wire
-        };
-        let dispatch = |event_loop: &mut EventLoop<'static, Ferese>, state: &mut Ferese| {
-            event_loop.dispatch(Duration::from_millis(20), state).unwrap();
-            state.display_handle.flush_clients().unwrap();
-        };
-
-        let mut first = acquire(&mut state);
-        dispatch(&mut event_loop, &mut state);
-        assert_ne!(
-            state.capture_epoch, capture_epoch,
-            "lock revokes deferred window snapshots"
-        );
-        assert!(
-            matches!(state.session_lock.lifecycle, Lifecycle::Locked(_)),
-            "no outputs must confirm immediately"
-        );
-        first.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
-        let mut event = [0u8; 8];
-        first.read_exact(&mut event).unwrap();
-        assert_eq!(u32::from_ne_bytes(event[..4].try_into().unwrap()), 2);
-        assert_eq!(
-            u32::from_ne_bytes(event[4..].try_into().unwrap()),
-            8u32 << 16,
-            "protocol locked event"
-        );
-
-        let owner = state.session_lock.lifecycle.owner().cloned();
-
-        let mut competitor = acquire(&mut state);
-        dispatch(&mut event_loop, &mut state);
-        assert_eq!(
-            state.session_lock.lifecycle.owner(),
-            owner.as_ref(),
-            "a live owner cannot be replaced"
-        );
-        // A rejected client must not unlock the confirmed owner.
-        for word in [2u32, (8u32 << 16) | 2] {
-            competitor.write_all(&word.to_ne_bytes()).unwrap();
-        }
-        dispatch(&mut event_loop, &mut state);
-        assert_eq!(state.session_lock.lifecycle.owner(), owner.as_ref());
-
-        drop(competitor);
-        drop(first);
-        dispatch(&mut event_loop, &mut state);
-        assert!(matches!(state.session_lock.lifecycle, Lifecycle::Orphaned));
-        assert!(state.session_lock.active());
-
-        let replacement = acquire(&mut state);
-        dispatch(&mut event_loop, &mut state);
-        assert!(matches!(state.session_lock.lifecycle, Lifecycle::Locked(_)));
-        assert_ne!(state.session_lock.lifecycle.owner(), owner.as_ref());
-        drop(replacement);
-        dispatch(&mut event_loop, &mut state);
-        assert!(state.session_lock.active());
-
-        let output = Output::new(
-            "last-output".into(),
-            smithay::output::PhysicalProperties {
-                size: (0, 0).into(),
-                subpixel: smithay::output::Subpixel::Unknown,
-                make: "test".into(),
-                model: "test".into(),
-            },
-        );
-        output.change_current_state(
-            Some(smithay::output::Mode {
-                size: (800, 600).into(),
-                refresh: 60_000,
-            }),
-            None,
-            None,
-            None,
-        );
-        state.space.map_output(&output, (0, 0));
-        state.register_output(&output, "last-output".into());
-
-        let pending = acquire(&mut state);
-        dispatch(&mut event_loop, &mut state);
-        assert!(
-            matches!(state.session_lock.lifecycle, Lifecycle::Acquiring(_)),
-            "a newly added output requires a protected frame"
-        );
-        drop(pending);
-        dispatch(&mut event_loop, &mut state);
-        assert!(matches!(state.session_lock.lifecycle, Lifecycle::Orphaned));
-
-        let replacement = acquire(&mut state);
-        dispatch(&mut event_loop, &mut state);
-        assert!(matches!(state.session_lock.lifecycle, Lifecycle::Acquiring(_)));
-        state.unregister_output(&output);
-        assert!(
-            matches!(state.session_lock.lifecycle, Lifecycle::Locked(_)),
-            "removing the last pending output must confirm"
-        );
-
-        drop(replacement);
-        dispatch(&mut event_loop, &mut state);
-        state.space.map_output(&output, (0, 0));
-        state.session_lock.output_added(&output);
-
-        let mut pending = acquire(&mut state);
-        dispatch(&mut event_loop, &mut state);
-        assert!(matches!(state.session_lock.lifecycle, Lifecycle::Acquiring(_)));
-        assert!(state.session_lock.idle_timer.is_none());
-
-        // Remove the final display without delivering a frame or confirming during removal.
-        state.space.unmap_output(&output);
-        state.session_lock.output_removed(&output);
-        assert!(matches!(state.session_lock.lifecycle, Lifecycle::Acquiring(_)));
-
-        state.refresh_lock_outputs();
-        assert!(matches!(state.session_lock.lifecycle, Lifecycle::Locked(_)));
-        assert!(state.session_lock.idle_timer.is_some());
-        state.display_handle.flush_clients().unwrap();
-        pending.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
-        pending.read_exact(&mut event).unwrap();
-        assert_eq!(u32::from_ne_bytes(event[..4].try_into().unwrap()), 2);
-        assert_eq!(u32::from_ne_bytes(event[4..].try_into().unwrap()), 8u32 << 16);
-    }
-
-    #[test]
-    fn dim_fade_respects_speed_without_changing_idle_deadlines() {
-        let policy = IdleSettings::default();
-        for (duration, half_at) in [(250, 30_125), (1000, 30_500)] {
-            let fade = Duration::from_millis(duration);
-            assert_eq!(policy.appearance(Duration::from_secs(29), fade), (0.0, false));
-            let halfway = policy.appearance(Duration::from_millis(half_at), fade);
-            assert!((halfway.0 - 0.325).abs() < 0.001 && !halfway.1);
-            assert_eq!(
-                policy.next_deadline(Duration::from_millis(half_at), fade),
-                Some(Duration::from_millis(16))
-            );
-            assert_eq!(policy.appearance(Duration::from_secs(120), fade), (1.0, true));
-        }
-        assert_eq!(
-            policy.appearance(Duration::from_secs(30), Duration::ZERO),
-            (0.65, false)
-        );
-        assert_eq!(policy.appearance(Duration::from_secs(120), Duration::ZERO), (1.0, true));
-    }
-
-    #[test]
-    fn idle_policy_fades_then_sleeps_and_activity_resets_it() {
-        let policy = IdleSettings::default();
-        assert_eq!(
-            policy.appearance(Duration::from_secs(29), Duration::from_millis(500)),
-            (0.0, false)
-        );
-        let halfway = policy.appearance(Duration::from_millis(30_250), Duration::from_millis(500));
-        assert!((halfway.0 - 0.325).abs() < 0.001 && !halfway.1);
-        assert_eq!(
-            policy.appearance(Duration::from_secs(31), Duration::from_millis(500)),
-            (0.65, false)
-        );
-        assert_eq!(
-            policy.appearance(Duration::from_secs(120), Duration::from_millis(500)),
-            (1.0, true)
-        );
-        assert_eq!(
-            policy.appearance(Duration::ZERO, Duration::from_millis(500)),
-            (0.0, false)
-        );
-        assert_eq!(
-            policy.next_deadline(Duration::from_millis(29_998), Duration::from_millis(500)),
-            Some(Duration::from_millis(2))
-        );
-        assert_eq!(
-            policy.next_deadline(Duration::from_secs(30), Duration::from_millis(500)),
-            Some(Duration::from_millis(16))
-        );
-        assert_eq!(
-            policy.next_deadline(Duration::from_secs(30), Duration::ZERO),
-            Some(Duration::from_secs(90))
-        );
-        assert_eq!(policy.next_deadline(Duration::from_secs(120), Duration::ZERO), None);
-        assert_eq!(
-            IdleSettings {
-                dim_after_seconds: 0,
-                sleep_after_seconds: 0
-            }
-            .next_deadline(Duration::ZERO, Duration::ZERO),
-            None
-        );
-    }
-
-    #[test]
-    fn mirror_must_present_protected_frame_before_lock_is_ready() {
-        let make_output = |name: &str| {
-            Output::new(
-                name.into(),
-                smithay::output::PhysicalProperties {
-                    size: (0, 0).into(),
-                    subpixel: smithay::output::Subpixel::Unknown,
-                    make: "test".into(),
-                    model: "test".into(),
-                },
-            )
-        };
-        let source = make_output("source");
-        let mirror = make_output("mirror");
-        let mut lock = Lock {
-            lifecycle: Lifecycle::Orphaned,
-            ..Lock::default()
-        };
-        lock.presented.insert(source.clone());
-        let displays = [&source, &mirror];
-        assert!(
-            !lock.ready_for_idle(displays.into_iter()),
-            "failed mirror rendering must block confirmation"
-        );
-        lock.presented.insert(mirror.clone());
-        assert!(lock.ready_for_idle(displays.into_iter()));
-        lock.output_added(&mirror);
-        assert!(
-            !lock.ready_for_idle(displays.into_iter()),
-            "reconfiguration invalidates physical protection"
-        );
-        lock.output_removed(&mirror);
-        assert!(lock.ready_for_idle(std::iter::once(&source)));
-    }
-
-    #[test]
-    fn protected_fallback_frames_allow_idle_after_early_locker_crash() {
-        let output = Output::new(
-            "test".into(),
-            smithay::output::PhysicalProperties {
-                size: (0, 0).into(),
-                subpixel: smithay::output::Subpixel::Unknown,
-                make: "test".into(),
-                model: "test".into(),
-            },
-        );
-        let mut lock = Lock {
-            lifecycle: Lifecycle::Orphaned,
-            ..Lock::default()
-        };
-        assert!(!lock.ready_for_idle(std::iter::once(&output)));
-        lock.presented.insert(output.clone());
-        assert!(lock.ready_for_idle(std::iter::once(&output)));
-        assert!(matches!(lock.lifecycle, Lifecycle::Orphaned));
-        lock.output_added(&output);
-        assert!(!lock.ready_for_idle(std::iter::once(&output)));
-        assert!(matches!(lock.lifecycle, Lifecycle::Orphaned));
-    }
-
-    #[test]
-    fn input_wakes_a_sleeping_orphan_without_unlocking() {
-        let mut lock = Lock {
-            lifecycle: Lifecycle::Orphaned,
-            sleeping: true,
-            idle_opacity: 1.0,
-            ..Lock::default()
-        };
-        let now = Instant::now();
-        assert!(lock.activity(now));
-        assert!(lock.active() && matches!(lock.lifecycle, Lifecycle::Orphaned));
-        assert!(!lock.sleeping);
-        assert_eq!(lock.idle_opacity, 0.0);
-        assert_eq!(lock.idle_since, Some(now));
-        assert!(!lock.activity(now));
-        let mut unlocked = Lock::default();
-        assert!(!unlocked.activity(now));
-        assert!(unlocked.idle_since.is_none());
-    }
-
-    #[test]
-    fn idle_disabled_options_are_independent() {
-        assert_eq!(
-            IdleSettings {
-                dim_after_seconds: 0,
-                sleep_after_seconds: 0
-            }
-            .appearance(Duration::from_secs(9999), Duration::from_millis(500)),
-            (0.0, false)
-        );
-        assert_eq!(
-            IdleSettings {
-                dim_after_seconds: 0,
-                sleep_after_seconds: 10
-            }
-            .appearance(Duration::from_secs(10), Duration::from_millis(500)),
-            (1.0, true)
-        );
-        assert_eq!(
-            IdleSettings {
-                dim_after_seconds: 1,
-                sleep_after_seconds: 0
-            }
-            .appearance(Duration::from_secs(9999), Duration::from_millis(500)),
-            (0.65, false)
-        );
-        assert!(
-            IdleSettings {
-                dim_after_seconds: 86401,
-                sleep_after_seconds: 0
-            }
-            .validate()
-            .is_err()
-        );
-        assert!(crate::config::Config::parse_source("lock-screen { dim-after-seconds -1; }").is_err());
-        assert!(
-            crate::config::Config::parse_source("lock-screen { sleep-after-seconds 90000; }")
-                .unwrap()
-                .runtime_config()
-                .is_err()
-        );
-    }
-}
+mod tests;

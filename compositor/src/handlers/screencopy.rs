@@ -49,6 +49,7 @@ pub(crate) enum CaptureSink {
         part: usize,
         complete: PartSender,
         published: AtomicBool,
+        permit: Option<super::screenshot::BudgetPermit>,
     },
 }
 
@@ -59,6 +60,7 @@ impl CaptureSink {
             part,
             complete,
             published: AtomicBool::new(false),
+            permit: None,
         }
     }
 
@@ -73,12 +75,14 @@ impl CaptureSink {
                 part,
                 complete,
                 published,
+                permit,
             } => {
                 if !published.swap(true, Ordering::AcqRel) {
                     let _ = complete.send(PartOutcome {
                         request: *request,
                         part: *part,
                         result: Err("Screenshot part failed".to_string()),
+                        permit: permit.clone(),
                     });
                 }
             }
@@ -93,6 +97,7 @@ impl CaptureSink {
             part,
             complete,
             published,
+            permit,
         } = self
         else {
             return false;
@@ -105,12 +110,20 @@ impl CaptureSink {
                 request: *request,
                 part: *part,
                 result: Ok(buffer),
+                permit: permit.clone(),
             })
             .is_ok()
     }
 }
 
 impl PendingScreencopy {
+    pub(crate) fn with_permit(mut self, permit: Option<super::screenshot::BudgetPermit>) -> Self {
+        if let CaptureSink::Owned { permit: stored, .. } = &mut self.sink {
+            *stored = permit;
+        }
+        self
+    }
+
     pub(crate) fn owned(
         request: u64,
         part: usize,
@@ -332,6 +345,19 @@ impl Ferese {
         self.pending_screencopies
             .iter()
             .any(|capture| capture.output == *output && cursor_overlay_matches(capture.overlay_cursor, overlay_cursor))
+    }
+
+    pub(crate) fn fail_screencopies(&mut self, output: &Output, overlay_cursor: bool) {
+        let mut remaining = Vec::new();
+        for capture in std::mem::take(&mut self.pending_screencopies) {
+            if capture.output == *output && cursor_overlay_matches(capture.overlay_cursor, overlay_cursor) {
+                capture.sink.fail();
+            } else {
+                remaining.push(capture);
+            }
+        }
+
+        self.pending_screencopies = remaining;
     }
 }
 

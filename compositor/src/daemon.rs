@@ -1,7 +1,6 @@
 //! Session-owned services. Never grant shell/effects privileges to daemons.
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::os::fd::{FromRawFd, OwnedFd};
 use std::process::Child;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
@@ -13,6 +12,7 @@ use smithay::reexports::calloop::{Interest, Mode, PostAction, RegistrationToken}
 use crate::Ferese;
 use crate::config::DaemonConfig;
 use crate::private_client::ClientCapabilities;
+use crate::process::{pidfd, spawn_client, terminate_child};
 
 struct Service {
     config: DaemonConfig,
@@ -26,16 +26,6 @@ pub(crate) struct Runner(
     HashMap<u32, RegistrationToken>,
     Option<(RegistrationToken, Instant)>,
 );
-
-fn pidfd(pid: u32) -> std::io::Result<OwnedFd> {
-    // SAFETY: pidfd_open has no pointer arguments and returns a new owned fd.
-    let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0) };
-    if fd < 0 {
-        return Err(std::io::Error::last_os_error());
-    }
-    // SAFETY: a successful syscall returned a unique valid descriptor.
-    Ok(unsafe { OwnedFd::from_raw_fd(fd as i32) })
-}
 
 impl Runner {
     pub fn start(state: &mut Ferese) -> Rc<RefCell<Self>> {
@@ -153,7 +143,7 @@ impl Runner {
         // TERM/grace/reaping must not pause the compositor's event loop.
         for mut removed in previous {
             if let Some(mut child) = removed.child.take() {
-                std::thread::spawn(move || crate::terminate_child(&mut child));
+                std::thread::spawn(move || terminate_child(&mut child));
             }
         }
     }
@@ -195,11 +185,7 @@ impl Runner {
                 }
             }
             if !service.finished && now >= service.next_start {
-                service.child = crate::spawn_client(
-                    state,
-                    service.config.command.iter().map(Into::into).collect(),
-                    ClientCapabilities::default(),
-                );
+                service.child = spawn_client(state, service.config.command.iter(), ClientCapabilities::default());
                 service.next_start = now + Duration::from_secs(5);
                 if service.child.is_none() && !service.config.restart {
                     service.finished = true;
@@ -211,7 +197,7 @@ impl Runner {
     pub fn stop(&mut self) {
         for service in &mut self.0 {
             if let Some(mut child) = service.child.take() {
-                crate::terminate_child(&mut child);
+                terminate_child(&mut child);
             }
             service.finished = true;
         }

@@ -18,8 +18,11 @@ use smithay::utils::{Buffer, Physical, Rectangle, Size};
 
 use crate::presentation::NativeTextureElement;
 
+mod decoder;
 mod pixels;
+use decoder::Decoder;
 use pixels::Pixels;
+use std::sync::Arc;
 
 const UPLOAD_RETRY_DELAY: Duration = Duration::from_secs(5);
 
@@ -59,6 +62,8 @@ struct WallpaperTexture {
 pub(crate) struct WallpaperState {
     config: WallpaperConfig,
     pending: Option<WallpaperConfig>,
+    loading: Option<WallpaperConfig>,
+    decoder: Arc<Decoder>,
     commit: CommitCounter,
     owned: bool,
     mode: WallpaperMode,
@@ -78,26 +83,35 @@ impl WallpaperState {
     }
 
     pub fn with_wakeup(config: WallpaperConfig, wakeup: Option<smithay::reexports::calloop::LoopSignal>) -> Self {
+        Self::with_decoder(config, wakeup, Decoder::new(pixels::load))
+    }
+
+    pub(crate) fn replacement(&self, config: WallpaperConfig) -> Self {
+        Self::with_decoder(config, self.wakeup.clone(), self.decoder.clone())
+    }
+
+    fn with_decoder(
+        config: WallpaperConfig,
+        wakeup: Option<smithay::reexports::calloop::LoopSignal>,
+        decoder: Arc<Decoder>,
+    ) -> Self {
         let retained = config.clone();
-        let (sender, receiver) = mpsc::channel();
         let owned = config.path.as_ref().is_some_and(|path| path.is_file());
-        if owned {
-            let path = config.path.unwrap();
-            let wakeup = wakeup.clone();
-            std::thread::spawn(move || {
-                let _ = sender.send(pixels::load(&path));
-                if let Some(wakeup) = wakeup {
-                    wakeup.wakeup();
-                }
-            });
-        }
+        let receiver = if owned {
+            Some(decoder.submit(config.path.clone().unwrap(), wakeup.clone()))
+        } else {
+            decoder.cancel_pending();
+            None
+        };
         Self {
             config: retained,
             pending: None,
+            loading: None,
+            decoder,
             commit: CommitCounter::default(),
             owned,
             mode: config.mode,
-            receiver: owned.then_some(receiver),
+            receiver,
             pixels: None,
             textures: HashMap::new(),
             upload_retries: HashMap::new(),
@@ -121,8 +135,22 @@ impl WallpaperState {
     }
 
     pub fn reload(&mut self, config: WallpaperConfig) {
+        if self.config.path != config.path && config.path.as_ref().is_some_and(|path| !path.is_file()) {
+            tracing::warn!("new wallpaper is unavailable; retaining previous image");
+            return;
+        }
+
         if self.receiver.is_some() {
-            self.pending = (self.config != config).then_some(config);
+            if self.loading.is_some() && self.config == config {
+                self.receiver = None;
+                self.loading = None;
+                self.pending = None;
+                self.decoder.cancel_pending();
+                return;
+            }
+
+            let requested = self.loading.as_ref().unwrap_or(&self.config);
+            self.pending = (requested != &config).then_some(config);
             return;
         }
         if self.config == config {
@@ -134,19 +162,18 @@ impl WallpaperState {
             self.commit.increment();
             return;
         }
-        if config.path.as_ref().is_some_and(|path| !path.is_file()) {
-            tracing::warn!("new wallpaper is unavailable; retaining previous image");
-            return;
-        }
-        let mut replacement = Self::with_wakeup(config, self.wakeup.clone());
-        self.config = replacement.config;
-        self.mode = replacement.mode;
-        self.owned = replacement.owned;
-        self.receiver = replacement.receiver.take();
-        if self.config.path.is_none() {
+        if let Some(path) = config.path.clone() {
+            self.receiver = Some(self.decoder.submit(path, self.wakeup.clone()));
+            self.loading = Some(config);
+        } else {
+            self.decoder.cancel_pending();
+            self.config = config;
+            self.mode = self.config.mode;
+            self.owned = false;
             self.pixels = None;
             self.textures.clear();
             self.upload_retries.clear();
+            self.commit.increment();
         }
     }
 
@@ -205,16 +232,15 @@ impl WallpaperState {
         match receiver.try_recv() {
             Ok(result) => {
                 self.receiver = None;
-                if let Some(pending) = self.pending.take() {
-                    if pending.path != self.config.path {
-                        self.reload(pending);
-                        return true;
-                    }
-                    self.config = pending;
-                    self.mode = self.config.mode;
-                }
+                let loading = self.loading.take();
                 match result {
                     Ok(pixels) => {
+                        if let Some(config) = loading {
+                            self.config = config;
+                            self.mode = self.config.mode;
+                            self.owned = true;
+                        }
+
                         tracing::info!(
                             width = pixels.width(),
                             height = pixels.height(),
@@ -227,13 +253,17 @@ impl WallpaperState {
                         self.commit.increment();
                     }
                     Err(error) => {
-                        tracing::warn!(%error, "wallpaper unavailable; using output clear color")
+                        tracing::warn!(%error, "wallpaper decode failed; retaining previous image")
                     }
+                }
+                if let Some(pending) = self.pending.take() {
+                    self.reload(pending);
                 }
                 true
             }
             Err(mpsc::TryRecvError::Disconnected) => {
                 self.receiver = None;
+                self.loading = None;
                 false
             }
             Err(mpsc::TryRecvError::Empty) => false,
@@ -322,6 +352,46 @@ fn image_geometry(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn failed_reload_preserves_accepted_config_and_unavailable_pending_keeps_success() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut state = WallpaperState::new(WallpaperConfig {
+            path: None,
+            mode: WallpaperMode::Fill,
+        });
+        let accepted = state.config.clone();
+        state.pixels = Some(pixels::from_rgba(image::RgbaImage::new(2, 2)).unwrap());
+        let bad = directory.path().join("bad-image");
+        std::fs::write(&bad, b"not an image").unwrap();
+        state.reload(WallpaperConfig {
+            path: Some(bad),
+            mode: WallpaperMode::Fit,
+        });
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !state.poll() {
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+
+        assert_eq!(state.config, accepted);
+        assert_eq!(state.pixels.as_ref().unwrap().dimensions(), (2, 2));
+        let (sender, receiver) = mpsc::channel();
+        state.receiver = Some(receiver);
+        state.reload(WallpaperConfig {
+            path: Some(directory.path().join("missing")),
+            mode: WallpaperMode::Fit,
+        });
+        sender
+            .send(Ok(pixels::from_rgba(image::RgbaImage::new(3, 4)).unwrap()))
+            .unwrap();
+        assert!(state.poll());
+        assert_eq!(state.pixels.as_ref().unwrap().dimensions(), (3, 4));
+        assert_eq!(state.config, accepted);
+
+        let replacement = state.replacement(accepted);
+        assert!(Arc::ptr_eq(&state.decoder, &replacement.decoder));
+    }
 
     #[test]
     fn portal_wallpaper_decodes_without_a_filename_extension() {

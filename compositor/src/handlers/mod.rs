@@ -1,4 +1,4 @@
-mod activation;
+pub(crate) mod activation;
 mod compositor;
 mod input_method;
 mod layer_shell;
@@ -60,6 +60,12 @@ impl SeatHandler for Ferese {
     }
 
     fn focus_changed(&mut self, seat: &Seat<Self>, focused: Option<&WlSurface>) {
+        // Smithay has already sent enter. last_enter uses a separate mutex;
+        // querying current_focus here would reenter the held keyboard lock.
+        if let Some(serial) = seat.get_keyboard().and_then(|keyboard| keyboard.last_enter()) {
+            self.record_activation_input(serial, focused.cloned());
+        }
+
         if let Some(id) = focused.and_then(|surface| self.windows.id_for_surface(surface)) {
             self.focus_history.record(id);
         }

@@ -7,6 +7,8 @@ mod layout;
 mod navigation;
 mod outputs;
 mod reconciliation;
+#[cfg(test)]
+mod window_lifecycle_tests;
 pub(crate) use reconciliation::{DesktopChanges, DesktopOutput, DesktopTransition};
 mod prediction;
 mod presentation_dependencies;
@@ -478,6 +480,7 @@ pub struct Ferese {
     pub direct_backend: Option<DirectBackendState>,
     _ipc_socket: Option<IpcSocketGuard>,
     pending_dmabuf_imports: Vec<(Dmabuf, ImportNotifier)>,
+    pub(crate) activation_inputs: crate::handlers::activation::InputHistory,
     pub(crate) pending_screencopies: Vec<PendingScreencopy>,
     // Screenshot requests outlive the readback that filled them: the
     // coordinator owns them until encoding finishes and the caller is
@@ -721,6 +724,7 @@ impl Ferese {
             direct_backend: None,
             _ipc_socket: None,
             pending_dmabuf_imports: Vec::new(),
+            activation_inputs: Default::default(),
             pending_screencopies: Vec::new(),
             screenshot: Coordinator::new(),
             screenshot_parts: None,

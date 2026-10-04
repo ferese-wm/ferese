@@ -9,9 +9,14 @@ pub(super) fn cancel_output_timers(
     handle: &smithay::reexports::calloop::LoopHandle<'static, Ferese>,
     output: &mut DirectOutput,
 ) {
-    for token in [output.render_timer.take(), output.callback_timer.take()]
-        .into_iter()
-        .flatten()
+    output.completion.retired();
+    for token in [
+        output.render_timer.take(),
+        output.callback_timer.take(),
+        output.completion_timer.take(),
+    ]
+    .into_iter()
+    .flatten()
     {
         handle.remove(token);
     }

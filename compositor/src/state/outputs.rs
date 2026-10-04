@@ -111,8 +111,6 @@ impl Ferese {
                 true
             }
         });
-        self.session_lock.surfaces.remove(output);
-        self.session_lock.backgrounds.remove(output);
         self.session_lock.output_removed(output);
     }
 

@@ -138,4 +138,4 @@ impl Ferese {
 
 #[cfg(test)]
 #[path = "capture_privacy_tests.rs"]
-mod tests;
+pub(super) mod tests;

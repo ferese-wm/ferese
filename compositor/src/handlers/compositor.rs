@@ -5,7 +5,7 @@ use smithay::reexports::wayland_server::protocol::wl_buffer;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::wayland::buffer::BufferHandler;
 use smithay::wayland::compositor::{
-    CompositorClientState, CompositorHandler, CompositorState, get_parent, is_sync_subsurface,
+    CompositorClientState, CompositorHandler, CompositorState, get_parent, get_role, is_sync_subsurface,
 };
 use smithay::wayland::dmabuf::{DmabufGlobal, DmabufHandler, DmabufState, ImportNotifier};
 use smithay::wayland::shm::{ShmHandler, ShmState};
@@ -35,6 +35,14 @@ impl CompositorHandler for Ferese {
     }
 
     fn commit(&mut self, surface: &WlSurface) {
+        if get_role(surface) == Some(smithay::wayland::shell::xdg::XDG_TOPLEVEL_ROLE)
+            && let Some(window) = self.window_for_surface(surface)
+            && let Some(toplevel) = window.toplevel()
+            && !xdg_shell::validate_size_constraints(toplevel)
+        {
+            return;
+        }
+
         self.update_surface_preferences(surface);
         self.capture_resize_before_commit(surface);
         self.capture_close_before_commit(surface);
@@ -45,12 +53,7 @@ impl CompositorHandler for Ferese {
             while let Some(parent) = get_parent(&root) {
                 root = parent;
             }
-            let window = {
-                self.space
-                    .elements()
-                    .find(|window| window.toplevel().is_some_and(|toplevel| toplevel.wl_surface() == &root))
-                    .cloned()
-            };
+            let window = self.window_for_surface(&root);
 
             if let Some(window) = window {
                 window.on_commit();
@@ -76,7 +79,7 @@ impl CompositorHandler for Ferese {
         self.refresh_idle_inhibition();
 
         layer_shell::handle_commit(self, surface);
-        xdg_shell::handle_commit(&mut self.popups, &mut self.space, surface);
+        xdg_shell::handle_commit(self, surface);
         crate::backends::direct::render_surface(self, surface);
     }
 

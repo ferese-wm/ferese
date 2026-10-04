@@ -97,7 +97,7 @@ static SYSTEM_APPEARANCE: std::sync::OnceLock<Mutex<Option<ferese_config::theme:
 
 fn auto_context() -> ferese_config::theme::AutoContext {
     let appearance = SYSTEM_APPEARANCE.get_or_init(|| {
-        let value = std::process::Command::new("gsettings")
+        let value = crate::process::command("gsettings")
             .args(["get", "org.gnome.desktop.interface", "color-scheme"])
             .output()
             .ok()
@@ -323,7 +323,7 @@ pub(crate) fn init(
         .spawn(move || {
             use std::io::BufRead;
             use std::os::unix::process::CommandExt;
-            let mut command = std::process::Command::new("gsettings");
+            let mut command = crate::process::command("gsettings");
             unsafe {
                 command.pre_exec(|| {
                     if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM) == -1 {
@@ -338,7 +338,7 @@ pub(crate) fn init(
                 .stderr(std::process::Stdio::null())
                 .spawn();
             if let Ok(mut monitor) = monitor {
-                if let Ok(output) = std::process::Command::new("gsettings")
+                if let Ok(output) = crate::process::command("gsettings")
                     .args(["get", "org.gnome.desktop.interface", "color-scheme"])
                     .output()
                 {
@@ -430,8 +430,7 @@ impl Ferese {
             self.poll_theme();
             return;
         }
-        let wallpaper = (self.wallpaper.configuration() != &wallpaper)
-            .then(|| WallpaperState::with_wakeup(wallpaper, Some(self.loop_signal.clone())));
+        let wallpaper = (self.wallpaper.configuration() != &wallpaper).then(|| self.wallpaper.replacement(wallpaper));
         self.theme_engine.pending = Some(Pending {
             candidate,
             wallpaper,

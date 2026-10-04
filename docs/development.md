@@ -83,6 +83,30 @@ cargo test --locked -p ferese backends::direct::capture::tests -- --ignored
 cargo test --locked -p ferese mirrored_pixels_fit -- --ignored
 ```
 
+## Session lock checks
+
+```sh
+cargo test --release --locked -p ferese session_lock::tests -- --nocapture
+```
+
+These tests create private runtime directories and Wayland clients. They run in
+normal test suites and in the compositor lifecycle CI job, without a host desktop or DRM.
+They cover confirmation, rejected unlocks, owner death and replacement, output
+removal, keyboard focus and idle timers. Physical display protection still needs
+hardware testing.
+
+## Resume listener checks
+
+```sh
+cargo test --release --locked -p ferese resume::tests -- --nocapture
+```
+
+These tests need `dbus-daemon`. They use a private bus to test missed resumes,
+logind replacement and listener shutdown during connection setup, signal waits
+and retries. They run in the compositor lifecycle CI job and never contact system logind.
+Recovery requests fresh hardware and theme state without resetting idle activity.
+Hardware suspend/resume still needs testing on a direct session.
+
 ## Idle inhibition checks
 
 The playback test runs a fake MPRIS player on a private bus and opens a client in
@@ -131,3 +155,49 @@ another VT, suspend/resume with a dock disconnected, change the lid while
 suspended, and unplug/reconnect the managed GPU where supported. Verify current
 output geometry, idle notifications, recovery after failures and continued lock
 protection. Nested sessions do not validate DRM reacquisition.
+
+## Capture and DRM failure checks
+
+The compositor tests cover screenshot admission across requests, cancellation
+while buffers remain owned, staging-file cleanup, activation serials, child
+reaping and wallpaper decode coalescing:
+
+```sh
+cargo test --release --locked -p ferese
+```
+
+Screenshot requests share a 256 MiB readback reservation. The reservation follows
+pending readbacks, queued results and encoder jobs, including after cancellation.
+It does not include GPU targets, the encoder's composition canvas or encoded PNG
+bytes; it is not a cap on total process memory.
+
+The offscreen pixel tests need EGL. CI runs them with software Mesa and private
+Wayland sockets:
+
+```sh
+LIBGL_ALWAYS_SOFTWARE=1 EGL_PLATFORM=surfaceless cargo test --release --locked -p ferese state::capture_privacy::tests -- --ignored
+LIBGL_ALWAYS_SOFTWARE=1 EGL_PLATFORM=surfaceless cargo test --release --locked -p ferese backends::direct::capture::tests::capture_recomposes_cursor_without_touching_the_display_target -- --ignored
+```
+
+A retirement error or a frame pending for two seconds triggers DRM device
+reconciliation. Ferese keeps the frame marked pending until device teardown;
+clearing that flag alone would leave Smithay's buffer ownership uncertain.
+The watchdog keeps one timer per output while frames are flowing. Session pause
+and output removal cancel it.
+
+To exercise both failures on hardware, build with the test feature and start
+Ferese from an unused VT. These commands each inject one failure. Device
+recreation may briefly blank the displays; do not run them inside your active
+desktop.
+
+```sh
+cargo build --release --locked -p ferese --features drm-fault-injection
+FERESE_TEST_DRM_FAILURE=retirement target/release/ferese --backend drm
+FERESE_TEST_DRM_FAILURE=missing-completion target/release/ferese --backend drm
+```
+
+Run them separately. Check that redraws resume, connected outputs retain their
+identities, windows remain reachable, and lock protection survives the recovery.
+The unit tests check retirement-result handling and pending-frame ownership;
+they cannot prove hardware recovery succeeds. The installer leaves fault
+injection disabled.

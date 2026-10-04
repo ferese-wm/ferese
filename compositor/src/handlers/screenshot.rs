@@ -2,6 +2,10 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::SyncSender as ReplySender;
+use std::sync::{
+    Arc,
+    atomic::{AtomicUsize, Ordering},
+};
 use std::time::{Duration, Instant};
 
 use ferese_ipc::Response;
@@ -315,6 +319,7 @@ pub(crate) struct PartOutcome {
     pub(crate) request: u64,
     pub(crate) part: usize,
     pub(crate) result: Result<CaptureBuffer, String>,
+    pub(crate) permit: Option<BudgetPermit>,
 }
 
 // A calloop channel so publishing a part also wakes the event loop, whichever
@@ -352,11 +357,16 @@ struct Request {
     parts: Vec<(PartSpec, PartState)>,
     received: usize,
     deadline: Instant,
+    permit: Option<BudgetPermit>,
 }
 
 pub(crate) enum Action {
     None,
-    Encode { request: u64, frames: Vec<OutputFrame> },
+    Encode {
+        request: u64,
+        frames: Vec<OutputFrame>,
+        permit: BudgetPermit,
+    },
     // The path was already sent to the caller; it must not be cleaned up.
     Delivered(PathBuf),
     // The request is gone, so this file is ours to remove.
@@ -365,6 +375,45 @@ pub(crate) enum Action {
 
 const MAX_OUTSTANDING: usize = 8;
 const MAX_PENDING_BYTES: usize = 256 * 1024 * 1024;
+
+#[derive(Default, Debug)]
+struct Budget {
+    used: AtomicUsize,
+}
+
+#[derive(Debug)]
+struct Reservation {
+    budget: Arc<Budget>,
+    bytes: usize,
+}
+
+impl Drop for Reservation {
+    fn drop(&mut self) {
+        self.budget.used.fetch_sub(self.bytes, Ordering::AcqRel);
+    }
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct BudgetPermit {
+    _reservation: Arc<Reservation>,
+}
+
+impl Budget {
+    fn reserve(self: &Arc<Self>, bytes: usize) -> Result<BudgetPermit, String> {
+        self.used
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |used| {
+                used.checked_add(bytes).filter(|total| *total <= MAX_PENDING_BYTES)
+            })
+            .map_err(|_| "Screenshot memory budget is exhausted".to_string())?;
+        Ok(BudgetPermit {
+            _reservation: Arc::new(Reservation {
+                budget: self.clone(),
+                bytes,
+            }),
+        })
+    }
+}
+
 // A request is answered or abandoned this long after it is admitted. Parts are
 // produced by the render path, so an output that is never repainted would
 // otherwise leave the request in Collecting forever, holding one of the few
@@ -375,6 +424,7 @@ pub(crate) const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 pub(crate) struct Coordinator {
     requests: std::collections::HashMap<u64, Request>,
     next_id: u64,
+    budget: Arc<Budget>,
     deadline_changed: Option<Box<dyn Fn(Option<Instant>)>>,
     notified_deadline: Option<Instant>,
 }
@@ -432,6 +482,7 @@ impl Coordinator {
             return Err("Screenshot region is too large".into());
         }
 
+        let permit = self.budget.reserve(pending)?;
         self.next_id = self.next_id.wrapping_add(1);
         let id = self.next_id;
         self.requests.insert(
@@ -444,10 +495,15 @@ impl Coordinator {
                 parts: specs.into_iter().map(|spec| (spec, PartState::Pending)).collect(),
                 received: 0,
                 deadline: now + REQUEST_TIMEOUT,
+                permit: Some(permit),
             },
         );
         self.notify_deadline_change();
         Ok(id)
+    }
+
+    pub(crate) fn permit(&self, request: u64) -> Option<BudgetPermit> {
+        self.requests.get(&request).and_then(|entry| entry.permit.clone())
     }
 
     // Used by the completion tests to assert that a request is still tracked.
@@ -513,7 +569,11 @@ impl Coordinator {
             })
             .collect();
         entry.state = RequestState::Encoding;
-        Action::Encode { request, frames }
+        Action::Encode {
+            request,
+            frames,
+            permit: entry.permit.take().expect("collecting request owns its reservation"),
+        }
     }
 
     pub(crate) fn on_encoded(&mut self, request: u64, result: Result<PathBuf, String>) -> Action {
@@ -1046,6 +1106,43 @@ mod completion {
     }
 
     #[test]
+    fn admission_enforces_one_budget_across_requests_and_late_readbacks() {
+        let (reply, _received) = sync_channel(8);
+        let mut coordinator = Coordinator::new();
+        let first = coordinator.admit(1, 1, reply.clone(), vec![spec(4096, 8192)]).unwrap();
+        let second = coordinator.admit(1, 2, reply.clone(), vec![spec(4096, 8192)]).unwrap();
+        assert!(coordinator.admit(1, 3, reply.clone(), vec![spec(2, 2)]).is_err());
+
+        // A cancelled request can still have a readback retained by a sink or channel.
+        let late_readback = coordinator.permit(first).unwrap();
+        coordinator.reject(first, "cancelled");
+        assert!(coordinator.admit(1, 4, reply.clone(), vec![spec(2, 2)]).is_err());
+        drop(late_readback);
+        assert!(coordinator.admit(1, 5, reply, vec![spec(2, 2)]).is_ok());
+        coordinator.reject(second, "finished");
+    }
+
+    #[test]
+    fn aggregate_reservations_survive_request_cancellation_during_encoding() {
+        let mut harness = Harness::new(1);
+        let id = harness.coordinator.next_id;
+        let bytes = harness.coordinator.budget.used.load(Ordering::Acquire);
+        let Action::Encode { frames, permit, .. } = harness.coordinator.on_part(id, 0, Ok(buffer(2, 2))) else {
+            panic!("ready request should encode");
+        };
+        harness.coordinator.reject(id, "cancelled while encoder owns pixels");
+        assert_eq!(harness.coordinator.budget.used.load(Ordering::Acquire), bytes);
+        assert!(harness.coordinator.budget.reserve(MAX_PENDING_BYTES).is_err());
+        drop(frames);
+        drop(permit);
+        assert_eq!(harness.coordinator.budget.used.load(Ordering::Acquire), 0);
+        let first = harness.coordinator.budget.reserve(MAX_PENDING_BYTES / 2 + 1).unwrap();
+        assert!(harness.coordinator.budget.reserve(MAX_PENDING_BYTES / 2).is_err());
+        drop(first);
+        assert!(harness.coordinator.budget.reserve(MAX_PENDING_BYTES).is_ok());
+    }
+
+    #[test]
     fn all_parts_ready_hands_frames_to_the_encoder() {
         let mut harness = Harness::new(2);
         let id = harness.coordinator.next_id;
@@ -1055,7 +1152,7 @@ mod completion {
             Action::None
         ));
         let action = harness.coordinator.on_part(id, 1, Ok(buffer(2, 2)));
-        let Action::Encode { request, frames } = action else {
+        let Action::Encode { request, frames, .. } = action else {
             panic!("expected the request to move to encoding");
         };
         assert_eq!(request, id);
@@ -1407,7 +1504,9 @@ mod completion {
         // buffer that was handed off is never replaced.
         assert!(!sink.publish(buffer(64, 64)));
 
-        let PartOutcome { request, part, result } = receiver.try_recv().expect("published once");
+        let PartOutcome {
+            request, part, result, ..
+        } = receiver.try_recv().expect("published once");
         assert_eq!((request, part), (7, 1));
         assert_eq!(result.unwrap().width, 2);
         assert!(receiver.try_recv().is_err(), "no second buffer was sent");
@@ -1422,7 +1521,9 @@ mod completion {
         // failure has already been reported.
         assert!(!sink.publish(buffer(2, 2)));
 
-        let PartOutcome { request, part, result } = receiver.try_recv().expect("answered");
+        let PartOutcome {
+            request, part, result, ..
+        } = receiver.try_recv().expect("answered");
         assert_eq!((request, part), (3, 0));
         assert!(result.is_err());
         assert!(receiver.try_recv().is_err());

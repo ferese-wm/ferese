@@ -1,6 +1,6 @@
 use smithay::desktop::{
-    PopupKeyboardGrab, PopupKind, PopupManager, PopupPointerGrab, Space, Window, WindowSurfaceType,
-    find_popup_root_surface, get_popup_toplevel_coords,
+    PopupKeyboardGrab, PopupKind, PopupPointerGrab, Window, WindowSurfaceType, find_popup_root_surface,
+    get_popup_toplevel_coords,
 };
 use smithay::input::Seat;
 use smithay::input::pointer::{Focus, GrabStartData};
@@ -17,7 +17,7 @@ use smithay::wayland::shell::xdg::{
 };
 
 use crate::Ferese;
-use crate::grabs::{MoveSurfaceGrab, ResizeEdge, ResizeSurfaceGrab, handle_resize_commit};
+use crate::grabs::{MoveSurfaceGrab, ResizeEdge, ResizeSurfaceGrab};
 
 impl XdgShellHandler for Ferese {
     fn xdg_shell_state(&mut self) -> &mut XdgShellState {
@@ -82,19 +82,7 @@ impl XdgShellHandler for Ferese {
 
     fn toplevel_destroyed(&mut self, surface: ToplevelSurface) {
         // Hidden workspace windows are managed but unmapped from Space.
-        let Some(window) = self
-            .windows
-            .id_for_surface(surface.wl_surface())
-            .and_then(|id| self.windows.window(id))
-            .or_else(|| {
-                self.space.elements().find(|window| {
-                    window
-                        .toplevel()
-                        .is_some_and(|toplevel| toplevel.wl_surface() == surface.wl_surface())
-                })
-            })
-            .cloned()
-        else {
+        let Some(window) = self.window_for_surface(surface.wl_surface()) else {
             return;
         };
 
@@ -330,17 +318,27 @@ pub(crate) fn initial_configure_sent(toplevel: &ToplevelSurface) -> bool {
     })
 }
 
-pub fn handle_commit(popups: &mut PopupManager, space: &mut Space<Window>, surface: &WlSurface) {
-    handle_resize_commit(surface);
-    if let Some(window) = space
-        .elements()
-        .find(|window| {
-            window
-                .toplevel()
-                .is_some_and(|toplevel| toplevel.wl_surface() == surface)
-        })
-        .cloned()
-    {
+pub(crate) fn validate_size_constraints(toplevel: &ToplevelSurface) -> bool {
+    use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
+    use smithay::wayland::shell::xdg::SurfaceCachedState;
+
+    let valid = with_states(toplevel.wl_surface(), |states| {
+        let mut cached = states.cached_state.get::<SurfaceCachedState>();
+        let state = cached.current();
+        let valid_axis = |min: i32, max: i32| min >= 0 && max >= 0 && (max == 0 || min <= max);
+        valid_axis(state.min_size.w, state.max_size.w) && valid_axis(state.min_size.h, state.max_size.h)
+    });
+    if !valid {
+        toplevel
+            .xdg_toplevel()
+            .post_error(xdg_toplevel::Error::InvalidSize, "invalid minimum/maximum window size");
+    }
+
+    valid
+}
+
+pub fn handle_commit(state: &mut Ferese, surface: &WlSurface) {
+    if let Some(window) = state.window_for_surface(surface) {
         let configured = with_states(surface, |states| {
             states
                 .data_map
@@ -358,8 +356,8 @@ pub fn handle_commit(popups: &mut PopupManager, space: &mut Space<Window>, surfa
         }
     }
 
-    popups.commit(surface);
-    if let Some(PopupKind::Xdg(popup)) = popups.find_popup(surface)
+    state.popups.commit(surface);
+    if let Some(PopupKind::Xdg(popup)) = state.popups.find_popup(surface)
         && !popup.is_initial_configure_sent()
     {
         popup.send_configure().expect("initial popup configure is valid");

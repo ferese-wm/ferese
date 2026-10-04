@@ -1,5 +1,3 @@
-#![allow(irrefutable_let_patterns)]
-
 mod backends;
 mod config;
 mod cursor;
@@ -26,6 +24,7 @@ mod portal_shortcuts;
 mod presentation;
 mod presentation_policy;
 mod private_client;
+mod process;
 mod reload;
 mod render;
 #[cfg(feature = "resize-metrics")]
@@ -35,6 +34,8 @@ mod resume;
 mod session_lock;
 mod shell_control;
 mod stacking;
+#[cfg(test)]
+mod startup_tests;
 mod state;
 mod theme;
 mod wallpaper;
@@ -42,11 +43,10 @@ mod window_rules;
 mod winit;
 
 use std::error::Error;
-use std::process::{Child, Command};
-use std::time::Duration;
-use std::{io, thread};
+use std::io;
 
 use calloop::signals::{Signal, Signals};
+use process::{spawn_client, terminate_child, watch_client_exit};
 use smithay::reexports::calloop::EventLoop;
 use smithay::reexports::wayland_server::Display;
 pub use state::{Ferese, RuntimeConfig};
@@ -64,13 +64,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         if args.len() != 2 {
             return Err("usage: ferese --check-config PATH".into());
         }
-        let source = std::fs::read_to_string(&args[1])?;
-        theme::prepare(
-            &source,
-            std::path::Path::new(&args[1])
-                .parent()
-                .unwrap_or(std::path::Path::new(".")),
-        )?;
+
+        check_config(std::path::Path::new(&args[1]))?;
         println!("Configuration is valid");
         return Ok(());
     }
@@ -81,11 +76,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         .filter(|path| path.exists())
         .map(|path| theme::read_source(&path))
         .transpose()?;
-    let source = initial_source.as_deref().unwrap_or("");
     let directory = config::config_path()
         .and_then(|path| path.parent().map(ToOwned::to_owned))
         .unwrap_or_else(|| std::path::PathBuf::from("."));
-    let (_, runtime, candidate) = theme::prepare(source, &directory)?;
+    let (_, runtime, candidate) = theme::prepare(initial_source.as_deref().unwrap_or(""), &directory)?;
     let mut event_loop = EventLoop::try_new()?;
     let signals = Signals::new(&[Signal::SIGINT, Signal::SIGTERM])?;
     event_loop
@@ -109,56 +103,18 @@ fn main() -> Result<(), Box<dyn Error>> {
             value
         });
     theme::init(&mut event_loop, &mut state, candidate)?;
-    resume::init(&mut event_loop)?;
+    let _resume_monitor = resume::init(&mut event_loop)?;
     idle_inhibition::media::init(&mut event_loop)?;
     overview::init_font_loader(&mut event_loop, &mut state)?;
     backends::init(launch.backend, &mut event_loop, &mut state)?;
+
     info!(socket = ?state.socket_name, backend = ?launch.backend, "Ferese is accepting Wayland clients");
-    let mut child = spawn_client(&mut state, launch.client, launch.client_capabilities);
+
+    let child = spawn_client(&mut state, launch.client, launch.client_capabilities)
+        .map(|child| watch_client_exit(&state.loop_handle, child));
     let runner = daemon::Runner::start(&mut state);
     state.daemons = Some(runner.clone());
-    let reload_handle = event_loop.handle();
-    let result = event_loop.run(None, &mut state, |state| {
-        state.poll_theme();
-        // The decoder wakes the loop after publishing its result, including
-        // when no output has a pending frame.
-        let wallpaper_changed = state.wallpaper.poll();
-        // All input/Wayland callbacks have returned, releasing seat locks.
-        if state.focus_cycle.is_some() && (state.session_lock.active() || state.input_capture.captures(1)) {
-            state.cancel_focus_cycle();
-        }
-        // Coalesce cursor changes and redraw here, never inside cursor_image.
-        if state.input_capture.restore_focus {
-            state.restore_input_capture_focus();
-        }
-        state.apply_unlocked_pointer_hint();
-        let wallpaper_retry = state.wallpaper.take_retry_wakeup();
-        let cursor_changed = std::mem::take(&mut state.cursor_redraw_pending);
-        let output_redraws = std::mem::take(&mut state.output_redraw_pending);
-        if wallpaper_changed || wallpaper_retry {
-            backends::direct::render_all(state);
-        } else {
-            if cursor_changed {
-                backends::direct::render_cursor(state);
-            }
-
-            if !output_redraws.is_empty() {
-                backends::direct::render_on(state, &output_redraws);
-            }
-        }
-        if let Err(error) = state
-            .wallpaper
-            .arm_retry_timer(&reload_handle, std::time::Instant::now())
-        {
-            warn!(%error, "could not schedule wallpaper upload retry");
-        }
-        // Registry/sync/configure replies must not depend on a submitted
-        // frame: at startup clients need these before they can draw anything.
-        // This also keeps idle DRM sessions responsive when there is no damage.
-        if let Err(error) = state.display_handle.flush_clients() {
-            tracing::warn!(%error, "failed to flush Wayland clients");
-        }
-    });
+    let result = event_loop.run(None, &mut state, after_dispatch);
 
     if let Some(backend) = state.direct_backend.as_ref() {
         backend.dump_scheduling_metrics();
@@ -168,8 +124,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     state.resize_metrics.dump();
 
     runner.borrow_mut().stop();
-    if let Some(child) = &mut child {
-        terminate_child(child);
+    if let Some(child) = child
+        && let Some(mut child) = child.borrow_mut().take()
+    {
+        terminate_child(&mut child);
     }
 
     result.map_err(Into::into)
@@ -181,130 +139,66 @@ fn init_logging() {
     tracing_subscriber::fmt().with_env_filter(filter).init();
 }
 
-fn spawn_client(
-    state: &mut Ferese,
-    mut args: Vec<std::ffi::OsString>,
-    capabilities: private_client::ClientCapabilities,
-) -> Option<Child> {
-    if args.is_empty() {
-        info!("no client requested; pass one after `--`, for example `-- foot`");
-        return None;
-    }
-    let program = args.remove(0);
+fn check_config(path: &std::path::Path) -> Result<(), String> {
+    let source = theme::read_source(path)?;
+    theme::prepare(&source, path.parent().unwrap_or(std::path::Path::new(".")))?;
+    Ok(())
+}
 
-    let mut command = Command::new(&program);
-    command.args(args);
-    // Wallpaper decoding and drivers may already have worker threads. Set
-    // the child's display explicitly instead of mutating the process env.
-    command.env("WAYLAND_DISPLAY", &state.socket_name);
-    command.env_remove("WAYLAND_SOCKET");
-    command.env_remove("FERESE_SHELL_CONTROL_SOCKET");
-    command.env("FERESE_COMPOSITOR_WALLPAPER", "1");
-    let private_connection = if capabilities.is_empty() {
-        None
+#[derive(Debug)]
+enum RedrawRequest<'a> {
+    Global,
+    Cursor,
+    Outputs(&'a [smithay::output::Output]),
+}
+
+fn after_dispatch(state: &mut Ferese) {
+    after_dispatch_with_redraw(state, |state, request| match request {
+        RedrawRequest::Global => backends::direct::render_all(state),
+        RedrawRequest::Cursor => backends::direct::render_cursor(state),
+        RedrawRequest::Outputs(outputs) => backends::direct::render_on(state, outputs),
+    });
+}
+
+fn after_dispatch_with_redraw(state: &mut Ferese, mut redraw: impl FnMut(&mut Ferese, RedrawRequest<'_>)) {
+    state.poll_theme();
+    // The decoder wakes the loop after publishing its result, including
+    // when no output has a pending frame.
+    let wallpaper_changed = state.wallpaper.poll();
+    // All input/Wayland callbacks have returned, releasing seat locks.
+    if state.focus_cycle.is_some() && (state.session_lock.active() || state.input_capture.captures(1)) {
+        state.cancel_focus_cycle();
+    }
+
+    if state.input_capture.restore_focus {
+        state.restore_input_capture_focus();
+    }
+
+    state.apply_unlocked_pointer_hint();
+    let wallpaper_retry = state.wallpaper.take_retry_wakeup();
+    let cursor_changed = std::mem::take(&mut state.cursor_redraw_pending);
+    let output_redraws = std::mem::take(&mut state.output_redraw_pending);
+    if wallpaper_changed || wallpaper_retry {
+        redraw(state, RedrawRequest::Global);
     } else {
-        match private_client::prepare_command(state, &mut command, capabilities) {
-            Ok(connection) => Some(connection),
-            Err(error) => {
-                warn!(program = ?program, %error, "failed to create private Wayland connection");
-                return None;
-            }
+        if cursor_changed {
+            redraw(state, RedrawRequest::Cursor);
         }
-    };
 
-    let child = match command.spawn() {
-        Ok(child) => {
-            info!(program = ?program, pid = child.id(), "spawned Wayland client");
-            Some(child)
+        if !output_redraws.is_empty() {
+            redraw(state, RedrawRequest::Outputs(&output_redraws));
         }
-        Err(error) => {
-            warn!(program = ?program, %error, "failed to spawn Wayland client");
-            None
-        }
-    };
-    drop(private_connection);
-    child
-}
-
-fn terminate_child(child: &mut Child) {
-    if child.try_wait().ok().flatten().is_some() {
-        return;
     }
 
-    // SAFETY: the process ID comes from the live Child owned by Ferese.
-    unsafe {
-        libc::kill(child.id() as i32, libc::SIGTERM);
+    if let Err(error) = state
+        .wallpaper
+        .arm_retry_timer(&state.loop_handle, std::time::Instant::now())
+    {
+        warn!(%error, "could not schedule wallpaper upload retry");
     }
 
-    for _ in 0..20 {
-        if child.try_wait().ok().flatten().is_some() {
-            return;
-        }
-        thread::sleep(Duration::from_millis(10));
-    }
-
-    let _ = child.kill();
-    let _ = child.wait();
-}
-
-#[cfg(test)]
-mod startup_tests {
-    use std::io::{Read, Write};
-    use std::os::unix::net::UnixStream;
-    use std::sync::Arc;
-
-    use super::*;
-
-    #[test]
-    fn deferred_cursor_redraw_runs_after_input_lock_is_released() {
-        use std::sync::Mutex;
-
-        let mut event_loop = EventLoop::<bool>::try_new().unwrap();
-        let pointer_lock = Arc::new(Mutex::new(()));
-        let callback_lock = pointer_lock.clone();
-        event_loop.handle().insert_idle(move |pending| {
-            // Mirrors Smithay's cursor_image callback during pointer motion.
-            let _guard = callback_lock.lock().unwrap();
-            *pending = true;
-            *pending = true; // Multiple cursor changes must coalesce.
-            assert!(callback_lock.try_lock().is_err());
-        });
-
-        let signal = event_loop.get_signal();
-        let mut pending = false;
-        let mut redraws = 0;
-        event_loop
-            .run(Some(Duration::ZERO), &mut pending, |pending| {
-                if std::mem::take(pending) {
-                    // Rendering reads the pointer location at this point.
-                    let _guard = pointer_lock.try_lock().expect("input lock still held");
-                    redraws += 1;
-                }
-                assert!(!std::mem::take(pending));
-                signal.stop();
-            })
-            .unwrap();
-        assert_eq!(redraws, 1);
-    }
-
-    #[test]
-    fn wayland_roundtrip_completes_without_a_rendered_frame() {
-        let mut display = Display::<()>::new().unwrap();
-        let (server, mut client) = UnixStream::pair().unwrap();
-        display
-            .handle()
-            .insert_client(server, Arc::new(state::ClientState::default()))
-            .unwrap();
-        // wl_display.sync(new_id=2), using native-endian Wayland wire format.
-        for word in [1u32, 12u32 << 16, 2u32] {
-            client.write_all(&word.to_ne_bytes()).unwrap();
-        }
-        display.dispatch_clients(&mut ()).unwrap();
-        display.handle().flush_clients().unwrap();
-        client.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
-        let mut reply = [0u8; 12];
-        client.read_exact(&mut reply).unwrap();
-        assert_eq!(u32::from_ne_bytes(reply[0..4].try_into().unwrap()), 2);
-        assert_eq!(u32::from_ne_bytes(reply[4..8].try_into().unwrap()) & 0xffff, 0);
+    // Clients need registry/sync/configure replies even when no frame is drawn.
+    if let Err(error) = state.display_handle.flush_clients() {
+        warn!(%error, "failed to flush Wayland clients");
     }
 }

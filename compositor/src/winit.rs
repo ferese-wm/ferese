@@ -155,7 +155,7 @@ pub fn init(event_loop: &mut EventLoop<Ferese>, state: &mut Ferese) -> Result<()
                                     &mut capture_texture,
                                     &output,
                                     &scene,
-                                )?;
+                                );
                                 capture_changed_binding = true;
                             }
                             if capture_changed_binding {

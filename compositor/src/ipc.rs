@@ -908,14 +908,16 @@ impl Ferese {
 
         for (position, part) in planned.iter().enumerate() {
             let (output, _) = &targets[part.index];
-            self.pending_screencopies
-                .push(crate::handlers::screencopy::PendingScreencopy::owned(
+            self.pending_screencopies.push(
+                crate::handlers::screencopy::PendingScreencopy::owned(
                     id,
                     position,
                     parts.clone(),
                     output.clone(),
                     part.buffer,
-                ));
+                )
+                .with_permit(self.screenshot.permit(id)),
+            );
         }
 
         // The nested backend redraws on its refresh timer; this drives the
@@ -1006,11 +1008,20 @@ impl Ferese {
             request: capture,
             part: 0,
             result,
+            permit: self.screenshot.permit(capture),
         });
     }
 
     pub(crate) fn on_screenshot_part(&mut self, outcome: PartOutcome) {
-        let action = self.screenshot.on_part(outcome.request, outcome.part, outcome.result);
+        let PartOutcome {
+            request,
+            part,
+            result,
+            permit,
+        } = outcome;
+        let action = self.screenshot.on_part(request, part, result);
+        // Pixels have moved into the coordinator/job before the channel lease is dropped.
+        drop(permit);
         self.apply_screenshot_action(action);
     }
 
@@ -1022,11 +1033,20 @@ impl Ferese {
     fn apply_screenshot_action(&mut self, action: Action) {
         match action {
             Action::None => {}
-            Action::Encode { request, frames } => {
-                let submitted = self
-                    .screenshot_worker
-                    .as_ref()
-                    .is_some_and(|worker| worker.submit(Job { request, frames }).is_ok());
+            Action::Encode {
+                request,
+                frames,
+                permit,
+            } => {
+                let submitted = self.screenshot_worker.as_ref().is_some_and(|worker| {
+                    worker
+                        .submit(Job {
+                            request,
+                            frames,
+                            _permit: Some(permit),
+                        })
+                        .is_ok()
+                });
                 if !submitted {
                     self.screenshot.reject(request, "Screenshot encoding queue is full");
                 }

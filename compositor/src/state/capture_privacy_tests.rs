@@ -22,7 +22,7 @@ use smithay::wayland::shell::xdg::{XdgShellHandler, XdgToplevelSurfaceData, XdgW
 use crate::Ferese;
 use crate::state::{ClientState, DesktopOutput};
 
-fn request(wire: &mut UnixStream, object: u32, opcode: u32, args: &[u32], fd: Option<RawFd>) {
+pub(crate) fn request(wire: &mut UnixStream, object: u32, opcode: u32, args: &[u32], fd: Option<RawFd>) {
     let bytes = [object, (((args.len() + 2) * 4) as u32) << 16 | opcode]
         .into_iter()
         .chain(args.iter().copied())
@@ -54,12 +54,12 @@ fn request(wire: &mut UnixStream, object: u32, opcode: u32, args: &[u32], fd: Op
     }
 }
 
-fn dispatch(events: &mut EventLoop<'static, Ferese>, state: &mut Ferese) {
+pub(crate) fn dispatch(events: &mut EventLoop<'static, Ferese>, state: &mut Ferese) {
     events.dispatch(Duration::from_millis(1), state).unwrap();
     state.display_handle.flush_clients().unwrap();
 }
 
-fn ack_configure(wire: &mut UnixStream, xdg: u32) -> u32 {
+pub(crate) fn ack_configure(wire: &mut UnixStream, xdg: u32) -> u32 {
     wire.set_nonblocking(true).unwrap();
     let mut bytes = Vec::new();
     let _ = wire.read_to_end(&mut bytes);
@@ -79,7 +79,7 @@ fn ack_configure(wire: &mut UnixStream, xdg: u32) -> u32 {
     serial.unwrap()
 }
 
-fn window(state: &mut Ferese, events: &mut EventLoop<'static, Ferese>, color: u32) -> (Window, UnixStream) {
+pub(crate) fn window(state: &mut Ferese, events: &mut EventLoop<'static, Ferese>, color: u32) -> (Window, UnixStream) {
     let (server, mut wire) = UnixStream::pair().unwrap();
     let client = state
         .display_handle
@@ -208,7 +208,7 @@ fn pixels(
                 Rectangle::from_size((320, 240).into()),
             ));
         let mut target = Some(texture.clone());
-        crate::backends::direct::capture::capture_output(state, renderer, &mut target, output, &scene).unwrap();
+        crate::backends::direct::capture::capture_output(state, renderer, &mut target, output, &scene);
         let mut result = receiver.try_recv().unwrap().result.unwrap().pixels;
         for pixel in result.chunks_exact_mut(4) {
             pixel.swap(0, 2);
@@ -424,8 +424,7 @@ fn capture_privacy_pixels_and_policy_transitions() {
         &mut Some(capture_texture.clone()),
         &output,
         &scene,
-    )
-    .unwrap();
+    );
     let region = receiver.try_recv().unwrap().result.unwrap();
     assert_eq!((region.width, region.height), (160, 120));
     assert!(

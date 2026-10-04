@@ -1,5 +1,3 @@
-use std::process::Command;
-
 use ferese_layout::Direction;
 use smithay::backend::input::{
     AbsolutePositionEvent, Axis, AxisSource, ButtonState, Event, GestureBeginEvent, GestureEndEvent,
@@ -22,6 +20,7 @@ use crate::Ferese;
 use crate::config::BindingAction;
 use crate::gestures::SwipeDirection;
 use crate::grabs::{MoveSurfaceGrab, ResizeEdge, ResizeSurfaceGrab};
+use crate::process::spawn_client;
 
 const BTN_LEFT: u32 = 0x110;
 const BTN_RIGHT: u32 = 0x111;
@@ -278,11 +277,16 @@ impl Ferese {
                         keyboard.set_focus(self, None, SERIAL_COUNTER.next_serial());
                     }
                 }
-                keyboard.input::<(), _>(
+                let serial = SERIAL_COUNTER.next_serial();
+                let interaction_focus = keyboard.current_focus();
+                let client_grab = keyboard
+                    .with_grab(|_, grab| grab.is::<smithay::desktop::PopupKeyboardGrab<Self>>())
+                    .unwrap_or(true);
+                let intercepted = keyboard.input::<(), _>(
                     self,
                     keycode,
                     state,
-                    SERIAL_COUNTER.next_serial(),
+                    serial,
                     event.time_msec(),
                     |data, modifiers, keysym| {
                         if data.focus_cycle.is_some() {
@@ -423,6 +427,10 @@ impl Ferese {
                         FilterResult::Intercept(())
                     },
                 );
+                if state == KeyState::Pressed && intercepted.is_none() && client_grab {
+                    self.record_activation_input(serial, interaction_focus);
+                }
+
                 if was_captured && !self.input_capture.active() {
                     self.restore_input_capture_focus();
                 }
@@ -534,6 +542,10 @@ impl Ferese {
                 if self.overview.is_active() {
                     let position = pointer.current_location();
                     if self.layer_under(position).is_some() {
+                        if event.state() == ButtonState::Pressed {
+                            self.record_activation_input(serial, pointer.current_focus());
+                        }
+
                         pointer.button(
                             self,
                             &ButtonEvent {
@@ -582,6 +594,16 @@ impl Ferese {
 
                 if event.state() == ButtonState::Pressed && !pointer.is_grabbed() {
                     self.focus_window_at(pointer.current_location(), serial, true);
+                }
+
+                let client_grab = pointer
+                    .with_grab(|_, grab| {
+                        grab.is::<smithay::desktop::PopupPointerGrab<Self>>()
+                            || grab.is::<smithay::input::pointer::ClickGrab<Self>>()
+                    })
+                    .unwrap_or(true);
+                if event.state() == ButtonState::Pressed && client_grab {
+                    self.record_activation_input(serial, pointer.current_focus());
                 }
 
                 pointer.button(
@@ -653,6 +675,10 @@ impl Ferese {
                 self.focus_window_at(location, SERIAL_COUNTER.next_serial(), true);
                 let touch = self.seat.get_touch().expect("seat has touch capability");
                 let serial = SERIAL_COUNTER.next_serial();
+
+                if !touch.is_grabbed() {
+                    self.record_activation_input(serial, self.surface_under(location).map(|(surface, _)| surface));
+                }
 
                 touch.down(
                     self,
@@ -1042,20 +1068,10 @@ impl Ferese {
         match action {
             BindingAction::None => {}
             BindingAction::Spawn(argv) => {
-                let (program, args) = argv.split_first().expect("binding commands are validated");
-
-                match Command::new(program)
-                    .args(args)
-                    .env("WAYLAND_DISPLAY", &self.socket_name)
-                    .env_remove("WAYLAND_SOCKET")
-                    .spawn()
+                if let Some(child) =
+                    spawn_client(self, argv.iter(), crate::private_client::ClientCapabilities::default())
                 {
-                    Ok(child) => {
-                        tracing::info!(%program, pid = child.id(), "spawned binding command")
-                    }
-                    Err(error) => {
-                        tracing::warn!(%program, %error, "failed to spawn binding command")
-                    }
+                    crate::process::watch_client_exit(&self.loop_handle, child);
                 }
             }
             BindingAction::Close => self.close_focused_window(),
@@ -1165,6 +1181,43 @@ fn overview_escape(symbol: u32, overview_active: bool) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{emergency_shortcut_escape, overview_escape, virtual_terminal};
+
+    #[test]
+    fn binding_commands_are_reaped_while_the_compositor_runs() {
+        if !crate::startup_tests::private_runtime("input::tests::binding_commands_are_reaped_while_the_compositor_runs")
+        {
+            return;
+        }
+
+        let mut events = smithay::reexports::calloop::EventLoop::try_new().unwrap();
+        let mut state = crate::startup_tests::state(&mut events);
+        let children_path = format!("/proc/self/task/{}/children", unsafe { libc::gettid() });
+        assert!(std::fs::read_to_string(&children_path).unwrap().trim().is_empty());
+        for _ in 0..24 {
+            state.execute_binding(crate::config::BindingAction::Spawn(vec!["/bin/true".into()].into()));
+        }
+
+        let children: Vec<i32> = std::fs::read_to_string(&children_path)
+            .unwrap()
+            .split_whitespace()
+            .map(|pid| pid.parse().unwrap())
+            .collect();
+        assert_eq!(children.len(), 24);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        while !std::fs::read_to_string(&children_path).unwrap().trim().is_empty() {
+            assert!(std::time::Instant::now() < deadline, "binding children were not reaped");
+            events
+                .dispatch(Some(std::time::Duration::from_millis(20)), &mut state)
+                .unwrap();
+            crate::after_dispatch(&mut state);
+        }
+
+        for pid in children {
+            let mut status = 0;
+            assert_eq!(unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) }, -1);
+            assert_eq!(std::io::Error::last_os_error().raw_os_error(), Some(libc::ECHILD));
+        }
+    }
 
     #[test]
     fn escape_closes_only_an_active_overview() {

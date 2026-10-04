@@ -246,12 +246,14 @@ impl Ferese {
 
                 let is_maximized =
                     self.windows.record(*id).is_some_and(|w| w.maximized) && workspace_fullscreen != Some(*id);
+                let placement = self.workspaces.placement(*id);
+                let is_floating = matches!(placement, Some(WindowPlacement::Floating { .. }));
                 let rect = if workspace_fullscreen == Some(*id) {
                     fullscreen_bounds
-                } else if is_maximized && !is_scrolling_layout {
+                } else if is_maximized && (!is_scrolling_layout || is_floating) {
                     maximized_rect(bounds, self.gap_config.outer)
                 } else {
-                    match self.workspaces.placement(*id) {
+                    match placement {
                         Some(WindowPlacement::Tiled) => {
                             let Some(rect) = layout.geometry.get(id).copied() else {
                                 continue;
@@ -271,7 +273,6 @@ impl Ferese {
                 };
 
                 let is_fullscreen = workspace_fullscreen == Some(*id);
-                let is_floating = matches!(self.workspaces.placement(*id), Some(WindowPlacement::Floating { .. }));
 
                 visible.insert(*id);
                 let scrolling = if !is_fullscreen && !is_floating && (!is_maximized || is_scrolling_layout) {
