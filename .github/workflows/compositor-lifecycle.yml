@@ -44,3 +44,4 @@ jobs:
         run: |
           cargo +1.95.0 test --locked -p ferese state::capture_privacy::tests -- --ignored --nocapture
           cargo +1.95.0 test --locked -p ferese backends::direct::capture::tests::capture_recomposes_cursor_without_touching_the_display_target -- --ignored --nocapture
+          cargo +1.95.0 test --locked -p ferese winit::tests::capture_failure_restores_display_target_and_subsequent_frames_render -- --ignored --nocapture

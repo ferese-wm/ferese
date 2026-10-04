@@ -112,9 +112,9 @@ impl DmabufHandler for Ferese {
         &mut self.dmabuf_state
     }
 
-    fn dmabuf_imported(&mut self, _global: &DmabufGlobal, dmabuf: Dmabuf, notifier: ImportNotifier) {
-        self.queue_dmabuf_import(dmabuf, notifier);
-        crate::backends::direct::render_all(self);
+    fn dmabuf_imported(&mut self, global: &DmabufGlobal, dmabuf: Dmabuf, notifier: ImportNotifier) {
+        self.dmabuf_imports
+            .enqueue(*global, dmabuf, notifier, std::time::Instant::now());
     }
 }
 

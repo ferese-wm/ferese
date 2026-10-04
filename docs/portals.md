@@ -42,8 +42,11 @@ remembered InputCapture grants are not supported. InputCapture forwards local
 input; it does not inject remote input.
 
 Wallpaper approval copies the image into Ferese's data directory and updates the
-config. Set `theme.background.lock-path` for a separate lock-screen image; otherwise
-it follows the desktop wallpaper.
+active light or dark appearance in the config. The other appearance keeps its
+wallpaper. A desktop-only change keeps the current lock-screen image, and a
+lock-screen-only change keeps the desktop image. Set `theme.background.lock-path`
+for a shared lock-screen image, or override it under `theme.light.background` and
+`theme.dark.background`. Without a lock-screen path, it follows the desktop wallpaper.
 
 Global shortcuts cannot replace Ferese bindings or reserved escape/console keys.
 They stop when the app session closes. They never activate on the lock screen.

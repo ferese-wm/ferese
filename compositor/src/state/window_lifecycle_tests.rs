@@ -32,6 +32,190 @@ fn fixture() -> (smithay::reexports::calloop::EventLoop<'static, Ferese>, Ferese
 }
 
 #[test]
+fn late_keymap_failure_preserves_capture_sessions_and_runtime_settings() {
+    if !crate::startup_tests::private_runtime(
+        "state::window_lifecycle_tests::late_keymap_failure_preserves_capture_sessions_and_runtime_settings",
+    ) {
+        return;
+    }
+
+    let (mut events, mut state, _) = fixture();
+    let (window, _wire) = window(&mut state, &mut events, 0xff112233);
+    let focus = state.focused_window;
+    let session = state.input_capture.register(42, 1).unwrap();
+    state.input_capture.enable(session).unwrap();
+    let previous_layout = state.input_settings.xkb_layout.clone();
+    let previous_repeat = state.input_settings.repeat_rate;
+    let mut runtime = crate::config::Config::default().runtime_config().unwrap();
+    // Preparation succeeded; force the real late application failure.
+    runtime.input_settings.xkb_layout = "ferese-nonexistent-layout-for-regression".into();
+    runtime.input_settings.repeat_rate = previous_repeat + 1;
+    let result = state.apply_runtime_config(runtime, &serde_json::json!({"input": "changed"}));
+    assert!(result.unwrap_err().contains("keymap reload failed"));
+    assert!(state.input_capture.has_sessions());
+    state.input_capture.enable(session).unwrap();
+    assert!(!state.input_capture.restore_focus);
+    assert_eq!(state.focused_window, focus);
+    assert_eq!(state.input_settings.xkb_layout, previous_layout);
+    assert_eq!(state.input_settings.repeat_rate, previous_repeat);
+    assert!(state.windows.ids().contains_key(&window));
+}
+
+#[test]
+fn dmabuf_validation_uses_the_originating_global_without_a_desktop_frame() {
+    use smithay::backend::allocator::{Buffer, Format, Fourcc, Modifier};
+    use std::io::Read;
+    use std::os::fd::AsRawFd;
+    use std::os::unix::net::UnixStream;
+    use std::sync::Arc;
+
+    if !crate::startup_tests::private_runtime(
+        "state::window_lifecycle_tests::dmabuf_validation_uses_the_originating_global_without_a_desktop_frame",
+    ) {
+        return;
+    }
+
+    let mut events = smithay::reexports::calloop::EventLoop::try_new().unwrap();
+    let mut state = crate::startup_tests::state(&mut events);
+    let formats = [Format {
+        code: Fourcc::Argb8888,
+        modifier: Modifier::Linear,
+    }];
+    let a = state
+        .dmabuf_state
+        .create_global::<Ferese>(&state.display_handle, formats);
+    state.dmabuf_imports.register(a);
+    let (server, mut wire) = UnixStream::pair().unwrap();
+    let client = state
+        .display_handle
+        .insert_client(server, Arc::new(ClientState::default()))
+        .unwrap();
+    request(&mut wire, 1, 1, &[2], None);
+    dispatch(&mut events, &mut state);
+    let read = |wire: &mut UnixStream| {
+        wire.set_nonblocking(true).unwrap();
+        let mut bytes = Vec::new();
+        let _ = wire.read_to_end(&mut bytes);
+        wire.set_nonblocking(false).unwrap();
+        bytes
+    };
+    let mut registry = read(&mut wire);
+    // Register B after the initial registry roundtrip so notification order
+    // identifies A and B without depending on backend map iteration order.
+    let b = state
+        .dmabuf_state
+        .create_global::<Ferese>(&state.display_handle, formats);
+    state.dmabuf_imports.register(b);
+    state.display_handle.flush_clients().unwrap();
+    registry.extend(read(&mut wire));
+    let mut offset = 0;
+    let mut names = Vec::new();
+    while offset < registry.len() {
+        let header = u32::from_ne_bytes(registry[offset + 4..offset + 8].try_into().unwrap());
+        let length = (header >> 16) as usize;
+        let message = &registry[offset..offset + length];
+        if message
+            .windows(b"zwp_linux_dmabuf_v1\0".len())
+            .any(|text| text == b"zwp_linux_dmabuf_v1\0")
+        {
+            names.push(u32::from_ne_bytes(message[8..12].try_into().unwrap()));
+        }
+        offset += length;
+    }
+    assert_eq!(names.len(), 2);
+    let interface = b"zwp_linux_dmabuf_v1\0";
+    for (name, id) in names.into_iter().zip([3, 4]) {
+        let mut args = vec![name, interface.len() as u32];
+        let mut padded = interface.to_vec();
+        padded.resize(padded.len().next_multiple_of(4), 0);
+        args.extend(
+            padded
+                .chunks_exact(4)
+                .map(|word| u32::from_ne_bytes(word.try_into().unwrap())),
+        );
+        args.extend([3, id]);
+        request(&mut wire, 2, 0, &args, None);
+    }
+    dispatch(&mut events, &mut state);
+    read(&mut wire);
+    let file = tempfile::tempfile().unwrap();
+    file.set_len(64).unwrap();
+    // Both asynchronous and immediate imports must survive the wrong GPU
+    // being visited first. The mock capability accepts only B's buffers.
+    for (params, buffer) in [(5, None), (6, Some(7))] {
+        request(&mut wire, 4, 1, &[params], None);
+        request(&mut wire, params, 1, &[0, 0, 16, 0, 0], Some(file.as_raw_fd()));
+        let mut args = vec![4, 4, Fourcc::Argb8888 as u32, 0];
+        if let Some(buffer) = buffer {
+            args.insert(0, buffer);
+        }
+        request(&mut wire, params, if buffer.is_some() { 3 } else { 2 }, &args, None);
+        dispatch(&mut events, &mut state);
+        assert!(state.space.outputs().next().is_none());
+        state.process_pending_dmabuf_imports();
+        assert!(
+            read(&mut wire).is_empty(),
+            "unavailable renderer must defer notification"
+        );
+        state
+            .dmabuf_imports
+            .process_with(a, None, |_| panic!("B's request reached A's renderer"));
+        let mut calls = 0;
+        state.dmabuf_imports.process_with(b, None, |dmabuf| {
+            calls += 1;
+            assert_eq!(dmabuf.size(), (4, 4).into());
+            true
+        });
+        assert_eq!(calls, 1);
+        state.display_handle.flush_clients().unwrap();
+        let response = read(&mut wire);
+        if buffer.is_none() {
+            assert_eq!(u32::from_ne_bytes(response[..4].try_into().unwrap()), params);
+            assert_eq!(u32::from_ne_bytes(response[4..8].try_into().unwrap()) & 0xffff, 0);
+        } else {
+            assert!(response.is_empty(), "create_immed success must not emit a failed event");
+        }
+        assert!(client.get_credentials(&state.display_handle).is_ok());
+    }
+
+    // Deferred requests receive one terminal failure on timeout or removal.
+    for params in [8, 9] {
+        request(&mut wire, 4, 1, &[params], None);
+        request(&mut wire, params, 1, &[0, 0, 16, 0, 0], Some(file.as_raw_fd()));
+        request(&mut wire, params, 2, &[4, 4, Fourcc::Argb8888 as u32, 0], None);
+        dispatch(&mut events, &mut state);
+        state.process_pending_dmabuf_imports();
+        if params == 8 {
+            state.dmabuf_imports.expire(Instant::now() + Duration::from_secs(5));
+        } else {
+            state.dmabuf_imports.remove(b);
+        }
+
+        state.display_handle.flush_clients().unwrap();
+        let response = read(&mut wire);
+        assert_eq!(response.len(), 8);
+        assert_eq!(u32::from_ne_bytes(response[..4].try_into().unwrap()), params);
+        assert_eq!(u32::from_ne_bytes(response[4..8].try_into().unwrap()) & 0xffff, 1);
+        state
+            .dmabuf_imports
+            .process_with(b, None, |_| panic!("failed request survived"));
+        assert!(client.get_credentials(&state.display_handle).is_ok());
+    }
+
+    state.dmabuf_imports.register(b);
+    request(&mut wire, 4, 1, &[10], None);
+    request(&mut wire, 10, 1, &[0, 0, 16, 0, 0], Some(file.as_raw_fd()));
+    request(&mut wire, 10, 2, &[4, 4, Fourcc::Argb8888 as u32, 0], None);
+    dispatch(&mut events, &mut state);
+    drop(wire);
+    dispatch(&mut events, &mut state);
+    state.process_pending_dmabuf_imports();
+    state
+        .dmabuf_imports
+        .process_with(b, None, |_| panic!("disconnected client's request survived"));
+}
+
+#[test]
 fn hidden_null_commit_removes_membership_and_remaps_without_workspace_switch() {
     if !crate::startup_tests::private_runtime(
         "state::window_lifecycle_tests::hidden_null_commit_removes_membership_and_remaps_without_workspace_switch",

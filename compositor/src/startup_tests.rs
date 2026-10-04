@@ -27,7 +27,7 @@ pub(crate) fn private_runtime(test: &str) -> bool {
     let log_path = directory.path().join("test.log");
     let log = std::fs::File::create(&log_path).unwrap();
     let mut child = Command::new(std::env::current_exe().unwrap())
-        .args(["--exact", test, "--nocapture"])
+        .args(["--exact", test, "--include-ignored", "--nocapture"])
         .env(CHILD, test)
         .env("XDG_RUNTIME_DIR", directory.path())
         .env("XDG_CONFIG_HOME", directory.path())

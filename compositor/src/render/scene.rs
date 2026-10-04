@@ -487,15 +487,14 @@ pub(super) fn cursor_elements(
             })
             .collect()
         }
-        CursorImageStatus::Named(icon) => {
-            let Some(cursor) = state.named_cursors.get(icon) else {
+        CursorImageStatus::Named(_) => {
+            let Some(cursor) = state.named_cursor_frame() else {
                 return Vec::new();
             };
-            let hotspot = Point::<i32, Physical>::from((cursor.hotspot.x, cursor.hotspot.y));
-            let physical_location = pointer_location.to_physical_precise_round(scale) - hotspot;
+            let physical_location = cursor.physical_location(pointer_location, scale);
             let Ok(element) = MemoryRenderBufferRenderElement::from_buffer(
                 renderer,
-                physical_location.to_f64(),
+                physical_location,
                 &cursor.buffer,
                 None,
                 None,

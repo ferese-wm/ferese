@@ -235,7 +235,7 @@ pub(crate) async fn ipc(command: &'static str, args: serde_json::Value) -> Resul
         .map_err(|error| error.to_string())?
 }
 
-fn ipc_sync(command: &'static str, args: serde_json::Value) -> Result<serde_json::Value, String> {
+pub(crate) fn ipc_sync(command: &'static str, args: serde_json::Value) -> Result<serde_json::Value, String> {
     let path = std::env::var_os("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
         .ok_or("Missing runtime directory")?
@@ -294,8 +294,16 @@ async fn select_geometry(point: bool) -> Result<Option<String>, String> {
 }
 
 pub(crate) async fn wait_for_surface_removal(pid: u32) -> Result<(), String> {
+    wait_for_surface_removal_using(|| ipc("has-client-surfaces", serde_json::json!({"pid": pid}))).await
+}
+
+pub(crate) async fn wait_for_surface_removal_using<
+    F: std::future::Future<Output = Result<serde_json::Value, String>>,
+>(
+    mut check: impl FnMut() -> F,
+) -> Result<(), String> {
     for _ in 0..100 {
-        if ipc("has-client-surfaces", serde_json::json!({"pid": pid})).await? == false {
+        if check().await? == false {
             return Ok(());
         }
         tokio::time::sleep(Duration::from_millis(10)).await;
@@ -633,7 +641,7 @@ async fn wallpaper(
         return Ok(None);
     }
     let (_, path) = file.keep().map_err(|error| error.to_string())?;
-    if let Err(error) = update_wallpaper(&path, target) {
+    if let Err(error) = update_wallpaper(&path, target).await {
         let _ = std::fs::remove_file(path);
         return Err(error);
     }
@@ -699,44 +707,99 @@ fn prepare_wallpaper(input: &Path, cancel: &Cancel) -> Result<tempfile::NamedTem
     Ok(file)
 }
 
-fn update_wallpaper(image: &Path, target: &str) -> Result<(), String> {
-    let _transaction = crate::backend::CONFIG_TRANSACTION
-        .lock()
-        .map_err(|_| "Configuration transaction failed")?;
-    let path = ferese_config::config_path().ok_or("Missing config path")?;
-    edit_wallpaper(&path, image, target)
+async fn update_wallpaper(image: &Path, target: &str) -> Result<(), String> {
+    let value = crate::bridge::Bridge::connect()?
+        .call("theme-get", serde_json::json!({}))
+        .await?;
+    let snapshot = ferese_ipc::theme::Snapshot::decode(value, ferese_config::families::builtins)?;
+    let image = image.to_owned();
+    let target = target.to_owned();
+    tokio::task::spawn_blocking(move || {
+        let _transaction = crate::backend::CONFIG_TRANSACTION
+            .lock()
+            .map_err(|_| "Configuration transaction failed")?;
+        let path = ferese_config::config_path().ok_or("Missing config path")?;
+        edit_wallpaper(&path, &image, &target, snapshot.theme.appearance)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
-fn edit_wallpaper(path: &Path, image: &Path, target: &str) -> Result<(), String> {
+fn wallpaper_theme(
+    document: &ferese_config::Document,
+    directory: &Path,
+    appearance: ferese_config::theme::Appearance,
+) -> Result<ferese_config::theme::ResolvedTheme, String> {
+    let mut document = document.clone();
+    let mode = match appearance {
+        ferese_config::theme::Appearance::Light => "light",
+        ferese_config::theme::Appearance::Dark => "dark",
+    };
+    // The compositor knows the active appearance, including system overrides.
+    // Resolve that variant without changing the user's automatic policy.
+    document
+        .set("theme.mode", mode.into())
+        .map_err(|error| error.to_string())?;
+    ferese_config::theme::resolve(&document, directory, jiff::Timestamp::now(), |file| {
+        std::fs::read_to_string(file).map_err(|error| error.to_string())
+    })
+    .map(|candidate| candidate.theme)
+}
+
+fn edit_wallpaper(
+    path: &Path,
+    image: &Path,
+    target: &str,
+    appearance: ferese_config::theme::Appearance,
+) -> Result<(), String> {
+    use ferese_config::theme::Appearance;
+
     let source = match std::fs::read_to_string(path) {
         Ok(source) => source,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
         Err(error) => return Err(error.to_string()),
     };
     let mut document = ferese_config::Document::parse(&source).map_err(|error| error.to_string())?;
-    if target == "background" && document.get("theme.background.lock_path").is_none() {
-        let old = document
-            .get("theme.background.path")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or(ferese_config::default_wallpaper())
-            .to_owned();
+    let directory = path.parent().ok_or("Invalid config path")?;
+    let before = wallpaper_theme(&document, directory, appearance)?.tokens.background;
+    let (variant, other) = match appearance {
+        Appearance::Light => ("light", Appearance::Dark),
+        Appearance::Dark => ("dark", Appearance::Light),
+    };
+    let other_before = wallpaper_theme(&document, directory, other)?.tokens.background;
+    let base = format!("theme.{variant}.background");
+    if target == "background" && before.lock_path.is_none() {
+        let old = before
+            .path
+            .unwrap_or_else(|| ferese_config::default_wallpaper_for(appearance).into());
         document
-            .set("theme.background.lock_path", old.into())
+            .set(&format!("{base}.lock_path"), old.to_string_lossy().into_owned().into())
             .map_err(|error| error.to_string())?;
     }
+
     if target != "lockscreen" {
         document
-            .set("theme.background.path", image.to_string_lossy().into_owned().into())
+            .set(&format!("{base}.path"), image.to_string_lossy().into_owned().into())
             .map_err(|error| error.to_string())?;
     }
+
     if target != "background" {
         document
             .set(
-                "theme.background.lock_path",
+                &format!("{base}.lock_path"),
                 image.to_string_lossy().into_owned().into(),
             )
             .map_err(|error| error.to_string())?;
     }
+
+    let after = wallpaper_theme(&document, directory, appearance)?.tokens.background;
+    if (target != "lockscreen" && after.path.as_deref() != Some(image))
+        || (target != "background" && after.lock_path.as_deref() != Some(image))
+        || wallpaper_theme(&document, directory, other)?.tokens.background != other_before
+    {
+        return Err("Wallpaper change did not resolve to the requested image".into());
+    }
+
     let parent = path.parent().ok_or("Invalid config path")?;
     std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     let mut temp = tempfile::NamedTempFile::new_in(parent).map_err(|error| error.to_string())?;
@@ -821,27 +884,144 @@ mod tests {
 
     #[test]
     fn wallpaper_targets_preserve_independent_paths_and_other_settings() {
+        use ferese_config::theme::Appearance::{Dark, Light};
+
+        for appearance in [Light, Dark] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("config.kdl");
+            std::fs::write(
+                &path,
+                "// Keep my settings\ntheme { background { path \"/old.png\"; }; }; commands { terminal \"foot\"; }\n",
+            )
+            .unwrap();
+            let resolve = |mode| {
+                let document = ferese_config::Document::parse(&std::fs::read_to_string(&path).unwrap()).unwrap();
+                wallpaper_theme(&document, dir.path(), mode).unwrap().tokens.background
+            };
+            let other = if appearance == Light { Dark } else { Light };
+            let untouched = resolve(other);
+            edit_wallpaper(&path, Path::new("/desktop.png"), "background", appearance).unwrap();
+            assert_eq!(resolve(appearance).path.as_deref(), Some(Path::new("/desktop.png")));
+            assert_eq!(resolve(appearance).lock_path.as_deref(), Some(Path::new("/old.png")));
+            assert_eq!(resolve(other), untouched);
+            assert!(std::fs::read_to_string(&path).unwrap().contains("Keep my settings"));
+
+            edit_wallpaper(&path, Path::new("/lock.png"), "lockscreen", appearance).unwrap();
+            assert_eq!(resolve(appearance).path.as_deref(), Some(Path::new("/desktop.png")));
+            assert_eq!(resolve(appearance).lock_path.as_deref(), Some(Path::new("/lock.png")));
+            assert_eq!(resolve(other), untouched);
+
+            edit_wallpaper(&path, Path::new("/both.png"), "both", appearance).unwrap();
+            assert_eq!(resolve(appearance).path.as_deref(), Some(Path::new("/both.png")));
+            assert_eq!(resolve(appearance).lock_path.as_deref(), Some(Path::new("/both.png")));
+            assert_eq!(resolve(other), untouched);
+            let document = ferese_config::Document::parse(&std::fs::read_to_string(&path).unwrap()).unwrap();
+            assert_eq!(document.get("theme.background.path").unwrap(), "/old.png");
+            assert_eq!(document.get("commands.terminal").unwrap(), &serde_json::json!(["foot"]));
+        }
+    }
+
+    #[test]
+    fn wallpaper_replaces_active_overrides_without_changing_auto_policy() {
+        use ferese_config::theme::Appearance::{Dark, Light};
+
+        for appearance in [Light, Dark] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("config.kdl");
+            std::fs::write(
+                &path,
+                r#"theme {
+                mode "auto"
+                schedule { source "system"; }
+                background { path "/shared.png"; lock-path "/shared-lock.png"; }
+                light { background { path "light.png"; lock-path "light-lock.png"; }; }
+                dark { background { path "dark.png"; lock-path "dark-lock.png"; }; }
+            }
+            "#,
+            )
+            .unwrap();
+            let before = ferese_config::Document::parse(&std::fs::read_to_string(&path).unwrap()).unwrap();
+            let other = if appearance == Light { Dark } else { Light };
+            let old_active = wallpaper_theme(&before, dir.path(), appearance)
+                .unwrap()
+                .tokens
+                .background;
+            let old_other = wallpaper_theme(&before, dir.path(), other).unwrap().tokens.background;
+            edit_wallpaper(&path, Path::new("/new.png"), "background", appearance).unwrap();
+            let after = ferese_config::Document::parse(&std::fs::read_to_string(&path).unwrap()).unwrap();
+            let current = wallpaper_theme(&after, dir.path(), appearance)
+                .unwrap()
+                .tokens
+                .background;
+            assert_eq!(current.path.as_deref(), Some(Path::new("/new.png")));
+            assert_eq!(current.lock_path, old_active.lock_path);
+            assert_eq!(
+                wallpaper_theme(&after, dir.path(), other).unwrap().tokens.background,
+                old_other
+            );
+            assert_eq!(after.get("theme.mode").unwrap(), "auto");
+            assert_eq!(after.get("theme.background"), before.get("theme.background"));
+
+            edit_wallpaper(&path, Path::new("/new-lock.png"), "lockscreen", appearance).unwrap();
+            let after = ferese_config::Document::parse(&std::fs::read_to_string(&path).unwrap()).unwrap();
+            let current = wallpaper_theme(&after, dir.path(), appearance)
+                .unwrap()
+                .tokens
+                .background;
+            assert_eq!(current.path.as_deref(), Some(Path::new("/new.png")));
+            assert_eq!(current.lock_path.as_deref(), Some(Path::new("/new-lock.png")));
+            assert_eq!(
+                wallpaper_theme(&after, dir.path(), other).unwrap().tokens.background,
+                old_other
+            );
+        }
+    }
+
+    #[test]
+    fn desktop_only_change_pins_the_effective_variant_lock_wallpaper() {
+        use ferese_config::theme::Appearance::{Dark, Light};
+
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.kdl");
         std::fs::write(
             &path,
-            "// Keep my settings\ntheme { background { path \"/old.png\"; }; }; commands { terminal \"foot\"; }\n",
+            r#"theme {
+            background { path "shared.png"; }
+            light { background { path "light.png"; }; }
+            dark { background { path "dark.png"; }; }
+        }
+        "#,
         )
         .unwrap();
-        edit_wallpaper(&path, Path::new("/desktop.png"), "background").unwrap();
-        let document = ferese_config::Document::parse(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        assert_eq!(document.get("theme.background.path").unwrap(), "/desktop.png");
-        assert_eq!(document.get("theme.background.lock_path").unwrap(), "/old.png");
-        assert!(std::fs::read_to_string(&path).unwrap().contains("Keep my settings"));
-        edit_wallpaper(&path, Path::new("/lock.png"), "lockscreen").unwrap();
-        let document = ferese_config::Document::parse(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        assert_eq!(document.get("theme.background.path").unwrap(), "/desktop.png");
-        assert_eq!(document.get("theme.background.lock_path").unwrap(), "/lock.png");
-        edit_wallpaper(&path, Path::new("/both.png"), "both").unwrap();
-        let document = ferese_config::Document::parse(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        assert_eq!(document.get("theme.background.path").unwrap(), "/both.png");
-        assert_eq!(document.get("theme.background.lock_path").unwrap(), "/both.png");
-        assert_eq!(document.get("commands.terminal").unwrap(), &serde_json::json!(["foot"]));
+        let before = ferese_config::Document::parse(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let previous = wallpaper_theme(&before, dir.path(), Dark).unwrap().tokens.background;
+        assert_eq!(previous.lock_path, None);
+        edit_wallpaper(&path, Path::new("/new.png"), "background", Dark).unwrap();
+        let after = ferese_config::Document::parse(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let current = wallpaper_theme(&after, dir.path(), Dark).unwrap().tokens.background;
+        assert_eq!(current.lock_path, previous.path);
+        assert_eq!(
+            wallpaper_theme(&after, dir.path(), Light).unwrap().tokens.background,
+            wallpaper_theme(&before, dir.path(), Light).unwrap().tokens.background
+        );
+    }
+
+    #[test]
+    fn wallpaper_validation_failure_preserves_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.kdl");
+        let source = "theme { dark { file \"missing.kdl\"; }; }\n";
+        std::fs::write(&path, source).unwrap();
+        assert!(
+            edit_wallpaper(
+                &path,
+                Path::new("/new.png"),
+                "both",
+                ferese_config::theme::Appearance::Dark
+            )
+            .is_err()
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), source);
     }
 
     #[test]

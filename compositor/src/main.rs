@@ -4,6 +4,7 @@ mod cursor;
 mod daemon;
 mod dimming;
 mod display_presentation;
+mod dmabuf_imports;
 mod effects;
 mod floating;
 mod frame_scheduler;
@@ -161,6 +162,8 @@ fn after_dispatch(state: &mut Ferese) {
 }
 
 fn after_dispatch_with_redraw(state: &mut Ferese, mut redraw: impl FnMut(&mut Ferese, RedrawRequest<'_>)) {
+    state.process_pending_dmabuf_imports();
+    state.update_named_cursor(std::time::Instant::now());
     state.poll_theme();
     // The decoder wakes the loop after publishing its result, including
     // when no output has a pending frame.

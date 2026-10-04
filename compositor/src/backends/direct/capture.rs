@@ -67,7 +67,7 @@ pub(super) fn capture_mirror(
     }
 }
 
-fn capture_request<T, E: Display>(
+pub(crate) fn capture_request<T, E: Display>(
     state: &mut Ferese,
     output: &Output,
     include_cursor: bool,

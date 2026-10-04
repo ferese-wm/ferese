@@ -105,6 +105,20 @@ impl InputCapture {
         }
     }
 
+    async fn finish_native_call(
+        &self,
+        connection: &Connection,
+        path: &OwnedObjectPath,
+        bridge: &Bridge,
+        result: Result<serde_json::Value, String>,
+    ) -> zbus::fdo::Result<serde_json::Value> {
+        if bridge.is_closed() {
+            self.end(connection, path.as_str()).await;
+        }
+
+        result.map_err(failed)
+    }
+
     async fn native(session: &Session) -> zbus::fdo::Result<(Bridge, u64)> {
         let state = session.state.lock().await;
         if !state.started || session.cancel.stopped.load(Ordering::SeqCst) {
@@ -127,9 +141,16 @@ impl InputCapture {
         bridge: Bridge,
         id: u64,
     ) {
+        let control = session.state.lock().await.bridge.clone();
+        let Some(control) = control else {
+            self.end(&connection, path.as_str()).await;
+            return;
+        };
+
         loop {
             let response = tokio::select! {
                 _ = session.cancel.wait() => break,
+                _ = control.terminated() => break,
                 result = bridge.capture_watch(id) => result,
             };
             let Ok(response) = response else {
@@ -453,7 +474,9 @@ impl InputCapture {
         if cancel.stopped.load(Ordering::SeqCst) || session.cancel.stopped.load(Ordering::SeqCst) || result.is_none() {
             return Ok((1, Options::new()));
         }
-        let result = result.unwrap().map_err(failed)?;
+        let result = self
+            .finish_native_call(connection, &session_handle, &bridge, result.unwrap())
+            .await?;
         let zones: Vec<(u32, u32, i32, i32)> =
             serde_json::from_value(result["zones"].clone()).map_err(|_| invalid("Invalid native capture zones"))?;
         Ok((
@@ -515,7 +538,9 @@ impl InputCapture {
             self.end(connection, session_handle.as_str()).await;
             return Ok((1, Options::new()));
         }
-        let result = result.unwrap().map_err(failed)?;
+        let result = self
+            .finish_native_call(connection, &session_handle, &bridge, result.unwrap())
+            .await?;
         let failed_barriers: Vec<u32> = serde_json::from_value(result["failed_barriers"].clone())
             .map_err(|_| invalid("Invalid native barrier response"))?;
         Ok((
@@ -580,10 +605,9 @@ impl InputCapture {
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
-        bridge
-            .call("input-capture-enable", json!({"session":id}))
-            .await
-            .map_err(failed)?;
+        let result = bridge.call("input-capture-enable", json!({"session":id})).await;
+        self.finish_native_call(connection, &session_handle, &bridge, result)
+            .await?;
         Ok((0, Options::new()))
     }
 
@@ -597,10 +621,9 @@ impl InputCapture {
     ) -> zbus::fdo::Result<(u32, Options)> {
         let session = self.session(connection, &header, &session_handle, &app_id).await?;
         let (bridge, id) = Self::native(&session).await?;
-        bridge
-            .call("input-capture-disable", json!({"session":id}))
-            .await
-            .map_err(failed)?;
+        let result = bridge.call("input-capture-disable", json!({"session":id})).await;
+        self.finish_native_call(connection, &session_handle, &bridge, result)
+            .await?;
         Ok((0, Options::new()))
     }
 
@@ -633,13 +656,14 @@ impl InputCapture {
                 Ok(position)
             })
             .transpose()?;
-        bridge
+        let result = bridge
             .call(
                 "input-capture-release",
                 json!({"session":id,"activation_id":activation,"cursor_position":position}),
             )
-            .await
-            .map_err(failed)?;
+            .await;
+        self.finish_native_call(connection, &session_handle, &bridge, result)
+            .await?;
         Ok((0, Options::new()))
     }
 
@@ -704,6 +728,74 @@ impl SessionObject {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn broken_control_transport_ends_capture_but_valid_rejection_does_not() {
+        use std::process::Stdio;
+        use tokio::io::{AsyncBufReadExt, BufReader};
+
+        let mut bus = tokio::process::Command::new("dbus-daemon")
+            .args(["--session", "--nofork", "--print-address=1"])
+            .stdout(Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        let mut address = String::new();
+        BufReader::new(bus.stdout.take().unwrap())
+            .read_line(&mut address)
+            .await
+            .unwrap();
+        let connection = zbus::connection::Builder::address(address.trim())
+            .unwrap()
+            .build()
+            .await
+            .unwrap();
+
+        for transport_failure in [false, true] {
+            let capture = InputCapture::default();
+            let path: OwnedObjectPath = "/org/freedesktop/portal/desktop/session/test/capture"
+                .try_into()
+                .unwrap();
+            let (control, mut peer) = Bridge::test_pair();
+            let (watch, _peer) = Bridge::test_pair();
+            let session = Arc::new(Session {
+                owner: connection.unique_name().unwrap().to_string(),
+                app: "test".into(),
+                cancel: Arc::default(),
+                state: Mutex::new(State {
+                    started: true,
+                    bridge: Some(control.clone()),
+                    watch: Some(watch.clone()),
+                    ..State::default()
+                }),
+            });
+            capture.sessions.lock().await.insert(path.to_string(), session.clone());
+            let response = std::thread::spawn(move || {
+                let request: ferese_ipc::Request = ferese_ipc::read_frame(&mut peer).unwrap();
+                if !transport_failure {
+                    ferese_ipc::write_frame(&mut peer, &ferese_ipc::Response::error(request.id, "denied", "Denied"))
+                        .unwrap();
+                }
+            });
+            let result = control.call("input-capture-disable", json!({})).await;
+            assert!(
+                capture
+                    .finish_native_call(&connection, &path, &control, result)
+                    .await
+                    .is_err()
+            );
+            response.join().unwrap();
+            assert_eq!(session.cancel.stopped.load(Ordering::SeqCst), transport_failure);
+            assert_eq!(watch.is_closed(), transport_failure);
+            assert_eq!(
+                capture.sessions.lock().await.contains_key(path.as_str()),
+                !transport_failure
+            );
+            capture.end(&connection, path.as_str()).await;
+        }
+        bus.kill().await.unwrap();
+        bus.wait().await.unwrap();
+    }
 
     #[test]
     fn requested_capabilities_are_required_and_supported_subset_is_returned() {

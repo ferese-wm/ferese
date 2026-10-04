@@ -33,10 +33,8 @@ use ferese_layout::{
     Axis, ColumnWidth, Direction, GapConfig, LayoutResult, Rect, SizeConstraints, ViewportFocusStrategy, WindowId,
 };
 use ferese_protocols::shell::v1::server::ferese_shell_v1::FereseShellV1;
-use smithay::backend::allocator::dmabuf::Dmabuf;
 use smithay::backend::drm::{DrmEventTime, DrmNode};
 use smithay::backend::input::Keycode;
-use smithay::backend::renderer::ImportDma;
 use smithay::desktop::space::SpaceElement;
 use smithay::desktop::utils::send_frames_surface_tree;
 use smithay::desktop::{LayerSurface, PopupKind, PopupManager, Space, Window, WindowSurfaceType, layer_map_for_output};
@@ -55,7 +53,7 @@ use smithay::utils::{Logical, Point, Rectangle, Size};
 use smithay::wayland::alpha_modifier::AlphaModifierState;
 use smithay::wayland::compositor::{CompositorClientState, CompositorState, with_states};
 use smithay::wayland::cursor_shape::CursorShapeManagerState;
-use smithay::wayland::dmabuf::{DmabufState, ImportNotifier};
+use smithay::wayland::dmabuf::DmabufState;
 use smithay::wayland::fractional_scale::FractionalScaleManagerState;
 use smithay::wayland::idle_inhibit::IdleInhibitManagerState;
 use smithay::wayland::idle_notify::IdleNotifierState;
@@ -84,7 +82,7 @@ use window_registry::WindowRegistry;
 
 use crate::backends::direct::DirectBackendState;
 use crate::config::{Binding, BindingSet, DaemonConfig, InputSettings, OutputProfile, ThemeSettings};
-use crate::cursor::{NamedCursor, cursor_theme, load_named_cursor};
+use crate::cursor::NamedCursor;
 use crate::dimming::DimAnimation;
 use crate::gestures::{Swipe, SwipeDirection};
 use crate::handlers::screencopy::PendingScreencopy;
@@ -468,7 +466,8 @@ pub struct Ferese {
     pub(crate) output_redraw_pending: Vec<Output>,
     pub(crate) locked_pointer_hint: Option<LockedPointerHint>,
     pub(crate) last_pointer_time: u32,
-    pub(crate) cursor_theme: xcursor::CursorTheme,
+    pub(crate) cursor_loader: crate::cursor::Loader,
+    pub(crate) cursor_animation: crate::cursor::Animation,
     pub(crate) named_cursors: HashMap<CursorIcon, NamedCursor>,
     pub intercepted_keys: HashSet<Keycode>,
     pub(crate) swipe: Swipe,
@@ -479,7 +478,7 @@ pub struct Ferese {
     pub active_shortcuts_inhibitor: Option<KeyboardShortcutsInhibitor>,
     pub direct_backend: Option<DirectBackendState>,
     _ipc_socket: Option<IpcSocketGuard>,
-    pending_dmabuf_imports: Vec<(Dmabuf, ImportNotifier)>,
+    pub(crate) dmabuf_imports: crate::dmabuf_imports::ImportManager,
     pub(crate) activation_inputs: crate::handlers::activation::InputHistory,
     pub(crate) pending_screencopies: Vec<PendingScreencopy>,
     // Screenshot requests outlive the readback that filled them: the
@@ -630,8 +629,8 @@ impl Ferese {
         let socket_name = Self::init_wayland_listener(display, event_loop)?;
 
         let start_time = Instant::now();
-        let cursor_theme = cursor_theme();
-        let default_cursor = load_named_cursor(&cursor_theme, CursorIcon::Default);
+        let cursor_loader = crate::cursor::Loader::new(event_loop.get_signal())?;
+        let default_cursor = crate::cursor::fallback_cursor();
         let named_cursors = HashMap::from([(CursorIcon::Default, default_cursor)]);
 
         let mut state = Self {
@@ -712,7 +711,8 @@ impl Ferese {
             output_redraw_pending: Vec::new(),
             locked_pointer_hint: None,
             last_pointer_time: 0,
-            cursor_theme,
+            cursor_loader,
+            cursor_animation: crate::cursor::Animation::default(),
             named_cursors,
             intercepted_keys: HashSet::new(),
             swipe: Swipe::default(),
@@ -723,7 +723,7 @@ impl Ferese {
             active_shortcuts_inhibitor: None,
             direct_backend: None,
             _ipc_socket: None,
-            pending_dmabuf_imports: Vec::new(),
+            dmabuf_imports: crate::dmabuf_imports::ImportManager::default(),
             activation_inputs: Default::default(),
             pending_screencopies: Vec::new(),
             screenshot: Coordinator::new(),
@@ -809,10 +809,6 @@ impl Ferese {
 
         if input_changed && let Some(keyboard) = self.seat.get_keyboard() {
             if keyboard_changed {
-                self.input_capture.close_all();
-                if self.input_capture.restore_focus {
-                    self.restore_input_capture_focus();
-                }
                 let options = (!config.input_settings.xkb_options.is_empty())
                     .then(|| config.input_settings.xkb_options.join(","));
 
@@ -827,6 +823,11 @@ impl Ferese {
                         },
                     )
                     .map_err(|e| format!("keymap reload failed: {e}"))?;
+
+                self.input_capture.close_all();
+                if self.input_capture.restore_focus {
+                    self.restore_input_capture_focus();
+                }
             }
             keyboard.change_repeat_info(config.input_settings.repeat_rate, config.input_settings.repeat_delay_ms);
         }
@@ -929,29 +930,6 @@ impl Ferese {
         }
 
         Ok(())
-    }
-
-    pub(crate) fn queue_dmabuf_import(&mut self, dmabuf: Dmabuf, notifier: ImportNotifier) {
-        self.pending_dmabuf_imports.push((dmabuf, notifier));
-    }
-
-    pub(crate) fn process_dmabuf_imports<R>(&mut self, renderer: &mut R, node: Option<DrmNode>)
-    where
-        R: ImportDma,
-    {
-        for (dmabuf, notifier) in self.pending_dmabuf_imports.drain(..) {
-            if renderer.import_dmabuf(&dmabuf, None).is_ok() {
-                if let Some(node) = node {
-                    dmabuf.set_node(node);
-                }
-
-                if let Err(error) = notifier.successful::<Self>() {
-                    tracing::debug!(?error, "dma-buf client disappeared before import completed");
-                }
-            } else {
-                notifier.failed();
-            }
-        }
     }
 
     fn init_wayland_listener(

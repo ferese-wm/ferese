@@ -123,22 +123,11 @@ pub(super) fn cursor_on_output(state: &crate::Ferese, output: &smithay::output::
                 .to_f64()
         }
 
-        CursorImageStatus::Named(icon) => {
-            let Some(cursor) = state.named_cursors.get(icon) else {
+        CursorImageStatus::Named(_) => {
+            let Some(cursor) = state.named_cursor_frame() else {
                 return false;
             };
-            let scale = output.current_scale().fractional_scale();
-            // Named buffers use buffer scale 1: Smithay scales their size
-            // with the output, while the hotspot is subtracted physically.
-            let size = cursor.size;
-            Rectangle::<f64, Logical>::new(
-                (
-                    location.x - f64::from(cursor.hotspot.x) / scale,
-                    location.y - f64::from(cursor.hotspot.y) / scale,
-                )
-                    .into(),
-                (f64::from(size.w), f64::from(size.h)).into(),
-            )
+            cursor.logical_rect(location)
         }
 
         CursorImageStatus::Hidden => return false,
@@ -353,9 +342,9 @@ mod tests {
         );
         assert!(cursor_on_output(&state, &outputs[0]));
         assert!(cursor_on_output(&state, &outputs[1]), "cursor image straddles the seam");
-        if let CursorImageStatus::Named(icon) = &state.cursor_status {
-            let cursor = state.named_cursors.get(icon).unwrap();
-            let x = 1920.0 - f64::from(cursor.size.w) * 0.75 + f64::from(cursor.hotspot.x) / 2.0;
+        if let Some(cursor) = state.named_cursor_frame() {
+            let x = 1920.0 - f64::from(cursor.size.w) / f64::from(cursor.buffer_scale) * 0.75
+                + f64::from(cursor.hotspot.x) / f64::from(cursor.buffer_scale);
             pointer.motion(
                 &mut state,
                 None,

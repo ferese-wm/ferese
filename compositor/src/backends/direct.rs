@@ -107,6 +107,16 @@ impl DirectBackendState {
         self.active && !self.topology.reconciling && !self.lid.pending()
     }
 
+    pub(crate) fn process_dmabuf_imports(&mut self, imports: &mut crate::dmabuf_imports::ImportManager) {
+        if !self.active || self.topology.reconciling {
+            return;
+        }
+
+        for device in self.devices.values_mut().filter(|device| device.drm.is_active()) {
+            imports.process(device.dmabuf_global, &mut device.renderer, Some(device.render_node));
+        }
+    }
+
     pub(crate) fn scene_output(&self, state: &Ferese, output: &Output) -> Output {
         let source = self
             .devices
@@ -950,6 +960,7 @@ fn open_device(state: &mut Ferese, path: &Path) -> Result<DrmNode, Box<dyn Error
     let dmabuf_global = state
         .dmabuf_state
         .create_global_with_default_feedback::<Ferese>(&display_handle, &feedback);
+    state.dmabuf_imports.register(dmabuf_global);
     state
         .direct_backend
         .as_mut()
@@ -1086,6 +1097,23 @@ fn cursor_affected_outputs(state: &Ferese) -> Vec<Output> {
         .filter(|output| output.cursor_visible || redraw::cursor_on_output(state, &output.output))
         .map(|output| output.output.clone())
         .collect()
+}
+
+pub(crate) fn cursor_animation_visible(state: &Ferese) -> bool {
+    if let Some(backend) = state.direct_backend.as_ref() {
+        backend.can_render()
+            && backend.devices.values().any(|device| {
+                device
+                    .outputs
+                    .values()
+                    .any(|output| output.power.can_render() && redraw::cursor_on_output(state, &output.output))
+            })
+    } else {
+        state
+            .space
+            .outputs()
+            .any(|output| redraw::cursor_on_output(state, output))
+    }
 }
 
 #[track_caller]
@@ -1272,7 +1300,6 @@ fn render_output(
     let frame = state.sample_frame(&scene_output, horizon);
     let rendered = {
         (|| -> Result<bool, Box<dyn Error>> {
-            state.process_dmabuf_imports(&mut device.renderer, Some(device.render_node));
             let elements = if output.mirror_source.is_some() {
                 mirror::elements(state, &mut device.renderer, &scene_output, &frame, &mut output)?
             } else {
@@ -1562,6 +1589,7 @@ fn remove_device(state: &mut Ferese, node: DrmNode) {
     };
 
     state.loop_handle.remove(device.notifier);
+    state.dmabuf_imports.remove(device.dmabuf_global);
     state
         .dmabuf_state
         .disable_global::<Ferese>(&state.display_handle, &device.dmabuf_global);

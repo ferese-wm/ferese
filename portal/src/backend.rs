@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
-use tokio::sync::{Mutex, Notify};
+use tokio::sync::{Mutex, Notify, OwnedSemaphorePermit, Semaphore};
 use zbus::Connection;
 use zbus::message::Header;
 use zbus::object_server::SignalEmitter;
@@ -22,6 +22,7 @@ pub(crate) type Options = HashMap<String, OwnedValue>;
 pub(crate) static CONFIG_TRANSACTION: std::sync::Mutex<()> = std::sync::Mutex::new(());
 const FRONTEND: &str = "org.freedesktop.portal.Desktop";
 const PATH: &str = "/org/freedesktop/portal/desktop";
+const MAX_SESSIONS: usize = 8;
 
 #[derive(Debug)]
 enum StartError {
@@ -82,11 +83,22 @@ struct Session {
     persist_mode: u32,
     restore: Option<crate::restore::Restore>,
     cancel: Arc<Cancel>,
+    work: Arc<OwnedSemaphorePermit>,
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct Backend {
     sessions: Arc<Mutex<HashMap<String, Session>>>,
+    work: Arc<Semaphore>,
+}
+
+impl Default for Backend {
+    fn default() -> Self {
+        Self {
+            sessions: Arc::default(),
+            work: Arc::new(Semaphore::new(MAX_SESSIONS)),
+        }
+    }
 }
 
 // This private interface only transfers stop controls to the shell's own recorder.
@@ -252,11 +264,17 @@ impl Backend {
             return Err(error("Invalid session"));
         }
         let mut sessions = self.sessions.lock().await;
-        if sessions.len() >= 8 || sessions.contains_key(session_handle.as_str()) {
+        if sessions.len() >= MAX_SESSIONS || sessions.contains_key(session_handle.as_str()) {
             return Err(zbus::fdo::Error::LimitsExceeded(
                 "Session limit reached or duplicate session".into(),
             ));
         }
+        let work = Arc::new(
+            self.work
+                .clone()
+                .try_acquire_owned()
+                .map_err(|_| zbus::fdo::Error::LimitsExceeded("Capture work is still shutting down".into()))?,
+        );
         let inserted = connection
             .object_server()
             .at(
@@ -284,6 +302,7 @@ impl Backend {
                 persist_mode: 0,
                 restore: None,
                 cancel: Arc::default(),
+                work,
             },
         );
         Ok((0, Options::new()))
@@ -347,7 +366,7 @@ impl Backend {
             return Err(error("Invalid request path"));
         }
 
-        let (multiple, cursor, source_types, bar_controlled, persist_mode, restore, cancel) = {
+        let (multiple, cursor, source_types, bar_controlled, persist_mode, restore, cancel, work) = {
             let mut sessions = self.sessions.lock().await;
             let session = sessions
                 .get_mut(session_handle.as_str())
@@ -366,6 +385,7 @@ impl Backend {
                 session.persist_mode,
                 session.restore.clone(),
                 session.cancel.clone(),
+                session.work.clone(),
             )
         };
         let inserted = connection
@@ -400,6 +420,8 @@ impl Backend {
                 requested_persistence: persist_mode,
                 restore,
                 bar_controlled,
+                cancel: cancel.clone(),
+                work,
             },
         );
         let result = tokio::select! {
@@ -543,6 +565,39 @@ struct StreamOptions {
     requested_persistence: u32,
     restore: Option<crate::restore::Restore>,
     bar_controlled: bool,
+    cancel: Arc<Cancel>,
+    work: Arc<OwnedSemaphorePermit>,
+}
+
+async fn capture_work<T: Send + 'static>(
+    cancel: Arc<Cancel>,
+    permit: Arc<OwnedSemaphorePermit>,
+    operation: impl FnOnce(&AtomicBool) -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    tokio::task::spawn_blocking(move || {
+        // A dropped async future does not stop spawn_blocking. This lease
+        // stays with the worker until its connection and work are released.
+        let _permit = permit;
+        if cancel.stopped.load(Ordering::SeqCst) {
+            return Err("Capture cancelled".into());
+        }
+
+        operation(&cancel.stopped)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+async fn capture_ipc(
+    cancel: &Arc<Cancel>,
+    work: &Arc<OwnedSemaphorePermit>,
+    command: &'static str,
+    args: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    capture_work(cancel.clone(), work.clone(), move |_| {
+        crate::desktop::ipc_sync(command, args)
+    })
+    .await
 }
 
 async fn start_streams(
@@ -557,20 +612,20 @@ async fn start_streams(
         requested_persistence,
         restore,
         bar_controlled,
+        cancel,
+        work,
     } = options;
-    let mut discovery = tokio::task::spawn_blocking(|| Capture::connect(&AtomicBool::new(false)))
-        .await
-        .map_err(|e| e.to_string())??;
+    let mut discovery = capture_work(cancel.clone(), work.clone(), Capture::connect).await?;
     let mut sources = if source_types & 1 != 0 {
         discovery.sources()
     } else {
         Vec::new()
     };
     if source_types & 2 != 0 && discovery.supports_windows() {
-        let windows = crate::desktop::ipc("get-windows", serde_json::json!({})).await?;
+        let windows = capture_ipc(&cancel, &work, "get-windows", serde_json::json!({})).await?;
         sources.extend(crate::desktop::sharing_window_sources(&windows)?);
     }
-    let outputs = crate::desktop::ipc("get-outputs", serde_json::json!({})).await?;
+    let outputs = capture_ipc(&cancel, &work, "get-outputs", serde_json::json!({})).await?;
     let rememberable = sources
         .iter()
         .filter(|source| {
@@ -616,13 +671,21 @@ async fn start_streams(
             return Err("Invalid persistence selection".into());
         }
         let selected = validate_selection(&prompt.sources, &selection.names, multiple)?;
-        crate::desktop::wait_for_surface_removal(picker_pid).await?;
+        crate::desktop::wait_for_surface_removal_using(|| {
+            capture_ipc(
+                &cancel,
+                &work,
+                "has-client-surfaces",
+                serde_json::json!({"pid": picker_pid}),
+            )
+        })
+        .await?;
 
         (selected, selection.persist_mode)
     };
 
     let mut reply = Options::new();
-    let fresh_outputs = crate::desktop::ipc("get-outputs", serde_json::json!({})).await?;
+    let fresh_outputs = capture_ipc(&cancel, &work, "get-outputs", serde_json::json!({})).await?;
 
     let monitors = selected
         .iter()
@@ -698,11 +761,12 @@ async fn start_streams(
         children.push(child);
     }
 
-    tokio::task::spawn_blocking(move || discovery.validate_sources(&generations))
-        .await
-        .map_err(|error| error.to_string())??;
+    capture_work(cancel.clone(), work.clone(), move |stop| {
+        discovery.validate_sources(&generations, stop)
+    })
+    .await?;
 
-    let final_outputs = crate::desktop::ipc("get-outputs", serde_json::json!({})).await?;
+    let final_outputs = capture_ipc(&cancel, &work, "get-outputs", serde_json::json!({})).await?;
     if !crate::restore::selection_unchanged(&monitors, &outputs, &final_outputs) {
         return Err("A selected display changed during stream startup".into());
     }
@@ -711,7 +775,7 @@ async fn start_streams(
         return Err("A selected stream ended during startup".into());
     }
 
-    let final_windows = crate::desktop::ipc("get-windows", serde_json::json!({})).await?;
+    let final_windows = capture_ipc(&cancel, &work, "get-windows", serde_json::json!({})).await?;
     let streams = streams
         .into_iter()
         .map(|(name, ready)| {
@@ -914,6 +978,61 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn cancelled_async_work_holds_session_capacity_until_worker_exits() {
+        let backend = Backend::default();
+        let cancel = Arc::new(Cancel::default());
+        let permits: Vec<_> = (0..MAX_SESSIONS)
+            .map(|_| Arc::new(backend.work.clone().try_acquire_owned().unwrap()))
+            .collect();
+        let (started, received) = tokio::sync::oneshot::channel();
+        let (release, blocked) = std::sync::mpsc::channel();
+        let permit = permits[0].clone();
+        let flag = cancel.clone();
+        let task = tokio::spawn(async move {
+            capture_work(flag, permit, move |stop| {
+                started.send(()).unwrap();
+                blocked.recv_timeout(Duration::from_secs(2)).unwrap();
+                assert!(stop.load(Ordering::SeqCst));
+                Ok(())
+            })
+            .await
+        });
+        received.await.unwrap();
+        cancel.stop();
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+        // End the corresponding session while its blocking worker is alive.
+        let mut permits = permits;
+        permits.remove(0);
+        assert!(backend.work.clone().try_acquire_owned().is_err());
+        release.send(()).unwrap();
+        let recovered = tokio::time::timeout(Duration::from_secs(1), backend.work.clone().acquire_owned())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(recovered.num_permits(), 1);
+        assert_eq!(backend.work.available_permits(), 0);
+        drop(recovered);
+        drop(permits);
+        assert_eq!(backend.work.available_permits(), MAX_SESSIONS);
+    }
+
+    #[tokio::test]
+    async fn already_cancelled_capture_never_starts_blocking_discovery() {
+        let backend = Backend::default();
+        let cancel = Arc::new(Cancel::default());
+        cancel.stop();
+        let permit = Arc::new(backend.work.clone().try_acquire_owned().unwrap());
+        let result = capture_work(cancel, permit, |_| -> Result<(), String> {
+            panic!("Cancelled discovery must not start");
+        })
+        .await;
+        assert!(result.unwrap_err().contains("cancelled"));
+        assert_eq!(backend.work.available_permits(), MAX_SESSIONS);
+    }
+
     #[test]
     fn bar_control_claims_are_bound_to_the_recorder_connection() {
         assert!(owns_session(

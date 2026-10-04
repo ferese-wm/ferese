@@ -12,9 +12,7 @@ use smithay::desktop::layer_map_for_output;
 use smithay::output::{Mode, Output, PhysicalProperties, Scale, Subpixel};
 use smithay::reexports::calloop::EventLoop;
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
-use smithay::reexports::wayland_protocols::wp::presentation_time::server::wp_presentation_feedback::Kind as PresentationKind;
-use smithay::utils::{Clock, Monotonic, Physical, Rectangle, Transform};
-use smithay::wayland::presentation::Refresh;
+use smithay::utils::{Physical, Rectangle, Size, Transform};
 
 use crate::Ferese;
 use crate::metrics::{FrameEffectMetrics, RenderMetrics};
@@ -32,14 +30,18 @@ type DamageRenderResult = Result<
 
 pub fn init(event_loop: &mut EventLoop<Ferese>, state: &mut Ferese) -> Result<(), Box<dyn Error>> {
     let (mut backend, event_source) = winit::init::<GlesRenderer>()?;
+    configure_nested_protocols(state);
+    let initial_size = backend.window_size();
+    let drawable = Rc::new(Cell::new(usable_size(initial_size)));
     let dmabuf_formats = backend.renderer().dmabuf_formats();
     let display_handle = state.display_handle.clone();
-    state
+    let dmabuf_global = state
         .dmabuf_state
         .create_global::<Ferese>(&display_handle, dmabuf_formats);
+    state.dmabuf_imports.register(dmabuf_global);
     let initial_scale = normalized_scale(backend.scale_factor());
     let mode = Mode {
-        size: backend.window_size(),
+        size: if drawable.get() { initial_size } else { (1, 1).into() },
         refresh: backend
             .window()
             .current_monitor()
@@ -67,8 +69,6 @@ pub fn init(event_loop: &mut EventLoop<Ferese>, state: &mut Ferese) -> Result<()
     state.register_output(&output, "nested-primary".to_owned());
 
     let mut damage_tracker = OutputDamageTracker::from_output(&output);
-    let clock = Clock::<Monotonic>::new();
-    let mut sequence = 0_u64;
     let mut missed_deadlines = 0_u64;
     let mut render_metrics = RenderMetrics::from_environment(output.name());
 
@@ -82,11 +82,16 @@ pub fn init(event_loop: &mut EventLoop<Ferese>, state: &mut Ferese) -> Result<()
     state.nested_backend = Some(backend.clone());
     let redraw_backend = backend.clone();
     let redraw_refresh = refresh.clone();
+    let redraw_drawable = drawable.clone();
     event_loop
         .handle()
         .insert_source(Timer::from_duration(refresh.get()), move |_, _, _| {
-            redraw_backend.borrow().window().request_redraw();
-            TimeoutAction::ToDuration(redraw_refresh.get())
+            if redraw_drawable.get() {
+                redraw_backend.borrow().window().request_redraw();
+                TimeoutAction::ToDuration(redraw_refresh.get())
+            } else {
+                TimeoutAction::ToDuration(Duration::from_millis(250))
+            }
         })?;
 
     let mut capture_texture = None;
@@ -97,21 +102,16 @@ pub fn init(event_loop: &mut EventLoop<Ferese>, state: &mut Ferese) -> Result<()
             match event {
                 WinitEvent::Resized { size, scale_factor } => {
                     tracing::debug!(target: "ferese::nested_input", ?size, scale_factor, "host resized nested output");
-                    let scale = normalized_scale(scale_factor);
                     let rate = backend
                         .window()
                         .current_monitor()
                         .and_then(|monitor| monitor.refresh_rate_millihertz())
                         .unwrap_or(60_000) as i32;
-                    refresh.set(Duration::from_nanos(1_000_000_000_000 / rate.max(1) as u64));
+                    if !resize_nested_output(state, &output, &drawable, size, scale_factor, rate) {
+                        return;
+                    }
 
-                    let mut runtime = state.current_desktop_outputs();
-                    let resized = runtime.iter_mut().find(|entry| entry.output == output).unwrap();
-                    resized.mode = Mode { size, refresh: rate };
-                    resized.scale = Scale::Fractional(scale);
-                    state.begin_desktop_transition();
-                    let changes = state.publish_desktop(runtime).expect("valid nested output geometry");
-                    state.finish_desktop_transition(changes);
+                    refresh.set(Duration::from_nanos(1_000_000_000_000 / rate.max(1) as u64));
                     if let Err(error) = state.display_handle.flush_clients() {
                         tracing::debug!(%error, "failed to flush output-resize configure");
                     }
@@ -125,13 +125,17 @@ pub fn init(event_loop: &mut EventLoop<Ferese>, state: &mut Ferese) -> Result<()
                         "host input in nested output");
                 }
                 WinitEvent::Redraw => {
+                    if !drawable.get() || !usable_size(backend.window_size()) {
+                        drawable.set(false);
+                        return;
+                    }
+
                     state.advance_animations(Instant::now());
                     let age = backend.buffer_age().unwrap_or(0);
                     let render_started = Instant::now();
                     let rendered = (|| -> DamageRenderResult {
                         {
                             let (renderer, mut framebuffer) = backend.bind()?;
-                            state.process_dmabuf_imports(renderer, None);
                             let elements = animated_window_elements(state, renderer, &output);
                             let effects = frame_effect_metrics(&elements, output.current_scale().fractional_scale());
                             let result = damage_tracker.render_output(
@@ -143,31 +147,41 @@ pub fn init(event_loop: &mut EventLoop<Ferese>, state: &mut Ferese) -> Result<()
                             )?;
                             // Keep the existing readback-only path when the
                             // displayed scene has no privacy exclusions.
-                            let mut capture_changed_binding = !state.has_capture_exclusions()
-                                && state.process_screencopies(renderer, &framebuffer, &output, true);
-                            if state.has_pending_screencopy(&output, false)
-                                || state.has_pending_screencopy(&output, true)
-                            {
-                                let scene = state.sample_frame(&output, Duration::ZERO);
-                                crate::backends::direct::capture::capture_output(
-                                    state,
-                                    renderer,
-                                    &mut capture_texture,
-                                    &output,
-                                    &scene,
-                                );
-                                capture_changed_binding = true;
-                            }
-                            if capture_changed_binding {
-                                // Restore the display framebuffer binding after offscreen readback.
-                                let _ = renderer
-                                    .render(
-                                        &mut framebuffer,
-                                        output.current_mode().expect("output has a mode").size,
-                                        output.current_transform(),
-                                    )?
-                                    .finish()?;
-                            }
+                            capture_with_display_restore(
+                                renderer,
+                                &mut framebuffer,
+                                |renderer, framebuffer| {
+                                    let mut changed = !state.has_capture_exclusions()
+                                        && state.process_screencopies(renderer, framebuffer, &output, true);
+                                    if state.has_pending_screencopy(&output, false)
+                                        || state.has_pending_screencopy(&output, true)
+                                    {
+                                        let scene = state.sample_frame(&output, Duration::ZERO);
+                                        crate::backends::direct::capture::capture_output(
+                                            state,
+                                            renderer,
+                                            &mut capture_texture,
+                                            &output,
+                                            &scene,
+                                        );
+                                        changed = true;
+                                    }
+
+                                    changed
+                                },
+                                |renderer, framebuffer| {
+                                    // Capture failures are handled locally. Failure to restore
+                                    // the display target means the renderer itself is unusable.
+                                    let _ = renderer
+                                        .render(
+                                            framebuffer,
+                                            output.current_mode().unwrap().size,
+                                            output.current_transform(),
+                                        )?
+                                        .finish()?;
+                                    Ok::<_, smithay::backend::renderer::gles::GlesError>(())
+                                },
+                            )?;
 
                             Ok((result.damage.cloned(), effects, result.states))
                         }
@@ -212,19 +226,6 @@ pub fn init(event_loop: &mut EventLoop<Ferese>, state: &mut Ferese) -> Result<()
                     }
                     render_metrics.record_frame(elapsed, &damage, missed_deadlines, effects);
 
-                    let mut presentation = crate::presentation::take_output_feedback(
-                        state,
-                        &output,
-                        &rendered_states,
-                        PresentationKind::Vsync,
-                    );
-                    sequence = sequence.wrapping_add(1);
-                    presentation.presented(
-                        clock.now(),
-                        Refresh::fixed(refresh.get()),
-                        sequence,
-                        PresentationKind::Vsync,
-                    );
                     send_nested_frame_callbacks(state, &output);
                     state.space.refresh();
                     state.popups.cleanup();
@@ -237,6 +238,74 @@ pub fn init(event_loop: &mut EventLoop<Ferese>, state: &mut Ferese) -> Result<()
                 _ => {}
             }
         })?;
+    Ok(())
+}
+
+fn configure_nested_protocols(state: &mut Ferese) {
+    // Winit's swap has no host presentation timestamp or retrace counter.
+    // Do not advertise timing we cannot report accurately.
+    state
+        .display_handle
+        .disable_global::<Ferese>(state.presentation_state.global());
+}
+
+fn usable_size(size: Size<i32, Physical>) -> bool {
+    size.w > 0 && size.h > 0
+}
+
+fn resize_nested_output(
+    state: &mut Ferese,
+    output: &Output,
+    drawable: &Cell<bool>,
+    size: Size<i32, Physical>,
+    scale_factor: f64,
+    rate: i32,
+) -> bool {
+    if !usable_size(size) {
+        drawable.set(false);
+        return false;
+    }
+
+    let mut runtime = state.current_desktop_outputs();
+    let Some(resized) = runtime.iter_mut().find(|entry| entry.output == *output) else {
+        drawable.set(false);
+        return false;
+    };
+    resized.mode = Mode {
+        size,
+        refresh: rate.max(1),
+    };
+    resized.scale = Scale::Fractional(normalized_scale(scale_factor));
+    // Paused host time must not advance springs when publication relayouts.
+    if !drawable.get() {
+        state.reset_animation_clock();
+    }
+
+    state.begin_desktop_transition();
+    let changes = match state.publish_desktop(runtime) {
+        Ok(changes) => changes,
+        Err(error) => {
+            state.desktop_transition = None;
+            drawable.set(false);
+            tracing::warn!(%error, "ignoring invalid nested output geometry");
+            return false;
+        }
+    };
+    state.finish_desktop_transition(changes);
+    drawable.set(true);
+    true
+}
+
+fn capture_with_display_restore<R, F, E>(
+    renderer: &mut R,
+    framebuffer: &mut F,
+    capture: impl FnOnce(&mut R, &mut F) -> bool,
+    restore: impl FnOnce(&mut R, &mut F) -> Result<(), E>,
+) -> Result<(), E> {
+    if capture(renderer, framebuffer) {
+        restore(renderer, framebuffer)?;
+    }
+
     Ok(())
 }
 
@@ -268,7 +337,196 @@ fn normalized_scale(scale: f64) -> f64 {
 
 #[cfg(test)]
 mod tests {
-    use super::normalized_scale;
+    use super::*;
+
+    #[test]
+    fn zero_host_resize_preserves_geometry_and_recovers() {
+        if !crate::startup_tests::private_runtime("winit::tests::zero_host_resize_preserves_geometry_and_recovers") {
+            return;
+        }
+
+        let mut events = EventLoop::try_new().unwrap();
+        let mut state = crate::startup_tests::state(&mut events);
+        let output = Output::new(
+            "nested".into(),
+            PhysicalProperties {
+                size: (0, 0).into(),
+                subpixel: Subpixel::Unknown,
+                make: "test".into(),
+                model: "test".into(),
+            },
+        );
+        output.change_current_state(
+            Some(Mode {
+                size: (800, 600).into(),
+                refresh: 60_000,
+            }),
+            None,
+            None,
+            None,
+        );
+        state.space.map_output(&output, (0, 0));
+        state.register_output(&output, "nested-primary".into());
+        let drawable = Cell::new(true);
+        assert!(resize_nested_output(
+            &mut state,
+            &output,
+            &drawable,
+            (900, 600).into(),
+            1.25,
+            60_000
+        ));
+        let before = output.current_mode();
+        for size in [(0, 600), (900, 0), (0, 0), (-1, 600)] {
+            assert!(!resize_nested_output(
+                &mut state,
+                &output,
+                &drawable,
+                size.into(),
+                2.0,
+                144_000
+            ));
+            assert_eq!(output.current_mode(), before);
+            assert_eq!(output.current_scale().fractional_scale(), 1.25);
+            assert!(!drawable.get());
+            assert!(state.desktop_transition.is_none());
+        }
+
+        assert!(resize_nested_output(
+            &mut state,
+            &output,
+            &drawable,
+            (1200, 800).into(),
+            1.5,
+            120_000
+        ));
+        assert_eq!(output.current_mode().unwrap().size, (1200, 800).into());
+        assert!(drawable.get());
+        assert!(state.desktop_transition.is_none());
+    }
+
+    #[test]
+    fn nested_registry_does_not_advertise_unobserved_presentation_timing() {
+        use std::io::{Read, Write};
+        use std::os::unix::net::UnixStream;
+        use std::sync::Arc;
+        if !crate::startup_tests::private_runtime(
+            "winit::tests::nested_registry_does_not_advertise_unobserved_presentation_timing",
+        ) {
+            return;
+        }
+
+        let mut events = EventLoop::try_new().unwrap();
+        let mut state = crate::startup_tests::state(&mut events);
+        configure_nested_protocols(&mut state);
+        let (server, mut wire) = UnixStream::pair().unwrap();
+        let _client = state
+            .display_handle
+            .insert_client(server, Arc::new(crate::state::ClientState::default()))
+            .unwrap();
+        wire.write_all(
+            &[1u32, 12 << 16 | 1, 2]
+                .into_iter()
+                .flat_map(u32::to_ne_bytes)
+                .collect::<Vec<_>>(),
+        )
+        .unwrap();
+        events.dispatch(Duration::from_millis(1), &mut state).unwrap();
+        state.display_handle.flush_clients().unwrap();
+        wire.set_nonblocking(true).unwrap();
+        let mut globals = Vec::new();
+        let _ = wire.read_to_end(&mut globals);
+        assert!(
+            globals
+                .windows(b"wl_compositor\0".len())
+                .any(|bytes| bytes == b"wl_compositor\0")
+        );
+        assert!(
+            !globals
+                .windows(b"wp_presentation\0".len())
+                .any(|bytes| bytes == b"wp_presentation\0")
+        );
+    }
+
+    #[test]
+    #[ignore = "requires an EGL device and private Wayland sockets"]
+    fn capture_failure_restores_display_target_and_subsequent_frames_render() {
+        use smithay::backend::allocator::Fourcc;
+        use smithay::backend::egl::{EGLContext, EGLDevice, EGLDisplay};
+        use smithay::backend::renderer::gles::{GlesError, GlesTexture};
+        use smithay::backend::renderer::{Bind, Color32F, ExportMem, Offscreen};
+        use smithay::reexports::calloop::channel;
+        use smithay::utils::Buffer;
+        if !crate::startup_tests::private_runtime(
+            "winit::tests::capture_failure_restores_display_target_and_subsequent_frames_render",
+        ) {
+            return;
+        }
+
+        let mut events = EventLoop::try_new().unwrap();
+        let mut state = crate::startup_tests::state(&mut events);
+        let display = unsafe { EGLDisplay::new(EGLDevice::enumerate().unwrap().last().unwrap()).unwrap() };
+        let context = EGLContext::new(&display).unwrap();
+        let mut renderer = unsafe { GlesRenderer::new(context).unwrap() };
+        let output = Output::new(
+            "nested".into(),
+            PhysicalProperties {
+                size: (0, 0).into(),
+                subpixel: Subpixel::Unknown,
+                make: "test".into(),
+                model: "test".into(),
+            },
+        );
+        let size: Size<i32, Physical> = (32, 24).into();
+        let mut displayed: GlesTexture = renderer.create_buffer(Fourcc::Abgr8888, (32, 24).into()).unwrap();
+        let mut offscreen: GlesTexture = renderer.create_buffer(Fourcc::Abgr8888, (32, 24).into()).unwrap();
+        let damage = [Rectangle::from_size(size)];
+        let mut framebuffer = renderer.bind(&mut displayed).unwrap();
+        for changed_binding in [false, true] {
+            let (sender, receiver) = channel::channel();
+            state
+                .pending_screencopies
+                .push(crate::handlers::screencopy::PendingScreencopy::owned(
+                    1,
+                    0,
+                    sender,
+                    output.clone(),
+                    Rectangle::<i32, Buffer>::from_size((32, 24).into()),
+                ));
+            capture_with_display_restore(
+                &mut renderer,
+                &mut framebuffer,
+                |renderer, _| {
+                    if changed_binding {
+                        let _target = renderer.bind(&mut offscreen).unwrap();
+                    }
+                    assert!(
+                        crate::backends::direct::capture::capture_request(&mut state, &output, false, || {
+                            Err::<(), _>("injected offscreen allocation/render failure")
+                        })
+                        .is_none()
+                    );
+                    true
+                },
+                |renderer, framebuffer| {
+                    let _ = renderer.render(framebuffer, size, Transform::Normal)?.finish()?;
+                    Ok::<_, GlesError>(())
+                },
+            )
+            .unwrap();
+            assert!(receiver.try_recv().unwrap().result.is_err());
+            assert!(receiver.try_recv().is_err());
+            assert!(state.pending_screencopies.is_empty());
+            let mut frame = renderer.render(&mut framebuffer, size, Transform::Normal).unwrap();
+            frame.clear(Color32F::new(0.0, 0.0, 1.0, 1.0), &damage).unwrap();
+            frame.finish().unwrap().wait().unwrap();
+            let pixels = renderer
+                .copy_framebuffer(&framebuffer, Rectangle::from_size((32, 24).into()), Fourcc::Abgr8888)
+                .unwrap();
+            assert_eq!(&renderer.map_texture(&pixels).unwrap()[..4], &[0, 0, 255, 255]);
+        }
+    }
+
     #[test]
     fn accepts_positive_finite_scale() {
         assert_eq!(normalized_scale(1.25), 1.25);

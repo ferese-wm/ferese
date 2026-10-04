@@ -46,11 +46,17 @@ impl SeatHandler for Ferese {
     }
 
     fn cursor_image(&mut self, _seat: &Seat<Self>, image: CursorImageStatus) {
-        if let CursorImageStatus::Named(icon) = &image {
-            self.named_cursors
-                .entry(*icon)
-                .or_insert_with(|| crate::cursor::load_named_cursor(&self.cursor_theme, *icon));
+        if let CursorImageStatus::Named(icon) = &image
+            && !self.named_cursors.contains_key(icon)
+        {
+            self.cursor_loader.request(*icon, self.cursor_animation.buffer_scale);
         }
+        self.cursor_animation.reset |= match (&self.cursor_status, &image) {
+            (CursorImageStatus::Named(previous), CursorImageStatus::Named(next)) => previous != next,
+            (CursorImageStatus::Hidden, CursorImageStatus::Hidden) => false,
+            (CursorImageStatus::Surface(previous), CursorImageStatus::Surface(next)) => previous != next,
+            _ => true,
+        };
         self.cursor_status = image;
         self.update_capture_cursor_privacy();
         // Pointer focus transitions invoke this with the pointer lock held.

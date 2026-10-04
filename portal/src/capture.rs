@@ -87,6 +87,10 @@ pub struct Capture {
 impl Capture {
     pub fn connect(stop: &AtomicBool) -> Result<Self, String> {
         let connection = Connection::connect_to_env().map_err(|e| e.to_string())?;
+        Self::connect_with_connection(connection, stop)
+    }
+
+    fn connect_with_connection(connection: Connection, stop: &AtomicBool) -> Result<Self, String> {
         let queue = connection.new_event_queue();
         connection.display().get_registry(&queue.handle(), ());
         let mut this = Self {
@@ -135,8 +139,8 @@ impl Capture {
         Ok(())
     }
 
-    pub fn validate_sources(&mut self, selected: &[(String, u32)]) -> Result<(), String> {
-        self.sync(&AtomicBool::new(false))?;
+    pub fn validate_sources(&mut self, selected: &[(String, u32)], stop: &AtomicBool) -> Result<(), String> {
+        self.sync(stop)?;
         for (name, generation) in selected {
             if self.generation(name) != Some(*generation) {
                 return Err("A selected display disconnected during approval".into());
@@ -534,6 +538,41 @@ impl Dispatch<window_manager::FereseWindowCaptureManagerV1, ()> for State {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn discovery_and_final_validation_cancel_on_a_stalled_compositor() {
+        use std::io::Read;
+        use std::os::unix::net::UnixStream;
+
+        for discovery in [true, false] {
+            let (client, mut server) = UnixStream::pair().unwrap();
+            server.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+            let stop = Arc::new(AtomicBool::new(false));
+            let flag = stop.clone();
+            let worker = std::thread::spawn(move || {
+                let connection = Connection::from_socket(client).unwrap();
+                if discovery {
+                    Capture::connect_with_connection(connection, &flag).err().unwrap()
+                } else {
+                    let queue = connection.new_event_queue();
+                    let mut capture = Capture {
+                        connection,
+                        queue,
+                        state: State::default(),
+                        selected_output: None,
+                    };
+                    capture.validate_sources(&[], &flag).unwrap_err()
+                }
+            });
+            // Wait for the real Wayland request before cancelling its roundtrip.
+            assert!(server.read(&mut [0u8; 64]).unwrap() > 0);
+            let cancelled = Instant::now();
+            stop.store(true, Ordering::SeqCst);
+            assert!(worker.join().unwrap().to_lowercase().contains("cancel"));
+            assert!(cancelled.elapsed() < Duration::from_secs(1));
+        }
+    }
+
     #[test]
     fn capture_orientation_matches_presentation_for_all_transforms() {
         use wl_output::Transform::*;
