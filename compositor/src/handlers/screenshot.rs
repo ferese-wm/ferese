@@ -478,36 +478,22 @@ impl Coordinator {
         }
 
         let frame = match result {
-            Ok(ref buffer) => {
-                let mut pixels = Vec::new();
-                if pixels.try_reserve_exact(buffer.pixels.len()).is_err() {
-                    None
-                } else {
-                    pixels.extend_from_slice(&buffer.pixels);
-                    Some(OutputFrame {
-                        preserve_alpha: spec.preserve_alpha,
-                        width: buffer.width,
-                        height: buffer.height,
-                        stride: buffer.stride,
-                        pixels,
-                        transform: spec.transform,
-                        location: spec.location,
-                        scale: spec.scale,
-                        logical_width: spec.logical_width,
-                        logical_height: spec.logical_height,
-                    })
-                }
+            Ok(buffer) => OutputFrame {
+                preserve_alpha: spec.preserve_alpha,
+                width: buffer.width,
+                height: buffer.height,
+                stride: buffer.stride,
+                pixels: buffer.pixels,
+                transform: spec.transform,
+                location: spec.location,
+                scale: spec.scale,
+                logical_width: spec.logical_width,
+                logical_height: spec.logical_height,
+            },
+            Err(error) => {
+                self.reject_inner(request, &error);
+                return Action::None;
             }
-            Err(_) => None,
-        };
-
-        let Some(frame) = frame else {
-            let error = match result {
-                Err(error) => error,
-                Ok(_) => "Screenshot capture could not be allocated".to_string(),
-            };
-            self.reject_inner(request, &error);
-            return Action::None;
         };
 
         let Some(entry) = self.requests.get_mut(&request) else {
@@ -975,6 +961,23 @@ mod completion {
         fn response(&self) -> Option<Response> {
             self.received.try_recv().ok()
         }
+    }
+
+    #[test]
+    fn completed_readback_moves_its_pixels_to_the_encoder() {
+        let mut harness = Harness::new(1);
+        let id = harness.coordinator.next_id;
+        let mut captured = buffer(2, 2);
+        captured.pixels.fill(137);
+        let allocation = captured.pixels.as_ptr();
+
+        let Action::Encode { frames, .. } = harness.coordinator.on_part(id, 0, Ok(captured)) else {
+            panic!("completed readback was not queued for encoding");
+        };
+
+        assert_eq!(frames.len(), 1);
+        assert_eq!(frames[0].pixels.as_ptr(), allocation, "readback pixels were copied");
+        assert_eq!(frames[0].pixels, vec![137; 16]);
     }
 
     #[test]

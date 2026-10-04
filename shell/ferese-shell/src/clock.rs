@@ -5,6 +5,7 @@ use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use cosmic::iced::{Subscription, futures};
 use ferese_config::desktop::Clock;
@@ -34,25 +35,57 @@ struct Format {
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 struct Settings {
     bar: bool,
-    desktop: Option<Format>,
+    desktop: Option<Arc<Format>>,
 }
 
-pub fn subscription(bar: bool, clock: &Clock, desktop_visible: bool) -> Subscription<Labels> {
-    let settings = Settings::new(bar, clock, desktop_visible);
-    settings.map_or_else(Subscription::none, |settings| Subscription::run_with(settings, stream))
+#[derive(Default)]
+pub struct Service {
+    desktop: Option<Arc<Format>>,
 }
 
-impl Settings {
-    fn new(bar: bool, clock: &Clock, desktop_visible: bool) -> Option<Self> {
-        let desktop = (desktop_visible && clock.enabled).then(|| Format {
+impl Service {
+    pub fn new(clock: &Clock) -> Self {
+        let mut service = Self::default();
+        service.configure(clock);
+        service
+    }
+
+    pub fn configure(&mut self, clock: &Clock) {
+        if !clock.enabled {
+            self.desktop = None;
+            return;
+        }
+
+        let date = clock.show_date.then_some(clock.date_format.as_str());
+        let zone = clock.time_zone.as_deref().filter(|zone| !zone.is_empty());
+        if self.desktop.as_ref().is_some_and(|format| {
+            format.time == clock.time_format
+                && format.date.as_deref() == date
+                && format.zone.as_deref() == zone
+                && format.lowercase == clock.lowercase
+        }) {
+            return;
+        }
+
+        self.desktop = Some(Arc::new(Format {
             time: clock.time_format.clone(),
-            date: clock.show_date.then(|| clock.date_format.clone()),
-            zone: clock.time_zone.clone().filter(|zone| !zone.is_empty()),
+            date: date.map(str::to_owned),
+            zone: zone.map(str::to_owned),
             lowercase: clock.lowercase,
-        });
+        }));
+    }
+
+    pub fn subscription(&self, bar: bool, desktop_visible: bool) -> Subscription<Labels> {
+        self.settings(bar, desktop_visible)
+            .map_or_else(Subscription::none, |settings| Subscription::run_with(settings, stream))
+    }
+
+    fn settings(&self, bar: bool, desktop_visible: bool) -> Option<Settings> {
+        let desktop = if desktop_visible { self.desktop.clone() } else { None };
         if !bar && desktop.is_none() {
             return None;
         }
+
         Some(Settings { bar, desktop })
     }
 }
@@ -404,13 +437,85 @@ mod tests {
     fn settings(time: Option<&str>, date: Option<&str>) -> Settings {
         Settings {
             bar: true,
-            desktop: time.map(|time| Format {
-                time: time.into(),
-                date: date.map(str::to_owned),
-                zone: None,
-                lowercase: false,
+            desktop: time.map(|time| {
+                Arc::new(Format {
+                    time: time.into(),
+                    date: date.map(str::to_owned),
+                    zone: None,
+                    lowercase: false,
+                })
             }),
         }
+    }
+
+    #[test]
+    fn subscription_rebuilds_and_style_changes_keep_the_cached_format() {
+        let mut clock = Clock {
+            enabled: true,
+            time_zone: Some("Asia/Kathmandu".into()),
+            ..Clock::default()
+        };
+        let mut service = Service::new(&clock);
+        let first = service.settings(true, true).unwrap();
+        let format = first.desktop.as_ref().unwrap();
+        for _ in 0..100 {
+            let current = service.settings(true, true).unwrap();
+            assert!(Arc::ptr_eq(format, current.desktop.as_ref().unwrap()));
+            assert_eq!(first, current);
+        }
+
+        clock.time_size += 8.;
+        clock.margin_x += 10;
+        service.configure(&clock);
+        assert!(Arc::ptr_eq(format, service.desktop.as_ref().unwrap()));
+        assert!(service.settings(true, false).unwrap().desktop.is_none());
+        assert!(service.settings(false, false).is_none());
+        assert!(Arc::ptr_eq(
+            format,
+            service.settings(false, true).unwrap().desktop.as_ref().unwrap()
+        ));
+    }
+
+    #[test]
+    fn format_changes_replace_subscription_identity_without_mutating_the_worker_settings() {
+        let mut clock = Clock {
+            enabled: true,
+            ..Clock::default()
+        };
+        let mut service = Service::new(&clock);
+        let initial = service.settings(true, true).unwrap();
+        clock.time_format = "%H:%M:%S".into();
+        service.configure(&clock);
+        let seconds = service.settings(true, true).unwrap();
+        assert_ne!(initial, seconds);
+        assert_eq!(initial.desktop.as_ref().unwrap().time, "%-I:%M %p");
+
+        clock.show_date = false;
+        service.configure(&clock);
+        let no_date = service.settings(true, true).unwrap();
+        assert_ne!(seconds, no_date);
+        assert!(no_date.desktop.as_ref().unwrap().date.is_none());
+        clock.date_format = "%Y".into();
+        service.configure(&clock);
+        assert!(Arc::ptr_eq(
+            no_date.desktop.as_ref().unwrap(),
+            service.desktop.as_ref().unwrap()
+        ));
+
+        clock.time_zone = Some("UTC".into());
+        service.configure(&clock);
+        assert_ne!(no_date, service.settings(true, true).unwrap());
+        clock.lowercase = !clock.lowercase;
+        let previous = service.settings(true, true).unwrap();
+        service.configure(&clock);
+        assert_ne!(previous, service.settings(true, true).unwrap());
+        clock.enabled = false;
+        service.configure(&clock);
+        assert!(service.settings(false, true).is_none());
+        assert!(service.settings(true, true).unwrap().desktop.is_none());
+        clock.enabled = true;
+        service.configure(&clock);
+        assert!(service.settings(false, true).unwrap().desktop.is_some());
     }
 
     #[test]
@@ -421,31 +526,31 @@ mod tests {
             date_format: "%S%.f".into(),
             ..Clock::default()
         };
-        assert_eq!(subscription(false, &clock, false).units(), 0);
-        assert_eq!(subscription(true, &clock, false).units(), 1);
-        let hidden = Settings::new(true, &clock, false).unwrap();
+        assert_eq!(Service::new(&clock).subscription(false, false).units(), 0);
+        assert_eq!(Service::new(&clock).subscription(true, false).units(), 1);
+        let hidden = Service::new(&clock).settings(true, false).unwrap();
         assert!(hidden.desktop.is_none());
         let now: Timestamp = "2026-10-04T12:34:56.123Z".parse().unwrap();
         assert_eq!(
             deadline(&hidden, now, &TimeZone::UTC, &TimeZone::UTC),
             "2026-10-04T12:35:00Z".parse::<Timestamp>().unwrap().as_nanosecond()
         );
-        let visible = Settings::new(true, &clock, true).unwrap();
+        let visible = Service::new(&clock).settings(true, true).unwrap();
         assert_eq!(
             deadline(&visible, now, &TimeZone::UTC, &TimeZone::UTC),
             "2026-10-04T12:34:56.5Z".parse::<Timestamp>().unwrap().as_nanosecond()
         );
         clock.show_date = false;
-        let hidden_date = Settings::new(true, &clock, true).unwrap();
+        let hidden_date = Service::new(&clock).settings(true, true).unwrap();
         assert_ne!(hidden_date, visible);
         assert_eq!(
             deadline(&hidden_date, now, &TimeZone::UTC, &TimeZone::UTC),
             "2026-10-04T12:35:00Z".parse::<Timestamp>().unwrap().as_nanosecond()
         );
         clock.time_format = "%S".into();
-        assert_ne!(Settings::new(true, &clock, true).unwrap(), hidden_date);
+        assert_ne!(Service::new(&clock).settings(true, true).unwrap(), hidden_date);
         clock.enabled = false;
-        assert_eq!(subscription(false, &clock, true).units(), 0);
+        assert_eq!(Service::new(&clock).subscription(false, true).units(), 0);
     }
 
     #[test]
@@ -459,7 +564,7 @@ mod tests {
                 time_zone: Some(zone.into()),
                 ..Clock::default()
             };
-            let settings = Settings::new(true, &clock, true).unwrap();
+            let settings = Service::new(&clock).settings(true, true).unwrap();
             let desktop = named_zone(zone, &mut Vec::new()).unwrap_or_else(|| panic!("zone {zone} unavailable"));
             let actual = labels(&settings, now, &TimeZone::UTC, &desktop).desktop;
             assert_eq!(actual, clock.labels(&now.to_zoned(TimeZone::UTC)).unwrap(), "{zone}");

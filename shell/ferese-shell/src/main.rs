@@ -170,6 +170,7 @@ struct FereseShell {
     snapshot: ShellSnapshot,
     overview_active: bool,
     clock: String,
+    clock_service: clock::Service,
     desktop_clock: (String, String),
     outputs: Vec<OutputSurfaces>,
     notifications: notifications::Center,
@@ -330,6 +331,7 @@ impl cosmic::Application for FereseShell {
             note_inflight: Vec::new(),
             note_saving: false,
             note_error: None,
+            clock_service: clock::Service::new(&config.desktop_widgets.clock),
             config,
             wallpaper: None,
             control: ShellControl::connect()
@@ -381,14 +383,14 @@ impl cosmic::Application for FereseShell {
                 )) => Some(Message::Event(event, id)),
                 _ => None,
             }),
-            clock::subscription(
-                self.outputs.iter().any(|output| !output.hidden),
-                &self.config.desktop_widgets.clock,
-                self.outputs.iter().any(|output| {
-                    output.clock.is_some() && self.config.desktop_widgets.clock.on_output(output.name.as_deref())
-                }),
-            )
-            .map(Message::ClockChanged),
+            self.clock_service
+                .subscription(
+                    self.outputs.iter().any(|output| !output.hidden),
+                    self.outputs.iter().any(|output| {
+                        output.clock.is_some() && self.config.desktop_widgets.clock.on_output(output.name.as_deref())
+                    }),
+                )
+                .map(Message::ClockChanged),
             self.recorder.subscription().map(Message::RecorderEvent),
             self.recorder.elapsed_subscription().map(|_| Message::RecorderElapsed),
             self.status_service.subscription().map(Message::StatusUpdated),
@@ -902,6 +904,7 @@ impl FereseShell {
             || old.bar_margin_horizontal != theme.bar_margin_horizontal
             || old.bar_window_gap != theme.bar_window_gap;
         self.notifications.configure(config.notifications.clone());
+        self.clock_service.configure(&config.desktop_widgets.clock);
         self.config = config;
         self.desktop_clock = self
             .config
