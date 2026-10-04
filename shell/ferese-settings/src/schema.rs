@@ -743,6 +743,20 @@ pub fn fields(page: Page) -> Vec<Field> {
                 "#3D7BE6",
             ),
             choice(
+                "theme.focus_ring.style",
+                "Accent style",
+                "Window focus borders and selected controls. Gradients use the theme colors unless overridden.",
+                "auto",
+                &[("auto", "Gradient"), ("solid", "Solid")],
+            ),
+            choice(
+                "theme.border.style",
+                "Inactive border style",
+                "Gradients retain the border color's transparency.",
+                "auto",
+                &[("auto", "Gradient"), ("solid", "Solid")],
+            ),
+            choice(
                 "theme.material.style",
                 "Surface style",
                 "Choose the finish for the bar and menus.",

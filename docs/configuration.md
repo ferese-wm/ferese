@@ -322,10 +322,22 @@ Filled controls choose a contrasting text color automatically.
 Solid materials omit blur; translucent materials blur behind the surface color.
 True fullscreen removes decorations. Focus transitions never scale the content.
 
-Optional `theme.focus-ring.gradient` and `theme.border.gradient` use the same
-keys: required `from` and `to` colors, and `angle` (number, default `0`). Angles
-are clockwise: 0 is left-to-right, 90 top-to-bottom. Omit the gradient section
-for solid `accent` or `border` colors.
+Window focus borders and selected controls use an accent gradient by default.
+Built-in themes supply the second color; when a theme has one accent color,
+Ferese derives a nearby lighter or darker shade. Changing the accent replaces
+the automatic gradient. Inactive window borders derive their gradient from the
+border color and keep its transparency.
+Automatic accent endpoints are adjusted for contrast against the theme's surfaces.
+
+In Settings → Appearance, choose **Gradient** or **Solid** for **Accent style**
+and **Inactive border style**. In KDL, `theme.focus-ring.style` and
+`theme.border.style` accept `"auto"` (default) or `"solid"`. Solid disables the
+gradient, including any explicit endpoints, without deleting them from the config.
+
+For custom endpoints, set `theme.focus-ring.gradient` or `theme.border.gradient`.
+Both require `from` and `to` colors; `angle` is optional and defaults to `0`.
+Angles are clockwise: 0 is left-to-right, 90 top-to-bottom. Explicit gradients
+take precedence over automatically derived colors. The automatic angle is 135°.
 
 ```kdl
 theme {
@@ -336,6 +348,15 @@ theme {
             angle 135.0
         }
     }
+}
+```
+
+For solid colors:
+
+```kdl
+theme {
+    focus-ring { style "solid"; }
+    border { style "solid"; }
 }
 ```
 

@@ -954,6 +954,14 @@ impl App {
     fn change(&mut self, edit: Edit) -> Task<Message> {
         match self.draft.edit(&edit) {
             Ok(()) => {
+                // A shared style selection applies to both appearances while
+                // retaining their authored gradient endpoints.
+                for unset in visuals::paint_style_overrides(&self.draft, &edit) {
+                    if self.draft.edit(&unset).is_ok() {
+                        self.pending.push(unset);
+                    }
+                }
+
                 // When a gradient exists, changing Accent also changes its
                 // leading stop; otherwise the visible focus border would stay
                 // on the old palette despite the control saying it changed.

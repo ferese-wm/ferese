@@ -718,6 +718,18 @@ mod tests {
     }
 
     #[test]
+    fn resolved_paint_styles_reach_window_decorations() {
+        let mut theme = ferese_config::theme::default_theme();
+        let settings = Config::resolved_theme_settings(&theme).unwrap();
+        assert!(settings.border_gradient.is_some());
+        assert!(settings.focus_ring_gradient.is_some());
+        theme.tokens.focus_ring.style = ferese_config::theme::PaintStyle::Solid;
+        let settings = Config::resolved_theme_settings(&theme).unwrap();
+        assert!(settings.focus_ring_gradient.is_none());
+        assert!(settings.border_gradient.is_some());
+    }
+
+    #[test]
     fn border_gradients_reject_invalid_colors_and_nonfinite_angles() {
         for settings in [
             "from \"invalid\"\nto \"#445566\"\n",

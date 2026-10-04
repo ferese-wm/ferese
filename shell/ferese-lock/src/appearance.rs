@@ -126,6 +126,7 @@ impl Appearance {
             text: self.text,
             muted: self.text.scale_alpha(0.55),
             accent: self.accent,
+            accent_gradient: None,
             on_accent: self.on_accent,
             radius: self.radius,
             error: Color::from_rgb8(235, 98, 98),

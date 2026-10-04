@@ -107,9 +107,35 @@ pub struct Gradient {
     pub angle: f64,
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum PaintStyle {
+    #[default]
+    Auto,
+    Solid,
+}
+
+impl PaintStyle {
+    fn is_auto(&self) -> bool {
+        *self == Self::Auto
+    }
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 pub struct Paint {
+    #[serde(default, skip_serializing_if = "PaintStyle::is_auto")]
+    pub style: PaintStyle,
     pub gradient: Option<Gradient>,
+}
+
+impl Paint {
+    pub fn effective_gradient(&self) -> Option<&Gradient> {
+        if self.style == PaintStyle::Solid {
+            None
+        } else {
+            self.gradient.as_ref()
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]

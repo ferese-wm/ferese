@@ -213,16 +213,19 @@ pub fn default_tokens() -> Tokens {
             "background":{"path":crate::default_wallpaper(),"lock_path":null,"mode":"fill"},
             "surface":{"bar":{"background":"#111821","text_primary":"#F4F7FB","text_muted":"#8793A2"}},
             "shadow":{"soft":{"offset_y":4.0,"blur":18.0,"opacity":0.2}},
-            "border":{"gradient":null},"focus_ring":{"gradient":null}
+            "border":{"style":"auto","gradient":null},"focus_ring":{"style":"auto","gradient":null}
         }))
         .expect("valid built-in theme")
 }
 
 pub fn default_theme() -> ResolvedTheme {
+    let mut tokens = default_tokens();
+    resolve_gradients(&mut tokens, None);
+
     ResolvedTheme {
         appearance: Appearance::Dark,
         requested_accent: "#3D7BE6".into(),
-        tokens: default_tokens(),
+        tokens,
         accessibility: Accessibility::default(),
         reduced_motion: false,
     }
@@ -323,6 +326,7 @@ pub fn resolve_with_context(
                     pair.1.clone()
                 }
             });
+        let custom_variant = variant.is_some();
         let mut tokens = if let Some(tokens) = variant {
             tokens
         } else if let Some(id) = crate::families::variant(family_id, kind) {
@@ -366,6 +370,19 @@ pub fn resolve_with_context(
         }
 
         let authored_base = tokens.colors.surface_base.clone();
+        let authored_accent = tokens.colors.accent.clone();
+        let preset_end = (!custom_variant)
+            .then(|| {
+                let id = crate::families::variant(family_id, kind).unwrap_or(if kind == Appearance::Light {
+                    "ferese-blue-light"
+                } else {
+                    "ferese-blue"
+                });
+                crate::presets::PRESETS.iter().find(|preset| preset.id == id)
+            })
+            .flatten()
+            .map(|preset| preset.gradient_end)
+            .filter(|end| *end != authored_accent);
         let mut explicit_surfaces = std::collections::HashSet::new();
         if root
             .get("geometry")
@@ -378,7 +395,7 @@ pub fn resolve_with_context(
         {
             tokens.geometry.shell_radius = radius;
         }
-        let mut value = serde_json::to_value(&tokens).map_err(|e| e.to_string())?;
+        let mut value = token_value(&tokens)?;
         for file in [&policy.file, &selection.file].into_iter().flatten() {
             let path = theme_path(directory, file);
             if !all_files.contains(&path) {
@@ -406,7 +423,7 @@ pub fn resolve_with_context(
         merge(&mut value, &root, "", &mut warnings, true)?;
         let mut overrides = selection.overrides.clone();
         if !split && policy.family.is_some() {
-            for key in ["colors", "surface", "border", "focus_ring"] {
+            for key in ["colors", "surface"] {
                 overrides.remove(key);
             }
         }
@@ -443,6 +460,7 @@ pub fn resolve_with_context(
         validate(&tokens)?;
         let requested_accent = tokens.colors.accent.clone();
         transform(&mut tokens, &policy.accessibility, &mut warnings);
+        resolve_gradients(&mut tokens, preset_end.filter(|_| requested_accent == authored_accent));
         let theme = ResolvedTheme {
             appearance: kind,
             tokens,
@@ -487,6 +505,15 @@ pub fn theme_path(directory: &Path, path: &Path) -> PathBuf {
         return parent.join(name);
     }
     path
+}
+
+fn token_value(tokens: &Tokens) -> Result<Value, String> {
+    let mut value = serde_json::to_value(tokens).map_err(|error| error.to_string())?;
+    // Keep authoring defaults available for merging. The wire format omits
+    // automatic styles so older snapshots still round-trip unchanged.
+    value["focus_ring"]["style"] = serde_json::to_value(tokens.focus_ring.style).unwrap();
+    value["border"]["style"] = serde_json::to_value(tokens.border.style).unwrap();
+    Ok(value)
 }
 
 fn merge(
@@ -664,7 +691,7 @@ fn validate(tokens: &Tokens) -> Result<(), String> {
             }
             Value::Number(n) => {
                 let n = n.as_f64().ok_or("invalid theme number")?;
-                if !n.is_finite() || (path != ".shadow.soft.offset_y" && n < 0.) {
+                if !n.is_finite() || (path != ".shadow.soft.offset_y" && !path.ends_with(".angle") && n < 0.) {
                     return Err(format!("Invalid theme value {path}"));
                 }
                 if (path.ends_with("opacity") || path.ends_with("tint_strength")) && n > 1. {
@@ -776,6 +803,51 @@ fn transform(t: &mut Tokens, accessibility: &Accessibility, warnings: &mut Vec<S
     }
 }
 
+fn resolve_gradients(tokens: &mut Tokens, preset_end: Option<&str>) {
+    let shade = |color: &str| {
+        let source = rgba(color).expect("validated paint color");
+        let endpoint = if luminance(source) > 0.4 {
+            [0., 0., 0., source[3]]
+        } else {
+            [1., 1., 1., source[3]]
+        };
+        hex(blend(source, endpoint, 0.18))
+    };
+
+    let backgrounds = [
+        rgba(&tokens.colors.surface_base).unwrap(),
+        rgba(&tokens.colors.surface_raised).unwrap(),
+        rgba(&tokens.colors.application_background).unwrap(),
+        rgba(&tokens.surface.bar.background).unwrap(),
+    ];
+    for (paint, color, endpoint, focus) in [
+        (&mut tokens.focus_ring, &tokens.colors.accent, preset_end, true),
+        (&mut tokens.border, &tokens.colors.border, None, false),
+    ] {
+        if paint.style == PaintStyle::Solid {
+            paint.gradient = None;
+            continue;
+        }
+
+        if let Some(gradient) = &mut paint.gradient {
+            gradient.angle = gradient.angle.rem_euclid(360.);
+            continue;
+        }
+
+        let to = endpoint.map_or_else(|| shade(color), str::to_owned);
+        let to = if focus {
+            hex(readable_across(rgba(&to).unwrap(), &backgrounds, 3.))
+        } else {
+            to
+        };
+        paint.gradient = Some(Gradient {
+            from: color.clone(),
+            to,
+            angle: 135.,
+        });
+    }
+}
+
 fn resolve_material_contrast(tokens: &mut Tokens, minimum: f64) {
     if tokens.material.style == "solid" {
         return;
@@ -835,7 +907,7 @@ pub fn import_family(id: &str, source: &str) -> Result<ImportedFamily, String> {
                 },
                 appearance,
             )?;
-            let mut value = serde_json::to_value(base).map_err(|e| e.to_string())?;
+            let mut value = token_value(&base)?;
             merge(&mut value, layer, "", &mut warnings, false)?;
             let tokens: Tokens = serde_json::from_value(value).map_err(|e| e.to_string())?;
             validate(&tokens)?;
@@ -888,6 +960,140 @@ mod tests {
             "2026-09-30T12:00:00Z".parse().unwrap(),
             |_| Err("unexpected file read".into()),
         )
+    }
+
+    #[test]
+    fn automatic_gradients_follow_presets_and_preserve_border_alpha() {
+        for preset in crate::presets::PRESETS {
+            let mode = if preset.appearance == Appearance::Light {
+                "light"
+            } else {
+                "dark"
+            };
+            let theme = candidate(&format!(
+                "theme {{ mode {mode}; family {}; }}",
+                crate::families::family_id(preset.id)
+            ))
+            .unwrap()
+            .theme;
+            let gradient = theme.tokens.focus_ring.gradient.as_ref().unwrap();
+            assert_eq!(gradient.from, theme.tokens.colors.accent);
+            if preset.gradient_end != preset.accent {
+                let backgrounds = [
+                    rgba(&theme.tokens.colors.surface_base).unwrap(),
+                    rgba(&theme.tokens.colors.surface_raised).unwrap(),
+                    rgba(&theme.tokens.colors.application_background).unwrap(),
+                    rgba(&theme.tokens.surface.bar.background).unwrap(),
+                ];
+                assert_eq!(
+                    gradient.to,
+                    hex(readable_across(rgba(preset.gradient_end).unwrap(), &backgrounds, 3.))
+                );
+                assert!(
+                    backgrounds
+                        .iter()
+                        .all(|background| contrast(rgba(&gradient.to).unwrap(), *background) >= 3.)
+                );
+            } else {
+                assert_ne!(rgba(&gradient.from).unwrap(), rgba(&gradient.to).unwrap());
+            }
+
+            let border = theme.tokens.border.gradient.as_ref().unwrap();
+            let alpha = rgba(&theme.tokens.colors.border).unwrap()[3];
+            assert_eq!(rgba(&border.from).unwrap()[3], alpha);
+            assert_eq!(rgba(&border.to).unwrap()[3], alpha);
+        }
+    }
+
+    #[test]
+    fn accent_overrides_and_imported_themes_do_not_keep_old_preset_endpoints() {
+        let theme = candidate("theme { family catppuccin; accent \"#E17B38\"; }")
+            .unwrap()
+            .theme;
+        let gradient = theme.tokens.focus_ring.gradient.as_ref().unwrap();
+        assert_eq!(gradient.from, theme.tokens.colors.accent);
+        assert_ne!(gradient.to, "#B4BEFE");
+        let from = rgba(&gradient.from).unwrap();
+        let to = rgba(&gradient.to).unwrap();
+        assert!(from[0] > from[1] && from[1] > from[2]);
+        assert!(to[0] > to[1] && to[1] > to[2]);
+
+        let document =
+            Document::parse("theme { family custom; custom-themes { custom { file \"custom.kdl\"; }; }; }").unwrap();
+        let theme = resolve(
+            &document,
+            Path::new("/config"),
+            "2026-09-30T12:00:00Z".parse().unwrap(),
+            |_| Ok("theme { dark { colors { accent \"#E17B38\"; }; }; }".into()),
+        )
+        .unwrap()
+        .theme;
+        let gradient = theme.tokens.focus_ring.gradient.as_ref().unwrap();
+        assert_eq!(gradient.from, theme.tokens.colors.accent);
+        assert_eq!(
+            gradient.to,
+            candidate("theme { accent \"#E17B38\"; }")
+                .unwrap()
+                .theme
+                .tokens
+                .focus_ring
+                .gradient
+                .unwrap()
+                .to
+        );
+    }
+
+    #[test]
+    fn explicit_paints_win_with_paired_families_and_solid_can_disable_them() {
+        let source = r##"theme {
+            family catppuccin
+            border { style solid; }
+            dark { focus-ring { gradient { from "#123456"; to "#ABCDEF80"; angle -45; }; }; }
+        }"##;
+        let theme = candidate(source).unwrap().theme;
+        let gradient = theme.tokens.focus_ring.gradient.unwrap();
+        assert_eq!(
+            (gradient.from.as_str(), gradient.to.as_str(), gradient.angle),
+            ("#123456", "#ABCDEF80", 315.)
+        );
+        assert!(theme.tokens.border.gradient.is_none());
+
+        let source = source.replace("family catppuccin", "family catppuccin\nfocus-ring { style solid; }");
+        let theme = candidate(&source).unwrap().theme;
+        assert!(theme.tokens.focus_ring.gradient.is_none());
+        assert_eq!(theme.tokens.focus_ring.style, PaintStyle::Solid);
+        assert!(candidate("theme { focus-ring { style rainbow; }; }").is_err());
+        assert!(candidate("theme { focus-ring { gradient { from \"bad\"; to \"#FFFFFF\"; }; }; }").is_err());
+    }
+
+    #[test]
+    fn gradients_interpolate_stops_alpha_angles_and_solid_transitions() {
+        let mut from = default_theme();
+        let mut to = from.clone();
+        from.tokens.focus_ring.gradient = Some(Gradient {
+            from: "#FF000000".into(),
+            to: "#112233".into(),
+            angle: 350.,
+        });
+        to.tokens.focus_ring.gradient = Some(Gradient {
+            from: "#0000FFFF".into(),
+            to: "#ABCDEF".into(),
+            angle: 10.,
+        });
+        let frame = from.transition(&to, 0.5);
+        let gradient = frame.tokens.focus_ring.gradient.unwrap();
+        assert_eq!(gradient.from, "#0000FF80");
+        assert!(gradient.angle.abs() < 0.001);
+        assert_eq!(from.transition(&to, 0.), from);
+        assert_eq!(from.transition(&to, 1.), to);
+
+        to.tokens.focus_ring.style = PaintStyle::Solid;
+        to.tokens.focus_ring.gradient = None;
+        let middle = from.transition(&to, 0.5);
+        assert_eq!(middle.tokens.focus_ring.style, PaintStyle::Auto);
+        assert!(middle.tokens.focus_ring.gradient.is_some());
+        assert_eq!(from.transition(&to, 1.), to);
+        assert!(to.transition(&from, 0.5).tokens.focus_ring.gradient.is_some());
     }
 
     #[test]
