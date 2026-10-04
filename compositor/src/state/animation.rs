@@ -1,7 +1,19 @@
 use super::*;
 
 impl Ferese {
+    pub(super) fn presentation_now(&self) -> Duration {
+        #[cfg(test)]
+        if let Some(now) = self.animation_test_time {
+            return now;
+        }
+        self.start_time.elapsed()
+    }
+
     pub fn advance_animations(&mut self, now: Instant) -> bool {
+        #[cfg(test)]
+        if let Some(time) = self.animation_test_time {
+            return self.advance_animations_at(Duration::ZERO, time);
+        }
         let delta = crate::presentation::frame_delta(&mut self.last_animation_tick, now);
         // Consume wall time even while presentation is paused. A paused
         // desktop must not turn suspend/DPMS time into a spring step.
@@ -35,7 +47,10 @@ impl Ferese {
                 continue;
             };
             let moving = |value: &AnimatedValue| value.current != value.target || value.velocity != 0.0;
-            let viewport = self.viewport_animations.get(&workspace).is_some_and(moving)
+            let viewport = self
+                .presentation_dependencies
+                .viewport_blocked(workspace, &self.windows)
+                && self.viewport_animations.get(&workspace).is_some_and(moving)
                 && self
                     .output_workspaces
                     .output_for_workspace(workspace)
@@ -51,6 +66,7 @@ impl Ferese {
                     .chain(workspace.floating.iter().copied())
                     .any(|other| {
                         other != *id
+                            && self.presentation_dependencies.reflow_blocked(other, &self.windows)
                             && self
                                 .windows
                                 .window(other)
@@ -80,7 +96,7 @@ impl Ferese {
 
     fn animations_need_tick(&self) -> bool {
         if self.focus_swipe.is_some()
-            || !self.paused_workspaces.is_empty()
+            || self.presentation_dependencies.needs_tick()
             || !self.workspace_slides.is_empty()
             || !self.render.closing.is_empty()
             || !self.dismissing_popups.is_empty()
@@ -125,11 +141,15 @@ impl Ferese {
     }
 
     pub(super) fn advance_animations_by(&mut self, delta: std::time::Duration) -> bool {
-        self.advance_animations_at(delta, self.start_time.elapsed())
+        self.advance_animations_at(delta, self.presentation_now())
     }
 
     // The production caller supplies monotonic wall time; tests supply a fake clock.
     pub(super) fn advance_animations_at(&mut self, delta: Duration, now: Duration) -> bool {
+        #[cfg(test)]
+        if self.animation_test_time.is_some() {
+            self.animation_test_time = Some(now);
+        }
         if !self.animations_need_tick() {
             self.sync_window_stacking();
             return false;
@@ -141,7 +161,11 @@ impl Ferese {
             .as_ref()
             .is_some_and(|swipe| !self.focus_swipe_is_current(swipe))
         {
-            self.focus_swipe = None;
+            if let Some(swipe) = self.focus_swipe.take() {
+                self.presentation_dependencies
+                    .restore_viewport(swipe.workspace, swipe.dependencies);
+                self.release_presentation_dependencies();
+            }
         }
 
         let mut active_animation = false;
@@ -274,13 +298,8 @@ impl Ferese {
             self.render.remove_window(id);
         }
 
-        // Include transactions expiring on this dispatch: their waiting time
-        // must not be charged to the first resumed animation step.
-        let paused_before_expiry = self
-            .windows
-            .resizing()
-            .filter_map(|id| self.workspaces.workspace_for_window(*id))
-            .collect::<HashSet<_>>();
+        // Capture holds before expiry so waiting wall time never steps reflow.
+        let (mut held_reflow, mut held_viewport) = self.presentation_dependencies.holds(&self.windows);
         #[cfg(feature = "resize-metrics")]
         self.measure_resize_pauses(now);
         #[cfg(feature = "resize-metrics")]
@@ -291,15 +310,18 @@ impl Ferese {
                 }
             }
         }
-        self.windows.expire_transactions(now);
-
-        let blocked_workspaces = self
+        let expired = self
             .windows
             .resizing()
-            .filter_map(|id| self.workspaces.workspace_for_window(*id))
-            .collect::<HashSet<_>>();
-        let mut resume_pauses = std::mem::replace(&mut self.paused_workspaces, blocked_workspaces.clone());
-        resume_pauses.extend(paused_before_expiry);
+            .any(|id| self.windows.transaction(id).unwrap().expired(now));
+        self.windows.expire_transactions(now);
+        if expired {
+            self.release_presentation_dependencies();
+        }
+
+        let (released_reflow, released_viewport) = self.presentation_dependencies.holds(&self.windows);
+        held_reflow.extend(released_reflow);
+        held_viewport.extend(released_viewport);
         let animations_enabled = self.animations_enabled;
         let animation_speed = self.animation_speed;
         #[cfg(feature = "resize-metrics")]
@@ -309,10 +331,7 @@ impl Ferese {
                 return false;
             }
 
-            let waiting_for_client = self
-                .workspaces
-                .workspace_for_window(*id)
-                .is_some_and(|workspace| blocked_workspaces.contains(&workspace));
+            let waiting_for_client = self.presentation_dependencies.reflow_blocked(*id, &self.windows);
             // A shrinking client's destination buffer arrives before the
             // animated bounds reach it. Keep the old native pixels covering
             // that strip rather than fading them into the neutral resize fill.
@@ -349,7 +368,8 @@ impl Ferese {
         });
         active_animation |= self.render.snapshots().next().is_some();
         // Keep scheduling frames while waiting, so the deadline cannot stall.
-        active_animation |= !blocked_workspaces.is_empty() || !resume_pauses.is_empty();
+        active_animation |=
+            self.windows.resizing().next().is_some() || !held_reflow.is_empty() || !held_viewport.is_empty();
         for (workspace, viewport) in &mut self.viewport_animations {
             if self
                 .output_workspaces
@@ -359,7 +379,7 @@ impl Ferese {
                 continue;
             }
 
-            if blocked_workspaces.contains(workspace) || resume_pauses.contains(workspace) {
+            if held_viewport.contains(workspace) {
                 continue;
             }
 
@@ -380,14 +400,7 @@ impl Ferese {
                 continue;
             };
 
-            if self
-                .workspaces
-                .workspace_for_window(id)
-                .is_some_and(|workspace| blocked_workspaces.contains(&workspace) || resume_pauses.contains(&workspace))
-            {
-                continue;
-            }
-
+            let held = held_reflow.contains(&id);
             let Some(record) = self.windows.record_mut(id) else {
                 continue;
             };
@@ -397,6 +410,8 @@ impl Ferese {
                 continue;
             };
 
+            let previous = geometry.visual.current;
+            geometry.presentation_changed = false;
             let zooming = geometry.is_zooming();
 
             let coupled_target = record.coupled_width.as_ref().map(|(_, width)| width.target);
@@ -404,7 +419,9 @@ impl Ferese {
                 geometry.visual.target.width = geometry.visual.current.width;
                 geometry.visual.velocity.width = 0.0;
             }
-            active_animation |= geometry.advance(delta, self.spring_config, self.animations_enabled);
+            if !held {
+                active_animation |= geometry.advance(delta, self.spring_config, self.animations_enabled);
+            }
 
             if zooming != geometry.is_zooming() {
                 self.stacking_cache.invalidate();
@@ -419,18 +436,28 @@ impl Ferese {
             {
                 if zooming {
                     sync_scrolling_coordinates(geometry, world_x, viewport, true);
-                } else if self.animations_enabled {
+                } else if !held && self.animations_enabled {
                     active_animation |= world_x.advance(delta, self.spring_config);
-                } else {
+                } else if !held {
                     world_x.snap();
                 }
 
                 if !zooming {
-                    sync_scrolling_coordinates(geometry, world_x, viewport, false);
+                    let mut presented_world = *world_x;
+                    if held {
+                        presented_world.velocity = 0.0;
+                    }
+                    let mut presented_viewport = *viewport;
+                    if held_viewport.contains(workspace) {
+                        presented_viewport.velocity = 0.0;
+                    }
+                    sync_scrolling_coordinates(geometry, &mut presented_world, &presented_viewport, false);
                 }
             }
 
-            if let Some((_, width)) = record.coupled_width.as_mut() {
+            if let Some((_, width)) = record.coupled_width.as_mut()
+                && !held
+            {
                 let width_active = if self.animations_enabled {
                     width.advance(delta, self.viewport_spring_config)
                 } else {
@@ -455,7 +482,9 @@ impl Ferese {
                 );
             }
 
-            if let Some(size) = geometry.presentation_size_request(now)
+            geometry.presentation_changed |= previous != geometry.visual.current;
+            if !held
+                && let Some(size) = geometry.presentation_size_request(now)
                 && !natural_pending
                 && let Some(toplevel) = window.toplevel()
             {
@@ -864,6 +893,10 @@ mod tests {
             id,
             crate::resize_transaction::ResizeTransaction::new(1.into(), Duration::from_millis(40)),
         );
+        state.rebuild_presentation_dependencies();
+        state
+            .presentation_dependencies
+            .wait_for_viewport(workspace, id, 1.into());
         state.advance_animations_at(Duration::from_millis(300), Duration::from_millis(340));
         assert!(state.windows.transaction(&id).is_none());
         assert_eq!(state.viewport_animations[&workspace], frozen);
@@ -882,6 +915,10 @@ mod tests {
             id,
             crate::resize_transaction::ResizeTransaction::new(2.into(), Duration::from_millis(356)),
         );
+        state.rebuild_presentation_dependencies();
+        state
+            .presentation_dependencies
+            .wait_for_viewport(workspace, id, 2.into());
         state.advance_animations_at(Duration::from_millis(100), Duration::from_millis(456));
         let frozen = state.viewport_animations[&workspace];
         state.windows.clear_transaction(&id);
@@ -935,10 +972,14 @@ mod tests {
             id,
             crate::resize_transaction::ResizeTransaction::new(3.into(), Duration::from_millis(800)),
         );
+        state.rebuild_presentation_dependencies();
+        state
+            .presentation_dependencies
+            .wait_for_viewport(workspace, id, 3.into());
         state.advance_animations_at(Duration::from_millis(100), Duration::from_millis(900));
-        assert!(state.paused_workspaces.contains(&workspace));
+        assert!(state.presentation_dependencies.needs_tick());
         state.windows.clear_transaction(&id);
         state.advance_animations_at(Duration::from_millis(16), Duration::from_millis(916));
-        assert!(state.paused_workspaces.is_empty());
+        assert!(!state.presentation_dependencies.needs_tick());
     }
 }

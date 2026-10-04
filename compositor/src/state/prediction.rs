@@ -37,7 +37,25 @@ impl Ferese {
         delta: Duration,
     ) -> crate::presentation::WindowPresentation {
         let record = self.windows.record(id).expect("presentation has a window record");
-        let mut bounds = overview.presented_bounds(id, geometry.visual);
+        let mut visual = geometry.visual;
+        if self.presentation_dependencies.reflow_blocked(id, &self.windows) {
+            let predicted_x_velocity = visual.velocity.x;
+            visual.velocity = Default::default();
+            if !geometry.is_zooming()
+                && let Some((workspace, _)) = record.world_x.as_ref()
+                && !self
+                    .presentation_dependencies
+                    .viewport_blocked(*workspace, &self.windows)
+                && let Some(viewport) = self.viewport_animations.get(workspace)
+            {
+                visual.velocity.x = if delta.is_zero() {
+                    -viewport.velocity
+                } else {
+                    predicted_x_velocity
+                };
+            }
+        }
+        let mut bounds = overview.presented_bounds(id, visual);
         bounds.current.x += offset.0;
         bounds.current.y += offset.1;
         if let Some(workspace) = self.workspaces.workspace_for_window(id)
@@ -113,18 +131,17 @@ impl Ferese {
             .flat_map(move |output| self.output_workspaces.assigned_workspaces(output))
             .filter_map(move |id| self.workspaces.workspace(id))
             .flat_map(move |workspace| {
-                let blocked = block_resizes
-                    && workspace
-                        .layout
-                        .window_ids()
-                        .chain(workspace.floating.iter().copied())
-                        .any(|id| self.windows.record(id).is_some_and(|record| record.resize.is_some()));
-
                 workspace
                     .layout
                     .window_ids()
                     .chain(workspace.floating.iter().copied())
-                    .filter_map(move |id| Some((id, self.windows.record(id)?, blocked)))
+                    .filter_map(move |id| {
+                        Some((
+                            id,
+                            self.windows.record(id)?,
+                            block_resizes && self.presentation_dependencies.reflow_blocked(id, &self.windows),
+                        ))
+                    })
             })
     }
 
@@ -252,10 +269,16 @@ impl Ferese {
                     .as_ref()
                     .is_some_and(|swipe| swipe.workspace == *workspace);
 
-                Some((*world, *viewport, held))
+                Some((
+                    *world,
+                    *viewport,
+                    held || self
+                        .presentation_dependencies
+                        .viewport_blocked(*workspace, &self.windows),
+                ))
             });
             let width = record.coupled_width.as_ref().map(|(_, width)| *width);
-            let geometry = if delta.is_zero() || blocked {
+            let geometry = if delta.is_zero() {
                 original
             } else {
                 predict_geometry(
@@ -265,6 +288,7 @@ impl Ferese {
                     self.viewport_spring_config,
                     world,
                     width,
+                    blocked,
                 )
             };
 
@@ -304,6 +328,7 @@ fn predict_geometry(
     viewport_spring: SpringConfig,
     world: Option<(AnimatedValue, AnimatedValue, bool)>,
     width: Option<AnimatedValue>,
+    reflow_held: bool,
 ) -> WindowGeometry {
     let mut predicted = original;
     let zooming = predicted.is_zooming();
@@ -312,21 +337,32 @@ fn predict_geometry(
         predicted.visual.velocity.width = 0.0;
     }
 
-    predicted.advance(delta, spring, true);
+    if !reflow_held {
+        predicted.advance(delta, spring, true);
+    } else {
+        predicted.visual.velocity = Default::default();
+    }
     predicted.visual.target.width = original.visual.target.width;
     if let Some((mut world, mut viewport, held)) = world
         && !zooming
     {
-        world.advance(delta, spring);
+        if !reflow_held {
+            world.advance(delta, spring);
+        } else {
+            world.velocity = 0.0;
+        }
         if !held {
             viewport.advance(delta, viewport_spring);
+        } else {
+            viewport.velocity = 0.0;
         }
 
-        predicted.visual.current.x = world.current - viewport.current;
-        predicted.visual.velocity.x = world.velocity - viewport.velocity;
+        super::animation::sync_scrolling_coordinates(&mut predicted, &mut world, &viewport, false);
     }
 
-    if let Some(mut width) = width {
+    if let Some(mut width) = width
+        && !reflow_held
+    {
         width.advance(delta, viewport_spring);
         predicted.visual.current.width = width.current;
         predicted.visual.velocity.width = width.velocity;
@@ -625,6 +661,7 @@ mod tests {
             id,
             crate::resize_transaction::ResizeTransaction::new(9.into(), Duration::ZERO),
         );
+        state.rebuild_presentation_dependencies();
         let blocked = state.sample_frame(&output, Duration::from_millis(16));
         assert_eq!(blocked.windows[&id].geometry, geometry);
         assert!(state.windows.transaction(&id).is_some());
@@ -726,6 +763,7 @@ mod tests {
                 SpringConfig::default(),
                 None,
                 None,
+                false,
             )
         };
 
@@ -741,7 +779,8 @@ mod tests {
 
     #[test]
     fn scrolling_coordinates_and_coupled_width_use_the_same_forecast_time() {
-        let geometry = WindowGeometry::new(Rect::new(500., 0., 400., 300.), None);
+        let mut geometry = WindowGeometry::new(Rect::new(500., 0., 400., 300.), None);
+        geometry.set_logical_target(Rect::new(400., 0., 500., 300.), Duration::ZERO);
         let mut world = AnimatedValue::new(500.);
         world.set_target(600.);
         let mut viewport = AnimatedValue::new(0.);
@@ -757,6 +796,7 @@ mod tests {
             spring,
             Some((world, viewport, false)),
             Some(width),
+            false,
         );
         world.advance_with_policy(delta, spring, CrossingPolicy::NoCrossing);
         viewport.advance_with_policy(delta, spring, CrossingPolicy::NoCrossing);

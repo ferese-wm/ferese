@@ -9,6 +9,7 @@ mod outputs;
 mod reconciliation;
 pub(crate) use reconciliation::{DesktopChanges, DesktopOutput, DesktopTransition};
 mod prediction;
+mod presentation_dependencies;
 pub(crate) use prediction::FrameScene;
 mod lifecycle;
 mod window_registry;
@@ -154,6 +155,8 @@ struct FocusSwipe {
     start: f64,
     destination: f64,
     progress: f64,
+    layout: Option<ferese_layout::ScrollingLayout>,
+    dependencies: Option<presentation_dependencies::ViewportDependencies>,
 }
 
 impl FocusSwipe {
@@ -433,7 +436,7 @@ pub struct Ferese {
     pub(crate) logout_query: Option<u32>,
     pub(crate) logout_owner: Option<ObjectId>,
     viewport_animations: HashMap<WorkspaceId, AnimatedValue>,
-    paused_workspaces: HashSet<WorkspaceId>,
+    presentation_dependencies: presentation_dependencies::PresentationDependencies,
     #[cfg(feature = "resize-metrics")]
     pub(crate) resize_metrics: crate::resize_metrics::ResizeMetrics,
     focus_swipe: Option<FocusSwipe>,
@@ -488,6 +491,8 @@ pub struct Ferese {
     pub(crate) overview: OverviewState,
     next_output_id: u64,
     last_animation_tick: Instant,
+    #[cfg(test)]
+    animation_test_time: Option<Duration>,
     pub popups: PopupManager,
     pub(crate) dismissing_popups: Vec<(WlSurface, PopupKind, DimAnimation)>,
     pub seat: Seat<Self>,
@@ -676,7 +681,7 @@ impl Ferese {
             logout_query: None,
             logout_owner: None,
             viewport_animations: HashMap::new(),
-            paused_workspaces: HashSet::new(),
+            presentation_dependencies: Default::default(),
             #[cfg(feature = "resize-metrics")]
             resize_metrics: crate::resize_metrics::ResizeMetrics::default(),
             focus_swipe: None,
@@ -726,6 +731,8 @@ impl Ferese {
             overview: OverviewState::with_font_family(config.overview_font_family),
             next_output_id: 1,
             last_animation_tick: start_time,
+            #[cfg(test)]
+            animation_test_time: None,
             popups: PopupManager::default(),
             dismissing_popups: Vec::new(),
             seat,
@@ -1213,6 +1220,8 @@ mod tests {
             start: 20.0,
             destination: 20.0,
             progress: 2.0,
+            layout: None,
+            dependencies: None,
         };
         assert!(swipe.position() > 20.0 && swipe.position() < 84.0);
         assert!(swipe.release_velocity(0.0, 3.0) > 0.0);
@@ -1363,6 +1372,8 @@ mod tests {
                     start: 500.0,
                     destination,
                     progress: 0.75,
+                    layout: None,
+                    dependencies: None,
                 };
                 let far = swipe.position();
                 swipe.progress = 0.25;
@@ -1391,6 +1402,8 @@ mod tests {
                 start: 0.0,
                 destination: 0.0,
                 progress: 0.5,
+                layout: None,
+                dependencies: None,
             };
             assert_eq!(swipe.position(), sign * 32.0);
             assert_eq!(swipe.destination, 0.0);

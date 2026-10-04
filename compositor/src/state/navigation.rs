@@ -71,7 +71,13 @@ impl Ferese {
                     candidate.viewport_x().unwrap_or(start)
                 },
                 progress,
+                dependencies: self.presentation_dependencies.save_viewport(workspace_id),
+                layout: match candidate {
+                    WorkspaceLayout::Scrolling(layout) => Some(layout),
+                    _ => None,
+                },
             });
+            self.rebuild_presentation_dependencies();
             self.swipe.mark_preview_started();
         }
         if let Some(swipe) = &mut self.focus_swipe {
@@ -94,8 +100,16 @@ impl Ferese {
             return false;
         };
         let current = self.focus_swipe_is_current(&swipe);
+        let blocked = self
+            .presentation_dependencies
+            .viewport_blocked(swipe.workspace, &self.windows);
+        self.presentation_dependencies
+            .restore_viewport(swipe.workspace, swipe.dependencies.clone());
         // Release from the last input position even if no frame rendered that update.
-        if current && let Some(viewport) = self.viewport_animations.get_mut(&swipe.workspace) {
+        if current
+            && !blocked
+            && let Some(viewport) = self.viewport_animations.get_mut(&swipe.workspace)
+        {
             viewport.current = swipe.position();
             viewport.velocity = swipe
                 .release_velocity(self.swipe.release_velocity, self.swipe.unbounded_release_velocity)
