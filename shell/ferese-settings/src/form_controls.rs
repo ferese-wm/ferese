@@ -176,7 +176,7 @@ impl App {
                     .into()
             }
             Kind::Choice { default, choices } => {
-                let value = self.draft.string(&path, default);
+                let value = self.wallpaper_field_value(&path, default);
                 let mut options = row([]).spacing(2);
                 for (key, label) in choices {
                     options = options.push(
@@ -196,7 +196,7 @@ impl App {
                     if argv {
                         self.draft.argv(&path)
                     } else {
-                        self.draft.string(&path, default)
+                        self.wallpaper_field_value(&path, default)
                     }
                 });
                 let commit = field.clone();

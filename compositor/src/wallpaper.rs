@@ -508,7 +508,7 @@ mod tests {
     fn default_wallpaper_is_bundled_and_decodable() {
         let config: WallpaperConfig = ferese_config::from_str("").unwrap();
         let path = config.path.unwrap();
-        assert_eq!(image::image_dimensions(&path).unwrap(), (1672, 941));
+        assert_eq!(image::image_dimensions(&path).unwrap(), (3840, 2160));
         assert!(WallpaperState::new(WallpaperConfig::default()).owns_background());
     }
 }

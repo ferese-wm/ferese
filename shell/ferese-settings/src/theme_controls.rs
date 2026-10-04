@@ -189,8 +189,8 @@ impl App {
         let list = crate::navigation::gallery_list(appearance);
         for chunk in 0..choices.len().div_ceil(3) {
             let content = widget::responsive(move |size| {
-                // Three previews: 200:126 image, caption, and tile padding.
-                let height = ((size.width - 12.) / 3. - 16.).max(0.) * 126. / 200. + 34.;
+                // Three borderless previews, with names overlaid inside each image.
+                let height = ((size.width - 12.) / 3.).max(0.) * 126. / 200.;
                 let content: Element<'_, Message> = if self.visible_rows.contains(&(list, chunk)) {
                     // Rebuild only mounted rows; responsive owns their actual layout width.
                     self.theme_gallery_row(chunk, appearance)

@@ -38,27 +38,17 @@ documentation](https://docs.github.com/en/pages/getting-started-with-github-page
 
 ## Brand assets
 
-`docs/images/ferese-icon-glow.svg` is the supplied transparent orbit logo with
-cyan-to-blue gradients, edge highlights and three SVG drop-shadow passes. The
-website intro, headers and footers, handbook and README use this self-contained
-SVG on its original 1024×1024 canvas. Display it square so the native paths and
-glow margins remain intact; do not crop it to the flat logo's viewBox.
+The orbit symbols live in `assets/branding`. The website uses
+`ferese-orbit-blue-dark.svg`. The README chooses the light or dark SVG to match
+the reader's appearance and uses the flat blue SVG as its fallback. Keep their
+1024×1024 canvas square so the orbit and glow are not stretched or cropped.
 
-`docs/images/ferese-icon.svg` retains the flat blue-gradient orbit, identical to
-`packaging/icons/ferese.svg`. Its white and dark variants retain the 1058:650
-aspect ratio. The shell's symbolic SVG uses the same paths with `currentColor`
-for the selected desktop theme. The glow variant is specific to the site and
-README; desktop icons and favicons keep the flat variant.
+The favicon uses the flat blue symbol. `site/assets/favicon-32.png` is 32×32;
+`site/assets/favicon.ico` contains 16×16, 32×32 and 48×48 images. These files are
+checked in, so building the site needs no icon renderer. Their links work at
+both the site root and the GitHub Pages project path.
 
-`site/assets/favicon-32.png` is a transparent 32×32 PNG, and
-`site/assets/favicon.ico` contains transparent 16×16, 32×32 and 48×48 images.
-They are rendered from the canonical gradient SVG and centered in square canvases
-without stretching the orbit. These checked-in assets are copied by the normal
-site build; icon generation adds no build dependency. Keep homepage and handbook
-favicon references relative so they resolve under the GitHub Pages project path.
-
-`assets/wallpapers/ferese.png` is the supplied 1672×941 RGB orbit wallpaper,
-stored without resizing or re-encoding. The installer bundles it at
-`wallpapers/ferese.png`; the desktop default and lock-screen fallback use this
-PNG. Custom desktop and lock-screen wallpaper paths continue to take precedence.
-Existing screenshots retain the previous artwork.
+The light and dark orbit wallpapers live in `assets/wallpapers`. Both are
+3840×2160 and are bundled by the installer. Ferese selects the matching image
+when no custom wallpaper is set. Settings keeps both defaults available below
+the current wallpaper preview. Existing screenshots show the previous artwork.

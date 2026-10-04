@@ -30,11 +30,17 @@ pub fn tile<M: Clone + 'static>(
         font,
         id,
     } = options;
-    use cosmic::widget::{button, column, row};
-    let mut caption = row([])
-        .spacing(6)
-        .align_y(cosmic::iced::Alignment::Center)
-        .push(crate::text(family.name.clone(), font).size(12));
+    use cosmic::widget::{button, container, row};
+    let label_color = family
+        .palette(variant.unwrap_or(Appearance::Light))
+        .or(family.dark.as_ref())
+        .map(|palette| crate::parse_color(&palette.text).unwrap())
+        .unwrap_or(palette.text);
+    let mut caption = row([]).spacing(6).align_y(cosmic::iced::Alignment::Center).push(
+        crate::text(family.name.clone(), font)
+            .size(12)
+            .class(cosmic::theme::Text::Color(label_color)),
+    );
     if family.light.is_none() || family.dark.is_none() {
         caption = caption.push(
             crate::text(
@@ -46,19 +52,31 @@ pub fn tile<M: Clone + 'static>(
                 font,
             )
             .size(10)
-            .class(cosmic::theme::Text::Color(palette.muted)),
+            .class(cosmic::theme::Text::Color(label_color)),
         );
     }
-    let image = preview(family, variant, active, selected);
-    let image =
-        cosmic::widget::responsive(move |size| image.clone().height(Length::Fixed(size.width * 126. / 200.)).into())
-            .height(Length::Shrink);
-    let content = column([]).spacing(2).push(image).push(caption);
+    let family_preview = family.clone();
+    let caption: Element<'static, M> = container(caption)
+        .padding(8)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .align_y(cosmic::iced::alignment::Vertical::Bottom)
+        .into();
+    let image = cosmic::widget::responsive(move |size| {
+        let height = size.width * 126. / 200.;
+        // Match the button's logical radius when scaling the cached SVG artwork.
+        let radius = 10. * 200. / size.width.max(1.);
+        preview_with_radius(&family_preview, variant, active, selected, radius)
+            .height(Length::Fixed(height))
+            .into()
+    })
+    .height(Length::Shrink);
+    let content = cosmic::iced::widget::stack([image.into(), caption]);
     let tile = button::custom(content)
         .id(id.clone())
         .name(format!("{}, {}", family.name, family.availability()))
         .width(Length::Fill)
-        .padding(8)
+        .padding(0)
         .class(tile_style(palette, selected))
         .on_press(on_select);
     radio(tile, id, selected, navigate)
@@ -68,11 +86,17 @@ fn tile_style(palette: crate::Palette, selected: bool) -> cosmic::theme::Button 
     let style = move |focused: bool, hovered: bool| cosmic::widget::button::Style {
         shape: Some(BorderShape::Continuous),
         outline: None,
-        background: Some(if hovered { palette.sidebar } else { palette.card }.into()),
-        border_width: if selected { 2. } else { 0. },
+        background: None,
+        border_width: if selected || focused {
+            2.
+        } else if hovered {
+            1.
+        } else {
+            0.
+        },
         border_color: palette.accent,
         border_radius: 10.into(),
-        outline_width: if focused { 2. } else { 0. },
+        outline_width: 0.,
         outline_color: palette.text,
         text_color: Some(palette.text),
         icon_color: Some(palette.text),
@@ -92,14 +116,25 @@ pub fn preview(
     active: Option<Appearance>,
     selected: bool,
 ) -> cosmic::widget::icon::Icon {
+    preview_with_radius(family, variant, active, selected, 10.)
+}
+
+fn preview_with_radius(
+    family: &Family,
+    variant: Option<Appearance>,
+    active: Option<Appearance>,
+    selected: bool,
+    radius: f32,
+) -> cosmic::widget::icon::Icon {
     use cosmic::widget::icon;
-    let key = format!("{}/{variant:?}/{active:?}/{selected}", family.id);
+    let key = format!("{}/{variant:?}/{active:?}/{selected}/{}", family.id, radius.to_bits());
     static CACHE: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, (Family, icon::Handle)>>> =
         std::sync::OnceLock::new();
     let cache = CACHE.get_or_init(Default::default);
     let mut cache = cache.lock().unwrap();
     if cache.get(&key).is_none_or(|(cached, _)| cached != family) {
-        let handle = icon::from_svg_bytes(svg(family, variant, active, selected).into_bytes()).symbolic(false);
+        let handle = icon::from_svg_bytes(svg_with_radius(family, variant, active, selected, radius).into_bytes())
+            .symbolic(false);
         cache.insert(key.clone(), (family.clone(), handle));
     }
     let handle = cache[&key].1.clone();
@@ -128,11 +163,32 @@ fn desktop(p: &Palette) -> String {
 }
 
 pub fn svg(family: &Family, variant: Option<Appearance>, active: Option<Appearance>, selected: bool) -> String {
+    svg_with_radius(family, variant, active, selected, 10.)
+}
+
+fn svg_with_radius(
+    family: &Family,
+    variant: Option<Appearance>,
+    active: Option<Appearance>,
+    selected: bool,
+    radius: f32,
+) -> String {
     let mut result = String::from(
         r##"<svg xmlns="http://www.w3.org/2000/svg" width="200" height="126" viewBox="0 0 200 126"><defs>
 <clipPath id="light"><rect width="100" height="126"/></clipPath><clipPath id="dark"><rect x="100" width="100" height="126"/></clipPath>
-<pattern id="missing" width="8" height="8" patternUnits="userSpaceOnUse"><rect width="8" height="8" fill="#D9DDE2"/><path d="M-2 2l4-4M0 8l8-8M6 10l4-4" stroke="#C4C9D1"/></pattern></defs>"##,
+<pattern id="missing" width="8" height="8" patternUnits="userSpaceOnUse"><rect width="8" height="8" fill="#D9DDE2"/><path d="M-2 2l4-4M0 8l8-8M6 10l4-4" stroke="#C4C9D1"/></pattern>"##,
     );
+    let outline =
+        cosmic::iced::border::Outline::new([0., 0., 200., 126.], [f64::from(radius); 4], BorderShape::Continuous)
+            .expect("finite preview dimensions");
+    // Rasterized once per cached preview; no shaped rendering layer per tile.
+    let points = outline.polygon(0.02).expect("positive contour tolerance");
+    result.push_str("<clipPath id=\"preview\"><polygon points=\"");
+    for [x, y] in points {
+        use std::fmt::Write as _;
+        write!(result, "{x:.4},{y:.4} ").unwrap();
+    }
+    result.push_str("\"/></clipPath></defs><g clip-path=\"url(#preview)\">");
     for appearance in [Appearance::Light, Appearance::Dark] {
         if variant.is_some_and(|variant| variant != appearance) {
             continue;
@@ -194,7 +250,7 @@ pub fn svg(family: &Family, variant: Option<Appearance>, active: Option<Appearan
         ));
         result.push_str(&format!(r#"<circle cx="183" cy="16" r="10" fill="{}"/><path d="M178 16l3 3 6-6" fill="none" stroke="{foreground}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>"#, p.accent));
     }
-    result.push_str("</svg>");
+    result.push_str("</g></svg>");
     result
 }
 

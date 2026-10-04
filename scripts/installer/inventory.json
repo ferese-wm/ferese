@@ -101,6 +101,16 @@
       "mode": "0644"
     },
     {
+      "source": "assets/wallpapers/ferese-wallpaper-orbit-dark.jpg",
+      "target": "wallpapers/ferese-wallpaper-orbit-dark.jpg",
+      "mode": "0644"
+    },
+    {
+      "source": "assets/wallpapers/ferese-wallpaper-orbit-light.png",
+      "target": "wallpapers/ferese-wallpaper-orbit-light.png",
+      "mode": "0644"
+    },
+    {
       "source": "packaging/ferese.desktop",
       "target": "integration/usr/share/wayland-sessions/ferese.desktop",
       "mode": "0644",

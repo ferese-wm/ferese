@@ -38,13 +38,26 @@ pub fn config_path() -> Option<PathBuf> {
 }
 
 pub fn default_wallpaper() -> &'static str {
-    static PATH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    PATH.get_or_init(|| {
+    default_wallpaper_for(theme::Appearance::Dark)
+}
+
+pub fn default_wallpaper_for(appearance: theme::Appearance) -> &'static str {
+    static LIGHT: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    static DARK: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    let (slot, name) = match appearance {
+        theme::Appearance::Light => (&LIGHT, "ferese-wallpaper-orbit-light.png"),
+        theme::Appearance::Dark => (&DARK, "ferese-wallpaper-orbit-dark.jpg"),
+    };
+    slot.get_or_init(|| {
         let path = std::env::current_exe()
             .ok()
-            .and_then(|path| path.parent().map(|dir| dir.join("wallpapers/ferese.png")))
+            .and_then(|path| path.parent().map(|dir| dir.join("wallpapers").join(name)))
             .filter(|path| path.is_file())
-            .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/wallpapers/ferese.png"));
+            .unwrap_or_else(|| {
+                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../assets/wallpapers")
+                    .join(name)
+            });
 
         path.canonicalize().unwrap_or(path).to_string_lossy().into_owned()
     })
