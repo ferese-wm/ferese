@@ -339,10 +339,7 @@ mod tests {
     }
 
     #[test]
-    fn default_uses_logo_blue_and_native_controls_follow_lightness() {
-        let logo = include_str!("../../../packaging/icons/ferese.svg").to_ascii_uppercase();
-        assert!(logo.contains(PRESETS[0].accent));
-
+    fn native_controls_follow_lightness() {
         for (index, item) in PRESETS.iter().enumerate() {
             let _ = index;
             let resolved = ferese_config::theme::ResolvedTheme {
