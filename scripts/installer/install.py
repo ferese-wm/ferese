@@ -125,7 +125,7 @@ def record(rule, name=None):
             for key, value in rule.items() if key != 'source'}
 
 
-def validate_bundle(bundle):
+def validate_bundle(bundle, *, installed=False):
     if bundle.is_symlink() or not bundle.is_dir():
         fail(f'Bundle must be a directory, not a symlink: {bundle}')
 
@@ -162,7 +162,14 @@ def validate_bundle(bundle):
         seen.add(target)
 
     actual = {str(path.relative_to(bundle)) for path in bundle.rglob('*') if path.is_file()}
-    if not expected.keys() <= seen or actual != seen | {'manifest.json'}:
+    required = expected.keys()
+    if installed:
+        # Installed releases may predate the appearance-specific wallpapers.
+        # New bundles must include them; upgrades and rollback verify the older
+        # release's recorded files without requiring these later additions.
+        required = required - {'wallpapers/ferese-wallpaper-dark.jpg', 'wallpapers/ferese-wallpaper-light.png'}
+
+    if not required <= seen or actual != seen | {'manifest.json'}:
         fail('Bundle is incomplete or contains unlisted files')
 
     return manifest
@@ -277,7 +284,7 @@ class Installation:
         if not (directory / 'manifest.json').is_file():
             fail(f'Release {release} predates verified bundles; select a bundled release for rollback')
 
-        return validate_bundle(directory)
+        return validate_bundle(directory, installed=True)
 
     def current_publication(self, current):
         if not current:

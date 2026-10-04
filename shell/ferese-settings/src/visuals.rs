@@ -34,6 +34,7 @@ pub fn brand_icon() -> svg_icon::Icon {
         .symbolic(false)
         .icon()
         .size(32)
+        .content_fit(cosmic::iced::ContentFit::Contain)
 }
 
 pub fn action_icon(path: &str, tint: Color) -> svg_icon::Icon {

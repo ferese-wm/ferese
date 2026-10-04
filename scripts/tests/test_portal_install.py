@@ -112,6 +112,36 @@ m.main()
         for name in ('ferese-session', 'ferese-session-shell', 'ferese-screenshot'):
             self.assertEqual((self.bundles[0] / name).stat().st_mode & 0o777, 0o755)
 
+    def without_appearance_wallpapers(self, bundle):
+        manifest_path = bundle / 'manifest.json'
+        manifest = json.loads(manifest_path.read_text())
+        removed = {'wallpapers/ferese-wallpaper-dark.jpg', 'wallpapers/ferese-wallpaper-light.png'}
+        for target in removed:
+            (bundle / target).unlink()
+
+        manifest['files'] = [item for item in manifest['files'] if item['target'] not in removed]
+        manifest_path.write_text(json.dumps(manifest))
+
+    def test_upgrade_and_rollback_accept_installed_release_before_appearance_wallpapers(self):
+        self.install()
+        legacy = self.base / 'releases/first'
+        self.without_appearance_wallpapers(legacy)
+        self.install(1)
+        self.run_command('rollback')
+        self.assertEqual(os.readlink(self.base / 'current'), 'releases/first')
+        self.assertEqual(installer.Installation(self.root).manifest('first')['release'], 'first')
+        (legacy / 'ferese').write_bytes(b'corrupt')
+        with self.assertRaisesRegex(ValueError, 'Checksum mismatch'):
+            installer.Installation(self.root).manifest('first')
+
+    def test_new_bundle_requires_appearance_wallpapers(self):
+        incomplete = Path(self.temporary.name) / 'incomplete'
+        shutil.copytree(self.bundles[0], incomplete)
+        self.without_appearance_wallpapers(incomplete)
+        result = self.run_command('install', incomplete, success=False)
+        self.assertIn('Bundle is incomplete', result.stderr)
+        self.assertFalse((self.base / 'current').exists())
+
     def test_fresh_upgrade_and_rollback_restore_all_integration(self):
         self.install()
         first = [(self.root / path).read_bytes() for path in (PORTAL, UNIT, DESKTOP)]
