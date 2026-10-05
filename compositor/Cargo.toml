@@ -17,6 +17,7 @@ ferese-ipc = { path = "../crates/ferese-ipc" }
 ferese-layout = { path = "../crates/ferese-layout" }
 ferese-protocols = { path = "../crates/ferese-protocols", features = ["server"] }
 futures-lite = "2.6.1"
+async-channel = "2.5.0"
 libc.workspace = true
 jiff.workspace = true
 notify = "8.2.0"

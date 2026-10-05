@@ -224,6 +224,7 @@ mod tests {
             pid: Some(42),
             desktop_entry: Some("player".into()),
             playing: true,
+            ..Default::default()
         };
         let window = AppWindow {
             id: WindowId(1),

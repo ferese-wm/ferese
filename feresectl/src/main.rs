@@ -152,6 +152,19 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<(String, Value),
                 .map_err(|_| format!("{} requires a positive workspace index", command))?;
             json!({ "index": index })
         }
+        "media" => {
+            return match positional.as_slice() {
+                [] => Ok(("media-get".into(), json!({}))),
+                [mode] if mode == "get" => Ok(("media-get".into(), json!({}))),
+                [action] if ["play-pause", "next", "previous", "raise", "auto"].contains(&action.as_str()) => {
+                    Ok(("media-action".into(), json!({"action": action})))
+                }
+                [action, player] if ["pin", "ignore", "unignore"].contains(&action.as_str()) => {
+                    Ok(("media-action".into(), json!({"action":if action == "pin" { "pin" } else { "ignore" },"player":player,"ignored":action == "ignore"})))
+                }
+                _ => Err("usage: feresectl media [get|play-pause|next|previous|raise|auto|pin PLAYER|ignore PLAYER|unignore PLAYER]".into()),
+            };
+        }
         "screenshot" => match positional.as_slice() {
             [] => json!({}),
             [flag, geometry] if flag == "--geometry" || flag == "-g" => {
@@ -220,12 +233,32 @@ fn socket_path() -> Result<PathBuf, io::Error> {
 }
 
 fn usage() -> String {
-    "usage: feresectl outputs\n       feresectl output-profiles\n       feresectl <output-confirm|output-revert>\n       feresectl output-layout <internal-only|external-only|extend|mirror>\n       feresectl toggle-display-mode\n       feresectl output-profile <name|auto>\n       feresectl output-internal <on|off>\n       feresectl autostart\n       feresectl screenshot [--geometry \"x,y WxH\"]\n       feresectl screenshot-window <window-id>\n       feresectl <focus|move|resize> <direction>\n       feresectl <workspace|move-to-workspace> <index>\n       feresectl workspace-back-and-forth\n       feresectl <focus-last-window|focus-mru-next|focus-mru-previous>\n       feresectl <toggle-floating|toggle-maximized|toggle-fullscreen|toggle-layout|toggle-overview|toggle-keybinding-guide>\n       feresectl <cycle-column-width|center-column|consume|expel|close|exit|request-logout>\n       feresectl <get-focused-window|get-windows|get-workspaces|get-outputs|get-idle-inhibition|reload-config>".to_owned()
+    "usage: feresectl media [get|play-pause|next|previous|raise|auto|pin PLAYER|ignore PLAYER|unignore PLAYER]\n       feresectl outputs\n       feresectl output-profiles\n       feresectl <output-confirm|output-revert>\n       feresectl output-layout <internal-only|external-only|extend|mirror>\n       feresectl toggle-display-mode\n       feresectl output-profile <name|auto>\n       feresectl output-internal <on|off>\n       feresectl autostart\n       feresectl screenshot [--geometry \"x,y WxH\"]\n       feresectl screenshot-window <window-id>\n       feresectl <focus|move|resize> <direction>\n       feresectl <workspace|move-to-workspace> <index>\n       feresectl workspace-back-and-forth\n       feresectl <focus-last-window|focus-mru-next|focus-mru-previous>\n       feresectl <toggle-floating|toggle-maximized|toggle-fullscreen|toggle-layout|toggle-overview|toggle-keybinding-guide>\n       feresectl <cycle-column-width|center-column|consume|expel|close|exit|request-logout>\n       feresectl <get-focused-window|get-windows|get-workspaces|get-outputs|get-idle-inhibition|reload-config>".to_owned()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn media_commands_route_transport_and_player_preferences() {
+        assert_eq!(parse_args(["media".into()]).unwrap().0, "media-get");
+        for action in ["play-pause", "next", "previous", "raise", "auto"] {
+            let (command, args) = parse_args(["media".into(), action.into()]).unwrap();
+            assert_eq!(command, "media-action");
+            assert_eq!(args["action"], action);
+        }
+
+        for (action, ignored) in [("ignore", true), ("unignore", false)] {
+            let (_, args) = parse_args(["media".into(), action.into(), "player".into()]).unwrap();
+            assert_eq!(args["action"], "ignore");
+            assert_eq!(args["ignored"], ignored);
+            assert_eq!(args["player"], "player");
+        }
+
+        assert!(parse_args(["media".into(), "pin".into()]).is_err());
+        assert!(parse_args(["media".into(), "next".into(), "extra".into()]).is_err());
+    }
 
     #[test]
     fn display_mode_commands_validate_layouts() {

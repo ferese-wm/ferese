@@ -121,6 +121,7 @@ pub(crate) fn init(event_loop: &mut EventLoop<'static, Ferese>) -> Result<Screen
                     state.portal_shortcuts.remove(owner);
                     state.portal_session.remove(owner);
                     state.theme_engine.remove(owner);
+                    state.media_engine.remove(owner);
                     state.refresh_idle_inhibition();
                     return;
                 }
@@ -146,6 +147,37 @@ pub(crate) fn init(event_loop: &mut EventLoop<'static, Ferese>) -> Result<Screen
                         "invalid_argument",
                         "Missing capture session",
                     ));
+                }
+            } else if matches!(call.request.command.as_str(), "media-watch" | "media-action") {
+                if let Err(error) = validate_request(&call.request) {
+                    let _ = call
+                        .response
+                        .try_send(Response::error(call.request.id, error.code, error.message));
+                } else if state.session_lock.active() {
+                    let _ = call.response.try_send(Response::error(
+                        call.request.id,
+                        "session_locked",
+                        "IPC unavailable while session is locked",
+                    ));
+                } else if call.request.command == "media-watch" {
+                    if let Some(since) = call.request.args["since"].as_u64() {
+                        state
+                            .media_engine
+                            .watch(call.owner, call.request.id, since, call.response);
+                    } else {
+                        let _ = call.response.try_send(Response::error(
+                            call.request.id,
+                            "invalid_argument",
+                            "Missing media revision",
+                        ));
+                    }
+                } else if let Err(error) = state
+                    .media_engine
+                    .action(call.request.args, Some((call.request.id, call.response.clone())))
+                {
+                    let _ = call
+                        .response
+                        .try_send(Response::error(call.request.id, "media_unavailable", error));
                 }
             } else if call.request.command == "theme-watch" {
                 if let Err(error) = validate_request(&call.request) {
@@ -741,6 +773,7 @@ impl Ferese {
             "close" => self.close_focused_window(),
             "get-focused-window" => return Ok(self.focused_window_json()),
             "get-windows" => return Ok(self.windows_json()),
+            "media-get" => return Ok(self.media_engine.value()),
             "get-idle-inhibition" => {
                 return Ok(json!({
                     "inhibited": self.idle_notifier_state.is_inhibited(),

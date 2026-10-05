@@ -336,6 +336,14 @@ pub(super) fn parse_action(
             no_argument()?;
             Ok(BindingAction::ToggleOverview)
         }
+        "media-play-pause" | "media-next" | "media-previous" => {
+            no_argument()?;
+            Ok(BindingAction::Media(match action {
+                "media-next" => "next",
+                "media-previous" => "previous",
+                _ => "play-pause",
+            }))
+        }
         "toggle-display-mode" => {
             no_argument()?;
             Ok(BindingAction::ToggleDisplayMode)
@@ -385,6 +393,10 @@ pub(super) fn default_bindings() -> Vec<BindingConfig> {
         binding("Super+Shift+Space", "toggle-floating", None),
         binding("Super+Tab", "toggle-overview", None),
         binding("XF86Display", "toggle-display-mode", None),
+        binding("XF86AudioPlay", "media-play-pause", None),
+        binding("XF86AudioPause", "media-play-pause", None),
+        binding("XF86AudioNext", "media-next", None),
+        binding("XF86AudioPrev", "media-previous", None),
         binding("Super+F1", "toggle-keybinding-guide", None),
         binding("Super+Escape", "workspace-back-and-forth", None),
         binding("Super+BackSpace", "focus-last-window", None),
@@ -473,6 +485,7 @@ pub enum BindingAction {
     ToggleOverview,
     ToggleKeybindingGuide,
     ToggleDisplayMode,
+    Media(&'static str),
 }
 
 impl Binding {
@@ -581,6 +594,12 @@ impl Binding {
             BindingAction::Consume => "Join window into column".into(),
             BindingAction::Expel => "Move window out of column".into(),
             BindingAction::ToggleFloating => "Toggle floating window".into(),
+            BindingAction::Media(action) => match *action {
+                "next" => "Next track",
+                "previous" => "Previous track",
+                _ => "Play or pause media",
+            }
+            .into(),
             BindingAction::ToggleOverview => "Open or close overview".into(),
             BindingAction::ToggleDisplayMode => "Open display mode chooser".into(),
             BindingAction::ToggleKeybindingGuide => "Open or close shortcut hint".into(),

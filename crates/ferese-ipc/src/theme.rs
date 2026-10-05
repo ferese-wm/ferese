@@ -78,9 +78,16 @@ impl Connection {
             command: command.into(),
             args,
         };
-        write_frame(&mut self.stream, &request).map_err(|e| e.to_string())?;
-        let response: Response = read_frame(&mut self.stream).map_err(|e| e.to_string())?;
+        let response = write_frame(&mut self.stream, &request).and_then(|()| read_frame::<Response>(&mut self.stream));
+        let response = match response {
+            Ok(response) => response,
+            Err(error) => {
+                let _ = self.stream.shutdown(Shutdown::Both);
+                return Err(error.to_string());
+            }
+        };
         if response.id != self.id || response.version != VERSION {
+            let _ = self.stream.shutdown(Shutdown::Both);
             return Err("Unexpected theme IPC response".into());
         }
         if let Some(error) = response.error {
@@ -98,8 +105,17 @@ impl Connection {
         revision: u64,
         fallback_families: impl FnOnce() -> Vec<Family>,
     ) -> Result<Snapshot, String> {
+        Snapshot::decode(self.wait("theme-watch", json!({"since": revision}))?, fallback_families)
+    }
+
+    /// Wait for a server-side change; dropping the cancellation handle interrupts it.
+    pub fn wait(&mut self, command: &str, args: Value) -> Result<Value, String> {
         self.stream.set_read_timeout(None).map_err(|e| e.to_string())?;
-        Snapshot::decode(self.call("theme-watch", json!({"since": revision}))?, fallback_families)
+        let result = self.call(command, args);
+        self.stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .map_err(|e| e.to_string())?;
+        result
     }
 }
 

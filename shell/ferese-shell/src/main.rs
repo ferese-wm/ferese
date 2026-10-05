@@ -12,6 +12,7 @@ mod config;
 mod control;
 mod display_mode;
 mod keybinding_guide;
+mod media;
 mod motion;
 mod note_store;
 mod notification_ui;
@@ -178,6 +179,7 @@ struct FereseShell {
     status_service: status::Service,
     status: status::Snapshot,
     recorder: recording::Recorder,
+    media: media::Model,
     calendar_offset: i32,
     status_error: Option<status::ActionError>,
     theme_error: Option<String>,
@@ -246,6 +248,14 @@ enum Message {
     ClockChanged(clock::Labels),
     RecorderEvent(recording::Event),
     RecorderElapsed,
+    MediaUpdated(std::sync::Arc<ferese_ipc::media::Snapshot>),
+    MediaAction(serde_json::Value),
+    MediaCompleted(Result<(), String>),
+    MediaTick,
+    MediaChoose,
+    MediaSeek(u64),
+    MediaSeekCommit,
+    MediaArt(media::Artwork),
     ControlReady,
     ActivateWorkspace(u64),
     ToggleOverview,
@@ -316,6 +326,7 @@ impl cosmic::Application for FereseShell {
             status_service: status::Service::start(config.status.settings_command.clone()),
             status: status::Snapshot::default(),
             recorder: recording::Recorder::default(),
+            media: media::Model::default(),
             calendar_offset: 0,
             status_error: None,
             theme_error: None,
@@ -393,6 +404,9 @@ impl cosmic::Application for FereseShell {
                     }),
                 )
                 .map(Message::ClockChanged),
+            self.media.subscription().map(Message::MediaUpdated),
+            self.media_tick_subscription().map(|_| Message::MediaTick),
+            self.media.art.subscription().map(Message::MediaArt),
             self.recorder.subscription().map(Message::RecorderEvent),
             self.recorder.elapsed_subscription().map(|_| Message::RecorderElapsed),
             self.status_service.subscription().map(Message::StatusUpdated),
@@ -427,6 +441,45 @@ impl cosmic::Application for FereseShell {
                 )
             }
 
+            Message::MediaUpdated(snapshot) => {
+                self.media.receive(snapshot);
+                self.refresh_media_art(
+                    self.menu
+                        .as_ref()
+                        .is_some_and(|menu| menu.kind == status_ui::Menu::Media && !menu.motion.closing()),
+                );
+                Task::none()
+            }
+            Message::MediaAction(args) => self.media.command(args),
+            Message::MediaCompleted(result) => self.media.completed(result),
+            Message::MediaTick => {
+                self.media.now_us = ferese_ipc::media::now_us();
+                Task::none()
+            }
+            Message::MediaChoose => {
+                self.media.choosing = !self.media.choosing;
+                Task::none()
+            }
+            Message::MediaSeek(position) => {
+                self.media.seeking = Some(position);
+                Task::none()
+            }
+            Message::MediaSeekCommit => {
+                let Some(position) = self.media.seeking.take() else {
+                    return Task::none();
+                };
+                let mut args = self.media.action("seek");
+                args["position_us"] = serde_json::json!(position);
+                args["track_id"] =
+                    serde_json::json!(self.media.snapshot.selected.as_ref().and_then(|p| p.track_id.clone()));
+                self.media.command(args)
+            }
+            Message::MediaArt(art) => {
+                if self.media.art.accepts(&art) {
+                    self.media.artwork = Some(art);
+                }
+                Task::none()
+            }
             Message::ThemeChanged(snapshot) => {
                 let mut config = self.config.clone();
                 config.apply_theme(&snapshot.presented);
@@ -787,6 +840,7 @@ impl cosmic::Application for FereseShell {
                     if let Some(snapshot) = poll.snapshot {
                         self.snapshot = snapshot;
                         let mut tasks = vec![reload_task];
+                        let mut visibility_changed = false;
 
                         for entry in &mut self.outputs {
                             let output = self
@@ -802,6 +856,7 @@ impl cosmic::Application for FereseShell {
                             }
 
                             entry.hidden = hidden;
+                            visibility_changed = true;
                             if let Some(effects) = &entry.effects
                                 && let Err(error) = effects.set_visible(!hidden)
                             {
@@ -815,6 +870,10 @@ impl cosmic::Application for FereseShell {
                         if self.bar_hidden(self.bar_surface_id) {
                             tasks.push(self.destroy_menu());
                         }
+                        if visibility_changed {
+                            self.refresh_media_art(false);
+                        }
+
                         reload_task = Task::batch(tasks);
                     }
                     for command in poll.commands {

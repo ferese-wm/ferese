@@ -1,7 +1,6 @@
 /target/
 /tools/
 *.log
-ChatGPT Image*.png
 
 # Local architecture decision notes
 /docs/adr/

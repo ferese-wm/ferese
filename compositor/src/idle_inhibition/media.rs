@@ -1,245 +1,124 @@
-//! MPRIS reads and signal handling run off the compositor thread, without polling.
+mod bus;
+mod policy;
+
 use std::collections::HashMap;
-use std::time::Duration;
+use std::sync::mpsc;
+use std::time::Instant;
 
 use calloop::EventLoop;
-use calloop::channel::{Event, channel};
-use futures_lite::{StreamExt, future, stream};
-use zbus::zvariant::OwnedValue;
-use zbus::{Connection, MatchRule, MessageStream};
+use calloop::channel::{Event, sync_channel};
+use ferese_ipc::{Response, media::Snapshot};
+use serde_json::Value;
 
 use crate::Ferese;
 
-const PREFIX: &str = "org.mpris.MediaPlayer2";
-const PATH: &str = "/org/mpris/MediaPlayer2";
-const PLAYER: &str = "org.mpris.MediaPlayer2.Player";
-const PROPERTIES: &str = "org.freedesktop.DBus.Properties";
-const MAX_PLAYERS: usize = 64;
-
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct Player {
     pub name: String,
     pub owner: String,
     pub pid: Option<u32>,
     pub desktop_entry: Option<String>,
     pub playing: bool,
+    pub view: ferese_ipc::media::Player,
+    pub(super) started: u64,
+    pub(super) active: u64,
 }
 
-async fn bus_call<T: serde::de::DeserializeOwned + zbus::zvariant::Type>(
-    connection: &Connection,
-    member: &str,
-    name: &str,
-) -> zbus::Result<T> {
-    connection
-        .call_method(
-            Some("org.freedesktop.DBus"),
-            "/org/freedesktop/DBus",
-            Some("org.freedesktop.DBus"),
-            member,
-            &(name,),
-        )
-        .await?
-        .body()
-        .deserialize()
+pub(crate) struct Command {
+    args: Value,
+    sent: Instant,
+    reply: Option<(u64, mpsc::SyncSender<Response>)>,
 }
 
-async fn property(connection: &Connection, owner: &str, interface: &str, name: &str) -> zbus::Result<OwnedValue> {
-    connection
-        .call_method(Some(owner), PATH, Some(PROPERTIES), "Get", &(interface, name))
-        .await?
-        .body()
-        .deserialize()
+struct Update {
+    players: Vec<Player>,
+    snapshot: Snapshot,
 }
 
-async fn refresh_player(connection: &Connection, player: &mut Player, identity: bool) {
-    // Bind reads to the unique owner, never a name that can change mid-query.
-    player.playing = property(connection, &player.owner, PLAYER, "PlaybackStatus")
-        .await
-        .ok()
-        .and_then(|value| String::try_from(value).ok())
-        .is_some_and(|status| status == "Playing");
-
-    if identity {
-        player.pid = bus_call(connection, "GetConnectionUnixProcessID", &player.owner)
-            .await
-            .ok();
-        player.desktop_entry = property(connection, &player.owner, PREFIX, "DesktopEntry")
-            .await
-            .ok()
-            .and_then(|value| String::try_from(value).ok())
-            .map(|value| crate::window_rules::normalize_app_id(&value))
-            .filter(|value| !value.is_empty());
-    }
+fn inhibition_changed(before: &[Player], after: &[Player]) -> bool {
+    before.len() != after.len()
+        || before.iter().zip(after).any(|(a, b)| {
+            (&a.name, &a.owner, a.pid, &a.desktop_entry, a.playing)
+                != (&b.name, &b.owner, b.pid, &b.desktop_entry, b.playing)
+        })
 }
 
-fn publish(
-    players: &HashMap<String, Player>,
-    previous: &mut Vec<Player>,
-    send: &mut impl FnMut(Vec<Player>) -> bool,
-) -> bool {
-    let mut snapshot: Vec<_> = players.values().cloned().collect();
-    snapshot.sort_unstable_by(|a, b| a.name.cmp(&b.name));
-    if snapshot == *previous {
-        return true;
-    }
-
-    *previous = snapshot.clone();
-    send(snapshot)
+#[derive(Default)]
+pub(crate) struct Engine {
+    snapshot: Snapshot,
+    value: Value,
+    waiters: HashMap<u64, (u64, mpsc::SyncSender<Response>)>,
+    commands: Option<async_channel::Sender<Command>>,
 }
 
-async fn monitor(connection: Connection, mut send: impl FnMut(Vec<Player>) -> bool) -> zbus::Result<()> {
-    // Subscribe before discovery so startup and owner replacement cannot lose
-    // a pause/stop event. Ignore unrelated property traffic such as position.
-    let properties = MatchRule::builder()
-        .msg_type(zbus::message::Type::Signal)
-        .path(PATH)?
-        .interface(PROPERTIES)?
-        .member("PropertiesChanged")?
-        .build();
-    let owners = MatchRule::builder()
-        .msg_type(zbus::message::Type::Signal)
-        .sender("org.freedesktop.DBus")?
-        .interface("org.freedesktop.DBus")?
-        .member("NameOwnerChanged")?
-        .arg0ns(PREFIX)?
-        .build();
-    let properties = MessageStream::for_match_rule(properties, &connection, Some(128)).await?;
-    let owners = MessageStream::for_match_rule(owners, &connection, Some(128)).await?;
-    let mut signals = stream::or(properties, owners);
-    let mut players = HashMap::new();
-    let mut previous = Vec::new();
-    let names: Vec<String> = connection
-        .call_method(
-            Some("org.freedesktop.DBus"),
-            "/org/freedesktop/DBus",
-            Some("org.freedesktop.DBus"),
-            "ListNames",
-            &(),
-        )
-        .await?
-        .body()
-        .deserialize()?;
-    let mut names: Vec<_> = names
-        .into_iter()
-        .filter(|name| name.strip_prefix(PREFIX).is_some_and(|suffix| suffix.starts_with('.')))
-        .collect();
-    names.sort_unstable();
-    for name in names.into_iter().take(MAX_PLAYERS) {
-        if let Ok(owner) = bus_call(&connection, "GetNameOwner", &name).await {
-            let mut player = Player {
-                name: name.clone(),
-                owner,
-                pid: None,
-                desktop_entry: None,
-                playing: false,
-            };
-            refresh_player(&connection, &mut player, true).await;
-            players.insert(name, player);
-        }
-    }
-
-    if !publish(&players, &mut previous, &mut send) {
-        return Ok(());
-    }
-    while let Some(message) = signals.next().await {
-        let message = message?;
-        let header = message.header();
-        if header
-            .member()
-            .is_some_and(|member| member.as_str() == "NameOwnerChanged")
-        {
-            let (name, _, owner): (String, String, String) = message.body().deserialize()?;
-            // Remove the old owner's state before looking up the replacement.
-            players.remove(&name);
-            if !publish(&players, &mut previous, &mut send) {
-                return Ok(());
-            }
-
-            if !owner.is_empty() && players.len() < MAX_PLAYERS {
-                let mut player = Player {
-                    name: name.clone(),
-                    owner,
-                    pid: None,
-                    desktop_entry: None,
-                    playing: false,
-                };
-                refresh_player(&connection, &mut player, true).await;
-                players.insert(name, player);
-            }
+impl Engine {
+    pub(crate) fn value(&self) -> Value {
+        if self.value.is_null() {
+            serde_json::to_value(&self.snapshot).expect("serializable media snapshot")
         } else {
-            let Ok((interface, changed, invalidated)) =
-                message
-                    .body()
-                    .deserialize::<(String, HashMap<String, OwnedValue>, Vec<String>)>()
-            else {
-                continue;
-            };
-            let identity = interface == PREFIX
-                && (changed.contains_key("DesktopEntry") || invalidated.iter().any(|field| field == "DesktopEntry"));
-            let status = interface == PLAYER
-                && (changed.contains_key("PlaybackStatus")
-                    || invalidated.iter().any(|field| field == "PlaybackStatus"));
-            if !identity && !status {
-                continue;
-            }
-
-            let Some(owner) = header.sender() else {
-                continue;
-            };
-            for player in players.values_mut().filter(|player| player.owner == owner.as_str()) {
-                // Re-read current state: a signal queued during discovery may
-                // describe older playback than the startup snapshot.
-                refresh_player(&connection, player, identity).await;
-            }
-        }
-
-        if !publish(&players, &mut previous, &mut send) {
-            return Ok(());
+            self.value.clone()
         }
     }
 
-    Err(zbus::Error::Failure("MPRIS signal connection ended".into()))
+    fn update(&mut self, mut snapshot: Snapshot) {
+        snapshot.revision = self.snapshot.revision;
+        if snapshot == self.snapshot {
+            return;
+        }
+
+        snapshot.revision = snapshot.revision.wrapping_add(1);
+        self.value = serde_json::to_value(&snapshot).expect("serializable media snapshot");
+        self.snapshot = snapshot;
+        for (_, (id, response)) in self.waiters.drain() {
+            let _ = response.try_send(Response::success(id, self.value.clone()));
+        }
+    }
+
+    pub(crate) fn watch(&mut self, owner: u64, id: u64, since: u64, response: mpsc::SyncSender<Response>) {
+        if since != self.snapshot.revision {
+            let _ = response.try_send(Response::success(id, self.value()));
+        } else {
+            self.waiters.insert(owner, (id, response));
+        }
+    }
+
+    pub(crate) fn remove(&mut self, owner: u64) {
+        self.waiters.remove(&owner);
+    }
+
+    pub(crate) fn action(&self, args: Value, reply: Option<(u64, mpsc::SyncSender<Response>)>) -> Result<(), String> {
+        let commands = self.commands.as_ref().ok_or("Media service is unavailable")?;
+        commands
+            .try_send(Command {
+                args,
+                sent: Instant::now(),
+                reply,
+            })
+            .map_err(|_| "Media command queue is unavailable or full".into())
+    }
 }
 
 pub(crate) fn init(event_loop: &mut EventLoop<Ferese>) -> Result<(), Box<dyn std::error::Error>> {
-    let (sender, receiver) = channel();
-    event_loop.handle().insert_source(receiver, |event, _, state| {
-        if let Event::Msg(players) = event {
-            state.media_players = players;
-            state.refresh_idle_inhibition();
+    let (sender, receiver) = sync_channel::<Update>(1);
+    let (commands, receive_commands) = async_channel::bounded(16);
+    event_loop.handle().insert_source(receiver, move |event, _, state| {
+        if let Event::Msg(update) = event {
+            let changed = inhibition_changed(&state.media_players, &update.players);
+            state.media_players = update.players;
+            state.media_engine.update(update.snapshot);
+            if changed {
+                state.refresh_idle_inhibition();
+            }
         }
     })?;
-
+    event_loop
+        .handle()
+        .insert_idle(move |state| state.media_engine.commands = Some(commands));
     std::thread::Builder::new()
         .name("ferese-playback".into())
-        .spawn(move || {
-            let mut had_players = false;
-            loop {
-                let result = future::block_on(async {
-                    let connection = zbus::connection::Builder::session()?
-                        .method_timeout(Duration::from_millis(500))
-                        .build()
-                        .await?;
-                    monitor(connection, |players| {
-                        had_players = !players.is_empty();
-                        sender.send(players).is_ok()
-                    })
-                    .await
-                });
-                match result {
-                    Ok(()) => break,
-                    Err(error) => {
-                        tracing::debug!(%error, "playback monitor disconnected; releasing automatic inhibition")
-                    }
-                }
-
-                if had_players && sender.send(Vec::new()).is_err() {
-                    break;
-                }
-                had_players = false;
-                // Reconnect only after failure; healthy operation sleeps on signals.
-                std::thread::sleep(Duration::from_secs(5));
-            }
-        })?;
+        .spawn(move || bus::run(sender, receive_commands))?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;

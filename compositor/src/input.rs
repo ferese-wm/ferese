@@ -1098,6 +1098,11 @@ impl Ferese {
             BindingAction::Expel => self.expel_focused_window(),
             BindingAction::ToggleFloating => self.toggle_focused_floating(),
             BindingAction::ToggleOverview => self.toggle_overview(),
+            BindingAction::Media(action) => {
+                if let Err(error) = self.media_engine.action(serde_json::json!({"action": action}), None) {
+                    tracing::debug!(%error, "media action unavailable");
+                }
+            }
             BindingAction::ToggleDisplayMode => {
                 self.toggle_display_mode();
             }

@@ -225,7 +225,11 @@ impl FereseShell {
             .and_then(|output| output.size)
             .map_or(0., |(width, _)| width as f32)
             - 2. * (shell_theme.panel_padding + shell_theme.bar_margin_horizontal as f32);
-        let title_width = (available - 920.).clamp(0., 360.);
+        let media_visible = self.media.snapshot.selected.is_some();
+        let title_width = (available - 920. - if media_visible { 400. } else { 0. }).clamp(0., 360.);
+        // Without a center title, give media controls more of a narrow bar.
+        // Keep equal sides when the title is shown so it stays centered.
+        let right_portion = if media_visible && title_width == 0. { 2 } else { 1 };
         let title = if self.config.status.window_title && title_width > 0. {
             focused_bar_title(&self.snapshot, focused_output)
         } else {
@@ -270,7 +274,7 @@ impl FereseShell {
             container(left).width(Length::Fill),
             center,
             container(right)
-                .width(Length::Fill)
+                .width(Length::FillPortion(right_portion))
                 .align_x(alignment::Horizontal::Right),
         ]
         .spacing(8)

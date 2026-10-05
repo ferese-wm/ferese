@@ -5,6 +5,7 @@ use std::{fmt, io};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+pub mod media;
 pub mod theme;
 
 pub const VERSION: u32 = 1;

@@ -802,6 +802,52 @@ The gaps between islands are transparent and let clicks pass through. Each islan
 
 Use **Island side padding** in Settings → Bar to tighten the space around each section. It applies only to islands; continuous bars keep their existing padding.
 
+### Now Playing
+
+The media control on the right shows artwork, the track title and a play/pause
+button. Click the artwork or title to open playback controls for MPRIS players.
+Scroll over the control to change the player's volume, or
+middle-click to raise its window when supported. The menu has previous/next
+buttons, a seek slider when supported, and a player chooser. It uses the same
+colors, transparency and animations as the other bar menus.
+
+Automatic selection prefers the player that most recently started playing.
+When none is playing, it selects the most recently active paused player. Players
+already running at startup have no known activity order; ties use their bus names.
+Stopped players hide the control. Pin a player through the chooser to keep it
+selected, or ignore it to exclude it. These choices last until that player leaves
+the bus or the media service reconnects. `Choose automatically` clears the pin.
+
+The bar and media keys share one MPRIS monitor. Playback updates come from D-Bus
+signals. Progress updates only while the menu is open and playback is running:
+once a second, or every three seconds on battery. Album art loads while the
+bar or menu is visible, on a worker with download, decode and cache limits. A placeholder
+keeps its space while loading or when art is unavailable.
+
+The default Play/Pause, Next and Previous keys use `media-play-pause`,
+`media-next` and `media-previous`. These actions take no arguments. Custom
+bindings can use them too:
+
+```kdl
+binding "Super+P" "media-play-pause"
+```
+
+Inspect players or control the selected one from the terminal:
+
+```sh
+feresectl media
+feresectl media play-pause
+feresectl media next
+feresectl media previous
+feresectl media pin org.mpris.MediaPlayer2.example
+feresectl media ignore org.mpris.MediaPlayer2.example
+feresectl media unignore org.mpris.MediaPlayer2.example
+feresectl media auto
+```
+
+`unignore` restores an ignored player even when the bar control is hidden. Apps
+without MPRIS support do not appear here.
+
 ## Login items and locking
 
 | `autostart` key | Type | Default | Meaning |

@@ -133,12 +133,45 @@ pub(crate) fn button<'a, M: Clone + 'a>(
     selected: bool,
     opacity: f32,
 ) -> Element<'a, M> {
-    let progress = std::rc::Rc::new(std::cell::Cell::new(0.0));
-    let active = progress.clone();
-    let hovered = progress.clone();
     let paint = move |progress: f32, pressed: bool| {
         ferese_theme::controls::shell_button(foreground, selected, opacity, radius(14.), progress, pressed)
     };
+    painted_button(button, paint)
+}
+
+pub(crate) fn circular_button<'a, M: Clone + 'a>(
+    button: cosmic::widget::button::Button<'a, M>,
+    foreground: cosmic::iced::Color,
+    fill: Option<cosmic::iced::Color>,
+    opacity: f32,
+    diameter: f32,
+) -> Element<'a, M> {
+    let paint = move |progress: f32, pressed: bool| {
+        let mut style =
+            ferese_theme::controls::shell_button(foreground, false, opacity, diameter / 2.0, progress, pressed);
+        style.shape = Some(cosmic::iced::border::Shape::Circular);
+        if let Some(fill) = fill {
+            style.background = Some(
+                cosmic::iced::Color {
+                    a: opacity * if pressed { 0.75 } else { 1.0 - 0.1 * progress },
+                    ..fill
+                }
+                .into(),
+            );
+        }
+
+        style
+    };
+    painted_button(button, paint)
+}
+
+fn painted_button<'a, M: Clone + 'a>(
+    button: cosmic::widget::button::Button<'a, M>,
+    paint: impl Fn(f32, bool) -> cosmic::widget::button::Style + Copy + 'static,
+) -> Element<'a, M> {
+    let progress = std::rc::Rc::new(std::cell::Cell::new(0.0));
+    let active = progress.clone();
+    let hovered = progress.clone();
     let content = button
         .class(cosmic::theme::Button::Custom {
             active: Box::new(move |_, _| paint(active.get(), false)),

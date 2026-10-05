@@ -6,6 +6,7 @@ mod bluetooth;
 mod calendar;
 mod controls;
 mod lifecycle;
+mod media;
 mod network;
 mod system;
 
@@ -37,6 +38,7 @@ pub enum Menu {
     Battery,
     Calendar,
     Recording,
+    Media,
     Notifications,
     System,
 }
@@ -60,7 +62,7 @@ impl Menu {
             Self::System => 360.0,
             Self::Battery => 328.0,
             Self::Calendar => 268.0,
-            Self::Notifications => 368.0,
+            Self::Notifications | Self::Media => 368.0,
             _ => 300.0,
         }
     }
@@ -78,6 +80,7 @@ impl Menu {
             Self::Battery => "Battery",
             Self::Calendar => "Calendar",
             Self::Recording => "Screen recording",
+            Self::Media => "Now playing",
             Self::Notifications => "Notifications",
         }
     }
@@ -88,7 +91,7 @@ impl Menu {
             Self::Bluetooth => status.bluetooth.is_some(),
             Self::Audio => status.audio.is_some(),
             Self::Battery => status.battery.is_some(),
-            Self::Calendar | Self::Recording => true,
+            Self::Calendar | Self::Recording | Self::Media => true,
             Self::Notifications => status.notifications.is_some(),
             Self::System => true,
         }
@@ -216,6 +219,7 @@ impl FereseShell {
             Menu::Calendar => rows.push(calendar::view(self.calendar_offset, theme, p)),
             Menu::Notifications => notification_controls(self, rows, style, false),
             Menu::Recording => rows,
+            Menu::Media => media::view(self, rows, style),
         };
         if kind != Menu::Calendar && !kind.available(&self.status) {
             rows = rows.push(text("Service unavailable").size(13).class(theme::Text::Color(muted)));

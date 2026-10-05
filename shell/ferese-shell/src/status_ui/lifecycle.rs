@@ -25,11 +25,26 @@ impl FereseShell {
             if let Some(menu) = &mut self.menu
                 && menu.motion.closing()
             {
+                if kind == Menu::Media {
+                    self.media.now_us = ferese_ipc::media::now_us();
+                    self.media.refresh_art(true);
+                }
+
                 menu.motion.retarget(1.0, Instant::now());
                 return Task::none();
             }
 
             return self.close_menu();
+        }
+
+        if kind == Menu::Media {
+            self.media.now_us = ferese_ipc::media::now_us();
+            self.media.refresh_art(true);
+            self.media.error = None;
+        }
+
+        if kind != Menu::Media {
+            self.refresh_media_art(false);
         }
 
         if kind == Menu::Calendar {
@@ -122,6 +137,7 @@ impl FereseShell {
         let Some(menu) = self.menu.take() else {
             return Task::none();
         };
+        self.refresh_media_art(false);
         if menu.kind == Menu::Notifications {
             self.notifications.history_open = false;
             self.notifications.hovered = None;
@@ -133,6 +149,7 @@ impl FereseShell {
     }
 
     pub fn close_menu(&mut self) -> Task<Message> {
+        self.refresh_media_art(false);
         let Some(menu) = &mut self.menu else {
             return Task::none();
         };

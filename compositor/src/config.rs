@@ -972,12 +972,36 @@ mod tests {
     }
 
     #[test]
+    fn native_media_keys_share_the_selected_player_and_reject_arguments() {
+        let defaults = Config::default().runtime_config().unwrap();
+        for (key, name, action) in [
+            (keysyms::KEY_XF86AudioPlay, "media-play-pause", "play-pause"),
+            (keysyms::KEY_XF86AudioPause, "media-play-pause", "play-pause"),
+            (keysyms::KEY_XF86AudioNext, "media-next", "next"),
+            (keysyms::KEY_XF86AudioPrev, "media-previous", "previous"),
+        ] {
+            assert!(
+                defaults
+                    .bindings
+                    .iter()
+                    .any(|binding| binding.trigger == BindingTrigger::Keysym(key)
+                        && binding.action == BindingAction::Media(action))
+            );
+            assert_eq!(
+                parse_action(name, None, &HashMap::new()).unwrap(),
+                BindingAction::Media(action)
+            );
+            assert!(parse_action(name, Some("unexpected"), &HashMap::new()).is_err());
+        }
+    }
+
+    #[test]
     fn supplies_complete_v0_bindings_and_terminal_command() {
         let config = parse("");
         let input = config.input_settings().unwrap();
         let bindings = config.bindings(&input).unwrap();
 
-        assert_eq!(bindings.len(), 54);
+        assert_eq!(bindings.len(), 58);
         for (shift, action) in [
             (false, BindingAction::ToggleMaximized),
             (true, BindingAction::ToggleFullscreen),
@@ -1021,7 +1045,7 @@ mod tests {
 
         let input = replaced.input_settings().unwrap();
         let bindings = replaced.bindings(&input).unwrap();
-        assert_eq!(bindings.len(), 54);
+        assert_eq!(bindings.len(), 58);
         assert!(bindings.iter().any(|binding| {
             binding.action
                 == BindingAction::Spawn(vec!["foot".to_owned(), "--app-id".to_owned(), "work".to_owned()].into())
@@ -1029,7 +1053,7 @@ mod tests {
 
         let input = unbound.input_settings().unwrap();
         let bindings = unbound.bindings(&input).unwrap();
-        assert_eq!(bindings.len(), 53);
+        assert_eq!(bindings.len(), 57);
         assert!(!bindings.iter().any(|binding| binding.action == BindingAction::Close));
     }
 

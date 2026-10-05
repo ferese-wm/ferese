@@ -12,6 +12,7 @@ impl FereseShell {
         if matches!(event, wayland::OutputEvent::Removed) {
             if let Some(index) = self.outputs.iter().position(|entry| entry.output == output) {
                 let entry = self.outputs.remove(index);
+                self.refresh_media_art(false);
                 let menu = if self.bar_surface_id == entry.bar {
                     self.destroy_menu()
                 } else {
@@ -101,6 +102,7 @@ impl FereseShell {
             size,
             hidden,
         });
+        self.refresh_media_art(false);
         let wallpaper_action = cosmic::surface::action::app_layer_shell::<Self>(
             |_| Default::default(),
             move |_| SctkLayerSurfaceSettings {

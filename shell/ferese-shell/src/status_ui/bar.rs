@@ -12,7 +12,11 @@ impl FereseShell {
         let theme = self.config.theme.for_bar();
         let islands = self.config.status.bar_layout == ferese_config::BarLayout::Islands;
         let metrics = BarMetrics::from(theme);
-        let mut controls = row::with_capacity(6).spacing(1).align_y(Alignment::Center);
+        let mut controls = row::with_capacity(7).spacing(1).align_y(Alignment::Center);
+        if self.media.snapshot.selected.is_some() {
+            controls = controls.push(super::media::bar(self, theme, metrics));
+        }
+
         for kind in [
             Menu::System,
             Menu::Network,
@@ -157,6 +161,7 @@ fn status_label(kind: Menu, s: &Snapshot) -> String {
         },
         Menu::Calendar => "Calendar".into(),
         Menu::Recording => "Screen recording".into(),
+        Menu::Media => "Now playing".into(),
         Menu::Battery => s.battery.as_ref().map_or_else(
             || "Battery: unavailable".into(),
             |b| format!("Battery: {}%, {}", b.percent, b.status),
@@ -203,6 +208,7 @@ pub(super) fn status_icon(kind: Menu, s: &Snapshot) -> (&'static [u8], bool) {
         }),
         Menu::Calendar => (ferese_theme::icons::CALENDAR, true),
         Menu::Recording => (ferese_theme::icons::RECORD, true),
+        Menu::Media => (ferese_theme::icons::MEDIA, true),
         Menu::Battery => {
             let Some(b) = &s.battery else {
                 return (ferese_theme::icons::BATTERY_EMPTY, false);
