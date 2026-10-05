@@ -1,5 +1,5 @@
 use cosmic::iced::border::Shape as BorderShape;
-use cosmic::iced::{Alignment, Border, Length, Rectangle, mouse};
+use cosmic::iced::{Alignment, Length, Rectangle, mouse};
 use cosmic::widget::{button, column, container, image, mouse_area, row, scrollable, slider};
 use cosmic::{Element, theme};
 use ferese_ipc::media::Playback;
@@ -150,7 +150,9 @@ pub(super) fn bar<'a>(
     }
 
     let mut bar_style = crate::bar::bar_group_style(palette);
-    bar_style.border.width(0.0);
+    bar_style.border = bar_style.border.width(0.0);
+    bar_style.background = Some(super::Background::Color(color_with_opacity(palette.border, 0.30)));
+
     let controls = container(
         row![
             motion::button(details, foreground, false, 1.0),
