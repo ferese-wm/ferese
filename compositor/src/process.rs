@@ -52,9 +52,11 @@ pub(crate) fn spawn_client<S: AsRef<OsStr>>(
     let mut command = command(program);
     command.args(args);
     // Workers may already exist. Change only this child's environment.
-    command.env("WAYLAND_DISPLAY", &state.socket_name);
-    command.env_remove("WAYLAND_SOCKET");
-    command.env_remove("FERESE_SHELL_CONTROL_SOCKET");
+    //
+    // Apply the public session environment first: doing it afterwards would
+    // erase the deliberately privileged private socket that
+    // prepare_command hands to genuine shell clients.
+    state.session_environment.apply_public(&mut command);
     command.env("FERESE_COMPOSITOR_WALLPAPER", "1");
     let private_connection = if capabilities.is_empty() {
         None

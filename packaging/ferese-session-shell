@@ -29,10 +29,33 @@ if [[ ${FERESE_SESSION_IMPORT_ENV:-0} == 1 ]]; then
     # Shell control uses a private socket FD. Activation must use the public
     # socket so portal and other desktop services connect as ordinary clients.
     public_display=${FERESE_PUBLIC_WAYLAND_DISPLAY:-${WAYLAND_DISPLAY:-}}
-    env WAYLAND_DISPLAY="$public_display" dbus-update-activation-environment --systemd \
-        WAYLAND_DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_DESKTOP XDG_SESSION_TYPE || \
-        env WAYLAND_DISPLAY="$public_display" dbus-update-activation-environment \
-            WAYLAND_DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_DESKTOP XDG_SESSION_TYPE || true
+    # The compositor sets DISPLAY/XAUTHORITY only when it successfully owns an
+    # X11 endpoint, and explicitly removes them otherwise. Forward them as
+    # explicit assignments rather than bare names: D-Bus activation updates can
+    # add or replace variables but cannot remove them, so an empty value clears
+    # a previous session's live-looking X endpoint instead of silently
+    # retaining it. With X11 disabled these are empty strings, not unset names.
+    #
+    # Only these variables are imported. WAYLAND_SOCKET, the shell control
+    # socket, and X11 cookies are deliberately excluded: activation is a
+    # separate trust boundary from Ferese's privileged private socket.
+    activation_vars=(
+        "WAYLAND_DISPLAY=$public_display"
+        "DISPLAY=${DISPLAY:-}"
+        "XAUTHORITY=${XAUTHORITY:-}"
+        XDG_CURRENT_DESKTOP
+        XDG_SESSION_DESKTOP
+        XDG_SESSION_TYPE
+    )
+    if command -v dbus-update-activation-environment >/dev/null; then
+        if ! env WAYLAND_DISPLAY="$public_display" \
+            dbus-update-activation-environment --systemd "${activation_vars[@]}"; then
+            # Older systemd user managers lack SetEnvironment for the user
+            # instance; the D-Bus update alone still reaches D-Bus activators.
+            env WAYLAND_DISPLAY="$public_display" \
+                dbus-update-activation-environment "${activation_vars[@]}" || true
+        fi
+    fi
     # User buses can outlive logout and may predate a newly installed service directory.
     if command -v dbus-send >/dev/null; then
         dbus-send --session --type=method_call --print-reply \

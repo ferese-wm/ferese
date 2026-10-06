@@ -54,6 +54,56 @@ other distributions; check the [Smithay
 dependencies](https://github.com/Smithay/smithay#system-dependencies) for equivalent
 libraries.
 
+### X11 support (optional)
+
+To run X11-only applications, Ferese launches
+[xwayland-satellite](https://github.com/Supreeeme/xwayland-satellite),
+which in turn needs an `Xwayland` binary. Both are runtime dependencies, not
+build dependencies, and neither is needed to build Ferese.
+
+- `Xwayland` ships with the X.Org server packages: `xorg-x11-server-Xwayland`
+  on Fedora and Debian/Ubuntu, `xorg-xwayland` on Arch.
+- `xwayland-satellite` is not packaged by most distributions. Build or install
+  it from its upstream releases, then confirm that your build sends the
+  readiness notification Ferese waits for. Ferese waits a fixed 10 seconds for
+  that message and treats its absence as a startup failure, so a build without
+  systemd readiness support will not start.
+
+The packaged configuration keeps X11 disabled. Enable it by setting
+
+```kdl
+xwayland {
+    enabled true
+}
+```
+
+in `~/.config/ferese/config.kdl` and starting a new session, then check
+`feresectl xwayland status`. See
+[X11 support](configuration.md#x11-support-xwayland-satellite) for the full key
+list, diagnostics, and known limitations.
+
+#### Sandboxed applications
+
+Ferese keeps the X11 cookie in a private file under `$XDG_RUNTIME_DIR`, and
+applications inherit it through `XAUTHORITY`. Sandboxed packaging formats do not
+all make that path visible, so an X11-only application may fail to start even
+though `feresectl xwayland status` reports a running service.
+
+Flatpak masks `/run/user/1000` with the application's own runtime directory, and
+a `fallback-x11` permission is not granted inside a Wayland session. Both effects
+deny the sandbox access to the display, so the application exits without a
+window. Grant the socket explicitly:
+
+```sh
+flatpak override --user --socket=x11 com.spotify.Client
+```
+
+Snaps under strict confinement usually expose the real `/run/user/1000`, so a
+snap that speaks X11 typically connects without extra configuration. That is a
+confinement detail rather than a guarantee: if a snap application still cannot
+reach the display, check whether its sandbox can read the `XAUTHORITY` path
+reported by `feresectl xwayland status`.
+
 ### Rust toolchain
 
 Install Rust through [rustup.rs](https://rustup.rs/). The checkout's

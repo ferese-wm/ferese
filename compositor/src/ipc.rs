@@ -535,6 +535,9 @@ impl Ferese {
                     | "input-capture-disable"
                     | "input-capture-release"
                     | "get-session-state"
+                    // Read-only diagnostics stay available while locked; an
+                    // explicit retry does not, because it starts a process.
+                    | ferese_ipc::xwayland::STATUS_COMMAND
                     | "portal-inhibit"
                     | "portal-monitor-register"
                     | "portal-monitor-ack"
@@ -575,6 +578,15 @@ impl Ferese {
             }
             "get-session-state" => {
                 return Ok(self.portal_session.snapshot());
+            }
+            ferese_ipc::xwayland::STATUS_COMMAND => {
+                return Ok(crate::xwayland::status_snapshot(self).to_value());
+            }
+            ferese_ipc::xwayland::RETRY_COMMAND => {
+                crate::xwayland::retry(self).map_err(|error| CommandError::new("x11_unavailable", error))?;
+                // Report the post-retry state so a caller can see the request was
+                // accepted rather than assuming the service is already running.
+                return Ok(crate::xwayland::status_snapshot(self).to_value());
             }
             "portal-monitor-register" => {
                 self.portal_session

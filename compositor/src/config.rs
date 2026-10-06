@@ -3,12 +3,14 @@ mod bindings;
 mod input_motion;
 mod layout;
 mod outputs;
+mod xwayland;
 
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::fmt;
 use std::path::PathBuf;
 
+pub(crate) use self::xwayland::{XwaylandConfig, XwaylandStartup};
 use appearance::*;
 pub use appearance::{BorderGradient, InactiveDimSettings, MaterialStyle, ThemeSettings};
 use bindings::*;
@@ -61,6 +63,8 @@ pub struct Config {
     scrolling: ScrollingConfig,
     #[serde(default)]
     output_profiles: Vec<OutputProfileConfig>,
+    #[serde(default)]
+    pub(crate) xwayland: XwaylandConfig,
     #[serde(default, rename = "status")]
     _status: ShellStatusConfig,
 }
@@ -114,6 +118,7 @@ impl Config {
     pub(crate) fn runtime_config(&self) -> Result<crate::RuntimeConfig, ConfigError> {
         self.notifications.validate().map_err(ConfigError::Binding)?;
         self.desktop_widgets.validate().map_err(ConfigError::Binding)?;
+        self.xwayland.validate().map_err(ConfigError::Binding)?;
         for daemon in &self.autostart {
             if daemon.command.first().is_none_or(|program| program.trim().is_empty()) {
                 return Err(ConfigError::Binding("autostart command must contain a program".into()));
@@ -143,6 +148,7 @@ impl Config {
             output_profiles: self.output_profiles()?,
             wallpaper: self.wallpaper_settings(),
             overview_font_family: self.overview_font_family(),
+            xwayland: self.xwayland.clone(),
         })
     }
 
@@ -517,10 +523,15 @@ mod tests {
 
     #[test]
     fn packaged_and_custom_kdl_pass_runtime_validation() {
-        Config::parse_source(include_str!("../../packaging/config.kdl"))
-            .unwrap()
-            .runtime_config()
-            .unwrap();
+        let packaged = Config::parse_source(include_str!("../../packaging/config.kdl")).unwrap();
+        packaged.runtime_config().unwrap();
+        // The shipped session keeps the X11 bridge off even though the code
+        // default is enabled: a packaged default must not ship a service that
+        // can restart-loop. Flipping this is a deliberate, reviewed change.
+        assert!(
+            !packaged.xwayland.enabled,
+            "packaging/config.kdl must keep xwayland disabled until the lifecycle gate passes"
+        );
         let source = "input {\n    touchpad {\n        swipe-threshold 96\n    }\n}\nbinding keys=\"Swipe3Up\" action=\"toggle-overview\"\noutput-profile name=\"desk\" {\n    output match=\"DP-1\" scale=1.5 {\n        position 0 0\n    }\n}\ndesktop-widgets {\n    clock {\n        enabled #true\n        outputs \"DP-1\"\n    }\n}\nautostart {\n    command \"program\" \"argument with space\"\n}\n";
         let config = Config::parse_source(source).unwrap();
         config.runtime_config().unwrap();

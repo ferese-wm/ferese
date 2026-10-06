@@ -15,6 +15,16 @@ commands {
     mic-mute "wpctl" "set-mute" "@DEFAULT_AUDIO_SOURCE@" "toggle"
 }
 
+// X11 compatibility runs through xwayland-satellite. The compositor's default
+// is enabled, but the packaged session keeps it off until the lifecycle gate
+// passes: a packaged default must not ship a bridge that can restart-loop.
+// Install xwayland-satellite and an Xwayland binary, then flip this to `true`.
+// See docs/configuration.md for the diagnostics and recovery commands.
+xwayland {
+    enabled #false
+    startup on-demand
+}
+
 // These supplement the built-in shortcuts listed in docs/shortcuts.md.
 binding "Super+B" "spawn" "browser"
 binding "Super+Z" "spawn" "editor"

@@ -32,6 +32,7 @@ mod render;
 mod resize_metrics;
 mod resize_transaction;
 mod resume;
+mod session_environment;
 mod session_lock;
 mod shell_control;
 mod stacking;
@@ -42,6 +43,9 @@ mod theme;
 mod wallpaper;
 mod window_rules;
 mod winit;
+mod xwayland;
+
+pub(crate) use session_environment::{SessionEnvironment, X11Environment};
 
 use std::error::Error;
 use std::io;
@@ -109,8 +113,15 @@ fn main() -> Result<(), Box<dyn Error>> {
     overview::init_font_loader(&mut event_loop, &mut state)?;
     backends::init(launch.backend, &mut event_loop, &mut state)?;
 
+    // Allocate the X11 endpoint and register sources. This does not wait for a
+    // Satellite -> Ferese Wayland handshake on this thread, and an optional
+    // dependency failure becomes a diagnostic rather than aborting the desktop.
+    xwayland::initialize(&mut state)?;
+
     info!(socket = ?state.socket_name, backend = ?launch.backend, "Ferese is accepting Wayland clients");
 
+    // Both client spawn paths now receive the immutable child session
+    // environment.
     let child = spawn_client(&mut state, launch.client, launch.client_capabilities)
         .map(|child| watch_client_exit(&state.loop_handle, child));
     let runner = daemon::Runner::start(&mut state);
@@ -130,6 +141,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     {
         terminate_child(&mut child);
     }
+
+    // Begin this before dropping the sockets, auth file, and Wayland display.
+    xwayland::shutdown_after_loop(&mut state);
 
     result.map_err(Into::into)
 }
