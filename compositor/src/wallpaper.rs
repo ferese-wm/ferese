@@ -58,7 +58,9 @@ pub(crate) enum WallpaperMode {
 struct WallpaperTexture {
     texture: GlesTexture,
     id: Id,
+    size: Size<i32, Buffer>,
 }
+
 pub(crate) struct WallpaperState {
     config: WallpaperConfig,
     pending: Option<WallpaperConfig>,
@@ -67,10 +69,18 @@ pub(crate) struct WallpaperState {
     commit: CommitCounter,
     owned: bool,
     mode: WallpaperMode,
+
     receiver: Option<mpsc::Receiver<Result<Pixels, String>>>,
+
     pixels: Option<Pixels>,
+
     textures: HashMap<ErasedContextId, WallpaperTexture>,
     upload_retries: HashMap<ErasedContextId, Instant>,
+
+    // Prevent a missing/corrupt source from being decoded on every frame when
+    // a new renderer context needs the wallpaper.
+    decode_failed: bool,
+
     wakeup: Option<smithay::reexports::calloop::LoopSignal>,
     retry_timer_pending: Rc<Cell<bool>>,
     retry_wakeup: Rc<Cell<bool>>,
@@ -97,12 +107,15 @@ impl WallpaperState {
     ) -> Self {
         let retained = config.clone();
         let owned = config.path.as_ref().is_some_and(|path| path.is_file());
+        let decode_failed = config.path.is_some() && !owned;
+
         let receiver = if owned {
             Some(decoder.submit(config.path.clone().unwrap(), wakeup.clone()))
         } else {
             decoder.cancel_pending();
             None
         };
+
         Self {
             config: retained,
             pending: None,
@@ -115,10 +128,23 @@ impl WallpaperState {
             pixels: None,
             textures: HashMap::new(),
             upload_retries: HashMap::new(),
+            decode_failed,
             wakeup,
             retry_timer_pending: Rc::default(),
             retry_wakeup: Rc::default(),
         }
+    }
+
+    fn ensure_pixels(&mut self) {
+        if self.pixels.is_some() || self.receiver.is_some() || self.decode_failed {
+            return;
+        }
+
+        let Some(path) = self.config.path.clone() else {
+            return;
+        };
+
+        self.receiver = Some(self.decoder.submit(path, self.wakeup.clone()))
     }
 
     pub(crate) fn configuration(&self) -> &WallpaperConfig {
@@ -126,9 +152,12 @@ impl WallpaperState {
     }
 
     pub(crate) fn failed(&self) -> bool {
-        self.config.path.is_some() && self.receiver.is_none() && self.pixels.is_none()
+        self.config.path.is_some()
+            && self.receiver.is_none()
+            && self.pixels.is_none()
+            && self.textures.is_empty()
+            && self.decode_failed
     }
-
     #[cfg(test)]
     pub fn owns_background(&self) -> bool {
         self.owned
@@ -173,6 +202,7 @@ impl WallpaperState {
             self.pixels = None;
             self.textures.clear();
             self.upload_retries.clear();
+            self.decode_failed = false;
             self.commit.increment();
         }
     }
@@ -229,10 +259,14 @@ impl WallpaperState {
         let Some(receiver) = &self.receiver else {
             return false;
         };
+
         match receiver.try_recv() {
             Ok(result) => {
                 self.receiver = None;
+
                 let loading = self.loading.take();
+                let replacing_wallpaper = loading.is_some();
+
                 match result {
                     Ok(pixels) => {
                         if let Some(config) = loading {
@@ -247,18 +281,36 @@ impl WallpaperState {
                             bytes = pixels.as_raw().len(),
                             "decoded compositor wallpaper once"
                         );
+
                         self.pixels = Some(pixels);
-                        self.textures.clear();
+                        self.decode_failed = false;
+
+                        // A decode for a new wallpaper invalidates textures from
+                        // the old image. A lazy re-decode for another context does
+                        // not: those existing textures are still valid.
+                        if replacing_wallpaper {
+                            self.textures.clear();
+                        }
+
                         self.upload_retries.clear();
                         self.commit.increment();
                     }
                     Err(error) => {
+                        // A failed replacement does not poison the currently
+                        // accepted wallpaper. Only failure to decode the accepted
+                        // source itself should suppress repeated lazy re-decodes.
+                        if !replacing_wallpaper {
+                            self.decode_failed = true;
+                        }
+
                         tracing::warn!(%error, "wallpaper decode failed; retaining previous image")
                     }
                 }
+
                 if let Some(pending) = self.pending.take() {
                     self.reload(pending);
                 }
+
                 true
             }
             Err(mpsc::TryRecvError::Disconnected) => {
@@ -271,36 +323,68 @@ impl WallpaperState {
     }
 
     pub fn element(&mut self, renderer: &mut GlesRenderer, output: &Output) -> Option<NativeTextureElement> {
-        let pixels = self.pixels.as_ref()?;
         let context = renderer.context_id().erased();
+
         if !self.textures.contains_key(&context) {
             if !self.upload_ready(&context, Instant::now()) {
                 return None;
             }
-            let size = Size::from((pixels.width() as i32, pixels.height() as i32));
-            match renderer.import_memory(pixels.as_raw(), Fourcc::Abgr8888, size, false) {
+
+            if self.pixels.is_none() {
+                self.ensure_pixels();
+                return None;
+            }
+
+            let (size, bytes, texture) = {
+                let pixels = self.pixels.as_ref()?;
+                let size = Size::from((pixels.width() as i32, pixels.height() as i32));
+                let bytes = pixels.as_raw().len();
+
+                let texture = renderer.import_memory(pixels.as_raw(), Fourcc::Abgr8888, size, false);
+
+                (size, bytes, texture)
+            };
+
+            match texture {
                 Ok(texture) => {
                     self.upload_retries.remove(&context);
-                    tracing::debug!(bytes = pixels.as_raw().len(), "uploaded shared wallpaper texture");
-                    self.textures
-                        .insert(context.clone(), WallpaperTexture { texture, id: Id::new() });
+
+                    self.textures.insert(
+                        context.clone(),
+                        WallpaperTexture {
+                            texture,
+                            id: Id::new(),
+                            size,
+                        },
+                    );
+
+                    // import_memory() has produced a renderer-owned texture.
+                    // The decoded RGBA mapping is only staging and no longer
+                    // needs to stay resident.
+                    self.pixels = None;
+
+                    tracing::debug!(
+                        bytes,
+                        "uploaded shared wallpaper texture and released CPU staging pixels"
+                    );
                 }
                 Err(error) => {
-                    // Avoid retrying a large failed allocation every frame, but
-                    // allow recovery from temporary GPU memory pressure.
+                    // Keep pixels alive on failure so the retry does not require
+                    // another decode.
                     self.upload_retries.insert(context, Instant::now() + UPLOAD_RETRY_DELAY);
+
                     tracing::debug!(%error, "wallpaper texture import failed");
+
                     return None;
                 }
             }
         }
+
         let cached = self.textures.get(&context)?;
         let output_size = output.current_transform().transform_size(output.current_mode()?.size);
-        let (geometry, source) = image_geometry(
-            (pixels.width() as i32, pixels.height() as i32).into(),
-            output_size,
-            self.mode,
-        );
+
+        let (geometry, source) = image_geometry(cached.size, output_size, self.mode);
+
         Some(NativeTextureElement {
             id: cached.id.clone(),
             commit: self.commit,
@@ -570,5 +654,101 @@ mod tests {
         let path = config.path.unwrap();
         assert_eq!(image::image_dimensions(&path).unwrap(), (3840, 2160));
         assert!(WallpaperState::new(WallpaperConfig::default()).owns_background());
+    }
+
+    #[test]
+
+    fn released_staging_is_not_a_failed_wallpaper() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("wallpaper.png");
+
+        image::RgbaImage::from_pixel(2, 2, image::Rgba([32, 80, 160, 255]))
+            .save(&path)
+            .unwrap();
+
+        let mut state = WallpaperState::new(WallpaperConfig {
+            path: Some(path),
+            mode: WallpaperMode::Fill,
+        });
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !state.poll() {
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+
+        assert!(state.pixels.is_some());
+        assert!(!state.failed());
+
+        // Model successful upload releasing CPU staging.
+        state.pixels = None;
+
+        // Missing staging is normal after upload, not a decode failure.
+        assert!(!state.failed());
+    }
+
+    #[test]
+
+    fn missing_staging_is_lazily_redecoded() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("wallpaper.png");
+
+        image::RgbaImage::from_pixel(3, 2, image::Rgba([32, 80, 160, 255]))
+            .save(&path)
+            .unwrap();
+
+        let mut state = WallpaperState::new(WallpaperConfig {
+            path: Some(path),
+            mode: WallpaperMode::Fill,
+        });
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !state.poll() {
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+
+        state.pixels = None;
+        assert!(state.receiver.is_none());
+
+        state.ensure_pixels();
+
+        assert!(state.receiver.is_some());
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !state.poll() {
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+
+        assert_eq!(state.pixels.as_ref().unwrap().dimensions(), (3, 2));
+    }
+
+    #[test]
+    fn failed_lazy_decode_is_not_restarted_every_frame() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("wallpaper");
+        std::fs::write(&path, b"not an image").unwrap();
+
+        let mut state = WallpaperState::new(WallpaperConfig {
+            path: Some(path),
+            mode: WallpaperMode::Fill,
+        });
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !state.poll() {
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+
+        assert!(state.decode_failed);
+        assert!(state.failed());
+
+        state.ensure_pixels();
+
+        assert!(
+            state.receiver.is_none(),
+            "failed source must not restart a decode every frame"
+        );
     }
 }
