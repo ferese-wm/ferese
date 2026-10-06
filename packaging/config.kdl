@@ -15,6 +15,12 @@ commands {
     mic-mute "wpctl" "set-mute" "@DEFAULT_AUDIO_SOURCE@" "toggle"
 }
 
+xwayland {
+    enabled #true
+    startup on-demand
+    path "xwayland-satellite"
+}
+
 // These supplement the built-in shortcuts listed in docs/shortcuts.md.
 binding "Super+B" "spawn" "browser"
 binding "Super+Z" "spawn" "editor"

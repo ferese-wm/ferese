@@ -136,8 +136,11 @@ impl cosmic::Application for Consent {
             Message::Opened(id) => {
                 let parent = self.prompt.parent.clone();
                 return cosmic::iced::window::run(id, move |window| {
-                    let parent = crate::parent::Parent::attach(window, &parent)?.map(Arc::new);
-                    Ok((parent, ModalMaterial::attach(window)))
+                    let attached = crate::parent::Parent::attach(window, &parent)?;
+                    if let Some(diagnostic) = attached.diagnostic {
+                        eprintln!("ferese portal: {diagnostic}");
+                    }
+                    Ok((attached.parent.map(Arc::new), ModalMaterial::attach(window)))
                 })
                 .map(|result| cosmic::Action::App(Message::Attached(result)));
             }

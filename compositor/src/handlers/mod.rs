@@ -11,6 +11,7 @@ mod xdg_shell;
 use smithay::desktop::{PopupManager, layer_map_for_output};
 use smithay::input::pointer::{CursorImageStatus, PointerHandle};
 use smithay::input::{Seat, SeatHandler, SeatState};
+use smithay::reexports::wayland_protocols::xdg::shell::server::{xdg_popup, xdg_positioner, xdg_surface, xdg_wm_base};
 use smithay::reexports::wayland_server::Resource;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::wayland::compositor::{TraversalAction, with_states, with_surface_tree_downward};
@@ -29,6 +30,9 @@ use smithay::wayland::selection::data_device::{
 };
 use smithay::wayland::selection::primary_selection::{
     PrimarySelectionHandler, PrimarySelectionState, set_primary_focus,
+};
+use smithay::wayland::shell::xdg::{
+    XdgPositionerUserData, XdgShellState, XdgShellSurfaceUserData, XdgSurfaceUserData, XdgWmBaseUserData,
 };
 use smithay::wayland::tablet_manager::TabletSeatHandler;
 use smithay::wayland::xdg_foreign::{XdgForeignHandler, XdgForeignState};
@@ -338,7 +342,21 @@ smithay::delegate_viewporter!(Ferese);
 smithay::delegate_xdg_activation!(Ferese);
 smithay::delegate_xdg_decoration!(Ferese);
 smithay::delegate_xdg_foreign!(Ferese);
-smithay::delegate_xdg_shell!(Ferese);
+smithay::reexports::wayland_server::delegate_global_dispatch!(
+    Ferese: [xdg_wm_base::XdgWmBase: ()] => XdgShellState
+);
+smithay::reexports::wayland_server::delegate_dispatch!(
+    Ferese: [xdg_wm_base::XdgWmBase: XdgWmBaseUserData] => XdgShellState
+);
+smithay::reexports::wayland_server::delegate_dispatch!(
+    Ferese: [xdg_positioner::XdgPositioner: XdgPositionerUserData] => XdgShellState
+);
+smithay::reexports::wayland_server::delegate_dispatch!(
+    Ferese: [xdg_popup::XdgPopup: XdgShellSurfaceUserData] => XdgShellState
+);
+smithay::reexports::wayland_server::delegate_dispatch!(
+    Ferese: [xdg_surface::XdgSurface: XdgSurfaceUserData] => XdgShellState
+);
 smithay::delegate_xdg_toplevel_icon!(Ferese);
 
 smithay::delegate_data_control!(Ferese);

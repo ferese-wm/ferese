@@ -463,3 +463,41 @@ fn malformed_resize_limits_disconnect_only_the_client_and_motion_survives() {
     let (healthy, _wire) = window(&mut state, &mut events, 0xff112233);
     assert!(state.windows.ids().contains_key(&healthy));
 }
+
+#[test]
+fn window_rule_minimum_size_replaces_the_client_advertised_minimum() {
+    if !crate::startup_tests::private_runtime(
+        "state::window_lifecycle_tests::window_rule_minimum_size_replaces_the_client_advertised_minimum",
+    ) {
+        return;
+    }
+
+    let (mut events, mut state, _) = fixture();
+    let (window, mut wire) = window(&mut state, &mut events, 0xff112233);
+    let id = state.windows.ids()[&window];
+    request(&mut wire, 4, 8, &[800, 600], None);
+    request(&mut wire, 2, 6, &[], None);
+    dispatch(&mut events, &mut state);
+    assert_eq!(state.effective_size_constraints(&window, (800, 600), (0,0)).0, (800, 600));
+    assert_eq!(state.window_constraints()[&id].min_width, 800.0);
+    assert_eq!(state.window_constraints()[&id].min_height, 600.0);
+
+    state.window_rules =
+        crate::config::Config::parse_source("window-rule transient=#false min-width=500 min-height=400\n")
+            .unwrap()
+            .window_rules()
+            .unwrap();
+    assert_eq!(state.effective_size_constraints(&window, (800, 600), (0,0)).0, (500, 400));
+    let constraints = state.window_constraints();
+    assert_eq!(constraints[&id].min_width, 500.0);
+    assert_eq!(constraints[&id].min_height, 400.0);
+
+    state.window_rules = crate::config::Config::parse_source("window-rule transient=#false min-height=400\n")
+        .unwrap()
+        .window_rules()
+        .unwrap();
+    assert_eq!(state.effective_size_constraints(&window, (800, 600), (0,0)).0, (800, 400));
+
+    state.window_rules.clear();
+    assert_eq!(state.effective_size_constraints(&window, (800, 600), (0,0)).0, (800, 600));
+}

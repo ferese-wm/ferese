@@ -261,8 +261,42 @@ impl Ferese {
         self.apply_window_rule_result(window, rule);
     }
 
+    pub(crate) fn effective_size_constraints(
+        &self,
+        window: &Window,
+        minimum: (i32, i32),
+        maximum: (i32, i32),
+    ) -> ((i32, i32), (i32, i32)) {
+        let Some(toplevel) = window.toplevel() else {
+            return (minimum, maximum);
+        };
+        let rules = &self.window_rules;
+        with_states(toplevel.wl_surface(), |states| {
+            let attributes = states
+                .data_map
+                .get::<XdgToplevelSurfaceData>()
+                .expect("xdg toplevel state exists")
+                .lock()
+                .expect("xdg toplevel state is not poisoned");
+            let rule = resolve_window_rules(
+                rules,
+                attributes.app_id.as_deref(),
+                attributes.title.as_deref(),
+                attributes.parent.is_some(),
+            );
+            (
+                (
+                    rule.min_width.map_or(minimum.0, |width| width.ceil() as i32),
+                    rule.min_height.map_or(minimum.1, |height| height.ceil() as i32),
+                ),
+                maximum,
+            )
+        })
+    }
+
     pub(super) fn reapply_window_rules(&mut self, old_rules: &[WindowRule]) {
         let windows = self.windows.ids().keys().cloned().collect::<Vec<_>>();
+        let mut minimums_changed = false;
         for window in windows {
             let Some(toplevel) = window.toplevel() else {
                 continue;
@@ -278,9 +312,13 @@ impl Ferese {
             });
             let old = resolve_window_rules(old_rules, app_id.as_deref(), title.as_deref(), transient);
             let new = resolve_window_rules(&self.window_rules, app_id.as_deref(), title.as_deref(), transient);
+            minimums_changed |= old.min_width != new.min_width || old.min_height != new.min_height;
             if let Some(new) = crate::window_rules::live_result(old, new, transient) {
                 self.apply_window_rule_result(&window, new);
             }
+        }
+        if minimums_changed {
+            self.relayout();
         }
     }
 

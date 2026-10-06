@@ -513,6 +513,58 @@ mod tests {
         assert!(!state.inactive_dim.enabled);
     }
 
+    /// The status endpoint must be able to tell "the live service is running
+    /// with the settings it started with" from "the file was edited", so the
+    /// desired X11 configuration has to follow live reloads.
+    #[test]
+    fn xwayland_configuration_follows_live_reloads() {
+        const CHILD: &str = "FERESE_XWAYLAND_RELOAD_TEST_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            use std::os::unix::fs::PermissionsExt;
+            let directory = Directory::new();
+            std::fs::set_permissions(&directory.0, std::fs::Permissions::from_mode(0o700)).unwrap();
+            let result = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "reload::tests::xwayland_configuration_follows_live_reloads",
+                    "--nocapture",
+                ])
+                .env(CHILD, "1")
+                .env("XDG_RUNTIME_DIR", &directory.0)
+                .env("XDG_CONFIG_HOME", &directory.0)
+                .env_remove("FERESE_SOCKET")
+                .output()
+                .unwrap();
+            assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+            return;
+        }
+
+        let directory = Directory::new();
+        let (_, runtime, _) = crate::theme::prepare("xwayland { enabled #false; }", &directory.0).unwrap();
+        let mut event_loop = smithay::reexports::calloop::EventLoop::try_new().unwrap();
+        let display = smithay::reexports::wayland_server::Display::new().unwrap();
+        let mut state = crate::Ferese::new(&mut event_loop, display, runtime).unwrap();
+
+        assert!(
+            !state.xwayland_config.enabled,
+            "the session starts with the configured value"
+        );
+
+        state
+            .reload_config_source("xwayland { enabled #true; startup \"eager\"; }".into())
+            .unwrap();
+
+        assert!(
+            state.xwayland_config.enabled,
+            "a reload must update the desired configuration, or restart_required can never become true"
+        );
+        assert_eq!(
+            state.xwayland_config.startup,
+            crate::config::XwaylandStartup::Eager,
+            "every field follows the reload, not just the enabled flag"
+        );
+    }
+
     #[test]
     fn invalid_monitor_reload_keeps_last_good_runtime_configuration() {
         const CHILD: &str = "FERESE_OUTPUT_RELOAD_TEST_CHILD";

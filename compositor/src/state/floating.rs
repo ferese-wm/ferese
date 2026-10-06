@@ -300,16 +300,21 @@ impl Ferese {
         let constraints = window
             .toplevel()
             .map(|top| {
-                with_states(top.wl_surface(), |states| {
+                let (minimum, maximum) = with_states(top.wl_surface(), |states| {
                     let mut cache = states.cached_state.get::<SurfaceCachedState>();
                     let state = cache.current();
-                    SizeConstraints {
-                        min_width: state.min_size.w.max(1) as f64,
-                        min_height: state.min_size.h.max(1) as f64,
-                        max_width: (state.max_size.w > 0).then_some(state.max_size.w as f64),
-                        max_height: (state.max_size.h > 0).then_some(state.max_size.h as f64),
-                    }
-                })
+                    (
+                        (state.min_size.w, state.min_size.h),
+                        (state.max_size.w, state.max_size.h),
+                    )
+                });
+                let (minimum, maximum) = self.effective_size_constraints(window, minimum, maximum);
+                SizeConstraints {
+                    min_width: minimum.0.max(1) as f64,
+                    min_height: minimum.1.max(1) as f64,
+                    max_width: (maximum.0 > 0).then_some(maximum.0 as f64),
+                    max_height: (maximum.1 > 0).then_some(maximum.1 as f64),
+                }
             })
             .unwrap_or_default();
         let stored_size = if parent_rect.is_none() {

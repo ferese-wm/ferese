@@ -3,12 +3,14 @@ mod bindings;
 mod input_motion;
 mod layout;
 mod outputs;
+mod xwayland;
 
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::fmt;
 use std::path::PathBuf;
 
+pub(crate) use self::xwayland::{XwaylandConfig, XwaylandStartup};
 use appearance::*;
 pub use appearance::{BorderGradient, InactiveDimSettings, MaterialStyle, ThemeSettings};
 use bindings::*;
@@ -61,6 +63,8 @@ pub struct Config {
     scrolling: ScrollingConfig,
     #[serde(default)]
     output_profiles: Vec<OutputProfileConfig>,
+    #[serde(default)]
+    pub(crate) xwayland: XwaylandConfig,
     #[serde(default, rename = "status")]
     _status: ShellStatusConfig,
 }
@@ -114,6 +118,7 @@ impl Config {
     pub(crate) fn runtime_config(&self) -> Result<crate::RuntimeConfig, ConfigError> {
         self.notifications.validate().map_err(ConfigError::Binding)?;
         self.desktop_widgets.validate().map_err(ConfigError::Binding)?;
+        self.xwayland.validate().map_err(ConfigError::Binding)?;
         for daemon in &self.autostart {
             if daemon.command.first().is_none_or(|program| program.trim().is_empty()) {
                 return Err(ConfigError::Binding("autostart command must contain a program".into()));
@@ -143,6 +148,7 @@ impl Config {
             output_profiles: self.output_profiles()?,
             wallpaper: self.wallpaper_settings(),
             overview_font_family: self.overview_font_family(),
+            xwayland: self.xwayland.clone(),
         })
     }
 
@@ -517,10 +523,13 @@ mod tests {
 
     #[test]
     fn packaged_and_custom_kdl_pass_runtime_validation() {
-        Config::parse_source(include_str!("../../packaging/config.kdl"))
-            .unwrap()
-            .runtime_config()
-            .unwrap();
+        let packaged = Config::parse_source(include_str!("../../packaging/config.kdl")).unwrap();
+        packaged.runtime_config().unwrap();
+
+        assert!(
+            packaged.xwayland.enabled,
+            "packaging/config.kdl must ship X11 support enabled, matching the default"
+        );
         let source = "input {\n    touchpad {\n        swipe-threshold 96\n    }\n}\nbinding keys=\"Swipe3Up\" action=\"toggle-overview\"\noutput-profile name=\"desk\" {\n    output match=\"DP-1\" scale=1.5 {\n        position 0 0\n    }\n}\ndesktop-widgets {\n    clock {\n        enabled #true\n        outputs \"DP-1\"\n    }\n}\nautostart {\n    command \"program\" \"argument with space\"\n}\n";
         let config = Config::parse_source(source).unwrap();
         config.runtime_config().unwrap();
@@ -555,6 +564,40 @@ mod tests {
 
     fn parse(source: &str) -> Config {
         ferese_config::from_str(source).unwrap()
+    }
+
+    #[test]
+    fn an_empty_configuration_enables_the_managed_x11_service() {
+        let config = parse("");
+
+        assert_eq!(config.xwayland, XwaylandConfig::default());
+        assert!(config.xwayland.enabled, "an empty config keeps the default");
+        assert_eq!(config.xwayland.startup, XwaylandStartup::OnDemand);
+        let runtime = config.runtime_config().expect("an empty config is valid");
+        assert!(runtime.xwayland.enabled);
+    }
+
+    #[test]
+    fn a_configuration_without_an_xwayland_section_keeps_the_defaults() {
+        let source = r#"
+            layout-mode "scrolling";
+            desktop-widgets {
+                clock {
+                    time-format "%H:%M";
+                };
+            }
+            scroll-factor 1.0;
+        "#;
+        let config = parse(source);
+
+        assert!(
+            source.find("xwayland").is_none(),
+            "the sample must have no xwayland node"
+        );
+        assert_eq!(config.xwayland, XwaylandConfig::default());
+        assert!(config.xwayland.enabled);
+        let runtime = config.runtime_config().expect("the existing config stays valid");
+        assert!(runtime.xwayland.enabled);
     }
 
     #[test]
@@ -1084,7 +1127,7 @@ mod tests {
     #[test]
     fn parses_and_validates_window_rules() {
         let config = parse(
-            "window-rule app-id=\"org.example.Editor\" workspace=3 floating=#true width=900.0 height=600.0 fullscreen=#false block-out-from-screencasts=#true\n",
+            "window-rule app-id=\"org.example.Editor\" workspace=3 floating=#true width=900.0 height=600.0 min-width=500 min-height=400 fullscreen=#false block-out-from-screencasts=#true\n",
         );
         let rules = config.window_rules().unwrap();
         let result = window_rules::resolve(&rules, Some("org.example.editor.desktop"), Some("Document"), false);
@@ -1093,6 +1136,8 @@ mod tests {
         assert_eq!(result.floating, Some(true));
         assert_eq!(result.width, Some(900.0));
         assert_eq!(result.height, Some(600.0));
+        assert_eq!(result.min_width, Some(500.0));
+        assert_eq!(result.min_height, Some(400.0));
         assert_eq!(result.fullscreen, Some(false));
         assert_eq!(result.block_out_from_screencasts, Some(true));
     }
@@ -1101,9 +1146,11 @@ mod tests {
     fn rejects_invalid_window_rule_configuration() {
         let catch_all = parse("window-rule floating=#true\n");
         let zero_workspace = parse("window-rule app-id=\"editor\" workspace=0\n");
+        let zero_minimum = parse("window-rule app-id=\"editor\" min-width=0\n");
 
         assert!(catch_all.window_rules().is_err());
         assert!(zero_workspace.window_rules().is_err());
+        assert!(zero_minimum.window_rules().is_err());
     }
 
     #[test]

@@ -402,6 +402,14 @@ pub struct Ferese {
     pub(crate) theme_engine: crate::theme::Engine,
     pub start_time: Instant,
     pub socket_name: OsString,
+
+    pub(crate) session_environment: crate::SessionEnvironment,
+
+    pub(crate) xwayland: Option<crate::xwayland::XwaylandManager>,
+
+    pub(crate) xwayland_config: crate::config::XwaylandConfig,
+
+    pub(crate) x11_diagnostic: Option<String>,
     pub display_handle: DisplayHandle,
     pub loop_signal: LoopSignal,
     pub(crate) loop_handle: LoopHandle<'static, Self>,
@@ -552,6 +560,7 @@ pub struct RuntimeConfig {
     pub spring_config: SpringConfig,
     pub viewport_spring_config: SpringConfig,
     pub output_profiles: Vec<OutputProfile>,
+    pub(crate) xwayland: crate::config::XwaylandConfig,
 }
 
 impl Ferese {
@@ -643,7 +652,15 @@ impl Ferese {
             config_worker: None,
             theme_engine: Default::default(),
             start_time,
+
+            session_environment: crate::SessionEnvironment {
+                wayland_display: socket_name.clone(),
+                x11: None,
+            },
             socket_name,
+            xwayland: None,
+            xwayland_config: config.xwayland.clone(),
+            x11_diagnostic: None,
             display_handle,
             loop_signal: event_loop.get_signal(),
             loop_handle: event_loop.handle(),
@@ -793,6 +810,11 @@ impl Ferese {
                 .as_ref()
                 .is_none_or(|previous| keys.iter().any(|key| previous.get(*key) != sections.get(*key)))
         };
+        // Desired configuration: reloads update it while endpoints stay
+        // session-scoped, so a difference from the running service is reported
+        // as `restart_required` rather than applied behind the user's back.
+        self.xwayland_config = config.xwayland.clone();
+
         let layout_changed = changed(&["layout", "scrolling", "workspaces"]);
         let bindings_changed = changed(&["bindings", "commands"]);
         let input_changed = changed(&["input"]);

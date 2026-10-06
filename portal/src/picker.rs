@@ -177,8 +177,14 @@ impl cosmic::Application for Picker {
             Message::WindowOpened(id) => {
                 let parent = self.prompt.parent.clone();
                 return cosmic::iced::window::run(id, move |window| {
-                    let parent = crate::parent::Parent::attach(window, &parent)?.map(std::sync::Arc::new);
-                    Ok((parent, ferese_theme_client::material::ModalMaterial::attach(window)))
+                    let attached = crate::parent::Parent::attach(window, &parent)?;
+                    if let Some(diagnostic) = attached.diagnostic {
+                        eprintln!("ferese portal: {diagnostic}");
+                    }
+                    Ok((
+                        attached.parent.map(std::sync::Arc::new),
+                        ferese_theme_client::material::ModalMaterial::attach(window),
+                    ))
                 })
                 .map(|result| cosmic::Action::App(Message::Attached(result)));
             }

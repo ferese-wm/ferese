@@ -19,6 +19,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     if env::args().nth(1).as_deref() == Some("theme") {
         return theme_command(env::args().skip(2).collect());
     }
+    if env::args().nth(1).as_deref() == Some("xwayland") {
+        return xwayland_command(env::args().skip(2).collect());
+    }
     let (command, args) = parse_args(env::args().skip(1))?;
     let request = Request {
         version: VERSION,
@@ -84,6 +87,40 @@ fn theme_command(args: Vec<String>) -> Result<(), Box<dyn Error>> {
             );
         }
     }
+    Ok(())
+}
+
+fn xwayland_command(args: Vec<String>) -> Result<(), Box<dyn Error>> {
+    use ferese_ipc::xwayland::{RETRY_COMMAND, STATUS_COMMAND, Status};
+
+    let command = match args.as_slice() {
+        [command] if command == "status" => STATUS_COMMAND,
+        [command] if command == "retry" => RETRY_COMMAND,
+        _ => return Err("usage: feresectl xwayland <status|retry>".into()),
+    };
+
+    let request = Request {
+        version: VERSION,
+        id: 1,
+        kind: "command".to_owned(),
+        command: command.to_owned(),
+        args: json!({}),
+    };
+    let mut stream = UnixStream::connect(socket_path()?)?;
+    write_frame(&mut stream, &request)?;
+    let response: Response = read_frame(&mut stream)?;
+    if let Some(error) = response.error {
+        return Err(format!("{}: {}", error.code, error.message).into());
+    }
+
+    let status = Status::from_value(response.result.unwrap_or(Value::Null))?;
+    if command == RETRY_COMMAND {
+        println!(
+            "X11 retry requested; current state: {}",
+            serde_json::to_string(&status.state)?
+        );
+    }
+    println!("{}", serde_json::to_string_pretty(&status)?);
     Ok(())
 }
 
@@ -233,12 +270,74 @@ fn socket_path() -> Result<PathBuf, io::Error> {
 }
 
 fn usage() -> String {
-    "usage: feresectl media [get|play-pause|next|previous|raise|auto|pin PLAYER|ignore PLAYER|unignore PLAYER]\n       feresectl outputs\n       feresectl output-profiles\n       feresectl <output-confirm|output-revert>\n       feresectl output-layout <internal-only|external-only|extend|mirror>\n       feresectl toggle-display-mode\n       feresectl output-profile <name|auto>\n       feresectl output-internal <on|off>\n       feresectl autostart\n       feresectl screenshot [--geometry \"x,y WxH\"]\n       feresectl screenshot-window <window-id>\n       feresectl <focus|move|resize> <direction>\n       feresectl <workspace|move-to-workspace> <index>\n       feresectl workspace-back-and-forth\n       feresectl <focus-last-window|focus-mru-next|focus-mru-previous>\n       feresectl <toggle-floating|toggle-maximized|toggle-fullscreen|toggle-layout|toggle-overview|toggle-keybinding-guide>\n       feresectl <cycle-column-width|center-column|consume|expel|close|exit|request-logout>\n       feresectl <get-focused-window|get-windows|get-workspaces|get-outputs|get-idle-inhibition|reload-config>".to_owned()
+    "usage: feresectl media [get|play-pause|next|previous|raise|auto|pin PLAYER|ignore PLAYER|unignore PLAYER]\n       feresectl outputs\n       feresectl output-profiles\n       feresectl <output-confirm|output-revert>\n       feresectl output-layout <internal-only|external-only|extend|mirror>\n       feresectl toggle-display-mode\n       feresectl output-profile <name|auto>\n       feresectl output-internal <on|off>\n       feresectl autostart\n       feresectl xwayland <status|retry>\n       feresectl screenshot [--geometry \"x,y WxH\"]\n       feresectl screenshot-window <window-id>\n       feresectl <focus|move|resize> <direction>\n       feresectl <workspace|move-to-workspace> <index>\n       feresectl workspace-back-and-forth\n       feresectl <focus-last-window|focus-mru-next|focus-mru-previous>\n       feresectl <toggle-floating|toggle-maximized|toggle-fullscreen|toggle-layout|toggle-overview|toggle-keybinding-guide>\n       feresectl <cycle-column-width|center-column|consume|expel|close|exit|request-logout>\n       feresectl <get-focused-window|get-windows|get-workspaces|get-outputs|get-idle-inhibition|reload-config>".to_owned()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn xwayland_commands_map_to_the_shared_ipc_command_names() {
+        assert_eq!(ferese_ipc::xwayland::STATUS_COMMAND, "xwayland-status");
+        assert_eq!(ferese_ipc::xwayland::RETRY_COMMAND, "xwayland-retry");
+
+        assert!(usage().contains("feresectl xwayland <status|retry>"));
+    }
+
+    #[test]
+    fn the_xwayland_status_snapshot_round_trips_over_the_ipc_framing() {
+        let status = ferese_ipc::xwayland::Status {
+            enabled: true,
+            effective_startup: "on-demand".to_owned(),
+            state: ferese_ipc::xwayland::State::Running,
+            display: Some(":7".to_owned()),
+            satellite_pid: Some(24017),
+            generation: Some(2),
+            readiness: ferese_ipc::xwayland::Readiness::Verified,
+            recent_failures: 1,
+            restart_required: false,
+            last_error: None,
+        };
+        let request = Request {
+            version: VERSION,
+            id: 1,
+            kind: "command".to_owned(),
+            command: ferese_ipc::xwayland::STATUS_COMMAND.to_owned(),
+            args: json!({}),
+        };
+
+        let mut bytes = Vec::new();
+        write_frame(&mut bytes, &request).expect("encode the request");
+        let decoded: Request = read_frame(&mut bytes.as_slice()).expect("decode the request");
+        assert_eq!(decoded.command, "xwayland-status");
+
+        let mut reply = Vec::new();
+        write_frame(
+            &mut reply,
+            &Response::success(1, ferese_ipc::xwayland::Status::to_value(&status)),
+        )
+        .expect("encode the response");
+        let response: Response = read_frame(&mut reply.as_slice()).expect("decode the response");
+        assert!(response.error.is_none());
+
+        let decoded = ferese_ipc::xwayland::Status::from_value(response.result.expect("a result"))
+            .expect("decode the status snapshot");
+        assert_eq!(decoded, status);
+        assert_eq!(decoded.state, ferese_ipc::xwayland::State::Running);
+    }
+
+    #[test]
+    fn a_failed_x11_retry_surfaces_the_compositor_error_code() {
+        let response = Response::error(1, "x11_unavailable", "X11 is disabled in the configuration");
+        let mut bytes = Vec::new();
+        write_frame(&mut bytes, &response).expect("encode");
+        let decoded: Response = read_frame(&mut bytes.as_slice()).expect("decode");
+
+        let error = decoded.error.expect("an error response");
+        assert_eq!(error.code, "x11_unavailable");
+        assert!(error.message.contains("disabled"));
+    }
 
     #[test]
     fn media_commands_route_transport_and_player_preferences() {

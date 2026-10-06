@@ -30,9 +30,9 @@ serde_json.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 xcursor.workspace = true
+tempfile.workspace = true
 
 [dev-dependencies]
-tempfile.workspace = true
 
 [features]
 # Opt-in counters/histograms with a per-client exit summary.

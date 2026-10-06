@@ -9,6 +9,8 @@ pub(crate) struct WindowRuleConfig {
     pub floating: Option<bool>,
     pub width: Option<f64>,
     pub height: Option<f64>,
+    pub min_width: Option<f64>,
+    pub min_height: Option<f64>,
     pub fullscreen: Option<bool>,
     pub block_out_from_screencasts: Option<bool>,
     pub idle_inhibit: Option<crate::idle_inhibition::Mode>,
@@ -23,6 +25,8 @@ pub struct WindowRule {
     floating: Option<bool>,
     width: Option<f64>,
     height: Option<f64>,
+    min_width: Option<f64>,
+    min_height: Option<f64>,
     fullscreen: Option<bool>,
     block_out_from_screencasts: Option<bool>,
     idle_inhibit: Option<crate::idle_inhibition::Mode>,
@@ -40,6 +44,8 @@ pub struct WindowRuleResult {
     pub floating: Option<bool>,
     pub width: Option<f64>,
     pub height: Option<f64>,
+    pub min_width: Option<f64>,
+    pub min_height: Option<f64>,
     pub fullscreen: Option<bool>,
     pub block_out_from_screencasts: Option<bool>,
     pub idle_inhibit: Option<crate::idle_inhibition::Mode>,
@@ -56,6 +62,10 @@ pub(crate) fn live_result(
     new.block_out_from_screencasts = None;
     old.idle_inhibit = None;
     new.idle_inhibit = None;
+    old.min_width = None;
+    old.min_height = None;
+    new.min_width = None;
+    new.min_height = None;
     if old == new {
         return None;
     }
@@ -106,6 +116,8 @@ pub fn resolve(rules: &[WindowRule], app_id: Option<&str>, title: Option<&str>, 
         result.floating = rule.floating.or(result.floating);
         result.width = rule.width.or(result.width);
         result.height = rule.height.or(result.height);
+        result.min_width = rule.min_width.or(result.min_width);
+        result.min_height = rule.min_height.or(result.min_height);
         result.fullscreen = rule.fullscreen.or(result.fullscreen);
         result.block_out_from_screencasts = rule.block_out_from_screencasts.or(result.block_out_from_screencasts);
         result.idle_inhibit = rule.idle_inhibit.or(result.idle_inhibit);
@@ -138,6 +150,8 @@ fn validate_rule(index: usize, rule: &WindowRuleConfig) -> Result<WindowRule, St
         .map(str::to_owned);
     let width = positive_dimension(rule.width, index, "width")?;
     let height = positive_dimension(rule.height, index, "height")?;
+    let min_width = positive_dimension(rule.min_width, index, "min-width")?;
+    let min_height = positive_dimension(rule.min_height, index, "min-height")?;
 
     Ok(WindowRule {
         app_id,
@@ -147,6 +161,8 @@ fn validate_rule(index: usize, rule: &WindowRuleConfig) -> Result<WindowRule, St
         floating: rule.floating,
         width,
         height,
+        min_width,
+        min_height,
         fullscreen: rule.fullscreen,
         block_out_from_screencasts: rule.block_out_from_screencasts,
         idle_inhibit: rule.idle_inhibit,
@@ -194,27 +210,6 @@ pub(crate) fn normalize_app_id(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn live_rule_removal_reverts_placement_but_unchanged_rules_preserve_manual_state() {
-        let old = super::WindowRuleResult {
-            floating: Some(true),
-            fullscreen: Some(true),
-            ..Default::default()
-        };
-        assert_eq!(super::live_result(old, old, false), None);
-        let removed = super::live_result(old, Default::default(), false).unwrap();
-        assert_eq!(removed.floating, Some(false));
-        assert_eq!(removed.fullscreen, Some(false));
-        assert_eq!(
-            super::live_result(old, Default::default(), true).unwrap().floating,
-            Some(true)
-        );
-        let new = super::WindowRuleResult {
-            width: Some(800.),
-            ..Default::default()
-        };
-        assert_eq!(super::live_result(old, new, false).unwrap().floating, None);
-    }
     use super::*;
 
     fn config(app_id: &str) -> WindowRuleConfig {
@@ -226,6 +221,8 @@ mod tests {
             floating: None,
             width: None,
             height: None,
+            min_width: None,
+            min_height: None,
             fullscreen: None,
             block_out_from_screencasts: None,
             idle_inhibit: None,
@@ -358,6 +355,8 @@ mod tests {
             floating: Some(true),
             width: None,
             height: None,
+            min_width: None,
+            min_height: None,
             fullscreen: None,
             block_out_from_screencasts: None,
             idle_inhibit: None,
@@ -366,8 +365,91 @@ mod tests {
             width: Some(f64::NAN),
             ..config("editor")
         };
+        let invalid_minimum = WindowRuleConfig {
+            min_width: Some(0.0),
+            ..config("editor")
+        };
 
         assert!(validate(&[catch_all]).is_err());
         assert!(validate(&[invalid_size]).is_err());
+        assert!(validate(&[invalid_minimum]).is_err());
+    }
+
+    #[test]
+    fn minimum_size_overrides_are_per_axis_and_later_rules_win() {
+        let rules = validate(&[
+            WindowRuleConfig {
+                min_width: Some(800.0),
+                min_height: Some(600.0),
+                ..config("spotify")
+            },
+            WindowRuleConfig {
+                min_width: Some(500.0),
+                ..config("spotify")
+            },
+        ])
+        .unwrap();
+
+        let result = resolve(&rules, Some("spotify"), None, false);
+        assert_eq!(result.min_width, Some(500.0));
+        assert_eq!(result.min_height, Some(600.0));
+
+        let single = validate(&[WindowRuleConfig {
+            min_height: Some(400.0),
+            ..config("spotify")
+        }])
+        .unwrap();
+        let result = resolve(&single, Some("spotify"), None, false);
+        assert_eq!(result.min_width, None);
+        assert_eq!(result.min_height, Some(400.0));
+        assert_eq!(resolve(&[], Some("spotify"), None, false).min_width, None);
+    }
+
+    #[test]
+    fn live_rule_removal_reverts_placement_but_unchanged_rules_preserve_manual_state() {
+        let old = super::WindowRuleResult {
+            floating: Some(true),
+            fullscreen: Some(true),
+            ..Default::default()
+        };
+        assert_eq!(super::live_result(old, old, false), None);
+        let removed = super::live_result(old, Default::default(), false).unwrap();
+        assert_eq!(removed.floating, Some(false));
+        assert_eq!(removed.fullscreen, Some(false));
+        assert_eq!(
+            super::live_result(old, Default::default(), true).unwrap().floating,
+            Some(true)
+        );
+        let new = super::WindowRuleResult {
+            width: Some(800.),
+            ..Default::default()
+        };
+        assert_eq!(super::live_result(old, new, false).unwrap().floating, None);
+    }
+
+    #[test]
+    fn minimum_size_changes_are_constraint_policy_not_placement_work() {
+        let old = super::WindowRuleResult {
+            min_width: Some(500.),
+            min_height: Some(400.),
+            ..Default::default()
+        };
+        assert_eq!(super::live_result(old, Default::default(), false), None);
+        let raised = super::WindowRuleResult {
+            min_width: Some(600.),
+            min_height: Some(400.),
+            ..Default::default()
+        };
+        assert_eq!(super::live_result(old, raised, false), None);
+        assert_eq!(super::live_result(old, old, false), None);
+
+        let with_placement = super::WindowRuleResult {
+            floating: Some(true),
+            min_width: Some(700.),
+            ..Default::default()
+        };
+        let applied = super::live_result(old, with_placement, false).unwrap();
+        assert_eq!(applied.floating, Some(true));
+        assert_eq!(applied.min_width, None);
     }
 }

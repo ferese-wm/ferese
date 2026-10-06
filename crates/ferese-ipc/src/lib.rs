@@ -7,6 +7,7 @@ use serde_json::Value;
 
 pub mod media;
 pub mod theme;
+pub mod xwayland;
 
 pub const VERSION: u32 = 1;
 pub const MAX_PAYLOAD_SIZE: usize = 1024 * 1024;

@@ -29,10 +29,22 @@ if [[ ${FERESE_SESSION_IMPORT_ENV:-0} == 1 ]]; then
     # Shell control uses a private socket FD. Activation must use the public
     # socket so portal and other desktop services connect as ordinary clients.
     public_display=${FERESE_PUBLIC_WAYLAND_DISPLAY:-${WAYLAND_DISPLAY:-}}
-    env WAYLAND_DISPLAY="$public_display" dbus-update-activation-environment --systemd \
-        WAYLAND_DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_DESKTOP XDG_SESSION_TYPE || \
-        env WAYLAND_DISPLAY="$public_display" dbus-update-activation-environment \
-            WAYLAND_DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_DESKTOP XDG_SESSION_TYPE || true
+    # Empty assignments replace stale values; D-Bus cannot remove activation variables.
+    activation_vars=(
+        "WAYLAND_DISPLAY=$public_display"
+        "DISPLAY=${DISPLAY:-}"
+        "XAUTHORITY=${XAUTHORITY:-}"
+        XDG_CURRENT_DESKTOP
+        XDG_SESSION_DESKTOP
+        XDG_SESSION_TYPE
+    )
+    if command -v dbus-update-activation-environment >/dev/null; then
+        if ! env WAYLAND_DISPLAY="$public_display" \
+            dbus-update-activation-environment --systemd "${activation_vars[@]}"; then
+            env WAYLAND_DISPLAY="$public_display" \
+                dbus-update-activation-environment "${activation_vars[@]}" || true
+        fi
+    fi
     # User buses can outlive logout and may predate a newly installed service directory.
     if command -v dbus-send >/dev/null; then
         dbus-send --session --type=method_call --print-reply \
