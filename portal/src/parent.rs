@@ -13,28 +13,14 @@ use wayland_protocols::xdg::foreign::zv2::client::zxdg_imported_v2;
 use wayland_protocols::xdg::foreign::zv2::client::zxdg_imported_v2::ZxdgImportedV2;
 use wayland_protocols::xdg::foreign::zv2::client::zxdg_importer_v2::ZxdgImporterV2;
 
-/// Longest parent identifier accepted before it is treated as hostile input.
 const MAX_PARENT_IDENTIFIER: usize = 4096;
 
-/// Outcome of resolving a portal parent window.
 #[derive(Debug, Default)]
 pub(crate) struct ParentAttachment {
-    /// The imported parent, when one could be established.
     pub parent: Option<Parent>,
-    /// Set when parenting is unavailable but the request may still proceed.
-    ///
-    /// The dialog is shown unparented. This is deliberately *not* an error:
-    /// failing the whole file chooser or consent prompt because a caller used an
-    /// X11 parent would deny an otherwise valid operation.
     pub diagnostic: Option<String>,
 }
 
-/// Classify a portal parent identifier without contacting the compositor.
-///
-/// A valid `x11:` identifier is not an error condition: Ferese does not yet
-/// have a verified XID-to-exported-Wayland-parent bridge, so the request
-/// degrades to an unparented window. Crucially, an `x11:` identifier is never
-/// reinterpreted as a Wayland foreign handle.
 fn classify_parent<'a>(parent: &'a str) -> ParentKind<'a> {
     if parent.is_empty() {
         return ParentKind::None;
@@ -77,13 +63,9 @@ fn is_x11_window_identifier(identifier: &str) -> bool {
 
 #[derive(Debug, PartialEq, Eq)]
 enum ParentKind<'a> {
-    /// No parent requested.
     None,
-    /// A Wayland foreign-toplevel handle that can be imported.
     Wayland(&'a str),
-    /// A valid but unsupported X11 parent window identifier.
     X11,
-    /// Malformed or unrecognized; this stays a hard error.
     Unsupported,
 }
 
@@ -102,10 +84,6 @@ impl Parent {
                 return Ok(ParentAttachment::default());
             }
             ParentKind::X11 => {
-                // Degrade, do not fail. Authorization and consent checks are
-                // unaffected; only the transient parent relationship is lost.
-                // No parent is invented, and the untrusted XID is not used to
-                // identify a process or to grant any permission.
                 return Ok(ParentAttachment {
                     parent: None,
                     diagnostic: Some(
@@ -212,17 +190,12 @@ mod tests {
 
     #[test]
     fn an_x11_parent_degrades_instead_of_failing_the_request() {
-        // The whole point: a valid X11 parent must not fail an otherwise valid
-        // file chooser or consent prompt.
         assert!(matches!(classify_parent("x11:0x2400003"), ParentKind::X11));
         assert!(matches!(classify_parent("x11:1a2b3c"), ParentKind::X11));
     }
 
     #[test]
     fn an_x11_parent_is_never_reinterpreted_as_a_wayland_handle() {
-        // A Wayland handle is the raw remainder after the prefix. Treating an
-        // XID as one would ask the compositor to import a nonsense handle and,
-        // worse, could match some unrelated exported surface.
         match classify_parent("x11:0x2400003") {
             ParentKind::Wayland(handle) => panic!("an X11 parent must not become a Wayland handle: {handle}"),
             ParentKind::X11 => {}
@@ -268,8 +241,6 @@ mod tests {
 
     #[test]
     fn malformed_identifiers_remain_hard_errors() {
-        // An empty remainder, an unknown scheme, and an absurdly long value all
-        // stay errors rather than silently degrading.
         for parent in ["x11:", "wayland:", "dbus:", "not-a-parent", "X11:0x1"] {
             assert!(
                 matches!(classify_parent(parent), ParentKind::Unsupported),

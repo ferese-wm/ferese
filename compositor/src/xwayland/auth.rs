@@ -4,12 +4,10 @@ use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::Path;
 
 use tempfile::NamedTempFile;
-use tracing::warn;
 
-/// A private X11 authority file holding one `MIT-MAGIC-COOKIE-1` record.
-///
-/// This authenticates access to the X server. It does not isolate mutually
-/// untrusted applications once they share that X server.
+// The cookie authenticates the server; it does not isolate X11 clients from each other.
+/// Deletion has one owner: the `NamedTempFile` removes the cookie file when
+/// this value drops, so nothing here unlinks the path a second time.
 #[derive(Debug)]
 pub(crate) struct AuthorityFile {
     file: NamedTempFile,
@@ -49,7 +47,6 @@ fn hostname() -> io::Result<Vec<u8>> {
     Ok(buffer[..end].to_vec())
 }
 
-/// Write one length-prefixed libXau binary field.
 fn field(output: &mut impl Write, bytes: &[u8]) -> io::Result<()> {
     let length = u16::try_from(bytes.len())
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "Xauthority field is too long"))?;
@@ -58,12 +55,6 @@ fn field(output: &mut impl Write, bytes: &[u8]) -> io::Result<()> {
 }
 
 impl AuthorityFile {
-    /// Create the authority file under the session's validated
-    /// `XDG_RUNTIME_DIR`, for the given display number.
-    ///
-    /// `FamilyLocal` with the current hostname is used deliberately rather than
-    /// a wildcard family. A container with a different hostname may need the
-    /// platform's normal Xauthority forwarding instead.
     pub fn create(runtime_directory: &Path, display: u32) -> io::Result<Self> {
         let metadata = fs::symlink_metadata(runtime_directory)?;
         let uid = unsafe { libc::geteuid() };
@@ -99,20 +90,6 @@ impl AuthorityFile {
 
     pub fn path(&self) -> &Path {
         self.file.path()
-    }
-
-    /// Release the authority file. The cookie is never logged, returned over
-    /// IPC, or included in a diagnostic bundle.
-    fn release(&mut self) {
-        if let Err(error) = fs::remove_file(self.file.path()) {
-            warn!(path = %self.file.path().display(), %error, "could not remove Xauthority file");
-        }
-    }
-}
-
-impl Drop for AuthorityFile {
-    fn drop(&mut self) {
-        self.release();
     }
 }
 
@@ -206,9 +183,6 @@ mod tests {
         assert_eq!(error.kind(), io::ErrorKind::NotFound);
     }
 
-    /// Verify the record is actually readable by libXau, not just by our own
-    /// parser: `xauth -f PATH list` must decode the file and report the
-    /// display, cookie type, and a 16-byte cookie.
     #[test]
     fn the_record_is_decodable_by_libxau_via_xauth() {
         let runtime = private_runtime_dir("libxau");
@@ -243,8 +217,6 @@ mod tests {
         let file = AuthorityFile::create(&runtime, 92).unwrap();
         let mode = fs::metadata(file.path()).unwrap().mode() & 0o777;
 
-        // The mode alone is weak evidence; assert the containing directory is
-        // private too, since a world-readable runtime dir would defeat it.
         assert_eq!(mode, 0o600);
         assert_eq!(fs::metadata(&runtime).unwrap().mode() & 0o777, 0o700);
     }

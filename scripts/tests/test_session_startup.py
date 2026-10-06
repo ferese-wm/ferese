@@ -19,8 +19,6 @@ class SessionStartupTest(unittest.TestCase):
             helper = root / 'ferese-session-shell'
             shutil.copyfile(SCRIPT, helper)
             programs = {
-                # Record both the resolved WAYLAND_DISPLAY and the full argument
-                # vector so tests can assert exactly which names were imported.
                 'dbus-update-activation-environment': (
                     'printf "import:%s\\n" "$WAYLAND_DISPLAY" >> "$TEST_ROOT/events"\n'
                     'printf "vars:%s\\n" "$*" >> "$TEST_ROOT/events"\n'),
@@ -37,13 +35,8 @@ class SessionStartupTest(unittest.TestCase):
                        FERESE_SESSION_IMPORT_ENV=str(int(direct)), WAYLAND_DISPLAY='private-display',
                        FERESE_PUBLIC_WAYLAND_DISPLAY='public-display', WAYLAND_SOCKET='77',
                        TEST_FAIL=str(int(fail_target)), TEST_STATUS=str(shell_status), TEST_WAIT=str(int(terminate)))
-            # Drop any inherited host X11 variables first: the fixture decides
-            # what the compositor supplies, so a host DISPLAY/XAUTHORITY would
-            # otherwise satisfy the "X11 disabled" case and mask a real bug.
             env.pop('DISPLAY', None)
             env.pop('XAUTHORITY', None)
-            # Only set the X11 variables when the compositor supplied them. A
-            # session with X11 disabled must leave them absent entirely.
             if display is not None:
                 env['DISPLAY'] = display
             if xauthority is not None:
@@ -65,7 +58,6 @@ class SessionStartupTest(unittest.TestCase):
     def imported_vars(events):
         for line in events:
             if line.startswith('vars:'):
-                # ``vars:`` is empty for an empty value, so split explicitly.
                 return line[len('vars:'):].split(' ')
         raise AssertionError('no activation-environment import recorded')
 
@@ -88,10 +80,6 @@ class SessionStartupTest(unittest.TestCase):
         self.assertIn('WAYLAND_DISPLAY=public-display', imported)
 
     def test_a_session_without_x11_imports_empty_values_instead_of_omitting_them(self):
-        # The compositor removes DISPLAY/XAUTHORITY when it owns no X11
-        # endpoint. D-Bus cannot delete activation variables, so the import
-        # must send explicit empty values to clear a previous session's
-        # live-looking endpoint rather than leaving it in place.
         status, events = self.run_session()
         self.assertEqual(status, 0)
         imported = self.imported_vars(events)

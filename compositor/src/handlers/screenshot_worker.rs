@@ -54,9 +54,8 @@ impl Worker {
 
 fn run(receiver: Receiver<Job>, results: channel::SyncSender<Encoded>) {
     while let Ok(job) = receiver.recv() {
-        let result = encode(&job);
         let request = job.request;
-        drop(job);
+        let result = encode(job);
         // This send cannot block. Each request produces exactly one Encode, so at
         // most QUEUE_CAPACITY jobs can be queued while one more is being encoded,
         // and RESULT_QUEUE_CAPACITY is asserted to exceed that. Blocking here
@@ -99,8 +98,10 @@ pub(crate) fn sweep_stale_files() {
     }
 }
 
-fn encode(job: &Job) -> Result<PathBuf, String> {
+fn encode(job: Job) -> Result<PathBuf, String> {
     let canvas = compose(&job.frames)?;
+    drop(job);
+
     let png = encode_png(&canvas)?;
     write_private_file(&png)
 }
@@ -114,6 +115,7 @@ fn encode_png(canvas: &Canvas) -> Result<Vec<u8>, String> {
     }
     let image = image::ImageBuffer::<image::Rgba<u8>, _>::from_raw(width, height, canvas.pixels.as_slice())
         .ok_or("Screenshot buffer does not match its dimensions")?;
+
     let mut out = Vec::new();
     let encoder = image::codecs::png::PngEncoder::new_with_quality(
         std::io::Cursor::new(&mut out),

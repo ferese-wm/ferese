@@ -402,15 +402,13 @@ pub struct Ferese {
     pub(crate) theme_engine: crate::theme::Engine,
     pub start_time: Instant,
     pub socket_name: OsString,
-    /// Immutable child session environment, built once after display
-    /// reservation and authority-file creation succeed.
+
     pub(crate) session_environment: crate::SessionEnvironment,
-    /// Managed X11 service, absent when X11 is unavailable or disabled.
+
     pub(crate) xwayland: Option<crate::xwayland::XwaylandManager>,
-    /// The configured X11 settings, retained so diagnostics can report the
-    /// configured value separately from the effective running value.
+
     pub(crate) xwayland_config: crate::config::XwaylandConfig,
-    /// Why X11 is unavailable, when it is.
+
     pub(crate) x11_diagnostic: Option<String>,
     pub display_handle: DisplayHandle,
     pub loop_signal: LoopSignal,
@@ -654,8 +652,7 @@ impl Ferese {
             config_worker: None,
             theme_engine: Default::default(),
             start_time,
-            // X11 is added to the child environment later, by initialize(),
-            // once the endpoint actually exists. Never publish a fake DISPLAY.
+
             session_environment: crate::SessionEnvironment {
                 wayland_display: socket_name.clone(),
                 x11: None,
@@ -813,11 +810,9 @@ impl Ferese {
                 .as_ref()
                 .is_none_or(|previous| keys.iter().any(|key| previous.get(*key) != sections.get(*key)))
         };
-        // The X11 configuration is *desired* configuration: it follows live
-        // reloads so status can compare it against what the service was
-        // actually started with. Allocating endpoints is once per session, so a
-        // difference is reported as `restart_required` rather than applied
-        // behind the user's back.
+        // Desired configuration: reloads update it while endpoints stay
+        // session-scoped, so a difference from the running service is reported
+        // as `restart_required` rather than applied behind the user's back.
         self.xwayland_config = config.xwayland.clone();
 
         let layout_changed = changed(&["layout", "scrolling", "workspaces"]);

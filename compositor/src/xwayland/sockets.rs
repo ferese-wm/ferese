@@ -9,12 +9,7 @@ use std::path::{Path, PathBuf};
 
 use tracing::warn;
 
-/// A shared name this process created, remembered by identity so cleanup only
-/// ever unlinks the exact file we made.
-///
-/// The identity check protects against ordinary replacement mistakes. It is
-/// not a race-free boundary against a hostile same-UID process swapping the
-/// path between the check and the unlink.
+// Identity checks prevent accidental unlinking, not races with hostile same-UID code.
 #[derive(Debug)]
 struct CreatedPath {
     path: PathBuf,
@@ -71,7 +66,7 @@ fn validate_shared_directory(path: &Path) -> io::Result<()> {
             format!("untrusted X11 directory: {}", path.display()),
         ));
     }
-    // A shared writable directory must have sticky-directory semantics.
+
     if metadata.mode() & 0o022 != 0 && metadata.mode() & 0o1000 == 0 {
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
@@ -82,13 +77,6 @@ fn validate_shared_directory(path: &Path) -> io::Result<()> {
     Ok(())
 }
 
-/// A reserved X11 display number, its conventional local socket path, and its
-/// lock file.
-///
-/// Reservation is conservative: it never reclaims a pre-existing stale lock or
-/// socket path, and never unlinks another display's socket. Occupied display
-/// numbers are skipped. Cleanup order matters — listeners are dropped before
-/// owned names, and the display lock goes last.
 #[derive(Debug)]
 pub(crate) struct Reservation {
     display: u32,
@@ -99,12 +87,23 @@ pub(crate) struct Reservation {
 }
 
 impl Reservation {
+    // Leave pre-existing locks and socket paths untouched.
     pub fn allocate() -> io::Result<Self> {
+        #[cfg(test)]
+        {
+            // Owned inputs, so an ordinary test never competes for a real slot in
+            // `/tmp/.X11-unix` nor depends on that directory existing.
+            let (sockets, locks) = crate::xwayland::test_hooks::allocator_root_for_reservation().unwrap_or_else(|| {
+                let root = crate::xwayland::test_hooks::default_allocator_root();
+                (root.clone(), root)
+            });
+            Self::allocate_in(&sockets, &locks, 0..64)
+        }
+
+        #[cfg(not(test))]
         Self::allocate_in(Path::new("/tmp/.X11-unix"), Path::new("/tmp"), 0..64)
     }
 
-    /// Custom directories stay crate-internal, for isolated allocator tests
-    /// only. Production always uses the conventional paths.
     fn allocate_in(socket_directory: &Path, lock_directory: &Path, candidates: Range<u32>) -> io::Result<Self> {
         validate_shared_directory(socket_directory)?;
         validate_shared_directory(lock_directory)?;
@@ -119,13 +118,11 @@ impl Reservation {
                 .open(&path)
             {
                 Ok(file) => file,
-                // Another display already owns this name. Skip it; never reclaim.
+
                 Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
                 Err(error) => return Err(error),
             };
 
-            // If metadata fails, leave the newly created name for diagnosis
-            // rather than risk deleting a name we cannot identify.
             let lock_path = CreatedPath::record(path, &file.metadata()?);
             if let Err(error) = writeln!(file, "{:>10}", std::process::id()).and_then(|()| file.flush()) {
                 drop(file);
@@ -145,7 +142,6 @@ impl Reservation {
             match reservation.bind_same_display() {
                 Ok(()) => return Ok(reservation),
                 Err(error) if error.kind() == io::ErrorKind::AddrInUse => {
-                    // Drop only resources this attempt actually created.
                     drop(reservation);
                 }
                 Err(error) => return Err(error),
@@ -170,21 +166,21 @@ impl Reservation {
         &self.listeners
     }
 
-    /// Make the endpoint fail-fast. Callers must remove all event-source clones
-    /// and stop the old server first, because a descriptor clone inside a
-    /// calloop `Generic` source is still an open listening socket and
-    /// `disable()` does not close it.
+    // Remove source clones and stop the server before closing the reservation.
     pub fn close_listeners(&mut self) {
         self.listeners.clear();
-        if let Some(mut socket_path) = self.socket_path.take() {
-            socket_path.remove();
-        }
-        // The lock path is deliberately retained: the display number is still
-        // session-owned for the lifetime of this reservation.
+        self.socket_path = None;
     }
 
-    /// Explicit retry reopens the same display after terminal failure.
     pub fn bind_same_display(&mut self) -> io::Result<()> {
+        #[cfg(test)]
+        if crate::xwayland::test_hooks::fire(&crate::xwayland::test_hooks::FAIL_REBIND_AFTER) {
+            return Err(io::Error::new(
+                io::ErrorKind::AddrInUse,
+                "injected X11 display rebind failure",
+            ));
+        }
+
         if !self.listeners.is_empty() || self.socket_path.is_some() {
             return Err(io::Error::new(
                 io::ErrorKind::AlreadyExists,
@@ -194,15 +190,14 @@ impl Reservation {
 
         validate_shared_directory(&self.socket_directory)?;
         let path = self.socket_directory.join(format!("X{}", self.display));
-        // Never unlink an existing path to make this succeed.
         let filesystem = UnixListener::bind(&path)?;
         let owned_path = CreatedPath::record(path.clone(), &fs::symlink_metadata(&path)?);
         let abstract_address = SocketAddr::from_abstract_name(path.as_os_str().as_bytes())?;
         let abstract_socket = match UnixListener::bind_addr(&abstract_address) {
             Ok(listener) => listener,
             Err(error) => {
-                let mut owned_path = owned_path;
-                owned_path.remove();
+                // Drop the recorded path first so cleanup happens in order, once.
+                drop(owned_path);
                 drop(filesystem);
                 return Err(error);
             }
@@ -214,13 +209,9 @@ impl Reservation {
         Ok(())
     }
 
-    /// Release the display number itself. Only correct during final teardown,
-    /// after the service is gone and no client can still be using the display.
     fn release_display(&mut self) {
         self.close_listeners();
-        if let Some(mut lock_path) = self.lock_path.take() {
-            lock_path.remove();
-        }
+        self.lock_path = None;
     }
 }
 
@@ -235,8 +226,6 @@ mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
 
-    /// Shared directories must be sticky and owned by root or this user, so
-    /// tests use private subdirectories with those properties.
     fn shared_root(name: &str) -> PathBuf {
         let root = std::env::temp_dir().join(format!("ferese-xwayland-alloc-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
@@ -271,12 +260,10 @@ mod tests {
         let first = Reservation::allocate_in(&sockets, &locks, 0..64).unwrap();
         let taken = first.display_number();
 
-        // A second allocator must not take the same number.
         let second = Reservation::allocate_in(&sockets, &locks, 0..64).unwrap();
         assert_ne!(second.display_number(), taken);
         assert!(second.display_number() > taken);
 
-        // The occupied display's lock and socket still belong to the first.
         assert!(locks.join(format!(".X{taken}-lock")).exists());
         assert!(sockets.join(format!("X{taken}")).exists());
     }
@@ -350,7 +337,7 @@ mod tests {
         let root = std::env::temp_dir().join(format!("ferese-xwayland-untrusted-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).unwrap();
-        // Writable by everyone without the sticky bit.
+
         fs::set_permissions(&root, fs::Permissions::from_mode(0o777)).unwrap();
 
         let locks = root.join("locks");

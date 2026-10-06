@@ -525,9 +525,7 @@ mod tests {
     fn packaged_and_custom_kdl_pass_runtime_validation() {
         let packaged = Config::parse_source(include_str!("../../packaging/config.kdl")).unwrap();
         packaged.runtime_config().unwrap();
-        // The shipped session keeps the X11 bridge off even though the code
-        // default is enabled: a packaged default must not ship a service that
-        // can restart-loop. Flipping this is a deliberate, reviewed change.
+
         assert!(
             !packaged.xwayland.enabled,
             "packaging/config.kdl must keep xwayland disabled until the lifecycle gate passes"
@@ -566,6 +564,40 @@ mod tests {
 
     fn parse(source: &str) -> Config {
         ferese_config::from_str(source).unwrap()
+    }
+
+    #[test]
+    fn an_empty_configuration_enables_the_managed_x11_service() {
+        let config = parse("");
+
+        assert_eq!(config.xwayland, XwaylandConfig::default());
+        assert!(config.xwayland.enabled, "an empty config keeps the default");
+        assert_eq!(config.xwayland.startup, XwaylandStartup::OnDemand);
+        let runtime = config.runtime_config().expect("an empty config is valid");
+        assert!(runtime.xwayland.enabled);
+    }
+
+    #[test]
+    fn a_configuration_without_an_xwayland_section_keeps_the_defaults() {
+        let source = r#"
+            layout-mode "scrolling";
+            desktop-widgets {
+                clock {
+                    time-format "%H:%M";
+                };
+            }
+            scroll-factor 1.0;
+        "#;
+        let config = parse(source);
+
+        assert!(
+            source.find("xwayland").is_none(),
+            "the sample must have no xwayland node"
+        );
+        assert_eq!(config.xwayland, XwaylandConfig::default());
+        assert!(config.xwayland.enabled);
+        let runtime = config.runtime_config().expect("the existing config stays valid");
+        assert!(runtime.xwayland.enabled);
     }
 
     #[test]

@@ -1,9 +1,8 @@
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
-/// Rolling window in which repeated failures count against the retry budget.
 const FAILURE_WINDOW: Duration = Duration::from_secs(30);
-/// Failures within the window that open the circuit.
+
 const MAX_FAILURES: usize = 3;
 
 /// What the service must do once a generation's resources are actually gone.
@@ -21,11 +20,10 @@ pub(crate) enum AfterStop {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Phase {
-    /// Endpoint reserved and published, but no service process exists.
     Idle,
-    /// A generation ticket has been claimed; spawn is scheduled.
+
     Starting(u64),
-    /// Exec succeeded; not yet protocol-ready.
+
     Spawned(u64),
     Running(u64),
     /// Cleanup in progress. This phase still owns the previous process and its
@@ -39,13 +37,12 @@ pub(crate) enum Phase {
         generation: u64,
         until: Instant,
     },
-    /// Circuit open. The endpoint fails fast until an explicit retry.
+
     Failed,
     Stopped,
 }
 
 impl Phase {
-    /// The generation this phase belongs to, if it is generation-scoped.
     pub fn generation(self) -> Option<u64> {
         match self {
             Phase::Starting(generation)
@@ -61,7 +58,6 @@ impl Phase {
         matches!(self, Phase::Running(_))
     }
 
-    /// True when a start request can still claim a generation.
     ///
     /// Only `Idle` qualifies. In particular `Stopping` does not, which is what
     /// keeps a new generation from starting while a previous process may still
@@ -77,12 +73,7 @@ impl Phase {
     }
 }
 
-/// The pure transition core of the X11 service lifecycle.
-///
-/// Every generation-tagged transition is rejected unless the caller's
-/// generation is the current one, so a stale callback can never move a newer
-/// generation. This type owns no sockets, files, timers, or children; those
-/// live in [`super::Manager`].
+// Process resources belong to the manager, not this state model.
 pub(crate) struct Lifecycle {
     pub phase: Phase,
     next_generation: u64,
@@ -100,8 +91,6 @@ impl Default for Lifecycle {
 }
 
 impl Lifecycle {
-    /// Claim a generation ticket. Returns `None` unless the phase is `Idle`,
-    /// so a synchronous transition prevents two starts.
     pub fn request_start(&mut self) -> Option<u64> {
         if !self.phase.can_start() {
             return None;
@@ -116,7 +105,6 @@ impl Lifecycle {
         Some(generation)
     }
 
-    /// Record a successful exec for `generation`.
     pub fn spawned(&mut self, generation: u64) -> bool {
         if self.phase != Phase::Starting(generation) {
             return false;
@@ -126,7 +114,6 @@ impl Lifecycle {
         true
     }
 
-    /// Record validated readiness for `generation`.
     pub fn ready(&mut self, generation: u64) -> bool {
         if self.phase != Phase::Spawned(generation) {
             return false;
@@ -136,16 +123,8 @@ impl Lifecycle {
         true
     }
 
-    /// Begin stopping `generation` because it failed.
-    ///
-    /// Records the failure and chooses what to do *once cleanup finishes*, then
-    /// parks the lifecycle in `Stopping`. The caller still owns the process at
-    /// this point, so the previous failure history must not be published yet:
-    /// returning to `Backoff` or `Idle` here would let a connection start a
-    /// replacement generation while a live service still holds the listeners.
-    ///
-    /// The failure history is *not* reset on a successful spawn: that would
-    /// make a crash loop look healthy.
+    /// Parks in `Stopping` so no connection can start a replacement generation
+    /// while the old service still holds the listeners.
     pub fn begin_stop_after_failure(&mut self, generation: u64, now: Instant, retryable: bool) -> Option<AfterStop> {
         let current = matches!(
             self.phase,
@@ -234,7 +213,6 @@ impl Lifecycle {
         }
     }
 
-    /// Release a backoff into `Idle` once its window has elapsed.
     pub fn finish_backoff(&mut self, generation: u64, now: Instant) -> bool {
         match self.phase {
             Phase::Backoff {
@@ -290,7 +268,6 @@ impl Lifecycle {
         Some(generation)
     }
 
-    /// Count of failures currently inside the rolling window.
     pub fn recent_failures(&self) -> usize {
         self.failures.len()
     }
@@ -320,8 +297,6 @@ mod tests {
         after_stop
     }
 
-    /// A retryable failure lands in `Backoff`, so a new start requires the
-    /// window to elapse first. Tests that need the next generation must say so.
     fn start_after_backoff(lifecycle: &mut Lifecycle) -> u64 {
         let now = Instant::now();
         let Phase::Backoff { generation, until } = lifecycle.phase else {
@@ -340,7 +315,6 @@ mod tests {
         assert_eq!(generation, 1);
         assert_eq!(lifecycle.phase, Phase::Starting(1));
 
-        // A second request while starting is refused.
         assert_eq!(lifecycle.request_start(), None);
         assert_eq!(lifecycle.phase, Phase::Starting(1));
     }
@@ -386,7 +360,6 @@ mod tests {
         let mut lifecycle = Lifecycle::default();
         let generation = start(&mut lifecycle);
 
-        // Spawned -> Running without a successful exec must be rejected.
         assert!(!lifecycle.ready(generation));
         assert_eq!(lifecycle.phase, Phase::Starting(generation));
     }
@@ -409,8 +382,6 @@ mod tests {
     fn backoff_is_bounded_and_then_opens_the_circuit() {
         let mut lifecycle = Lifecycle::default();
 
-        // Pin each observation to a single `now` so the asserted deadline is
-        // exact rather than racing the clock.
         let now = Instant::now();
         let first = start(&mut lifecycle);
         assert_eq!(fail_and_stop(&mut lifecycle, first, now, true), AfterStop::Backoff);
@@ -459,8 +430,7 @@ mod tests {
         let first = start(&mut lifecycle);
         fail_and_stop(&mut lifecycle, first, Instant::now(), true);
         let second = start_after_backoff(&mut lifecycle);
-        // Crashes after running, then a successful spawn: the history must
-        // survive, or a crash loop would look healthy.
+
         lifecycle.spawned(second);
         lifecycle.ready(second);
 
@@ -479,7 +449,6 @@ mod tests {
         let later = start_time + FAILURE_WINDOW + Duration::from_secs(1);
         fail_and_stop(&mut lifecycle, second, later, true);
 
-        // The old failure aged out, so this counts as the first again.
         assert_eq!(lifecycle.recent_failures(), 1);
     }
 
@@ -491,7 +460,6 @@ mod tests {
         fail_and_stop(&mut lifecycle, generation, Instant::now(), false);
         assert_eq!(lifecycle.phase, Phase::Failed);
 
-        // A client connection must not reopen the circuit.
         assert_eq!(lifecycle.request_start(), None);
 
         assert!(lifecycle.can_explicit_retry());

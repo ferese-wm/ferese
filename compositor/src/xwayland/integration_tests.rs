@@ -1,18 +1,4 @@
-//! Deterministic lifecycle tests driven by a fake Satellite.
-//!
-//! These tests spawn a real child process that accepts the same argument shape
-//! as Satellite, so descriptor passing, the readiness contract, and owned
-//! process-group cleanup are proven end to end without starting an X server.
-//!
-//! Behaviour is selected per test by writing a small wrapper script and passing
-//! it as the configured `xwayland.path`. That exercises the configurable-path
-//! knob and avoids mutating global environment state, which would race between
-//! parallel tests.
-//!
-//! Event-loop dispatch is covered too: `manager_loop` drives a real
-//! `XwaylandManager` through a real calloop `EventLoop` inside an isolated
-//! session, so source registration, readiness delivery, and the stop poll are
-//! exercised the way a live compositor exercises them.
+//! Child and notification helper tests; these do not drive the manager event loop.
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -27,7 +13,6 @@ use super::readiness::ReadinessSocket;
 use super::sockets::Reservation;
 use crate::session_environment::{SessionEnvironment, X11Environment};
 
-/// One generation's fixtures, dropped in reverse creation order.
 struct Fixture {
     directory: PathBuf,
     record: PathBuf,
@@ -39,6 +24,15 @@ struct Fixture {
 
 impl Fixture {
     fn new(name: &str) -> Self {
+        Self::with_allocator(name, false)
+    }
+
+    /// Production display-slot inputs: an X client resolves `DISPLAY` against `/tmp/.X11-unix`.
+    fn new_live(name: &str) -> Self {
+        Self::with_allocator(name, true)
+    }
+
+    fn with_allocator(name: &str, production_inputs: bool) -> Self {
         let directory = std::env::temp_dir().join(format!(
             "ferese-x11-it-{name}-{}-{:?}",
             std::process::id(),
@@ -46,12 +40,20 @@ impl Fixture {
         ));
         let _ = fs::remove_dir_all(&directory);
         fs::create_dir_all(&directory).expect("create the fixture directory");
-        // The runtime directory must be private; the authority cookie and the
-        // readiness socket both live there.
         let runtime_directory = directory.join("run");
         fs::create_dir_all(&runtime_directory).expect("create the runtime directory");
         fs::set_permissions(&runtime_directory, fs::Permissions::from_mode(0o700))
             .expect("make the runtime directory private");
+
+        if production_inputs {
+            crate::xwayland::test_hooks::allocator_root_in(PathBuf::from("/tmp/.X11-unix"), PathBuf::from("/tmp"));
+        } else {
+            // Owned inputs, so this fixture never allocates a real slot in `/tmp/.X11-unix`.
+            let allocator = directory.join("x11");
+            fs::create_dir_all(&allocator).expect("create the allocator directory");
+            fs::set_permissions(&allocator, fs::Permissions::from_mode(0o700)).expect("make the allocator private");
+            crate::xwayland::test_hooks::allocator_root(allocator);
+        }
 
         let reservation = Reservation::allocate().expect("reserve a display");
         let authority =
@@ -67,8 +69,6 @@ impl Fixture {
         }
     }
 
-    /// Write the configured executable, a wrapper that pins the fake's
-    /// behaviour, so no test mutates the parent environment.
     fn script(&self, assignments: &[(&str, &str)]) -> &Self {
         let fake = Path::new(env!("CARGO_MANIFEST_DIR")).join("../scripts/tests/fake-xwayland-satellite.py");
         assert!(fake.exists(), "the fake Satellite must exist at {}", fake.display());
@@ -98,7 +98,6 @@ impl Fixture {
         }
     }
 
-    /// Every start the fake recorded, as raw JSON lines.
     fn starts(&self) -> Vec<serde_json::Value> {
         match fs::read_to_string(&self.record) {
             Ok(contents) => contents
@@ -125,14 +124,11 @@ impl Fixture {
         (spawned, socket)
     }
 
-    /// Spawn the real Satellite binary against the caller's live Wayland
-    /// session, using this fixture's reserved display and authority file.
     fn spawn_real(&self, generation: u64, executable: &Path) -> (Child, ReadinessSocket) {
         let socket = ReadinessSocket::create(&self.runtime_directory, generation).expect("create a readiness socket");
         let notify = socket.path().to_owned();
         let mut environment = self.environment();
-        // The real bridge is an ordinary public client of the running
-        // compositor; a test compositor is not what is under test here.
+
         environment.wayland_display = std::env::var_os("WAYLAND_DISPLAY").expect("a live Wayland session is required");
         let spawned = child::spawn_satellite(
             executable,
@@ -152,6 +148,37 @@ impl Drop for Fixture {
     }
 }
 
+/// Run `test_path` in a dedicated process and report whether this is that process.
+///
+/// Process-wide checks must not share a process with parallel tests that fork
+/// children: those inherit every descriptor of this process, close-on-exec or
+/// not, and would read as unrelated holders.
+fn run_isolated(test_path: &str) -> bool {
+    const CHILD: &str = "FERESE_XWAYLAND_TEST_CHILD";
+    if std::env::var_os(CHILD).is_some() {
+        return true;
+    }
+    let directory = std::env::temp_dir().join(format!(
+        "ferese-isolated-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    let _ = fs::remove_dir_all(&directory);
+    fs::create_dir_all(&directory).expect("create the isolated session directory");
+    fs::set_permissions(&directory, fs::Permissions::from_mode(0o700)).expect("make the session private");
+
+    let status = Command::new(std::env::current_exe().expect("the test binary"))
+        .args(["--exact", test_path, "--nocapture"])
+        .env(CHILD, "1")
+        .env("XDG_RUNTIME_DIR", &directory)
+        .env("XDG_CONFIG_HOME", &directory)
+        .env_remove("FERESE_SOCKET")
+        .output()
+        .expect("re-exec the test");
+    assert!(status.status.success(), "{}", String::from_utf8_lossy(&status.stderr));
+    false
+}
+
 fn wait_until(mut condition: impl FnMut() -> bool) -> bool {
     let deadline = Instant::now() + Duration::from_secs(10);
     while Instant::now() < deadline {
@@ -163,7 +190,6 @@ fn wait_until(mut condition: impl FnMut() -> bool) -> bool {
     false
 }
 
-/// Drain the readiness socket until the fake's notification is judged.
 fn read_ready(socket: &ReadinessSocket, pid: u32) -> bool {
     let deadline = Instant::now() + Duration::from_secs(10);
     while Instant::now() < deadline {
@@ -190,13 +216,19 @@ fn process_exists(pid: u32) -> bool {
 
 #[test]
 fn satellite_receives_exactly_the_owned_listeners_and_no_extra_descriptors() {
-    // A descriptor the parent holds open. Rust creates sockets with
-    // FD_CLOEXEC, so Ferese must not leak it into Satellite.
     let sentinel = std::net::TcpListener::bind("127.0.0.1:0").expect("bind a sentinel");
     let sentinel_fd = sentinel.as_raw_fd();
 
     let fixture = Fixture::new("listeners");
-    fixture.script(&[("FAKE_SATELLITE_READY", "0")]);
+    let sentinel_target = std::fs::read_link(format!("/proc/self/fd/{sentinel_fd}"))
+        .expect("the sentinel descriptor is open")
+        .to_string_lossy()
+        .into_owned();
+    fixture.script(&[
+        ("FAKE_SATELLITE_READY", "0"),
+        ("FAKE_SATELLITE_SENTINEL_FD", &sentinel_fd.to_string()),
+        ("FAKE_SATELLITE_SENTINEL_TARGET", &sentinel_target),
+    ]);
     let (satellite, _socket) = fixture.spawn(1);
     assert!(
         wait_until(|| !fixture.starts().is_empty()),
@@ -204,22 +236,22 @@ fn satellite_receives_exactly_the_owned_listeners_and_no_extra_descriptors() {
     );
     let record = fixture.starts().remove(0);
 
-    // The display and authority Ferese reserved are the ones the fake sees.
     assert_eq!(record["display"], fixture.reservation.display_name());
     assert_eq!(record["authority"], fixture.authority.path().to_str().unwrap());
 
-    // One -listenfd per owned listener, all distinct, all actually listening.
     let listenfds = record["listenfds"].as_array().expect("listenfds array");
     assert_eq!(listenfds.len(), fixture.reservation.listeners().len());
     assert_eq!(
         record["all_listening"], true,
         "every passed fd must be a listening socket"
     );
+    assert_eq!(
+        record["sentinel_leaked"], false,
+        "the ordinary spawn must prove the parent's own descriptor never leaked"
+    );
     reap(satellite);
 
-    // Positive control: with FD_CLOEXEC deliberately cleared, the same
-    // descriptor *is* visible to the child. Without this, the assertion above
-    // could pass merely because the check is broken.
+    // Positive control: with the flag cleared in the forked child, the same descriptor is visible.
     let flags = unsafe { libc::fcntl(sentinel_fd, libc::F_GETFD) };
     assert_ne!(flags, -1);
     assert_ne!(
@@ -227,17 +259,19 @@ fn satellite_receives_exactly_the_owned_listeners_and_no_extra_descriptors() {
         0,
         "the sentinel must start close-on-exec, otherwise this test proves nothing"
     );
-    // Positive control: clear FD_CLOEXEC so the descriptor *does* leak.
-    assert_eq!(
-        unsafe { libc::fcntl(sentinel_fd, libc::F_SETFD, flags & !libc::FD_CLOEXEC) },
-        0
-    );
 
     let control = Fixture::new("listeners-control");
     control.script(&[
         ("FAKE_SATELLITE_READY", "0"),
         ("FAKE_SATELLITE_SENTINEL_FD", &sentinel_fd.to_string()),
+        ("FAKE_SATELLITE_SENTINEL_TARGET", &sentinel_target),
     ]);
+    child::test_hook::set_in_child(move || {
+        if unsafe { libc::fcntl(sentinel_fd, libc::F_SETFD, 0) } == -1 {
+            return Err(std::io::Error::last_os_error());
+        }
+        Ok(())
+    });
     let (satellite, _socket) = control.spawn(1);
     assert!(
         wait_until(|| !control.starts().is_empty()),
@@ -249,6 +283,13 @@ fn satellite_receives_exactly_the_owned_listeners_and_no_extra_descriptors() {
         "the control proves the descriptor check can detect an inherited fd"
     );
     reap(satellite);
+
+    let flags = unsafe { libc::fcntl(sentinel_fd, libc::F_GETFD) };
+    assert_ne!(
+        flags & libc::FD_CLOEXEC,
+        0,
+        "the parent's descriptor flags must be unchanged after the control"
+    );
 }
 
 #[test]
@@ -263,7 +304,7 @@ fn satellite_gets_the_session_environment_and_never_a_private_socket() {
     assert_eq!(environment["DISPLAY"], fixture.reservation.display_name());
     assert_eq!(environment["XAUTHORITY"], fixture.authority.path().to_str().unwrap());
     assert_eq!(environment["WAYLAND_DISPLAY"], "wayland-it");
-    // Satellite is an ordinary public client: it must connect by display name.
+
     assert_eq!(environment["WAYLAND_SOCKET"], serde_json::Value::Null);
     assert_eq!(environment["FERESE_SHELL_CONTROL_SOCKET"], serde_json::Value::Null);
 
@@ -299,8 +340,7 @@ fn a_notification_from_a_child_pid_is_rejected() {
     fixture.script(&[("FAKE_SATELLITE_FORK_NOTIFY", "1")]);
     let (satellite, socket) = fixture.spawn(1);
     let pid = satellite.id();
-    // The datagram is valid but its credentials are the forked child's, so it
-    // must not satisfy this generation's readiness contract.
+
     assert!(!read_ready(&socket, pid), "a foreign PID's READY=1 must be rejected");
     reap(satellite);
 }
@@ -348,47 +388,119 @@ fn wait_until_child(child: &mut Child) -> std::process::ExitStatus {
 
 #[test]
 fn shutdown_cleans_the_whole_owned_process_group() {
+    const PATH: &str = "xwayland::integration_tests::shutdown_cleans_the_whole_owned_process_group";
+    if !run_isolated(PATH) {
+        return;
+    }
+
     let fixture = Fixture::new("group");
-    // The fake forks a descendant that keeps the listening descriptors open and
-    // only exits when the parent tells it to, mimicking a bridge that leaves
-    // children holding the endpoints.
+
     fixture.script(&[
         ("FAKE_SATELLITE_HOLD_FDS", "1"),
         ("FAKE_SATELLITE_READY", "1"),
         ("FAKE_SATELLITE_LINGER", "30"),
     ]);
-    let (mut satellite, socket) = fixture.spawn(1);
+    let (satellite, socket) = fixture.spawn(1);
     let pid = satellite.id();
     assert!(read_ready(&socket, pid), "the group fixture must reach readiness first");
 
-    // The leader is in its own process group, so -pid targets it and any
-    // descendant that inherited the group.
     let group_children = process::group_members(pid);
     assert!(
         group_children.len() >= 2,
         "the fake must have a descendant holding the fds"
     );
 
-    child::signal_group(pid, libc::SIGKILL);
-    let _ = satellite.wait();
+    // Ownership, not liveness: the group must hold the endpoints it was handed.
+    let inodes = listener_inodes(&fixture.reservation);
+    assert!(!inodes.is_empty(), "the reserved listeners must be identifiable");
+    let holders_before = process::socket_holders(&inodes);
     assert!(
-        wait_until(|| !group_children.iter().any(|member| process_exists(*member))),
+        holders_before.iter().any(|holder| *holder != std::process::id()),
+        "a service descendant must hold the X11 listeners before shutdown: {holders_before:?}"
+    );
+
+    let mut group = child::OwnedProcessGroup::adopt(satellite);
+    let status = group
+        .terminate(Duration::from_secs(5))
+        .expect("the owned process group must terminate");
+    assert!(status.is_some(), "terminate() must reap the service leader");
+
+    assert!(
+        wait_until(|| group_children.iter().all(|member| !process_exists(*member))),
         "every member of the owned process group must be gone: {group_children:?}"
+    );
+    assert!(group.group_is_empty(), "the group must report itself empty");
+
+    let holders_after = process::socket_holders(&inodes);
+    assert_eq!(
+        holders_after,
+        vec![std::process::id()],
+        "no service process may still hold the listeners after shutdown: {holders_after:?}"
     );
 }
 
+/// Socket inodes behind the listeners this process reserved.
+fn listener_inodes(reservation: &Reservation) -> Vec<String> {
+    reservation
+        .listeners()
+        .iter()
+        .filter_map(|listener| {
+            let target = std::fs::read_link(format!("/proc/self/fd/{}", listener.as_raw_fd())).ok()?;
+            let text = target.to_string_lossy().into_owned();
+            text.strip_prefix("socket:[")
+                .and_then(|rest| rest.strip_suffix(']'))
+                .map(str::to_owned)
+        })
+        .collect()
+}
+
 mod process {
-    /// PIDs whose process group matches `leader`.
+    /// PIDs that currently hold any of `inodes`.
+    pub(super) fn socket_holders(inodes: &[String]) -> Vec<u32> {
+        let mut holders = Vec::new();
+        let Ok(entries) = std::fs::read_dir("/proc") else {
+            return holders;
+        };
+        for entry in entries.flatten() {
+            let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+                continue;
+            };
+            let Ok(pid): Result<u32, _> = name.parse() else {
+                continue;
+            };
+            let Ok(fds) = std::fs::read_dir(entry.path().join("fd")) else {
+                continue;
+            };
+            for fd in fds.flatten() {
+                let Ok(target) = std::fs::read_link(fd.path()) else {
+                    continue;
+                };
+                let text = target.to_string_lossy();
+                let Some(number) = text.strip_prefix("socket:[").and_then(|rest| rest.strip_suffix(']')) else {
+                    continue;
+                };
+                if inodes.iter().any(|inode| inode == number) {
+                    holders.push(pid);
+                    break;
+                }
+            }
+        }
+        holders.sort_unstable();
+        holders.dedup();
+        holders
+    }
+
     pub(super) fn group_members(leader: u32) -> Vec<u32> {
         let Ok(entries) = std::fs::read_dir("/proc") else {
             return Vec::new();
         };
+
         entries
             .filter_map(|entry| {
                 let name = entry.ok()?.file_name();
                 let pid: u32 = name.to_str()?.parse().ok()?;
                 let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
-                // The final field before the closing paren is the process group.
+
                 let closing = stat.rfind(')')?;
                 let fields: Vec<&str> = stat[closing + 1..].split_whitespace().collect();
                 let pgrp: u32 = fields.get(2)?.parse().ok()?;
@@ -398,37 +510,15 @@ mod process {
     }
 }
 
-/// Live check against the installed Satellite build.
-///
-/// This is the one assumption unit tests cannot establish: that the packaged
-/// binary actually implements the readiness contract Ferese depends on. It
-/// needs a real Satellite, a real `Xwayland`, and a live Wayland session, so it
-/// is ignored by default.
-///
-/// Run with:
-///
-/// ```text
-/// cargo test -p ferese --bin ferese -- --ignored real_satellite
-/// ```
 #[test]
 #[ignore = "requires a real Satellite, Xwayland, and a live Wayland session"]
 fn real_satellite_reports_verified_readiness_and_serves_authorized_x_clients() {
-    let Some(executable) = ["xwayland-satellite", "/usr/bin/xwayland-satellite"]
-        .into_iter()
-        .find_map(|candidate| {
-            let path = PathBuf::from(candidate);
-            path.is_file().then_some(path)
-        })
-    else {
-        panic!("xwayland-satellite is not installed");
-    };
+    let executable = live_dependencies();
 
-    let fixture = Fixture::new("real");
+    let fixture = Fixture::new_live("real");
     let (mut satellite, socket) = fixture.spawn_real(1, &executable);
     let pid = satellite.id();
 
-    // Ferese allows 10 seconds in production; allow more here so a slow machine
-    // does not produce a misleading failure, but report the real elapsed time.
     let started = Instant::now();
     let deadline = started + Duration::from_secs(30);
     let mut accepted = false;
@@ -456,9 +546,6 @@ fn real_satellite_reports_verified_readiness_and_serves_authorized_x_clients() {
         "readiness took {elapsed:?}, which exceeds the production startup budget"
     );
 
-    // Readiness alone does not prove the X server is actually usable. Connect a
-    // real X11 client through the managed authority file: this exercises the
-    // reservation, the cookie, and the inherited listening descriptors together.
     let output = Command::new("xdpyinfo")
         .arg("-display")
         .arg(fixture.reservation.display_name())
@@ -480,58 +567,61 @@ fn real_satellite_reports_verified_readiness_and_serves_authorized_x_clients() {
         Err(error) => panic!("xdpyinfo is unavailable, so the endpoint is unverified: {error}"),
     }
 
-    // Clean up the whole owned group, as shutdown does.
-    child::signal_group(pid, libc::SIGKILL);
-    let _ = satellite.wait();
+    let mut group = child::OwnedProcessGroup::adopt(satellite);
+    let status = group
+        .terminate(Duration::from_secs(10))
+        .expect("the real service group must terminate");
+    assert!(status.is_some(), "terminate() must reap the real Satellite");
+    assert!(
+        group.group_is_empty(),
+        "the real service group must be empty after shutdown"
+    );
     assert!(wait_until(|| !process_exists(pid)), "the real Satellite must be gone");
 }
 
-/// Manager-level tests: the real `XwaylandManager`, registered through a real
-/// calloop `EventLoop`, dispatched like a live compositor.
-///
-/// These are the paths the state-machine unit tests cannot reach: source
-/// registration, the readiness source firing inside a dispatch, the exit watch,
-/// and the stop poll deciding when the service becomes startable again. They
-/// run in a re-executed child with an isolated `XDG_RUNTIME_DIR`, because a
-/// live `Ferese` owns a Wayland `Display` and an IPC socket.
+/// Everything the live smoke test cannot supply for itself, declared up front.
+fn live_dependencies() -> PathBuf {
+    let Some(executable) = ["xwayland-satellite", "/usr/bin/xwayland-satellite"]
+        .into_iter()
+        .find_map(|candidate| {
+            let path = PathBuf::from(candidate);
+            path.is_file().then_some(path)
+        })
+    else {
+        panic!("dependency missing: xwayland-satellite is not installed");
+    };
+
+    if std::env::var_os("WAYLAND_DISPLAY").is_none() {
+        panic!("dependency missing: a live Wayland session (WAYLAND_DISPLAY is unset)");
+    }
+
+    let on_path = |program: &str| {
+        std::env::var_os("PATH")
+            .is_some_and(|paths| std::env::split_paths(&paths).any(|directory| directory.join(program).is_file()))
+    };
+    if !on_path("xdpyinfo") {
+        panic!("dependency missing: xdpyinfo (x11-utils) is required to prove an X client can connect");
+    }
+
+    match fs::symlink_metadata("/tmp/.X11-unix") {
+        Ok(metadata) if metadata.is_dir() => {}
+        Ok(_) => panic!("dependency missing: /tmp/.X11-unix exists but is not a directory"),
+        Err(error) => panic!("dependency missing: the shared X11 socket directory /tmp/.X11-unix: {error}"),
+    }
+
+    executable
+}
+
 mod manager_loop {
     use super::*;
     use crate::Ferese;
     use crate::config::{XwaylandConfig, XwaylandStartup};
     use crate::xwayland;
+    use crate::xwayland::test_hooks;
     use ferese_ipc::xwayland::{Readiness, State};
     use smithay::reexports::calloop::EventLoop;
     use smithay::reexports::wayland_server::Display;
 
-    /// Re-exec this test in an isolated session, and report whether we are the
-    /// child.
-    fn run_isolated(test_path: &str) -> bool {
-        const CHILD: &str = "FERESE_XWAYLAND_MANAGER_LOOP_CHILD";
-        if std::env::var_os(CHILD).is_some() {
-            return true;
-        }
-        let directory = std::env::temp_dir().join(format!(
-            "ferese-manager-loop-{}-{:?}",
-            std::process::id(),
-            std::thread::current().id()
-        ));
-        let _ = fs::remove_dir_all(&directory);
-        fs::create_dir_all(&directory).expect("create the isolated session directory");
-        fs::set_permissions(&directory, fs::Permissions::from_mode(0o700)).expect("make the session private");
-
-        let status = Command::new(std::env::current_exe().expect("the test binary"))
-            .args(["--exact", test_path, "--nocapture"])
-            .env(CHILD, "1")
-            .env("XDG_RUNTIME_DIR", &directory)
-            .env("XDG_CONFIG_HOME", &directory)
-            .env_remove("FERESE_SOCKET")
-            .output()
-            .expect("re-exec the test");
-        assert!(status.status.success(), "{}", String::from_utf8_lossy(&status.stderr));
-        false
-    }
-
-    /// Write the fake Satellite wrapper that this test drives.
     fn wrapper(directory: &Path, assignments: &[(&str, &str)]) -> PathBuf {
         let fake = Path::new(env!("CARGO_MANIFEST_DIR")).join("../scripts/tests/fake-xwayland-satellite.py");
         let script = directory.join("fake-satellite");
@@ -545,9 +635,20 @@ mod manager_loop {
         script
     }
 
+    fn x11_socket_path(directory: &Path, display: &str) -> PathBuf {
+        directory
+            .join("x11")
+            .join(format!("X{}", display.trim_start_matches(':')))
+    }
+
     /// A `Ferese` wired to a real event loop, ready to run the manager.
     fn session(directory: &Path, path: PathBuf) -> (EventLoop<'static, Ferese>, Ferese) {
         let (_, runtime, _) = crate::theme::prepare("xwayland { }", directory).expect("prepare configuration");
+        // Owned inputs, so this test never competes for a real display slot.
+        let allocator = directory.join("x11");
+        fs::create_dir_all(&allocator).expect("create the allocator directory");
+        fs::set_permissions(&allocator, fs::Permissions::from_mode(0o700)).expect("make the allocator private");
+        test_hooks::allocator_root(allocator);
         let mut event_loop = EventLoop::try_new().expect("create the event loop");
         let display = Display::new().expect("create the Wayland display");
         let mut state = Ferese::new(&mut event_loop, display, runtime).expect("create the session");
@@ -559,7 +660,6 @@ mod manager_loop {
         (event_loop, state)
     }
 
-    /// Dispatch until `condition` holds, or fail after a generous bound.
     fn dispatch_until(
         event_loop: &mut EventLoop<'static, Ferese>,
         state: &mut Ferese,
@@ -592,7 +692,7 @@ mod manager_loop {
         fs::create_dir_all(&directory).expect("create the test directory");
 
         let (mut event_loop, mut state) = session(&directory, wrapper(&directory, &[("FAKE_SATELLITE_LINGER", "60")]));
-        xwayland::initialize(&mut state).expect("initialize the managed X11 service");
+        xwayland::initialize(&mut state);
 
         let generation = xwayland::request_start(&mut state).expect("an on-demand service accepts a start request");
         assert!(generation > 0);
@@ -635,12 +735,10 @@ mod manager_loop {
                 &[("FAKE_SATELLITE_EXIT_AFTER_READY", "1"), ("FAKE_SATELLITE_LINGER", "0")],
             ),
         );
-        xwayland::initialize(&mut state).expect("initialize the managed X11 service");
+        xwayland::initialize(&mut state);
         xwayland::request_start(&mut state).expect("an on-demand service accepts a start request");
 
-        // The core contract: while a service process is alive, no dispatch may
-        // make the service startable again, or a replacement generation could
-        // race the process that still owns the listeners.
+        // While a service process is alive, no dispatch may make it startable again.
         let deadline = Instant::now() + Duration::from_secs(15);
         loop {
             event_loop
@@ -655,8 +753,7 @@ mod manager_loop {
                     "a live service must never be startable again; status: {status:?}"
                 );
             }
-            // Only a published outcome counts: `Stopped` covers an in-flight
-            // stop, where the process is still legitimately alive.
+            // `Stopped` also covers an in-flight stop, where the process is still alive.
             if matches!(status.state, State::Backoff | State::Failed | State::Idle) {
                 break;
             }
@@ -684,6 +781,615 @@ mod manager_loop {
                 "a fresh start must wait for the retry window"
             );
         }
+        let _ = fs::remove_dir_all(&directory);
+    }
+
+    #[test]
+    fn a_readiness_timeout_stops_the_live_service_before_anything_starts_again() {
+        const PATH: &str = "xwayland::integration_tests::manager_loop::a_readiness_timeout_stops_the_live_service_before_anything_starts_again";
+        if !run_isolated(PATH) {
+            return;
+        }
+        test_hooks::reset();
+        test_hooks::STARTUP_DEADLINE_MS.store(600, std::sync::atomic::Ordering::SeqCst);
+
+        let directory = std::env::temp_dir().join(format!("ferese-manager-timeout-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&directory);
+        fs::create_dir_all(&directory).expect("create the test directory");
+        let record = directory.join("starts.jsonl");
+        let record = record.display().to_string();
+
+        let (mut event_loop, mut state) = session(
+            &directory,
+            wrapper(
+                &directory,
+                &[
+                    ("FAKE_SATELLITE_RECORD", record.as_str()),
+                    // Never reports readiness; a descendant keeps the listeners open.
+                    ("FAKE_SATELLITE_READY", "0"),
+                    ("FAKE_SATELLITE_HOLD_FDS", "1"),
+                    ("FAKE_SATELLITE_LINGER", "60"),
+                ],
+            ),
+        );
+        xwayland::initialize(&mut state);
+        let first_generation =
+            xwayland::request_start(&mut state).expect("an on-demand service accepts a start request");
+
+        let display = xwayland::status_snapshot(&state)
+            .display
+            .expect("a display is reserved");
+        let socket_path = x11_socket_path(&directory, &display);
+        // The kernel queues the connection, so a re-enabled listener could claim it.
+        std::os::unix::net::UnixStream::connect(&socket_path).expect("the reserved socket accepts a queued connection");
+
+        let mut first_pid = None;
+        let mut observed_pids = Vec::new();
+        let mut highest_generation = first_generation;
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            event_loop
+                .dispatch(Some(Duration::from_millis(25)), &mut state)
+                .expect("dispatch the event loop");
+            let status = xwayland::status_snapshot(&state);
+            highest_generation = highest_generation.max(status.generation.unwrap_or(0));
+            if let Some(pid) = status.satellite_pid {
+                if first_pid.is_none() {
+                    first_pid = Some(pid);
+                }
+                observed_pids.push(pid);
+                assert!(
+                    xwayland::request_start(&mut state).is_none(),
+                    "a live service must never be startable again; status: {status:?}"
+                );
+            }
+            if status.state == State::Failed {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "the timeout never opened the circuit; last status: {status:?}"
+            );
+        }
+
+        let status = xwayland::status_snapshot(&state);
+        assert_eq!(status.state, State::Failed, "three silent starts must open the circuit");
+        assert!(
+            status
+                .last_error
+                .as_deref()
+                .is_some_and(|error| error.contains("reported no readiness")),
+            "the timeout must be reported as a broken readiness contract, got {status:?}"
+        );
+
+        let first_pid = first_pid.expect("a service was spawned");
+        assert!(
+            wait_until(|| !process_exists(first_pid)),
+            "the timed-out service leader must be reaped, pid {first_pid} still exists"
+        );
+        assert!(
+            observed_pids.iter().all(|pid| wait_until(|| !process_exists(*pid))),
+            "every generation started by the queued connection must be reaped"
+        );
+
+        let holder = fs::read_to_string(&record)
+            .expect("the fake recorded its start")
+            .lines()
+            .next()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("valid JSON")["holder_pid"].clone())
+            .and_then(|value| value.as_u64())
+            .map(|pid| pid as u32)
+            .expect("the fake reports the descriptor holder");
+        assert!(
+            wait_until(|| !process_exists(holder)),
+            "the descendant holding the listeners must be killed, pid {holder} still exists"
+        );
+
+        assert!(
+            !socket_path.exists(),
+            "the socket path must be released on terminal failure"
+        );
+        assert!(
+            xwayland::request_start(&mut state).is_none(),
+            "an open circuit must not accept a start request"
+        );
+        assert!(
+            highest_generation >= 2,
+            "the queued connection must have driven retries after cleanup, saw generation {highest_generation}"
+        );
+        let _ = fs::remove_dir_all(&directory);
+    }
+
+    #[test]
+    fn an_unavailable_pidfd_falls_back_to_the_bounded_exit_poll() {
+        const PATH: &str =
+            "xwayland::integration_tests::manager_loop::an_unavailable_pidfd_falls_back_to_the_bounded_exit_poll";
+        if !run_isolated(PATH) {
+            return;
+        }
+        test_hooks::reset();
+        test_hooks::PIDFD_UNAVAILABLE.store(true, std::sync::atomic::Ordering::SeqCst);
+
+        let directory = std::env::temp_dir().join(format!("ferese-manager-poll-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&directory);
+        fs::create_dir_all(&directory).expect("create the test directory");
+
+        let (mut event_loop, mut state) = session(
+            &directory,
+            wrapper(
+                &directory,
+                &[
+                    ("FAKE_SATELLITE_EXIT_AFTER_READY", "1"),
+                    ("FAKE_SATELLITE_LINGER", "60"),
+                ],
+            ),
+        );
+        xwayland::initialize(&mut state);
+        xwayland::request_start(&mut state).expect("an on-demand service accepts a start request");
+
+        let mut pid = None;
+        let mut verified_readiness = false;
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            event_loop
+                .dispatch(Some(Duration::from_millis(25)), &mut state)
+                .expect("dispatch the event loop");
+            let status = xwayland::status_snapshot(&state);
+            if let Some(observed) = status.satellite_pid {
+                pid = Some(observed);
+            }
+            if status.readiness == Readiness::Verified {
+                verified_readiness = true;
+            }
+            if pid.is_some() && status.state == State::Backoff {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "the fallback watcher never noticed the exit; last status: {status:?}"
+            );
+        }
+
+        let pid = pid.expect("a service was spawned");
+        assert!(
+            wait_until(|| !process_exists(pid)),
+            "the observed service must be reaped without a pidfd"
+        );
+        assert!(verified_readiness, "the service reported readiness before it exited");
+        let status = xwayland::status_snapshot(&state);
+        assert_eq!(status.satellite_pid, None, "cleanup released the process owner");
+        test_hooks::reset();
+        let _ = fs::remove_dir_all(&directory);
+    }
+
+    #[test]
+    fn a_stale_exit_callback_cannot_stop_a_replacement_service() {
+        const PATH: &str =
+            "xwayland::integration_tests::manager_loop::a_stale_exit_callback_cannot_stop_a_replacement_service";
+        if !run_isolated(PATH) {
+            return;
+        }
+        test_hooks::reset();
+
+        let directory = std::env::temp_dir().join(format!("ferese-manager-stale-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&directory);
+        fs::create_dir_all(&directory).expect("create the test directory");
+
+        let (mut event_loop, mut state) = session(
+            &directory,
+            wrapper(&directory, &[("FAKE_SATELLITE_EXIT_BEFORE_READY", "1")]),
+        );
+        xwayland::initialize(&mut state);
+        let first_generation =
+            xwayland::request_start(&mut state).expect("an on-demand service accepts a start request");
+
+        let mut retired_pid = None;
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            event_loop
+                .dispatch(Some(Duration::from_millis(25)), &mut state)
+                .expect("dispatch the event loop");
+            let status = xwayland::status_snapshot(&state);
+            if let Some(pid) = status.satellite_pid {
+                retired_pid = Some(pid);
+            }
+            if status.state == State::Failed {
+                break;
+            }
+            assert!(Instant::now() < deadline, "the early failure never settled: {status:?}");
+        }
+        let retired_pid = retired_pid.expect("the first generation was spawned");
+        let retired_status = xwayland::status_snapshot(&state);
+        assert!(
+            !retired_status.state.is_inactive(),
+            "an early failure must leave the circuit open: {retired_status:?}"
+        );
+
+        wrapper(&directory, &[("FAKE_SATELLITE_LINGER", "60")]);
+        xwayland::retry(&mut state).expect("an explicit retry rebuilds an unavailable service");
+        dispatch_until(&mut event_loop, &mut state, |state| {
+            xwayland::status_snapshot(state).state == State::Running
+        });
+        let live = xwayland::status_snapshot(&state);
+        let live_pid = live.satellite_pid.expect("the replacement reports its pid");
+        let live_generation = live.generation.expect("the replacement reports its generation");
+        assert_ne!(live_pid, retired_pid, "the replacement must be a different process");
+
+        let handle = state.loop_handle.clone();
+        let stale_generation = first_generation;
+        {
+            let manager = state.xwayland.as_mut().expect("the service exists");
+            assert!(
+                !manager.owns(stale_generation, retired_pid),
+                "the retired process is no longer owned"
+            );
+            manager.handle_exit(&handle, stale_generation, retired_pid);
+            manager.fail(&handle, stale_generation, "stale failure", true);
+        }
+
+        let after = xwayland::status_snapshot(&state);
+        assert_eq!(
+            after.state,
+            State::Running,
+            "a stale callback must not move the live service"
+        );
+        assert_eq!(after.satellite_pid, Some(live_pid), "the live process must stay owned");
+        assert_eq!(
+            after.generation,
+            Some(live_generation),
+            "the live generation must survive"
+        );
+        assert!(
+            process_exists(live_pid),
+            "the live service must not be signalled by a stale callback"
+        );
+        let _ = fs::remove_dir_all(&directory);
+    }
+
+    #[test]
+    fn shutdown_while_starting_stops_the_service_it_owns() {
+        const PATH: &str =
+            "xwayland::integration_tests::manager_loop::shutdown_while_starting_stops_the_service_it_owns";
+        if !run_isolated(PATH) {
+            return;
+        }
+        test_hooks::reset();
+
+        let directory = std::env::temp_dir().join(format!("ferese-manager-shutdown-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&directory);
+        fs::create_dir_all(&directory).expect("create the test directory");
+        let (mut event_loop, mut state) =
+            session(&directory, wrapper(&directory, &[("FAKE_SATELLITE_READY_DELAY", "30")]));
+        xwayland::initialize(&mut state);
+        xwayland::request_start(&mut state).expect("an on-demand service accepts a start request");
+
+        for _ in 0..8 {
+            event_loop
+                .dispatch(Some(Duration::from_millis(25)), &mut state)
+                .expect("dispatch the event loop");
+        }
+        let status = xwayland::status_snapshot(&state);
+        let display = status.display.clone().expect("a display is reserved");
+        let pid = status.satellite_pid.expect("the service was spawned");
+        assert_eq!(
+            status.state,
+            State::Starting,
+            "shutdown must happen mid-start: {status:?}"
+        );
+
+        xwayland::shutdown_after_loop(&mut state);
+        assert!(state.xwayland.is_none(), "shutdown releases the manager");
+        assert!(
+            wait_until(|| !process_exists(pid)),
+            "the starting service must be stopped and reaped, pid {pid} still exists"
+        );
+
+        event_loop
+            .dispatch(Some(Duration::from_millis(50)), &mut state)
+            .expect("dispatch after shutdown");
+        assert!(
+            state.xwayland.is_none(),
+            "a stale callback must not resurrect the manager"
+        );
+        assert!(
+            !x11_socket_path(&directory, &display).exists(),
+            "shutdown must release the socket path"
+        );
+        let _ = fs::remove_dir_all(&directory);
+    }
+
+    #[test]
+    fn a_failed_rebind_is_reported_and_the_next_retry_starts_a_service() {
+        const PATH: &str = "xwayland::integration_tests::manager_loop::a_failed_rebind_is_reported_and_the_next_retry_starts_a_service";
+        if !run_isolated(PATH) {
+            return;
+        }
+        test_hooks::reset();
+
+        let directory = std::env::temp_dir().join(format!("ferese-manager-rebind-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&directory);
+        fs::create_dir_all(&directory).expect("create the test directory");
+
+        let (mut event_loop, mut state) = session(
+            &directory,
+            wrapper(&directory, &[("FAKE_SATELLITE_EXIT_BEFORE_READY", "1")]),
+        );
+        xwayland::initialize(&mut state);
+        let first_generation =
+            xwayland::request_start(&mut state).expect("an on-demand service accepts a start request");
+
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            event_loop
+                .dispatch(Some(Duration::from_millis(25)), &mut state)
+                .expect("dispatch the event loop");
+            if xwayland::status_snapshot(&state).state == State::Failed {
+                break;
+            }
+            assert!(Instant::now() < deadline, "the service never became failed");
+        }
+
+        test_hooks::FAIL_REBIND_AFTER.store(0, std::sync::atomic::Ordering::SeqCst);
+        let error = xwayland::retry(&mut state).expect_err("an injected rebind failure must be reported");
+        assert!(
+            error.contains("rebind X11 display"),
+            "the reported error must name the rebind step: {error}"
+        );
+        let failed = xwayland::status_snapshot(&state);
+        assert_eq!(
+            failed.state,
+            State::Failed,
+            "a failed rebind must stay retryable: {failed:?}"
+        );
+        assert!(
+            xwayland::request_start(&mut state).is_none(),
+            "the circuit is still open"
+        );
+
+        test_hooks::FAIL_REBIND_AFTER.store(usize::MAX, std::sync::atomic::Ordering::SeqCst);
+        wrapper(&directory, &[("FAKE_SATELLITE_LINGER", "60")]);
+        xwayland::retry(&mut state).expect("a retry after a failed rebind must succeed");
+        dispatch_until(&mut event_loop, &mut state, |state| {
+            xwayland::status_snapshot(state).state == State::Running
+                && xwayland::status_snapshot(state)
+                    .generation
+                    .is_some_and(|generation| generation > first_generation)
+        });
+        let status = xwayland::status_snapshot(&state);
+        assert!(
+            status
+                .generation
+                .is_some_and(|generation| generation > first_generation),
+            "the successful retry must start a real generation: {status:?}"
+        );
+        let _ = fs::remove_dir_all(&directory);
+    }
+
+    #[test]
+    fn a_listener_registration_failure_leaves_a_retryable_endpoint() {
+        const PATH: &str =
+            "xwayland::integration_tests::manager_loop::a_listener_registration_failure_leaves_a_retryable_endpoint";
+        if !run_isolated(PATH) {
+            return;
+        }
+        test_hooks::reset();
+
+        let directory = std::env::temp_dir().join(format!("ferese-manager-register-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&directory);
+        fs::create_dir_all(&directory).expect("create the test directory");
+
+        let (mut event_loop, mut state) = session(
+            &directory,
+            wrapper(&directory, &[("FAKE_SATELLITE_EXIT_BEFORE_READY", "1")]),
+        );
+        // Fail the second listener source: the first is already registered.
+        test_hooks::FAIL_LISTENER_REGISTRATION_AFTER.store(1, std::sync::atomic::Ordering::SeqCst);
+        xwayland::initialize(&mut state);
+        let diagnostic = state.x11_diagnostic.clone().expect("the failure must be visible");
+        assert!(
+            diagnostic.contains("injected X11 listener registration failure"),
+            "the diagnostic must name the failure: {diagnostic}"
+        );
+        assert!(
+            state.xwayland.is_none(),
+            "a half-registered endpoint must not be published"
+        );
+
+        test_hooks::FAIL_LISTENER_REGISTRATION_AFTER.store(usize::MAX, std::sync::atomic::Ordering::SeqCst);
+        xwayland::retry(&mut state).expect("the service becomes available once registration works");
+
+        let mut first_generation = None;
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            event_loop
+                .dispatch(Some(Duration::from_millis(25)), &mut state)
+                .expect("dispatch the event loop");
+            let status = xwayland::status_snapshot(&state);
+            if status.generation.is_some() {
+                first_generation = status.generation;
+            }
+            if status.state == State::Failed {
+                break;
+            }
+            assert!(Instant::now() < deadline, "the service never became failed: {status:?}");
+        }
+        let first_generation = first_generation.expect("a generation was started");
+
+        test_hooks::FAIL_LISTENER_REGISTRATION_AFTER.store(1, std::sync::atomic::Ordering::SeqCst);
+        let error = xwayland::retry(&mut state).expect_err("registration failure must be reported");
+        assert!(
+            error.contains("injected X11 listener registration failure"),
+            "the reported error must name the failure: {error}"
+        );
+        let failed = xwayland::status_snapshot(&state);
+        assert_eq!(
+            failed.state,
+            State::Failed,
+            "the endpoint must stay in a retryable failed state: {failed:?}"
+        );
+        assert!(
+            xwayland::request_start(&mut state).is_none(),
+            "the circuit is still open"
+        );
+        let display = failed.display.expect("the display is still reserved");
+        assert!(
+            !x11_socket_path(&directory, &display).exists(),
+            "the half-registered listeners must be closed"
+        );
+
+        test_hooks::FAIL_LISTENER_REGISTRATION_AFTER.store(usize::MAX, std::sync::atomic::Ordering::SeqCst);
+        wrapper(&directory, &[("FAKE_SATELLITE_LINGER", "60")]);
+        xwayland::retry(&mut state).expect("the endpoint recovers once registration works");
+        dispatch_until(&mut event_loop, &mut state, |state| {
+            xwayland::status_snapshot(state).state == State::Running
+                && xwayland::status_snapshot(state)
+                    .generation
+                    .is_some_and(|generation| generation > first_generation)
+        });
+        let _ = fs::remove_dir_all(&directory);
+    }
+
+    #[test]
+    fn an_eager_service_that_could_not_start_retries_exactly_once() {
+        const PATH: &str =
+            "xwayland::integration_tests::manager_loop::an_eager_service_that_could_not_start_retries_exactly_once";
+        if !run_isolated(PATH) {
+            return;
+        }
+        test_hooks::reset();
+
+        let directory = std::env::temp_dir().join(format!("ferese-manager-eager-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&directory);
+        fs::create_dir_all(&directory).expect("create the test directory");
+
+        let (mut event_loop, mut state) = session(&directory, wrapper(&directory, &[("FAKE_SATELLITE_LINGER", "60")]));
+        state.xwayland_config.startup = XwaylandStartup::Eager;
+
+        test_hooks::FAIL_LISTENER_REGISTRATION_AFTER.store(0, std::sync::atomic::Ordering::SeqCst);
+        xwayland::initialize(&mut state);
+        assert!(state.xwayland.is_none(), "an unavailable service publishes no endpoint");
+        assert!(
+            state.x11_diagnostic.is_some(),
+            "the unavailable start must leave a diagnostic"
+        );
+        test_hooks::FAIL_LISTENER_REGISTRATION_AFTER.store(usize::MAX, std::sync::atomic::Ordering::SeqCst);
+
+        // Eager startup must still issue exactly one start request.
+        xwayland::retry(&mut state).expect("an eager retry of an unavailable service must succeed");
+        assert!(
+            state.x11_diagnostic.is_none(),
+            "a successful retry clears the diagnostic"
+        );
+
+        dispatch_until(&mut event_loop, &mut state, |state| {
+            xwayland::status_snapshot(state).state == State::Running
+        });
+        let status = xwayland::status_snapshot(&state);
+        assert_eq!(
+            status.generation,
+            Some(1),
+            "exactly one generation was requested: {status:?}"
+        );
+        assert_eq!(status.readiness, Readiness::Verified, "readiness is earned: {status:?}");
+        let _ = fs::remove_dir_all(&directory);
+    }
+
+    #[test]
+    fn restart_required_tracks_desired_configuration_only() {
+        const PATH: &str =
+            "xwayland::integration_tests::manager_loop::restart_required_tracks_desired_configuration_only";
+        if !run_isolated(PATH) {
+            return;
+        }
+        test_hooks::reset();
+
+        let directory = std::env::temp_dir().join(format!("ferese-manager-reload-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&directory);
+        fs::create_dir_all(&directory).expect("create the test directory");
+
+        let (mut event_loop, mut state) = session(&directory, wrapper(&directory, &[("FAKE_SATELLITE_LINGER", "60")]));
+        xwayland::initialize(&mut state);
+        xwayland::request_start(&mut state).expect("an on-demand service accepts a start request");
+        dispatch_until(&mut event_loop, &mut state, |state| {
+            xwayland::status_snapshot(state).state == State::Running
+        });
+
+        let effective = xwayland::status_snapshot(&state);
+        let display = effective.display.clone().expect("a display is reserved");
+        let pid = effective.satellite_pid.expect("a running service reports its pid");
+        let authority = state
+            .xwayland
+            .as_ref()
+            .and_then(|manager| manager.x11_environment().authority.to_str().map(str::to_owned))
+            .expect("an authority path is published");
+        assert!(
+            !effective.restart_required,
+            "the live service matches the session configuration"
+        );
+
+        // Every restart-only field, changed one reload at a time.
+        let changes = [
+            "xwayland { enabled #true; startup \"eager\"; }",
+            "xwayland { enabled #true; path \"/nonexistent/satellite\"; }",
+            "xwayland { enabled #false; }",
+        ];
+        for source in changes {
+            state
+                .reload_config_source(source.into())
+                .unwrap_or_else(|error| panic!("the reload must be accepted: {error}"));
+            let status = xwayland::status_snapshot(&state);
+            assert!(
+                status.restart_required,
+                "changing the configuration must request a restart: {source} => {status:?}"
+            );
+            assert_eq!(
+                status.state,
+                State::Running,
+                "a reload must not disturb the live service"
+            );
+            assert_eq!(
+                status.display.as_deref(),
+                Some(display.as_str()),
+                "the display must not move"
+            );
+            assert_eq!(status.satellite_pid, Some(pid), "the service must not be restarted");
+            let authority_now = state
+                .xwayland
+                .as_ref()
+                .and_then(|manager| manager.x11_environment().authority.to_str().map(str::to_owned))
+                .expect("an authority path is published");
+            assert_eq!(authority_now, authority, "the authority file must not be replaced");
+        }
+
+        // Reverting to the session configuration clears the indication.
+        state
+            .reload_config_source(
+                "xwayland { enabled #true; startup \"on-demand\"; path \"".to_owned()
+                    + &wrapper(&directory, &[]).display().to_string()
+                    + "\"; }",
+            )
+            .expect("the reload must be accepted");
+        let reverted = xwayland::status_snapshot(&state);
+        assert!(
+            !reverted.restart_required,
+            "reverting to the effective configuration must clear restart_required: {reverted:?}"
+        );
+
+        // A rejected reload changes nothing.
+        let error = state
+            .reload_config_source("xwayland { enabled #true; startup \"whenever\"; }".into())
+            .expect_err("an invalid startup mode must be rejected");
+        assert!(!error.is_empty(), "the rejection is explained");
+        let unchanged = xwayland::status_snapshot(&state);
+        assert!(
+            !unchanged.restart_required,
+            "a rejected reload must not change desired state: {unchanged:?}"
+        );
+        assert_eq!(
+            unchanged.satellite_pid,
+            Some(pid),
+            "a rejected reload must not touch the service"
+        );
         let _ = fs::remove_dir_all(&directory);
     }
 }

@@ -138,7 +138,6 @@ impl cosmic::Application for Consent {
                 return cosmic::iced::window::run(id, move |window| {
                     let attached = crate::parent::Parent::attach(window, &parent)?;
                     if let Some(diagnostic) = attached.diagnostic {
-                        // The prompt is still shown, without a parent window.
                         eprintln!("ferese portal: {diagnostic}");
                     }
                     Ok((attached.parent.map(Arc::new), ModalMaterial::attach(window)))

@@ -179,7 +179,6 @@ impl cosmic::Application for Picker {
                 return cosmic::iced::window::run(id, move |window| {
                     let attached = crate::parent::Parent::attach(window, &parent)?;
                     if let Some(diagnostic) = attached.diagnostic {
-                        // The chooser is still shown, without a parent window.
                         eprintln!("ferese portal: {diagnostic}");
                     }
                     Ok((

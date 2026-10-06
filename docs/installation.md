@@ -73,7 +73,7 @@ The packaged configuration keeps X11 disabled. Enable it by setting
 
 ```kdl
 xwayland {
-    enabled true
+    enabled #true
 }
 ```
 

@@ -1,28 +1,5 @@
 #!/usr/bin/env python3
-"""A fake ``xwayland-satellite`` for lifecycle tests.
-
-It accepts the same argument shape Ferese uses and can be told to misbehave, so
-lifecycle, descriptor, and readiness behaviour can be proven deterministically
-without starting a real X server.
-
-Behaviour is selected with ``FAKE_SATELLITE_*`` environment variables:
-
-``FAKE_SATELLITE_RECORD``    Path to append one JSON record per start.
-``FAKE_SATELLITE_READY``     ``1`` (default) send ``READY=1``; ``0`` never send;
-                             ``garbage`` send malformed data.
-``FAKE_SATELLITE_READY_DELAY``  Seconds to wait before notifying (default 0).
-``FAKE_SATELLITE_EXIT_BEFORE_READY``  Exit non-zero before notifying.
-``FAKE_SATELLITE_EXIT_AFTER_READY``   Exit non-zero after notifying.
-``FAKE_SATELLITE_FORK_NOTIFY`` ``1`` notify from a forked child, not this PID.
-``FAKE_SATELLITE_IGNORE_SIGTERM``   ``1`` ignore SIGTERM.
-``FAKE_SATELLITE_HOLD_FDS``   ``1`` fork a child that keeps the listening
-                             descriptors open after this process exits.
-``FAKE_SATELLITE_LINGER``     Seconds to stay alive after readiness (default 30).
-
-The recording includes the inherited descriptors it can see, so tests can prove
-that Ferese passed exactly one ``-listenfd`` per owned listener, that each
-descriptor is a listening socket, and that no unrelated descriptor leaked.
-"""
+"""Fake Satellite for child-launch and notification tests; it does not serve X11."""
 
 import ctypes
 import errno
@@ -33,7 +10,6 @@ import socket
 import sys
 import time
 
-# SO_ACCEPTCONN is a fixed Linux ABI value.
 SO_ACCEPTCONN = 30
 _LIBC = ctypes.CDLL(None, use_errno=True)
 _LIBC.getsockopt.argtypes = [
@@ -53,7 +29,6 @@ LINGER = float(os.environ.get('FAKE_SATELLITE_LINGER', '30'))
 
 
 def parse_args(argv):
-    """Validate Ferese's exact argument order, rejecting anything unexpected."""
     display = None
     authority = None
     listenfds = []
@@ -87,15 +62,51 @@ def parse_args(argv):
     return display, authority, listenfds
 
 
+# The scan's own descriptor and entries that vanish mid-scan are not held descriptors.
+def inherited_fds():
+    inherited = []
+    with os.scandir('/proc/self/fd') as entries:
+        for entry in entries:
+            try:
+                fd = int(entry.name)
+            except ValueError:
+                continue
+            try:
+                target = os.readlink(entry.path)
+            except OSError:
+                continue
+            if target == '/proc/self/fd':
+                continue
+            inherited.append(fd)
+    return sorted(inherited)
+
+
+# Compare the link target: an fd number alone can be reused by an unrelated descriptor.
+def sentinel_is_leaked(inherited):
+    sentinel = os.environ.get('FAKE_SATELLITE_SENTINEL_FD')
+    if not sentinel:
+        return False
+    try:
+        fd = int(sentinel)
+    except ValueError:
+        return False
+    target = os.environ.get('FAKE_SATELLITE_SENTINEL_TARGET')
+    if target:
+        try:
+            return os.readlink(f'/proc/self/fd/{fd}') == target
+        except OSError:
+            return False
+    return fd in inherited
+
+
 def describe_fds(listenfds):
-    """Describe the inherited descriptors, proving no unrelated one leaked."""
-    inherited = sorted(int(name) for name in os.listdir('/proc/self/fd'))
+    inherited = inherited_fds()
     sentinel = os.environ.get('FAKE_SATELLITE_SENTINEL_FD')
     return {
         'inherited_fds': inherited,
         'listenfds': listenfds,
         'sentinel_fd': int(sentinel) if sentinel else None,
-        'sentinel_leaked': bool(sentinel) and int(sentinel) in inherited,
+        'sentinel_leaked': sentinel_is_leaked(inherited),
         'listening': {
             str(fd): is_listening(fd) for fd in listenfds
         },
@@ -104,11 +115,6 @@ def describe_fds(listenfds):
 
 
 def is_listening(fd):
-    """True when the descriptor refers to a listening socket.
-
-    ``/proc`` fdinfo flags do not expose socket state, so ask the kernel with
-    ``SO_ACCEPTCONN``: it is 1 only for a socket in the listening state.
-    """
     value = ctypes.c_int(0)
     length = ctypes.c_uint(ctypes.sizeof(value))
     if _LIBC.getsockopt(
@@ -123,7 +129,6 @@ def is_listening(fd):
 
 
 def notify(payload):
-    """Send a systemd-style datagram to NOTIFY_SOCKET."""
     notify_socket = os.environ.get('NOTIFY_SOCKET')
     if not notify_socket:
         return False
@@ -140,17 +145,10 @@ def notify(payload):
         sender.close()
 
 
+# The descendant never exits on its own: a live holder after the leader is gone means group cleanup failed.
 def hold_descriptors(listenfds):
-    """Keep the listening descriptors alive in a child after this process exits.
-
-    This reproduces the case where a real bridge leaves descendants holding the
-    endpoints, so Ferese must clean up the whole owned process group rather than
-    only the leader it reaped. The descendant never exits on its own: if it is
-    still alive after the leader is gone, group cleanup failed.
-    """
     child = os.fork()
     if child == 0:
-        # Hold the endpoints open and never exit voluntarily.
         for fd in listenfds:
             try:
                 os.dup2(fd, fd)
@@ -166,7 +164,6 @@ def main():
     if IGNORE_SIGTERM:
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
 
-    # Fork the descriptor holder first, so the record can name it.
     holder_pid = None
     if HOLD_FDS:
         holder_pid = hold_descriptors(listenfds)
@@ -202,13 +199,14 @@ def main():
     elif READY == 'garbage':
         payload = b'READY'
     elif READY == 'truncated':
-        payload = b'READY='
+        # Oversize the buffer so the kernel really reports MSG_TRUNC; a short
+        # payload would only be a malformed line.
+        payload = b'READY=1' + b'X' * 4096
     else:
         payload = b''
 
     if payload:
         if FORK_NOTIFY or READY == 'child':
-            # Readiness from a different PID must not be accepted.
             pid = os.fork()
             if pid == 0:
                 notify(payload)

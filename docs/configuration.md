@@ -959,7 +959,7 @@ process. Nothing is inherited from a host X server.
 
 ```kdl
 xwayland {
-    enabled true
+    enabled #true
     startup  on-demand
     path     "xwayland-satellite"
 }

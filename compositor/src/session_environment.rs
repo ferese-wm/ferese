@@ -2,21 +2,13 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 use std::process::Command;
 
-/// The X11 endpoint this session owns, advertised to applications.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct X11Environment {
     pub display: OsString,
     pub authority: PathBuf,
 }
 
-/// The immutable child session environment, built once after display
-/// reservation and authority-file creation succeed.
-///
-/// This is deliberately separate from the compositor's own process
-/// environment: nested backend initialization needs the *host* `DISPLAY` or
-/// `WAYLAND_DISPLAY`, while children need the *Ferese* endpoints. Ferese has
-/// worker threads by the time children are spawned, so process-global
-/// `set_var` is not an option.
+// Child endpoints are separate from the host endpoints used by the nested backend.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct SessionEnvironment {
     pub wayland_display: OsString,
@@ -24,11 +16,7 @@ pub(crate) struct SessionEnvironment {
 }
 
 impl SessionEnvironment {
-    /// Build the public child environment.
-    ///
-    /// Apply this *before* adding a deliberately privileged private
-    /// connection, because applying it afterwards would erase the private
-    /// socket those clients intentionally receive.
+    /// Apply before private_client::prepare_command(), which overrides WAYLAND_SOCKET.
     pub fn apply_public(&self, command: &mut Command) {
         command
             .env("WAYLAND_DISPLAY", &self.wayland_display)
@@ -38,8 +26,6 @@ impl SessionEnvironment {
             .env_remove("DISPLAY")
             .env_remove("XAUTHORITY");
 
-        // When X11 is unavailable, DISPLAY/XAUTHORITY stay removed. Never
-        // publish a fake working DISPLAY.
         if let Some(x11) = &self.x11 {
             command.env("DISPLAY", &x11.display).env("XAUTHORITY", &x11.authority);
         }
@@ -101,7 +87,6 @@ mod tests {
         let mut command = Command::new("true");
         environment(None).apply_public(&mut command);
 
-        // Removed, never set to a placeholder.
         assert_eq!(value_of(&command, "DISPLAY"), Some(None));
         assert_eq!(value_of(&command, "XAUTHORITY"), Some(None));
     }
@@ -111,8 +96,6 @@ mod tests {
         let mut command = Command::new("true");
         environment(None).apply_public(&mut command);
 
-        // A host WAYLAND_SOCKET inherited by a child would win over
-        // WAYLAND_DISPLAY in wl_display_connect and misroute the client.
         assert_eq!(value_of(&command, "WAYLAND_SOCKET"), Some(None));
         assert_eq!(value_of(&command, "FERESE_SHELL_CONTROL_SOCKET"), Some(None));
     }
@@ -150,7 +133,6 @@ mod tests {
         }))
         .apply_public(&mut command);
 
-        // The child's DISPLAY must be the Ferese endpoint, never the host's.
         assert_eq!(value_of(&command, "DISPLAY"), Some(Some(":7".to_owned())));
     }
 }

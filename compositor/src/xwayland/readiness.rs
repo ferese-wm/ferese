@@ -3,9 +3,9 @@ use std::os::fd::AsRawFd;
 use std::os::unix::net::UnixDatagram;
 use std::path::{Path, PathBuf};
 
-/// `CMSG_LEN(sizeof(struct ucred))`. The libc crate does not expose
-/// `CMSG_LEN` on Linux, so compute it: the payload starts at the next
-/// `usize`-aligned offset after `cmsghdr`.
+/// Bytes reserved for ancillary control data, well above `CMSG_LEN(ucred)`.
+const CONTROL_CAPACITY: usize = 128;
+
 fn cmsg_len_ucred() -> usize {
     cmsg_data_offset() + std::mem::size_of::<libc::ucred>()
 }
@@ -29,42 +29,19 @@ struct ControlBuffer {
     payload: [u8; CONTROL_CAPACITY],
 }
 
-/// Bytes reserved for ancillary control data, well above `CMSG_LEN(ucred)`.
-const CONTROL_CAPACITY: usize = 128;
-
-/// A private, per-generation readiness notification socket.
-///
-/// Satellite, packaged with its `systemd` feature, sends `READY=1` over
-/// `NOTIFY_SOCKET` after Xwayland has initialized. Ferese owns the socket, so
-/// no separate systemd unit is involved.
-///
-/// A successful `spawn()` does **not** prove readiness, and Satellite's public
-/// CLI has no `-displayfd` for Ferese to consume. Readiness is therefore
-/// established only by a validated notification.
+// Requires Satellite's systemd notification feature; exec success is not readiness.
 pub(crate) struct ReadinessSocket {
     socket: UnixDatagram,
     path: PathBuf,
 }
 
 impl ReadinessSocket {
-    /// Create a fresh nonblocking datagram socket with credential delivery
-    /// enabled, under the validated runtime directory.
-    ///
-    /// The name is unique per generation so a stale notification from an
-    /// earlier service cannot satisfy a later generation's contract.
     pub fn create(runtime_directory: &Path, generation: u64) -> io::Result<Self> {
         let path = runtime_directory.join(format!("ferese-x11-notify-{generation}.sock"));
-        // Bind fails if a previous generation left the name behind, which is
-        // the correct behaviour: never reuse a notification endpoint.
+
         let socket = UnixDatagram::bind(&path)?;
         socket.set_nonblocking(true)?;
 
-        // Required: Xwayland inherits the notification environment before
-        // Satellite reports readiness, so a notification from some other child
-        // must not satisfy Ferese's readiness contract.
-        //
-        // Linux rejects SO_PASSCRED with a null optval or a zero length, so
-        // pass a real int.
         let enable: libc::c_int = 1;
         let length = libc::socklen_t::try_from(std::mem::size_of::<libc::c_int>())
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "optlen overflow"))?;
@@ -90,12 +67,6 @@ impl ReadinessSocket {
         &self.path
     }
 
-    /// Read one notification and validate it against `satellite_pid`.
-    ///
-    /// Returns `Ok(true)` only for an exact `READY=1` line sent by the actual
-    /// Satellite PID, with no truncated data or control messages. Stale and
-    /// foreign notifications are reported as `Ok(false)` rather than errors, so
-    /// the caller keeps draining until the finite deadline.
     pub fn recv_ready(&self, satellite_pid: u32) -> io::Result<bool> {
         let mut buffer = [0_u8; 512];
         let mut control = ControlBuffer {
@@ -124,17 +95,12 @@ impl ReadinessSocket {
         if received < 0 {
             return Err(io::Error::last_os_error());
         }
-        // A completely filled buffer cannot be distinguished from truncation.
-        if received as usize == buffer.len() {
-            return Ok(false);
-        }
-        if message.msg_flags & (libc::MSG_CTRUNC | libc::MSG_TRUNC) != 0 {
-            return Ok(false);
-        }
 
         // Walk *every* ancillary message, not just the first: a sender is free
         // to put credentials second, and descriptors attached to any message
-        // must not be leaked into this long-lived process.
+        // must not be leaked into this long-lived process. This happens before
+        // the truncation check below, because a truncated datagram can still
+        // have installed descriptors: the flag does not release them.
         let mut from_satellite = false;
         // SAFETY: the control buffer was sized, aligned, and described by this
         // message, and CMSG_NXTHDR walks only what the kernel filled in.
@@ -175,6 +141,13 @@ impl ReadinessSocket {
             }
         }
 
+        // Decided only after the control walk: a completely filled payload
+        // buffer cannot be distinguished from truncation, and the kernel's
+        // truncation flags never satisfy the readiness contract.
+        if received as usize == buffer.len() || message.msg_flags & (libc::MSG_CTRUNC | libc::MSG_TRUNC) != 0 {
+            return Ok(false);
+        }
+
         if !from_satellite {
             return Ok(false);
         }
@@ -185,10 +158,6 @@ impl ReadinessSocket {
         ))
     }
 
-    /// Take ownership of the descriptor for a calloop `Generic` source.
-    ///
-    /// Registering the source keeps its own clone open, which is why terminal
-    /// failure paths must *remove* the source rather than only disable it.
     pub fn try_clone_owned(&self) -> io::Result<UnixDatagram> {
         self.socket.try_clone()
     }
@@ -200,10 +169,6 @@ impl AsRawFd for ReadinessSocket {
     }
 }
 
-/// Split a payload into lines and look for one exactly equal to `wanted`.
-///
-/// Returns `None` when the payload is not valid newline-separated `KEY=VALUE`
-/// text, so a binary or malformed datagram cannot be accepted by accident.
 fn exact_line(payload: &[u8], wanted: &[u8]) -> Option<bool> {
     if payload.is_empty() || payload.contains(&0) {
         return None;
@@ -251,32 +216,34 @@ mod tests {
     /// # Safety
     /// Async-signal-safe, for use between `fork` and `_exit`.
     unsafe fn connect_datagram(path: &Path) -> libc::c_int {
-        let fd = libc::socket(libc::AF_UNIX, libc::SOCK_DGRAM, 0);
-        if fd < 0 {
-            return -1;
+        unsafe {
+            let fd = libc::socket(libc::AF_UNIX, libc::SOCK_DGRAM, 0);
+            if fd < 0 {
+                return -1;
+            }
+            let mut address: libc::sockaddr_un = std::mem::zeroed();
+            address.sun_family = libc::AF_UNIX as libc::sa_family_t;
+            let bytes = path.as_os_str().as_encoded_bytes();
+            if bytes.len() >= address.sun_path.len() {
+                libc::close(fd);
+                return -1;
+            }
+            for (slot, byte) in address.sun_path.iter_mut().zip(bytes) {
+                *slot = *byte as libc::c_char;
+            }
+            if libc::connect(
+                fd,
+                std::ptr::from_ref(&address).cast(),
+                // The fixed `sockaddr_un` length is what the kernel expects for
+                // AF_UNIX; `sun_path` is already zero-filled past the name.
+                libc::socklen_t::try_from(std::mem::size_of::<libc::sockaddr_un>()).unwrap(),
+            ) == -1
+            {
+                libc::close(fd);
+                return -1;
+            }
+            fd
         }
-        let mut address: libc::sockaddr_un = std::mem::zeroed();
-        address.sun_family = libc::AF_UNIX as libc::sa_family_t;
-        let bytes = path.as_os_str().as_encoded_bytes();
-        if bytes.len() >= address.sun_path.len() {
-            libc::close(fd);
-            return -1;
-        }
-        for (slot, byte) in address.sun_path.iter_mut().zip(bytes) {
-            *slot = *byte as libc::c_char;
-        }
-        if libc::connect(
-            fd,
-            std::ptr::from_ref(&address).cast(),
-            // The fixed `sockaddr_un` length is what the kernel expects for
-            // AF_UNIX; `sun_path` is already zero-filled past the name.
-            libc::socklen_t::try_from(std::mem::size_of::<libc::sockaddr_un>()).unwrap(),
-        ) == -1
-        {
-            libc::close(fd);
-            return -1;
-        }
-        fd
     }
 
     fn private_runtime_dir(name: &str) -> PathBuf {
@@ -287,9 +254,6 @@ mod tests {
         root
     }
 
-    /// Send `payload` from a genuinely separate process, so the receiver sees a
-    /// foreign `SCM_CREDENTIALS` PID. Uses only async-signal-safe calls between
-    /// fork and exec-free exit.
     fn send_from_child(path: &Path, payload: &[u8]) -> i32 {
         // SAFETY: the child path performs only socket/bind-free sendto and
         // _exit, which are async-signal-safe.
@@ -408,8 +372,7 @@ mod tests {
         }
     }
 
-    /// The review's finding: a truncation flag must actually be exercised, not
-    /// simulated by sending a different payload.
+    /// A truncation flag must be exercised for real, not simulated by a shorter payload.
     #[test]
     fn a_truncated_notification_is_rejected_even_with_valid_credentials() {
         let runtime = private_runtime_dir("truncated");
@@ -468,6 +431,238 @@ mod tests {
         // SAFETY: reaping a direct child that has finished sleeping.
         let mut status = 0;
         unsafe { libc::waitpid(pid, std::ptr::from_mut(&mut status), 0) };
+    }
+
+    /// Send `READY=1` with more descriptors than the receiver's control buffer can
+    /// hold, so the kernel truncates the ancillary data while installing what fits.
+    fn send_descriptors_beyond_capacity_from_child(path: &Path, sentinel: &Path, count: usize) -> i32 {
+        // SAFETY: the child performs only socket/open/sendmsg/sleep/_exit, all
+        // async-signal-safe except sleep, which is a bounded wait before exit.
+        unsafe {
+            let pid = libc::fork();
+            assert!(pid >= 0, "fork must succeed");
+            if pid == 0 {
+                let fd = connect_datagram(path);
+                if fd < 0 {
+                    libc::_exit(70);
+                }
+                let Ok(name) = std::ffi::CString::new(sentinel.as_os_str().as_encoded_bytes()) else {
+                    libc::_exit(73);
+                };
+                let sentinel_fd = libc::open(name.as_ptr(), libc::O_RDONLY);
+                if sentinel_fd < 0 {
+                    libc::_exit(72);
+                }
+                let filler = libc::open(c"/dev/null".as_ptr(), libc::O_RDONLY);
+                if filler < 0 {
+                    libc::_exit(72);
+                }
+
+                let mut iov = libc::iovec {
+                    iov_base: b"READY=1".as_ptr().cast_mut().cast(),
+                    iov_len: 7,
+                };
+                // A control buffer large enough to *send* the flood; the
+                // receiver's much smaller buffer is what truncates it.
+                let mut control = [0_u8; 1024];
+                let mut message: libc::msghdr = std::mem::zeroed();
+                message.msg_iov = std::ptr::from_mut(&mut iov);
+                message.msg_iovlen = 1;
+                message.msg_control = control.as_mut_ptr().cast();
+                message.msg_controllen = control.len() as _;
+                let header = libc::CMSG_FIRSTHDR(&message);
+                if header.is_null() {
+                    libc::_exit(74);
+                }
+                (*header).cmsg_level = libc::SOL_SOCKET;
+                (*header).cmsg_type = libc::SCM_RIGHTS;
+                let bytes = (count * std::mem::size_of::<libc::c_int>()) as u32;
+                (*header).cmsg_len = libc::CMSG_LEN(bytes) as _;
+                // Exactly the aligned size of one control message: trailing
+                // zero bytes would be read as a second, malformed message and
+                // the kernel would reject the send with EINVAL.
+                message.msg_controllen = libc::CMSG_SPACE(bytes) as _;
+                let data = libc::CMSG_DATA(header);
+                for index in 0..count {
+                    // The sentinel rides along first, so it is one of the
+                    // descriptors the receiver's short buffer actually installs.
+                    let descriptor = if index == 0 { sentinel_fd } else { filler };
+                    *data.cast::<libc::c_int>().add(index) = descriptor;
+                }
+                let sent = libc::sendmsg(fd, std::ptr::from_ref(&message), libc::MSG_NOSIGNAL);
+                if sent < 0 {
+                    libc::_exit(71);
+                }
+                libc::sleep(1);
+                libc::_exit(0);
+            }
+            pid
+        }
+    }
+
+    /// Send `count` malformed datagrams, each carrying a descriptor.
+    fn send_malformed_storm_from_child(path: &Path, sentinel: &Path, count: usize) -> i32 {
+        // SAFETY: the child performs only socket/open/sendmsg/_exit, all
+        // async-signal-safe.
+        unsafe {
+            let pid = libc::fork();
+            assert!(pid >= 0, "fork must succeed");
+            if pid == 0 {
+                let fd = connect_datagram(path);
+                if fd < 0 {
+                    libc::_exit(70);
+                }
+                let Ok(name) = std::ffi::CString::new(sentinel.as_os_str().as_encoded_bytes()) else {
+                    libc::_exit(73);
+                };
+                let sentinel_fd = libc::open(name.as_ptr(), libc::O_RDONLY);
+                if sentinel_fd < 0 {
+                    libc::_exit(72);
+                }
+                for _ in 0..count {
+                    let mut iov = libc::iovec {
+                        iov_base: b"READY=2".as_ptr().cast_mut().cast(),
+                        iov_len: 7,
+                    };
+                    let mut control = ControlBuffer {
+                        header: std::mem::zeroed(),
+                        payload: [0_u8; CONTROL_CAPACITY],
+                    };
+                    let descriptor = sentinel_fd;
+                    std::ptr::copy_nonoverlapping(
+                        std::ptr::from_ref(&descriptor).cast::<u8>(),
+                        control.payload.as_mut_ptr(),
+                        std::mem::size_of::<libc::c_int>(),
+                    );
+                    control.header.cmsg_len = (cmsg_data_offset() + std::mem::size_of::<libc::c_int>()) as _;
+                    control.header.cmsg_level = libc::SOL_SOCKET;
+                    control.header.cmsg_type = libc::SCM_RIGHTS;
+
+                    let mut message: libc::msghdr = std::mem::zeroed();
+                    message.msg_iov = std::ptr::from_mut(&mut iov);
+                    message.msg_iovlen = 1;
+                    message.msg_control = std::ptr::from_mut(&mut control).cast();
+                    message.msg_controllen = cmsg_data_offset() + std::mem::size_of::<libc::c_int>();
+                    if libc::sendmsg(fd, std::ptr::from_ref(&message), libc::MSG_NOSIGNAL) < 0 {
+                        libc::_exit(71);
+                    }
+                }
+                libc::_exit(0);
+            }
+            pid
+        }
+    }
+
+    /// Open descriptors in this process; only *deltas* between two calls are
+    /// meaningful, because parallel tests add and remove descriptors too.
+    fn open_fd_count() -> usize {
+        std::fs::read_dir("/proc/self/fd")
+            .map(|entries| entries.count())
+            .unwrap_or(0)
+    }
+
+    /// Drain the socket until empty; returns the datagrams judged and the elapsed time.
+    fn drain_all(socket: &ReadinessSocket, pid: u32, budget: usize) -> (usize, std::time::Duration) {
+        let started = std::time::Instant::now();
+        let mut judged = 0;
+        while judged < budget {
+            match socket.recv_ready(pid) {
+                Ok(_) => judged += 1,
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => break,
+                Err(error) => panic!("unexpected readiness read error: {error}"),
+            }
+            assert!(
+                started.elapsed() < std::time::Duration::from_secs(5),
+                "the drain must make progress rather than block"
+            );
+        }
+        (judged, started.elapsed())
+    }
+
+    /// A truncated ancillary buffer must be rejected and its delivered descriptors closed.
+    #[test]
+    fn truncated_control_messages_still_close_the_descriptors_they_delivered() {
+        let runtime = private_runtime_dir("ctrunc");
+        let socket = ReadinessSocket::create(&runtime, 24).unwrap();
+        let path = socket.path().to_owned();
+
+        let sentinel = sentinel_file("ctrunc");
+        let before = open_fd_count();
+        // Far more descriptors than the receiver's 128-byte payload can hold.
+        let pid = send_descriptors_beyond_capacity_from_child(&path, &sentinel, 64);
+        // SAFETY: reaping a direct child that has finished sleeping.
+        let mut status = 0;
+        unsafe { libc::waitpid(pid, std::ptr::from_mut(&mut status), 0) };
+        assert!(
+            libc::WIFEXITED(status) && libc::WEXITSTATUS(status) == 0,
+            "child must deliver the truncated notification: {status:#x}"
+        );
+
+        let verdict = recv_within(&socket, pid as u32);
+        assert!(!verdict, "MSG_CTRUNC must never satisfy readiness");
+        assert!(
+            !holds_open(&sentinel),
+            "descriptors installed before MSG_CTRUNC was noticed must be closed"
+        );
+        let after = open_fd_count();
+        assert!(
+            after <= before + 4,
+            "truncation leaked descriptors: {before} open before, {after} after"
+        );
+        let _ = std::fs::remove_file(&sentinel);
+    }
+
+    /// A flood of malformed datagrams must leak nothing and leave the socket usable.
+    #[test]
+    fn a_storm_of_malformed_datagrams_leaks_nothing_and_leaves_the_socket_usable() {
+        let runtime = private_runtime_dir("storm");
+        let socket = ReadinessSocket::create(&runtime, 25).unwrap();
+        let path = socket.path().to_owned();
+
+        let sentinel = sentinel_file("storm");
+        let before = open_fd_count();
+        let pid = send_malformed_storm_from_child(&path, &sentinel, 128);
+        // SAFETY: reaping a direct child that has already exited.
+        let mut status = 0;
+        unsafe { libc::waitpid(pid, std::ptr::from_mut(&mut status), 0) };
+        assert!(
+            libc::WIFEXITED(status) && libc::WEXITSTATUS(status) == 0,
+            "child must deliver the storm: {status:#x}"
+        );
+
+        let (judged, elapsed) = drain_all(&socket, u32::MAX, 256);
+        assert!(judged >= 128, "the storm must be delivered and judged: {judged}");
+        assert!(
+            elapsed < std::time::Duration::from_secs(2),
+            "judging the storm must not stall the consumer: {elapsed:?}"
+        );
+        assert!(
+            !holds_open(&sentinel),
+            "every descriptor carried by the storm must be closed"
+        );
+        let after = open_fd_count();
+        assert!(
+            after <= before + 4,
+            "the storm leaked descriptors: {before} open before, {after} after"
+        );
+        let _ = std::fs::remove_file(&sentinel);
+
+        let ready_sentinel = sentinel_file("storm-ready");
+        let ready_pid = send_with_descriptor_from_child(&path, &ready_sentinel);
+        assert!(
+            recv_within(&socket, ready_pid as u32),
+            "a READY=1 after the storm is still judged by credential, and the \
+             storm sender's exit must not have wedged the socket"
+        );
+        assert!(
+            !holds_open(&ready_sentinel),
+            "cleanup must keep working after the storm"
+        );
+        let _ = std::fs::remove_file(&ready_sentinel);
+
+        // SAFETY: reaping a direct child that has finished sleeping.
+        let mut ready_status = 0;
+        unsafe { libc::waitpid(ready_pid, std::ptr::from_mut(&mut ready_status), 0) };
     }
 
     /// Drain the socket until one datagram is judged, bounded like production.
@@ -530,7 +725,7 @@ mod tests {
         assert_eq!(exact_line(b"READY=1", b"READY=1"), Some(true));
         assert_eq!(exact_line(b"READY=1\n", b"READY=1"), Some(true));
         assert_eq!(exact_line(b"MAINPID=42\nREADY=1", b"READY=1"), Some(true));
-        // Not exact: must never satisfy the contract.
+
         assert_eq!(exact_line(b"READY=0", b"READY=1"), Some(false));
         assert_eq!(exact_line(b"READY=1 ", b"READY=1"), Some(false));
         assert_eq!(exact_line(b"XREADY=1", b"READY=1"), Some(false));
@@ -541,9 +736,6 @@ mod tests {
         assert_eq!(exact_line(b"\xff\xfe\x00\x01", b"READY=1"), None);
     }
 
-    /// The credential contract that matters: Xwayland inherits
-    /// `NOTIFY_SOCKET`, so a `READY=1` from any process other than the actual
-    /// Satellite must not mark the service running.
     #[test]
     fn a_ready_datagram_from_another_process_is_rejected() {
         let runtime = private_runtime_dir("foreign");
@@ -556,8 +748,6 @@ mod tests {
             "child must send"
         );
 
-        // Some other PID is expected, so this must be rejected even though the
-        // payload is a perfect READY=1.
         let mut rejected = false;
         for _ in 0..1000 {
             match socket.recv_ready(u32::MAX) {
@@ -580,15 +770,12 @@ mod tests {
         let socket = ReadinessSocket::create(&runtime, 4).unwrap();
         let path = socket.path().to_owned();
 
-        // Send from a child, then accept it by naming that child's PID. The
-        // child is reaped by send_from_child, so obtain its PID separately.
         let pid = {
             // SAFETY: mirror of send_from_child, returning the child PID.
             unsafe {
                 let pid = libc::fork();
                 assert!(pid >= 0);
                 if pid == 0 {
-                    // Busy-wait for the socket to exist, then send.
                     for _ in 0..500 {
                         if let Ok(client) = UnixDatagram::unbound()
                             && client.send_to(b"READY=1", &path).is_ok()
@@ -652,7 +839,6 @@ mod tests {
         let mut rejected = false;
         for _ in 0..1000 {
             match socket.recv_ready(pid as u32) {
-                // A datagram arrived but was not a READY=1 for this PID.
                 Ok(false) => {
                     rejected = true;
                     break;

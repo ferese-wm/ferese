@@ -2,12 +2,6 @@ use std::path::PathBuf;
 
 use serde::Deserialize;
 
-/// When the managed X11 service starts.
-///
-/// `on-demand` waits for a listener connection or an explicit retry request.
-/// `eager` starts the same managed service immediately after the event loop
-/// begins dispatching; it must not use a different allocation or environment
-/// path.
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub(crate) enum XwaylandStartup {
@@ -16,13 +10,6 @@ pub(crate) enum XwaylandStartup {
     Eager,
 }
 
-/// Public configuration for the managed `xwayland-satellite` integration.
-///
-/// Deliberately small. Startup timeout, retry policy, and shutdown grace stay
-/// internal constants until a real deployment needs to tune them. The field is
-/// `path` rather than `command` because Ferese's shared KDL conversion treats a
-/// field named `command` as an array, and arbitrary argument passthrough would
-/// conflict with the Ferese-owned display, auth, and listen arguments.
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct XwaylandConfig {

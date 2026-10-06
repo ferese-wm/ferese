@@ -8,20 +8,35 @@ use crate::session_environment::SessionEnvironment;
 
 use super::sockets::Reservation;
 
-/// Launch Satellite with Ferese's already-owned listening descriptors.
-///
-/// Satellite is launched on the **public** session environment: it is an
-/// ordinary Wayland client of Ferese. `private_client::prepare_command()` is
-/// deliberately not used here — its `WAYLAND_SOCKET` would take precedence over
-/// `WAYLAND_DISPLAY` in `wl_display_connect()` inside Xwayland, and Satellite
-/// does not remove that variable from Xwayland's inherited environment.
+#[cfg(test)]
+pub(crate) mod test_hook {
+    use std::cell::RefCell;
+
+    type InChild = Box<dyn FnMut() -> std::io::Result<()> + Send + Sync>;
+
+    thread_local! {
+        static IN_CHILD: RefCell<Option<InChild>> = const { RefCell::new(None) };
+    }
+
+    /// Arrange an action that must happen in *this* child only, after fork.
+    ///
+    /// Close-on-exec must be cleared here: the parent is shared with parallel
+    /// spawns, so a parent-side change would race them.
+    pub(crate) fn set_in_child(hook: impl FnMut() -> std::io::Result<()> + Send + Sync + 'static) {
+        IN_CHILD.with(|slot| *slot.borrow_mut() = Some(Box::new(hook)));
+    }
+
+    pub(crate) fn take_in_child() -> Option<InChild> {
+        IN_CHILD.with(|slot| slot.borrow_mut().take())
+    }
+}
+
+// Use the public Wayland socket: Satellite passes its environment to Xwayland.
 pub(crate) fn spawn_satellite(
     executable: &Path,
     environment: &SessionEnvironment,
     reservation: &Reservation,
     authority: &Path,
-    // Production passes the private, per-generation readiness socket. `None`
-    // is only for an explicit development/readiness-unknown mode.
     notify_socket: Option<&Path>,
 ) -> io::Result<Child> {
     if reservation.listeners().is_empty() {
@@ -34,10 +49,6 @@ pub(crate) fn spawn_satellite(
     satellite_command(executable, environment, reservation, authority, notify_socket).spawn()
 }
 
-/// Build the Satellite command line and child-only setup.
-///
-/// Split out from spawning so the verified CLI contract can be asserted
-/// directly, without starting a process.
 fn satellite_command(
     executable: &Path,
     environment: &SessionEnvironment,
@@ -47,8 +58,6 @@ fn satellite_command(
 ) -> std::process::Command {
     let inherited: Vec<_> = reservation.listeners().iter().map(AsRawFd::as_raw_fd).collect();
     if inherited.is_empty() {
-        // Callers check this before reaching a spawn; keep the guarantee local
-        // by refusing to build a command that could pass a dropped descriptor.
         panic!("cannot build a Satellite command without reserved listening sockets");
     }
 
@@ -64,8 +73,6 @@ fn satellite_command(
         .stderr(Stdio::inherit())
         .process_group(0);
 
-    // Do not accidentally notify or consume socket-activation state belonging
-    // to the service that launched Ferese itself.
     for name in [
         "NOTIFY_SOCKET",
         "WATCHDOG_PID",
@@ -80,11 +87,11 @@ fn satellite_command(
         command.env("NOTIFY_SOCKET", path);
     }
 
-    // Never hard-code these: pass each owned descriptor exactly once.
     for fd in &inherited {
         command.arg("-listenfd").arg(fd.to_string());
     }
 
+    // PR_SET_PDEATHSIG follows the spawning thread; spawn from the compositor thread.
     let expected_parent = unsafe { libc::getpid() };
     // SAFETY: this child-only hook performs only raw, non-allocating
     // Linux/POSIX operations on prevalidated descriptors. All formatting and
@@ -98,7 +105,6 @@ fn satellite_command(
                 }
             }
 
-            // Spawn this from Ferese's long-lived compositor thread.
             if libc::prctl(
                 libc::PR_SET_PDEATHSIG,
                 libc::SIGTERM as libc::c_ulong,
@@ -109,7 +115,7 @@ fn satellite_command(
             {
                 return Err(io::Error::last_os_error());
             }
-            // Covers parent death immediately before PR_SET_PDEATHSIG.
+
             if libc::getppid() != expected_parent {
                 return Err(io::Error::from_raw_os_error(libc::ESRCH));
             }
@@ -118,46 +124,36 @@ fn satellite_command(
         });
     }
 
+    // One-shot, thread-local, and consumed by exactly this spawn: the hook
+    // changes descriptors in the forked child, never in the parent.
+    #[cfg(test)]
+    if let Some(hook) = test_hook::take_in_child() {
+        // SAFETY: same contract as the hook above: a closure that runs in the
+        // forked child before exec, using only prevalidated descriptors and
+        // no allocation.
+        unsafe {
+            command.pre_exec(hook);
+        }
+    }
+
     command
 }
 
-/// What is known about the service leader right now.
-///
-/// Deliberately separates "has exited" from "has been reaped": only reaping
-/// releases the leader's process-group identity.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Observation {
-    /// Still running, or exited in a way that is not yet observable.
     Running,
-    /// The leader is waitable. Its status has deliberately **not** been
-    /// consumed, so group signalling is still safe.
     Exited,
-    /// Observation failed. Ownership is unknown, so the caller must not start
-    /// a replacement generation.
     Failed(String),
 }
 
-/// The single owner, signaler, and reaper of the managed service process group.
-///
-/// Group signalling with `-pgid` is only meaningful while the group leader is
-/// unreaped: once the leader is reaped its identifier may be reused, and a
-/// later `kill(-pgid, …)` could hit an unrelated group. Every exit check
-/// therefore uses `waitid(…, WNOWAIT)`, and [`OwnedProcessGroup::reap`] is the
-/// only operation that consumes the status.
-///
-/// Dropping this type is not a cleanup strategy, but it is a last-resort
-/// safety net: the caller must drive [`OwnedProcessGroup::terminate`] to
-/// completion before a generation becomes startable again.
 pub(crate) struct OwnedProcessGroup {
     pid: u32,
     child: Option<Child>,
-    /// Set once the leader has been reaped, releasing the identity.
     reaped: bool,
     cleanup_error: Option<String>,
 }
 
 impl OwnedProcessGroup {
-    /// Take sole ownership of an already-spawned Satellite process group.
     pub fn adopt(child: Child) -> Self {
         let pid = child.id();
         Self {
@@ -168,22 +164,16 @@ impl OwnedProcessGroup {
         }
     }
 
-    /// Take ownership of an already-spawned, group-leading child.
-    ///
-    /// The caller is responsible for having set `process_group(0)`, which is
-    /// what makes the group identifier owned rather than inherited.
     #[cfg(test)]
     fn from_command(mut command: std::process::Command) -> std::io::Result<Self> {
         command.process_group(0);
         Ok(Self::adopt(command.spawn()?))
     }
 
-    /// The process-group identifier, valid only until the leader is reaped.
     pub fn pid(&self) -> u32 {
         self.pid
     }
 
-    /// Observe the leader without consuming its exit status.
     pub fn observe(&mut self) -> Observation {
         if self.reaped {
             return Observation::Exited;
@@ -217,24 +207,11 @@ impl OwnedProcessGroup {
         }
     }
 
-    /// Signal every member of the owned group.
-    ///
-    /// Only call this while the leader is unreaped; see the type
-    /// documentation for why.
     pub fn signal_group(&self, signal: i32) {
         signal_group(self.pid, signal);
     }
 
-    /// Whether any member of the owned group is still alive.
-    ///
-    /// A crashed leader can leave descendants holding the X11 listeners, so
-    /// "the leader exited" is not the same as "the listeners are free". The
-    /// leader is kept unreaped while this is consulted, which keeps the
-    /// process-group identifier from being recycled underneath the check.
     pub fn group_is_empty(&self) -> bool {
-        if self.reaped {
-            return true;
-        }
         // SAFETY: `kill` with signal 0 performs error checking only. A negative
         // pid addresses the process group led by `self.pid`.
         let outcome = unsafe { libc::kill(-(self.pid as i32), 0) };
@@ -246,10 +223,10 @@ impl OwnedProcessGroup {
         std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
     }
 
-    /// Signal the group, then reap the leader once it is gone.
-    ///
-    /// Returns the exit status when the leader was reaped by this call.
-    /// `grace` bounds how long a cooperative group may take before `SIGKILL`.
+    pub fn is_reaped(&self) -> bool {
+        self.reaped
+    }
+
     pub fn terminate(&mut self, grace: std::time::Duration) -> Result<Option<std::process::ExitStatus>, String> {
         self.signal_group(libc::SIGTERM);
 
@@ -267,18 +244,22 @@ impl OwnedProcessGroup {
             }
         }
 
-        // Kill any surviving descendant while the leader is still unreaped, so
-        // the group identifier cannot have been recycled. SIGKILL is not
-        // waitable, so the group is polled briefly before the leader is reaped.
         self.signal_group(libc::SIGKILL);
-        let killed_at = std::time::Instant::now();
-        while !self.group_is_empty() && std::time::Instant::now() < killed_at + grace {
+        // A zombie still counts as a group member, so reap before asking
+        // whether a descendant is left.
+        let status = self.reap()?;
+
+        let deadline = std::time::Instant::now() + grace;
+        while !self.group_is_empty() && std::time::Instant::now() < deadline {
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
-        self.reap()
+        if !self.group_is_empty() {
+            // A survivor may still hold the X11 listeners, so report it.
+            return Err("the X11 service group survived SIGKILL".to_owned());
+        }
+        Ok(status)
     }
 
-    /// Consume the leader's exit status, releasing the process-group identity.
     pub fn reap(&mut self) -> Result<Option<std::process::ExitStatus>, String> {
         if self.reaped {
             return Ok(None);
@@ -296,7 +277,6 @@ impl OwnedProcessGroup {
         }
     }
 
-    /// A cleanup failure that makes the service non-startable, if any.
     pub fn cleanup_error(&self) -> Option<&str> {
         self.cleanup_error.as_deref()
     }
@@ -311,19 +291,15 @@ impl Drop for OwnedProcessGroup {
         if self.reaped {
             return;
         }
-        // Last resort only. The manager is required to reach a completed
-        // cleanup transition first; this prevents an unreaped, un-signalled
-        // process from being silently forgotten if that contract is ever broken.
+
+        // Last resort: the manager must already have reached a completed
+        // cleanup transition, so a process is never silently forgotten.
         self.signal_group(libc::SIGKILL);
         let _ = self.reap();
     }
 }
 
-/// Signal the service's whole process group while the group leader is still
-/// unreaped.
-///
-/// Reaping first and signalling `-old_pid` afterwards can target a reused
-/// identifier, so the caller must issue this *before* reaping the leader.
+/// Requires an unreaped group leader owned by the caller.
 pub(crate) fn signal_group(pid: u32, signal: i32) {
     // SAFETY: negative pid targets the process group led by pid.
     unsafe {
@@ -347,8 +323,6 @@ mod tests {
 
     #[test]
     fn refusing_to_launch_without_owned_listeners() {
-        // A reservation whose listeners were closed must not yield an
-        // integer FD that has already been dropped.
         let mut reservation = Reservation::allocate().unwrap();
         reservation.close_listeners();
 
@@ -456,7 +430,6 @@ mod tests {
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect();
 
-        // The display number must be the first argument.
         assert_eq!(
             args.first().map(String::as_str),
             Some(reservation.display_name().as_str())
@@ -482,10 +455,9 @@ mod tests {
             }
         }
 
-        // TCP must never be enabled implicitly.
         assert!(args.windows(2).any(|pair| pair == ["-nolisten", "tcp"]));
         assert!(!args.iter().any(|arg| arg == "-ac"));
-        // No invented -displayfd.
+
         assert!(!args.iter().any(|arg| arg == "-displayfd"));
         assert_eq!(listenfds.len(), reservation.listeners().len());
     }
@@ -507,7 +479,6 @@ mod tests {
                 key.as_ref(),
                 "LISTEN_PID" | "LISTEN_FDS" | "LISTEN_FDNAMES" | "WATCHDOG_PID" | "WATCHDOG_USEC" | "NOTIFY_SOCKET"
             ) {
-                // Must be an explicit removal, never an inherited value.
                 assert_eq!(value, None, "{key} must not be inherited from the launching service");
             }
             if key.as_ref() == "WAYLAND_SOCKET" {

@@ -90,11 +90,6 @@ fn theme_command(args: Vec<String>) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-/// `feresectl xwayland <status|retry>`.
-///
-/// Prints the compositor's status snapshot. The snapshot never contains the X11
-/// cookie or the authority file's contents, so it is safe to paste into a bug
-/// report.
 fn xwayland_command(args: Vec<String>) -> Result<(), Box<dyn Error>> {
     use ferese_ipc::xwayland::{RETRY_COMMAND, STATUS_COMMAND, Status};
 
@@ -120,8 +115,6 @@ fn xwayland_command(args: Vec<String>) -> Result<(), Box<dyn Error>> {
 
     let status = Status::from_value(response.result.unwrap_or(Value::Null))?;
     if command == RETRY_COMMAND {
-        // Say plainly that a retry was requested, not that X11 is already up:
-        // the service still has to spawn and verify readiness.
         println!(
             "X11 retry requested; current state: {}",
             serde_json::to_string(&status.state)?
@@ -286,12 +279,9 @@ mod tests {
 
     #[test]
     fn xwayland_commands_map_to_the_shared_ipc_command_names() {
-        // The compositor dispatches these exact names, so a typo here would
-        // silently produce "unknown command" at runtime.
         assert_eq!(ferese_ipc::xwayland::STATUS_COMMAND, "xwayland-status");
         assert_eq!(ferese_ipc::xwayland::RETRY_COMMAND, "xwayland-retry");
 
-        // The usage text advertises both subcommands.
         assert!(usage().contains("feresectl xwayland <status|retry>"));
     }
 
@@ -339,8 +329,6 @@ mod tests {
 
     #[test]
     fn a_failed_x11_retry_surfaces_the_compositor_error_code() {
-        // The compositor answers with a structured error; the CLI must not
-        // report success when X11 could not be started.
         let response = Response::error(1, "x11_unavailable", "X11 is disabled in the configuration");
         let mut bytes = Vec::new();
         write_frame(&mut bytes, &response).expect("encode");

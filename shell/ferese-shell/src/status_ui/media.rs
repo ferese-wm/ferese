@@ -243,7 +243,8 @@ pub(super) fn view<'a>(shell: &'a FereseShell, mut rows: MenuRows<'a>, style: Me
                     .center_y(64)
                     .into(),
             };
-        let mut info = column![text(player.label()).size(15).width(Length::Fill).ellipsize(
+        let text_size = if player.label().len() >= 24 { 13 } else { 15 };
+        let mut info = column![text(player.label()).size(text_size).width(Length::Fill).ellipsize(
             cosmic::iced::widget::text::Ellipsize::End(cosmic::iced::advanced::text::EllipsizeHeightLimit::Lines(2))
         )]
         .spacing(4)

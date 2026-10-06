@@ -52,10 +52,7 @@ pub(crate) fn spawn_client<S: AsRef<OsStr>>(
     let mut command = command(program);
     command.args(args);
     // Workers may already exist. Change only this child's environment.
-    //
-    // Apply the public session environment first: doing it afterwards would
-    // erase the deliberately privileged private socket that
-    // prepare_command hands to genuine shell clients.
+    // Apply before granting the child a private Wayland connection.
     state.session_environment.apply_public(&mut command);
     command.env("FERESE_COMPOSITOR_WALLPAPER", "1");
     let private_connection = if capabilities.is_empty() {
@@ -85,6 +82,11 @@ pub(crate) fn spawn_client<S: AsRef<OsStr>>(
 }
 
 pub(crate) fn pidfd(pid: u32) -> io::Result<OwnedFd> {
+    #[cfg(test)]
+    if crate::xwayland::test_hooks::PIDFD_UNAVAILABLE.load(std::sync::atomic::Ordering::SeqCst) {
+        return Err(io::Error::from_raw_os_error(libc::ENOSYS));
+    }
+
     // SAFETY: pidfd_open has no pointer arguments and returns a new owned fd.
     let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0) };
     if fd < 0 {
