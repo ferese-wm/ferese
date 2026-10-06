@@ -61,19 +61,11 @@ To run X11-only applications, Ferese launches
 which in turn needs an `Xwayland` binary. Both are runtime dependencies, not
 build dependencies, and neither is needed to build Ferese.
 
-- `Xwayland` ships with the X.Org server packages: `xorg-x11-server-Xwayland`
-  on Fedora and Debian/Ubuntu, `xorg-xwayland` on Arch.
-- `xwayland-satellite` is not packaged by most distributions. Build or install
-  it from its upstream releases, then confirm that your build sends the
-  readiness notification Ferese waits for. Ferese waits a fixed 10 seconds for
-  that message and treats its absence as a startup failure, so a build without
-  systemd readiness support will not start.
-
-The packaged configuration keeps X11 disabled. Enable it by setting
-
 ```kdl
 xwayland {
     enabled #true
+    startup  on-demand
+    path     "xwayland-satellite"
 }
 ```
 
