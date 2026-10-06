@@ -150,7 +150,13 @@ impl PointerGrab<Ferese> for ResizeSurfaceGrab {
             let state = cached.current();
             (state.min_size, state.max_size)
         });
-        self.last_size = constrained_size(self.initial_rect.size, delta, self.edges, minimum, maximum);
+        self.last_size = constrained_size(
+            self.initial_rect.size,
+            delta,
+            self.edges,
+            (minimum.w, minimum.h),
+            (maximum.w, maximum.h),
+        );
         let rect = resized_rect(self.initial_rect, self.last_size, self.edges);
         data.set_floating_window_geometry(&self.window, rect.loc, rect.size);
         if let Some(id) = data.windows.ids().get(&self.window).copied() {
@@ -303,8 +309,8 @@ fn constrained_size(
     initial: Size<i32, Logical>,
     delta: Point<f64, Logical>,
     edges: ResizeEdge,
-    minimum: Size<i32, Logical>,
-    maximum: Size<i32, Logical>,
+    minimum: (i32, i32),
+    maximum: (i32, i32),
 ) -> Size<i32, Logical> {
     let mut width = initial.w;
     let mut height = initial.h;
@@ -322,17 +328,17 @@ fn constrained_size(
 
     // Protocol validation rejects these ranges, but a grab may still be alive
     // when its client is disconnected. Keep this path safe for any cached state.
-    let minimum_width = minimum.w.max(1);
-    let minimum_height = minimum.h.max(1);
-    let maximum_width = if maximum.w <= 0 {
+    let minimum_width = minimum.0.max(1);
+    let minimum_height = minimum.1.max(1);
+    let maximum_width = if maximum.0 <= 0 {
         i32::MAX
     } else {
-        maximum.w.max(minimum_width)
+        maximum.0.max(minimum_width)
     };
-    let maximum_height = if maximum.h <= 0 {
+    let maximum_height = if maximum.1 <= 0 {
         i32::MAX
     } else {
-        maximum.h.max(minimum_height)
+        maximum.1.max(minimum_height)
     };
     (
         width.clamp(minimum_width, maximum_width),
@@ -394,8 +400,8 @@ mod tests {
             (800, 600).into(),
             (100.0, 50.0).into(),
             ResizeEdge(xdg_toplevel::ResizeEdge::TopLeft),
-            (1, 1).into(),
-            (0, 0).into(),
+            (1, 1),
+            (0, 0),
         );
         assert_eq!(size, (700, 550).into());
     }
@@ -406,8 +412,8 @@ mod tests {
             (800, 600).into(),
             (100.0, 50.0).into(),
             ResizeEdge(xdg_toplevel::ResizeEdge::BottomRight),
-            (1, 1).into(),
-            (0, 0).into(),
+            (1, 1),
+            (0, 0),
         );
         assert_eq!(size, (900, 650).into());
     }
@@ -418,8 +424,8 @@ mod tests {
             (800, 600).into(),
             (1_000.0, 1_000.0).into(),
             ResizeEdge(xdg_toplevel::ResizeEdge::BottomRight),
-            (640, 480).into(),
-            (1_024, 768).into(),
+            (640, 480),
+            (1_024, 768),
         );
         assert_eq!(size, (1_024, 768).into());
     }
@@ -437,8 +443,8 @@ mod tests {
                     (800, 600).into(),
                     delta.into(),
                     ResizeEdge(xdg_toplevel::ResizeEdge::BottomRight),
-                    minimum.into(),
-                    maximum.into(),
+                    minimum,
+                    maximum,
                 );
                 assert!(size.w >= 1 && size.h >= 1);
                 let _ = resized_rect(

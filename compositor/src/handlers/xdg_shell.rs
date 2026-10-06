@@ -5,15 +5,17 @@ use smithay::desktop::{
 use smithay::input::Seat;
 use smithay::input::pointer::{Focus, GrabStartData};
 use smithay::reexports::wayland_protocols::xdg::decoration::zv1::server::zxdg_toplevel_decoration_v1::Mode;
+use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
 use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::State as ToplevelState;
-use smithay::reexports::wayland_server::Resource;
 use smithay::reexports::wayland_server::protocol::wl_seat;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
+use smithay::reexports::wayland_server::{Client, DataInit, Dispatch, DisplayHandle, Resource, backend::ClientId};
 use smithay::utils::{Logical, Point, Rectangle, Serial};
 use smithay::wayland::compositor::with_states;
 use smithay::wayland::shell::xdg::decoration::XdgDecorationHandler;
 use smithay::wayland::shell::xdg::{
-    PopupSurface, PositionerState, ToplevelSurface, XdgShellHandler, XdgShellState, XdgToplevelSurfaceData,
+    PopupSurface, PositionerState, SurfaceCachedState, ToplevelSurface, XdgShellHandler, XdgShellState,
+    XdgShellSurfaceUserData, XdgToplevelSurfaceData,
 };
 
 use crate::Ferese;
@@ -465,6 +467,72 @@ fn popup_constraint_target(
 ) -> Rectangle<i32, Logical> {
     output.loc -= root_location + parent_offset;
     output
+}
+
+impl Dispatch<xdg_toplevel::XdgToplevel, XdgShellSurfaceUserData> for Ferese {
+    fn request(
+        state: &mut Self,
+        client: &Client,
+        resource: &xdg_toplevel::XdgToplevel,
+        request: xdg_toplevel::Request,
+        data: &XdgShellSurfaceUserData,
+        dhandle: &DisplayHandle,
+        data_init: &mut DataInit<'_, Self>,
+    ) {
+        let unusable = match &request {
+            xdg_toplevel::Request::SetMinSize { width, height } => {
+                !size_limits_usable(state, resource, (*width, *height), true)
+            }
+            xdg_toplevel::Request::SetMaxSize { width, height } => {
+                !size_limits_usable(state, resource, (*width, *height), false)
+            }
+            _ => false,
+        };
+        if unusable {
+            resource.post_error(xdg_toplevel::Error::InvalidSize, "size limits are unusable");
+            return;
+        }
+
+        <XdgShellState as Dispatch<xdg_toplevel::XdgToplevel, XdgShellSurfaceUserData, Ferese>>::request(
+            state, client, resource, request, data, dhandle, data_init,
+        );
+    }
+
+    fn destroyed(
+        state: &mut Self,
+        client: ClientId,
+        resource: &xdg_toplevel::XdgToplevel,
+        data: &XdgShellSurfaceUserData,
+    ) {
+        <XdgShellState as Dispatch<xdg_toplevel::XdgToplevel, XdgShellSurfaceUserData, Ferese>>::destroyed(
+            state, client, resource, data,
+        );
+    }
+}
+
+fn size_limits_usable(
+    state: &Ferese,
+    toplevel: &xdg_toplevel::XdgToplevel,
+    proposed: (i32, i32),
+    minimum: bool,
+) -> bool {
+    if proposed.0 < 0 || proposed.1 < 0 {
+        return false;
+    }
+
+    let Some(surface) = state.xdg_shell_state.get_toplevel(toplevel) else {
+        return true;
+    };
+    let (min, max) = with_states(surface.wl_surface(), |states| {
+        let mut cached = states.cached_state.get::<SurfaceCachedState>();
+        let pending = cached.pending();
+        (
+            (pending.min_size.w, pending.min_size.h),
+            (pending.max_size.w, pending.max_size.h),
+        )
+    });
+    let (min, max) = if minimum { (proposed, max) } else { (min, proposed) };
+    (max.0 == 0 || min.0 <= max.0) && (max.1 == 0 || min.1 <= max.1)
 }
 
 #[cfg(test)]

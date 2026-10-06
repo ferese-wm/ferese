@@ -107,7 +107,7 @@ pub fn init(event_loop: &mut EventLoop<Ferese>, state: &mut Ferese) -> Result<()
                         .current_monitor()
                         .and_then(|monitor| monitor.refresh_rate_millihertz())
                         .unwrap_or(60_000) as i32;
-                    if !resize_nested_output(state, &output, &drawable, size, scale_factor, rate) {
+                    if !resize_nested_output(state, &output, &drawable, (size.w, size.h), scale_factor, rate) {
                         return;
                     }
 
@@ -249,19 +249,23 @@ fn configure_nested_protocols(state: &mut Ferese) {
         .disable_global::<Ferese>(state.presentation_state.global());
 }
 
+fn usable_dimensions(width: i32, height: i32) -> bool {
+    width > 0 && height > 0
+}
+
 fn usable_size(size: Size<i32, Physical>) -> bool {
-    size.w > 0 && size.h > 0
+    usable_dimensions(size.w, size.h)
 }
 
 fn resize_nested_output(
     state: &mut Ferese,
     output: &Output,
     drawable: &Cell<bool>,
-    size: Size<i32, Physical>,
+    size: (i32, i32),
     scale_factor: f64,
     rate: i32,
 ) -> bool {
-    if !usable_size(size) {
+    if !usable_dimensions(size.0, size.1) {
         drawable.set(false);
         return false;
     }
@@ -272,7 +276,7 @@ fn resize_nested_output(
         return false;
     };
     resized.mode = Mode {
-        size,
+        size: (size.0, size.1).into(),
         refresh: rate.max(1),
     };
     resized.scale = Scale::Fractional(normalized_scale(scale_factor));
@@ -372,19 +376,14 @@ mod tests {
             &mut state,
             &output,
             &drawable,
-            (900, 600).into(),
+            (900, 600),
             1.25,
             60_000
         ));
         let before = output.current_mode();
         for size in [(0, 600), (900, 0), (0, 0), (-1, 600)] {
             assert!(!resize_nested_output(
-                &mut state,
-                &output,
-                &drawable,
-                size.into(),
-                2.0,
-                144_000
+                &mut state, &output, &drawable, size, 2.0, 144_000
             ));
             assert_eq!(output.current_mode(), before);
             assert_eq!(output.current_scale().fractional_scale(), 1.25);
@@ -396,7 +395,7 @@ mod tests {
             &mut state,
             &output,
             &drawable,
-            (1200, 800).into(),
+            (1200, 800),
             1.5,
             120_000
         ));
