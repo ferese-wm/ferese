@@ -5,9 +5,6 @@ const FAILURE_WINDOW: Duration = Duration::from_secs(30);
 
 const MAX_FAILURES: usize = 3;
 
-/// What the service must do once a generation's resources are actually gone.
-///
-/// Chosen while cleanup starts, published only after it finishes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum AfterStop {
     /// Schedule a bounded retry.
@@ -26,9 +23,6 @@ pub(crate) enum Phase {
 
     Spawned(u64),
     Running(u64),
-    /// Cleanup in progress. This phase still owns the previous process and its
-    /// monitoring sources, and no new generation may start until
-    /// [`Lifecycle::finish_stop`] runs.
     Stopping {
         generation: u64,
         after_stop: AfterStop,
@@ -36,6 +30,11 @@ pub(crate) enum Phase {
     Backoff {
         generation: u64,
         until: Instant,
+    },
+
+    /// A stop whose cleanup could not be confirmed.
+    CleanupFailed {
+        generation: u64,
     },
 
     Failed,
@@ -49,7 +48,8 @@ impl Phase {
             | Phase::Spawned(generation)
             | Phase::Running(generation)
             | Phase::Stopping { generation, .. }
-            | Phase::Backoff { generation, .. } => Some(generation),
+            | Phase::Backoff { generation, .. }
+            | Phase::CleanupFailed { generation } => Some(generation),
             Phase::Idle | Phase::Failed | Phase::Stopped => None,
         }
     }
@@ -57,11 +57,6 @@ impl Phase {
     pub fn is_running(self) -> bool {
         matches!(self, Phase::Running(_))
     }
-
-    ///
-    /// Only `Idle` qualifies. In particular `Stopping` does not, which is what
-    /// keeps a new generation from starting while a previous process may still
-    /// hold the X11 listeners.
     pub fn can_start(self) -> bool {
         matches!(self, Phase::Idle)
     }
@@ -123,8 +118,6 @@ impl Lifecycle {
         true
     }
 
-    /// Parks in `Stopping` so no connection can start a replacement generation
-    /// while the old service still holds the listeners.
     pub fn begin_stop_after_failure(&mut self, generation: u64, now: Instant, retryable: bool) -> Option<AfterStop> {
         let current = matches!(
             self.phase,
@@ -156,7 +149,6 @@ impl Lifecycle {
         Some(after_stop)
     }
 
-    /// How long a retryable failure should wait before re-enabling activation.
     pub fn backoff_delay(&self) -> Duration {
         if self.failures.len() <= 1 {
             Duration::from_millis(250)
@@ -165,10 +157,6 @@ impl Lifecycle {
         }
     }
 
-    /// Publish the result of a completed stop.
-    ///
-    /// Returns `None` unless cleanup is finishing for `generation`, so a stale
-    /// cleanup callback cannot publish a newer generation's state.
     pub fn finish_stop(&mut self, generation: u64, now: Instant) -> Option<AfterStop> {
         let Phase::Stopping {
             generation: current,
@@ -193,24 +181,28 @@ impl Lifecycle {
         Some(after_stop)
     }
 
-    /// Strengthen an in-flight stop to `Failed` because cleanup could not be
-    /// confirmed.
-    ///
-    /// The scheduled outcome is only a hint: a service whose group still holds
-    /// the listeners must open the circuit whatever the stop was going to do,
-    /// otherwise a retryable `Backoff` would hand the display to a
-    /// replacement generation that cannot bind it.
-    pub fn escalate_stop_to_failed(&mut self, generation: u64) {
+    pub fn park_cleanup_failure(&mut self, generation: u64) -> bool {
         let Phase::Stopping {
-            generation: current,
-            after_stop,
-        } = &mut self.phase
+            generation: current, ..
+        } = self.phase
         else {
-            return;
+            return false;
         };
-        if *current == generation {
-            *after_stop = AfterStop::Failed;
+        if current != generation {
+            return false;
         }
+        self.phase = Phase::CleanupFailed { generation };
+
+        true
+    }
+
+    pub fn confirm_cleanup(&mut self, generation: u64) -> bool {
+        if self.phase != (Phase::CleanupFailed { generation }) {
+            return false;
+        }
+        self.phase = Phase::Failed;
+
+        true
     }
 
     pub fn finish_backoff(&mut self, generation: u64, now: Instant) -> bool {
@@ -226,21 +218,10 @@ impl Lifecycle {
         }
     }
 
-    /// Whether an explicit user-requested retry is currently allowed.
-    ///
-    /// Deliberately a check, not a transition: the caller must prepare
-    /// resources first and only then call [`Lifecycle::commit_explicit_retry`],
-    /// so a failed setup cannot leave the service in a state that rejects its
-    /// own retry.
     pub fn can_explicit_retry(&self) -> bool {
         self.phase == Phase::Failed
     }
 
-    /// Adopt the prepared state for an explicit retry.
-    ///
-    /// This clears the retry budget. It is a separate operation from an
-    /// incoming client connection, so a failing service can never reopen its
-    /// own circuit by receiving connections.
     pub fn commit_explicit_retry(&mut self) -> bool {
         if !self.can_explicit_retry() {
             return false;
@@ -251,10 +232,6 @@ impl Lifecycle {
         true
     }
 
-    /// Invalidate any scheduled start for the shutdown path.
-    ///
-    /// Uses the same `Stopping` phase as a failure so there is one stop
-    /// transition rather than two that can disagree.
     pub fn begin_shutdown_stop(&mut self) -> Option<u64> {
         if self.phase == Phase::Stopped {
             return None;
@@ -470,6 +447,79 @@ mod tests {
     }
 
     #[test]
+    fn an_unconfirmed_cleanup_is_not_retryable_until_it_is_confirmed() {
+        let mut lifecycle = Lifecycle::default();
+        let generation = start(&mut lifecycle);
+        lifecycle.spawned(generation);
+        let now = Instant::now();
+        lifecycle
+            .begin_stop_after_failure(generation, now, true)
+            .expect("the current generation accepts a failure");
+
+        assert!(lifecycle.park_cleanup_failure(generation), "an in-flight stop parks");
+        assert_eq!(lifecycle.phase, Phase::CleanupFailed { generation });
+
+        // The deadline proved nothing, so the service must refuse to act on it.
+        assert!(!lifecycle.phase.can_start());
+        assert_eq!(lifecycle.request_start(), None);
+        assert!(
+            !lifecycle.can_explicit_retry(),
+            "an unconfirmed cleanup is not retryable"
+        );
+        assert!(!lifecycle.commit_explicit_retry());
+        assert_eq!(
+            lifecycle.finish_stop(generation, Instant::now()),
+            None,
+            "a parked cleanup publishes nothing, not even the stop it replaced"
+        );
+        assert_eq!(lifecycle.phase, Phase::CleanupFailed { generation });
+
+        // Only evidence of a reclaimed group reopens the circuit.
+        assert!(lifecycle.confirm_cleanup(generation));
+        assert_eq!(lifecycle.phase, Phase::Failed);
+        assert!(lifecycle.can_explicit_retry());
+        assert!(lifecycle.commit_explicit_retry());
+        assert_eq!(lifecycle.phase, Phase::Idle);
+    }
+
+    #[test]
+    fn a_parked_cleanup_of_another_generation_is_never_confirmed() {
+        let mut lifecycle = Lifecycle::default();
+        let generation = start(&mut lifecycle);
+        lifecycle.spawned(generation);
+        lifecycle
+            .begin_stop_after_failure(generation, Instant::now(), false)
+            .expect("the current generation accepts a failure");
+        assert!(lifecycle.park_cleanup_failure(generation));
+
+        assert!(!lifecycle.confirm_cleanup(generation.wrapping_add(1)));
+        assert_eq!(lifecycle.phase, Phase::CleanupFailed { generation });
+        assert!(!lifecycle.can_explicit_retry());
+    }
+
+    #[test]
+    fn only_an_in_flight_stop_can_park_a_cleanup() {
+        let mut lifecycle = Lifecycle::default();
+        assert!(
+            !lifecycle.park_cleanup_failure(1),
+            "an idle service has no cleanup to park"
+        );
+
+        let generation = start(&mut lifecycle);
+        assert!(
+            !lifecycle.park_cleanup_failure(generation),
+            "a start in flight is not a stop, so it cannot park"
+        );
+        assert_eq!(lifecycle.phase, Phase::Starting(generation));
+
+        assert!(
+            !lifecycle.confirm_cleanup(generation),
+            "a confirmation outside a park must change nothing"
+        );
+        assert_eq!(lifecycle.phase, Phase::Starting(generation));
+    }
+
+    #[test]
     fn explicit_retry_is_refused_outside_the_failed_phase() {
         let mut lifecycle = Lifecycle::default();
         assert!(!lifecycle.can_explicit_retry());
@@ -561,5 +611,10 @@ mod tests {
         );
         assert_eq!(Phase::Idle.generation(), None);
         assert_eq!(Phase::Failed.generation(), None);
+        assert_eq!(
+            Phase::CleanupFailed { generation: 4 }.generation(),
+            Some(4),
+            "a parked cleanup names the generation it still owns"
+        );
     }
 }

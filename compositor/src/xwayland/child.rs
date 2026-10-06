@@ -10,12 +10,26 @@ use super::sockets::Reservation;
 
 #[cfg(test)]
 pub(crate) mod test_hook {
-    use std::cell::RefCell;
+    use std::cell::{Cell, RefCell};
 
     type InChild = Box<dyn FnMut() -> std::io::Result<()> + Send + Sync>;
 
     thread_local! {
         static IN_CHILD: RefCell<Option<InChild>> = const { RefCell::new(None) };
+        /// Group signals this thread's owners actually sent.
+        ///
+        /// Kept per thread so parallel tests cannot inflate it: an owner whose
+        /// leader was reaped must send none, and a test that measures before
+        /// and after a shutdown is measuring that owner alone.
+        static GROUP_SIGNALS: Cell<usize> = const { Cell::new(0) };
+    }
+
+    pub(crate) fn record_group_signal() {
+        GROUP_SIGNALS.with(|count| count.set(count.get() + 1));
+    }
+
+    pub(crate) fn group_signals() -> usize {
+        GROUP_SIGNALS.with(Cell::get)
     }
 
     /// Arrange an action that must happen in *this* child only, after fork.
@@ -207,11 +221,30 @@ impl OwnedProcessGroup {
         }
     }
 
+    /// Ask the whole group to stop, but only while this owner still holds the
+    /// unreaped leader that names it.
+    ///
+    /// Once the leader is reaped the group number identifies nothing this
+    /// owner controls: it may already belong to an unrelated process group.
+    /// Cleanup in that state resumes by *waiting* for the group, never by
+    /// signalling it, so a stale number can never kill a stranger.
     pub fn signal_group(&self, signal: i32) {
+        if self.reaped {
+            // The group number is stale: it may already name an unrelated
+            // process group, so resume by waiting and never by signalling.
+            return;
+        }
+        #[cfg(test)]
+        test_hook::record_group_signal();
         signal_group(self.pid, signal);
     }
 
     pub fn group_is_empty(&self) -> bool {
+        #[cfg(test)]
+        if super::test_hooks::force_group_not_empty() {
+            return false;
+        }
+
         // SAFETY: `kill` with signal 0 performs error checking only. A negative
         // pid addresses the process group led by `self.pid`.
         let outcome = unsafe { libc::kill(-(self.pid as i32), 0) };
@@ -410,6 +443,31 @@ mod tests {
         assert!(process.reaped);
         // Reaping twice is harmless, so cleanup paths stay simple.
         assert_eq!(process.reap().expect("reap again"), None);
+    }
+
+    #[test]
+    fn a_reaped_owner_resumes_shutdown_without_signalling_a_stale_group() {
+        let mut command = std::process::Command::new("/bin/sh");
+        command.arg("-c").arg("exit 0");
+        let mut process = OwnedProcessGroup::from_command(command).expect("spawn /bin/sh");
+        process.reap().expect("reap the leader");
+        assert!(process.is_reaped(), "the leader is reaped");
+
+        // A shutdown that resumes here still owns the cleanup record, but the
+        // group number may already name another process group: it must be
+        // waited for, never signalled.
+        let before = test_hook::group_signals();
+        let status = process
+            .terminate(Duration::from_secs(5))
+            .expect("terminating a reaped owner must not fail");
+
+        assert_eq!(status, None, "there is no leader left to report a status for");
+        assert_eq!(
+            test_hook::group_signals(),
+            before,
+            "a reaped owner must resume by waiting, not by signalling its stale group number"
+        );
+        assert!(process.group_is_empty(), "the group really was reclaimed");
     }
 
     #[test]

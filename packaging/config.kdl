@@ -15,8 +15,6 @@ commands {
     mic-mute "wpctl" "set-mute" "@DEFAULT_AUDIO_SOURCE@" "toggle"
 }
 
-// X11 apps need xwayland-satellite and an Xwayland binary installed.
-// See docs/configuration.md for the diagnostics and recovery commands.
 xwayland {
     enabled #true
     startup on-demand

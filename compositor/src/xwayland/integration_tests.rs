@@ -617,6 +617,7 @@ mod manager_loop {
     use crate::Ferese;
     use crate::config::{XwaylandConfig, XwaylandStartup};
     use crate::xwayland;
+    use crate::xwayland::lifecycle::Phase;
     use crate::xwayland::test_hooks;
     use ferese_ipc::xwayland::{Readiness, State};
     use smithay::reexports::calloop::EventLoop;
@@ -897,6 +898,229 @@ mod manager_loop {
             highest_generation >= 2,
             "the queued connection must have driven retries after cleanup, saw generation {highest_generation}"
         );
+        let _ = fs::remove_dir_all(&directory);
+    }
+
+    /// A stop that cannot prove its group is gone must not publish a stop at
+    /// all: publishing drops the only handle on survivors that may still hold
+    /// the X11 listeners, and a retry would then hand the display to a
+    /// replacement generation competing with them.
+    #[test]
+    fn an_unconfirmed_cleanup_keeps_the_endpoint_closed_until_the_group_is_reclaimed() {
+        const PATH: &str = "xwayland::integration_tests::manager_loop::an_unconfirmed_cleanup_keeps_the_endpoint_closed_until_the_group_is_reclaimed";
+        if !run_isolated(PATH) {
+            return;
+        }
+        test_hooks::reset();
+
+        let directory = std::env::temp_dir().join(format!("ferese-manager-cleanup-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&directory);
+        fs::create_dir_all(&directory).expect("create the test directory");
+        let record = directory.join("starts.jsonl");
+        let record = record.display().to_string();
+
+        let (mut event_loop, mut state) = session(
+            &directory,
+            wrapper(
+                &directory,
+                &[
+                    ("FAKE_SATELLITE_RECORD", record.as_str()),
+                    ("FAKE_SATELLITE_EXIT_AFTER_READY", "1"),
+                    ("FAKE_SATELLITE_LINGER", "0"),
+                ],
+            ),
+        );
+        xwayland::initialize(&mut state);
+        xwayland::request_start(&mut state).expect("an on-demand service accepts a start request");
+
+        // Whatever the stop asks, the group never reports itself reclaimed, so
+        // the kill grace expires with no evidence that the resources are gone.
+        test_hooks::FORCE_GROUP_NOT_EMPTY.store(true, std::sync::atomic::Ordering::SeqCst);
+
+        let mut retired_pid = None;
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            event_loop
+                .dispatch(Some(Duration::from_millis(25)), &mut state)
+                .expect("dispatch the event loop");
+            let status = xwayland::status_snapshot(&state);
+            if let Some(pid) = status.satellite_pid {
+                retired_pid = Some(pid);
+            }
+            if status.state == State::Failed {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "the cleanup never became unconfirmed: {status:?}"
+            );
+        }
+
+        let parked = xwayland::status_snapshot(&state);
+        let retired_pid = retired_pid.expect("a service was spawned");
+        let generation = parked.generation.expect("the parked generation is reported");
+        let display = parked.display.clone().expect("the display stays reserved");
+        assert_eq!(
+            parked.satellite_pid,
+            Some(retired_pid),
+            "the cleanup record must stay owned while its group may still exist"
+        );
+        {
+            let manager = state.xwayland.as_ref().expect("the manager stays published");
+            assert!(
+                matches!(manager.lifecycle.phase, Phase::CleanupFailed { .. }),
+                "the expired deadline must park the stop, found {:?}",
+                manager.lifecycle.phase
+            );
+            assert!(manager.process.is_some(), "the record still owns the group");
+        }
+
+        // No replacement may start while the old group may still hold the
+        // display: not from a queued connection, not from an explicit retry,
+        // and not by republishing an endpoint nobody is consuming.
+        assert!(
+            xwayland::request_start(&mut state).is_none(),
+            "a parked cleanup must refuse a replacement generation"
+        );
+        let error = xwayland::retry(&mut state).expect_err("a retry must be refused while cleanup is unconfirmed");
+        assert!(
+            error.contains("still holds the X11 display"),
+            "the refusal must name what is still holding the display: {error}"
+        );
+        assert!(
+            !x11_socket_path(&directory, &display).exists(),
+            "the endpoint must not be republished while cleanup is unconfirmed"
+        );
+        assert_eq!(
+            fs::read_to_string(&record)
+                .map(|contents| contents.lines().count())
+                .unwrap_or(0),
+            1,
+            "no replacement process may have been spawned"
+        );
+        assert_eq!(
+            xwayland::status_snapshot(&state).state,
+            State::Failed,
+            "the refused retry must not move the service"
+        );
+
+        // The group really was reclaimed all along: with the lie removed, the
+        // same retry must recover on the same display.
+        test_hooks::FORCE_GROUP_NOT_EMPTY.store(false, std::sync::atomic::Ordering::SeqCst);
+        wrapper(
+            &directory,
+            &[
+                ("FAKE_SATELLITE_RECORD", record.as_str()),
+                ("FAKE_SATELLITE_LINGER", "60"),
+            ],
+        );
+        xwayland::retry(&mut state).expect("a confirmed cleanup makes a retry legal again");
+        dispatch_until(&mut event_loop, &mut state, |state| {
+            let status = xwayland::status_snapshot(state);
+            status.state == State::Running && status.generation.is_some_and(|value| value > generation)
+        });
+
+        let recovered = xwayland::status_snapshot(&state);
+        assert_eq!(recovered.state, State::Running, "{recovered:?}");
+        assert!(
+            recovered.display.as_deref() == Some(display.as_str()),
+            "recovery must stay on the same display: {recovered:?}"
+        );
+        assert_eq!(
+            fs::read_to_string(&record)
+                .map(|contents| contents.lines().count())
+                .unwrap_or(0),
+            2,
+            "a confirmed cleanup is followed by exactly one replacement"
+        );
+
+        xwayland::shutdown_after_loop(&mut state);
+        test_hooks::reset();
+        let _ = fs::remove_dir_all(&directory);
+    }
+
+    /// The leader of a parked cleanup has already been reaped, so its group
+    /// number may name an unrelated group. Shutdown must resume by waiting for
+    /// the group, never by signalling that stale number.
+    #[test]
+    fn shutdown_of_an_unconfirmed_cleanup_issues_no_stale_group_signals() {
+        const PATH: &str = "xwayland::integration_tests::manager_loop::shutdown_of_an_unconfirmed_cleanup_issues_no_stale_group_signals";
+        if !run_isolated(PATH) {
+            return;
+        }
+        test_hooks::reset();
+
+        let directory = std::env::temp_dir().join(format!("ferese-manager-cleanup-stop-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&directory);
+        fs::create_dir_all(&directory).expect("create the test directory");
+
+        let (mut event_loop, mut state) = session(
+            &directory,
+            wrapper(
+                &directory,
+                &[("FAKE_SATELLITE_EXIT_AFTER_READY", "1"), ("FAKE_SATELLITE_LINGER", "0")],
+            ),
+        );
+        xwayland::initialize(&mut state);
+        xwayland::request_start(&mut state).expect("an on-demand service accepts a start request");
+        test_hooks::FORCE_GROUP_NOT_EMPTY.store(true, std::sync::atomic::Ordering::SeqCst);
+
+        let mut retired_pid = None;
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            event_loop
+                .dispatch(Some(Duration::from_millis(25)), &mut state)
+                .expect("dispatch the event loop");
+            let status = xwayland::status_snapshot(&state);
+            if let Some(pid) = status.satellite_pid {
+                retired_pid = Some(pid);
+            }
+            if status.state == State::Failed {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "the cleanup never became unconfirmed: {status:?}"
+            );
+        }
+
+        let retired_pid = retired_pid.expect("a service was spawned");
+        let display = xwayland::status_snapshot(&state)
+            .display
+            .expect("the display stays reserved");
+        {
+            let manager = state.xwayland.as_ref().expect("the manager stays published");
+            assert!(
+                matches!(manager.lifecycle.phase, Phase::CleanupFailed { .. }),
+                "the stop must be parked as unconfirmed, found {:?}",
+                manager.lifecycle.phase
+            );
+            assert_eq!(
+                manager.process.as_ref().map(|process| process.pid()),
+                Some(retired_pid),
+                "the parked record still owns the group"
+            );
+        }
+        assert!(
+            !process_exists(retired_pid),
+            "the leader was reaped, so only its group number could still be signalled"
+        );
+
+        let before = child::test_hook::group_signals();
+        xwayland::shutdown_after_loop(&mut state);
+
+        assert_eq!(
+            child::test_hook::group_signals(),
+            before,
+            "shutdown must resume an unconfirmed cleanup by waiting, not by signalling a \
+             group number whose leader was reaped"
+        );
+        assert!(state.xwayland.is_none(), "shutdown releases the manager");
+        assert!(
+            !x11_socket_path(&directory, &display).exists(),
+            "shutdown must release the socket path"
+        );
+        test_hooks::reset();
         let _ = fs::remove_dir_all(&directory);
     }
 

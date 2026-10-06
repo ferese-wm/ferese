@@ -527,8 +527,8 @@ mod tests {
         packaged.runtime_config().unwrap();
 
         assert!(
-            !packaged.xwayland.enabled,
-            "packaging/config.kdl must keep xwayland disabled until the lifecycle gate passes"
+            packaged.xwayland.enabled,
+            "packaging/config.kdl must ship X11 support enabled, matching the default"
         );
         let source = "input {\n    touchpad {\n        swipe-threshold 96\n    }\n}\nbinding keys=\"Swipe3Up\" action=\"toggle-overview\"\noutput-profile name=\"desk\" {\n    output match=\"DP-1\" scale=1.5 {\n        position 0 0\n    }\n}\ndesktop-widgets {\n    clock {\n        enabled #true\n        outputs \"DP-1\"\n    }\n}\nautostart {\n    command \"program\" \"argument with space\"\n}\n";
         let config = Config::parse_source(source).unwrap();

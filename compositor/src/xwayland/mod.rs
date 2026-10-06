@@ -43,6 +43,13 @@ pub(crate) mod test_hooks {
     pub(crate) static FAIL_LISTENER_REGISTRATION_AFTER: AtomicUsize = AtomicUsize::new(usize::MAX);
     pub(crate) static FAIL_REBIND_AFTER: AtomicUsize = AtomicUsize::new(usize::MAX);
     pub(crate) static STARTUP_DEADLINE_MS: AtomicUsize = AtomicUsize::new(0);
+    /// Pretend the previous service group can never be reclaimed, so a test can
+    /// reach the unconfirmed-cleanup state without an unkillable survivor.
+    pub(crate) static FORCE_GROUP_NOT_EMPTY: AtomicBool = AtomicBool::new(false);
+
+    pub(crate) fn force_group_not_empty() -> bool {
+        FORCE_GROUP_NOT_EMPTY.load(Ordering::SeqCst)
+    }
 
     /// True when this call must fail instead of performing its operation.
     ///
@@ -113,6 +120,7 @@ pub(crate) mod test_hooks {
         FAIL_LISTENER_REGISTRATION_AFTER.store(usize::MAX, Ordering::SeqCst);
         FAIL_REBIND_AFTER.store(usize::MAX, Ordering::SeqCst);
         STARTUP_DEADLINE_MS.store(0, Ordering::SeqCst);
+        FORCE_GROUP_NOT_EMPTY.store(false, Ordering::SeqCst);
         ALLOCATOR_ROOT.with(|slot| *slot.borrow_mut() = None);
     }
 }
@@ -230,7 +238,9 @@ impl XwaylandManager {
             // Cleanup owns the previous service; the endpoint is not usable.
             Phase::Stopping { .. } | Phase::Stopped => State::Stopped,
             Phase::Backoff { .. } => State::Backoff,
-            Phase::Failed => State::Failed,
+            // Failed and still failed: a parked cleanup refuses a retry until
+            // the group it owns is reclaimed, which `last_error` explains.
+            Phase::CleanupFailed { .. } | Phase::Failed => State::Failed,
         }
     }
 
@@ -400,8 +410,9 @@ impl XwaylandManager {
             // The group, not just the leader, has to be gone.
             Some(Observation::Exited) | None => {
                 self.wait_for_empty_group(loop_handle, generation, after_stop);
-                if self.process.is_none() {
-                    // Cleanup finished inside the helper.
+                if self.process.is_none() || !matches!(self.lifecycle.phase, Phase::Stopping { .. }) {
+                    // Cleanup finished, or was parked as unconfirmed, inside
+                    // the helper: either way no poll belongs to this stop.
                     return;
                 }
             }
@@ -497,9 +508,11 @@ impl XwaylandManager {
             }
             Some(grace) if now >= grace => {
                 let detail = "the X11 service group survived SIGKILL".to_owned();
-                warn!(generation, %detail, "cannot fully reclaim the X11 service group");
+                warn!(generation, %detail, "cannot reclaim the X11 service group; keeping it under ownership");
                 self.last_error = Some(detail);
-                self.complete_stop(loop_handle, generation, AfterStop::Failed);
+                // A deadline is not proof that the group is gone, so this must
+                // not publish a stop that would drop the only handle on it.
+                self.park_cleanup_failure(loop_handle, generation);
             }
             Some(_) => {}
         }
@@ -513,8 +526,93 @@ impl XwaylandManager {
             process.note_cleanup_error(detail);
         }
 
-        // An incomplete cleanup must never leave the service startable.
-        self.complete_stop(loop_handle, generation, AfterStop::Failed);
+        // An incomplete cleanup must never leave the service startable, and it
+        // must not be published as if the resources were gone.
+        self.park_cleanup_failure(loop_handle, generation);
+    }
+
+    /// Keep an unconfirmed cleanup under ownership instead of publishing it.
+    ///
+    /// The stop is over as far as the event loop is concerned, but the record
+    /// it was cleaning up is not: survivors may still hold the X11 listeners.
+    /// The record stays owned, the endpoint stays closed, and every start
+    /// stays refused until [`Self::confirm_cleanup`] proves the group is
+    /// empty.
+    fn park_cleanup_failure(&mut self, loop_handle: &Loop, generation: u64) {
+        if let Some(token) = self.sources.stop_poll.take() {
+            loop_handle.remove(token);
+        }
+        self.stop_kill_deadline = None;
+        self.stop_kill_grace = None;
+
+        // Reap here, while the process-group identity is still the one we own.
+        if let Some(process) = self.process.as_mut()
+            && let Err(error) = process.reap()
+        {
+            process.note_cleanup_error(error.clone());
+            self.last_error = Some(error);
+        }
+
+        if !self.lifecycle.park_cleanup_failure(generation) {
+            // Nothing current is waiting on this record, so it must not be
+            // mistaken for the cleanup of whatever the lifecycle moved on to.
+            warn!(
+                generation,
+                "an unconfirmed cleanup arrived for a generation that is no longer current"
+            );
+            return;
+        }
+        debug_assert!(
+            self.process.is_some(),
+            "a parked cleanup keeps the record that still owns the group"
+        );
+
+        // An open listening socket with no consumer would strand clients, and
+        // the path must not exist while survivors may still own the old one.
+        self.remove_listener_sources(loop_handle);
+        self.reservation.close_listeners();
+    }
+
+    /// Prove a parked cleanup is actually finished, so a retry may proceed.
+    ///
+    /// Only an empty group counts. The deadline that parked the stop said
+    /// nothing about the group, so the circuit reopens on evidence alone.
+    fn confirm_cleanup(&mut self) -> Result<(), String> {
+        let Phase::CleanupFailed { generation } = self.lifecycle.phase else {
+            return Ok(());
+        };
+
+        let confirmed = match self.process.as_mut() {
+            // Nothing is owned any more, so there is nothing left to reclaim.
+            None => true,
+            Some(process) => match process.reap() {
+                Ok(_) => process.group_is_empty(),
+                Err(error) => {
+                    let error = format!("cannot reap the previous X11 service: {error}");
+                    self.last_error = Some(error.clone());
+                    return Err(error);
+                }
+            },
+        };
+
+        if !confirmed {
+            let error = "the previous X11 service group still holds the X11 display; \
+                 cleanup has not finished, so X11 cannot be retried yet"
+                .to_owned();
+            self.last_error = Some(error.clone());
+            return Err(error);
+        }
+
+        self.process = None;
+        if !self.lifecycle.confirm_cleanup(generation) {
+            return Err("the X11 service left the unconfirmed cleanup state while it was checked".to_owned());
+        }
+        info!(
+            generation,
+            "reclaimed the previous X11 service group; retrying is allowed again"
+        );
+
+        Ok(())
     }
 
     fn complete_stop(&mut self, loop_handle: &Loop, generation: u64, after_stop: AfterStop) {
@@ -534,18 +632,16 @@ impl XwaylandManager {
         }
         // A leader that could not be reaped may still hold the display, so the
         // stop must not publish the outcome it was scheduled to publish.
-        let cleanup_unconfirmed = self
+        if self
             .process
             .as_ref()
-            .is_some_and(|process| process.cleanup_error().is_some());
+            .is_some_and(|process| process.cleanup_error().is_some())
+        {
+            self.park_cleanup_failure(loop_handle, generation);
+            return;
+        }
         // Safe now: the leader has been reaped, so Drop has nothing to signal.
         self.process = None;
-
-        // A caller that could not confirm cleanup asks for `Failed`; honour it
-        // instead of publishing whatever the stop was scheduled to do.
-        if cleanup_unconfirmed || after_stop == AfterStop::Failed {
-            self.lifecycle.escalate_stop_to_failed(generation);
-        }
 
         let Some(published) = self.lifecycle.finish_stop(generation, std::time::Instant::now()) else {
             return;
@@ -585,6 +681,13 @@ impl XwaylandManager {
     }
 
     pub fn explicit_retry(&mut self, loop_handle: &Loop) -> Result<(), String> {
+        // The previous group may still hold the display. Nothing below may run
+        // until that is proven false, or a replacement would be handed an
+        // endpoint an unknown survivor still owns.
+        if matches!(self.lifecycle.phase, Phase::CleanupFailed { .. }) {
+            self.confirm_cleanup()?;
+        }
+
         // A precondition check, not a transition: preparation happens first so
         // a failure cannot leave the service in a state that rejects its own
         // retry or advertises listeners nobody is watching.
@@ -633,6 +736,7 @@ fn phase_name(phase: Phase) -> &'static str {
         Phase::Running(_) => "running",
         Phase::Stopping { .. } => "stopping",
         Phase::Backoff { .. } => "backoff",
+        Phase::CleanupFailed { .. } => "cleanup-failed",
         Phase::Failed => "failed",
         Phase::Stopped => "stopped",
     }
@@ -710,13 +814,25 @@ fn request_first_generation(state: &mut Ferese) -> Result<u64, String> {
         .ok_or_else(|| "X11 could not be started yet; a previous attempt is still in progress".to_owned())
 }
 
-fn prepare(config: &XwaylandConfig) -> Result<XwaylandManager, String> {
-    let runtime_directory = runtime_directory()?;
-    let notify_directory = tempfile::Builder::new()
+/// Create the private directory that holds one service instance's readiness
+/// socket.
+///
+/// Production and the tests share this constructor so the mode is asserted
+/// against the same code that ships: the directory is `0700` whatever the
+/// session umask is, because another user must not be able to place a socket
+/// where Ferese looks for notifications.
+fn notification_directory(runtime_directory: &std::path::Path) -> Result<tempfile::TempDir, String> {
+    tempfile::Builder::new()
         .prefix("ferese-x11-")
         .rand_bytes(16)
-        .tempdir_in(&runtime_directory)
-        .map_err(|error| format!("cannot create the X11 notification directory: {error}"))?;
+        .permissions(std::os::unix::fs::PermissionsExt::from_mode(0o700))
+        .tempdir_in(runtime_directory)
+        .map_err(|error| format!("cannot create the X11 notification directory: {error}"))
+}
+
+fn prepare(config: &XwaylandConfig) -> Result<XwaylandManager, String> {
+    let runtime_directory = runtime_directory()?;
+    let notify_directory = notification_directory(&runtime_directory)?;
     let reservation = Reservation::allocate().map_err(|error| format!("cannot reserve an X11 display: {error}"))?;
     let display = reservation.display_number();
     let authority = AuthorityFile::create(&runtime_directory, display)
@@ -1095,6 +1211,11 @@ mod tests {
             "backoff"
         );
         assert_eq!(phase_name(Phase::Failed), "failed");
+        assert_eq!(
+            phase_name(Phase::CleanupFailed { generation: 1 }),
+            "cleanup-failed",
+            "an unconfirmed cleanup is reported distinctly from a finished stop"
+        );
 
         assert_eq!(phase_name(Phase::Starting(1)), "starting");
         assert_eq!(phase_name(Phase::Spawned(1)), "starting");
@@ -1128,18 +1249,12 @@ mod tests {
     #[test]
     fn notification_endpoints_are_private_per_instance() {
         let root = tempfile::tempdir().expect("a private runtime directory");
-        let stale = tempfile::Builder::new()
-            .prefix("ferese-x11-")
-            .rand_bytes(16)
-            .tempdir_in(root.path())
-            .expect("the first instance directory");
+        // The production constructor, so the mode below is the shipped one and
+        // not a second implementation that only the test believes in.
+        let stale = notification_directory(root.path()).expect("the first instance directory");
         let stale_socket = ReadinessSocket::create(stale.path(), 1).expect("the first endpoint");
 
-        let next = tempfile::Builder::new()
-            .prefix("ferese-x11-")
-            .rand_bytes(16)
-            .tempdir_in(root.path())
-            .expect("the second instance directory");
+        let next = notification_directory(root.path()).expect("the second instance directory");
         let next_socket = ReadinessSocket::create(next.path(), 1).expect("the second endpoint");
 
         assert_ne!(stale.path(), next.path(), "each instance owns its own directory");
@@ -1156,7 +1271,7 @@ mod tests {
         assert_eq!(
             mode & 0o777,
             0o700,
-            "the notification directory must be private to the session"
+            "the notification directory must be private to the session, whatever the umask is"
         );
     }
 

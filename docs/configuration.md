@@ -974,10 +974,16 @@ reallocate the X11 service; `feresectl xwayland status` reports
 ### Requirements and failure behavior
 
 `xwayland-satellite` and an `Xwayland` binary it can find must be installed.
-If either is missing, the session still starts as a normal Wayland desktop and
-`feresectl xwayland status` explains why X11 is unavailable. Ferese never
-publishes a `DISPLAY` value that does not work, so applications fail cleanly
-instead of hanging against an endpoint that accepts nothing.
+Satellite must be built with its `systemd` feature enabled
+(`cargo build --release --features systemd`); that feature sends the `READY=1`
+notification Ferese waits for. Upstream's default feature set is empty, so a
+default build never sends it and every start ends in a startup failure after
+Ferese's fixed 10-second budget, even though the process is running. Being
+spawned is not readiness. If any of these are missing, the session still starts
+as a normal Wayland desktop and `feresectl xwayland status` explains why X11 is
+unavailable. Ferese never publishes a `DISPLAY` value that does not work, so
+applications fail cleanly instead of hanging against an endpoint that accepts
+nothing.
 
 In a nested session, Ferese's own environment is preserved for backend
 initialization, but applications it launches receive the new Ferese endpoints.
@@ -998,6 +1004,13 @@ number of times, then stops and waits, so a broken binary cannot produce a
 restart loop. Run `feresectl xwayland retry` once the cause is fixed. The
 snapshot never contains the X11 cookie, so it is safe to paste into a bug
 report.
+
+`retry` can also refuse to run. If the previous service group cannot be proven
+gone — for example it survived the stop sequence — Ferese keeps its cleanup
+record instead of starting a second generation that would compete with
+survivors for the same display, and the retry fails with a message naming what
+still holds the X11 display. The endpoint is not republished in the meantime.
+Run the retry again once that group has finished exiting.
 
 Each start uses a fresh, private notification socket and only a `READY=1`
 message from the Satellite process that was actually spawned is accepted, so a

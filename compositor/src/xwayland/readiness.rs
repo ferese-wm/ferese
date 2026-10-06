@@ -561,24 +561,6 @@ mod tests {
             .unwrap_or(0)
     }
 
-    /// Drain the socket until empty; returns the datagrams judged and the elapsed time.
-    fn drain_all(socket: &ReadinessSocket, pid: u32, budget: usize) -> (usize, std::time::Duration) {
-        let started = std::time::Instant::now();
-        let mut judged = 0;
-        while judged < budget {
-            match socket.recv_ready(pid) {
-                Ok(_) => judged += 1,
-                Err(error) if error.kind() == io::ErrorKind::WouldBlock => break,
-                Err(error) => panic!("unexpected readiness read error: {error}"),
-            }
-            assert!(
-                started.elapsed() < std::time::Duration::from_secs(5),
-                "the drain must make progress rather than block"
-            );
-        }
-        (judged, started.elapsed())
-    }
-
     /// A truncated ancillary buffer must be rejected and its delivered descriptors closed.
     #[test]
     fn truncated_control_messages_still_close_the_descriptors_they_delivered() {
@@ -622,19 +604,52 @@ mod tests {
         let sentinel = sentinel_file("storm");
         let before = open_fd_count();
         let pid = send_malformed_storm_from_child(&path, &sentinel, 128);
-        // SAFETY: reaping a direct child that has already exited.
+
+        // Drain while the sender may still be blocked in `sendmsg`: the socket
+        // queue holds far fewer datagrams than the storm, so waiting for the
+        // child to exit before reading would deadlock the pair. One deadline
+        // covers both the send and the receive.
+        let started = std::time::Instant::now();
+        let deadline = started + std::time::Duration::from_secs(10);
+        let mut judged = 0;
         let mut status = 0;
+        while judged < 128 {
+            loop {
+                match socket.recv_ready(u32::MAX) {
+                    Ok(_) => judged += 1,
+                    Err(error) if error.kind() == io::ErrorKind::WouldBlock => break,
+                    Err(error) => panic!("unexpected readiness read error: {error}"),
+                }
+            }
+            if judged >= 128 || std::time::Instant::now() >= deadline {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+
+        if judged < 128 {
+            // The sender never finished, so it is still blocked. Kill it and
+            // reap it here rather than leave it behind for another test.
+            // SAFETY: signalling and reaping a direct child of this process.
+            unsafe {
+                libc::kill(pid, libc::SIGKILL);
+                libc::waitpid(pid, std::ptr::from_mut(&mut status), 0);
+            }
+            panic!("the storm was not delivered within the shared deadline: {judged} of 128 judged");
+        }
+
+        // Every datagram was accepted, so the sender has reached its exit.
+        // SAFETY: reaping a direct child that has finished sending.
         unsafe { libc::waitpid(pid, std::ptr::from_mut(&mut status), 0) };
         assert!(
             libc::WIFEXITED(status) && libc::WEXITSTATUS(status) == 0,
             "child must deliver the storm: {status:#x}"
         );
-
-        let (judged, elapsed) = drain_all(&socket, u32::MAX, 256);
         assert!(judged >= 128, "the storm must be delivered and judged: {judged}");
         assert!(
-            elapsed < std::time::Duration::from_secs(2),
-            "judging the storm must not stall the consumer: {elapsed:?}"
+            started.elapsed() < std::time::Duration::from_secs(2),
+            "judging the storm must not stall the consumer: {:?}",
+            started.elapsed()
         );
         assert!(
             !holds_open(&sentinel),
