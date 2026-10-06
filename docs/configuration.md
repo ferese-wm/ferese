@@ -109,7 +109,7 @@ columns align with the viewport. Wider columns reveal their left edge when
 approached from the left and their right edge when approached from the right;
 an existing view inside a wider column stays in place. `center_on_focus` centers
 the focused column. `paged` packs columns into viewport-sized pages: halves form pairs, thirds
-form triples; mixed widths and client minimum sizes determine actual boundaries.
+form triples; mixed widths and effective minimum sizes determine actual boundaries.
 Changing default width preserves manually resized columns.
 
 ## Animations
@@ -574,9 +574,15 @@ window rules can override that behavior.
 | `workspace` | integer > 0 | Leave placement unchanged |
 | `floating` | boolean | Leave placement unchanged |
 | `width`, `height` | numbers > 0 | Application-chosen floating size |
+| `min-width`, `min-height` | numbers > 0 | Replaces the client's advertised minimum size for that axis |
 | `fullscreen` | boolean | Leave fullscreen state unchanged |
 | `block-out-from-screencasts` | boolean | Exclude from captures; enabled by default for Ferese authentication dialogs |
 | `idle-inhibit` | `none`, `visible`, `fullscreen`, `playing`, `fullscreen-playing` | Automatic fullscreen playback; see [Idle inhibition](#idle-inhibition) |
+
+`window-rule app-id="spotify" min-width=500 min-height=400` replaces what the
+app itself reports as its smallest size, so a configured column width wins over
+an app that refuses to shrink (`min-width=1` removes the floor). Each axis is
+independent; an omitted axis keeps the client's minimum.
 
 `window-rule app-id="org.example.Private" block-out-from-screencasts=#true`
 keeps matching windows visible on the display but omits them (including their
@@ -603,7 +609,7 @@ part of their parent, then tries saved geometry, then the position with the leas
 summed overlap.
 Equal-overlap candidates favor the focused window's center. If the size cannot
 fit, a per-output cascade advances by 32 logical pixels and wraps to the work-area
-origin. Placement respects layer-shell exclusive zones and client minimum sizes;
+origin. Placement respects layer-shell exclusive zones and effective minimum sizes;
 an oversized window keeps its size with its top-left corner reachable.
 
 Successful move/resize completion saves ordinary floating geometry by app ID in
