@@ -952,11 +952,7 @@ override shell rounding.
 ## X11 support (xwayland-satellite)
 
 Ferese can run legacy X11-only applications through
-[xwayland-satellite](https://github.com/Supreeeme/xwayland-satellite). The
-compositor owns the whole bridge: it reserves a display, creates a private
-Xauthority file, passes the listening sockets to Satellite, and supervises the
-process. Nothing is inherited from a host X server.
-
+[xwayland-satellite](https://github.com/Supreeeme/xwayland-satellite).
 ```kdl
 xwayland {
     enabled #true
