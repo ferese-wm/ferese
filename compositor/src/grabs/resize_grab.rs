@@ -150,13 +150,17 @@ impl PointerGrab<Ferese> for ResizeSurfaceGrab {
             let state = cached.current();
             (state.min_size, state.max_size)
         });
-        let minimum = data.effective_minimum_size(&self.window, (minimum.w, minimum.h));
+        let (minimum, maximum) = data.effective_size_constraints(
+            &self.window,
+            (minimum.w, minimum.h),
+            (maximum.w, maximum.h),
+        );
         self.last_size = constrained_size(
             self.initial_rect.size,
             delta,
             self.edges,
             minimum,
-            (maximum.w, maximum.h),
+            (maximum.0, maximum.1),
         );
         let rect = resized_rect(self.initial_rect, self.last_size, self.edges);
         data.set_floating_window_geometry(&self.window, rect.loc, rect.size);

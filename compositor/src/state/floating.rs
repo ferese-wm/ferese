@@ -308,7 +308,7 @@ impl Ferese {
                         (state.max_size.w, state.max_size.h),
                     )
                 });
-                let minimum = self.effective_minimum_size(window, minimum);
+                let (minimum, maximum) = self.effective_size_constraints(window, minimum, maximum);
                 SizeConstraints {
                     min_width: minimum.0.max(1) as f64,
                     min_height: minimum.1.max(1) as f64,

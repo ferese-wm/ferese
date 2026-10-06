@@ -261,9 +261,14 @@ impl Ferese {
         self.apply_window_rule_result(window, rule);
     }
 
-    pub(crate) fn effective_minimum_size(&self, window: &Window, minimum: (i32, i32)) -> (i32, i32) {
+    pub(crate) fn effective_size_constraints(
+        &self,
+        window: &Window,
+        minimum: (i32, i32),
+        maximum: (i32, i32),
+    ) -> ((i32, i32), (i32, i32)) {
         let Some(toplevel) = window.toplevel() else {
-            return minimum;
+            return (minimum, maximum);
         };
         let rules = &self.window_rules;
         with_states(toplevel.wl_surface(), |states| {
@@ -280,8 +285,11 @@ impl Ferese {
                 attributes.parent.is_some(),
             );
             (
-                rule.min_width.map_or(minimum.0, |width| width.ceil() as i32),
-                rule.min_height.map_or(minimum.1, |height| height.ceil() as i32),
+                (
+                    rule.min_width.map_or(minimum.0, |width| width.ceil() as i32),
+                    rule.min_height.map_or(minimum.1, |height| height.ceil() as i32),
+                ),
+                maximum,
             )
         })
     }

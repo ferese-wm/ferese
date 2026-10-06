@@ -478,7 +478,7 @@ fn window_rule_minimum_size_replaces_the_client_advertised_minimum() {
     request(&mut wire, 4, 8, &[800, 600], None);
     request(&mut wire, 2, 6, &[], None);
     dispatch(&mut events, &mut state);
-    assert_eq!(state.effective_minimum_size(&window, (800, 600)), (800, 600));
+    assert_eq!(state.effective_size_constraints(&window, (800, 600), (0,0)).0, (800, 600));
     assert_eq!(state.window_constraints()[&id].min_width, 800.0);
     assert_eq!(state.window_constraints()[&id].min_height, 600.0);
 
@@ -487,7 +487,7 @@ fn window_rule_minimum_size_replaces_the_client_advertised_minimum() {
             .unwrap()
             .window_rules()
             .unwrap();
-    assert_eq!(state.effective_minimum_size(&window, (800, 600)), (500, 400));
+    assert_eq!(state.effective_size_constraints(&window, (800, 600), (0,0)).0, (500, 400));
     let constraints = state.window_constraints();
     assert_eq!(constraints[&id].min_width, 500.0);
     assert_eq!(constraints[&id].min_height, 400.0);
@@ -496,8 +496,8 @@ fn window_rule_minimum_size_replaces_the_client_advertised_minimum() {
         .unwrap()
         .window_rules()
         .unwrap();
-    assert_eq!(state.effective_minimum_size(&window, (800, 600)), (800, 400));
+    assert_eq!(state.effective_size_constraints(&window, (800, 600), (0,0)).0, (800, 400));
 
     state.window_rules.clear();
-    assert_eq!(state.effective_minimum_size(&window, (800, 600)), (800, 600));
+    assert_eq!(state.effective_size_constraints(&window, (800, 600), (0,0)).0, (800, 600));
 }

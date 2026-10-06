@@ -62,6 +62,10 @@ pub(crate) fn live_result(
     new.block_out_from_screencasts = None;
     old.idle_inhibit = None;
     new.idle_inhibit = None;
+    old.min_width = None;
+    old.min_height = None;
+    new.min_width = None;
+    new.min_height = None;
     if old == new {
         return None;
     }
@@ -206,27 +210,6 @@ pub(crate) fn normalize_app_id(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn live_rule_removal_reverts_placement_but_unchanged_rules_preserve_manual_state() {
-        let old = super::WindowRuleResult {
-            floating: Some(true),
-            fullscreen: Some(true),
-            ..Default::default()
-        };
-        assert_eq!(super::live_result(old, old, false), None);
-        let removed = super::live_result(old, Default::default(), false).unwrap();
-        assert_eq!(removed.floating, Some(false));
-        assert_eq!(removed.fullscreen, Some(false));
-        assert_eq!(
-            super::live_result(old, Default::default(), true).unwrap().floating,
-            Some(true)
-        );
-        let new = super::WindowRuleResult {
-            width: Some(800.),
-            ..Default::default()
-        };
-        assert_eq!(super::live_result(old, new, false).unwrap().floating, None);
-    }
     use super::*;
 
     fn config(app_id: &str) -> WindowRuleConfig {
@@ -420,5 +403,53 @@ mod tests {
         assert_eq!(result.min_width, None);
         assert_eq!(result.min_height, Some(400.0));
         assert_eq!(resolve(&[], Some("spotify"), None, false).min_width, None);
+    }
+
+    #[test]
+    fn live_rule_removal_reverts_placement_but_unchanged_rules_preserve_manual_state() {
+        let old = super::WindowRuleResult {
+            floating: Some(true),
+            fullscreen: Some(true),
+            ..Default::default()
+        };
+        assert_eq!(super::live_result(old, old, false), None);
+        let removed = super::live_result(old, Default::default(), false).unwrap();
+        assert_eq!(removed.floating, Some(false));
+        assert_eq!(removed.fullscreen, Some(false));
+        assert_eq!(
+            super::live_result(old, Default::default(), true).unwrap().floating,
+            Some(true)
+        );
+        let new = super::WindowRuleResult {
+            width: Some(800.),
+            ..Default::default()
+        };
+        assert_eq!(super::live_result(old, new, false).unwrap().floating, None);
+    }
+
+    #[test]
+    fn minimum_size_changes_are_constraint_policy_not_placement_work() {
+        let old = super::WindowRuleResult {
+            min_width: Some(500.),
+            min_height: Some(400.),
+            ..Default::default()
+        };
+        assert_eq!(super::live_result(old, Default::default(), false), None);
+        let raised = super::WindowRuleResult {
+            min_width: Some(600.),
+            min_height: Some(400.),
+            ..Default::default()
+        };
+        assert_eq!(super::live_result(old, raised, false), None);
+        assert_eq!(super::live_result(old, old, false), None);
+
+        let with_placement = super::WindowRuleResult {
+            floating: Some(true),
+            min_width: Some(700.),
+            ..Default::default()
+        };
+        let applied = super::live_result(old, with_placement, false).unwrap();
+        assert_eq!(applied.floating, Some(true));
+        assert_eq!(applied.min_width, None);
     }
 }
