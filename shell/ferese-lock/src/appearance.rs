@@ -20,6 +20,8 @@ pub struct Appearance {
     pub wallpaper_path: std::path::PathBuf,
     pub wallpaper_blur: f32,
     pub wallpaper_revision: u64,
+    wallpaper_loaded: bool,
+    wallpaper_pending: Option<(std::path::PathBuf, bool)>,
     pub reduce_transparency: bool,
     pub avatar: Option<image::Handle>,
 }
@@ -75,10 +77,11 @@ impl Appearance {
             .unwrap_or(18.)
             .clamp(0., 40.) as f32;
         let reduce_transparency = theme.accessibility.reduce_transparency;
-        let wallpaper =
-            load_wallpaper(&wallpaper_path, if reduce_transparency { 0. } else { blur }).unwrap_or_else(|_| {
-                image::Handle::from_bytes(include_bytes!("../../../assets/wallpapers/ferese.png").as_slice())
-            });
+        let loaded = load_wallpaper(&wallpaper_path, if reduce_transparency { 0. } else { blur });
+        let wallpaper_loaded = loaded.is_ok();
+        let wallpaper = loaded.unwrap_or_else(|_| {
+            image::Handle::from_bytes(include_bytes!("../../../assets/wallpapers/ferese.png").as_slice())
+        });
         let boolean = |key, fallback| {
             doc.as_ref()
                 .and_then(|d| d.get(key))
@@ -107,9 +110,58 @@ impl Appearance {
             wallpaper_path,
             wallpaper_blur: blur,
             wallpaper_revision: 0,
+            wallpaper_loaded,
+            wallpaper_pending: None,
             reduce_transparency,
             avatar: account_picture(user),
         }
+    }
+
+    pub fn request_wallpaper(
+        &mut self,
+        theme: &ferese_config::theme::ResolvedTheme,
+    ) -> Option<(u64, std::path::PathBuf, f32)> {
+        let path = theme
+            .tokens
+            .background
+            .lock_path
+            .as_ref()
+            .or(theme.tokens.background.path.as_ref())
+            .cloned()
+            .unwrap_or_else(|| ferese_config::default_wallpaper_for(theme.appearance).into());
+        let reduce = theme.accessibility.reduce_transparency;
+        let desired = (path.clone(), reduce);
+        if self.wallpaper_pending.as_ref() == Some(&desired) {
+            return None;
+        }
+        if self.wallpaper_loaded && path == self.wallpaper_path && reduce == self.reduce_transparency {
+            if self.wallpaper_pending.take().is_some() {
+                self.wallpaper_revision = self.wallpaper_revision.wrapping_add(1);
+            }
+            return None;
+        }
+        self.wallpaper_pending = Some(desired);
+        self.wallpaper_revision = self.wallpaper_revision.wrapping_add(1);
+        Some((
+            self.wallpaper_revision,
+            path,
+            if reduce { 0.0 } else { self.wallpaper_blur },
+        ))
+    }
+
+    pub fn finish_wallpaper(&mut self, revision: u64, result: Result<image::Handle, String>) -> Result<(), String> {
+        if revision != self.wallpaper_revision {
+            return Ok(());
+        }
+        let Some((path, reduce)) = self.wallpaper_pending.take() else {
+            return Ok(());
+        };
+        let wallpaper = result?;
+        self.wallpaper = wallpaper;
+        self.wallpaper_path = path;
+        self.reduce_transparency = reduce;
+        self.wallpaper_loaded = true;
+        Ok(())
     }
 
     pub fn clock_format(&self) -> &'static str {
@@ -215,6 +267,17 @@ fn decode_avatar(path: &std::path::Path) -> Result<::image::RgbaImage, String> {
 }
 
 pub fn load_wallpaper(path: &std::path::Path, blur: f32) -> Result<image::Handle, String> {
+    let result = prepare_wallpaper(path, blur);
+    // Decode and resize scratch buffers have been dropped. Return their freed
+    // pages even when glibc would otherwise retain them in an arena.
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    unsafe {
+        libc::malloc_trim(0);
+    }
+    result
+}
+
+fn prepare_wallpaper(path: &std::path::Path, blur: f32) -> Result<image::Handle, String> {
     use ::image::ImageDecoder;
     let mut reader = ::image::ImageReader::open(path)
         .map_err(|e| e.to_string())?
@@ -225,16 +288,18 @@ pub fn load_wallpaper(path: &std::path::Path, blur: f32) -> Result<image::Handle
     reader.limits(limits);
     let decoder = reader.into_decoder().map_err(|e| e.to_string())?;
     let (width, height) = decoder.dimensions();
-    if u64::from(width) * u64::from(height) * 4 > 256 * 1024 * 1024 {
+    if width == 0 || height == 0 || u64::from(width) * u64::from(height) > (256 * 1024 * 1024) / 4 {
         return Err("Lock wallpaper exceeds the decode limit".into());
     }
-    let pixels = ::image::DynamicImage::from_decoder(decoder)
-        .map_err(|e| e.to_string())?
-        .into_rgba8();
-    let pixels = if blur > 0. {
-        ::image::imageops::blur(&::image::imageops::thumbnail(&pixels, 640, 640), blur)
-    } else {
-        pixels
+    if blur <= 0. {
+        // Iced decodes the path and releases its host buffer after GPU upload.
+        // An RGBA handle would retain those pixels for the handle's lifetime.
+        return Ok(image::Handle::from_path(path));
+    }
+    let pixels = {
+        let decoded = ::image::DynamicImage::from_decoder(decoder).map_err(|e| e.to_string())?;
+        let thumbnail = decoded.thumbnail(640, 640).into_rgba8();
+        ::image::imageops::blur(&thumbnail, blur)
     };
     Ok(image::Handle::from_rgba(
         pixels.width(),
@@ -246,6 +311,76 @@ pub fn load_wallpaper(path: &std::path::Path, blur: f32) -> Result<image::Handle
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn wallpaper_handles_keep_only_paths_or_blurred_thumbnails() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        ::image::RgbaImage::from_pixel(1280, 720, ::image::Rgba([32, 80, 160, 255]))
+            .save_with_format(file.path(), ::image::ImageFormat::Png)
+            .unwrap();
+        match load_wallpaper(file.path(), 0.).unwrap() {
+            image::Handle::Path(_, path) => assert_eq!(path, file.path()),
+            _ => panic!("unblurred wallpaper must not retain RGBA pixels"),
+        }
+        match load_wallpaper(file.path(), 2.).unwrap() {
+            image::Handle::Rgba {
+                width, height, pixels, ..
+            } => {
+                assert_eq!((width, height), (640, 360));
+                assert_eq!(pixels.len(), 640 * 360 * 4);
+            }
+            _ => panic!("blurred wallpaper must retain only the processed thumbnail"),
+        }
+    }
+
+    #[test]
+    fn wallpaper_path_handles_require_a_valid_image_header() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        assert!(load_wallpaper(file.path(), 0.).is_err());
+        std::fs::write(file.path(), b"not an image").unwrap();
+        assert!(load_wallpaper(file.path(), 0.).is_err());
+        assert!(load_wallpaper(&file.path().with_extension("missing"), 0.).is_err());
+    }
+
+    #[test]
+    fn wallpaper_requests_retry_failures_and_ignore_superseded_results() {
+        let directory = tempfile::tempdir().unwrap();
+        let initial = directory.path().join("initial.png");
+        ::image::RgbaImage::new(2, 2).save(&initial).unwrap();
+        let mut theme = ferese_config::theme::default_theme();
+        theme.tokens.background.path = Some(initial.clone());
+        theme.tokens.background.lock_path = None;
+        let document = Document::parse("").unwrap();
+        let mut appearance = Appearance::from_document("no-such-test-user", Some(document), &theme);
+        assert!(appearance.request_wallpaper(&theme).is_none());
+        let next = directory.path().join("next.png");
+        theme.tokens.background.path = Some(next.clone());
+        let (failed, _, _) = appearance.request_wallpaper(&theme).unwrap();
+        assert!(appearance.request_wallpaper(&theme).is_none());
+        assert!(
+            appearance
+                .finish_wallpaper(failed, Err("decode failed".into()))
+                .is_err()
+        );
+        assert_eq!(appearance.wallpaper_path, initial);
+        let (retry, path, _) = appearance.request_wallpaper(&theme).unwrap();
+        assert_eq!(path, next);
+        let last = directory.path().join("last.png");
+        theme.tokens.background.path = Some(last.clone());
+        let (latest, _, _) = appearance.request_wallpaper(&theme).unwrap();
+        appearance
+            .finish_wallpaper(retry, Ok(image::Handle::from_rgba(1, 1, vec![255; 4])))
+            .unwrap();
+        assert_eq!(appearance.wallpaper_path, initial);
+        appearance
+            .finish_wallpaper(latest, Ok(image::Handle::from_rgba(1, 1, vec![255; 4])))
+            .unwrap();
+        assert_eq!(appearance.wallpaper_path, last);
+        assert!(appearance.request_wallpaper(&theme).is_none());
+        theme.tokens.background.lock_path = Some(initial.clone());
+        let (_, path, _) = appearance.request_wallpaper(&theme).unwrap();
+        assert_eq!(path, initial, "an explicit lock image overrides the desktop wallpaper");
+    }
+
     #[test]
     fn avatar_decoding_bounds_dimensions_and_encoded_size() {
         let file = tempfile::NamedTempFile::new().unwrap();

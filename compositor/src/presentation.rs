@@ -2,6 +2,8 @@
 //! logical pixels. Content, clips and decorations share those exact edges.
 use std::time::{Duration, Instant};
 
+use ferese_animation::AnimatedRect;
+
 use smithay::backend::renderer::element::{Element, Id, Kind, RenderElement, RenderElementStates};
 use smithay::backend::renderer::gles::{GlesError, GlesFrame, GlesRenderer, GlesTexProgram, GlesTexture, Uniform};
 use smithay::backend::renderer::utils::{CommitCounter, DamageSet};

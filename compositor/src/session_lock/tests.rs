@@ -626,3 +626,66 @@ fn acquiring_owner_disconnect_keeps_lock_and_replacement_waits_for_frame() {
     assert!(matches!(fixture.state.session_lock.lifecycle, Lifecycle::Locked(_)));
     replacement.expect_locked();
 }
+
+#[test]
+fn lock_input_preserves_owner_click_grabs_and_rejects_retired_surfaces() {
+    let Some(mut fixture) =
+        Fixture::new("session_lock::tests::lock_input_preserves_owner_click_grabs_and_rejects_retired_surfaces")
+    else {
+        return;
+    };
+    let output = fixture.output("lock-pointer");
+    let mut owner = fixture.acquire();
+    let surface = owner.surface(&mut fixture, &output);
+    let pointer = fixture.state.seat.get_pointer().unwrap();
+    let serial = SERIAL_COUNTER.next_serial();
+    pointer.motion(
+        &mut fixture.state,
+        Some((surface.wl_surface().clone(), (0.0, 0.0).into())),
+        &smithay::input::pointer::MotionEvent {
+            location: (10.0, 10.0).into(),
+            serial,
+            time: 1,
+        },
+    );
+    pointer.button(
+        &mut fixture.state,
+        &smithay::input::pointer::ButtonEvent {
+            button: 0x110,
+            state: smithay::backend::input::ButtonState::Pressed,
+            serial,
+            time: 2,
+        },
+    );
+    assert!(pointer.is_grabbed());
+    fixture.state.prepare_lock_input();
+    assert!(
+        pointer.is_grabbed(),
+        "the lock owner's click must survive until release"
+    );
+    pointer.button(
+        &mut fixture.state,
+        &smithay::input::pointer::ButtonEvent {
+            button: 0x110,
+            state: smithay::backend::input::ButtonState::Released,
+            serial: SERIAL_COUNTER.next_serial(),
+            time: 3,
+        },
+    );
+    assert!(!pointer.is_grabbed());
+    pointer.button(
+        &mut fixture.state,
+        &smithay::input::pointer::ButtonEvent {
+            button: 0x110,
+            state: smithay::backend::input::ButtonState::Pressed,
+            serial: SERIAL_COUNTER.next_serial(),
+            time: 4,
+        },
+    );
+    assert!(pointer.is_grabbed());
+    fixture.state.session_lock.surfaces.clear();
+    fixture.state.prepare_lock_input();
+    assert!(!pointer.is_grabbed(), "a retired surface cannot keep a lock grab");
+    assert_eq!(pointer.current_focus(), None);
+    assert_eq!(fixture.state.seat.get_keyboard().unwrap().current_focus(), None);
+}

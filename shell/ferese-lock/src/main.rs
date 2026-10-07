@@ -88,6 +88,7 @@ enum Message {
     Authenticated(bool),
     Tick,
     RetryReady,
+    FocusPassword,
 }
 
 // Never derive Debug for password-bearing messages.
@@ -109,6 +110,15 @@ enum AuthState {
 impl AuthState {
     fn may_submit(&self) -> bool {
         matches!(self, Self::Ready)
+    }
+
+    fn retry_ready(&mut self, now: Instant) -> bool {
+        if matches!(self, Self::Rejected(at) if now.saturating_duration_since(*at) >= Duration::from_secs(2)) {
+            *self = Self::Ready;
+            true
+        } else {
+            false
+        }
     }
 
     fn complete(&mut self, success: bool) -> bool {
@@ -228,22 +238,7 @@ impl cosmic::Application for Locker {
                 self.appearance.radius = palette.radius;
                 self.appearance.font = ferese_theme::font(Some(&snapshot.presented.tokens.typography.font_family));
                 let theme = cosmic::command::set_theme(self.appearance.theme());
-                let target = &snapshot.theme;
-                let path = target
-                    .tokens
-                    .background
-                    .lock_path
-                    .as_ref()
-                    .or(target.tokens.background.path.as_ref())
-                    .cloned()
-                    .unwrap_or_else(|| ferese_config::default_wallpaper().into());
-                let reduce = target.accessibility.reduce_transparency;
-                if path != self.appearance.wallpaper_path || reduce != self.appearance.reduce_transparency {
-                    self.appearance.wallpaper_path = path.clone();
-                    self.appearance.reduce_transparency = reduce;
-                    self.appearance.wallpaper_revision = self.appearance.wallpaper_revision.wrapping_add(1);
-                    let revision = self.appearance.wallpaper_revision;
-                    let blur = if reduce { 0. } else { self.appearance.wallpaper_blur };
+                if let Some((revision, path, blur)) = self.appearance.request_wallpaper(&snapshot.theme) {
                     let wallpaper = cosmic::task::future(async move {
                         let result = tokio::task::spawn_blocking(move || appearance::load_wallpaper(&path, blur))
                             .await
@@ -255,11 +250,8 @@ impl cosmic::Application for Locker {
                 return theme;
             }
             Message::WallpaperLoaded(revision, result) => {
-                if revision == self.appearance.wallpaper_revision {
-                    match result {
-                        Ok(image) => self.appearance.wallpaper = image,
-                        Err(error) => eprintln!("ferese-lock: retained wallpaper: {error}"),
-                    }
+                if let Err(error) = self.appearance.finish_wallpaper(revision, result) {
+                    eprintln!("ferese-lock: retained wallpaper: {error}");
                 }
             }
             Message::Event(event) => return self.handle_event(*event),
@@ -269,8 +261,13 @@ impl cosmic::Application for Locker {
                 self.date = now.strftime("%A, %B %-d").to_string();
             }
             Message::RetryReady => {
-                if matches!(self.state, AuthState::Rejected(at) if at.elapsed() >= Duration::from_secs(2)) {
-                    self.state = AuthState::Ready;
+                if self.state.retry_ready(Instant::now()) {
+                    return focus();
+                }
+            }
+            Message::FocusPassword => {
+                if self.state.may_submit() {
+                    return focus();
                 }
             }
             Message::Input(value) => {
@@ -546,7 +543,9 @@ impl Locker {
             .height(Length::Fill)
             .content_fit(iced::ContentFit::Cover)
             .into();
-        iced::widget::stack![background, foreground].into()
+        widget::mouse_area(iced::widget::stack![background, foreground])
+            .on_press(Message::FocusPassword)
+            .into()
     }
 }
 
@@ -567,6 +566,19 @@ fn ferese_symbol() -> widget::icon::Icon {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn retry_reenables_input_only_after_the_deadline() {
+        let now = Instant::now();
+        let mut state = AuthState::Rejected(now);
+        assert!(!state.retry_ready(now + Duration::from_millis(1999)));
+        assert!(!state.may_submit());
+        assert!(state.retry_ready(now + Duration::from_secs(2)));
+        assert!(state.may_submit());
+        assert!(!state.retry_ready(now + Duration::from_secs(3)));
+        state = AuthState::Checking;
+        assert!(!state.retry_ready(now + Duration::from_secs(3)));
+    }
+
     #[test]
     fn only_an_active_successful_attempt_unlocks() {
         let mut state = AuthState::Ready;

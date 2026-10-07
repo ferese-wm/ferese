@@ -273,6 +273,58 @@ impl Ferese {
         })
     }
 
+    pub(crate) fn prepare_lock_input(&mut self) {
+        // Reject desktop grabs installed after acquisition, but keep the lock
+        // owner's implicit click grab intact until its button release.
+        if let Some(keyboard) = self.seat.get_keyboard()
+            && keyboard.is_grabbed()
+        {
+            keyboard.unset_grab(self);
+        }
+        if let Some(pointer) = self.seat.get_pointer() {
+            let lock_click = pointer
+                .with_grab(|_, grab| {
+                    grab.is::<smithay::input::pointer::ClickGrab<Ferese>>()
+                        && grab.start_data().focus.as_ref().is_some_and(|(surface, _)| {
+                            self.session_lock
+                                .surfaces
+                                .values()
+                                .any(|lock| lock.alive() && lock.wl_surface() == surface)
+                        })
+                })
+                .unwrap_or(false);
+            if pointer.is_grabbed() && !lock_click {
+                pointer.unset_grab(self, SERIAL_COUNTER.next_serial(), self.last_pointer_time);
+            }
+            let stale_focus = pointer.current_focus().is_some_and(|surface| {
+                !self
+                    .session_lock
+                    .surfaces
+                    .values()
+                    .any(|lock| lock.alive() && lock.wl_surface() == &surface)
+            });
+            if stale_focus {
+                let location = pointer.current_location();
+                pointer.motion(
+                    self,
+                    self.lock_surface_under(location),
+                    &smithay::input::pointer::MotionEvent {
+                        location,
+                        serial: SERIAL_COUNTER.next_serial(),
+                        time: self.last_pointer_time,
+                    },
+                );
+                pointer.frame(self);
+            }
+        }
+        if let Some(touch) = self.seat.get_touch()
+            && touch.is_grabbed()
+        {
+            touch.unset_grab(self);
+        }
+        self.focus_lock_surface();
+    }
+
     pub(crate) fn focus_lock_surface(&mut self) {
         let surface = self
             .focused_output()
@@ -289,10 +341,10 @@ impl Ferese {
                     .map(|(_, surface)| surface)
             })
             .map(|surface| surface.wl_surface().clone());
-        self.seat
-            .get_keyboard()
-            .unwrap()
-            .set_focus(self, surface, SERIAL_COUNTER.next_serial());
+        let keyboard = self.seat.get_keyboard().unwrap();
+        if keyboard.current_focus() != surface {
+            keyboard.set_focus(self, surface, SERIAL_COUNTER.next_serial());
+        }
     }
 
     pub(crate) fn lock_frame_presented(&mut self, output: &Output) {

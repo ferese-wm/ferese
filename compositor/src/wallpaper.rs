@@ -1,5 +1,6 @@
-//! One decoded image and one texture per GPU context, not double-buffered
-//! full-screen UI surfaces per monitor. Resize changes sampling only.
+//! One wallpaper texture per GPU context. Decoded pixels are staging data,
+//! released after upload and decoded again when a new context needs them.
+//! Resize changes sampling only.
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -279,7 +280,7 @@ impl WallpaperState {
                             width = pixels.width(),
                             height = pixels.height(),
                             bytes = pixels.as_raw().len(),
-                            "decoded compositor wallpaper once"
+                            "decoded compositor wallpaper for texture upload"
                         );
 
                         self.pixels = Some(pixels);
@@ -540,6 +541,10 @@ mod tests {
     fn decoder_wakes_an_idle_event_loop() {
         use smithay::reexports::calloop::EventLoop;
         use smithay::reexports::calloop::timer::Timer;
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("wallpaper.png");
+        let expected = image::RgbaImage::from_pixel(2, 2, image::Rgba([32, 80, 160, 255]));
+        expected.save(&path).unwrap();
         let mut event_loop = EventLoop::<WallpaperState>::try_new().unwrap();
         event_loop
             .handle()
@@ -548,11 +553,19 @@ mod tests {
             })
             .unwrap();
         let signal = event_loop.get_signal();
-        let mut state = WallpaperState::with_wakeup(WallpaperConfig::default(), Some(signal.clone()));
+        let mut state = WallpaperState::with_wakeup(
+            WallpaperConfig {
+                path: Some(path),
+                mode: WallpaperMode::Fill,
+            },
+            Some(signal.clone()),
+        );
         event_loop
             .run(None, &mut state, |state| {
                 if state.poll() {
-                    assert!(state.pixels.is_some());
+                    let decoded = state.pixels.as_ref().unwrap();
+                    assert_eq!(decoded.dimensions(), expected.dimensions());
+                    assert_eq!(&decoded.as_raw()[..], expected.as_raw());
                     signal.stop();
                 }
             })

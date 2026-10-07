@@ -120,18 +120,7 @@ impl Ferese {
         }
 
         if self.session_lock.active() {
-            // An already-bound IME or drag client may install a grab after the
-            // lock request. Never let that grab receive subsequent lock input.
-            if let Some(keyboard) = seat.get_keyboard() {
-                keyboard.unset_grab(self);
-            }
-            if let Some(pointer) = seat.get_pointer() {
-                pointer.unset_grab(self, SERIAL_COUNTER.next_serial(), 0);
-            }
-            if let Some(touch) = seat.get_touch() {
-                touch.unset_grab(self);
-            }
-            self.focus_lock_surface();
+            self.prepare_lock_input();
         }
 
         if self.input_capture.active()
@@ -514,6 +503,33 @@ impl Ferese {
                 }
                 let pointer = self.seat.get_pointer().expect("seat has a pointer");
                 let serial = SERIAL_COUNTER.next_serial();
+                if self.session_lock.active() {
+                    if event.state() == ButtonState::Pressed {
+                        self.focus_window_at(pointer.current_location(), serial, true);
+                        if !pointer.is_grabbed() {
+                            pointer.motion(
+                                self,
+                                self.lock_surface_under(pointer.current_location()),
+                                &MotionEvent {
+                                    location: pointer.current_location(),
+                                    serial,
+                                    time: event.time_msec(),
+                                },
+                            );
+                        }
+                    }
+                    pointer.button(
+                        self,
+                        &ButtonEvent {
+                            button: event.button_code(),
+                            state: event.state(),
+                            serial,
+                            time: event.time_msec(),
+                        },
+                    );
+                    pointer.frame(self);
+                    return;
+                }
 
                 // Native popup_done destroys Iced's window immediately. For
                 // effects-capable shell popups, release input now but defer
