@@ -6,6 +6,7 @@ Requires built debug compositor/control binaries, a Wayland host, cc and wayland
 import json
 import os
 from pathlib import Path
+from session_socket import ipc_environment, ipc_socket
 import signal
 import subprocess
 import tempfile
@@ -57,10 +58,10 @@ class Presentation(unittest.TestCase):
             env.pop("FERESE_SHELL_CONTROL_SOCKET", None)
             log = (root / "compositor.log").open("w")
             try:
-                compositor = subprocess.Popen([str(REPO / "target/debug/ferese"), "--backend=nested"], env=env, stdout=log, stderr=log, start_new_session=True)
+                compositor = subprocess.Popen([str(REPO / "target/debug/ferese"), "--backend=nested"], env=ipc_environment(env), stdout=log, stderr=log, start_new_session=True)
                 processes.append(compositor)
                 deadline = time.monotonic() + 10
-                while not (runtime / "ferese/control.sock").exists():
+                while not (ipc_socket(runtime)).exists():
                     if compositor.poll() is not None or time.monotonic() > deadline:
                         self.fail((root / "compositor.log").read_text())
                     time.sleep(0.02)
@@ -68,7 +69,7 @@ class Presentation(unittest.TestCase):
                 env["WAYLAND_DISPLAY"] = str(next(path for path in sockets if not path.name.endswith(".lock")))
 
                 def call(*args):
-                    return subprocess.check_output([str(REPO / "target/debug/feresectl"), "-j", *args], env=env, timeout=10)
+                    return subprocess.check_output([str(REPO / "target/debug/feresectl"), "-j", *args], env=ipc_environment(env), timeout=10)
 
                 def windows(count):
                     deadline = time.monotonic() + 10
@@ -80,7 +81,7 @@ class Presentation(unittest.TestCase):
                     self.fail((root / "compositor.log").read_text())
 
                 events = (root / "events").open("w")
-                target = subprocess.Popen([str(root / "client")], env=env, stdin=subprocess.PIPE,
+                target = subprocess.Popen([str(root / "client")], env=ipc_environment(env), stdin=subprocess.PIPE,
                                           stdout=events, stderr=log, start_new_session=True)
                 processes.append(target)
                 windows(1)
@@ -95,7 +96,7 @@ class Presentation(unittest.TestCase):
                 self.assertGreater(count("frame"), before, "visible empty commits must get callbacks")
                 self.assertEqual(count("idle"), idle, "visible inhibitor must keep the notifier active")
 
-                cover = subprocess.Popen([str(root / "client"), "cover"], env=env, stdout=log,
+                cover = subprocess.Popen([str(root / "client"), "cover"], env=ipc_environment(env), stdout=log,
                                          stderr=log, start_new_session=True)
                 processes.append(cover)
                 current = windows(2)

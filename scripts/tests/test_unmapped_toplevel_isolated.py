@@ -7,6 +7,7 @@ Requires cc, pkg-config, wayland-scanner, and wayland-protocols.
 import json
 import os
 from pathlib import Path
+from session_socket import ipc_environment, ipc_socket
 import select
 import subprocess
 import tempfile
@@ -62,7 +63,7 @@ class UnmappedToplevelTest(unittest.TestCase):
             with (root / "compositor.log").open("w") as log:
                 compositor = subprocess.Popen(
                     [str(compositor_binary), "--backend", "nested"],
-                    env=env,
+                    env=ipc_environment(env),
                     stdout=log,
                     stderr=subprocess.STDOUT,
                 )
@@ -101,7 +102,7 @@ class UnmappedToplevelTest(unittest.TestCase):
                         while True:
                             result = subprocess.run(
                                 [str(ctl_binary), "-j", "focused-window"],
-                                env=env,
+                                env=ipc_environment(env),
                                 capture_output=True,
                                 text=True,
                                 check=True,
@@ -116,7 +117,7 @@ class UnmappedToplevelTest(unittest.TestCase):
                             visible_ids.append(focused["id"])
                         if phase == "visible":
                             # Leave a configure/resize outstanding when the buffer is detached.
-                            subprocess.run([str(ctl_binary), "toggle-maximized"], env=env,
+                            subprocess.run([str(ctl_binary), "toggle-maximized"], env=ipc_environment(env),
                                            capture_output=True, check=True)
                             time.sleep(.08)
                         if phase == "detached":
@@ -131,7 +132,7 @@ class UnmappedToplevelTest(unittest.TestCase):
                     deadline = time.monotonic() + 3
                     while True:
                         remaining = json.loads(subprocess.check_output(
-                            [str(ctl_binary), "-j", "windows"], env=env, text=True
+                            [str(ctl_binary), "-j", "windows"], env=ipc_environment(env), text=True
                         ))
                         if not remaining:
                             break
@@ -139,10 +140,10 @@ class UnmappedToplevelTest(unittest.TestCase):
                             self.fail(f"destroyed window still managed: {remaining}")
                         time.sleep(0.05)
 
-                    subprocess.run([str(ctl_binary), "focus-last-window"], env=env,
+                    subprocess.run([str(ctl_binary), "focus-last-window"], env=ipc_environment(env),
                                    capture_output=True, check=True)
                     focused = json.loads(subprocess.check_output(
-                        [str(ctl_binary), "-j", "focused-window"], env=env, text=True
+                        [str(ctl_binary), "-j", "focused-window"], env=ipc_environment(env), text=True
                     ))
                     self.assertIsNone(focused, "focus history must not restore a destroyed window")
                     deadline = time.monotonic() + 3

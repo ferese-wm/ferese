@@ -10,6 +10,7 @@ import errno
 import json
 import os
 from pathlib import Path
+from session_socket import ipc_environment, ipc_socket
 import re
 import signal
 import subprocess
@@ -46,12 +47,12 @@ class OverviewDamageTest(unittest.TestCase):
             log_path = root / "compositor.log"
 
             def launch(command, **kwargs):
-                child = subprocess.Popen(command, env=env, start_new_session=True, **kwargs)
+                child = subprocess.Popen(command, env=ipc_environment(env), start_new_session=True, **kwargs)
                 children.append(child)
                 return child
 
             def command(*args):
-                return json.loads(subprocess.check_output([str(control), "-j", *args], env=env, timeout=5))
+                return json.loads(subprocess.check_output([str(control), "-j", *args], env=ipc_environment(env), timeout=5))
 
             def wait_for(predicate, seconds=12):
                 deadline = time.monotonic() + seconds
@@ -98,7 +99,7 @@ class OverviewDamageTest(unittest.TestCase):
                                  stdout=subprocess.PIPE, text=True)
                     env["DBUS_SESSION_BUS_ADDRESS"] = bus.stdout.readline().strip()
                     launch([str(binary), "--backend", "nested"], stdout=log, stderr=log)
-                    wait_for(lambda: (runtime / "ferese/control.sock").is_socket())
+                    wait_for(lambda: (ipc_socket(runtime)).is_socket())
                     env["WAYLAND_DISPLAY"] = str(next(
                         path for path in runtime.glob("wayland-*") if not path.name.endswith(".lock")
                     ))

@@ -6,6 +6,7 @@ Requires a Wayland host, wayland-scanner and a C compiler.
 """
 import os
 from pathlib import Path
+from session_socket import ipc_environment, ipc_socket
 import subprocess
 import tempfile
 import time
@@ -56,7 +57,7 @@ class BlurredPopupTest(unittest.TestCase):
             with log_path.open("w") as log:
                 compositor = subprocess.Popen(
                     [str(binary), "--backend", "nested", "--grant-effects", "--", str(client)],
-                    env=env, stdout=log, stderr=log,
+                    env=ipc_environment(env), stdout=log, stderr=log,
                 )
                 try:
                     deadline = time.monotonic() + 30
@@ -66,7 +67,7 @@ class BlurredPopupTest(unittest.TestCase):
                             self.fail("Blurred popup stopped presenting frames:\n" + log_path.read_text())
                         time.sleep(.025)
                     control = repo / os.environ.get("FERESE_TEST_CTL", "target/debug/feresectl")
-                    subprocess.run([str(control), "-j", "outputs"], env=env, check=True,
+                    subprocess.run([str(control), "-j", "outputs"], env=ipc_environment(env), check=True,
                                    stdout=subprocess.DEVNULL, timeout=5)
                     phases = log_path.read_text().splitlines()
                     for name, count in [("parent", 1), ("open", 3), ("update", 9), ("close", 3)]:

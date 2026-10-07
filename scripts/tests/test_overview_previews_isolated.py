@@ -8,6 +8,7 @@ import io
 import json
 import os
 from pathlib import Path
+from session_socket import ipc_environment, ipc_socket
 import signal
 import subprocess
 import tempfile
@@ -55,7 +56,7 @@ class OverviewPreviews(unittest.TestCase):
             log_path = root / "compositor.log"
 
             def call(*args):
-                return subprocess.check_output([str(ctl), "-j", *args], env=env, timeout=10)
+                return subprocess.check_output([str(ctl), "-j", *args], env=ipc_environment(env), timeout=10)
 
             def wait_for(predicate):
                 deadline = time.monotonic() + 10
@@ -69,12 +70,12 @@ class OverviewPreviews(unittest.TestCase):
 
             with log_path.open("w") as log:
                 def launch(command):
-                    child = subprocess.Popen(command, env=env, stdout=log, stderr=log, start_new_session=True)
+                    child = subprocess.Popen(command, env=ipc_environment(env), stdout=log, stderr=log, start_new_session=True)
                     children.append(child)
 
                 try:
                     launch([str(binary), "--backend", "nested"])
-                    wait_for(lambda: (runtime / "ferese/control.sock").is_socket())
+                    wait_for(lambda: (ipc_socket(runtime)).is_socket())
                     env["WAYLAND_DISPLAY"] = str(next(path for path in runtime.glob("wayland-*") if path.is_socket()))
                     launch([str(root / "client")])
                     wait_for(lambda: len(json.loads(call("get-windows"))) == 1)

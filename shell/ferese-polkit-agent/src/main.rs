@@ -221,7 +221,9 @@ async fn session_subject(
     connection: &zbus::Connection,
 ) -> Result<(String, HashMap<String, Value<'static>>), Box<dyn std::error::Error>> {
     // Nested previews must not take over authentication for the host desktop.
-    if std::env::var("FERESE_SESSION_IMPORT_ENV").as_deref() == Ok("0") {
+    if std::env::var("FERESE_SESSION_MODE").as_deref() == Ok("embedded")
+        || std::env::var("FERESE_SESSION_IMPORT_ENV").as_deref() == Ok("0")
+    {
         return process_subject().map_err(Into::into);
     }
     let manager = zbus::Proxy::new(

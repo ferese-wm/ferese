@@ -8,6 +8,7 @@ before the 300 ms deadline; it does not measure frame pacing or GPU performance.
 import json
 import os
 from pathlib import Path
+from session_socket import ipc_environment, ipc_socket
 import select
 import subprocess
 import tempfile
@@ -50,10 +51,10 @@ class ResizeDependencies(unittest.TestCase):
             ctl = REPO / os.environ.get("FERESE_TEST_CTL", "target/debug/feresectl")
             with (root / "compositor.log").open("w") as log:
                 try:
-                    compositor = subprocess.Popen([str(binary), "--backend=nested"], env=env, stdout=log, stderr=log)
+                    compositor = subprocess.Popen([str(binary), "--backend=nested"], env=ipc_environment(env), stdout=log, stderr=log)
                     processes.append(compositor)
                     deadline = time.monotonic() + 10
-                    while not (runtime / "ferese/control.sock").exists():
+                    while not (ipc_socket(runtime)).exists():
                         if compositor.poll() is not None or time.monotonic() > deadline:
                             self.fail((root / "compositor.log").read_text())
                         time.sleep(.02)
@@ -61,10 +62,10 @@ class ResizeDependencies(unittest.TestCase):
                     client_env = dict(env, WAYLAND_DISPLAY=str(socket))
 
                     def call(*args):
-                        return json.loads(subprocess.check_output([str(ctl), "-j", *args], env=env, timeout=5))
+                        return json.loads(subprocess.check_output([str(ctl), "-j", *args], env=ipc_environment(env), timeout=5))
 
                     def action(*args):
-                        subprocess.run([str(ctl), *args], env=env, check=True, capture_output=True, timeout=5)
+                        subprocess.run([str(ctl), *args], env=ipc_environment(env), check=True, capture_output=True, timeout=5)
 
                     def client(name):
                         process = subprocess.Popen([str(root / "client"), name], env=client_env,

@@ -90,6 +90,8 @@ impl Fixture {
 
     fn environment(&self) -> SessionEnvironment {
         SessionEnvironment {
+            control_socket: PathBuf::from("/run/user/1000/ferese/control.sock"),
+            policy: crate::SessionPolicy::Desktop,
             wayland_display: std::ffi::OsString::from("wayland-it"),
             x11: Some(X11Environment {
                 display: std::ffi::OsString::from(self.reservation.display_name()),

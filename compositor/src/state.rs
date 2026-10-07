@@ -565,10 +565,27 @@ pub struct RuntimeConfig {
 }
 
 impl Ferese {
+    #[cfg(test)]
     pub fn new(
         event_loop: &mut EventLoop<'static, Self>,
         display: Display<Self>,
         config: RuntimeConfig,
+    ) -> Result<Self, Box<dyn Error>> {
+        Self::new_with_session(
+            event_loop,
+            display,
+            config,
+            crate::ipc::Endpoint::desktop()?,
+            crate::SessionPolicy::Desktop,
+        )
+    }
+
+    pub(crate) fn new_with_session(
+        event_loop: &mut EventLoop<'static, Self>,
+        display: Display<Self>,
+        config: RuntimeConfig,
+        ipc_endpoint: crate::ipc::Endpoint,
+        session_policy: crate::SessionPolicy,
     ) -> Result<Self, Box<dyn Error>> {
         let display_handle = display.handle();
 
@@ -657,6 +674,8 @@ impl Ferese {
 
             session_environment: crate::SessionEnvironment {
                 wayland_display: socket_name.clone(),
+                control_socket: ipc_endpoint.path.clone(),
+                policy: session_policy,
                 x11: None,
             },
             socket_name,
@@ -791,7 +810,7 @@ impl Ferese {
             xdg_toplevel_icon_manager,
         };
         state.config_worker = Some(crate::reload::Worker::new(event_loop)?);
-        let screenshot = crate::ipc::init(event_loop)?;
+        let screenshot = crate::ipc::init(event_loop, ipc_endpoint)?;
         state
             .screenshot
             .set_deadline_observer(move |deadline| screenshot.deadline_timer.update(deadline));

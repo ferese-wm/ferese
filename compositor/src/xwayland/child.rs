@@ -349,6 +349,8 @@ mod tests {
 
     fn environment() -> SessionEnvironment {
         SessionEnvironment {
+            control_socket: std::path::PathBuf::from("/run/user/1000/ferese/control.sock"),
+            policy: crate::SessionPolicy::Desktop,
             wayland_display: OsString::from("wayland-7"),
             x11: None,
         }

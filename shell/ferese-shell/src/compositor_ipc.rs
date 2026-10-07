@@ -1,5 +1,4 @@
 use std::os::unix::net::UnixStream;
-use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
@@ -15,10 +14,7 @@ struct SessionConnection {
 
 impl SessionConnection {
     fn connect() -> Result<Self, String> {
-        let path = std::env::var_os("XDG_RUNTIME_DIR")
-            .map(PathBuf::from)
-            .ok_or("Missing runtime directory")?
-            .join("ferese/control.sock");
+        let path = ferese_ipc::socket::resolve(None).map_err(|error| error.to_string())?;
         let stream = UnixStream::connect(path).map_err(|error| error.to_string())?;
         stream
             .set_read_timeout(Some(Duration::from_secs(2)))

@@ -24,10 +24,7 @@ struct BridgeInner {
 
 impl Bridge {
     pub(crate) fn connect() -> Result<Self, String> {
-        let path = std::env::var_os("XDG_RUNTIME_DIR")
-            .map(std::path::PathBuf::from)
-            .ok_or("Missing runtime directory")?
-            .join("ferese/control.sock");
+        let path = ferese_ipc::socket::resolve(None).map_err(|error| error.to_string())?;
         let stream = UnixStream::connect(path).map_err(|error| error.to_string())?;
         Self::from_stream(stream, Duration::from_secs(2))
     }

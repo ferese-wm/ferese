@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{SyncSender, sync_channel};
 use std::time::{Duration, Instant};
-use std::{env, fs, io, thread};
+use std::{fs, io, thread};
 
 use ferese_core::LayoutMode;
 use ferese_ipc::{Request, Response, VERSION, read_frame, write_frame};
@@ -78,6 +78,41 @@ pub(crate) struct IpcSocketGuard {
     path: PathBuf,
     device: u64,
     inode: u64,
+    _instance: Option<tempfile::TempDir>,
+}
+
+pub(crate) struct Endpoint {
+    pub(crate) path: PathBuf,
+    instance: Option<tempfile::TempDir>,
+}
+
+impl Endpoint {
+    pub(crate) fn desktop() -> io::Result<Self> {
+        Self::desktop_at(ferese_ipc::socket::runtime_default()?)
+    }
+
+    fn desktop_at(path: PathBuf) -> io::Result<Self> {
+        prepare_parent(&path)?;
+        Ok(Self { path, instance: None })
+    }
+
+    pub(crate) fn instance() -> io::Result<Self> {
+        Self::instance_at(ferese_ipc::socket::runtime_default()?)
+    }
+
+    fn instance_at(default: PathBuf) -> io::Result<Self> {
+        let root = default.parent().expect("runtime control socket has a parent");
+        prepare_directory(root)?;
+        let instances = root.join("instances");
+        prepare_directory(&instances)?;
+        let instance = tempfile::Builder::new()
+            .prefix(&format!("{}-", std::process::id()))
+            .tempdir_in(instances)?;
+        Ok(Self {
+            path: instance.path().join("control.sock"),
+            instance: Some(instance),
+        })
+    }
 }
 
 impl Drop for IpcSocketGuard {
@@ -90,8 +125,11 @@ impl Drop for IpcSocketGuard {
     }
 }
 
-pub(crate) fn init(event_loop: &mut EventLoop<'static, Ferese>) -> Result<ScreenshotInit, Box<dyn std::error::Error>> {
-    let path = socket_path()?;
+pub(crate) fn init(
+    event_loop: &mut EventLoop<'static, Ferese>,
+    endpoint: Endpoint,
+) -> Result<ScreenshotInit, Box<dyn std::error::Error>> {
+    let Endpoint { path, instance } = endpoint;
     prepare_parent(&path)?;
     let listener = bind_listener(&path)?;
     fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
@@ -100,6 +138,7 @@ pub(crate) fn init(event_loop: &mut EventLoop<'static, Ferese>) -> Result<Screen
         path: path.clone(),
         device: metadata.dev(),
         inode: metadata.ino(),
+        _instance: instance,
     };
 
     let (sender, receiver): (channel::SyncSender<IpcEvent>, channel::Channel<IpcEvent>) =
@@ -1531,16 +1570,17 @@ fn workspace_arg(args: &Value) -> Result<u32, CommandError> {
         .ok_or_else(|| CommandError::new("invalid_argument", "index must be a positive 32-bit integer"))
 }
 
-fn socket_path() -> Result<PathBuf, io::Error> {
-    env::var_os("XDG_RUNTIME_DIR")
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .map(|directory| directory.join("ferese/control.sock"))
-        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "XDG_RUNTIME_DIR is not set"))
-}
-
 fn prepare_parent(socket: &Path) -> Result<(), io::Error> {
     let parent = socket.parent().expect("the Ferese control socket always has a parent");
+    prepare_directory(parent)
+}
+
+fn prepare_directory(parent: &Path) -> Result<(), io::Error> {
+    match fs::create_dir(parent) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+        Err(error) => return Err(error),
+    }
     match fs::symlink_metadata(parent) {
         Ok(metadata) => {
             if !metadata.is_dir() || metadata.file_type().is_symlink() {
@@ -1556,7 +1596,6 @@ fn prepare_parent(socket: &Path) -> Result<(), io::Error> {
                 ));
             }
         }
-        Err(error) if error.kind() == io::ErrorKind::NotFound => fs::create_dir(parent)?,
         Err(error) => return Err(error),
     }
 
@@ -1613,6 +1652,7 @@ fn effective_uid() -> u32 {
 
 #[cfg(test)]
 mod tests {
+    use std::env;
     use std::io::{Read, Write};
     use std::net::Shutdown;
     use std::os::unix::fs::PermissionsExt;
@@ -1816,6 +1856,52 @@ mod tests {
 
         assert_eq!(metadata.permissions().mode() & 0o777, 0o700);
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn nested_endpoints_reserve_private_unique_directories_and_preserve_the_default() {
+        let runtime = tempfile::tempdir().unwrap();
+        let default = runtime.path().join("ferese/control.sock");
+        let drm = Endpoint::desktop_at(default.clone()).unwrap();
+        let host = bind_listener(&drm.path).unwrap();
+        let first = Endpoint::instance_at(default.clone()).unwrap();
+        let second = Endpoint::instance_at(default.clone()).unwrap();
+        assert_eq!(drm.path, default);
+        assert_ne!(first.path, second.path);
+        assert_eq!(
+            first.path.parent().unwrap().parent().unwrap(),
+            default.parent().unwrap().join("instances")
+        );
+        for endpoint in [&first, &second] {
+            assert_eq!(
+                fs::metadata(endpoint.path.parent().unwrap())
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o700
+            );
+        }
+        let first_directory = first.path.parent().unwrap().to_owned();
+        drop(first);
+        assert!(!first_directory.exists());
+        assert!(second.path.parent().unwrap().is_dir());
+        assert!(default.symlink_metadata().unwrap().file_type().is_socket());
+        assert_eq!(bind_listener(&default).unwrap_err().kind(), io::ErrorKind::AddrInUse);
+        drop(host);
+    }
+
+    #[test]
+    fn nested_endpoint_rejects_an_instances_symlink() {
+        let runtime = tempfile::tempdir().unwrap();
+        let default = runtime.path().join("ferese/control.sock");
+        let _drm = Endpoint::desktop_at(default.clone()).unwrap();
+        let outside = runtime.path().join("outside");
+        fs::create_dir(&outside).unwrap();
+        fs::set_permissions(&outside, fs::Permissions::from_mode(0o755)).unwrap();
+        std::os::unix::fs::symlink(&outside, default.parent().unwrap().join("instances")).unwrap();
+        assert!(Endpoint::instance_at(default).is_err());
+        assert_eq!(fs::metadata(outside).unwrap().permissions().mode() & 0o777, 0o755);
     }
 
     #[test]

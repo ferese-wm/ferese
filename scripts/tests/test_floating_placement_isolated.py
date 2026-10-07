@@ -6,6 +6,7 @@ Requires built debug ferese/feresectl, cc, wayland-scanner and a Wayland host.
 import json
 import os
 from pathlib import Path
+from session_socket import ipc_environment, ipc_socket
 import signal
 import subprocess
 import tempfile
@@ -63,12 +64,12 @@ class FloatingPlacementTest(unittest.TestCase):
             children = []
 
             def launch(command, **kwargs):
-                child = subprocess.Popen(command, env=env, start_new_session=True, **kwargs)
+                child = subprocess.Popen(command, env=ipc_environment(env), start_new_session=True, **kwargs)
                 children.append(child)
                 return child
 
             def command(*args):
-                return json.loads(subprocess.check_output([str(repo / "target/debug/feresectl"), "-j", *args], env=env, timeout=5))
+                return json.loads(subprocess.check_output([str(repo / "target/debug/feresectl"), "-j", *args], env=ipc_environment(env), timeout=5))
 
             with (root / "compositor.log").open("w") as log:
                 try:
@@ -76,7 +77,7 @@ class FloatingPlacementTest(unittest.TestCase):
                     env["DBUS_SESSION_BUS_ADDRESS"] = bus.stdout.readline().strip()
                     compositor = launch([str(repo / "target/debug/ferese"), "--backend", "nested"], stdout=log, stderr=log)
                     deadline = time.monotonic() + 10
-                    while not (runtime / "ferese/control.sock").is_socket():
+                    while not (ipc_socket(runtime)).is_socket():
                         if compositor.poll() is not None or time.monotonic() > deadline:
                             self.fail((root / "compositor.log").read_text())
                         time.sleep(.025)

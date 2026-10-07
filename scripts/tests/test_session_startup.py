@@ -32,6 +32,7 @@ class SessionStartupTest(unittest.TestCase):
                 path.write_text('#!/bin/bash\n' + body)
                 path.chmod(0o755)
             env = dict(os.environ, PATH=f'{root}:{os.environ["PATH"]}', TEST_ROOT=directory,
+                       FERESE_SESSION_MODE='desktop',
                        FERESE_SESSION_IMPORT_ENV=str(int(direct)), WAYLAND_DISPLAY='private-display',
                        FERESE_PUBLIC_WAYLAND_DISPLAY='public-display', WAYLAND_SOCKET='77',
                        TEST_FAIL=str(int(fail_target)), TEST_STATUS=str(shell_status), TEST_WAIT=str(int(terminate)))
@@ -71,6 +72,11 @@ class SessionStartupTest(unittest.TestCase):
                           '--user try-restart xdg-desktop-portal-ferese.service', 'shell:77',
                           '--user stop ferese-session.target'])
 
+    def test_direct_session_imports_its_control_socket(self):
+        status, events = self.run_session(extra_env={'FERESE_SOCKET': '/run/user/1000/ferese/control.sock'})
+        self.assertEqual(status, 0)
+        self.assertIn('FERESE_SOCKET=/run/user/1000/ferese/control.sock', self.imported_vars(events))
+
     def test_a_managed_x11_endpoint_is_imported_for_dbus_activators(self):
         status, events = self.run_session(display=':7', xauthority='/run/user/1000/ferese-xauth-abcd')
         self.assertEqual(status, 0)
@@ -102,6 +108,11 @@ class SessionStartupTest(unittest.TestCase):
 
     def test_nested_session_never_changes_host_activation(self):
         status, events = self.run_session(direct=False)
+        self.assertEqual(status, 0)
+        self.assertEqual(events, ['shell:77'])
+
+    def test_embedded_policy_blocks_session_services_despite_an_inherited_import_flag(self):
+        status, events = self.run_session(direct=True, extra_env={'FERESE_SESSION_MODE': 'embedded'})
         self.assertEqual(status, 0)
         self.assertEqual(events, ['shell:77'])
 

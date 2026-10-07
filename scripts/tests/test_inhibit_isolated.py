@@ -6,6 +6,7 @@ Uses a nested compositor and mock logind; never suspends or ends the host sessio
 import json
 import os
 from pathlib import Path
+from session_socket import ipc_environment, ipc_socket
 import signal
 import socket
 import struct
@@ -141,13 +142,13 @@ def private_test():
         env.pop("WAYLAND_SOCKET", None)
         log = (root / "test.log").open("w")
         try:
-            compositor = subprocess.Popen([str(REPO / "target/debug/ferese"), "--backend=nested"], env=env, stdout=log, stderr=log, start_new_session=True)
+            compositor = subprocess.Popen([str(REPO / "target/debug/ferese"), "--backend=nested"], env=ipc_environment(env), stdout=log, stderr=log, start_new_session=True)
             processes.append(compositor)
             deadline = time.monotonic() + 10
-            while not (runtime / "ferese/control.sock").exists():
+            while not (ipc_socket(runtime)).exists():
                 assert compositor.poll() is None and time.monotonic() < deadline, (root / "test.log").read_text()
                 time.sleep(0.02)
-            backend = subprocess.Popen([str(REPO / "target/debug/xdg-desktop-portal-ferese")], env=env, stdout=log, stderr=log, start_new_session=True)
+            backend = subprocess.Popen([str(REPO / "target/debug/xdg-desktop-portal-ferese")], env=ipc_environment(env), stdout=log, stderr=log, start_new_session=True)
             processes.append(backend)
             deadline = time.monotonic() + 10
             while True:
@@ -164,7 +165,7 @@ def private_test():
             except GLib.Error as error:
                 assert "AccessDenied" in str(error)
             bus.call_sync("org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "RequestName", GLib.Variant("(su)", ("org.freedesktop.portal.Desktop", 0)), None, Gio.DBusCallFlags.NONE, 2000, None)
-            admin = IPC(runtime / "ferese/control.sock")
+            admin = IPC(ipc_socket(runtime))
             def inhibit(path, flags):
                 call(INTERFACE, "Inhibit", GLib.Variant("(ossua{sv})", (path, "test.media", "", flags, {"reason": GLib.Variant("s", "Playing media")})))
             inhibit(request, 8)
@@ -180,7 +181,7 @@ def private_test():
             assert call(INTERFACE, "CreateMonitor", GLib.Variant("(ooss)", (PATH + "/request/test/monitor", session, "test.media", "")), "(u)") == (0,)
             wait_for(lambda: any(value["session-state"] == 1 for value in changes), "Missing initial Running")
             assert call("org.freedesktop.DBus.Properties", "Get", GLib.Variant("(ss)", ("org.freedesktop.impl.portal.Session", "version")), "(v)", session) == (1,)
-            query = IPC(runtime / "ferese/control.sock")
+            query = IPC(ipc_socket(runtime))
             state = query.call("begin-session-end")
             assert state["query-ready"] is False
             wait_for(lambda: any(value["session-state"] == 2 for value in changes), "Missing QueryEnd")

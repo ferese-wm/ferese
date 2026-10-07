@@ -6,6 +6,7 @@ Requires built debug ferese/feresectl, foot, dbus-daemon, and a Wayland host.
 import json
 import os
 from pathlib import Path
+from session_socket import ipc_environment, ipc_socket
 import signal
 import subprocess
 import tempfile
@@ -34,13 +35,13 @@ class FocusHistoryTest(unittest.TestCase):
             children = []
 
             def launch(command, **kwargs):
-                child = subprocess.Popen(command, env=env, start_new_session=True, **kwargs)
+                child = subprocess.Popen(command, env=ipc_environment(env), start_new_session=True, **kwargs)
                 children.append(child)
                 return child
 
             def command(*args):
                 return json.loads(subprocess.check_output(
-                    [str(repo / "target/debug/feresectl"), "-j", *args], env=env, timeout=5
+                    [str(repo / "target/debug/feresectl"), "-j", *args], env=ipc_environment(env), timeout=5
                 ))
 
             def wait_for(predicate):
@@ -62,7 +63,7 @@ class FocusHistoryTest(unittest.TestCase):
                                  stdout=subprocess.PIPE, text=True)
                     env["DBUS_SESSION_BUS_ADDRESS"] = bus.stdout.readline().strip()
                     launch([str(repo / "target/debug/ferese"), "--backend", "nested"], stdout=log, stderr=log)
-                    wait_for(lambda: (runtime / "ferese/control.sock").is_socket())
+                    wait_for(lambda: (ipc_socket(runtime)).is_socket())
                     command("focus-last-window")
                     self.assertIsNone(focused())
                     env["WAYLAND_DISPLAY"] = str(next(

@@ -45,19 +45,26 @@ its target in this order:
 3. `$XDG_RUNTIME_DIR/ferese/control.sock`
 
 ```sh
-feresectl --socket /tmp/ferese-preview/ferese/control.sock outputs
-FERESE_SOCKET=/tmp/ferese-preview/ferese/control.sock feresectl theme get -j
+feresectl --socket "$XDG_RUNTIME_DIR/ferese/instances/12345-abcdef/control.sock" outputs
+FERESE_SOCKET="$XDG_RUNTIME_DIR/ferese/instances/12345-abcdef/control.sock" feresectl theme get -j
 ```
 
 `--socket` selects an existing server; it does not create one or change where the
-compositor listens. A nested compositor uses its own runtime directory.
+compositor listens. DRM uses `$XDG_RUNTIME_DIR/ferese/control.sock`. Nested
+instances use `$XDG_RUNTIME_DIR/ferese/instances/<id>/control.sock`; copy the
+actual path from the compositor's startup log. Each instance removes its own
+socket and directory on normal shutdown. A forced kill can leave the directory
+behind; later instances allocate a different one.
+
+Clients launched by a nested compositor inherit its `FERESE_SOCKET`, so
+`feresectl outputs` inside that session connects to that instance.
 `autostart` launches desktop entries locally and does not use IPC.
 
 ## Follow changes
 
 ```sh
 feresectl event-stream
-feresectl --socket /tmp/ferese-preview/ferese/control.sock event-stream
+feresectl --socket "$XDG_RUNTIME_DIR/ferese/instances/12345-abcdef/control.sock" event-stream
 ```
 
 `event-stream` writes one JSON value per line and flushes each line. It always

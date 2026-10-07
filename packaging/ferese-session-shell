@@ -4,6 +4,10 @@ session_target_started=0
 shell_pid=
 agent_pid=
 autostart_pid=
+manage_session=0
+if [[ ${FERESE_SESSION_MODE:-desktop} == desktop && ${FERESE_SESSION_IMPORT_ENV:-0} == 1 ]]; then
+    manage_session=1
+fi
 cleanup() {
     trap - EXIT INT TERM
     if [[ -n $autostart_pid ]]; then
@@ -25,7 +29,7 @@ trap 'exit 143' TERM
 
 # The compositor supplies its new Wayland socket before this helper starts.
 # Nested previews must never replace the host session's activation environment.
-if [[ ${FERESE_SESSION_IMPORT_ENV:-0} == 1 ]]; then
+if ((manage_session)); then
     # Shell control uses a private socket FD. Activation must use the public
     # socket so portal and other desktop services connect as ordinary clients.
     public_display=${FERESE_PUBLIC_WAYLAND_DISPLAY:-${WAYLAND_DISPLAY:-}}
@@ -34,6 +38,7 @@ if [[ ${FERESE_SESSION_IMPORT_ENV:-0} == 1 ]]; then
         "WAYLAND_DISPLAY=$public_display"
         "DISPLAY=${DISPLAY:-}"
         "XAUTHORITY=${XAUTHORITY:-}"
+        "FERESE_SOCKET=${FERESE_SOCKET:-}"
         XDG_CURRENT_DESKTOP
         XDG_SESSION_DESKTOP
         XDG_SESSION_TYPE
@@ -70,7 +75,7 @@ env -u WAYLAND_SOCKET WAYLAND_DISPLAY="${FERESE_PUBLIC_WAYLAND_DISPLAY:-${WAYLAN
 agent_pid=$!
 "$release_dir/ferese-shell" &
 shell_pid=$!
-if [[ ${FERESE_SESSION_IMPORT_ENV:-0} == 1 && -x $release_dir/feresectl ]]; then
+if ((manage_session)) && [[ -x $release_dir/feresectl ]]; then
     env WAYLAND_DISPLAY="${FERESE_PUBLIC_WAYLAND_DISPLAY:-${WAYLAND_DISPLAY:-}}" \
         "$release_dir/feresectl" autostart &
     autostart_pid=$!

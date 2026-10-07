@@ -9,6 +9,7 @@ import io
 import json
 import os
 from pathlib import Path
+from session_socket import ipc_environment, ipc_socket
 import signal
 import selectors
 import subprocess
@@ -58,10 +59,10 @@ class WindowCapture(unittest.TestCase):
             env.pop("FERESE_SHELL_CONTROL_SOCKET", None)
             log = (root / "compositor.log").open("w")
             try:
-                compositor = subprocess.Popen([str(COMPOSITOR), "--backend=nested"], env=env, stdout=log, stderr=log, start_new_session=True)
+                compositor = subprocess.Popen([str(COMPOSITOR), "--backend=nested"], env=ipc_environment(env), stdout=log, stderr=log, start_new_session=True)
                 processes.append(compositor)
                 deadline = time.monotonic() + 10
-                while not (runtime / "ferese/control.sock").exists():
+                while not (ipc_socket(runtime)).exists():
                     if compositor.poll() is not None or time.monotonic() > deadline:
                         self.fail((root / "compositor.log").read_text())
                     time.sleep(0.02)
@@ -69,7 +70,7 @@ class WindowCapture(unittest.TestCase):
                 env["WAYLAND_DISPLAY"] = str(next(path for path in sockets if not path.name.endswith(".lock")))
 
                 def call(*args):
-                    return subprocess.check_output([str(CTL), "-j", *args], env=env, timeout=10)
+                    return subprocess.check_output([str(CTL), "-j", *args], env=ipc_environment(env), timeout=10)
 
                 def windows(count):
                     deadline = time.monotonic() + 10
@@ -80,9 +81,9 @@ class WindowCapture(unittest.TestCase):
                         time.sleep(0.02)
                     self.fail((root / "compositor.log").read_text())
 
-                processes.append(subprocess.Popen([str(root / "client")], env=env, stdout=log, stderr=log, start_new_session=True))
+                processes.append(subprocess.Popen([str(root / "client")], env=ipc_environment(env), stdout=log, stderr=log, start_new_session=True))
                 target = windows(1)[0]
-                processes.append(subprocess.Popen([str(root / "client"), "cover"], env=env, stdout=log, stderr=log, start_new_session=True))
+                processes.append(subprocess.Popen([str(root / "client"), "cover"], env=ipc_environment(env), stdout=log, stderr=log, start_new_session=True))
                 current = windows(2)
                 cover = next(window for window in current if window["title"] == "Occluding window")
                 self.assertEqual((target["x"], target["y"], target["width"], target["height"]),
@@ -131,7 +132,7 @@ class WindowCapture(unittest.TestCase):
                 worker.stdin.close()
                 worker.stdout.close()
                 rejected = subprocess.run([str(CTL), "screenshot-window", str(target["id"])],
-                                          env=env, capture_output=True, timeout=10)
+                                          env=ipc_environment(env), capture_output=True, timeout=10)
                 self.assertNotEqual(rejected.returncode, 0)
                 self.assertIn(b"protected", rejected.stderr)
                 self.assertTrue(next(window for window in windows(2) if window["id"] == target["id"])["mapped"])

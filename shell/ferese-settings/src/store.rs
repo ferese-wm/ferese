@@ -228,11 +228,10 @@ fn save_with(
 
 pub fn reload_running() -> bool {
     use ferese_ipc::{Request, Response, VERSION, read_frame, write_frame};
-    let Some(runtime) = std::env::var_os("XDG_RUNTIME_DIR") else {
+    let Ok(path) = ferese_ipc::socket::resolve(None) else {
         return false;
     };
-    let Ok(mut socket) = std::os::unix::net::UnixStream::connect(PathBuf::from(runtime).join("ferese/control.sock"))
-    else {
+    let Ok(mut socket) = std::os::unix::net::UnixStream::connect(path) else {
         return false;
     };
     let _ = socket.set_read_timeout(Some(Duration::from_secs(2)));

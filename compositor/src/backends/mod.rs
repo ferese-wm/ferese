@@ -7,6 +7,7 @@ use smithay::reexports::calloop::EventLoop;
 
 use crate::Ferese;
 use crate::private_client::ClientCapabilities;
+use crate::session_environment::SessionPolicy;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BackendKind {
@@ -17,6 +18,7 @@ pub enum BackendKind {
 #[derive(Debug, Eq, PartialEq)]
 pub struct LaunchConfig {
     pub backend: BackendKind,
+    pub(crate) session_policy: SessionPolicy,
     pub client: Vec<OsString>,
     pub client_capabilities: ClientCapabilities,
 }
@@ -75,6 +77,10 @@ impl LaunchConfig {
 
         Ok(Self {
             backend,
+            session_policy: match backend {
+                BackendKind::Drm => SessionPolicy::Desktop,
+                BackendKind::Nested => SessionPolicy::Embedded,
+            },
             client,
             client_capabilities,
         })
@@ -110,6 +116,7 @@ mod tests {
         let config = LaunchConfig::parse([OsString::from("foot")], true).unwrap();
 
         assert_eq!(config.backend, BackendKind::Nested);
+        assert_eq!(config.session_policy, SessionPolicy::Embedded);
         assert_eq!(config.client, [OsString::from("foot")]);
         assert!(config.client_capabilities.is_empty());
     }
@@ -119,6 +126,7 @@ mod tests {
         let config = LaunchConfig::parse(Vec::<OsString>::new(), false).unwrap();
 
         assert_eq!(config.backend, BackendKind::Drm);
+        assert_eq!(config.session_policy, SessionPolicy::Desktop);
         assert!(config.client.is_empty());
         assert!(config.client_capabilities.is_empty());
     }
@@ -177,5 +185,16 @@ mod tests {
         let error = LaunchConfig::parse([OsString::from("--backend"), OsString::from("other")], true).unwrap_err();
 
         assert!(error.contains("unknown backend"));
+    }
+
+    #[test]
+    fn explicit_backend_selects_the_default_session_policy() {
+        for (backend, graphical, policy) in [
+            ("--backend=drm", true, SessionPolicy::Desktop),
+            ("--backend=nested", false, SessionPolicy::Embedded),
+        ] {
+            let config = LaunchConfig::parse([OsString::from(backend)], graphical).unwrap();
+            assert_eq!(config.session_policy, policy);
+        }
     }
 }

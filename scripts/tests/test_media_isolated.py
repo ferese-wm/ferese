@@ -7,6 +7,7 @@ Requires a Wayland host, PyGObject and dbus-run-session.
 import json
 import os
 from pathlib import Path
+from session_socket import ipc_environment, ipc_socket
 import signal
 import socket
 import struct
@@ -135,7 +136,7 @@ def private_checks():
             binary = REPO / os.environ.get('FERESE_TEST_BINARY', 'target/debug/ferese')
             ctl = REPO / os.environ.get('FERESE_TEST_CTL', 'target/debug/feresectl')
             with (root / 'compositor.log').open('w') as log:
-                child = subprocess.Popen([str(binary), '--backend=nested'], env=env,
+                child = subprocess.Popen([str(binary), '--backend=nested'], env=ipc_environment(env),
                                          stdout=log, stderr=log, start_new_session=True)
 
                 def wait(check):
@@ -148,17 +149,17 @@ def private_checks():
                         time.sleep(.02)
                     raise AssertionError('Timed out\n' + (root / 'compositor.log').read_text())
 
-                wait(lambda: (runtime / 'ferese/control.sock').exists())
+                wait(lambda: (ipc_socket(runtime)).exists())
 
                 def call(*args):
-                    return json.loads(subprocess.check_output([str(ctl), "-j", *args], env=env, timeout=5))
+                    return json.loads(subprocess.check_output([str(ctl), "-j", *args], env=ipc_environment(env), timeout=5))
 
                 def request(command, args):
                     payload = json.dumps({'version': 1, 'id': 17, 'type': 'command',
                                           'command': command, 'args': args}).encode()
                     connection = socket.socket(socket.AF_UNIX)
                     connection.settimeout(3)
-                    connection.connect(str(runtime / 'ferese/control.sock'))
+                    connection.connect(str(ipc_socket(runtime)))
                     connection.sendall(struct.pack('!I', len(payload)) + payload)
                     return connection
 
@@ -181,7 +182,7 @@ def private_checks():
                 env['WAYLAND_DISPLAY'] = str(next(path for path in runtime.glob('wayland-*') if not path.name.endswith('.lock')))
                 shell_binary = os.environ.get('FERESE_TEST_SHELL')
                 if shell_binary:
-                    shell = subprocess.Popen([str(REPO / shell_binary)], env=env, stdout=log, stderr=log, start_new_session=True)
+                    shell = subprocess.Popen([str(REPO / shell_binary)], env=ipc_environment(env), stdout=log, stderr=log, start_new_session=True)
                 first = players[0]
                 selected(first.name)
                 initial = call('media')

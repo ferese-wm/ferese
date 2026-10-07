@@ -5,6 +5,7 @@ Requires built binaries and bwrap. FERESE_TEST_BIN_DIR selects debug/release. Ho
 import os
 import unittest
 from pathlib import Path
+from session_socket import ipc_environment, ipc_socket
 
 @unittest.skipUnless(os.environ.get("FERESE_TEST_LOCK") == "1", "visible nested lock test is opt-in")
 class NativeLockTest(unittest.TestCase):
@@ -23,7 +24,7 @@ class NativeLockTest(unittest.TestCase):
         env=dict(os.environ,XDG_RUNTIME_DIR=str(runtime),XDG_CONFIG_HOME=str(root/'config'),WAYLAND_DISPLAY=host_display,FERESE_ENABLE_SCREENCOPY='1')
         binary_dir = Path(os.environ.get('FERESE_TEST_BIN_DIR', 'target/release'))
         log=(root/'compositor.log').open('w')
-        compositor=subprocess.Popen([str(binary_dir / 'ferese'),'--backend','nested'],env=env,stdout=log,stderr=subprocess.STDOUT)
+        compositor=subprocess.Popen([str(binary_dir / 'ferese'),'--backend','nested'],env=ipc_environment(env),stdout=log,stderr=subprocess.STDOUT)
         ctl=binary_dir / 'feresectl'
         assert ctl.is_file(), f'missing {ctl}; build it with cargo build --release -p feresectl'
         locker=None
@@ -37,13 +38,13 @@ class NativeLockTest(unittest.TestCase):
             childenv=dict(env,WAYLAND_DISPLAY=str(sockets[0]),FERESE_LOCK_READY='1')
             def capture(destination, timeout=10):
                 with open(destination,'wb') as png:
-                    return subprocess.run([str(ctl),'screenshot'],env=childenv,stdout=png,stderr=subprocess.PIPE,timeout=timeout)
+                    return subprocess.run([str(ctl),'screenshot'],env=ipc_environment(childenv),stdout=png,stderr=subprocess.PIPE,timeout=timeout)
             time.sleep(.6)
             result=capture(root/'unlocked.png')
             assert result.returncode == 0, f'Capture failed while unlocked: {result.stderr.decode()}'
             assert (root/'unlocked.png').stat().st_size > 0, 'Capture produced an empty file'
             print('Native capture succeeded while unlocked',flush=True)
-            locker=subprocess.Popen(['bwrap','--bind','/','/','--dev-bind','/dev','/dev','--ro-bind',str(pam),'/etc/pam.d','--unshare-user','--',str(binary_dir / 'ferese-lock')],env=childenv,stdout=subprocess.DEVNULL,stderr=locker_log,start_new_session=True)
+            locker=subprocess.Popen(['bwrap','--bind','/','/','--dev-bind','/dev','/dev','--ro-bind',str(pam),'/etc/pam.d','--unshare-user','--',str(binary_dir / 'ferese-lock')],env=ipc_environment(childenv),stdout=subprocess.DEVNULL,stderr=locker_log,start_new_session=True)
             assert locker.wait(timeout=20) == 0, (root/'locker.log').read_text()
             print('Native locker received compositor confirmation',flush=True)
             result=capture(root/'locked.png')
@@ -54,7 +55,7 @@ class NativeLockTest(unittest.TestCase):
             result=capture(root/'after-crash.png')
             assert result.returncode != 0, 'Capture unexpectedly succeeded after locker crash'
             print('Capture remains denied after locker crash',flush=True)
-            locker=subprocess.Popen(['bwrap','--bind','/','/','--dev-bind','/dev','/dev','--ro-bind',str(pam),'/etc/pam.d','--unshare-user','--',str(binary_dir / 'ferese-lock')],env=childenv,stdout=subprocess.DEVNULL,stderr=locker_log,start_new_session=True)
+            locker=subprocess.Popen(['bwrap','--bind','/','/','--dev-bind','/dev','/dev','--ro-bind',str(pam),'/etc/pam.d','--unshare-user','--',str(binary_dir / 'ferese-lock')],env=ipc_environment(childenv),stdout=subprocess.DEVNULL,stderr=locker_log,start_new_session=True)
             assert locker.wait(timeout=20) == 0, (root/'locker.log').read_text()
             result=capture(root/'replacement.png')
             assert result.returncode != 0, 'Capture unexpectedly succeeded after locker takeover'

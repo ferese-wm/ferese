@@ -1,4 +1,5 @@
 use std::io::{Read, Write};
+use std::os::unix::fs::FileTypeExt;
 use std::os::unix::net::UnixStream;
 use std::os::unix::process::ExitStatusExt;
 use std::process::{Command, Stdio};
@@ -62,6 +63,127 @@ pub(crate) fn state(events: &mut EventLoop<'static, Ferese>) -> Ferese {
     config.wallpaper.path = None;
 
     Ferese::new(events, Display::new().unwrap(), config).unwrap()
+}
+
+#[test]
+fn nested_instances_share_a_runtime_and_route_launched_clients_to_their_own_ipc() {
+    use smithay::output::{Mode, Output, PhysicalProperties, Subpixel};
+    if !private_runtime("startup_tests::nested_instances_share_a_runtime_and_route_launched_clients_to_their_own_ipc") {
+        return;
+    }
+    let mut host_events = EventLoop::try_new().unwrap();
+    let host = state(&mut host_events);
+    let host_socket = host.session_environment.control_socket.clone();
+    let mut first_events = EventLoop::try_new().unwrap();
+    let mut second_events = EventLoop::try_new().unwrap();
+    let config = || {
+        let mut config = crate::config::Config::default().runtime_config().unwrap();
+        config.wallpaper.path = None;
+        config
+    };
+    let mut first = Ferese::new_with_session(
+        &mut first_events,
+        Display::new().unwrap(),
+        config(),
+        crate::ipc::Endpoint::instance().unwrap(),
+        crate::SessionPolicy::Embedded,
+    )
+    .unwrap();
+    let mut second = Ferese::new_with_session(
+        &mut second_events,
+        Display::new().unwrap(),
+        config(),
+        crate::ipc::Endpoint::instance().unwrap(),
+        crate::SessionPolicy::Embedded,
+    )
+    .unwrap();
+    let first_socket = first.session_environment.control_socket.clone();
+    let second_socket = second.session_environment.control_socket.clone();
+    assert_ne!(first_socket, host_socket);
+    assert_ne!(second_socket, host_socket);
+    assert_ne!(first_socket, second_socket);
+    assert_ne!(first.socket_name, second.socket_name);
+    let runtime = std::path::PathBuf::from(std::env::var_os("XDG_RUNTIME_DIR").unwrap());
+    assert_eq!(host_socket, runtime.join("ferese/control.sock"));
+    for (events, state, name) in [
+        (&mut first_events, &mut first, "first"),
+        (&mut second_events, &mut second, "second"),
+    ] {
+        let output = Output::new(
+            name.into(),
+            PhysicalProperties {
+                size: (0, 0).into(),
+                subpixel: Subpixel::Unknown,
+                make: "test".into(),
+                model: "test".into(),
+            },
+        );
+        output.change_current_state(
+            Some(Mode {
+                size: (800, 600).into(),
+                refresh: 60_000,
+            }),
+            None,
+            None,
+            None,
+        );
+        state.space.map_output(&output, (0, 0));
+        state.register_output(&output, name.into());
+        let report = runtime.join(format!("{name}.json"));
+        let script = r#"import json, os, socket, struct, sys
+s = socket.socket(socket.AF_UNIX)
+s.connect(os.environ['FERESE_SOCKET'])
+s.settimeout(2)
+payload = json.dumps({'version':1, 'id':1, 'type':'command', 'command':'outputs', 'args':{}}).encode()
+s.sendall(struct.pack('>I', len(payload)) + payload)
+def read_exact(n):
+    data = b''
+    while len(data) < n:
+        part = s.recv(n - len(data))
+        if not part: raise RuntimeError('IPC disconnected')
+        data += part
+    return data
+response = json.loads(read_exact(struct.unpack('>I', read_exact(4))[0]))
+with open(sys.argv[1], 'w') as report:
+    json.dump({'socket':os.environ['FERESE_SOCKET'], 'response':response}, report)
+"#;
+        let mut child = crate::process::spawn_client(
+            state,
+            [
+                std::ffi::OsStr::new("python3"),
+                std::ffi::OsStr::new("-c"),
+                std::ffi::OsStr::new(script),
+                report.as_os_str(),
+            ],
+            crate::private_client::ClientCapabilities::default(),
+        )
+        .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                assert!(status.success());
+                break;
+            }
+            assert!(Instant::now() < deadline, "nested IPC client timed out");
+            events.dispatch(Duration::from_millis(10), state).unwrap();
+        }
+        let result: serde_json::Value = serde_json::from_slice(&std::fs::read(report).unwrap()).unwrap();
+        assert_eq!(
+            result["socket"],
+            state.session_environment.control_socket.to_str().unwrap()
+        );
+        assert_eq!(result["response"]["result"][0]["name"], name);
+        assert!(result["response"]["error"].is_null());
+    }
+    let first_directory = first_socket.parent().unwrap().to_owned();
+    drop(first);
+    assert!(!first_directory.exists());
+    assert!(host_socket.symlink_metadata().unwrap().file_type().is_socket());
+    assert!(second_socket.symlink_metadata().unwrap().file_type().is_socket());
+    let second_directory = second_socket.parent().unwrap().to_owned();
+    drop(second);
+    assert!(!second_directory.exists());
+    assert!(host_socket.symlink_metadata().unwrap().file_type().is_socket());
 }
 
 #[test]

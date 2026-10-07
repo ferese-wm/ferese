@@ -9,10 +9,10 @@ use smithay::reexports::calloop::generic::Generic;
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 use smithay::reexports::calloop::{Interest, Mode, PostAction, RegistrationToken};
 
-use crate::Ferese;
 use crate::config::DaemonConfig;
 use crate::private_client::ClientCapabilities;
 use crate::process::{pidfd, spawn_client, terminate_child};
+use crate::{Ferese, SessionPolicy};
 
 struct Service {
     config: DaemonConfig,
@@ -31,7 +31,7 @@ impl Runner {
     pub fn start(state: &mut Ferese) -> Rc<RefCell<Self>> {
         let runner = Rc::new(RefCell::new(Self::new(
             &state.autostart,
-            state.direct_backend.is_none(),
+            state.session_environment.policy,
         )));
         Self::refresh(&runner, state);
         runner
@@ -114,9 +114,12 @@ impl Runner {
         }
     }
 
-    pub fn reconcile(&mut self, configs: &[DaemonConfig], nested: bool) {
+    pub fn reconcile(&mut self, configs: &[DaemonConfig], policy: SessionPolicy) {
         let mut previous = std::mem::take(&mut self.0);
-        for config in configs.iter().filter(|c| c.enabled && (!nested || c.nested)) {
+        for config in configs
+            .iter()
+            .filter(|c| c.enabled && policy.allows_autostart(c.nested))
+        {
             if self.0.iter().any(|service| service.config.command == config.command) {
                 continue;
             }
@@ -148,11 +151,11 @@ impl Runner {
         }
     }
 
-    pub fn new(configs: &[DaemonConfig], nested: bool) -> Self {
+    pub fn new(configs: &[DaemonConfig], policy: SessionPolicy) -> Self {
         Self(
             configs
                 .iter()
-                .filter(|config| config.enabled && (!nested || config.nested))
+                .filter(|config| config.enabled && policy.allows_autostart(config.nested))
                 .map(|config| Service {
                     config: config.clone(),
                     child: None,
@@ -166,7 +169,7 @@ impl Runner {
     }
 
     pub fn tick(&mut self, state: &mut Ferese) {
-        self.reconcile(&state.autostart, state.direct_backend.is_none());
+        self.reconcile(&state.autostart, state.session_environment.policy);
         let now = Instant::now();
         for service in &mut self.0 {
             if let Some(child) = &mut service.child {
@@ -244,17 +247,17 @@ mod tests {
             restart: false,
             nested: false,
         };
-        let mut runner = Runner::new(&[config.clone()], false);
+        let mut runner = Runner::new(&[config.clone()], SessionPolicy::Desktop);
         runner.0[0].child = Some(std::process::Command::new("/bin/sleep").arg("30").spawn().unwrap());
         let pid = runner.0[0].child.as_ref().unwrap().id();
         config.restart = true;
-        runner.reconcile(&[config.clone()], false);
+        runner.reconcile(&[config.clone()], SessionPolicy::Desktop);
         assert_eq!(runner.0[0].child.as_ref().unwrap().id(), pid);
         assert!(runner.0[0].config.restart);
-        runner.reconcile(&[config.clone(), config.clone()], false);
+        runner.reconcile(&[config.clone(), config.clone()], SessionPolicy::Desktop);
         assert_eq!(runner.0.len(), 1);
         config.enabled = false;
-        runner.reconcile(&[config], false);
+        runner.reconcile(&[config], SessionPolicy::Desktop);
         assert!(runner.0.is_empty());
         let deadline = Instant::now() + Duration::from_secs(2);
         while unsafe { libc::kill(pid as i32, 0) } == 0 {
@@ -271,22 +274,72 @@ mod tests {
             restart: true,
             nested: false,
         }];
-        assert!(Runner::new(&configs, true).0.is_empty());
-        let mut direct = Runner::new(&configs, false);
+        assert!(Runner::new(&configs, SessionPolicy::Embedded).0.is_empty());
+        let mut direct = Runner::new(&configs, SessionPolicy::Desktop);
         assert_eq!(direct.0.len(), 1);
         direct.stop();
         assert!(direct.0[0].finished);
     }
 
     #[test]
-    fn disabled_login_items_never_start_on_either_backend() {
+    fn disabled_login_items_never_start_under_either_session_policy() {
         let configs = vec![DaemonConfig {
             command: vec!["not-executed".into()],
             enabled: false,
             restart: true,
             nested: true,
         }];
-        assert!(Runner::new(&configs, true).0.is_empty());
-        assert!(Runner::new(&configs, false).0.is_empty());
+        assert!(Runner::new(&configs, SessionPolicy::Embedded).0.is_empty());
+        assert!(Runner::new(&configs, SessionPolicy::Desktop).0.is_empty());
+    }
+
+    #[test]
+    fn embedded_autostart_requires_opt_in_on_start_and_reload() {
+        let regular = DaemonConfig {
+            command: vec!["regular".into()],
+            enabled: true,
+            restart: false,
+            nested: false,
+        };
+        let embedded = DaemonConfig {
+            command: vec!["embedded".into()],
+            nested: true,
+            ..regular.clone()
+        };
+        let configs = [regular, embedded.clone()];
+        let mut runner = Runner::new(&configs, SessionPolicy::Embedded);
+        assert_eq!(runner.0.len(), 1);
+        assert_eq!(runner.0[0].config, embedded);
+        runner.reconcile(&configs, SessionPolicy::Desktop);
+        assert_eq!(runner.0.len(), 2);
+        runner.reconcile(&configs, SessionPolicy::Embedded);
+        assert_eq!(runner.0.len(), 1);
+        assert_eq!(runner.0[0].config, embedded);
+    }
+
+    #[test]
+    fn desktop_autostart_does_not_depend_on_a_live_drm_backend() {
+        if !crate::startup_tests::private_runtime(
+            "daemon::tests::desktop_autostart_does_not_depend_on_a_live_drm_backend",
+        ) {
+            return;
+        }
+        let mut events = smithay::reexports::calloop::EventLoop::try_new().unwrap();
+        let mut state = crate::startup_tests::state(&mut events);
+        assert!(state.direct_backend.is_none());
+        assert_eq!(state.session_environment.policy, SessionPolicy::Desktop);
+        state.autostart = vec![DaemonConfig {
+            command: vec!["/bin/sleep".into(), "30".into()],
+            enabled: true,
+            restart: false,
+            nested: false,
+        }];
+        let runner = Runner::start(&mut state);
+        assert_eq!(runner.borrow().0.len(), 1);
+        assert!(runner.borrow().0[0].child.is_some());
+        runner.borrow_mut().stop();
+        state.session_environment.policy = SessionPolicy::Embedded;
+        Runner::refresh(&runner, &mut state);
+        assert!(runner.borrow().0.is_empty());
     }
 }

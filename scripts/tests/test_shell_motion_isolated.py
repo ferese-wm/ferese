@@ -7,6 +7,7 @@ Protocol traces contain only this test's shell traffic, never the host desktop.
 """
 import os
 from pathlib import Path
+from session_socket import ipc_environment, ipc_socket
 import re
 import signal
 import subprocess
@@ -53,7 +54,7 @@ class ShellMotionTest(unittest.TestCase):
                 '<allow receive_sender="*"/><allow own="*"/></policy></busconfig>')
 
             def launch(command, **kwargs):
-                process = subprocess.Popen(command, env=env, start_new_session=True, **kwargs)
+                process = subprocess.Popen(command, env=ipc_environment(env), start_new_session=True, **kwargs)
                 children.append(process)
                 return process
 
@@ -73,7 +74,7 @@ class ShellMotionTest(unittest.TestCase):
                 return subprocess.run(["gdbus", "call", "--session", "--dest", "org.freedesktop.Notifications",
                                        "--object-path", "/org/freedesktop/Notifications", "--method",
                                        "org.freedesktop.Notifications." + method, *args],
-                                      env=env, text=True, capture_output=True, timeout=5, check=check)
+                                      env=ipc_environment(env), text=True, capture_output=True, timeout=5, check=check)
 
             def layer_surface(namespace):
                 matches = list(re.finditer(r'get_layer_surface\([^\n]*?wl_surface[@#](\d+)[^\n]*"' + namespace + '"', log_path.read_text()))
@@ -132,7 +133,7 @@ class ShellMotionTest(unittest.TestCase):
                     compositor = launch([str(binary), "--backend", "nested", "--grant-effects", "--grant-shell-control",
                                          "--", "env", "WAYLAND_DEBUG=client", "ICED_BACKEND=tiny-skia", str(shell)],
                                         stdout=log, stderr=log)
-                    wait_for(lambda: (runtime / "ferese/control.sock").is_socket())
+                    wait_for(lambda: (ipc_socket(runtime)).is_socket())
                     wait_for(lambda: dbus("GetServerInformation", check=False).returncode == 0)
                     bar = wait_for(lambda: layer_surface("ferese-shell-top-bar"))
                     if bar_layout == "islands":
@@ -165,11 +166,11 @@ class ShellMotionTest(unittest.TestCase):
                                        "notification materials did not follow their fade")
                     print(f"Toast: {opening_frames} opening callback requests, {idle_frames / 2:g} settled commits/s; destroyed", flush=True)
 
-                    subprocess.run([str(ctl), "toggle-keybinding-guide"], env=env, check=True, capture_output=True)
+                    subprocess.run([str(ctl), "toggle-keybinding-guide"], env=ipc_environment(env), check=True, capture_output=True)
                     modal = wait_for(lambda: layer_surface("ferese-system-modal"))
                     wait_for(lambda: frames(modal) >= 4)
                     time.sleep(.3)
-                    subprocess.run([str(ctl), "toggle-keybinding-guide"], env=env, check=True, capture_output=True)
+                    subprocess.run([str(ctl), "toggle-keybinding-guide"], env=ipc_environment(env), check=True, capture_output=True)
                     wait_for(lambda: destroyed(modal), timeout=5)
                     self.assertGreater(frames(modal), 10, "modal close did not follow frames")
                     self.assertIsNone(compositor.poll(), log_path.read_text()[-8000:])
@@ -181,7 +182,7 @@ class ShellMotionTest(unittest.TestCase):
                             source = config_file.read_text()
                             config_file.write_text(re.sub(
                                 r'bar-layout "[^"]+"', f'bar-layout "{layout_name}"', source))
-                            subprocess.run([str(ctl), "reload-config"], env=env, check=True, capture_output=True)
+                            subprocess.run([str(ctl), "reload-config"], env=ipc_environment(env), check=True, capture_output=True)
                             wait_for(lambda: bar_region_count(bar) == (expected_count or 2))
 
                         self.assertIsNone(compositor.poll(), log_path.read_text()[-8000:])
@@ -192,7 +193,7 @@ class ShellMotionTest(unittest.TestCase):
                             source = config_file.read_text()
                             config_file.write_text(re.sub(
                                 r'bar-island-padding \d+', f'bar-island-padding {padding}', source))
-                            subprocess.run([str(ctl), "reload-config"], env=env, check=True, capture_output=True)
+                            subprocess.run([str(ctl), "reload-config"], env=ipc_environment(env), check=True, capture_output=True)
                             expected_width = original_input[0][2] - 2 * (12 - padding)
                             wait_for(lambda: len(bar_input_rectangles(bar)) == 2
                                      and bar_input_rectangles(bar)[0][2] == expected_width)

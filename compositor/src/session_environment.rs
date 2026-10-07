@@ -8,10 +8,31 @@ pub(crate) struct X11Environment {
     pub authority: PathBuf,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SessionPolicy {
+    Desktop,
+    Embedded,
+}
+
+impl SessionPolicy {
+    fn environment_value(self) -> &'static str {
+        match self {
+            Self::Desktop => "desktop",
+            Self::Embedded => "embedded",
+        }
+    }
+
+    pub(crate) fn allows_autostart(self, embedded_opt_in: bool) -> bool {
+        self == Self::Desktop || embedded_opt_in
+    }
+}
+
 // Child endpoints are separate from the host endpoints used by the nested backend.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct SessionEnvironment {
     pub wayland_display: OsString,
+    pub control_socket: PathBuf,
+    pub policy: SessionPolicy,
     pub x11: Option<X11Environment>,
 }
 
@@ -21,6 +42,8 @@ impl SessionEnvironment {
         command
             .env("WAYLAND_DISPLAY", &self.wayland_display)
             .env("FERESE_PUBLIC_WAYLAND_DISPLAY", &self.wayland_display)
+            .env("FERESE_SOCKET", &self.control_socket)
+            .env("FERESE_SESSION_MODE", self.policy.environment_value())
             .env_remove("WAYLAND_SOCKET")
             .env_remove("FERESE_SHELL_CONTROL_SOCKET")
             .env_remove("DISPLAY")
@@ -28,6 +51,9 @@ impl SessionEnvironment {
 
         if let Some(x11) = &self.x11 {
             command.env("DISPLAY", &x11.display).env("XAUTHORITY", &x11.authority);
+        }
+        if self.policy == SessionPolicy::Embedded {
+            command.env("FERESE_SESSION_IMPORT_ENV", "0");
         }
     }
 }
@@ -39,6 +65,8 @@ mod tests {
     fn environment(x11: Option<X11Environment>) -> SessionEnvironment {
         SessionEnvironment {
             wayland_display: OsString::from("wayland-7"),
+            control_socket: PathBuf::from("/run/user/1000/ferese/instances/preview/control.sock"),
+            policy: SessionPolicy::Desktop,
             x11,
         }
     }
@@ -134,5 +162,43 @@ mod tests {
         .apply_public(&mut command);
 
         assert_eq!(value_of(&command, "DISPLAY"), Some(Some(":7".to_owned())));
+    }
+
+    #[test]
+    fn a_host_control_socket_is_replaced_by_the_instance_socket() {
+        let mut command = Command::new("true");
+        command.env("FERESE_SOCKET", "/run/user/1000/ferese/control.sock");
+        environment(None).apply_public(&mut command);
+        assert_eq!(
+            value_of(&command, "FERESE_SOCKET"),
+            Some(Some("/run/user/1000/ferese/instances/preview/control.sock".into()))
+        );
+    }
+
+    #[test]
+    fn embedded_clients_cannot_import_their_environment_into_the_host_session() {
+        let mut command = Command::new("true");
+        command.env("FERESE_SESSION_IMPORT_ENV", "1");
+        command.env("FERESE_SESSION_MODE", "desktop");
+        let mut embedded = environment(None);
+        embedded.policy = SessionPolicy::Embedded;
+        embedded.apply_public(&mut command);
+        assert_eq!(value_of(&command, "FERESE_SESSION_IMPORT_ENV"), Some(Some("0".into())));
+        assert_eq!(value_of(&command, "FERESE_SESSION_MODE"), Some(Some("embedded".into())));
+    }
+
+    #[test]
+    fn desktop_clients_preserve_the_launchers_activation_import_choice() {
+        for choice in ["0", "1"] {
+            let mut command = Command::new("true");
+            command.env("FERESE_SESSION_IMPORT_ENV", choice);
+            command.env("FERESE_SESSION_MODE", "embedded");
+            environment(None).apply_public(&mut command);
+            assert_eq!(
+                value_of(&command, "FERESE_SESSION_IMPORT_ENV"),
+                Some(Some(choice.into()))
+            );
+            assert_eq!(value_of(&command, "FERESE_SESSION_MODE"), Some(Some("desktop".into())));
+        }
     }
 }

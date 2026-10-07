@@ -6,6 +6,7 @@ Requires target/debug/ferese, feresectl, and a running Wayland desktop.
 import json
 import os
 from pathlib import Path
+from session_socket import ipc_environment, ipc_socket
 import select
 import signal
 import shutil
@@ -38,12 +39,12 @@ class ThemeTest(unittest.TestCase):
                        XDG_CONFIG_HOME=str(root / "config"))
 
             def launch(command, **kwargs):
-                child = subprocess.Popen(command, env=env, start_new_session=True, **kwargs)
+                child = subprocess.Popen(command, env=ipc_environment(env), start_new_session=True, **kwargs)
                 children.append(child)
                 return child
 
             def command(*args):
-                return json.loads(subprocess.check_output([str(repo / "target/debug/feresectl"), "-j", *args], env=env, timeout=5))
+                return json.loads(subprocess.check_output([str(repo / "target/debug/feresectl"), "-j", *args], env=ipc_environment(env), timeout=5))
 
             def until(predicate, seconds=5):
                 deadline = time.monotonic() + seconds
@@ -67,7 +68,7 @@ class ThemeTest(unittest.TestCase):
                     bus = launch(["dbus-daemon", "--session", "--nofork", "--print-address=1"], stdout=subprocess.PIPE, text=True)
                     env["DBUS_SESSION_BUS_ADDRESS"] = bus.stdout.readline().strip()
                     compositor = launch([str(repo / "target/debug/ferese"), "--backend", "nested"], stdout=log, stderr=log)
-                    until(lambda: (runtime / "ferese/control.sock").is_socket())
+                    until(lambda: (ipc_socket(runtime)).is_socket())
                     self.assertEqual(command("theme", "get")["theme"]["appearance"], "dark")
                     subscriber = launch([str(repo / "target/debug/feresectl"), "theme", "subscribe"], stdout=subprocess.PIPE, text=True)
                     self.assertTrue(select.select([subscriber.stdout], [], [], 3)[0])
@@ -116,10 +117,10 @@ class ThemeTest(unittest.TestCase):
                     command("theme", "mode", "light")
                     until(lambda: command("theme", "get")["theme"]["tokens"]["colors"]["surface_base"] == "#FBF1C7")
                     if shutil.which("gsettings"):
-                        subprocess.run(["gsettings", "set", "org.gnome.desktop.interface", "color-scheme", "prefer-dark"], env=env, check=True, timeout=5)
+                        subprocess.run(["gsettings", "set", "org.gnome.desktop.interface", "color-scheme", "prefer-dark"], env=ipc_environment(env), check=True, timeout=5)
                         replace(source, 'theme { mode "auto"; family "everforest"; schedule { source "system"; }; }\n')
                         until(lambda: (snapshot := command("theme", "get"))["mode"] == "auto" and snapshot["theme"]["appearance"] == "dark" and snapshot["fallback_note"] is None)
-                        subprocess.run(["gsettings", "set", "org.gnome.desktop.interface", "color-scheme", "prefer-light"], env=env, check=True, timeout=5)
+                        subprocess.run(["gsettings", "set", "org.gnome.desktop.interface", "color-scheme", "prefer-light"], env=ipc_environment(env), check=True, timeout=5)
                         until(lambda: (snapshot := command("theme", "get"))["theme"]["appearance"] == "light" and snapshot["presented"] == snapshot["theme"])
                     self.assertIsNone(compositor.poll())
                 finally:

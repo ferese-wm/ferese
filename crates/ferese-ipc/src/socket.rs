@@ -11,6 +11,11 @@ pub fn resolve(explicit: Option<&Path>) -> io::Result<PathBuf> {
     )
 }
 
+/// The DRM session's listening address, independent of a client's IPC target.
+pub fn runtime_default() -> io::Result<PathBuf> {
+    resolve_with(None, None, std::env::var_os("XDG_RUNTIME_DIR").as_deref())
+}
+
 fn resolve_with(explicit: Option<&Path>, socket: Option<&OsStr>, runtime: Option<&OsStr>) -> io::Result<PathBuf> {
     if let Some(path) = explicit {
         if path.as_os_str().is_empty() {

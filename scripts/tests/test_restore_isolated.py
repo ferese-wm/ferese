@@ -7,6 +7,7 @@ No host permission store, compositor configuration or portal service is changed.
 import json
 import os
 from pathlib import Path
+from session_socket import ipc_environment, ipc_socket
 import signal
 import socket
 import struct
@@ -94,10 +95,10 @@ def private_test():
         env.pop("WAYLAND_SOCKET", None)
         log = (root / "test.log").open("w")
         try:
-            compositor = subprocess.Popen([str(REPO / "target/debug/ferese"), "--backend=nested"], env=env, stdout=log, stderr=log, start_new_session=True)
+            compositor = subprocess.Popen([str(REPO / "target/debug/ferese"), "--backend=nested"], env=ipc_environment(env), stdout=log, stderr=log, start_new_session=True)
             processes.append(compositor)
-            destination = runtime / "ferese/control.sock"
-            wait_for(lambda: destination.exists(), "Nested compositor did not start")
+            wait_for(lambda: ipc_socket(runtime).is_socket(), "Nested compositor did not start")
+            destination = ipc_socket(runtime)
             admin = IPC(destination)
             outputs = admin.call("get-outputs")
             name = next(output["name"] for output in outputs if output["enabled"])
@@ -122,7 +123,7 @@ def private_test():
             threading.Thread(target=accept, daemon=True).start()
             bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
             bus.call_sync("org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "RequestName", GLib.Variant("(su)", ("org.freedesktop.portal.Desktop", 0)), None, Gio.DBusCallFlags.NONE, 2000, None)
-            backend = subprocess.Popen([str(REPO / "target/debug/xdg-desktop-portal-ferese")], env=env, stdout=log, stderr=log, start_new_session=True)
+            backend = subprocess.Popen([str(REPO / "target/debug/xdg-desktop-portal-ferese")], env=ipc_environment(env), stdout=log, stderr=log, start_new_session=True)
             processes.append(backend)
             def call(method, params=None, path=PATH, interface=INTERFACE):
                 return bus.call_sync(NAME, path, interface, method, params, None, Gio.DBusCallFlags.NO_AUTO_START, 12000, None).unpack()
@@ -180,7 +181,7 @@ def private_test():
             fallback("replacement", saved=stale)
             print("PASS: other-app and changed-device restore require fresh consent", flush=True)
 
-            mismatch = subprocess.Popen([str(REPO / "target/debug/xdg-desktop-portal-ferese"), "--stream", name, "hidden", str(2**32 - 1)], env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
+            mismatch = subprocess.Popen([str(REPO / "target/debug/xdg-desktop-portal-ferese"), "--stream", name, "hidden", str(2**32 - 1)], env=ipc_environment(env), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
             processes.append(mismatch)
             mismatch.wait(timeout=8)
             error = mismatch.stderr.read()

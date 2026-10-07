@@ -242,12 +242,20 @@ authentication, idle locking and limits.
 
 ## Preview and logs
 
+`ferese` selects a nested window when `WAYLAND_DISPLAY` or `DISPLAY` is set,
+and DRM otherwise. Nested instances have separate control sockets. Clients
+launched by Ferese inherit that instance’s `FERESE_SOCKET`. Use
+`--backend=nested` or `--backend=drm` to override detection.
+
+Nested previews leave the host activation environment and session target alone.
+They skip XDG autostart and run configured autostart entries only with `nested true`.
+
 To preview a source build before installing, run these commands from the checkout
 inside an existing Wayland desktop:
 
 ```sh
 cargo build --release --locked -p ferese -p ferese-shell -p ferese-settings -p feresectl -p ferese-lock -p xdg-desktop-portal-ferese
-FERESE_ENABLE_SCREENCOPY=1 target/release/ferese --backend nested \
+FERESE_ENABLE_SCREENCOPY=1 target/release/ferese \
   --grant-effects --grant-shell-control -- \
   target/release/ferese-shell
 ```

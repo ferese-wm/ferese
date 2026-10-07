@@ -46,7 +46,7 @@ mod window_rules;
 mod winit;
 mod xwayland;
 
-pub(crate) use session_environment::{SessionEnvironment, X11Environment};
+pub(crate) use session_environment::{SessionEnvironment, SessionPolicy, X11Environment};
 
 use std::error::Error;
 use std::io;
@@ -95,7 +95,11 @@ fn main() -> Result<(), Box<dyn Error>> {
             state.loop_signal.stop();
         })?;
     let display = Display::new()?;
-    let mut state = Ferese::new(&mut event_loop, display, runtime)?;
+    let endpoint = match launch.backend {
+        backends::BackendKind::Drm => ipc::Endpoint::desktop()?,
+        backends::BackendKind::Nested => ipc::Endpoint::instance()?,
+    };
+    let mut state = Ferese::new_with_session(&mut event_loop, display, runtime, endpoint, launch.session_policy)?;
     state.config_source = initial_source.filter(|source| source.len() <= 60 * 1024);
     state.config_sections = state
         .config_source

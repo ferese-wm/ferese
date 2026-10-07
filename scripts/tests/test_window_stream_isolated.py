@@ -7,6 +7,7 @@ Only this test's compositor, windows and streams are stopped.
 import json
 import os
 from pathlib import Path
+from session_socket import ipc_environment, ipc_socket
 import select
 import signal
 import subprocess
@@ -65,21 +66,21 @@ class WindowStream(unittest.TestCase):
             env.pop("FERESE_SHELL_CONTROL_SOCKET", None)
             log = (root / "test.log").open("w")
             try:
-                compositor = subprocess.Popen([str(REPO / "target/debug/ferese"), "--backend=nested"], env=env, stdout=log, stderr=log, start_new_session=True)
+                compositor = subprocess.Popen([str(REPO / "target/debug/ferese"), "--backend=nested"], env=ipc_environment(env), stdout=log, stderr=log, start_new_session=True)
                 processes.append(compositor)
-                socket = runtime / "ferese/control.sock"
-                wait_for(socket.exists, "Nested compositor did not start")
+                wait_for(lambda: ipc_socket(runtime).is_socket(), "Nested compositor did not start")
+                socket = ipc_socket(runtime)
                 admin = IPC(socket)
                 sockets = [path for path in runtime.glob("wayland-*") if not path.name.endswith(".lock")]
                 env["WAYLAND_DISPLAY"] = str(sockets[0])
-                target = subprocess.Popen([str(root / "client"), "resize"], env=env, stdin=subprocess.PIPE, stdout=log, stderr=log, start_new_session=True)
+                target = subprocess.Popen([str(root / "client"), "resize"], env=ipc_environment(env), stdin=subprocess.PIPE, stdout=log, stderr=log, start_new_session=True)
                 processes.append(target)
                 windows = wait_for(lambda: [window for window in admin.call("get-windows") if window["capture_width"] == 640], "Window fixture did not map; private manager must be hidden from ordinary clients")
                 target_id = windows[0]["id"]
-                cover = subprocess.Popen([str(root / "client"), "cover"], env=env, stdout=log, stderr=log, start_new_session=True)
+                cover = subprocess.Popen([str(root / "client"), "cover"], env=ipc_environment(env), stdout=log, stderr=log, start_new_session=True)
                 processes.append(cover)
                 wait_for(lambda: len(admin.call("get-windows")) == 2, "Occluding window did not map")
-                helper = subprocess.Popen([str(REPO / "target/debug/xdg-desktop-portal-ferese"), "--stream-window", str(target_id), "hidden"], env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=log, text=True, start_new_session=True)
+                helper = subprocess.Popen([str(REPO / "target/debug/xdg-desktop-portal-ferese"), "--stream-window", str(target_id), "hidden"], env=ipc_environment(env), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=log, text=True, start_new_session=True)
                 processes.append(helper)
                 self.assertTrue(select.select([helper.stdout], [], [], 10)[0], "Stream did not announce a PipeWire node")
                 ready = json.loads(helper.stdout.readline())
@@ -126,11 +127,11 @@ class WindowStream(unittest.TestCase):
                 pipeline.set_state(Gst.State.NULL)
                 pipeline = None
                 cover_id = next(window["id"] for window in admin.call("get-windows") if window["title"] == "Occluding window")
-                paused = subprocess.Popen([str(REPO / "target/debug/xdg-desktop-portal-ferese"), "--stream-window", str(cover_id), "hidden"], env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=log, text=True, start_new_session=True)
+                paused = subprocess.Popen([str(REPO / "target/debug/xdg-desktop-portal-ferese"), "--stream-window", str(cover_id), "hidden"], env=ipc_environment(env), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=log, text=True, start_new_session=True)
                 processes.append(paused)
                 self.assertTrue(select.select([paused.stdout], [], [], 10)[0])
                 self.assertGreater(json.loads(paused.stdout.readline())["width"], 0)
-                locker = subprocess.Popen([str(root / "locker")], env=env, stdout=subprocess.PIPE, stderr=log, text=True, start_new_session=True)
+                locker = subprocess.Popen([str(root / "locker")], env=ipc_environment(env), stdout=subprocess.PIPE, stderr=log, text=True, start_new_session=True)
                 processes.append(locker)
                 self.assertTrue(select.select([locker.stdout], [], [], 5)[0], "Nested lock request did not complete")
                 self.assertIn(locker.stdout.readline().strip(), ("locked", "requested"))

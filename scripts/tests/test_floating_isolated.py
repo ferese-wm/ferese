@@ -7,6 +7,7 @@ the compositor and FERESE_TEST_CTL at feresectl when they are not siblings.
 import json
 import os
 from pathlib import Path
+from session_socket import ipc_environment, ipc_socket
 import subprocess
 import tempfile
 import time
@@ -50,7 +51,7 @@ class FloatingSizeTest(unittest.TestCase):
                 self.fail(f"missing {ctl}; build it with cargo build -p feresectl")
             with (root / "compositor.log").open("w") as log:
                 process = subprocess.Popen([str(binary), "--backend", "nested", "--", str(root / "client")],
-                                           env=env, stdout=log, stderr=subprocess.STDOUT)
+                                           env=ipc_environment(env), stdout=log, stderr=subprocess.STDOUT)
                 try:
                     for _ in range(100):
                         if process.poll() is not None:
@@ -62,7 +63,7 @@ class FloatingSizeTest(unittest.TestCase):
                     self.assertTrue(sockets, "nested Wayland socket did not appear")
                     childenv = dict(env, WAYLAND_DISPLAY=str(sockets[0]))
                     time.sleep(2)
-                    listed = subprocess.run([str(ctl), "-j", "outputs"], env=childenv,
+                    listed = subprocess.run([str(ctl), "-j", "outputs"], env=ipc_environment(childenv),
                                             check=True, capture_output=True, timeout=10, text=True)
                     enabled = [o for o in json.loads(listed.stdout) if o.get("enabled")]
                     if not enabled:
@@ -74,7 +75,7 @@ class FloatingSizeTest(unittest.TestCase):
                     screenshot = root / "frame.png"
                     with screenshot.open("wb") as png:
                         captured = subprocess.run([str(ctl), "screenshot", "-g", geometry],
-                                                  env=childenv, stdout=png, stderr=subprocess.PIPE, timeout=15)
+                                                  env=ipc_environment(childenv), stdout=png, stderr=subprocess.PIPE, timeout=15)
                     if captured.returncode != 0:
                         self.fail(f"capture of {geometry} failed: {captured.stderr.decode()}")
                     if screenshot.stat().st_size == 0:

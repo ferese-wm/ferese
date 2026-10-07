@@ -7,6 +7,7 @@ FERESE_TEST_BINARY and FERESE_TEST_CTL can select release binaries.
 import json
 import os
 from pathlib import Path
+from session_socket import ipc_environment, ipc_socket
 import signal
 import subprocess
 import sys
@@ -99,7 +100,7 @@ def private_checks():
 
             with (root / "compositor.log").open("w") as log:
                 try:
-                    compositor = subprocess.Popen([str(BINARY), "--backend=nested"], env=env, stdout=log, stderr=log, start_new_session=True)
+                    compositor = subprocess.Popen([str(BINARY), "--backend=nested"], env=ipc_environment(env), stdout=log, stderr=log, start_new_session=True)
                     processes.append(compositor)
 
                     def wait(check, message):
@@ -112,11 +113,11 @@ def private_checks():
                             time.sleep(0.02)
                         raise AssertionError(message + "\n" + (root / "compositor.log").read_text())
 
-                    wait(lambda: (runtime / "ferese/control.sock").exists(), "compositor startup")
+                    wait(lambda: (ipc_socket(runtime)).exists(), "compositor startup")
                     env["WAYLAND_DISPLAY"] = str(next(path for path in runtime.glob("wayland-*") if not path.name.endswith(".lock")))
 
                     def call(*args):
-                        return json.loads(subprocess.check_output([str(CTL), "-j", *args], env=env, timeout=5))
+                        return json.loads(subprocess.check_output([str(CTL), "-j", *args], env=ipc_environment(env), timeout=5))
 
                     def inhibited(expected):
                         def matches():
@@ -126,7 +127,7 @@ def private_checks():
                         wait(matches, f"idle inhibition != {expected}")
 
                     wait(lambda: len(call("get-idle-inhibition")["players"]) == 1, "MPRIS discovery")
-                    client = subprocess.Popen([str(root / "client")], env=env, stdout=log, stderr=log, start_new_session=True)
+                    client = subprocess.Popen([str(root / "client")], env=ipc_environment(env), stdout=log, stderr=log, start_new_session=True)
                     processes.append(client)
                     wait(lambda: len(call("get-windows")) == 1, "window map")
                     call("toggle-fullscreen")
@@ -153,7 +154,7 @@ def private_checks():
                     inhibited(False)
                     player.set("Playing")
                     inhibited(True)
-                    ambiguous = subprocess.Popen([str(root / "client"), "cover"], env=env,
+                    ambiguous = subprocess.Popen([str(root / "client"), "cover"], env=ipc_environment(env),
                                                  stdout=log, stderr=log, start_new_session=True)
                     processes.append(ambiguous)
                     wait(lambda: len(call("get-windows")) == 2, "second player window")

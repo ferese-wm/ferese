@@ -2,6 +2,7 @@
 import json
 import os
 from pathlib import Path
+from session_socket import ipc_environment, ipc_socket
 import signal
 import socket
 import struct
@@ -31,12 +32,12 @@ class ShortcutConnections(unittest.TestCase):
             env = dict(os.environ, XDG_RUNTIME_DIR=str(runtime), XDG_CONFIG_HOME=str(root / "config"), WAYLAND_DISPLAY=str(host_display))
             env.pop("WAYLAND_SOCKET", None)
             env.pop("FERESE_SHELL_CONTROL_SOCKET", None)
-            process = subprocess.Popen([str(REPO / "target/debug/ferese"), "--backend=nested"], env=env,
+            process = subprocess.Popen([str(REPO / "target/debug/ferese"), "--backend=nested"], env=ipc_environment(env),
                                        stdout=log, stderr=log, start_new_session=True)
             connections = []
             try:
                 deadline = time.monotonic() + 15
-                while not (runtime / "ferese/control.sock").exists():
+                while not (ipc_socket(runtime)).exists():
                     if process.poll() is not None or time.monotonic() >= deadline:
                         self.fail((root / "compositor.log").read_text())
                     time.sleep(0.02)
@@ -44,7 +45,7 @@ class ShortcutConnections(unittest.TestCase):
                 def connect():
                     connection = socket.socket(socket.AF_UNIX)
                     connection.settimeout(2)
-                    connection.connect(str(runtime / "ferese/control.sock"))
+                    connection.connect(str(ipc_socket(runtime)))
                     connections.append(connection)
                     return connection
 
