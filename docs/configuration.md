@@ -551,7 +551,13 @@ selects an edge or corner using a 3×3 grid; the center selects the nearest corn
 The selected edges stay fixed for the whole drag. These work even when an app has
 no title bar or resize border.
 
-Moving and resizing snap to work-area edges and nearby visible window edges at
+For a floating window, Super+Shift+H/J/K/L moves left/down/up/right by 32 logical
+pixels. Super+Ctrl+H/L shrinks/grows its width; Super+Ctrl+K/J shrinks/grows its
+height by the same step. Keyboard adjustments respect client size limits and
+keep the window reachable in its output's work area. Fullscreen and maximized
+floating windows ignore these actions.
+
+Mouse moves and resizes snap to work-area edges and nearby visible window edges at
 10 logical pixels, then resist movement until 20 pixels from the attached edge.
 Window edges are eligible only when the windows overlap along the other axis,
 with a 10-pixel allowance. Hold Shift during a drag to bypass snapping.

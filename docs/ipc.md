@@ -45,6 +45,12 @@ feresectl focus-floating
 tiled/floating layer on the active workspace. It does nothing when that layer
 has no candidate. `toggle-floating` changes placement; `focus-floating` changes focus.
 
+`feresectl move left|right|up|down` and `feresectl resize left|right|up|down`
+also handle floating windows. Moves use 32 logical pixels. Resizing shrinks
+width/height with left/up and grows them with right/down by 32 logical pixels,
+subject to client size limits. Fullscreen and maximized floating windows ignore
+these actions.
+
 ## Choose a session
 
 Every feresectl IPC command, including theme commands and subscriptions, resolves

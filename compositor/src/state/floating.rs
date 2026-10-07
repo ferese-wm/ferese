@@ -1,6 +1,57 @@
 use super::*;
 
 impl Ferese {
+    pub(super) fn adjust_floating_direction(&mut self, id: WindowId, direction: Direction, resize: bool) {
+        const STEP: f64 = 32.0;
+        let workspace = self.workspaces.active();
+        if self.session_lock.active()
+            || self.input_capture.captures(1)
+            || self.workspaces.workspace_for_window(id) != Some(workspace.id)
+            || workspace.fullscreen == Some(id)
+            || self.windows.record(id).is_some_and(|record| record.maximized)
+        {
+            return;
+        }
+        let Some(WindowPlacement::Floating { rect }) = self.workspaces.placement(id) else {
+            return;
+        };
+        let Some(work) = self.floating_bounds_for_window(id) else {
+            return;
+        };
+        let mut destination = rect;
+        match (resize, direction) {
+            (false, Direction::Left) => destination.x -= STEP,
+            (false, Direction::Right) => destination.x += STEP,
+            (false, Direction::Up) => destination.y -= STEP,
+            (false, Direction::Down) => destination.y += STEP,
+            (true, Direction::Left) => destination.width -= STEP,
+            (true, Direction::Right) => destination.width += STEP,
+            (true, Direction::Up) => destination.height -= STEP,
+            (true, Direction::Down) => destination.height += STEP,
+        }
+        if resize {
+            destination = constrained_floating_rect(
+                destination,
+                self.window_constraints().get(&id).copied().unwrap_or_default(),
+            );
+        }
+        destination = crate::floating::clamp_to_work(destination, work);
+        if destination == rect {
+            return;
+        }
+        if let Err(error) = self.workspaces.set_floating_rect(id, destination) {
+            tracing::error!(%error, ?id, "failed to adjust floating window geometry");
+            return;
+        }
+        self.windows.update(id, |record| {
+            record.resize_anchor = resize.then_some((false, false, destination))
+        });
+        self.relayout_window(id);
+        if let Some(window) = self.windows.window(id).cloned() {
+            self.remember_floating(&window);
+        }
+    }
+
     pub fn toggle_focused_floating(&mut self) {
         let Some(window) = self.focused_window else {
             return;

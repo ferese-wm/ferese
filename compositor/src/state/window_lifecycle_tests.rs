@@ -32,6 +32,188 @@ fn fixture() -> (smithay::reexports::calloop::EventLoop<'static, Ferese>, Ferese
 }
 
 #[test]
+fn keyboard_floating_move_and_resize_work_in_both_layouts() {
+    if !crate::startup_tests::private_runtime(
+        "state::window_lifecycle_tests::keyboard_floating_move_and_resize_work_in_both_layouts",
+    ) {
+        return;
+    }
+    let (mut events, mut state, _) = fixture();
+    let (window, _wire) = window(&mut state, &mut events, 0xff112233);
+    let id = state.windows.ids()[&window];
+    state.toggle_focused_floating();
+    let initial = Rect::new(120., 100., 160., 128.);
+    let workspace = state.workspaces.active_id();
+    for mode in [LayoutMode::Scrolling, LayoutMode::Tree] {
+        state
+            .workspaces
+            .set_active_layout_mode(mode, state.output_bounds().unwrap())
+            .unwrap();
+        for (resize, direction, expected) in [
+            (false, Direction::Left, Rect::new(88., 100., 160., 128.)),
+            (false, Direction::Right, Rect::new(152., 100., 160., 128.)),
+            (false, Direction::Up, Rect::new(120., 68., 160., 128.)),
+            (false, Direction::Down, Rect::new(120., 132., 160., 128.)),
+            (true, Direction::Left, Rect::new(120., 100., 128., 128.)),
+            (true, Direction::Right, Rect::new(120., 100., 192., 128.)),
+            (true, Direction::Up, Rect::new(120., 100., 160., 96.)),
+            (true, Direction::Down, Rect::new(120., 100., 160., 160.)),
+        ] {
+            state.workspaces.set_floating_rect(id, initial).unwrap();
+            state.relayout_window(id);
+            if resize {
+                state.resize_direction(direction);
+            } else {
+                state.move_direction(direction);
+            }
+            assert_eq!(
+                state.workspaces.placement(id),
+                Some(WindowPlacement::Floating { rect: expected })
+            );
+            assert_eq!(state.windows.geometry(&id).unwrap().logical, expected);
+            assert_eq!(state.focused_window, Some(id));
+            assert_eq!(state.workspaces.active_id(), workspace);
+            assert_eq!(state.workspaces.workspace_for_window(id), Some(workspace));
+        }
+    }
+}
+
+#[test]
+fn keyboard_floating_geometry_stays_reachable_and_respects_client_limits() {
+    if !crate::startup_tests::private_runtime(
+        "state::window_lifecycle_tests::keyboard_floating_geometry_stays_reachable_and_respects_client_limits",
+    ) {
+        return;
+    }
+    let (mut events, mut state, _) = fixture();
+    let (window, mut wire) = window(&mut state, &mut events, 0xff112233);
+    let id = state.windows.ids()[&window];
+    state.toggle_focused_floating();
+    request(&mut wire, 4, 8, &[100, 80], None);
+    request(&mut wire, 4, 7, &[200, 160], None);
+    request(&mut wire, 2, 6, &[], None);
+    dispatch(&mut events, &mut state);
+    state
+        .workspaces
+        .set_floating_rect(id, Rect::new(630., 470., 160., 128.))
+        .unwrap();
+    state.relayout_window(id);
+    for _ in 0..5 {
+        state.move_direction(Direction::Right);
+        state.move_direction(Direction::Down);
+        state.resize_direction(Direction::Right);
+        state.resize_direction(Direction::Down);
+    }
+    assert_eq!(
+        state.workspaces.placement(id),
+        Some(WindowPlacement::Floating {
+            rect: Rect::new(600., 440., 200., 160.),
+        })
+    );
+    for _ in 0..30 {
+        state.move_direction(Direction::Left);
+        state.move_direction(Direction::Up);
+        state.resize_direction(Direction::Left);
+        state.resize_direction(Direction::Up);
+    }
+    assert_eq!(
+        state.workspaces.placement(id),
+        Some(WindowPlacement::Floating {
+            rect: Rect::new(0., 0., 100., 80.),
+        })
+    );
+    request(&mut wire, 4, 7, &[0, 0], None);
+    request(&mut wire, 4, 8, &[900, 700], None);
+    request(&mut wire, 2, 6, &[], None);
+    dispatch(&mut events, &mut state);
+    state.resize_direction(Direction::Left);
+    state.resize_direction(Direction::Up);
+    state.move_direction(Direction::Right);
+    state.move_direction(Direction::Down);
+    assert_eq!(
+        state.workspaces.placement(id),
+        Some(WindowPlacement::Floating {
+            rect: Rect::new(0., 0., 900., 700.),
+        })
+    );
+}
+
+#[test]
+fn keyboard_floating_actions_preserve_maximized_and_fullscreen_restore_geometry() {
+    if !crate::startup_tests::private_runtime(
+        "state::window_lifecycle_tests::keyboard_floating_actions_preserve_maximized_and_fullscreen_restore_geometry",
+    ) {
+        return;
+    }
+    let (mut events, mut state, _) = fixture();
+    let (window, _wire) = window(&mut state, &mut events, 0xff112233);
+    let id = state.windows.ids()[&window];
+    state.toggle_focused_floating();
+    let normal = state.workspaces.placement(id);
+    for fullscreen in [false, true] {
+        if fullscreen {
+            state.set_window_fullscreen(id, true);
+        } else {
+            state.set_window_maximized(id, true);
+        }
+        let geometry = state.windows.geometry(&id).unwrap().logical;
+        for direction in [Direction::Left, Direction::Right, Direction::Up, Direction::Down] {
+            state.move_direction(direction);
+            state.resize_direction(direction);
+            assert_eq!(state.workspaces.placement(id), normal);
+            assert_eq!(state.windows.geometry(&id).unwrap().logical, geometry);
+        }
+        if fullscreen {
+            state.set_window_fullscreen(id, false);
+        } else {
+            state.set_window_maximized(id, false);
+        }
+        let WindowPlacement::Floating { rect } = normal.unwrap() else {
+            panic!("floating window")
+        };
+        assert_eq!(state.windows.geometry(&id).unwrap().logical, rect);
+    }
+    state.focused_window = None;
+    state.move_direction(Direction::Right);
+    state.resize_direction(Direction::Down);
+    assert_eq!(state.workspaces.placement(id), normal);
+}
+
+#[test]
+fn keyboard_floating_resize_reuses_the_client_barrier_and_move_keeps_it_pending() {
+    if !crate::startup_tests::private_runtime(
+        "state::window_lifecycle_tests::keyboard_floating_resize_reuses_the_client_barrier_and_move_keeps_it_pending",
+    ) {
+        return;
+    }
+    let (mut events, mut state, _) = fixture();
+    let (window, _wire) = window(&mut state, &mut events, 0xff112233);
+    let id = state.windows.ids()[&window];
+    state.toggle_focused_floating();
+    state.set_floating_window_geometry(&window, (120, 100).into(), (64, 48).into());
+    state.animations_enabled = true;
+    let before = state.windows.geometry(&id).unwrap().visual.current;
+    let client = state.windows.geometry(&id).unwrap().client.committed_size;
+    state.resize_direction(Direction::Right);
+    let transaction = *state.windows.transaction(&id).expect("existing resize barrier");
+    assert_eq!(transaction.source_geometry(), Some(window.geometry()));
+    assert_eq!(state.windows.geometry(&id).unwrap().client.committed_size, client);
+    assert_eq!(state.windows.geometry(&id).unwrap().visual.current, before);
+    assert_eq!(
+        state.windows.geometry(&id).unwrap().logical,
+        Rect::new(120., 100., 96., 48.)
+    );
+    state.move_direction(Direction::Right);
+    assert_eq!(state.windows.transaction(&id).unwrap().serial(), transaction.serial());
+    assert_eq!(state.windows.geometry(&id).unwrap().client.committed_size, client);
+    assert_eq!(state.windows.geometry(&id).unwrap().visual.current, before);
+    assert_eq!(
+        state.windows.geometry(&id).unwrap().logical,
+        Rect::new(152., 100., 96., 48.)
+    );
+}
+
+#[test]
 fn late_keymap_failure_preserves_capture_sessions_and_runtime_settings() {
     if !crate::startup_tests::private_runtime(
         "state::window_lifecycle_tests::late_keymap_failure_preserves_capture_sessions_and_runtime_settings",

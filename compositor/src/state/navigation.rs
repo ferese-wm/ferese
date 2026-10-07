@@ -197,6 +197,13 @@ impl Ferese {
         let Some(current) = self.focused_window else {
             return;
         };
+        if matches!(
+            self.workspaces.placement(current),
+            Some(WindowPlacement::Floating { .. })
+        ) {
+            self.adjust_floating_direction(current, direction, false);
+            return;
+        }
         let Some(bounds) = self.output_bounds() else {
             return;
         };
@@ -219,6 +226,14 @@ impl Ferese {
         let Some(current) = self.focused_window else {
             return;
         };
+
+        if matches!(
+            self.workspaces.placement(current),
+            Some(WindowPlacement::Floating { .. })
+        ) {
+            self.adjust_floating_direction(current, direction, true);
+            return;
+        }
 
         match self
             .workspaces
