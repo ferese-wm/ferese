@@ -32,6 +32,28 @@ impl Default for ColumnWidth {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct ColumnSizing {
+    viewport_width: f64,
+    inner_gap: f64,
+}
+
+impl ColumnSizing {
+    fn resolve(self, width: ColumnWidth) -> f64 {
+        match normalized_width(width) {
+            ColumnWidth::Proportion(value) => {
+                ((self.viewport_width + self.inner_gap) * value - self.inner_gap).max(1.0)
+            }
+            ColumnWidth::Fixed(value) => value,
+            ColumnWidth::Full => self.viewport_width,
+        }
+    }
+
+    fn proportion(self, resolved_width: f64) -> f64 {
+        (resolved_width + self.inner_gap) / (self.viewport_width + self.inner_gap)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Column {
     pub windows: Vec<WindowId>,
@@ -171,7 +193,7 @@ pub struct ScrollingLayout {
     default_width: ColumnWidth,
     focus_strategy: ViewportFocusStrategy,
     pending_viewport: Option<PendingViewportRequest>,
-    last_viewport_width: Option<f64>,
+    last_column_sizing: Option<ColumnSizing>,
     allocated_widths: HashMap<WindowId, f64>,
     viewport_basis: Option<ViewportTarget>,
 }
@@ -185,7 +207,7 @@ impl Default for ScrollingLayout {
             default_width: ColumnWidth::default(),
             focus_strategy: ViewportFocusStrategy::Minimal,
             pending_viewport: None,
-            last_viewport_width: None,
+            last_column_sizing: None,
             allocated_widths: HashMap::new(),
             viewport_basis: None,
         }
@@ -335,7 +357,13 @@ impl ScrollingLayout {
                 Some(active) => Some(active.min(self.columns.len() - 1)),
             };
         } else {
-            column.active = column.active.min(column.windows.len() - 1);
+            column.active = if window_index < column.active {
+                column.active - 1
+            } else {
+                // Removing the active row selects its successor, or the last
+                // surviving row when there is no successor.
+                column.active.min(column.windows.len() - 1)
+            };
             column.normalize_heights();
         }
         if self.pending_focus() == Some(PendingFocusRequest::Reveal(window))
@@ -419,9 +447,10 @@ impl ScrollingLayout {
             return Ok(());
         }
 
+        let width = self.columns[source].width;
         self.remove(window)?;
         let insertion = (source + 1).min(self.columns.len());
-        self.columns.insert(insertion, Column::new(window, self.default_width));
+        self.columns.insert(insertion, Column::new(window, width));
         self.active_column = Some(insertion);
         self.request_reveal(self.active_window());
 
@@ -488,7 +517,7 @@ impl ScrollingLayout {
                 Some(position)
             })
             .collect::<Vec<_>>();
-        let viewport_width = self.last_viewport_width.unwrap();
+        let viewport_width = self.last_column_sizing.unwrap().viewport_width;
         self.record_viewport_basis(
             &positions,
             inner,
@@ -560,6 +589,8 @@ impl ScrollingLayout {
         Ok(true)
     }
 
+    /// Horizontal resize adjusts proportions. Fixed widths need a resolved
+    /// viewport and start from the allocated column width, including minimums.
     pub fn resize_window(&mut self, window: WindowId, direction: Direction, amount: f64) -> Result<bool, LayoutError> {
         let (column, row) = self.window_location(window).ok_or(LayoutError::UnknownWindow(window))?;
         let amount = if amount.is_finite() { amount.abs() } else { 0.0 };
@@ -571,7 +602,13 @@ impl ScrollingLayout {
             Direction::Left | Direction::Right => {
                 let current = match normalized_width(self.columns[column].width) {
                     ColumnWidth::Proportion(value) => value,
-                    ColumnWidth::Fixed(_) | ColumnWidth::Full => DEFAULT_WIDTH,
+                    ColumnWidth::Full => 1.0,
+                    ColumnWidth::Fixed(width) => {
+                        let Some(sizing) = self.last_column_sizing else {
+                            return Ok(false);
+                        };
+                        sizing.proportion(self.allocated_column_width(window).unwrap_or(width))
+                    }
                 };
                 let adjustment = if direction == Direction::Right { amount } else { -amount };
                 let resized = (current + adjustment).clamp(MIN_COLUMN_WIDTH, MAX_COLUMN_WIDTH);
@@ -618,6 +655,10 @@ impl ScrollingLayout {
         };
         let viewport_width = (bounds.width - outer * 2.0).max(1.0);
         let viewport_height = (bounds.height - outer * 2.0).max(1.0);
+        let sizing = ColumnSizing {
+            viewport_width,
+            inner_gap: inner,
+        };
         // Strip coordinates start at the viewport's inset left edge. Inner
         // gaps belong to column positions; outer margins inset the viewport
         // and are added back exactly once when placing windows on the output.
@@ -625,11 +666,7 @@ impl ScrollingLayout {
         let mut next_column_x = 0.0;
 
         for column in &self.columns {
-            let requested = match normalized_width(column.width) {
-                ColumnWidth::Proportion(proportion) => ((viewport_width + inner) * proportion - inner).max(1.0),
-                ColumnWidth::Fixed(width) => width,
-                ColumnWidth::Full => viewport_width,
-            };
+            let requested = sizing.resolve(column.width);
             let minimum = column
                 .windows
                 .iter()
@@ -652,8 +689,8 @@ impl ScrollingLayout {
             .zip(&column_positions)
             .flat_map(|(column, (_, width))| column.windows.iter().map(move |id| (*id, *width)))
             .collect();
-        let viewport_resized = self.last_viewport_width != Some(viewport_width);
-        self.last_viewport_width = Some(viewport_width);
+        let viewport_resized = self.last_column_sizing.map(|sizing| sizing.viewport_width) != Some(viewport_width);
+        self.last_column_sizing = Some(sizing);
         match self.pending_viewport.take() {
             Some(PendingViewportRequest::WidthCycle(_)) => {
                 if let Some(active) = self.active_column {
@@ -714,7 +751,13 @@ impl ScrollingLayout {
         let mut result = LayoutResult::default();
         for (column_index, column) in self.columns.iter().enumerate() {
             let (column_x, column_width) = column_positions[column_index];
-            let available_height = (viewport_height - inner * (column.windows.len().saturating_sub(1) as f64)).max(1.0);
+            let available_height = (viewport_height - inner * (column.windows.len().saturating_sub(1) as f64)).max(0.0);
+            let row_constraints = column
+                .windows
+                .iter()
+                .map(|window| normalized_constraints(constraints.get(window).copied().unwrap_or_default()))
+                .collect::<Vec<_>>();
+            let row_heights = constrained_row_heights(column, available_height, &row_constraints);
             let mut y = bounds.y + outer;
 
             for (window_index, window) in column.windows.iter().enumerate() {
@@ -722,16 +765,12 @@ impl ScrollingLayout {
                     bounds.x + outer + column_x - self.viewport_x,
                     y,
                     column_width,
-                    available_height * column.heights[window_index],
+                    row_heights[window_index],
                 );
-                let constraint = constraints
-                    .get(window)
-                    .copied()
-                    .map(normalized_constraints)
-                    .unwrap_or_default();
+                let constraint = row_constraints[window_index];
                 record_minimum_warnings(*window, rect, constraint, &mut result.warnings);
                 apply_maximums(*window, &mut rect, constraint, &mut result.warnings);
-                y += available_height * column.heights[window_index] + inner;
+                y += row_heights[window_index] + inner;
                 result.geometry.insert(*window, rect);
             }
         }
@@ -833,9 +872,10 @@ impl ScrollingLayout {
         }
 
         let insertion = if destination < source { source } else { source + 1 };
+        let width = self.columns[source].width;
         self.remove(window)?;
         let insertion = insertion.min(self.columns.len());
-        self.columns.insert(insertion, Column::new(window, self.default_width));
+        self.columns.insert(insertion, Column::new(window, width));
         self.active_column = Some(insertion);
         self.request_reveal(self.active_window());
         Ok(())
@@ -898,7 +938,13 @@ impl ScrollingLayout {
 }
 
 fn resize_rows(column: &mut Column, row: usize, neighbor: usize, amount: f64) -> bool {
-    let transferable = (column.heights[neighbor] - MIN_ROW_HEIGHT).max(0.0);
+    // Keep the usual floor where it fits, capped at half an equal row's share.
+    // A row already below that floor can still donate half its current weight.
+    let floor = MIN_ROW_HEIGHT
+        .min(0.5 / column.windows.len() as f64)
+        .min(column.heights[neighbor] * 0.5)
+        .max(f64::from_bits(1));
+    let transferable = (column.heights[neighbor] - floor).max(0.0);
     let adjustment = amount.min(transferable);
     if adjustment == 0.0 {
         return false;
@@ -907,6 +953,55 @@ fn resize_rows(column: &mut Column, row: usize, neighbor: usize, amount: f64) ->
     column.heights[row] += adjustment;
     column.heights[neighbor] -= adjustment;
     true
+}
+
+fn constrained_row_heights(column: &Column, available: f64, constraints: &[SizeConstraints]) -> Vec<f64> {
+    let mut heights = vec![0.0; column.windows.len()];
+    let minimum_total = constraints.iter().map(|constraint| constraint.min_height).sum::<f64>();
+    if minimum_total > available {
+        // Match the tree layout's focus priority under impossible minima.
+        // Other rows retain their relative weights in the remaining space.
+        heights[column.active] = constraints[column.active].min_height.min(available);
+        let remaining = available - heights[column.active];
+        let weight = column
+            .heights
+            .iter()
+            .enumerate()
+            .filter(|(row, _)| *row != column.active)
+            .map(|(_, weight)| weight)
+            .sum::<f64>();
+        for (row, height) in heights.iter_mut().enumerate() {
+            if row != column.active {
+                *height = remaining * column.heights[row] / weight;
+            }
+        }
+        return heights;
+    }
+
+    // Pin rows whose weighted share is below their minimum, then redistribute
+    // among the remaining rows using their original relative weights.
+    let mut remaining = available;
+    let mut pending = (0..column.windows.len()).collect::<Vec<_>>();
+    while !pending.is_empty() {
+        let weight = pending.iter().map(|row| column.heights[*row]).sum::<f64>();
+        let pinned = pending
+            .iter()
+            .copied()
+            .filter(|row| remaining * column.heights[*row] / weight < constraints[*row].min_height)
+            .collect::<Vec<_>>();
+        if pinned.is_empty() {
+            for row in pending {
+                heights[row] = remaining * column.heights[row] / weight;
+            }
+            break;
+        }
+        for row in &pinned {
+            heights[*row] = constraints[*row].min_height;
+            remaining -= heights[*row];
+        }
+        pending.retain(|row| !pinned.contains(row));
+    }
+    heights
 }
 
 fn normalized_width(width: ColumnWidth) -> ColumnWidth {
@@ -955,6 +1050,270 @@ fn apply_maximums(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn stacked_layout(weights: &[f64]) -> ScrollingLayout {
+        let mut layout = ScrollingLayout::default();
+        layout.insert(window(1), None).unwrap();
+        for row in 1..weights.len() {
+            let id = window(row as u64 + 1);
+            layout.insert(id, Some(window(row as u64))).unwrap();
+            layout.move_into_column(id, window(row as u64)).unwrap();
+        }
+        layout.columns[0].heights = weights.to_vec();
+        layout
+    }
+
+    fn row_geometry(
+        layout: &mut ScrollingLayout,
+        constraints: &HashMap<WindowId, SizeConstraints>,
+        inner: f64,
+    ) -> LayoutResult {
+        layout
+            .resolve_geometry_with_constraints(
+                Rect::new(0.0, 0.0, 1_000.0, 800.0),
+                GapConfig {
+                    inner,
+                    outer: 0.0,
+                    smart: false,
+                },
+                constraints,
+                None,
+            )
+            .unwrap()
+    }
+
+    #[test]
+    fn row_removal_preserves_the_remembered_active_window() {
+        for (active, removed, expected) in [(2, 1, 2), (2, 2, 3), (2, 3, 2), (3, 3, 2)] {
+            for leave_before_removal in [false, true] {
+                let mut layout = stacked_layout(&[1.0 / 3.0; 3]);
+                layout.insert(window(4), Some(window(3))).unwrap();
+                layout.focus(window(active)).unwrap();
+                if leave_before_removal {
+                    layout.focus(window(4)).unwrap();
+                }
+                layout.remove(window(removed)).unwrap();
+                assert_eq!(
+                    layout.columns()[0].windows[layout.columns()[0].active],
+                    window(expected)
+                );
+                if !leave_before_removal {
+                    assert_eq!(layout.active_window(), Some(window(expected)));
+                    layout.focus(window(4)).unwrap();
+                }
+                let restored = layout
+                    .directional_neighbor(window(4), Direction::Left)
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(restored, window(expected));
+                layout.focus(restored).unwrap();
+                assert_eq!(layout.active_window(), Some(window(expected)));
+                assert!(layout.validate().is_ok());
+            }
+        }
+    }
+
+    #[test]
+    fn feasible_row_minima_preserve_unconstrained_proportions_and_weights() {
+        let mut layout = stacked_layout(&[0.1, 0.3, 0.6]);
+        let weights = layout.columns()[0].heights.clone();
+        let constraints = HashMap::from([(
+            window(1),
+            SizeConstraints {
+                min_height: 500.0,
+                ..Default::default()
+            },
+        )]);
+        let result = row_geometry(&mut layout, &constraints, 0.0);
+        assert_eq!(result.geometry[&window(1)].height, 500.0);
+        assert!((result.geometry[&window(2)].height - 100.0).abs() < 1e-6);
+        assert!((result.geometry[&window(3)].height - 200.0).abs() < 1e-6);
+        assert!(
+            !result
+                .warnings
+                .iter()
+                .any(|warning| warning.kind == ConstraintKind::MinimumHeight)
+        );
+        assert_eq!(layout.columns()[0].heights, weights);
+    }
+
+    #[test]
+    fn simultaneous_row_minima_account_for_inner_gaps() {
+        let mut layout = stacked_layout(&[0.1, 0.1, 0.8]);
+        let constraints = HashMap::from([
+            (
+                window(1),
+                SizeConstraints {
+                    min_height: 250.0,
+                    ..Default::default()
+                },
+            ),
+            (
+                window(2),
+                SizeConstraints {
+                    min_height: 300.0,
+                    ..Default::default()
+                },
+            ),
+        ]);
+        for (gap, last_height) in [(0.0, 250.0), (20.0, 210.0), (124.5, 1.0)] {
+            let result = row_geometry(&mut layout, &constraints, gap);
+            assert_eq!(result.geometry[&window(1)].height, 250.0);
+            assert_eq!(result.geometry[&window(2)].height, 300.0);
+            assert!((result.geometry[&window(3)].height - last_height).abs() < 1e-6);
+            assert_eq!(result.geometry[&window(2)].y, 250.0 + gap);
+            assert_eq!(result.geometry[&window(3)].y, 550.0 + 2.0 * gap);
+            assert!(
+                !result
+                    .warnings
+                    .iter()
+                    .any(|warning| warning.kind == ConstraintKind::MinimumHeight)
+            );
+        }
+    }
+
+    #[test]
+    fn changing_row_minima_restores_weight_intent_and_applies_maximums() {
+        let mut layout = stacked_layout(&[0.25, 0.75]);
+        let weights = layout.columns()[0].heights.clone();
+        for (minimum, maximum, expected) in [(500.0, None, 500.0), (100.0, None, 200.0), (100.0, Some(150.0), 150.0)] {
+            let constraints = HashMap::from([(
+                window(1),
+                SizeConstraints {
+                    min_height: minimum,
+                    max_height: maximum,
+                    ..Default::default()
+                },
+            )]);
+            let result = row_geometry(&mut layout, &constraints, 0.0);
+            assert_eq!(result.geometry[&window(1)].height, expected);
+            assert_eq!(layout.columns()[0].heights, weights);
+            assert!(
+                !result
+                    .warnings
+                    .iter()
+                    .any(|warning| warning.kind == ConstraintKind::MinimumHeight)
+            );
+            assert_eq!(
+                result
+                    .warnings
+                    .iter()
+                    .any(|warning| warning.kind == ConstraintKind::MaximumHeight),
+                maximum.is_some()
+            );
+        }
+        let result = row_geometry(&mut layout, &HashMap::new(), 0.0);
+        assert_eq!(result.geometry[&window(1)].height, 200.0);
+        assert_eq!(result.geometry[&window(2)].height, 600.0);
+        assert_eq!(layout.columns()[0].heights, weights);
+    }
+
+    #[test]
+    fn impossible_row_minima_prioritize_the_remembered_active_row() {
+        let mut layout = stacked_layout(&[0.25, 0.25, 0.5]);
+        let constraints = (1..=3)
+            .map(|id| {
+                (
+                    window(id),
+                    SizeConstraints {
+                        min_height: 500.0,
+                        ..Default::default()
+                    },
+                )
+            })
+            .collect();
+        for focused in 1..=3 {
+            layout.focus(window(focused)).unwrap();
+            let result = row_geometry(&mut layout, &constraints, 10.0);
+            assert_eq!(result.geometry[&window(focused)].height, 500.0);
+            assert!((result.geometry.values().map(|rect| rect.height).sum::<f64>() - 780.0).abs() < 1e-6);
+            let warnings = result
+                .warnings
+                .iter()
+                .filter(|warning| warning.kind == ConstraintKind::MinimumHeight)
+                .collect::<Vec<_>>();
+            assert_eq!(warnings.len(), 2);
+            assert!(warnings.iter().all(|warning| warning.window != window(focused)));
+            assert_eq!(row_geometry(&mut layout, &constraints, 10.0), result);
+        }
+        let constraints = HashMap::from([(
+            window(3),
+            SizeConstraints {
+                min_height: 900.0,
+                ..Default::default()
+            },
+        )]);
+        let result = row_geometry(&mut layout, &constraints, 10.0);
+        assert_eq!(result.geometry[&window(3)].height, 780.0);
+        assert_eq!(result.geometry[&window(1)].height, 0.0);
+        assert_eq!(result.geometry[&window(2)].height, 0.0);
+        assert_eq!(
+            result
+                .warnings
+                .iter()
+                .filter(|warning| warning.kind == ConstraintKind::MinimumHeight)
+                .count(),
+            3
+        );
+        let result = row_geometry(&mut layout, &constraints, 500.0);
+        assert!(result.geometry.values().all(|rect| rect.height == 0.0));
+    }
+
+    #[test]
+    fn expelling_rows_preserves_column_width_intent_but_new_windows_use_default() {
+        for width in [
+            ColumnWidth::Proportion(0.75),
+            ColumnWidth::Full,
+            ColumnWidth::Fixed(700.0),
+        ] {
+            for direction in [None, Some(Direction::Left), Some(Direction::Right)] {
+                let mut layout = stacked_layout(&[0.5, 0.5]);
+                layout.set_column_width(window(1), width).unwrap();
+                layout.insert(window(3), Some(window(2))).unwrap();
+                // Provide a left-hand neighbor as well as a right-hand one.
+                layout.columns.swap(0, 1);
+                layout.insert(window(4), Some(window(2))).unwrap();
+                layout.focus(window(2)).unwrap();
+                if let Some(direction) = direction {
+                    assert!(layout.move_window(window(2), direction).unwrap());
+                } else {
+                    layout.extract_to_column(window(2)).unwrap();
+                }
+                for id in [1, 2] {
+                    let (column, _) = layout.window_location(window(id)).unwrap();
+                    assert_eq!(layout.columns()[column].width, width);
+                }
+                layout.insert(window(5), Some(window(2))).unwrap();
+                let (column, _) = layout.window_location(window(5)).unwrap();
+                assert_eq!(layout.columns()[column].width, layout.default_width());
+                assert!(layout.validate().is_ok());
+            }
+        }
+    }
+
+    #[test]
+    fn vertical_resize_progresses_with_more_than_twenty_rows() {
+        for equal_weights in [false, true] {
+            let mut layout = stacked_layout(&[1.0 / 32.0; 32]);
+            if !equal_weights {
+                // Stacking a new row repeatedly produces unequal small weights.
+                layout.columns[0].heights = (0..32).map(|row| 2.0_f64.powi(row - 31)).collect();
+                layout.columns[0].normalize_heights();
+            }
+            let before = layout.columns()[0].heights.clone();
+            assert!(layout.resize_window(window(1), Direction::Down, 0.05).unwrap());
+            assert!(layout.columns()[0].heights[0] > before[0]);
+            assert!(layout.columns()[0].heights[1] < before[1]);
+            assert!(layout.resize_window(window(2), Direction::Up, 0.05).unwrap());
+            // Repeated transfers must not eventually underflow the donor to zero.
+            for _ in 0..1_100 {
+                layout.resize_window(window(1), Direction::Down, 1.0).unwrap();
+            }
+            assert!(layout.columns()[0].heights.iter().all(|weight| *weight > 0.0));
+            assert!((layout.columns()[0].heights.iter().sum::<f64>() - 1.0).abs() < 1e-12);
+            assert!(layout.validate().is_ok());
+        }
+    }
 
     fn window(id: u64) -> WindowId {
         WindowId(id)
@@ -1799,6 +2158,183 @@ mod tests {
 
         assert!(layout.resize_window(window(1), Direction::Down, 0.1).unwrap());
         assert_eq!(layout.columns()[0].heights, vec![0.6, 0.4]);
+    }
+
+    #[test]
+    fn proportional_resize_keeps_the_existing_proportion() {
+        let mut layout = ScrollingLayout::default();
+        layout.insert(window(1), None).unwrap();
+        assert!(layout.resize_window(window(1), Direction::Right, 0.05).unwrap());
+        assert_eq!(layout.columns()[0].width, ColumnWidth::Proportion(0.55));
+    }
+
+    #[test]
+    fn full_width_resize_left_starts_at_one() {
+        let mut layout = ScrollingLayout::with_default_width(ColumnWidth::Full);
+        layout.insert(window(1), None).unwrap();
+        assert!(layout.resize_window(window(1), Direction::Left, 0.05).unwrap());
+        assert_eq!(layout.columns()[0].width, ColumnWidth::Proportion(0.95));
+    }
+
+    #[test]
+    fn full_width_resize_right_grows_instead_of_shrinking() {
+        let mut layout = ScrollingLayout::with_default_width(ColumnWidth::Full);
+        layout.insert(window(1), None).unwrap();
+        let bounds = Rect::new(0.0, 0.0, 1_000.0, 800.0);
+        let before = layout
+            .resolve_geometry_with_constraints(bounds, GapConfig::default(), &HashMap::new(), None)
+            .unwrap();
+        assert!(layout.resize_window(window(1), Direction::Right, 0.05).unwrap());
+        let after = layout
+            .resolve_geometry_with_constraints(bounds, GapConfig::default(), &HashMap::new(), None)
+            .unwrap();
+        assert_eq!(layout.columns()[0].width, ColumnWidth::Proportion(1.05));
+        assert!(after.geometry[&window(1)].width > before.geometry[&window(1)].width);
+    }
+
+    #[test]
+    fn fixed_resize_uses_the_current_viewport_and_gap() {
+        let mut layout = ScrollingLayout::with_default_width(ColumnWidth::Fixed(400.0));
+        layout.insert(window(1), None).unwrap();
+        for (width, inner, outer, smart) in [
+            (1_000.0, 10.0, 10.0, false),
+            (800.0, 24.0, 32.0, false),
+            (800.0, 48.0, 32.0, false),
+            (800.0, 12.0, 32.0, true),
+        ] {
+            layout.set_column_width(window(1), ColumnWidth::Fixed(400.0)).unwrap();
+            let bounds = Rect::new(0.0, 0.0, width, 800.0);
+            let gaps = GapConfig { inner, outer, smart };
+            let before = layout
+                .resolve_geometry_with_constraints(bounds, gaps, &HashMap::new(), None)
+                .unwrap();
+            assert_eq!(before.geometry[&window(1)].width, 400.0);
+            let viewport = width - if smart { 0.0 } else { 2.0 * outer };
+            let expected = (400.0 + inner) / (viewport + inner) + 0.05;
+            assert!(layout.resize_window(window(1), Direction::Right, 0.05).unwrap());
+            assert_eq!(layout.columns()[0].width, ColumnWidth::Proportion(expected));
+            let after = layout
+                .resolve_geometry_with_constraints(bounds, gaps, &HashMap::new(), None)
+                .unwrap();
+            assert!((after.geometry[&window(1)].width - (400.0 + (viewport + inner) * 0.05)).abs() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn fixed_resize_starts_from_the_minimum_constrained_column_width() {
+        let mut layout = ScrollingLayout::with_default_width(ColumnWidth::Fixed(300.0));
+        layout.insert(window(1), None).unwrap();
+        let bounds = Rect::new(0.0, 0.0, 1_000.0, 800.0);
+        let gaps = GapConfig {
+            inner: 10.0,
+            outer: 10.0,
+            smart: false,
+        };
+        let constraints = HashMap::from([(
+            window(1),
+            SizeConstraints {
+                min_width: 600.0,
+                ..Default::default()
+            },
+        )]);
+        let before = layout
+            .resolve_geometry_with_constraints(bounds, gaps, &constraints, None)
+            .unwrap();
+        assert_eq!(before.geometry[&window(1)].width, 600.0);
+        layout.resize_window(window(1), Direction::Right, 0.05).unwrap();
+        let after = layout
+            .resolve_geometry_with_constraints(bounds, gaps, &constraints, None)
+            .unwrap();
+        assert!((after.geometry[&window(1)].width - 649.5).abs() < 1e-6);
+        layout.resize_window(window(1), Direction::Left, 0.1).unwrap();
+        let shrunk = layout
+            .resolve_geometry_with_constraints(bounds, gaps, &constraints, None)
+            .unwrap();
+        assert_eq!(shrunk.geometry[&window(1)].width, 600.0);
+    }
+
+    #[test]
+    fn repeated_fixed_resize_steps_continue_from_the_converted_proportion() {
+        let mut layout = ScrollingLayout::with_default_width(ColumnWidth::Fixed(400.0));
+        layout.insert(window(1), None).unwrap();
+        let bounds = Rect::new(0.0, 0.0, 1_000.0, 800.0);
+        let gaps = GapConfig {
+            inner: 10.0,
+            outer: 10.0,
+            smart: false,
+        };
+        layout
+            .resolve_geometry_with_constraints(bounds, gaps, &HashMap::new(), None)
+            .unwrap();
+        for step in 1..=4 {
+            layout.resize_window(window(1), Direction::Right, 0.05).unwrap();
+            let result = layout
+                .resolve_geometry_with_constraints(bounds, gaps, &HashMap::new(), None)
+                .unwrap();
+            assert!((result.geometry[&window(1)].width - (400.0 + 49.5 * f64::from(step))).abs() < 1e-6);
+        }
+        layout.resize_window(window(1), Direction::Left, 0.05).unwrap();
+        let result = layout
+            .resolve_geometry_with_constraints(bounds, gaps, &HashMap::new(), None)
+            .unwrap();
+        assert!((result.geometry[&window(1)].width - 548.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn fixed_resize_without_resolved_geometry_leaves_width_unchanged() {
+        let mut layout = ScrollingLayout::with_default_width(ColumnWidth::Fixed(400.0));
+        layout.insert(window(1), None).unwrap();
+        assert!(!layout.resize_window(window(1), Direction::Right, 0.05).unwrap());
+        assert_eq!(layout.columns()[0].width, ColumnWidth::Fixed(400.0));
+    }
+
+    #[test]
+    fn width_cycle_after_fixed_resize_preserves_precise_viewport_dependencies() {
+        let mut layout = ScrollingLayout::with_default_width(ColumnWidth::Fixed(400.0));
+        for id in 1..=3 {
+            layout.insert(window(id), (id > 1).then(|| window(id - 1))).unwrap();
+        }
+        let bounds = Rect::new(0.0, 0.0, 1_000.0, 800.0);
+        let gaps = GapConfig {
+            inner: 10.0,
+            outer: 10.0,
+            smart: false,
+        };
+        layout
+            .resolve_geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(2)))
+            .unwrap();
+        let target = layout.viewport_target().cloned();
+        let viewport = layout.viewport_x();
+        layout.resize_window(window(1), Direction::Right, 0.05).unwrap();
+        layout
+            .resolve_geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(2)))
+            .unwrap();
+        assert_eq!(layout.viewport_x(), viewport);
+        assert_eq!(layout.viewport_target(), target.as_ref());
+
+        layout
+            .cycle_column_width(window(2), &[ColumnWidth::Fixed(400.0), ColumnWidth::Full])
+            .unwrap();
+        layout
+            .resolve_geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(2)))
+            .unwrap();
+        assert_eq!(layout.columns()[1].width, ColumnWidth::Full);
+        assert!((layout.viewport_x() - 459.5).abs() < 1e-6);
+        let first = layout.allocated_column_width(window(1)).unwrap();
+        let second = layout.allocated_column_width(window(2)).unwrap();
+        assert!(layout.viewport_depends_on_width(window(1), 400.0, first));
+        assert!(layout.viewport_depends_on_width(window(2), 400.0, second));
+        assert!(!layout.viewport_depends_on_width(window(3), 300.0, 400.0));
+        let held = layout
+            .viewport_target()
+            .unwrap()
+            .with_held_widths(&[(window(1), 400.0, first)], None);
+        assert!((held - 410.0).abs() < 1e-6);
+        let held = layout
+            .viewport_target()
+            .unwrap()
+            .with_held_widths(&[(window(2), 400.0, second)], None);
+        assert_eq!(held, 0.0);
     }
 
     #[test]

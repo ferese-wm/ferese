@@ -32,6 +32,127 @@ fn fixture() -> (smithay::reexports::calloop::EventLoop<'static, Ferese>, Ferese
 }
 
 #[test]
+fn width_cycle_keeps_stacked_rows_together_through_holds_forecasts_and_reversal() {
+    if !crate::startup_tests::private_runtime(
+        "state::window_lifecycle_tests::width_cycle_keeps_stacked_rows_together_through_holds_forecasts_and_reversal",
+    ) {
+        return;
+    }
+    for animations in [true, false] {
+        let (mut events, mut state, output) = fixture();
+        state.animation_test_time = Some(Duration::ZERO);
+        state.gap_config = GapConfig {
+            inner: 10.0,
+            outer: 10.0,
+            smart: false,
+        };
+        state.column_width_presets = vec![ColumnWidth::Proportion(0.5), ColumnWidth::Full];
+        let WorkspaceLayout::Scrolling(layout) = &mut state.workspaces.active_mut().layout else {
+            panic!("expected scrolling layout");
+        };
+        layout.set_default_width(ColumnWidth::Proportion(0.5));
+        layout.set_focus_strategy(ferese_layout::ViewportFocusStrategy::Minimal);
+        let (neighbor, _neighbor_wire) = window(&mut state, &mut events, 0xff112233);
+        let (first, _first_wire) = window(&mut state, &mut events, 0xff445566);
+        let (second, _second_wire) = window(&mut state, &mut events, 0xff778899);
+        let a = state.windows.ids()[&first];
+        let b = state.windows.ids()[&second];
+        state.workspaces.stack_window(b, a).unwrap();
+        state.focused_window = Some(state.windows.ids()[&neighbor]);
+        state.relayout();
+        state.focused_window = Some(b);
+        state.relayout();
+        let ids = [a, b];
+        for id in state.windows.resizing().copied().collect::<Vec<_>>() {
+            state.windows.clear_transaction(&id);
+        }
+        state.release_presentation_dependencies();
+        state.advance_animations_at(Duration::ZERO, Duration::ZERO);
+        let before = state.windows.geometry(&a).unwrap().visual.current.width;
+        assert_eq!(state.windows.geometry(&b).unwrap().visual.current.width, before);
+        state.animations_enabled = animations;
+        state.spring_config = SpringConfig {
+            stiffness: 900.0,
+            damping: 65.0,
+            ..Default::default()
+        };
+        state.viewport_spring_config = SpringConfig {
+            stiffness: 200.0,
+            damping: 30.0,
+            ..Default::default()
+        };
+        state.focused_window = Some(b);
+        let workspace = state.workspaces.active_id();
+        let viewport_before = state.viewports[&workspace].motion().target;
+        // An interrupted width motion must provide one source and velocity for
+        // the column, even if a sibling previously used its general spring.
+        if animations {
+            state.windows.update(a, |record| {
+                let mut width = AnimatedValue::new(before);
+                width.velocity = 25.0;
+                record.coupled_width = Some((workspace, width));
+            });
+        }
+        state.cycle_focused_column_width();
+        assert!(state.viewports[&workspace].motion().target > viewport_before);
+        for id in ids {
+            assert!(state.windows.record(id).unwrap().coupled_width.is_some());
+            assert_eq!(state.windows.transaction(&id).is_some(), animations);
+        }
+        let assert_equal = |state: &Ferese| {
+            let first = *state.windows.geometry(&a).unwrap();
+            let second = *state.windows.geometry(&b).unwrap();
+            assert_eq!(first.visual.current.width, second.visual.current.width);
+            assert_eq!(first.visual.velocity.width, second.visual.velocity.width);
+            for horizon in [Duration::ZERO, Duration::from_millis(4), Duration::from_millis(16)] {
+                let scene = state.sample_frame(&output, horizon);
+                assert_eq!(
+                    scene.windows[&a].geometry.visual.current.width,
+                    scene.windows[&b].geometry.visual.current.width
+                );
+            }
+            assert_eq!(*state.windows.geometry(&a).unwrap(), first);
+            assert_eq!(*state.windows.geometry(&b).unwrap(), second);
+        };
+        assert_equal(&state);
+        state.windows.clear_transaction(&a);
+        state.release_presentation_dependencies();
+        assert_eq!(
+            state.presentation_dependencies.reflow_blocked(a, &state.windows),
+            animations
+        );
+        assert_eq!(
+            state.presentation_dependencies.reflow_blocked(b, &state.windows),
+            animations
+        );
+        for millis in [16, 100, 299, 300, 316, 332] {
+            state.advance_animations_at(Duration::from_millis(16), Duration::from_millis(millis));
+            assert_equal(&state);
+        }
+        assert!(
+            state.windows.transaction(&b).is_none(),
+            "existing deadline releases the last sibling"
+        );
+        if animations {
+            assert!(state.windows.geometry(&a).unwrap().visual.current.width > before);
+        }
+        // Retarget the same column while its spring is moving.
+        state.cycle_focused_column_width();
+        assert_equal(&state);
+        for id in ids {
+            state.windows.clear_transaction(&id);
+        }
+        state.release_presentation_dependencies();
+        for frame in 1..=150 {
+            state.advance_animations_at(Duration::from_millis(16), Duration::from_millis(332 + frame * 16));
+            assert_equal(&state);
+        }
+        assert_eq!(state.windows.geometry(&a).unwrap().visual.current.width, before);
+        assert_eq!(state.windows.geometry(&b).unwrap().visual.current.width, before);
+    }
+}
+
+#[test]
 fn floating_placement_reserves_the_full_opening_window_footprint() {
     if !crate::startup_tests::private_runtime(
         "state::window_lifecycle_tests::floating_placement_reserves_the_full_opening_window_footprint",

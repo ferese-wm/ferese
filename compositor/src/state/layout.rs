@@ -148,7 +148,48 @@ impl Ferese {
             })
             .collect::<HashMap<_, _>>();
         let mut previous_scrolling_world_x = self.windows.take_world_positions();
-        let pending_column_width_cycles = self.windows.take_column_width_requests();
+        let mut pending_column_width_cycles = self.windows.take_column_width_requests();
+        let mut column_width_sources = HashMap::new();
+        if !pending_column_width_cycles.is_empty() {
+            for workspace in self.workspaces.iter() {
+                let WorkspaceLayout::Scrolling(layout) = &workspace.layout else {
+                    continue;
+                };
+                for column in layout.columns() {
+                    if !column.windows.iter().any(|id| pending_column_width_cycles.contains(id)) {
+                        continue;
+                    }
+                    // A cycle belongs to the column. Copy one presented motion
+                    // to every row; sibling configure holds already release the
+                    // whole column together, including partial client commits.
+                    let mut rows = column.windows.iter().filter(|id| {
+                        self.windows
+                            .geometry(id)
+                            .is_some_and(|geometry| !geometry.is_zooming() && !geometry.is_fullscreen())
+                    });
+                    let source = rows
+                        .clone()
+                        .find_map(|id| {
+                            self.windows
+                                .record(*id)?
+                                .coupled_width
+                                .filter(|(id, _)| *id == workspace.id)
+                        })
+                        .or_else(|| {
+                            rows.find_map(|id| {
+                                let visual = self.windows.geometry(id)?.visual;
+                                let mut width = AnimatedValue::new(visual.current.width);
+                                width.velocity = visual.velocity.width;
+                                Some((workspace.id, width))
+                            })
+                        });
+                    pending_column_width_cycles.extend(column.windows.iter().copied());
+                    if let Some(source) = source {
+                        column_width_sources.extend(column.windows.iter().map(|id| (*id, source)));
+                    }
+                }
+            }
+        }
         let outputs = self.space.outputs().cloned().collect::<Vec<_>>();
         let constraints = self.window_constraints();
         let mut visible = HashSet::new();
@@ -374,6 +415,9 @@ impl Ferese {
                             .as_ref()
                             .is_some_and(|(previous_workspace, _)| *previous_workspace == workspace));
                 if coupled {
+                    if let Some(source) = column_width_sources.get(&id) {
+                        record.coupled_width = Some(*source);
+                    }
                     let width = record
                         .coupled_width
                         .get_or_insert_with(|| (workspace, AnimatedValue::new(geometry.visual.current.width)));
