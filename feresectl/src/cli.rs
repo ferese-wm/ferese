@@ -80,6 +80,8 @@ pub enum Command {
     WorkspaceBackAndForth,
     /// Focus the previously focused window.
     FocusLastWindow,
+    /// Focus the most recently focused window in the opposite tiled/floating layer on this workspace.
+    FocusFloating,
     /// Focus the next recently used window.
     FocusMruNext,
     /// Focus the previous recently used window.
@@ -239,6 +241,7 @@ impl Command {
             Self::RequestLogout => ("request-logout", json!({})),
             Self::WorkspaceBackAndForth => ("workspace-back-and-forth", json!({})),
             Self::FocusLastWindow => ("focus-last-window", json!({})),
+            Self::FocusFloating => ("focus-floating", json!({})),
             Self::FocusMruNext => ("focus-mru-next", json!({})),
             Self::FocusMruPrevious => ("focus-mru-previous", json!({})),
             Self::Focus { direction } => ("focus", json!({"direction": value_name(direction)})),

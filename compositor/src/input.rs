@@ -1094,6 +1094,7 @@ impl Ferese {
             BindingAction::Exit => self.request_logout_confirmation(),
             BindingAction::Focus(direction) => self.focus_direction(direction),
             BindingAction::FocusLastWindow => self.focus_last_window(),
+            BindingAction::FocusFloating => self.focus_floating(),
             BindingAction::FocusMru(reverse) => self.cycle_focus(reverse, false),
             BindingAction::Move(direction) => self.move_direction(direction),
             BindingAction::Resize(direction) => self.resize_direction(direction),

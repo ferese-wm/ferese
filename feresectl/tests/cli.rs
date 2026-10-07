@@ -41,6 +41,7 @@ fn help_exits_successfully_without_a_session_and_has_hidden_legacy_aliases() {
         &["media", "--help"],
         &["xwayland", "--help"],
         &["screenshot", "--help"],
+        &["focus-floating", "--help"],
     ] {
         let text = success(ctl(args).output().unwrap());
         assert!(text.contains("Usage:"));
@@ -50,6 +51,31 @@ fn help_exits_successfully_without_a_session_and_has_hidden_legacy_aliases() {
     assert_eq!(output.status.code(), Some(2));
     let error = String::from_utf8(output.stderr).unwrap();
     assert!(error.contains("windows"), "{error}");
+}
+
+#[test]
+fn focus_floating_sends_a_parameterless_action_and_rejects_cycle_arguments() {
+    let directory = tempfile::tempdir().unwrap();
+    let socket = directory.path().join("control.sock");
+    let listener = UnixListener::bind(&socket).unwrap();
+    let worker = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        stream
+            .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+            .unwrap();
+        let request: Request = read_frame(&mut stream).unwrap();
+        assert_eq!(request.command, "focus-floating");
+        assert_eq!(request.args, json!({}));
+        write_frame(&mut stream, &Response::success(request.id, json!({}))).unwrap();
+    });
+    success(
+        ctl(&["--socket", socket.to_str().unwrap(), "focus-floating"])
+            .output()
+            .unwrap(),
+    );
+    worker.join().unwrap();
+    let output = ctl(&["focus-floating", "next"]).output().unwrap();
+    assert_eq!(output.status.code(), Some(2));
 }
 
 #[test]

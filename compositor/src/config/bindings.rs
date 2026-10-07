@@ -276,6 +276,10 @@ pub(super) fn parse_action(
             no_argument()?;
             Ok(BindingAction::FocusLastWindow)
         }
+        "focus-floating" => {
+            no_argument()?;
+            Ok(BindingAction::FocusFloating)
+        }
         "focus-mru-next" | "focus-mru-previous" => {
             no_argument()?;
             Ok(BindingAction::FocusMru(action == "focus-mru-previous"))
@@ -391,6 +395,7 @@ pub(super) fn default_bindings() -> Vec<BindingConfig> {
         binding("Super+[", "consume", None),
         binding("Super+]", "expel", None),
         binding("Super+Shift+Space", "toggle-floating", None),
+        binding("Super+V", "focus-floating", None),
         binding("Super+Tab", "toggle-overview", None),
         binding("XF86Display", "toggle-display-mode", None),
         binding("XF86AudioPlay", "media-play-pause", None),
@@ -467,6 +472,7 @@ pub enum BindingAction {
     Exit,
     Focus(ferese_layout::Direction),
     FocusLastWindow,
+    FocusFloating,
     FocusMru(bool),
     Move(ferese_layout::Direction),
     Resize(ferese_layout::Direction),
@@ -572,6 +578,7 @@ impl Binding {
             BindingAction::Exit => "Log out (with confirmation)".into(),
             BindingAction::Focus(direction) => format!("Focus window {direction:?}"),
             BindingAction::FocusLastWindow => "Return to last focused window".into(),
+            BindingAction::FocusFloating => "Switch focus between tiled and floating windows".into(),
             BindingAction::FocusMru(reverse) => if *reverse {
                 "Previous window in focus history"
             } else {

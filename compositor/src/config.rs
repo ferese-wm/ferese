@@ -485,10 +485,22 @@ mod tests {
     }
 
     #[test]
+    fn focus_floating_is_bound_to_super_v_and_accepts_a_custom_binding() {
+        for source in ["", "binding \"Super+V\" \"focus-floating\"\n"] {
+            let configured = parse(source).runtime_config().unwrap();
+            assert!(configured.bindings.iter().any(|binding| {
+                binding.action == BindingAction::FocusFloating
+                    && binding.matches(55_u32.into(), &[keysyms::KEY_v], true, false, false, false)
+            }));
+        }
+    }
+
+    #[test]
     fn focus_history_actions_are_bindable_and_have_defaults() {
         let defaults = Config::default().runtime_config().unwrap();
         for action in [
             BindingAction::FocusLastWindow,
+            BindingAction::FocusFloating,
             BindingAction::FocusMru(false),
             BindingAction::FocusMru(true),
         ] {
@@ -496,6 +508,7 @@ mod tests {
         }
         for (name, action) in [
             ("focus-last-window", BindingAction::FocusLastWindow),
+            ("focus-floating", BindingAction::FocusFloating),
             ("focus-mru-next", BindingAction::FocusMru(false)),
             ("focus-mru-previous", BindingAction::FocusMru(true)),
         ] {
@@ -1056,7 +1069,7 @@ mod tests {
         let input = config.input_settings().unwrap();
         let bindings = config.bindings(&input).unwrap();
 
-        assert_eq!(bindings.len(), 58);
+        assert_eq!(bindings.len(), 59);
         for (shift, action) in [
             (false, BindingAction::ToggleMaximized),
             (true, BindingAction::ToggleFullscreen),
@@ -1100,7 +1113,7 @@ mod tests {
 
         let input = replaced.input_settings().unwrap();
         let bindings = replaced.bindings(&input).unwrap();
-        assert_eq!(bindings.len(), 58);
+        assert_eq!(bindings.len(), 59);
         assert!(bindings.iter().any(|binding| {
             binding.action
                 == BindingAction::Spawn(vec!["foot".to_owned(), "--app-id".to_owned(), "work".to_owned()].into())
@@ -1108,7 +1121,7 @@ mod tests {
 
         let input = unbound.input_settings().unwrap();
         let bindings = unbound.bindings(&input).unwrap();
-        assert_eq!(bindings.len(), 57);
+        assert_eq!(bindings.len(), 58);
         assert!(!bindings.iter().any(|binding| binding.action == BindingAction::Close));
     }
 

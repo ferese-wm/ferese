@@ -855,6 +855,7 @@ impl Ferese {
                 .map_err(|e| CommandError::new("invalid_config", e))?,
             "focus" => self.focus_direction(direction_arg(args)?),
             "focus-last-window" => self.focus_last_window(),
+            "focus-floating" => self.focus_floating(),
             "focus-mru-next" => self.cycle_focus(false, false),
             "focus-mru-previous" => self.cycle_focus(true, false),
             "move" => self.move_direction(direction_arg(args)?),

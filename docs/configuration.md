@@ -518,6 +518,7 @@ invalid. A disabled binding must omit `action` and `argument`.
 | `workspace-next`, `workspace-previous` | None; next/previous workspace on this monitor |
 | `workspace-back-and-forth` | None; return to the previous workspace on this monitor |
 | `focus-last-window` | None; return to the last focused window |
+| `focus-floating` | None; focus the last focused window in the opposite tiled/floating layer on this workspace |
 | `focus-mru-next`, `focus-mru-previous` | None; cycle windows in focus order |
 | `none` | None; ignore this trigger |
 | `close`, `exit`, `toggle-maximized`, `toggle-fullscreen`, `toggle-layout`, `cycle-column-width`, `center-column`, `consume`, `expel`, `toggle-floating`, `toggle-overview` | None |
@@ -527,13 +528,18 @@ commands {
     terminal "foot"
 }
 binding keys="Super+Enter" action="spawn" argument="terminal"
+binding keys="Super+V" action="focus-floating"
 ```
+
+`focus-floating` switches focus between tiled and floating windows without
+changing placement. It stays on the active workspace and does nothing when the
+opposite layer has no candidate. `toggle-floating` changes window placement.
 
 Defaults: Super+Enter terminal; Super+Q close; Super+H/J/K/L focus;
 Super+Shift+H/J/K/L move; Super+Ctrl+H/J/K/L resize; Super+1–9 workspace;
 Super+Shift+1–9 move to workspace; Super+R width cycle; Super+C center;
 Super+[/] consume/expel; Super+F maximize; Super+Shift+F fullscreen;
-Super+M layout; Super+Shift+Space floating; Super+Tab overview;
+Super+M layout; Super+Shift+Space floating; Super+V focus tiled/floating; Super+Tab overview;
 Super+Escape previous visited workspace;
 Super+BackSpace last focused window; Alt+Tab/Alt+Shift+Tab MRU switching;
 Super+Shift+S area screenshot; Print Screen whole-screen screenshot;

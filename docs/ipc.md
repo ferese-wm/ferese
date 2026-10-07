@@ -35,6 +35,16 @@ feresectl screenshot -g '0,0 800x600' > region.png
 feresectl screenshot-window 7 > window.png
 ```
 
+## Window focus
+
+```sh
+feresectl focus-floating
+```
+
+`focus-floating` focuses the most recently focused window in the opposite
+tiled/floating layer on the active workspace. It does nothing when that layer
+has no candidate. `toggle-floating` changes placement; `focus-floating` changes focus.
+
 ## Choose a session
 
 Every feresectl IPC command, including theme commands and subscriptions, resolves
