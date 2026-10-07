@@ -13,6 +13,7 @@
 - [Lock screen](locking.md): change its appearance, set up automatic locking and configure display sleep.
 - [Screen sharing and recording](screen-sharing.md): choose a source and stop sharing.
 - [Desktop portals](portals.md): services available to applications.
+- [feresectl and IPC events](ipc.md): query the desktop, target a session and follow changes.
 
 ## Develop Ferese
 

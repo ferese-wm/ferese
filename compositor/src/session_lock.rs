@@ -115,6 +115,19 @@ pub(crate) struct Lock {
 }
 
 impl Lock {
+    pub(crate) fn event_state(&self) -> ferese_ipc::events::LockState {
+        let phase = match self.lifecycle {
+            Lifecycle::Unlocked => "unlocked",
+            Lifecycle::Acquiring(_) => "acquiring",
+            Lifecycle::Locked(_) => "locked",
+            Lifecycle::Orphaned => "orphaned",
+        };
+        ferese_ipc::events::LockState {
+            phase: phase.into(),
+            sleeping: self.sleeping,
+        }
+    }
+
     pub(crate) fn active(&self) -> bool {
         !matches!(self.lifecycle, Lifecycle::Unlocked)
     }

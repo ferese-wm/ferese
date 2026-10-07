@@ -100,7 +100,7 @@ class UnmappedToplevelTest(unittest.TestCase):
                         deadline = time.monotonic() + 3
                         while True:
                             result = subprocess.run(
-                                [str(ctl_binary), "get-focused-window"],
+                                [str(ctl_binary), "-j", "focused-window"],
                                 env=env,
                                 capture_output=True,
                                 text=True,
@@ -131,7 +131,7 @@ class UnmappedToplevelTest(unittest.TestCase):
                     deadline = time.monotonic() + 3
                     while True:
                         remaining = json.loads(subprocess.check_output(
-                            [str(ctl_binary), "get-windows"], env=env, text=True
+                            [str(ctl_binary), "-j", "windows"], env=env, text=True
                         ))
                         if not remaining:
                             break
@@ -142,7 +142,7 @@ class UnmappedToplevelTest(unittest.TestCase):
                     subprocess.run([str(ctl_binary), "focus-last-window"], env=env,
                                    capture_output=True, check=True)
                     focused = json.loads(subprocess.check_output(
-                        [str(ctl_binary), "get-focused-window"], env=env, text=True
+                        [str(ctl_binary), "-j", "focused-window"], env=env, text=True
                     ))
                     self.assertIsNone(focused, "focus history must not restore a destroyed window")
                     deadline = time.monotonic() + 3

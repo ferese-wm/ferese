@@ -116,7 +116,7 @@ def private_checks():
                     env["WAYLAND_DISPLAY"] = str(next(path for path in runtime.glob("wayland-*") if not path.name.endswith(".lock")))
 
                     def call(*args):
-                        return json.loads(subprocess.check_output([str(CTL), *args], env=env, timeout=5))
+                        return json.loads(subprocess.check_output([str(CTL), "-j", *args], env=env, timeout=5))
 
                     def inhibited(expected):
                         def matches():

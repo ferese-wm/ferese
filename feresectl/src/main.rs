@@ -1,127 +1,130 @@
 mod autostart;
+mod cli;
+mod output;
 
 use std::error::Error;
 use std::io::Write;
 use std::os::unix::net::UnixStream;
-use std::path::PathBuf;
+use std::path::Path;
 use std::{env, fs, io};
 
+use clap::{Parser, ValueEnum};
+use cli::{Cli, Command, ThemeAction};
 use ferese_ipc::{Request, Response, VERSION, read_frame, write_frame};
 use serde_json::{Value, json};
 
 fn main() -> Result<(), Box<dyn Error>> {
-    if env::args().nth(1).as_deref() == Some("autostart") {
-        if env::args().len() != 2 {
-            return Err("usage: feresectl autostart".into());
-        }
+    let cli = Cli::parse();
+    if matches!(cli.command, Command::Autostart) {
         return autostart::run();
     }
-    if env::args().nth(1).as_deref() == Some("theme") {
-        return theme_command(env::args().skip(2).collect());
-    }
-    if env::args().nth(1).as_deref() == Some("xwayland") {
-        return xwayland_command(env::args().skip(2).collect());
-    }
-    let (command, args) = parse_args(env::args().skip(1))?;
-    let request = Request {
-        version: VERSION,
-        id: 1,
-        kind: "command".to_owned(),
-        command: command.clone(),
-        args,
-    };
-    let mut stream = UnixStream::connect(socket_path()?)?;
-
-    write_frame(&mut stream, &request)?;
-    let response: Response = read_frame(&mut stream)?;
-    if let Some(error) = response.error {
-        return Err(format!("{}: {}", error.code, error.message).into());
-    }
-
-    if matches!(command.as_str(), "screenshot" | "screenshot-window") {
-        write_png(&response)
-    } else {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&response.result.unwrap_or(Value::Null))?
+    for alias in env::args().skip(1).filter(|arg| {
+        matches!(
+            arg.as_str(),
+            "get-outputs"
+                | "get-windows"
+                | "get-workspaces"
+                | "get-focused-window"
+                | "get-idle-inhibition"
+                | "get-session-state"
+                | "get-keybindings"
+        )
+    }) {
+        eprintln!(
+            "feresectl: {alias} is deprecated; use {}",
+            alias.trim_start_matches("get-")
         );
-        Ok(())
+    }
+    let socket = ferese_ipc::socket::resolve(cli.socket.as_deref())?;
+    match &cli.command {
+        Command::Theme { action } => theme_command(action, &socket, cli.json),
+        Command::EventStream => event_stream(&socket),
+        command => {
+            let (command, args) = command.ipc().expect("IPC command");
+            let mut stream = UnixStream::connect(socket)?;
+            let result = request(&mut stream, command, args)?;
+            if matches!(command, "screenshot" | "screenshot-window") {
+                write_png(&Response::success(1, result))
+            } else {
+                output::print(&result, cli.json)
+            }
+        }
     }
 }
 
-fn theme_command(args: Vec<String>) -> Result<(), Box<dyn Error>> {
-    let mut connection = ferese_ipc::theme::Connection::connect()?;
-    match args.as_slice() {
-        [command] if command == "get" || command == "status" => {
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&connection.get(ferese_config::families::builtins)?)?
-            );
-        }
-        [command] if command == "subscribe" => {
+fn request(stream: &mut UnixStream, command: &str, args: Value) -> Result<Value, Box<dyn Error>> {
+    write_frame(
+        stream,
+        &Request {
+            version: VERSION,
+            id: 1,
+            kind: "command".into(),
+            command: command.into(),
+            args,
+        },
+    )?;
+    let response: Response = read_frame(stream)?;
+    if response.version != VERSION || response.id != 1 {
+        return Err("Unexpected IPC response".into());
+    }
+    if let Some(error) = response.error {
+        return Err(format!("{}: {}", error.code, error.message).into());
+    }
+    Ok(response.result.unwrap_or(Value::Null))
+}
+
+fn theme_command(action: &ThemeAction, socket: &Path, json_output: bool) -> Result<(), Box<dyn Error>> {
+    let mut connection = ferese_ipc::theme::Connection::connect_to(socket)?;
+    let result = match action {
+        ThemeAction::Get => serde_json::to_value(connection.get(ferese_config::families::builtins)?)?,
+        ThemeAction::Subscribe => {
             let mut snapshot = connection.get(ferese_config::families::builtins)?;
+            let mut stdout = io::stdout().lock();
             loop {
-                println!("{}", serde_json::to_string(&snapshot)?);
+                if !output::write_json_line(&mut stdout, &snapshot)? {
+                    return Ok(());
+                }
                 snapshot = connection.watch(snapshot.revision, ferese_config::families::builtins)?;
             }
         }
-        [command, mode] if command == "mode" && matches!(mode.as_str(), "light" | "dark" | "auto") => {
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&connection.call("theme-set-mode", json!({"mode": mode}))?)?
-            );
-        }
-        [command, path] if command == "preview" => {
-            let source = fs::read_to_string(path)?;
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&connection.call(
-                    "theme-preview",
-                    json!({"source": source, "directory": std::path::Path::new(path).canonicalize()?.parent()})
-                )?)?
-            );
-        }
-        _ => {
-            return Err(
-                "usage: feresectl theme <get|status|subscribe|mode light|mode dark|mode auto|preview PATH>".into(),
-            );
-        }
-    }
-    Ok(())
+        ThemeAction::Mode { mode } => connection.call(
+            "theme-set-mode",
+            json!({"mode": mode.to_possible_value().unwrap().get_name()}),
+        )?,
+        ThemeAction::Preview { path } => connection.call(
+            "theme-preview",
+            json!({
+                "source": fs::read_to_string(path)?, "directory": path.canonicalize()?.parent(),
+            }),
+        )?,
+    };
+    output::print(&result, json_output)
 }
 
-fn xwayland_command(args: Vec<String>) -> Result<(), Box<dyn Error>> {
-    use ferese_ipc::xwayland::{RETRY_COMMAND, STATUS_COMMAND, Status};
-
-    let command = match args.as_slice() {
-        [command] if command == "status" => STATUS_COMMAND,
-        [command] if command == "retry" => RETRY_COMMAND,
-        _ => return Err("usage: feresectl xwayland <status|retry>".into()),
-    };
-
-    let request = Request {
-        version: VERSION,
-        id: 1,
-        kind: "command".to_owned(),
-        command: command.to_owned(),
-        args: json!({}),
-    };
-    let mut stream = UnixStream::connect(socket_path()?)?;
-    write_frame(&mut stream, &request)?;
-    let response: Response = read_frame(&mut stream)?;
-    if let Some(error) = response.error {
-        return Err(format!("{}: {}", error.code, error.message).into());
+fn event_stream(socket: &Path) -> Result<(), Box<dyn Error>> {
+    let mut stream = UnixStream::connect(socket)?;
+    request(
+        &mut stream,
+        "event-stream",
+        json!({"version": ferese_ipc::events::VERSION}),
+    )?;
+    let mut stdout = io::stdout().lock();
+    loop {
+        let event: ferese_ipc::events::Event = read_frame(&mut stream)?;
+        event.validate()?;
+        if !output::write_json_line(&mut stdout, &event)? {
+            return Ok(());
+        }
     }
+}
 
-    let status = Status::from_value(response.result.unwrap_or(Value::Null))?;
-    if command == RETRY_COMMAND {
-        println!(
-            "X11 retry requested; current state: {}",
-            serde_json::to_string(&status.state)?
-        );
-    }
-    println!("{}", serde_json::to_string_pretty(&status)?);
-    Ok(())
+#[cfg(test)]
+fn parse_args(args: impl IntoIterator<Item = String>) -> Result<(String, Value), String> {
+    let cli = Cli::try_parse_from(std::iter::once("feresectl".to_owned()).chain(args)).map_err(|e| e.to_string())?;
+    cli.command
+        .ipc()
+        .map(|(command, args)| (command.into(), args))
+        .ok_or_else(|| "not an IPC command".into())
 }
 
 // The compositor stages the PNG in a private directory and replies with its
@@ -146,133 +149,6 @@ fn write_png(response: &Response) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn parse_args(args: impl IntoIterator<Item = String>) -> Result<(String, Value), String> {
-    let mut args = args.into_iter();
-    let command = args.next().ok_or_else(usage)?;
-    let positional = args.collect::<Vec<_>>();
-    let payload = match command.as_str() {
-        "output-layout" => {
-            exactly_one(&command, &positional, "internal-only, external-only, extend or mirror")?;
-            if !["internal-only", "external-only", "extend", "mirror"].contains(&positional[0].as_str()) {
-                return Err("unknown display layout".into());
-            }
-            json!({ "layout": positional[0] })
-        }
-        "output-profile" => {
-            exactly_one(&command, &positional, "profile name or auto")?;
-            json!({ "name": positional[0] })
-        }
-        "output-internal" => {
-            exactly_one(&command, &positional, "on or off")?;
-            let enabled = match positional[0].as_str() {
-                "on" => true,
-                "off" => false,
-                _ => return Err("output-internal requires on or off".into()),
-            };
-            json!({ "enabled": enabled })
-        }
-        "screenshot-window" => {
-            exactly_one(&command, &positional, "window ID")?;
-            let window = positional[0]
-                .parse::<u64>()
-                .map_err(|_| "Expected an unsigned window ID")?;
-            json!({"window":window})
-        }
-        "focus" | "move" | "resize" => {
-            exactly_one(&command, &positional, "direction")?;
-            json!({ "direction": positional[0] })
-        }
-        "workspace" | "move-to-workspace" => {
-            exactly_one(&command, &positional, "index")?;
-            let index = positional[0]
-                .parse::<u32>()
-                .map_err(|_| format!("{} requires a positive workspace index", command))?;
-            json!({ "index": index })
-        }
-        "media" => {
-            return match positional.as_slice() {
-                [] => Ok(("media-get".into(), json!({}))),
-                [mode] if mode == "get" => Ok(("media-get".into(), json!({}))),
-                [action] if ["play-pause", "next", "previous", "raise", "auto"].contains(&action.as_str()) => {
-                    Ok(("media-action".into(), json!({"action": action})))
-                }
-                [action, player] if ["pin", "ignore", "unignore"].contains(&action.as_str()) => {
-                    Ok(("media-action".into(), json!({"action":if action == "pin" { "pin" } else { "ignore" },"player":player,"ignored":action == "ignore"})))
-                }
-                _ => Err("usage: feresectl media [get|play-pause|next|previous|raise|auto|pin PLAYER|ignore PLAYER|unignore PLAYER]".into()),
-            };
-        }
-        "screenshot" => match positional.as_slice() {
-            [] => json!({}),
-            [flag, geometry] if flag == "--geometry" || flag == "-g" => {
-                json!({ "geometry": geometry })
-            }
-            _ => {
-                return Err(format!(
-                    "{command} accepts an optional --geometry \"x,y WxH\" ({})",
-                    usage()
-                ));
-            }
-        },
-        "toggle-floating"
-        | "toggle-fullscreen"
-        | "toggle-maximized"
-        | "toggle-layout"
-        | "toggle-overview"
-        | "toggle-keybinding-guide"
-        | "cycle-column-width"
-        | "center-column"
-        | "consume"
-        | "expel"
-        | "close"
-        | "get-focused-window"
-        | "get-windows"
-        | "get-idle-inhibition"
-        | "get-workspaces"
-        | "get-outputs"
-        | "outputs"
-        | "toggle-display-mode"
-        | "output-profiles"
-        | "output-confirm"
-        | "output-revert"
-        | "reload-config"
-        | "exit"
-        | "request-logout"
-        | "workspace-back-and-forth"
-        | "focus-last-window"
-        | "focus-mru-next"
-        | "focus-mru-previous" => {
-            if !positional.is_empty() {
-                return Err(format!("{command} does not accept arguments"));
-            }
-            json!({})
-        }
-        _ => return Err(format!("unknown command {command:?}\n{}", usage())),
-    };
-
-    Ok((command, payload))
-}
-
-fn exactly_one(command: &str, args: &[String], name: &str) -> Result<(), String> {
-    if args.len() == 1 {
-        Ok(())
-    } else {
-        Err(format!("{command} requires exactly one {name}"))
-    }
-}
-
-fn socket_path() -> Result<PathBuf, io::Error> {
-    env::var_os("XDG_RUNTIME_DIR")
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .map(|directory| directory.join("ferese/control.sock"))
-        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "XDG_RUNTIME_DIR is not set"))
-}
-
-fn usage() -> String {
-    "usage: feresectl media [get|play-pause|next|previous|raise|auto|pin PLAYER|ignore PLAYER|unignore PLAYER]\n       feresectl outputs\n       feresectl output-profiles\n       feresectl <output-confirm|output-revert>\n       feresectl output-layout <internal-only|external-only|extend|mirror>\n       feresectl toggle-display-mode\n       feresectl output-profile <name|auto>\n       feresectl output-internal <on|off>\n       feresectl autostart\n       feresectl xwayland <status|retry>\n       feresectl screenshot [--geometry \"x,y WxH\"]\n       feresectl screenshot-window <window-id>\n       feresectl <focus|move|resize> <direction>\n       feresectl <workspace|move-to-workspace> <index>\n       feresectl workspace-back-and-forth\n       feresectl <focus-last-window|focus-mru-next|focus-mru-previous>\n       feresectl <toggle-floating|toggle-maximized|toggle-fullscreen|toggle-layout|toggle-overview|toggle-keybinding-guide>\n       feresectl <cycle-column-width|center-column|consume|expel|close|exit|request-logout>\n       feresectl <get-focused-window|get-windows|get-workspaces|get-outputs|get-idle-inhibition|reload-config>".to_owned()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -282,7 +158,7 @@ mod tests {
         assert_eq!(ferese_ipc::xwayland::STATUS_COMMAND, "xwayland-status");
         assert_eq!(ferese_ipc::xwayland::RETRY_COMMAND, "xwayland-retry");
 
-        assert!(usage().contains("feresectl xwayland <status|retry>"));
+        assert!(Cli::try_parse_from(["feresectl", "xwayland", "status"]).is_ok());
     }
 
     #[test]

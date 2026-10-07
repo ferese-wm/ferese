@@ -51,7 +51,7 @@ class OverviewDamageTest(unittest.TestCase):
                 return child
 
             def command(*args):
-                return json.loads(subprocess.check_output([str(control), *args], env=env, timeout=5))
+                return json.loads(subprocess.check_output([str(control), "-j", *args], env=env, timeout=5))
 
             def wait_for(predicate, seconds=12):
                 deadline = time.monotonic() + seconds

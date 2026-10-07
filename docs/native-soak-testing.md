@@ -37,7 +37,7 @@ The local probe can also be run independently against a disposable Ferese sessio
 
 ```bash
 WAYLAND_DISPLAY=wayland-1 /path/to/ferese-malformed-client
-target/debug/feresectl get-outputs
+target/debug/feresectl outputs
 ```
 
 Do not point the malformed-client probe at the host compositor socket.

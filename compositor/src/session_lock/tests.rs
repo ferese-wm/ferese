@@ -689,3 +689,39 @@ fn lock_input_preserves_owner_click_grabs_and_rejects_retired_surfaces() {
     assert_eq!(pointer.current_focus(), None);
     assert_eq!(fixture.state.seat.get_keyboard().unwrap().current_focus(), None);
 }
+
+#[test]
+fn ipc_events_follow_lock_lifecycle_without_exposing_desktop_objects() {
+    let Some(mut fixture) =
+        Fixture::new("session_lock::tests::ipc_events_follow_lock_lifecycle_without_exposing_desktop_objects")
+    else {
+        return;
+    };
+    let output = fixture.output("lock-events");
+    let (sender, receive) = std::sync::mpsc::sync_channel(crate::ipc_events::QUEUE_CAPACITY);
+    fixture.state.ipc_events.subscribe(900, sender).unwrap();
+    fixture.state.publish_ipc_events();
+    receive.try_recv().unwrap();
+    let mut owner = fixture.acquire();
+    fixture.state.publish_ipc_events();
+    let snapshot = fixture.state.ipc_event_snapshot();
+    assert!(snapshot.workspaces.as_array().unwrap().is_empty());
+    assert!(snapshot.windows.as_array().unwrap().is_empty());
+    assert!(snapshot.focus.is_null());
+    assert_eq!(snapshot.lock.phase, "acquiring");
+    assert!(receive.try_iter().any(
+        |event| matches!(&event.change, ferese_ipc::events::Change::LockChanged { lock } if lock.phase == "acquiring")
+    ));
+    owner.surface(&mut fixture, &output);
+    fixture.state.session_lock.presented.insert(output);
+    fixture.state.confirm_lock_if_ready();
+    fixture.state.publish_ipc_events();
+    assert!(receive.try_iter().any(
+        |event| matches!(&event.change, ferese_ipc::events::Change::LockChanged { lock } if lock.phase == "locked")
+    ));
+    fixture.state.unlock();
+    fixture.state.publish_ipc_events();
+    assert!(receive.try_iter().any(
+        |event| matches!(&event.change, ferese_ipc::events::Change::LockChanged { lock } if lock.phase == "unlocked")
+    ));
+}

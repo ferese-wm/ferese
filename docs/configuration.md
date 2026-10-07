@@ -936,7 +936,7 @@ Wayland or portal protocols; a fullscreen window alone does not prove playback.
 
 These settings control automatic inhibition. They do not override an
 application's own Wayland or portal request, and they do not block manual
-locking or suspend. Run `feresectl get-idle-inhibition` to inspect the current
+locking or suspend. Run `feresectl idle-inhibition` to inspect the current
 inhibition state and discovered players. Changes take effect on config reload.
 
 ## Optional session protocols

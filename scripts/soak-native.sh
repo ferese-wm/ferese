@@ -130,7 +130,7 @@ wait_for_focus() {
     local focused
 
     for ((attempt = 0; attempt < 40; attempt += 1)); do
-        focused="$("$feresectl_program" get-focused-window 2>/dev/null || true)"
+        focused="$("$feresectl_program" -j focused-window 2>/dev/null || true)"
         if [[ "$focused" != "null" && -n "$focused" ]]; then
             return 0
         fi

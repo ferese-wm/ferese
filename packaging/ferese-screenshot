@@ -44,7 +44,7 @@ elif [[ $mode == full ]]; then
     # Never fall back to an all-monitor capture when IPC is unavailable.
     # This is the only mode that needs the output list; the editor is sized
     # from the captured image instead.
-    geometry=$(feresectl get-outputs | python3 -c '
+    geometry=$(feresectl -j outputs | python3 -c '
 import json, sys
 outputs = [output for output in json.load(sys.stdin) if output.get("enabled")]
 focused = [output for output in outputs if output.get("focused")]

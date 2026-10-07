@@ -20,7 +20,7 @@ FOCUSED_GEOMETRY = '1920,0 2560x1440'
 
 FARESECTL = '''#!/bin/bash
 case "$1" in
-    get-outputs) cat "$TEST_ROOT/outputs.json" ;;
+    -j) [[ "$2" == outputs && "$#" == 2 ]] || exit 1; cat "$TEST_ROOT/outputs.json" ;;
     screenshot)
         printf '%s\\n' "$@" >> "$TEST_ROOT/captures"
         cat "$TEST_ROOT/capture.png"

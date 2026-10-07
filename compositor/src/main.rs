@@ -15,6 +15,7 @@ mod idle_inhibition;
 mod input;
 mod input_capture;
 mod ipc;
+mod ipc_events;
 mod metrics;
 mod monitor_identity;
 mod output_policy;
@@ -207,6 +208,8 @@ fn after_dispatch_with_redraw(state: &mut Ferese, mut redraw: impl FnMut(&mut Fe
     {
         warn!(%error, "could not schedule wallpaper upload retry");
     }
+
+    state.publish_ipc_events();
 
     // Clients need registry/sync/configure replies even when no frame is drawn.
     if let Err(error) = state.display_handle.flush_clients() {

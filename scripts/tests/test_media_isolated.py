@@ -151,7 +151,7 @@ def private_checks():
                 wait(lambda: (runtime / 'ferese/control.sock').exists())
 
                 def call(*args):
-                    return json.loads(subprocess.check_output([str(ctl), *args], env=env, timeout=5))
+                    return json.loads(subprocess.check_output([str(ctl), "-j", *args], env=env, timeout=5))
 
                 def request(command, args):
                     payload = json.dumps({'version': 1, 'id': 17, 'type': 'command',

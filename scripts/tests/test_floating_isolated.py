@@ -62,7 +62,7 @@ class FloatingSizeTest(unittest.TestCase):
                     self.assertTrue(sockets, "nested Wayland socket did not appear")
                     childenv = dict(env, WAYLAND_DISPLAY=str(sockets[0]))
                     time.sleep(2)
-                    listed = subprocess.run([str(ctl), "get-outputs"], env=childenv,
+                    listed = subprocess.run([str(ctl), "-j", "outputs"], env=childenv,
                                             check=True, capture_output=True, timeout=10, text=True)
                     enabled = [o for o in json.loads(listed.stdout) if o.get("enabled")]
                     if not enabled:

@@ -398,6 +398,7 @@ pub struct Ferese {
     pub(crate) lock_idle: IdleSettings,
     pub(crate) config_source: Option<String>,
     pub(crate) config_sections: Option<serde_json::Value>,
+    pub(crate) ipc_events: crate::ipc_events::Subscribers,
     pub(crate) config_worker: Option<crate::reload::Worker>,
     pub(crate) theme_engine: crate::theme::Engine,
     pub start_time: Instant,
@@ -646,6 +647,7 @@ impl Ferese {
         let mut state = Self {
             session_lock_state,
             session_lock: crate::session_lock::Lock::default(),
+            ipc_events: crate::ipc_events::Subscribers::default(),
             lock_idle: config.lock_idle,
             config_source: None,
             config_sections: None,

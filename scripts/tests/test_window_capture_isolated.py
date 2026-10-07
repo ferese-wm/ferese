@@ -69,7 +69,7 @@ class WindowCapture(unittest.TestCase):
                 env["WAYLAND_DISPLAY"] = str(next(path for path in sockets if not path.name.endswith(".lock")))
 
                 def call(*args):
-                    return subprocess.check_output([str(CTL), *args], env=env, timeout=10)
+                    return subprocess.check_output([str(CTL), "-j", *args], env=env, timeout=10)
 
                 def windows(count):
                     deadline = time.monotonic() + 10

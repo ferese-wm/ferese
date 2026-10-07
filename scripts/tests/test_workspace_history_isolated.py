@@ -41,7 +41,7 @@ class WorkspaceHistoryTest(unittest.TestCase):
 
             def command(*args):
                 return json.loads(subprocess.check_output(
-                    [str(repo / "target/debug/feresectl"), *args], env=env, timeout=5
+                    [str(repo / "target/debug/feresectl"), "-j", *args], env=env, timeout=5
                 ))
 
             def active():

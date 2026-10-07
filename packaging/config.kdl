@@ -209,7 +209,7 @@ lock-screen {
 // idle-inhibit { fullscreen-playback #false; }
 // window-rule app-id="org.example.Presentation" idle-inhibit="visible"
 
-// Find display names with feresectl get-outputs, then adjust and uncomment.
+// Find display names with feresectl outputs, then adjust and uncomment.
 // output-profile "docked" {
 //     output "HDMI-A-1" scale=1.5 { position 0 0; }
 //     output "eDP-1" scale=1.5 { position 2560 0; }

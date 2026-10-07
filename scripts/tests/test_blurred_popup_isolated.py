@@ -66,7 +66,7 @@ class BlurredPopupTest(unittest.TestCase):
                             self.fail("Blurred popup stopped presenting frames:\n" + log_path.read_text())
                         time.sleep(.025)
                     control = repo / os.environ.get("FERESE_TEST_CTL", "target/debug/feresectl")
-                    subprocess.run([str(control), "get-outputs"], env=env, check=True,
+                    subprocess.run([str(control), "-j", "outputs"], env=env, check=True,
                                    stdout=subprocess.DEVNULL, timeout=5)
                     phases = log_path.read_text().splitlines()
                     for name, count in [("parent", 1), ("open", 3), ("update", 9), ("close", 3)]:

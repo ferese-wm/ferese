@@ -61,7 +61,7 @@ class ResizeDependencies(unittest.TestCase):
                     client_env = dict(env, WAYLAND_DISPLAY=str(socket))
 
                     def call(*args):
-                        return json.loads(subprocess.check_output([str(ctl), *args], env=env, timeout=5))
+                        return json.loads(subprocess.check_output([str(ctl), "-j", *args], env=env, timeout=5))
 
                     def action(*args):
                         subprocess.run([str(ctl), *args], env=env, check=True, capture_output=True, timeout=5)

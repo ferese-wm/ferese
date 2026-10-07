@@ -6,7 +6,12 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+clap = { version = "4.5", features = ["derive"] }
 ferese-config = { path = "../crates/ferese-config" }
 ferese-ipc = { path = "../crates/ferese-ipc" }
+serde.workspace = true
 serde_json.workspace = true
 libc.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

@@ -347,6 +347,7 @@ impl crate::Ferese {
                 false
             }
         });
+        self.ipc_events.config_revision = self.ipc_events.config_revision.wrapping_add(1);
         tracing::info!("configuration reloaded live");
         Ok(())
     }

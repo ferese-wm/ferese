@@ -43,7 +43,7 @@ class ThemeTest(unittest.TestCase):
                 return child
 
             def command(*args):
-                return json.loads(subprocess.check_output([str(repo / "target/debug/feresectl"), *args], env=env, timeout=5))
+                return json.loads(subprocess.check_output([str(repo / "target/debug/feresectl"), "-j", *args], env=env, timeout=5))
 
             def until(predicate, seconds=5):
                 deadline = time.monotonic() + seconds

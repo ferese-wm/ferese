@@ -46,10 +46,7 @@ impl Snapshot {
 }
 
 pub fn socket_path() -> io::Result<PathBuf> {
-    std::env::var_os("XDG_RUNTIME_DIR")
-        .filter(|value| !value.is_empty())
-        .map(|directory| PathBuf::from(directory).join("ferese/control.sock"))
-        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "XDG_RUNTIME_DIR is not set"))
+    crate::socket::resolve(None)
 }
 
 pub struct Connection {
@@ -59,7 +56,11 @@ pub struct Connection {
 
 impl Connection {
     pub fn connect() -> io::Result<Self> {
-        let stream = UnixStream::connect(socket_path()?)?;
+        Self::connect_to(socket_path()?)
+    }
+
+    pub fn connect_to(path: impl AsRef<std::path::Path>) -> io::Result<Self> {
+        let stream = UnixStream::connect(path)?;
         stream.set_write_timeout(Some(Duration::from_secs(2)))?;
         stream.set_read_timeout(Some(Duration::from_secs(2)))?;
         Ok(Self { stream, id: 0 })

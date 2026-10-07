@@ -5,7 +5,9 @@ use std::{fmt, io};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+pub mod events;
 pub mod media;
+pub mod socket;
 pub mod theme;
 pub mod xwayland;
 

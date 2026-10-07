@@ -55,7 +55,7 @@ class OverviewPreviews(unittest.TestCase):
             log_path = root / "compositor.log"
 
             def call(*args):
-                return subprocess.check_output([str(ctl), *args], env=env, timeout=10)
+                return subprocess.check_output([str(ctl), "-j", *args], env=env, timeout=10)
 
             def wait_for(predicate):
                 deadline = time.monotonic() + 10

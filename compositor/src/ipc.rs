@@ -43,6 +43,7 @@ struct IpcCall {
     owner: u64,
     request: Request,
     response: SyncSender<Response>,
+    events: Option<SyncSender<Arc<ferese_ipc::events::Event>>>,
 }
 
 #[derive(Debug)]
@@ -108,6 +109,7 @@ pub(crate) fn init(event_loop: &mut EventLoop<'static, Ferese>) -> Result<Screen
             let call = match event {
                 IpcEvent::Call(call) => call,
                 IpcEvent::Closed(owner) => {
+                    state.ipc_events.remove(owner);
                     for request in state.screenshot.terminate_owner(owner) {
                         state
                             .pending_screencopies
@@ -126,7 +128,25 @@ pub(crate) fn init(event_loop: &mut EventLoop<'static, Ferese>) -> Result<Screen
                     return;
                 }
             };
-            if call.request.command.starts_with("input-capture-") && !call.native_portal {
+            if call.request.command == "event-stream" {
+                let result = validate_request(&call.request).and_then(|()| {
+                    if call.request.args["version"].as_u64() != Some(u64::from(ferese_ipc::events::VERSION)) {
+                        return Err(CommandError::new(
+                            "unsupported_event_version",
+                            "Unsupported event schema version",
+                        ));
+                    }
+                    state
+                        .ipc_events
+                        .subscribe(call.owner, call.events.expect("event stream sender"))
+                        .map_err(|error| CommandError::new("subscriber_limit", error))
+                });
+                let response = match result {
+                    Ok(()) => Response::success(call.request.id, json!({"version": ferese_ipc::events::VERSION})),
+                    Err(error) => Response::error(call.request.id, error.code, error.message),
+                };
+                let _ = call.response.try_send(response);
+            } else if call.request.command.starts_with("input-capture-") && !call.native_portal {
                 let _ = call.response.try_send(Response::error(
                     call.request.id,
                     "access_denied",
@@ -449,6 +469,8 @@ fn serve_connection(mut stream: UnixStream, sender: channel::SyncSender<IpcEvent
             continue;
         }
         let (response, receiver) = sync_channel(1);
+        let event_stream_requested = request.command == "event-stream";
+        let (events, event_receiver) = sync_channel(crate::ipc_events::QUEUE_CAPACITY);
         let exit_requested = request.command == "exit";
         let screenshot_requested = matches!(request.command.as_str(), "screenshot" | "screenshot-window");
         let call = IpcEvent::Call(IpcCall {
@@ -456,6 +478,7 @@ fn serve_connection(mut stream: UnixStream, sender: channel::SyncSender<IpcEvent
             owner,
             request,
             response,
+            events: event_stream_requested.then_some(events),
         });
         if sender.try_send(call).is_err() {
             tracing::warn!("disconnecting IPC client because the request queue is full");
@@ -491,6 +514,7 @@ fn serve_connection(mut stream: UnixStream, sender: channel::SyncSender<IpcEvent
             }
         };
         let exit_accepted = exit_requested && response.error.is_none();
+        let event_stream_accepted = event_stream_requested && response.error.is_none();
         if let Err(error) = write_frame(&mut stream, &response) {
             if screenshot_requested {
                 discard_undelivered_screenshot(&response);
@@ -498,11 +522,51 @@ fn serve_connection(mut stream: UnixStream, sender: channel::SyncSender<IpcEvent
             tracing::debug!(%error, "IPC client disconnected before receiving its response");
             return;
         }
+        if event_stream_accepted {
+            let _ = stream.set_write_timeout(Some(Duration::from_secs(2)));
+            relay_events(&mut stream, event_receiver);
+            return;
+        }
         if exit_accepted {
             // Acknowledge before stopping so feresectl never races process exit.
             signal.stop();
             signal.wakeup();
             return;
+        }
+    }
+}
+
+// Socket I/O stays on the bounded connection worker, never the compositor loop.
+fn relay_events(stream: &mut UnixStream, events: std::sync::mpsc::Receiver<Arc<ferese_ipc::events::Event>>) {
+    loop {
+        match events.recv_timeout(Duration::from_millis(250)) {
+            Ok(event) => {
+                if write_frame(stream, event.as_ref()).is_err() {
+                    return;
+                }
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                let mut byte = 0_u8;
+                // SAFETY: the stream owns its descriptor and byte is writable.
+                let result = unsafe {
+                    libc::recv(
+                        stream.as_raw_fd(),
+                        (&raw mut byte).cast(),
+                        1,
+                        libc::MSG_PEEK | libc::MSG_DONTWAIT,
+                    )
+                };
+                if result >= 0 {
+                    return;
+                }
+                if !matches!(
+                    io::Error::last_os_error().kind(),
+                    io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
+                ) {
+                    return;
+                }
+            }
         }
     }
 }
@@ -1108,6 +1172,58 @@ impl Ferese {
                     );
                 }
             }
+        }
+    }
+
+    pub(crate) fn ipc_event_snapshot(&self) -> ferese_ipc::events::Snapshot {
+        let locked = self.session_lock.active();
+        let mut outputs = self.outputs_json();
+        if locked {
+            for output in outputs.as_array_mut().into_iter().flatten() {
+                if let Some(fields) = output.as_object_mut() {
+                    fields.remove("workspace");
+                    fields.remove("focused");
+                }
+            }
+        }
+        let windows = if locked {
+            json!([])
+        } else {
+            Value::Array(self.windows.ordered_ids().filter_map(|id| {
+                let record = self.windows.record(id)?;
+                let workspace = self.workspaces.workspace_for_window(id)?;
+                Some(json!({
+                    "id": id.0, "app_id": record.app_id, "title": record.title,
+                    "focused": self.focused_window == Some(id), "workspace": workspace.0,
+                    "floating": matches!(self.workspaces.placement(id), Some(ferese_core::WindowPlacement::Floating { .. })),
+                    "fullscreen": self.workspaces.workspace(workspace).is_some_and(|workspace| workspace.fullscreen == Some(id)),
+                }))
+            }).collect())
+        };
+        let live = &self.theme_engine.live;
+        let theme = json!({
+            "mode": live.mode, "theme": live.theme, "families": live.families,
+            "warnings": live.warnings, "error": live.error, "fallback_note": live.fallback_note,
+        });
+        ferese_ipc::events::Snapshot {
+            outputs,
+            workspaces: if locked { json!([]) } else { self.workspaces_json() },
+            windows,
+            focus: if locked {
+                Value::Null
+            } else {
+                json!({
+                    "window": self.focused_window.map(|id| id.0),
+                    "output": self.output_workspaces.focused_output().map(|id| id.0),
+                    "workspace": self.output_workspaces.focused_output().and_then(|id| self.output_workspaces.active_workspace(id)).map(|id| id.0),
+                })
+            },
+            config: ferese_ipc::events::ConfigState {
+                revision: self.ipc_events.config_revision,
+                error: self.theme_engine.live.error.clone(),
+            },
+            theme,
+            lock: self.session_lock.event_state(),
         }
     }
 
@@ -1741,6 +1857,54 @@ mod tests {
         permits.pop();
         assert_eq!(active.load(Ordering::Acquire), MAX_CONNECTIONS - 1);
         assert!(try_acquire_connection(&active).is_some());
+    }
+
+    #[test]
+    fn idle_event_stream_disconnect_is_detected_without_an_event() {
+        let (client, mut server) = UnixStream::pair().unwrap();
+        let (_sender, receiver) = sync_channel(1);
+        let (finished, completion) = sync_channel(1);
+        let worker = thread::spawn(move || {
+            relay_events(&mut server, receiver);
+            finished.send(()).unwrap();
+        });
+        drop(client);
+        completion.recv_timeout(Duration::from_secs(2)).unwrap();
+        worker.join().unwrap();
+    }
+
+    #[test]
+    fn stalled_event_socket_write_expires_on_the_worker() {
+        let (_client, mut server) = UnixStream::pair().unwrap();
+        server.set_write_timeout(Some(Duration::from_millis(50))).unwrap();
+        let (sender, receiver) = sync_channel(1);
+        let (finished, completion) = sync_channel(1);
+        sender
+            .send(Arc::new(ferese_ipc::events::Event {
+                version: ferese_ipc::events::VERSION,
+                generation: 1,
+                last: true,
+                change: ferese_ipc::events::Change::WindowsChanged {
+                    windows: json!([{"title": "x".repeat(900_000)}]),
+                },
+            }))
+            .unwrap();
+        let worker = thread::spawn(move || {
+            relay_events(&mut server, receiver);
+            finished.send(()).unwrap();
+        });
+        completion.recv_timeout(Duration::from_secs(2)).unwrap();
+        worker.join().unwrap();
+        assert!(
+            sender
+                .try_send(Arc::new(ferese_ipc::events::Event {
+                    version: ferese_ipc::events::VERSION,
+                    generation: 2,
+                    last: true,
+                    change: ferese_ipc::events::Change::FocusChanged { focus: json!(null) },
+                }))
+                .is_err()
+        );
     }
 
     fn unique_test_directory(label: &str) -> PathBuf {
