@@ -155,7 +155,7 @@ impl App {
                 );
             }
         } else {
-            if matches!(self.page, Page::Bar | Page::Windows) {
+            if self.page == Page::Windows || self.page == Page::Bar && self.draft.item("panels").is_none() {
                 body = body.push(visuals::preview_resolved(&self.draft, &self.resolved.presented));
             }
             if self.page == Page::Appearance {
@@ -181,7 +181,12 @@ impl App {
             if self.page == Page::Wallpaper {
                 body = body.push(self.wallpaper_controls());
             }
-            let fields = if self.page == Page::Wallpaper {
+            if self.page == Page::Bar {
+                body = body.push(self.panel_controls());
+            }
+            let fields = if self.page == Page::Bar {
+                self.bar_fields()
+            } else if self.page == Page::Wallpaper {
                 self.wallpaper_fields()
             } else {
                 schema::fields(self.page)

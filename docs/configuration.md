@@ -39,10 +39,10 @@ output-profile "docked" {
 }
 ```
 
-Use repeated `binding`, `window-rule`, `output-profile`, `output`, `note` and
+Use repeated `panel`, `group`, `item`, `binding`, `window-rule`, `output-profile`, `output`, `note` and
 `autostart` nodes for lists of settings. Bindings accept keys, an action and its
 argument positionally. Profiles, outputs and notes accept a positional name,
-match or ID; other fields can be properties or child nodes. Autostart commands
+match or ID; panels, groups and items accept a positional ID. Other fields can be properties or child nodes. Autostart commands
 use positional arguments. Duplicate fields are rejected.
 The dotted paths in the reference tables below describe nested sections.
 
@@ -802,6 +802,82 @@ the earlier GPUs. Legacy KMS lacks atomic
 test-only validation. Hardware failures can still prevent every monitor from
 working; Ferese tries preferred modes to recover a display instead of
 intentionally turning off the last working one.
+
+## Panel composition
+
+Ferese shows one top panel on each output. Without a `panel` block, the status
+settings below generate the usual arrangement. An explicit panel replaces that
+arrangement, including its background, title, and battery percentage settings.
+Settings → Menu bar → **Customize items** saves the current arrangement and adds
+per-item visibility, overflow, and preferred-size controls.
+
+```kdl
+panel "main" {
+    background "islands"
+    start {
+        group "navigation" {
+            surface "island"
+            item "overview" kind="overview" overflow="never"
+            item "workspaces" kind="workspaces" overflow="never"
+        }
+    }
+    center {
+        group "title" {
+            surface "none"
+            item "title" kind="focused-window" overflow="never"
+        }
+    }
+    end {
+        group "status" {
+            surface "island"
+            item "network" kind="network" overflow="always"
+            item "audio" kind="audio"
+            item "battery" kind="battery" percentage=#true
+            item "clock" kind="clock" representation="compact"
+        }
+    }
+}
+```
+
+Start, center, and end contain ordered groups. Each group contains ordered item
+instances. IDs must be unique within the panel, use ASCII letters/digits or
+`-_.:@`, contain 1–128 characters, and not start with `_`. Exactly one panel
+can be configured; edge selection and per-output overrides are not supported yet.
+
+Built-in kinds are `overview`, `workspaces`, `focused-window`, `media`,
+`quick-settings`, `network`, `audio`, `recording`, `notifications`, `battery`,
+`clock`, and `display-mode`. Availability still follows the associated service
+or hardware. Duplicate kinds are allowed when their IDs differ; clock instances
+currently share the same clock format and timezone.
+
+| Scope / key | Values / default | Meaning |
+| --- | --- | --- |
+| Panel `background` | `continuous` (default), `islands` | Whole-panel background or transparent gaps |
+| Zone `spacing` | 0–64; default 8 | Gap between groups |
+| Group `surface` | `none`, `inset` (default), `island` | Decoration around the group |
+| Group `spacing` | 0–64; default 1 | Gap between items |
+| Group `padding` | two integers 0–32; default `2 3` | Vertical and horizontal inner padding |
+| Group `island-padding` | 0–32; default 4 | Additional horizontal padding for islands |
+| Item `visible` | boolean; default `true` | Allow the item when available |
+| Item `overflow` | `auto` (default), `never`, `always` | Move when needed, keep visible, or place in overflow |
+| Item `priority` | integer 0–100; default 50 | Lower priorities yield space first |
+| Item `representation` | omit, `wide`, `compact`, `icon` | Preferred supported form; smaller forms may be used |
+| Item `gap-before` | 0–64; unset | Override the preceding gap within a group |
+| Battery `percentage` | boolean; default `true` | Include percentage in its full form |
+| Focused window `enabled` | boolean; default `true` | Include the title |
+
+Media and clock support all three representations. Battery with a percentage
+supports `wide` and `icon`; other controls keep their existing form. Unsupported
+preferences use the kind's normal form. The title can shrink and ellipsize;
+workspace controls scroll within their allocation. The panel itself does not scroll.
+
+The center stays screen-centered. When controls cannot fit, lower-priority items
+adapt first, with definition order breaking ties. The overflow chevron appears
+before the end controls and opens displaced items through their usual menus.
+`never` moves to overflow only when the mandatory controls cannot fit. A surface
+narrower than the chevron's padded minimum clips that control.
+
+The [integration notes](panel-composition.md) describe ownership and remaining work.
 
 ## Status controls
 

@@ -2,6 +2,7 @@ mod connections;
 mod form_controls;
 mod navigation;
 mod pages;
+mod panel_controls;
 mod theme_controls;
 
 use theme_controls::*;
@@ -99,6 +100,7 @@ enum Message {
     RowVisibility(&'static str, usize, bool),
     Search(String),
     Change(Edit),
+    CustomizePanel,
     SelectFont(String, String),
     Draft(String, String),
     Commit(Field),
@@ -587,6 +589,12 @@ impl cosmic::Application for App {
                         set(&field.path, value)
                     };
                     return self.change(edit);
+                }
+            }
+            Message::CustomizePanel if self.draft.item("panels").is_none() => {
+                match panel_controls::initialize(&self.draft) {
+                    Ok(edit) => return self.change(edit),
+                    Err(error) => self.error = Some(error),
                 }
             }
             Message::Change(edit) => return self.change(edit),

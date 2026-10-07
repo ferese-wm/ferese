@@ -122,7 +122,14 @@ impl FereseShell {
     pub(super) fn notification_history_height_limit(&self) -> f32 {
         self.outputs
             .iter()
-            .find(|output| output.bar == self.bar_surface_id)
+            .find(|output| {
+                Some(output.bar)
+                    == self
+                        .menu
+                        .as_ref()
+                        .map(|menu| menu.anchor.parent)
+                        .or_else(|| self.active_bar())
+            })
             .and_then(|output| output.size)
             .map_or(HISTORY_MAX_HEIGHT, |(_, height)| {
                 let theme = self.config.theme;
@@ -135,31 +142,29 @@ impl FereseShell {
         if self.notifications.history_open {
             return self.close_menu();
         }
-        // Cards can open history too. Anchor those requests to the active bar;
-        // bell clicks pass their exact anchor through the normal menu path.
-        if let Some(output) = self.outputs.iter().find(|entry| {
-            self.snapshot
-                .outputs
-                .iter()
-                .any(|output| output.focused && Some(output.name.as_str()) == entry.name.as_deref())
-        }) {
-            self.bar_surface_id = output.bar;
-        }
+        // Toast requests use the focused output without changing popup parent selection.
+        let Some(parent) = self.active_bar() else {
+            return Task::none();
+        };
+        let panel = &self.config.panels[0];
         let width = self
             .outputs
             .iter()
-            .find(|entry| entry.bar == self.bar_surface_id)
+            .find(|entry| entry.bar == parent)
             .and_then(|entry| entry.size)
             .map_or(POPUP_WIDTH as i32, |size| size.0);
-        self.open_menu(
-            status_ui::Menu::Notifications,
-            cosmic::iced::Rectangle {
+        let anchor = status_ui::PopoverAnchor {
+            parent,
+            panel: panel.id.clone(),
+            item: None,
+            rectangle: cosmic::iced::Rectangle {
                 x: (width - 48).max(0),
                 y: 0,
                 width: 24,
                 height: self.config.theme.bar_height.round() as i32,
             },
-        )
+        };
+        self.open_menu(status_ui::Menu::Notifications, anchor)
     }
 
     pub(super) fn close_notification_history(&mut self) -> Task<Message> {

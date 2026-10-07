@@ -1,6 +1,7 @@
 pub mod desktop;
 pub mod families;
 pub mod notifications;
+pub mod panel;
 pub mod presets;
 pub mod theme;
 
@@ -97,6 +98,9 @@ fn field(name: &str, parent: &str) -> String {
         "output-profile" => "output_profiles".into(),
         "output" => "outputs".into(),
         "note" => "notes".into(),
+        "panel" => "panels".into(),
+        "group" => "groups".into(),
+        "item" => "items".into(),
         _ => name.replace('-', "_"),
     }
 }
@@ -104,9 +108,13 @@ fn field(name: &str, parent: &str) -> String {
 fn is_records(key: &str, parent: &str) -> bool {
     matches!(
         (parent, key),
-        ("", "bindings" | "window_rules" | "output_profiles" | "autostart")
-            | ("output_profiles", "outputs")
+        (
+            "",
+            "bindings" | "window_rules" | "output_profiles" | "autostart" | "panels"
+        ) | ("output_profiles", "outputs")
             | ("desktop_widgets", "notes")
+            | ("start" | "center" | "end", "groups")
+            | ("groups", "items")
     )
 }
 
@@ -114,7 +122,7 @@ fn is_array(key: &str, parent: &str) -> bool {
     parent == "commands"
         || matches!(
             key,
-            "command" | "position" | "width_presets" | "xkb_options" | "settings_command" | "outputs"
+            "command" | "position" | "padding" | "width_presets" | "xkb_options" | "settings_command" | "outputs"
         )
 }
 
@@ -190,7 +198,7 @@ fn node_value(node: &KdlNode, key: &str, parent: &str) -> Result<Value, Error> {
             "bindings" => &["keys", "action", "argument"],
             "output_profiles" => &["name"],
             "outputs" => &["match"],
-            "notes" => &["id"],
+            "notes" | "panels" | "groups" | "items" => &["id"],
             "autostart" => &[],
             "window_rules" => &[],
             _ => unreachable!(),
@@ -552,6 +560,41 @@ fn set_in(doc: &mut KdlDocument, parts: &[&str], parent: &str, value: Value) -> 
     }
 
     let key = parts[0];
+    if parts.len() == 1 && is_records(key, parent) {
+        let records = value
+            .as_array()
+            .ok_or_else(|| Error("Expected a list of records".into()))?;
+        let mut nodes = records
+            .iter()
+            .map(|value| value_node(key, value, parent))
+            .collect::<Result<Vec<_>, _>>()?;
+        let at = doc
+            .nodes()
+            .iter()
+            .position(|node| field(node.name().value(), parent) == key)
+            .unwrap_or(doc.nodes().len());
+        let mut comments = String::new();
+        for node in doc
+            .nodes()
+            .iter()
+            .filter(|node| field(node.name().value(), parent) == key)
+        {
+            collect_comments(node, &mut comments);
+        }
+        doc.nodes_mut().retain(|node| field(node.name().value(), parent) != key);
+        if let Some(first) = nodes.first_mut() {
+            first.set_format(kdl::KdlNodeFormat {
+                leading: comments,
+                ..Default::default()
+            });
+        } else if !comments.is_empty() {
+            let mut format = doc.format().cloned().unwrap_or_default();
+            format.trailing.push_str(&comments);
+            doc.set_format(format);
+        }
+        doc.nodes_mut().splice(at..at, nodes);
+        return Ok(());
+    }
     let i = node_index(doc, key, parent);
 
     if parts.len() == 1 {
@@ -588,7 +631,7 @@ fn set_in(doc: &mut KdlDocument, parts: &[&str], parent: &str, value: Value) -> 
                 "bindings" => &["keys", "action", "argument"],
                 "outputs" => &["match"],
                 "output_profiles" => &["name"],
-                "notes" => &["id"],
+                "notes" | "panels" | "groups" | "items" => &["id"],
                 _ => &[],
             };
             let position = positions.iter().position(|p| *p == rest[0]);
@@ -681,6 +724,9 @@ fn node_name(key: &str, parent: &str) -> String {
         "output_profiles" => "output-profile".into(),
         "outputs" => "output".into(),
         "notes" => "note".into(),
+        "panels" => "panel".into(),
+        "groups" => "group".into(),
+        "items" => "item".into(),
         _ => key.replace('_', "-"),
     }
 }
@@ -694,7 +740,7 @@ fn value_node(key: &str, value: &Value, parent: &str) -> Result<KdlNode, Error> 
                 "bindings" => &["keys", "action", "argument"],
                 "output_profiles" => &["name"],
                 "outputs" => &["match"],
-                "notes" => &["id"],
+                "notes" | "panels" | "groups" | "items" => &["id"],
                 _ => &[],
             };
             let mut child = KdlDocument::new();

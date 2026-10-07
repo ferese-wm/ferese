@@ -32,6 +32,8 @@ use crate::window_rules::{WindowRule, WindowRuleConfig};
 #[derive(Debug, Default, Deserialize)]
 pub struct Config {
     #[serde(default)]
+    panels: Option<Vec<ferese_config::panel::Panel>>,
+    #[serde(default)]
     notifications: ferese_config::notifications::NotificationConfig,
     #[serde(default)]
     lock_screen: crate::session_lock::IdleSettings,
@@ -116,6 +118,9 @@ impl Config {
     }
 
     pub(crate) fn runtime_config(&self) -> Result<crate::RuntimeConfig, ConfigError> {
+        if let Some(panels) = &self.panels {
+            ferese_config::panel::validate(panels).map_err(ConfigError::Binding)?;
+        }
         self.notifications.validate().map_err(ConfigError::Binding)?;
         self.desktop_widgets.validate().map_err(ConfigError::Binding)?;
         self.xwayland.validate().map_err(ConfigError::Binding)?;
@@ -371,6 +376,25 @@ pub(crate) fn config_path() -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn validates_shell_composition_before_publishing_config() {
+        let source = r#"panel "main" { end { group "status" { item "network" kind="network"; item "clock" kind="clock"; }; }; }"#;
+        assert!(Config::parse_source(source).unwrap().runtime_config().is_ok());
+        assert!(
+            Config::parse_source(&source.replace("item \"clock\"", "item \"network\""))
+                .unwrap()
+                .runtime_config()
+                .is_err()
+        );
+        assert!(
+            Config::parse_source("panel \"one\"; panel \"two\";")
+                .unwrap()
+                .runtime_config()
+                .is_err()
+        );
+        assert!(Config::parse_source("panel \"one\" { edge \"bottom\"; }").is_err());
+    }
+
     #[test]
     fn bar_layout_is_validated_before_live_publication() {
         for layout in ["continuous", "islands"] {

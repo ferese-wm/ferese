@@ -2,15 +2,32 @@ use super::{
     Background, BarMetrics, Border, Color, Element, FereseShell, Length, Message, ShellSnapshot, ShellTheme, alignment,
     bar_icon, button, color, color_with_opacity, container, control, motion, row, status_ui, text, theme, window,
 };
+use crate::panel::{Availability, GroupSurface, Item, ItemKind, PanelId, Zone};
 use cosmic::iced::border::Shape as BorderShape;
 use ferese_config::BarLayout;
 
+mod adaptive;
 pub(super) mod presentation;
+use crate::panel::{Group, GroupId, OverflowPolicy, Representation};
+use crate::panel_layout::Placement;
 
 impl FereseShell {
     pub(super) fn output_for_bar(&self, id: window::Id) -> Option<&control::OutputSnapshot> {
         let name = self.outputs.iter().find(|entry| entry.bar == id)?.name.as_deref()?;
         self.snapshot.outputs.iter().find(|output| output.name == name)
+    }
+
+    pub(super) fn active_bar(&self) -> Option<window::Id> {
+        self.outputs
+            .iter()
+            .find(|entry| {
+                self.snapshot
+                    .outputs
+                    .iter()
+                    .any(|output| output.focused && Some(output.name.as_str()) == entry.name.as_deref())
+            })
+            .or_else(|| self.outputs.first())
+            .map(|output| output.bar)
     }
 
     pub(super) fn bar_hidden(&self, id: window::Id) -> bool {
@@ -21,43 +38,388 @@ impl FereseShell {
         if self.bar_hidden(id) {
             return container(text("")).width(Length::Fill).height(Length::Fill).into();
         }
-
-        let focused_output = self.output_for_bar(id);
+        let panel = &self.config.panels[0];
         let shell_theme = self.config.theme.for_bar();
-        let bar = BarMetrics::from(shell_theme);
-        let mode = self.config.status.bar_layout;
+        let mode = panel.background;
         let islands = mode == BarLayout::Islands;
         let output = self.outputs.iter().find(|output| output.bar == id);
         let effects = output.and_then(|output| output.effects.as_ref());
         let compositor_material = effects.is_some();
+        let availability = Availability {
+            media: self.media.snapshot.selected.is_some(),
+            network: self.status.network.is_some(),
+            audio: self.status.audio.is_some(),
+            notifications: self.status.notifications.is_some(),
+            battery: self.status.battery.is_some(),
+            external_display: self.display_mode.external_connected(),
+        };
+        let mut samples = Vec::new();
+        for zone in [&panel.center, &panel.start, &panel.end] {
+            for group in &zone.groups {
+                for item in group.items.iter().filter(|item| item.available(availability)) {
+                    if matches!(item.kind, ItemKind::FocusedWindow { enabled: false })
+                        || matches!(item.kind, ItemKind::FocusedWindow { .. })
+                            && focused_bar_title(&self.snapshot, self.output_for_bar(id)).is_empty()
+                    {
+                        continue;
+                    }
+                    let alternatives = item.kind.representations();
+                    let alternatives = if let Some(preferred) = item.representation {
+                        alternatives
+                            .iter()
+                            .copied()
+                            .filter(|representation| *representation as u8 >= preferred as u8)
+                            .collect::<Vec<_>>()
+                    } else {
+                        alternatives.to_vec()
+                    };
+                    let alternatives = if alternatives.is_empty() {
+                        vec![item.kind.representations()[0]]
+                    } else {
+                        alternatives
+                    };
+                    for representation in alternatives {
+                        let view = self.view_panel_item(id, item, None, islands, representation).0;
+                        samples.push(adaptive::Sample {
+                            id: item.id.clone(),
+                            representation,
+                            minimum: match item.kind {
+                                ItemKind::FocusedWindow { .. } => Some(48.0),
+                                ItemKind::Workspaces => Some(24.0),
+                                _ => None,
+                            },
+                            view,
+                        });
+                    }
+                }
+            }
+        }
+        let overflow_group = overflow_group(panel);
+        samples.push(adaptive::Sample {
+            id: overflow_group.items[0].id.clone(),
+            representation: Representation::Icon,
+            minimum: None,
+            view: self
+                .view_panel_item(id, &overflow_group.items[0], None, islands, Representation::Icon)
+                .0,
+        });
+        // Measure the control itself; reserve group decoration separately.
+        let overflow_width = 2.0 * f32::from(overflow_group.padding[1])
+            + if islands {
+                2.0 * overflow_group.island_padding
+            } else {
+                0.0
+            };
+        let content = adaptive::frame(
+            panel,
+            samples,
+            overflow_width,
+            output.map(|output| output.panel_resolution.clone()).unwrap_or_default(),
+            move |resolution| {
+                let zone = |zone: &Zone| {
+                    let mut zone = zone.clone();
+                    for group in &mut zone.groups {
+                        group.items.retain(|item| matches!(resolution.items.get(&item.id), Some(Placement::Visible { width, .. }) if *width > 0.0));
+                    }
+                    view_zone(
+                        &panel.id,
+                        &zone,
+                        availability,
+                        shell_theme,
+                        compositor_material,
+                        |item| {
+                            let Some(Placement::Visible { representation, width }) = resolution.items.get(&item.id)
+                            else {
+                                unreachable!()
+                            };
+                            self.view_panel_item(id, item, Some(*width), islands, *representation)
+                        },
+                    )
+                };
+                let start = zone(&panel.start);
+                let center = zone(&panel.center);
+                let end = zone(&panel.end);
+                let end: Element<'_, cosmic::Action<Message>> = if resolution.overflow.is_empty() {
+                    end
+                } else {
+                    let trigger = view_zone(
+                        &panel.id,
+                        &Zone {
+                            groups: vec![overflow_group.clone()],
+                            spacing: 0.0,
+                        },
+                        availability,
+                        shell_theme,
+                        compositor_material,
+                        |item| {
+                            self.view_panel_item(
+                                id,
+                                item,
+                                Some(resolution.overflow_trigger_width),
+                                islands,
+                                Representation::Icon,
+                            )
+                        },
+                    );
+                    let end_has_items = panel.end.groups.iter().flat_map(|group| &group.items)
+                        .any(|item| matches!(resolution.items.get(&item.id), Some(Placement::Visible { width, .. }) if *width > 0.0));
+                    if end_has_items {
+                        row![trigger, end]
+                            .spacing(panel.end.spacing)
+                            .align_y(cosmic::iced::Alignment::Center)
+                            .into()
+                    } else {
+                        trigger
+                    }
+                };
+                cosmic::iced::widget::stack![
+                    row![start, cosmic::iced::widget::Space::new().width(Length::Fill), end]
+                        .width(Length::Fill)
+                        .height(Length::Fill)
+                        .align_y(cosmic::iced::Alignment::Center),
+                    container(center).center_x(Length::Fill).center_y(Length::Fill),
+                ]
+                .into()
+            },
+            move |resolution| cosmic::Action::App(Message::PanelResolved(id, resolution)),
+        );
+        let content = container(content)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .padding([0, shell_theme.panel_padding.round() as u16])
+            .class(theme::Container::custom(move |_| {
+                bar_style(shell_theme, compositor_material, islands)
+            }))
+            .into();
+        presentation::frame(
+            content,
+            mode,
+            shell_theme.bar_radius,
+            move |regions| {
+                if let Some(effects) = effects
+                    && let Err(error) =
+                        effects.set_material_regions(regions, super::ferese_surface_effects_v1::Role::Panel)
+                {
+                    eprintln!("ferese-shell: could not update bar material: {error}");
+                }
+            },
+            move |regions| cosmic::Action::App(Message::BarRegionsChanged(id, regions)),
+        )
+    }
+
+    fn view_panel_item(
+        &self,
+        id: window::Id,
+        item: &Item,
+        width: Option<f32>,
+        islands: bool,
+        representation: Representation,
+    ) -> (Element<'_, cosmic::Action<Message>>, bool) {
+        let shell_theme = self.config.theme.for_bar();
+        let bar = BarMetrics::from(shell_theme);
         let control_height = if islands {
             bar.group_item_height
         } else {
             bar.control_height
         };
-        let control_metrics = BarMetrics { control_height, ..bar };
-        let mut workspace_row = row::with_capacity(self.snapshot.workspaces.len() + 1)
-            .spacing(if islands { 8 } else { 3 })
-            .align_y(cosmic::iced::Alignment::Center);
-
-        let overview = motion::button(
-            button::custom(overview_control(control_metrics, color(shell_theme.accent)))
+        let foreground = color(shell_theme.text_primary);
+        let focused_output = self.output_for_bar(id);
+        let selected = self.menu.as_ref().is_some_and(|menu| {
+            menu.anchor.parent == id
+                && menu.anchor.panel == self.config.panels[0].id
+                && menu.anchor.item.as_ref() == Some(&item.id)
+        });
+        let element = match item.kind {
+            ItemKind::Overview => motion::button(
+                button::custom(overview_control(
+                    BarMetrics { control_height, ..bar },
+                    color(shell_theme.accent),
+                ))
                 .height(control_height)
                 .padding([0, 7])
                 .on_press(cosmic::Action::App(Message::ToggleOverview)),
-            color(shell_theme.text_primary),
-            self.overview_active,
-            1.0,
-        );
-        let mut workspace_buttons = row::with_capacity(self.snapshot.workspaces.len() + usize::from(islands))
+                foreground,
+                self.overview_active,
+                1.0,
+            ),
+            ItemKind::Workspaces => {
+                let workspaces = self.view_workspace_item(id);
+                if let Some(width) = width {
+                    cosmic::iced::widget::scrollable(workspaces)
+                        .direction(cosmic::iced::widget::scrollable::Direction::Horizontal(
+                            cosmic::iced::widget::scrollable::Scrollbar::default()
+                                .width(0)
+                                .scroller_width(0),
+                        ))
+                        .width(width)
+                        .into()
+                } else {
+                    workspaces
+                }
+            }
+            ItemKind::FocusedWindow { enabled } => {
+                let title = if enabled && width.is_none_or(|width| width > 0.) {
+                    focused_bar_title(&self.snapshot, focused_output)
+                } else {
+                    ""
+                };
+                let element: Element<'_, cosmic::Action<Message>> = text(title)
+                    .size(bar.text_size)
+                    .width(width.map_or(Length::Shrink, Length::Fixed))
+                    .height(control_height)
+                    .align_x(alignment::Horizontal::Center)
+                    .align_y(alignment::Vertical::Center)
+                    .wrapping(cosmic::iced::widget::text::Wrapping::None)
+                    .ellipsize(cosmic::iced::widget::text::Ellipsize::End(
+                        cosmic::iced::advanced::text::EllipsizeHeightLimit::Lines(1),
+                    ))
+                    .class(theme::Text::Color(foreground))
+                    .into();
+                return (container(element).max_width(360).into(), !title.is_empty());
+            }
+            ItemKind::Media => self.view_media_item(representation, selected),
+            ItemKind::QuickSettings => self.view_status_item(status_ui::Menu::System, false, selected),
+            ItemKind::Network => self.view_status_item(status_ui::Menu::Network, false, selected),
+            ItemKind::Audio => self.view_status_item(status_ui::Menu::Audio, false, selected),
+            ItemKind::Recording => self.view_status_item(status_ui::Menu::Recording, false, selected),
+            ItemKind::Notifications => self.view_status_item(status_ui::Menu::Notifications, false, selected),
+            ItemKind::Battery { percentage } => self.view_status_item(
+                status_ui::Menu::Battery,
+                percentage && representation != Representation::Icon,
+                selected,
+            ),
+            ItemKind::Clock if representation == Representation::Icon => {
+                self.view_status_item(status_ui::Menu::Calendar, false, selected)
+            }
+            ItemKind::Overflow => self.view_status_item(status_ui::Menu::Overflow, false, selected),
+            ItemKind::Clock => {
+                let (date, time) = self.clock.split_once(", ").unwrap_or(("", &self.clock));
+                motion::button(
+                    button::custom(
+                        container(
+                            row![
+                                text(if representation == Representation::Wide {
+                                    date
+                                } else {
+                                    ""
+                                })
+                                .size(12)
+                                .class(theme::Text::Color(foreground)),
+                                text(time).size(bar.text_size).class(theme::Text::Color(foreground)),
+                            ]
+                            .spacing(8)
+                            .align_y(cosmic::iced::Alignment::Center),
+                        )
+                        .center_y(bar.group_item_height),
+                    )
+                    .padding([0, 8])
+                    .height(bar.group_item_height)
+                    .name("Open calendar")
+                    .on_press_with_rectangle(move |offset, bounds| {
+                        cosmic::Action::App(Message::OpenMenu(
+                            status_ui::Menu::Calendar,
+                            cosmic::iced::Rectangle {
+                                x: (bounds.x - offset.x).round() as i32,
+                                y: (bounds.y - offset.y).round() as i32,
+                                width: bounds.width.round() as i32,
+                                height: bounds.height.round() as i32,
+                            },
+                        ))
+                    }),
+                    foreground,
+                    selected,
+                    1.0,
+                )
+            }
+            ItemKind::DisplayMode => motion::button(
+                button::custom(bar_content(
+                    bar_icon(ferese_theme::icons::DISPLAY, bar.icon_size, foreground),
+                    control_height,
+                ))
+                .name("Display mode")
+                .height(control_height)
+                .padding([0, 7])
+                .on_press(cosmic::Action::App(Message::OpenDisplays(
+                    self.outputs
+                        .iter()
+                        .find(|output| output.bar == id)
+                        .and_then(|output| output.name.clone()),
+                ))),
+                foreground,
+                self.display_mode.open,
+                1.0,
+            ),
+        };
+        let panel = self.config.panels[0].id.clone();
+        let item = item.id.clone();
+        let element: Element<'_, cosmic::Action<Message>> = container(element)
+            .width(width.map_or(Length::Shrink, Length::Fixed))
+            .into();
+        (
+            element.map(move |action| match action {
+                cosmic::Action::App(Message::OpenMenu(kind, anchor)) => cosmic::Action::App(Message::OpenPopover(
+                    kind,
+                    status_ui::PopoverAnchor {
+                        parent: id,
+                        panel: panel.clone(),
+                        item: Some(item.clone()),
+                        rectangle: anchor,
+                    },
+                )),
+                other => other,
+            }),
+            true,
+        )
+    }
+
+    pub(crate) fn view_panel_overflow<'a>(
+        &'a self,
+        mut rows: cosmic::widget::Column<'a, cosmic::Action<Message>, cosmic::Theme, cosmic::Renderer>,
+    ) -> cosmic::widget::Column<'a, cosmic::Action<Message>, cosmic::Theme, cosmic::Renderer> {
+        let Some(menu) = &self.menu else { return rows };
+        let Some(output) = self.outputs.iter().find(|output| output.bar == menu.anchor.parent) else {
+            return rows;
+        };
+        let panel = &self.config.panels[0];
+        for id in &output.panel_resolution.overflow {
+            let Some(item) = panel.item(id) else {
+                continue;
+            };
+            let element = self
+                .view_panel_item(
+                    output.bar,
+                    item,
+                    Some(menu.kind.width() - 32.0),
+                    false,
+                    Representation::Wide,
+                )
+                .0;
+            let anchor = menu.anchor.clone();
+            let element = element.map(move |action| match action {
+                cosmic::Action::App(Message::OpenPopover(kind, mut target)) => {
+                    target.rectangle = anchor.rectangle;
+                    cosmic::Action::App(Message::OpenPopover(kind, target))
+                }
+                cosmic::Action::App(
+                    message @ (Message::ToggleOverview
+                    | Message::ActivateWorkspace(_)
+                    | Message::StartRecording
+                    | Message::StopRecording),
+                ) => cosmic::Action::App(Message::PanelAction(Box::new(message))),
+                other => other,
+            });
+            rows = rows.push(cosmic::widget::column![text(item.kind.label()).size(12), element].spacing(4));
+        }
+        rows
+    }
+
+    fn view_workspace_item(&self, id: window::Id) -> Element<'_, cosmic::Action<Message>> {
+        let focused_output = self.output_for_bar(id);
+        let shell_theme = self.config.theme.for_bar();
+        let bar = BarMetrics::from(shell_theme);
+        let mut workspace_buttons = row::with_capacity(self.snapshot.workspaces.len())
             .spacing(1)
             .align_y(cosmic::iced::Alignment::Center);
-        if islands {
-            workspace_buttons = workspace_buttons.push(overview);
-        } else {
-            workspace_row = workspace_row.push(overview);
-        }
-
         for workspace in self
             .snapshot
             .workspaces_for_output(focused_output.map(|output| output.id))
@@ -107,203 +469,97 @@ impl FereseShell {
             // accessible button name, without an overlay stealing its target.
             workspace_buttons = workspace_buttons.push(selector);
         }
-        workspace_row = workspace_row.push(island(
-            container(workspace_buttons)
-                .padding([2, 3])
-                .height(bar.group_height)
-                .class(theme::Container::custom(move |_| bar_group_style(shell_theme)))
-                .into(),
-            shell_theme,
-            self.config.status.bar_island_padding,
-            islands,
-            compositor_material,
-        ));
+        workspace_buttons.into()
+    }
+}
 
-        let foreground = color(shell_theme.text_primary);
-        let left = cosmic::iced::widget::scrollable(workspace_row)
-            .direction(cosmic::iced::widget::scrollable::Direction::Horizontal(
-                cosmic::iced::widget::scrollable::Scrollbar::default()
-                    .width(0)
-                    .scroller_width(0),
-            ))
-            .width(Length::Fill)
-            .height(if islands { bar.height } else { bar.group_height });
-        let (date, time) = self.clock.split_once(", ").unwrap_or(("", &self.clock));
-        let clock = motion::button(
-            button::custom(
-                container(
-                    row![
-                        text(date).size(12).class(theme::Text::Color(foreground)),
-                        text(time).size(bar.text_size).class(theme::Text::Color(foreground)),
-                    ]
-                    .spacing(8)
-                    .align_y(cosmic::iced::Alignment::Center),
-                )
-                .center_y(bar.group_item_height),
-            )
-            .padding([0, 8])
-            .height(bar.group_item_height)
-            .name("Open calendar")
-            .on_press_with_rectangle(move |offset, bounds| {
-                cosmic::Action::App(Message::OpenMenuOn(
-                    id,
-                    status_ui::Menu::Calendar,
-                    cosmic::iced::Rectangle {
-                        x: (bounds.x - offset.x).round() as i32,
-                        y: (bounds.y - offset.y).round() as i32,
-                        width: bounds.width.round() as i32,
-                        height: bounds.height.round() as i32,
-                    },
-                ))
-            }),
-            foreground,
-            self.menu
-                .as_ref()
-                .is_some_and(|menu| menu.kind == status_ui::Menu::Calendar),
-            1.0,
-        );
-        let clock: Element<'_, cosmic::Action<Message>> = if islands {
-            clock
+fn overflow_group(panel: &crate::panel::Panel) -> Group {
+    let padding = panel
+        .end
+        .groups
+        .first()
+        .map_or(ferese_config::default_bar_island_padding(), |group| {
+            group.island_padding
+        });
+    Group {
+        id: GroupId("_overflow".into()),
+        items: vec![Item {
+            id: crate::panel::ItemId("_overflow".into()),
+            kind: ItemKind::Overflow,
+            gap_before: None,
+            representation: None,
+            visible: true,
+            overflow: OverflowPolicy::Never,
+            priority: 100,
+        }],
+        surface: if panel.background == BarLayout::Islands {
+            GroupSurface::Island
         } else {
-            container(clock)
-                .padding([2, 3])
+            GroupSurface::Inset
+        },
+        spacing: 0.0,
+        padding: [2, 3],
+        island_padding: padding,
+    }
+}
+
+/// Render ordered instances; item rendering does not choose its neighbors or surface.
+fn view_zone<'a>(
+    panel: &PanelId,
+    zone: &Zone,
+    availability: Availability,
+    shell_theme: ShellTheme,
+    compositor_material: bool,
+    render: impl Fn(&Item) -> (Element<'a, cosmic::Action<Message>>, bool),
+) -> Element<'a, cosmic::Action<Message>> {
+    let bar = BarMetrics::from(shell_theme);
+    let mut groups = row::with_capacity(zone.groups.len())
+        .spacing(zone.spacing)
+        .align_y(cosmic::iced::Alignment::Center);
+    for group in &zone.groups {
+        let mut controls = row::with_capacity(group.items.len()).align_y(cosmic::iced::Alignment::Center);
+        let mut count = 0;
+        let mut has_content = false;
+        for item in group.items.iter().filter(|item| item.available(availability)) {
+            if count > 0 {
+                controls =
+                    controls.push(cosmic::iced::widget::Space::new().width(item.gap_before.unwrap_or(group.spacing)));
+            }
+            let (element, content) = render(item);
+            has_content |= content;
+            let element: Element<'_, cosmic::Action<Message>> = if matches!(item.kind, ItemKind::FocusedWindow { .. }) {
+                element
+            } else {
+                container(element).id(presentation::input_id()).into()
+            };
+            controls = controls.push(container(element).id(format!("panel:{}:item:{}", panel.0, item.id.0)));
+            count += 1;
+        }
+        if count == 0 {
+            continue;
+        }
+        let content: Element<'_, cosmic::Action<Message>> = if group.surface != GroupSurface::None && has_content {
+            container(controls)
+                .padding(group.padding)
                 .height(bar.group_height)
                 .align_y(alignment::Vertical::Center)
                 .class(theme::Container::custom(move |_| bar_group_style(shell_theme)))
                 .into()
-        };
-        let mut right = row![
-            self.view_status_bar().map(move |action| match action {
-                cosmic::Action::App(Message::OpenMenu(kind, anchor)) =>
-                    cosmic::Action::App(Message::OpenMenuOn(id, kind, anchor)),
-                other => other,
-            }),
-            clock
-        ]
-        .spacing(8)
-        .align_y(cosmic::iced::Alignment::Center);
-        if self.display_mode.external_connected() {
-            let display = motion::button(
-                button::custom(bar_content(
-                    bar_icon(ferese_theme::icons::DISPLAY, bar.icon_size, foreground),
-                    control_height,
-                ))
-                .name("Display mode")
-                .height(control_height)
-                .padding([0, 7])
-                .on_press(cosmic::Action::App(Message::OpenDisplays(
-                    self.outputs
-                        .iter()
-                        .find(|output| output.bar == id)
-                        .and_then(|output| output.name.clone()),
-                ))),
-                foreground,
-                self.display_mode.open,
-                1.0,
-            );
-            right = right.push(display);
-        }
-        let right: Element<'_, cosmic::Action<Message>> = if islands {
-            island(
-                container(right)
-                    .padding([2, 3])
-                    .height(bar.group_height)
-                    .class(theme::Container::custom(move |_| bar_group_style(shell_theme)))
-                    .into(),
-                shell_theme,
-                self.config.status.bar_island_padding,
-                true,
-                compositor_material,
-            )
         } else {
-            right.into()
+            controls.into()
         };
-        let available = self
-            .outputs
-            .iter()
-            .find(|output| output.bar == id)
-            .and_then(|output| output.size)
-            .map_or(0., |(width, _)| width as f32)
-            - 2. * (shell_theme.panel_padding + shell_theme.bar_margin_horizontal as f32);
-        let media_visible = self.media.snapshot.selected.is_some();
-        let title_width = (available - 920. - if media_visible { 400. } else { 0. }).clamp(0., 360.);
-        // Without a center title, give media controls more of a narrow bar.
-        // Keep equal sides when the title is shown so it stays centered.
-        let right_portion = if media_visible && title_width == 0. { 2 } else { 1 };
-        let title = if self.config.status.window_title && title_width > 0. {
-            focused_bar_title(&self.snapshot, focused_output)
-        } else {
-            ""
-        };
-        let center = text(title)
-            .size(bar.text_size)
-            .width(title_width)
-            .height(control_height)
-            .align_x(alignment::Horizontal::Center)
-            .align_y(alignment::Vertical::Center)
-            .wrapping(cosmic::iced::widget::text::Wrapping::None)
-            .ellipsize(cosmic::iced::widget::text::Ellipsize::End(
-                cosmic::iced::advanced::text::EllipsizeHeightLimit::Lines(1),
-            ))
-            .class(theme::Text::Color(foreground));
-        let center: Element<'_, cosmic::Action<Message>> = if islands && !title.is_empty() {
-            island(
-                container(center)
-                    .height(bar.group_height)
-                    .align_y(alignment::Vertical::Center)
-                    .class(theme::Container::custom(move |_| bar_group_style(shell_theme)))
-                    .into(),
-                shell_theme,
-                self.config.status.bar_island_padding,
-                true,
-                compositor_material,
-            )
-        } else {
-            center.into()
-        };
-        let right = cosmic::iced::widget::scrollable(container(right).width(Length::Shrink))
-            .direction(cosmic::iced::widget::scrollable::Direction::Horizontal(
-                cosmic::iced::widget::scrollable::Scrollbar::default()
-                    .width(0)
-                    .scroller_width(0),
-            ))
-            .anchor_right()
-            .width(Length::Shrink)
-            .height(if islands { bar.height } else { bar.group_height });
-        let content = row![
-            container(left).width(Length::Fill),
-            center,
-            container(right)
-                .width(Length::FillPortion(right_portion))
-                .align_x(alignment::Horizontal::Right),
-        ]
-        .spacing(8)
-        .align_y(cosmic::iced::Alignment::Center)
-        .height(Length::Fill);
-
         let content = container(content)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .padding([0, shell_theme.panel_padding.round() as u16])
-            .class(theme::Container::custom(move |_| {
-                bar_style(shell_theme, compositor_material, islands)
-            }))
+            .id(format!("panel:{}:group:{}", panel.0, group.id.0))
             .into();
-        presentation::frame(
+        groups = groups.push(island(
             content,
-            mode,
-            shell_theme.bar_radius,
-            move |regions| {
-                if let Some(effects) = effects
-                    && let Err(error) =
-                        effects.set_material_regions(regions, super::ferese_surface_effects_v1::Role::Panel)
-                {
-                    eprintln!("ferese-shell: could not update bar material: {error}");
-                }
-            },
-            move |regions| cosmic::Action::App(Message::BarRegionsChanged(id, regions)),
-        )
+            shell_theme,
+            group.island_padding,
+            group.surface == GroupSurface::Island && has_content,
+            compositor_material,
+        ));
     }
+    groups.into()
 }
 
 pub(super) fn bar_content<'a>(
@@ -517,6 +773,182 @@ pub(super) fn bar_group_style(theme: ShellTheme) -> container::Style {
 #[cfg(test)]
 mod island_tests {
     use super::*;
+    use crate::panel::{ItemId, Panel};
+    use cosmic::iced::advanced::{Layout, layout, renderer::Headless, widget};
+    use cosmic::iced::{Font, Pixels, Rectangle, Size};
+
+    #[derive(Default)]
+    struct Bounds {
+        targets: Vec<(widget::Id, String)>,
+        items: Vec<(String, Rectangle)>,
+        islands: Vec<Rectangle>,
+    }
+
+    impl widget::Operation for Bounds {
+        fn traverse(&mut self, children: &mut dyn FnMut(&mut dyn widget::Operation)) {
+            children(self);
+        }
+
+        fn container(&mut self, id: Option<&widget::Id>, bounds: Rectangle) {
+            if id == Some(&presentation::island_id()) {
+                self.islands.push(bounds);
+            }
+            if let Some((_, name)) = self.targets.iter().find(|(target, _)| Some(target) == id) {
+                self.items.push((name.clone(), bounds));
+            }
+        }
+    }
+
+    fn measure_zone(panel: &Panel, zone: &Zone, availability: Availability, title_content: bool) -> Bounds {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let renderer = runtime
+            .block_on(<cosmic::Renderer as Headless>::new(
+                Font::default(),
+                Pixels(14.),
+                Some("tiny-skia"),
+            ))
+            .unwrap();
+        let theme = ShellTheme::default();
+        let mut view = view_zone(&panel.id, zone, availability, theme, true, |item| {
+            let width = match item.kind {
+                ItemKind::Overview => 28.,
+                ItemKind::Workspaces => 72.,
+                ItemKind::FocusedWindow { .. } => 80.,
+                ItemKind::Clock => 60.,
+                _ => 20.,
+            };
+            let height = if matches!(item.kind, ItemKind::FocusedWindow { .. }) {
+                24.
+            } else {
+                20.
+            };
+            (
+                container(cosmic::iced::widget::Space::new().width(width).height(height)).into(),
+                !matches!(item.kind, ItemKind::FocusedWindow { .. }) || title_content,
+            )
+        });
+        let mut tree = widget::Tree::new(&view);
+        let node = view.as_widget_mut().layout(
+            &mut tree,
+            &renderer,
+            &layout::Limits::new(Size::ZERO, Size::new(1200., 28.)),
+        );
+        let mut bounds = Bounds {
+            targets: zone
+                .groups
+                .iter()
+                .flat_map(|group| &group.items)
+                .map(|item| {
+                    (
+                        widget::Id::from(format!("panel:{}:item:{}", panel.id.0, item.id.0)),
+                        item.id.0.clone(),
+                    )
+                })
+                .collect(),
+            ..Default::default()
+        };
+        view.as_widget_mut()
+            .operate(&mut tree, Layout::new(&node), &renderer, &mut bounds);
+        bounds
+    }
+
+    #[test]
+    fn composition_preserves_default_group_gaps_and_material_geometry() {
+        for padding in [0., 4., 13.5] {
+            for background in [BarLayout::Continuous, BarLayout::Islands] {
+                let panel = crate::panel::from_status(&crate::config::StatusConfig {
+                    bar_layout: background,
+                    bar_island_padding: padding,
+                    ..Default::default()
+                });
+                let start = measure_zone(&panel, &panel.start, Availability::default(), true);
+                assert_eq!(
+                    start.items.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(),
+                    ["overview", "workspaces"]
+                );
+                let islands = background == BarLayout::Islands;
+                assert_eq!(start.items[0].1.x, if islands { padding + 3. } else { 0. });
+                assert_eq!(start.items[1].1.x - start.items[0].1.x, if islands { 29. } else { 34. });
+                assert_eq!(start.islands.len(), usize::from(islands));
+                if islands {
+                    assert_eq!(
+                        start.islands[0],
+                        Rectangle::new((0., 0.).into(), (107. + 2. * padding, 28.).into())
+                    );
+                }
+                let end = measure_zone(&panel, &panel.end, Availability::default(), true);
+                assert_eq!(
+                    end.items.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(),
+                    ["quick-settings", "recording", "clock"]
+                );
+                assert_eq!(end.items[1].1.x - end.items[0].1.x, 21.);
+                assert_eq!(end.items[2].1.x - end.items[1].1.x, if islands { 28. } else { 34. });
+                if islands {
+                    assert_eq!(
+                        end.islands[0],
+                        Rectangle::new((0., 0.).into(), (115. + 2. * padding, 28.).into())
+                    );
+                }
+                let center = measure_zone(&panel, &panel.center, Availability::default(), true);
+                assert_eq!(center.islands.len(), usize::from(islands));
+                if islands {
+                    assert_eq!(center.islands[0].width, 80. + 2. * padding);
+                }
+                let empty_title = measure_zone(&panel, &panel.center, Availability::default(), false);
+                assert!(empty_title.islands.is_empty());
+                assert_eq!(
+                    empty_title.items[0].1.width, 80.,
+                    "keep the current empty title reservation"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn group_renderer_obeys_order_and_instance_identity_and_skips_unavailable_groups() {
+        let mut panel = crate::panel::from_status(&crate::config::StatusConfig {
+            bar_layout: BarLayout::Islands,
+            ..Default::default()
+        });
+        let group = &mut panel.end.groups[0];
+        let mut clock = group
+            .items
+            .iter()
+            .find(|item| item.kind == ItemKind::Clock)
+            .unwrap()
+            .clone();
+        let battery = group
+            .items
+            .iter()
+            .find(|item| matches!(item.kind, ItemKind::Battery { .. }))
+            .unwrap()
+            .clone();
+        clock.gap_before = None;
+        let mut second = clock.clone();
+        second.id = ItemId("other-clock".into());
+        group.items = vec![battery, clock, second];
+        let mut unavailable = group.clone();
+        unavailable.id = crate::panel::GroupId("unavailable".into());
+        unavailable.items = vec![unavailable.items.remove(0)];
+        panel.end.groups.insert(0, unavailable);
+        let result = measure_zone(&panel, &panel.end, Availability::default(), true);
+        assert_eq!(
+            result.items.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(),
+            ["clock", "other-clock"]
+        );
+        assert_eq!(result.items[0].1.x, 7., "an unavailable group adds no space");
+        assert_eq!(result.items[1].1.x, 68.);
+        assert_eq!(result.islands.len(), 1);
+        panel.end.groups[1].items.reverse();
+        let reordered = measure_zone(&panel, &panel.end, Availability::default(), true);
+        assert_eq!(
+            reordered.items.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(),
+            ["other-clock", "clock"]
+        );
+    }
 
     #[test]
     fn island_gaps_are_click_through_and_fullscreen_disables_every_input_region() {

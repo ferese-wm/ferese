@@ -1,11 +1,13 @@
 use std::time::Instant;
 
 use cosmic::app::Task;
+#[cfg(test)]
+use cosmic::iced::Rectangle;
 use cosmic::iced::platform_specific::runtime::wayland::popup::{SctkPopupSettings, SctkPositioner};
-use cosmic::iced::{Limits, Rectangle, window};
+use cosmic::iced::{Limits, window};
 use wayland_client::Proxy;
 
-use super::{Menu, OpenMenu};
+use super::{Menu, OpenMenu, PopoverAnchor};
 use crate::status::Action;
 use crate::{FereseShell, Message};
 
@@ -20,8 +22,28 @@ impl OpenMenu {
 }
 
 impl FereseShell {
-    pub fn open_menu(&mut self, kind: Menu, anchor: Rectangle<i32>) -> Task<Message> {
-        if self.menu.as_ref().is_some_and(|menu| menu.kind == kind) {
+    pub fn open_menu(&mut self, kind: Menu, anchor: PopoverAnchor) -> Task<Message> {
+        if !anchor.belongs_to(&self.config.panels[0])
+            || !self.outputs.iter().any(|output| output.bar == anchor.parent)
+            || self.bar_hidden(anchor.parent)
+            || !kind.available(&self.status)
+        {
+            return Task::none();
+        }
+        if self
+            .menu
+            .as_ref()
+            .is_some_and(|menu| menu.anchor.parent != anchor.parent)
+        {
+            let close = self.destroy_menu();
+            let open = self.open_menu(kind, anchor);
+            return close.chain(open);
+        }
+        if self
+            .menu
+            .as_ref()
+            .is_some_and(|menu| menu.kind == kind && menu.anchor.same_item(&anchor))
+        {
             if let Some(menu) = &mut self.menu
                 && menu.motion.closing()
             {
@@ -66,35 +88,18 @@ impl FereseShell {
         let notifications = self.sync_notification_surface();
         crate::EFFECT_FRAME_PENDING.store(true, std::sync::atomic::Ordering::Relaxed);
         self.status_error = None;
-        let parent = self.bar_surface_id;
-        let anchor = if kind == Menu::System {
-            self.outputs
-                .iter()
-                .find(|output| output.bar == parent)
-                .and_then(|output| output.size)
-                .map(|(width, _)| {
-                    let theme = self.config.theme;
-                    Rectangle {
-                        x: (width - theme.bar_margin_horizontal * 2 - theme.panel_padding.round() as i32 - 1).max(0),
-                        y: 0,
-                        width: 1,
-                        height: theme.bar_height.round() as i32,
-                    }
-                })
-                .unwrap_or(anchor)
-        } else {
-            anchor
-        };
+        let parent = anchor.parent;
+        let rectangle = anchor.rectangle;
         let height_limit = if kind == Menu::Notifications {
             self.notification_history_height_limit()
         } else {
             kind.height_limit()
         };
         let positioner = SctkPositioner {
-            anchor_rect: anchor,
+            anchor_rect: rectangle,
             anchor: 2u32.try_into().unwrap(),
             gravity: 6u32.try_into().unwrap(),
-            offset: (anchor.width / 2, 8),
+            offset: (rectangle.width / 2, 8),
             // The view's autosize widget supplies the active panel's bounds.
             // Keep initial popup limits broad enough for later panel changes.
             size_limits: Limits::NONE.max_width(368.0).max_height(720.0_f32.max(height_limit)),
@@ -102,6 +107,7 @@ impl FereseShell {
             ..Default::default()
         };
         if let Some(menu) = &mut self.menu {
+            menu.anchor = anchor;
             menu.switch_panel(kind, self.config.animations, Instant::now());
             return Task::batch([
                 notifications,
@@ -111,6 +117,7 @@ impl FereseShell {
         let id = window::Id::unique();
         self.menu = Some(OpenMenu {
             id,
+            anchor,
             kind,
             motion: crate::motion::PopupMotion::new(self.config.animations),
             effects: None,
@@ -218,12 +225,38 @@ mod tests {
     use crate::motion::{PopupMotion, Settings};
     use std::time::Duration;
 
+    fn test_anchor() -> PopoverAnchor {
+        PopoverAnchor {
+            parent: window::Id::unique(),
+            panel: crate::panel::PanelId("main".into()),
+            item: Some(crate::panel::ItemId("battery".into())),
+            rectangle: Rectangle::default(),
+        }
+    }
+
+    #[test]
+    fn popup_identity_includes_parent_panel_and_instance_but_not_rectangle() {
+        let first = test_anchor();
+        let mut second = first.clone();
+        second.rectangle.x = 100;
+        assert!(first.same_item(&second));
+        second.item = Some(crate::panel::ItemId("other-battery".into()));
+        assert!(!first.same_item(&second));
+        second = first.clone();
+        second.parent = window::Id::unique();
+        assert!(!first.same_item(&second));
+        second = first.clone();
+        second.panel = crate::panel::PanelId("other".into());
+        assert!(!first.same_item(&second));
+    }
+
     #[test]
     fn switching_panels_replays_entrance_on_the_same_surface() {
         let now = Instant::now();
         let settings = Settings::default();
         let mut menu = OpenMenu {
             id: window::Id::unique(),
+            anchor: test_anchor(),
             kind: Menu::Battery,
             motion: PopupMotion::new(settings),
             effects: None,
@@ -268,6 +301,7 @@ mod tests {
         let now = Instant::now();
         let mut menu = OpenMenu {
             id: window::Id::unique(),
+            anchor: test_anchor(),
             kind: Menu::Battery,
             motion: PopupMotion::new(Settings::default()),
             effects: None,
@@ -298,5 +332,36 @@ mod tests {
             now,
         );
         assert_eq!(menu.motion.progress_at(now + Duration::from_millis(60)), normal);
+    }
+    #[test]
+    fn popup_anchors_reject_removed_hidden_items_and_other_panel_definitions() {
+        let mut panel = crate::panel::Panel::from_defaults(&crate::panel::Defaults::default());
+        let anchor = PopoverAnchor {
+            parent: window::Id::unique(),
+            panel: panel.id.clone(),
+            item: Some(crate::panel::ItemId("network".into())),
+            rectangle: Rectangle {
+                x: 0,
+                y: 0,
+                width: 20,
+                height: 20,
+            },
+        };
+        assert!(anchor.belongs_to(&panel));
+        panel.end.groups[0].items[2].visible = false;
+        assert!(!anchor.belongs_to(&panel));
+        panel.end.groups[0].items.remove(2);
+        assert!(!anchor.belongs_to(&panel));
+        panel.id = crate::panel::PanelId("other".into());
+        let fallback = PopoverAnchor {
+            item: None,
+            ..anchor.clone()
+        };
+        assert!(!fallback.belongs_to(&panel));
+        let fallback = PopoverAnchor {
+            panel: panel.id.clone(),
+            ..fallback
+        };
+        assert!(fallback.belongs_to(&panel));
     }
 }

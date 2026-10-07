@@ -17,6 +17,8 @@ mod motion;
 mod note_store;
 mod notification_ui;
 mod notifications;
+mod panel;
+mod panel_layout;
 mod recording;
 mod renderer;
 mod status;
@@ -164,7 +166,6 @@ type WallpaperLoad = cosmic::iced::futures::channel::oneshot::Receiver<Result<im
 
 struct FereseShell {
     core: Core,
-    bar_surface_id: window::Id,
     config: ShellConfig,
     wallpaper: Option<image::Handle>,
     control: Option<ShellControl>,
@@ -226,12 +227,14 @@ struct OutputSurfaces {
     size: Option<(i32, i32)>,
     effects: Option<EffectsBinding>,
     bar_regions: Vec<[f32; 5]>,
+    panel_resolution: panel_layout::Resolution,
     hidden: bool,
 }
 
 #[derive(Clone, Debug)]
 enum Message {
     BarRegionsChanged(window::Id, Vec<[f32; 5]>),
+    PanelResolved(window::Id, panel_layout::Resolution),
     ThemeChanged(Box<ferese_ipc::theme::Snapshot>),
     ThemeMode(ferese_config::theme::Mode),
     ThemeModeSet(Result<(), String>),
@@ -273,8 +276,9 @@ enum Message {
     ToggleNotificationGroup(String),
     RemoveNotificationGroup(String),
     AnimateMenu,
+    PanelAction(Box<Message>),
     OpenMenu(status_ui::Menu, cosmic::iced::Rectangle<i32>),
-    OpenMenuOn(window::Id, status_ui::Menu, cosmic::iced::Rectangle<i32>),
+    OpenPopover(status_ui::Menu, status_ui::PopoverAnchor),
     Control(status::Action),
     ShowGuide,
     GuideLoaded {
@@ -316,11 +320,9 @@ impl cosmic::Application for FereseShell {
     }
 
     fn init(core: Core, (config, wallpaper): Self::Flags) -> (Self, Task<Self::Message>) {
-        let bar_surface_id = window::Id::unique();
         let desktop_clock = config.desktop_widgets.clock.labels(&Zoned::now()).unwrap_or_default();
         let app = Self {
             core,
-            bar_surface_id,
             notifications: notifications::Center::new(config.notifications.clone()),
             notification_surface: None,
             status_service: status::Service::start(config.status.settings_command.clone()),
@@ -429,6 +431,21 @@ impl cosmic::Application for FereseShell {
 
     fn update(&mut self, message: Self::Message) -> Task<Self::Message> {
         match message {
+            Message::PanelResolved(id, resolution) => {
+                let close_overflow = resolution.overflow.is_empty()
+                    && self
+                        .menu
+                        .as_ref()
+                        .is_some_and(|menu| menu.kind == status_ui::Menu::Overflow && menu.anchor.parent == id);
+                if let Some(output) = self.outputs.iter_mut().find(|output| output.bar == id) {
+                    output.panel_resolution = resolution;
+                }
+                if close_overflow {
+                    self.destroy_menu()
+                } else {
+                    Task::none()
+                }
+            }
             Message::BarRegionsChanged(id, regions) => {
                 let Some(output) = self.outputs.iter_mut().find(|output| output.bar == id) else {
                     return Task::none();
@@ -437,7 +454,7 @@ impl cosmic::Application for FereseShell {
                 output.bar_regions = regions;
                 set_input_zone(
                     id,
-                    bar::input_region(self.config.status.bar_layout, output.hidden, &output.bar_regions),
+                    bar::input_region(self.config.panels[0].background, output.hidden, &output.bar_regions),
                 )
             }
 
@@ -580,7 +597,7 @@ impl cosmic::Application for FereseShell {
             }
             Message::NativeSurface(id, result) => {
                 match result {
-                    Ok((_connection, surface)) if self.outputs.iter().any(|entry| entry.bar == id) => {
+                    Ok((_connection, surface)) if self.outputs.iter().any(|output| output.bar == id) => {
                         self.attach_effects(id, &surface)
                     }
                     Ok((_connection, surface)) => {
@@ -676,17 +693,13 @@ impl cosmic::Application for FereseShell {
                 self.sync_notification_surface()
             }
             Message::AnimateMenu => self.animate_menu(),
-            Message::OpenMenu(kind, anchor) => self.open_menu(kind, anchor),
-            Message::OpenMenuOn(id, kind, anchor) => {
-                if self.bar_surface_id != id {
-                    let destroy = self.destroy_menu();
-                    self.bar_surface_id = id;
-                    let open = self.open_menu(kind, anchor);
-                    Task::batch([destroy, open])
-                } else {
-                    self.open_menu(kind, anchor)
-                }
+            Message::PanelAction(message) => {
+                let close = self.destroy_menu();
+                let action = self.update(*message);
+                close.chain(action)
             }
+            Message::OpenMenu(..) => Task::none(), // Bar views attach an explicit item/surface anchor.
+            Message::OpenPopover(kind, anchor) => self.open_menu(kind, anchor),
             Message::ShowGuide => {
                 if self.guide_shown
                     || self.guide_load.loading
@@ -864,10 +877,14 @@ impl cosmic::Application for FereseShell {
                             }
                             tasks.push(set_input_zone(
                                 entry.bar,
-                                bar::input_region(self.config.status.bar_layout, hidden, &entry.bar_regions),
+                                bar::input_region(self.config.panels[0].background, hidden, &entry.bar_regions),
                             ));
                         }
-                        if self.bar_hidden(self.bar_surface_id) {
+                        if self
+                            .menu
+                            .as_ref()
+                            .is_some_and(|menu| self.bar_hidden(menu.anchor.parent))
+                        {
                             tasks.push(self.destroy_menu());
                         }
                         if visibility_changed {
@@ -960,6 +977,7 @@ impl FereseShell {
         self.status_service
             .update_settings(config.status.settings_command.clone());
 
+        let composition_changed = self.config.panels != config.panels;
         let old = self.config.theme;
         let old_clock = &self.config.desktop_widgets.clock;
         let old_notes = &self.config.desktop_widgets.notes;
@@ -993,6 +1011,17 @@ impl FereseShell {
         } else {
             Task::none()
         }];
+
+        if composition_changed {
+            tasks.push(self.destroy_menu());
+            for output in &mut self.outputs {
+                output.panel_resolution = Default::default();
+                tasks.push(set_input_zone(
+                    output.bar,
+                    bar::input_region(self.config.panels[0].background, output.hidden, &output.bar_regions),
+                ));
+            }
+        }
 
         if !self.guide_load.manual
             && !self.config.status.keybinding_guide

@@ -170,7 +170,15 @@ impl FereseShell {
                     .iter()
                     .position(|output| output.name.as_deref() == Some(name))
             })
-            .or_else(|| self.outputs.iter().position(|output| output.bar == self.bar_surface_id))
+            .or_else(|| {
+                self.menu
+                    .as_ref()
+                    .and_then(|menu| self.outputs.iter().position(|output| output.bar == menu.anchor.parent))
+            })
+            .or_else(|| {
+                self.active_bar()
+                    .and_then(|bar| self.outputs.iter().position(|output| output.bar == bar))
+            })
             .unwrap_or(0);
         let mut tasks = vec![
             self.destroy_system_modal(true),

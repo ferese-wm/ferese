@@ -5,7 +5,7 @@ use serde::Deserialize;
 
 const DEFAULT_BACKGROUND: [u8; 3] = [11, 15, 20];
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub(crate) struct ShellConfig {
     pub(crate) notifications: ferese_config::notifications::NotificationConfig,
     pub(crate) desktop_widgets: ferese_config::desktop::DesktopWidgets,
@@ -15,6 +15,24 @@ pub(crate) struct ShellConfig {
     pub(crate) theme: ShellTheme,
     pub(crate) theme_mode: ferese_config::theme::Mode,
     pub(crate) status: StatusConfig,
+    pub(crate) panels: Vec<crate::panel::Panel>,
+}
+
+impl Default for ShellConfig {
+    fn default() -> Self {
+        let status = StatusConfig::default();
+        Self {
+            notifications: Default::default(),
+            desktop_widgets: Default::default(),
+            animations: Default::default(),
+            font_family: None,
+            wallpaper: Default::default(),
+            theme: Default::default(),
+            theme_mode: Default::default(),
+            panels: vec![crate::panel::from_status(&status)],
+            status,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -164,6 +182,8 @@ pub(crate) enum WallpaperMode {
 
 #[derive(Debug, Default, Deserialize)]
 struct FereseConfig {
+    #[serde(default)]
+    panels: Option<Vec<crate::panel::Panel>>,
     #[serde(default)]
     notifications: ferese_config::notifications::NotificationConfig,
     #[serde(default)]
@@ -368,6 +388,9 @@ fn parse_document(
         .map_err(|error| ferese_config::Error::from(error.to_string()))
     {
         Ok(config) => {
+            if let Some(panels) = &config.panels {
+                ferese_config::panel::validate(panels).map_err(ferese_config::Error::from)?;
+            }
             config.animations.validate().map_err(ferese_config::Error::from)?;
             config.notifications.validate().map_err(ferese_config::Error::from)?;
             config.desktop_widgets.validate().map_err(ferese_config::Error::from)?;
@@ -393,6 +416,9 @@ fn parse_document(
                 wallpaper: config.theme.background,
                 theme,
                 theme_mode: mode,
+                panels: config
+                    .panels
+                    .unwrap_or_else(|| vec![crate::panel::from_status(&config.status)]),
                 status: StatusConfig {
                     low_battery_threshold: config.status.low_battery_threshold.min(100),
                     ..config.status
@@ -637,6 +663,48 @@ mod tests {
                 .status
                 .keybinding_guide
         );
+    }
+
+    #[test]
+    fn config_loading_translates_existing_settings_into_composition() {
+        use crate::panel::{GroupSurface, ItemKind};
+
+        let fallback = ShellConfig::default();
+        let defaults = parse_test_source("").unwrap();
+        assert_eq!(fallback.panels, defaults.panels);
+        let source = "status { bar-layout \"islands\"; bar-island-padding 9.5; window-title #false; battery-percentage #false; }";
+        let current = parse_test_source(source).unwrap();
+        assert!(parse_test_source("status { bar-island-padding -1; }").is_err());
+        assert_eq!(current.panels.len(), 1);
+        let panel = &current.panels[0];
+        assert_eq!(panel.background, ferese_config::BarLayout::Islands);
+        assert_eq!(panel.end.groups[0].surface, GroupSurface::Island);
+        assert_eq!(panel.end.groups[0].island_padding, 9.5);
+        assert_eq!(
+            panel.center.groups[0].items[0].kind,
+            ItemKind::FocusedWindow { enabled: false }
+        );
+        assert_eq!(
+            panel.end.groups[0].items[6].kind,
+            ItemKind::Battery { percentage: false }
+        );
+        let reloaded = parse_test_source("").unwrap();
+        assert_eq!(reloaded.panels, defaults.panels);
+    }
+
+    #[test]
+    fn authored_composition_overrides_legacy_arrangement_and_rejects_invalid_reload_data() {
+        let source = r#"status { bar-layout "continuous"; }
+panel "custom" { background "islands"; end { group "clocks" { item "one" kind="clock"; item "two" kind="clock"; }; }; }
+"#;
+        let config = parse_test_source(source).unwrap();
+        assert_eq!(config.panels[0].id.0, "custom");
+        assert_eq!(config.panels[0].background, ferese_config::BarLayout::Islands);
+        assert_eq!(config.panels[0].end.groups[0].items.len(), 2);
+        assert!(parse_test_source(&source.replace("item \"two\"", "item \"one\"")).is_err());
+        assert!(parse_test_source("panel \"one\"; panel \"two\";").is_err());
+        assert!(parse_test_source("panel \"one\" { edge \"bottom\"; }").is_err());
+        assert_eq!(config.panels[0].end.groups[0].items[1].id.0, "two");
     }
 
     #[test]

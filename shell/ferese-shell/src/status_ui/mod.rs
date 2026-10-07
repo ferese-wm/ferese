@@ -41,6 +41,7 @@ pub enum Menu {
     Media,
     Notifications,
     System,
+    Overflow,
 }
 
 impl Menu {
@@ -57,7 +58,7 @@ impl Menu {
         relevant.then_some(error.message.as_str())
     }
 
-    fn width(self) -> f32 {
+    pub(crate) fn width(self) -> f32 {
         match self {
             Self::System => 360.0,
             Self::Battery => 328.0,
@@ -74,6 +75,7 @@ impl Menu {
     fn title(self) -> &'static str {
         match self {
             Self::System => "Control Center",
+            Self::Overflow => "Panel items",
             Self::Network => "Wi-Fi",
             Self::Bluetooth => "Bluetooth",
             Self::Audio => "Sound",
@@ -93,17 +95,41 @@ impl Menu {
             Self::Battery => status.battery.is_some(),
             Self::Calendar | Self::Recording | Self::Media => true,
             Self::Notifications => status.notifications.is_some(),
-            Self::System => true,
+            Self::System | Self::Overflow => true,
         }
     }
 }
 
 pub struct OpenMenu {
     pub id: window::Id,
+    pub anchor: PopoverAnchor,
     pub kind: Menu,
     pub motion: super::motion::PopupMotion,
     pub effects: Option<EffectsBinding>,
     pub regions: super::motion::Regions,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct PopoverAnchor {
+    pub parent: window::Id,
+    pub panel: crate::panel::PanelId,
+    // Notifications can be opened from a toast without a panel item.
+    pub item: Option<crate::panel::ItemId>,
+    pub rectangle: cosmic::iced::Rectangle<i32>,
+}
+
+impl PopoverAnchor {
+    pub(crate) fn belongs_to(&self, panel: &crate::panel::Panel) -> bool {
+        self.panel == panel.id
+            && self
+                .item
+                .as_ref()
+                .is_none_or(|id| id.0 == "_overflow" || panel.item(id).is_some_and(|item| item.visible))
+    }
+
+    pub fn same_item(&self, other: &Self) -> bool {
+        self.parent == other.parent && self.panel == other.panel && self.item == other.item
+    }
 }
 
 impl OpenMenu {
@@ -219,6 +245,7 @@ impl FereseShell {
             Menu::Calendar => rows.push(calendar::view(self.calendar_offset, theme, p)),
             Menu::Notifications => notification_controls(self, rows, style, false),
             Menu::Recording => rows,
+            Menu::Overflow => self.view_panel_overflow(rows),
             Menu::Media => media::view(self, rows, style),
         };
         if kind != Menu::Calendar && !kind.available(&self.status) {
@@ -237,7 +264,12 @@ impl FereseShell {
         }
 
         let compositor_material = menu.effects.is_some();
-        let panel = container(rows)
+        let body: Element<'_, cosmic::Action<Message>> = if kind == Menu::Overflow {
+            cosmic::widget::scrollable(rows).height(Length::Shrink).into()
+        } else {
+            rows.into()
+        };
+        let panel = container(body)
             .id("ferese-blur-card")
             .width(kind.width())
             .padding(16)
@@ -378,6 +410,12 @@ mod tests {
         motion.begin(past);
         let menu = OpenMenu {
             id: window::Id::unique(),
+            anchor: PopoverAnchor {
+                parent: window::Id::unique(),
+                panel: crate::panel::PanelId("main".into()),
+                item: None,
+                rectangle: Default::default(),
+            },
             kind: Menu::Network,
             motion,
             effects: None,

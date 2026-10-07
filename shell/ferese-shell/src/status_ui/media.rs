@@ -73,11 +73,12 @@ pub(super) fn bar<'a>(
     shell: &'a FereseShell,
     palette: ShellTheme,
     metrics: BarMetrics,
+    representation: crate::panel::Representation,
+    selected: bool,
 ) -> Element<'a, cosmic::Action<Message>> {
     let Some(player) = &shell.media.snapshot.selected else {
         return text("").into();
     };
-    let selected = shell.menu.as_ref().is_some_and(|menu| menu.kind == Menu::Media);
     let foreground = color(if selected { palette.accent } else { palette.text_primary });
     let height = (metrics.group_item_height - 4.0).max(0.0);
     let side = height.min(24.0);
@@ -113,7 +114,11 @@ pub(super) fn bar<'a>(
         .class(theme::Text::Color(foreground));
     let label = container(label).max_width(112);
     let details = button::custom(bar_content(
-        row![cover, label].spacing(8).align_y(Alignment::Center),
+        if representation == crate::panel::Representation::Compact {
+            row![label].align_y(Alignment::Center)
+        } else {
+            row![cover, label].spacing(8).align_y(Alignment::Center)
+        },
         height,
     ))
     .name(format!("Now playing: {}", player.label()))

@@ -8,6 +8,11 @@ pub(crate) fn island_id() -> widget::Id {
     ID.get_or_init(widget::Id::unique).clone()
 }
 
+pub(crate) fn input_id() -> widget::Id {
+    static ID: std::sync::OnceLock<widget::Id> = std::sync::OnceLock::new();
+    ID.get_or_init(widget::Id::unique).clone()
+}
+
 pub(super) fn frame<'a, M: 'a>(
     content: Element<'a, M>,
     mode: BarLayout,
@@ -29,7 +34,9 @@ struct State {
     mode: Option<BarLayout>,
     current: Vec<[f32; 5]>,
     scratch: Vec<[f32; 5]>,
-    scroll_starts: Vec<usize>,
+    input: Vec<[f32; 5]>,
+    input_scratch: Vec<[f32; 5]>,
+    scroll_starts: Vec<(usize, usize)>,
 }
 
 type Present<'a> = Box<dyn Fn(&[[f32; 5]]) + 'a>;
@@ -111,10 +118,12 @@ impl<M> Widget<M, Theme, cosmic::Renderer> for Presentation<'_, M> {
         let state = tree.state.downcast_mut::<State>();
         let mut collector = Collect {
             regions: std::mem::take(&mut state.scratch),
+            input: std::mem::take(&mut state.input_scratch),
             scroll_starts: std::mem::take(&mut state.scroll_starts),
             radius: self.radius,
         };
         collector.regions.clear();
+        collector.input.clear();
         collector.scroll_starts.clear();
         if self.mode == BarLayout::Islands {
             self.content
@@ -128,15 +137,23 @@ impl<M> Widget<M, Theme, cosmic::Renderer> for Presentation<'_, M> {
         }
 
         collector.clip_from(0, layout.bounds(), Vector::ZERO);
+        collector.clip_input_from(0, layout.bounds(), Vector::ZERO);
         collector.regions.retain(|region| region[2] > 0.0 && region[3] > 0.0);
+        collector.input.retain(|region| region[2] > 0.0 && region[3] > 0.0);
         (self.present)(&collector.regions);
-        if state.mode != Some(self.mode) || state.current != collector.regions {
+        if state.mode != Some(self.mode) || state.current != collector.regions || state.input != collector.input {
             state.mode = Some(self.mode);
             state.current.clone_from(&collector.regions);
-            shell.publish((self.changed)(collector.regions.clone()));
+            state.input.clone_from(&collector.input);
+            shell.publish((self.changed)(if self.mode == BarLayout::Continuous {
+                collector.regions.clone()
+            } else {
+                collector.input.clone()
+            }));
         }
 
         state.scratch = collector.regions;
+        state.input_scratch = collector.input;
         state.scroll_starts = collector.scroll_starts;
     }
 
@@ -196,11 +213,18 @@ impl<M> Widget<M, Theme, cosmic::Renderer> for Presentation<'_, M> {
 
 struct Collect {
     regions: Vec<[f32; 5]>,
-    scroll_starts: Vec<usize>,
+    input: Vec<[f32; 5]>,
+    scroll_starts: Vec<(usize, usize)>,
     radius: f32,
 }
 
 impl Collect {
+    fn clip_input_from(&mut self, start: usize, viewport: Rectangle, translation: Vector) {
+        std::mem::swap(&mut self.regions, &mut self.input);
+        self.clip_from(start, viewport, translation);
+        std::mem::swap(&mut self.regions, &mut self.input);
+    }
+
     fn clip_from(&mut self, start: usize, viewport: Rectangle, translation: Vector) {
         for region in &mut self.regions[start..] {
             let bounds = Rectangle {
@@ -221,6 +245,10 @@ impl widget::Operation for Collect {
     }
 
     fn container(&mut self, id: Option<&widget::Id>, bounds: Rectangle) {
+        if id == Some(&island_id()) || id == Some(&input_id()) {
+            self.input
+                .push([bounds.x, bounds.y, bounds.width, bounds.height, self.radius]);
+        }
         if id == Some(&island_id()) {
             self.regions
                 .push([bounds.x, bounds.y, bounds.width, bounds.height, self.radius]);
@@ -230,7 +258,7 @@ impl widget::Operation for Collect {
     fn pre_operation(&mut self, _id: Option<&widget::Id>) {
         // Iced visits scrollable content before its scrollable callback. Record
         // the range so only that subtree receives its offset and viewport clip.
-        self.scroll_starts.push(self.regions.len());
+        self.scroll_starts.push((self.regions.len(), self.input.len()));
     }
 
     fn scrollable(
@@ -241,8 +269,9 @@ impl widget::Operation for Collect {
         translation: Vector,
         _state: &mut dyn widget::operation::Scrollable,
     ) {
-        if let Some(start) = self.scroll_starts.pop() {
+        if let Some((start, input_start)) = self.scroll_starts.pop() {
             self.clip_from(start, bounds, translation);
+            self.clip_input_from(input_start, bounds, translation);
         }
     }
 }
@@ -350,6 +379,7 @@ mod tests {
     fn scrolling_clips_only_its_own_islands_and_preserves_fractional_positions() {
         let mut collector = Collect {
             regions: vec![[400., 2., 80., 24., 14.], [10.25, 2., 180., 24., 14.]],
+            input: Vec::new(),
             scroll_starts: Vec::new(),
             radius: 14.,
         };
@@ -365,5 +395,64 @@ mod tests {
         collector.clip_from(0, Rectangle::new((0., 0.).into(), (200., 28.).into()), Vector::ZERO);
         collector.regions.retain(|region| region[2] > 0. && region[3] > 0.);
         assert_eq!(collector.regions, vec![[20., 2., 100., 24., 14.]]);
+    }
+    #[test]
+    fn undecorated_controls_have_input_regions_without_creating_material_or_gap_regions() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let renderer = runtime
+            .block_on(<cosmic::Renderer as Headless>::new(
+                Font::default(),
+                Pixels(14.),
+                Some("tiny-skia"),
+            ))
+            .unwrap();
+        let content = row![
+            container(widgets::Space::new().width(30).height(24)).id(input_id()),
+            container(widgets::Space::new().width(40).height(24)).id(input_id()),
+        ]
+        .spacing(20)
+        .into();
+        let materials = std::cell::RefCell::new(Vec::new());
+        let mut view = frame(
+            content,
+            BarLayout::Islands,
+            14.,
+            |regions| *materials.borrow_mut() = regions.to_vec(),
+            |regions| regions,
+        );
+        let mut tree = widget::Tree::new(&view);
+        let viewport = Rectangle::new((0., 0.).into(), (100., 28.).into());
+        let node = view
+            .as_widget_mut()
+            .layout(&mut tree, &renderer, &layout::Limits::new(Size::ZERO, viewport.size()));
+        let mut messages = Vec::new();
+        view.as_widget_mut().update(
+            &mut tree,
+            &Event::Window(cosmic::iced::window::Event::RedrawRequested(std::time::Instant::now())),
+            Layout::new(&node),
+            mouse::Cursor::Unavailable,
+            &renderer,
+            &mut clipboard::Null,
+            &mut Shell::new(&mut messages),
+            &viewport,
+        );
+        assert!(materials.borrow().is_empty());
+        assert_eq!(messages, vec![vec![[0., 0., 30., 24., 14.], [50., 0., 40., 24., 14.]]]);
+        let mut collector = Collect {
+            regions: vec![[300., 0., 20., 24., 14.]],
+            input: messages.remove(0),
+            scroll_starts: Vec::new(),
+            radius: 14.,
+        };
+        collector.clip_input_from(
+            1,
+            Rectangle::new((40., 0.).into(), (20., 28.).into()),
+            Vector::new(10., 0.),
+        );
+        assert_eq!(collector.input, vec![[0., 0., 30., 24., 14.], [40., 0., 20., 24., 14.]]);
+        assert_eq!(collector.regions, vec![[300., 0., 20., 24., 14.]]);
     }
 }

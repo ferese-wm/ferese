@@ -21,6 +21,11 @@ impl Snapshot {
             return Err("Configuration exceeds the 60 KiB limit.".into());
         }
         let doc = Document::parse(&source).map_err(|e| e.to_string())?;
+        if let Some(value) = doc.get("panels") {
+            let panels: Vec<ferese_config::panel::Panel> =
+                serde_json::from_value(value.clone()).map_err(|error| error.to_string())?;
+            ferese_config::panel::validate(&panels)?;
+        }
         Ok(Self { source, doc })
     }
 

@@ -13,13 +13,15 @@ impl FereseShell {
             if let Some(index) = self.outputs.iter().position(|entry| entry.output == output) {
                 let entry = self.outputs.remove(index);
                 self.refresh_media_art(false);
-                let menu = if self.bar_surface_id == entry.bar {
+                let menu = if self.menu.as_ref().is_some_and(|menu| menu.anchor.parent == entry.bar) {
                     self.destroy_menu()
                 } else {
                     Task::none()
                 };
-
-                let mut tasks = vec![destroy_layer_surface(entry.bar), menu, self.rebuild_system_modal()];
+                let mut tasks = vec![
+                    menu.chain(destroy_layer_surface(entry.bar)),
+                    self.rebuild_system_modal(),
+                ];
                 if self.note_drag.as_ref().is_some_and(|drag| {
                     entry.clock == Some(drag.source) || entry.notes.iter().any(|(_, id)| *id == drag.source)
                 }) {
@@ -76,7 +78,7 @@ impl FereseShell {
         let bar_surface_id = window::Id::unique();
         let wallpaper_surface_id = window::Id::unique();
         let shell_theme = self.config.theme;
-        let bar_layout = self.config.status.bar_layout;
+        let bar_layout = self.config.panels[0].background;
         let bar = BarMetrics::from(shell_theme);
         let wallpaper_output = output.clone();
         let bar_output = output.clone();
@@ -97,6 +99,7 @@ impl FereseShell {
                 .then_some(wallpaper_surface_id),
             effects: None,
             bar_regions: Vec::new(),
+            panel_resolution: Default::default(),
             clock: None,
             notes: Vec::new(),
             size,
@@ -398,7 +401,7 @@ impl FereseShell {
 
     pub(super) fn attach_effects(&mut self, id: window::Id, surface: &wl_surface::WlSurface) {
         let hidden = self.bar_hidden(id);
-        let islands = self.config.status.bar_layout == ferese_config::BarLayout::Islands;
+        let islands = self.config.panels[0].background == ferese_config::BarLayout::Islands;
         let Some(entry) = self.outputs.iter_mut().find(|entry| entry.bar == id) else {
             return;
         };
