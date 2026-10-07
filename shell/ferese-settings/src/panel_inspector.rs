@@ -28,7 +28,7 @@ impl App {
                 .spacing(8)
                 .align_y(cosmic::iced::Alignment::Center)
                 .push(self.label("Placement", 13.).width(cosmic::iced::Length::Fill))
-                .push(ferese_theme::controls::select(
+                .push(crate::visuals::panel_select(
                     cosmic::iced::widget::pick_list(
                         crate::panel_edit::destinations(panel),
                         Some(destination.clone()),
@@ -52,15 +52,11 @@ impl App {
             &item.id,
             Field::new(
                 format!("{path}.overflow"),
-                "When space is limited",
+                "Overflow",
                 "Keep visible moves to overflow only if the panel cannot fit its minimum controls.",
                 Kind::Choice {
                     default: "auto",
-                    choices: &[
-                        ("never", "Keep visible"),
-                        ("auto", "Overflow when needed"),
-                        ("always", "Always in overflow"),
-                    ],
+                    choices: &[("never", "Keep visible"), ("auto", "When needed"), ("always", "Always")],
                 },
             ),
         ));
@@ -112,26 +108,27 @@ impl App {
             .position(|candidate| candidate.id == item.id)
             .unwrap();
         rows = rows.push(
-            widget::row([])
-                .spacing(6)
-                .push(self.settings_button(
+            widget::flex_row(vec![
+                self.settings_button(
                     "Move earlier",
                     "M6 15l6-6 6 6",
                     (index > 0).then(|| Message::PanelEdit(Action::Earlier(item.id.clone()))),
                     false,
-                ))
-                .push(self.settings_button(
+                ),
+                self.settings_button(
                     "Move later",
                     "M6 9l6 6 6-6",
                     (index + 1 < group.items.len()).then(|| Message::PanelEdit(Action::Later(item.id.clone()))),
                     false,
-                ))
-                .push(self.settings_button(
+                ),
+                self.settings_button(
                     "Remove item",
                     "M6 6l12 12 M6 18L18 6",
                     Some(Message::PanelEdit(Action::Remove(item.id.clone()))),
                     false,
-                )),
+                ),
+            ])
+            .spacing(6),
         );
         rows.into()
     }
@@ -139,7 +136,7 @@ impl App {
     pub(super) fn group_inspector(&self, panel: &Panel, group: &Group, placement: Zone) -> Element<'static, Message> {
         let palette = crate::visuals::Palette::from_resolved(&self.resolved.presented);
         let id = group.id.clone();
-        let path = crate::panel_edit::group_record_path(panel, &id).expect("existing group");
+
         let mut rows = widget::column([])
             .spacing(4)
             .push(self.label(format!("Group · {}", group.id.0), 14.))
@@ -147,7 +144,7 @@ impl App {
                 widget::row([])
                     .align_y(cosmic::iced::Alignment::Center)
                     .push(self.label("Placement", 13.).width(cosmic::iced::Length::Fill))
-                    .push(ferese_theme::controls::select(
+                    .push(crate::visuals::panel_select(
                         cosmic::iced::widget::pick_list(Zone::ALL.to_vec(), Some(placement), move |zone| {
                             Message::PanelEdit(Action::MoveGroup(id.clone(), zone))
                         })
@@ -157,23 +154,18 @@ impl App {
                     )),
             );
         let id = group.id.clone();
-        rows = rows.push(
-            self.field(Field::new(
-                format!("{path}.surface"),
-                "Group surface",
-                "",
-                Kind::Choice {
-                    default: "inset",
-                    choices: &[("none", "None"), ("inset", "Inset"), ("island", "Island")],
-                },
-            ))
-            .map(move |message| match message {
-                Message::Change(store::Edit::Set(_, value)) => {
-                    Message::PanelEdit(Action::SetGroup(id.clone(), "surface".into(), value))
-                }
-                other => other,
-            }),
-        );
+        let selected = match group.surface {
+            GroupSurface::None => "none",
+            GroupSurface::Inset => "inset",
+            GroupSurface::Island => "island",
+        };
+        rows = rows.push(widget::column([]).spacing(8).push(self.label("Surface", 13.)).push(
+            self.panel_surface_choices(
+                selected,
+                &[("none", "None"), ("inset", "Inset"), ("island", "Island")],
+                move |key| Message::PanelEdit(Action::SetGroup(id.clone(), "surface".into(), key.into())),
+            ),
+        ));
         // Pick lists save once per choice and resolve the group ID at that time.
         // They do not leave index-based slider drafts behind when groups move.
         for (name, label, value, maximum) in [
@@ -201,7 +193,7 @@ impl App {
                 widget::row([])
                     .align_y(cosmic::iced::Alignment::Center)
                     .push(self.label(label, 13.).width(cosmic::iced::Length::Fill))
-                    .push(ferese_theme::controls::select(
+                    .push(crate::visuals::panel_select(
                         cosmic::iced::widget::pick_list(options, Some(Pixels(value)), move |value| {
                             let value = if name.starts_with("padding_") {
                                 serde_json::json!(value.0 as u16)
@@ -223,34 +215,31 @@ impl App {
             .position(|candidate| candidate.id == group.id)
             .unwrap();
         rows = rows.push(
-            widget::row([])
-                .spacing(6)
-                .push(self.settings_button(
+            widget::flex_row(vec![
+                self.settings_button(
                     "Move earlier",
                     "M6 15l6-6 6 6",
                     (index > 0).then(|| Message::PanelEdit(Action::EarlierGroup(group.id.clone()))),
                     false,
-                ))
-                .push(
-                    self.settings_button(
-                        "Move later",
-                        "M6 9l6 6 6-6",
-                        (index + 1 < placement.definition(panel).groups.len())
-                            .then(|| Message::PanelEdit(Action::LaterGroup(group.id.clone()))),
-                        false,
-                    ),
-                )
-                .push(
-                    self.settings_button(
-                        "Remove group",
-                        "M6 6l12 12 M6 18L18 6",
-                        group
-                            .items
-                            .is_empty()
-                            .then(|| Message::PanelEdit(Action::RemoveGroup(group.id.clone()))),
-                        false,
-                    ),
                 ),
+                self.settings_button(
+                    "Move later",
+                    "M6 9l6 6 6-6",
+                    (index + 1 < placement.definition(panel).groups.len())
+                        .then(|| Message::PanelEdit(Action::LaterGroup(group.id.clone()))),
+                    false,
+                ),
+                self.settings_button(
+                    "Remove group",
+                    "M6 6l12 12 M6 18L18 6",
+                    group
+                        .items
+                        .is_empty()
+                        .then(|| Message::PanelEdit(Action::RemoveGroup(group.id.clone()))),
+                    false,
+                ),
+            ])
+            .spacing(6),
         );
         if !group.items.is_empty() {
             rows = rows.push(self.note("Move or remove the items before removing this group."));
@@ -261,11 +250,37 @@ impl App {
     fn panel_field(&self, id: &ferese_config::panel::ItemId, field: Field) -> Element<'static, Message> {
         let id = id.clone();
         let name = field.path.rsplit('.').next().unwrap().to_owned();
-        self.field(field).map(move |message| match message {
-            Message::Change(store::Edit::Set(_, value)) => {
-                Message::PanelEdit(Action::Set(id.clone(), name.clone(), value))
+        if let Kind::Choice { default, choices } = field.kind {
+            let value = self.draft.string(&field.path, default);
+            let options = widget::row(choices.iter().map(|&(key, label)| {
+                widget::button::custom(self.label(label, 11.))
+                    .name(format!("{}: {label}", field.label))
+                    .padding([8, 5])
+                    .width(cosmic::iced::Length::Fill)
+                    .class(crate::visuals::panel_button(
+                        crate::visuals::Palette::from_resolved(&self.resolved.presented),
+                        value == key,
+                    ))
+                    .on_press(Message::PanelEdit(Action::Set(id.clone(), name.clone(), key.into())))
+                    .into()
+            }))
+            .spacing(4)
+            .width(cosmic::iced::Length::Fill);
+            let mut rows = widget::column([])
+                .spacing(6)
+                .push(self.label(field.label, 13.))
+                .push(options);
+            if !field.description.is_empty() {
+                rows = rows.push(self.note(&field.description));
             }
-            other => other,
-        })
+            widget::container(rows).padding([8, 0]).into()
+        } else {
+            self.field(field).map(move |message| match message {
+                Message::Change(store::Edit::Set(_, value)) => {
+                    Message::PanelEdit(Action::Set(id.clone(), name.clone(), value))
+                }
+                other => other,
+            })
+        }
     }
 }

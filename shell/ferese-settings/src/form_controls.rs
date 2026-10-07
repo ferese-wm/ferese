@@ -21,6 +21,14 @@ impl App {
             .into()
     }
 
+    fn control_button_style(&self, palette: visuals::Palette, selected: bool) -> cosmic::theme::Button {
+        if self.page == crate::schema::Page::Bar {
+            visuals::panel_button(palette, selected)
+        } else {
+            visuals::button_style(palette, selected)
+        }
+    }
+
     pub(super) fn settings_button(
         &self,
         label: &str,
@@ -38,7 +46,7 @@ impl App {
         )
         .name(label.to_owned())
         .padding([4, 8])
-        .class(visuals::button_style(palette, selected))
+        .class(self.control_button_style(palette, selected))
         .on_press_maybe(message)
         .into()
     }
@@ -54,7 +62,7 @@ impl App {
             button::custom(visuals::action_icon(icon, palette.text))
                 .name(label.to_owned())
                 .padding(4)
-                .class(visuals::button_style(palette, false))
+                .class(self.control_button_style(palette, false))
                 .on_press_maybe(message),
             self.label(label.to_owned(), 11.),
             widget::tooltip::Position::Top,
@@ -182,7 +190,7 @@ impl App {
                     options = options.push(
                         button::custom(self.label(*label, 12.))
                             .padding([4, 8])
-                            .class(visuals::button_style(palette, value == *key))
+                            .class(self.control_button_style(palette, value == *key))
                             .on_press(Message::Change(set(&path, *key))),
                     );
                 }

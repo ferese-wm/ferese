@@ -1175,10 +1175,34 @@ mod tests {
         app.page = Page::Bar;
         let edit = panel_controls::initialize(&app.draft).unwrap();
         app.draft.edit(&edit).unwrap();
-        let collapsed = tree_nodes(&cosmic::iced::advanced::widget::Tree::new(app.page_view().as_widget()));
+        use cosmic::iced::advanced::{layout, renderer::Headless, widget::Tree};
+        use cosmic::iced::{Font, Pixels, Size};
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let renderer = runtime
+            .block_on(<cosmic::Renderer as Headless>::new(
+                Font::default(),
+                Pixels(14.),
+                Some("tiny-skia"),
+            ))
+            .unwrap();
+        let nodes = |app: &App| {
+            let mut view = app.page_view();
+            let mut tree = Tree::new(&view);
+            view.as_widget_mut().layout(
+                &mut tree,
+                &renderer,
+                &layout::Limits::new(Size::ZERO, Size::new(1120., 840.)),
+            );
+            tree_nodes(&tree)
+        };
+        app.panel_tab = panel_controls::PanelTab::Items;
+        let collapsed = nodes(&app);
         let id = ferese_config::panel::ItemId("clock".into());
         let _ = app.update(Message::PanelSelect(id.clone()));
-        let expanded = tree_nodes(&cosmic::iced::advanced::widget::Tree::new(app.page_view().as_widget()));
+        let expanded = nodes(&app);
         assert!(expanded > collapsed);
         let _ = app.update(Message::PanelEdit(panel_edit::Action::Remove(id)));
         let _ = app.page_view();

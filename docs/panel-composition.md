@@ -96,9 +96,10 @@ existing group. Editing resolves IDs against the latest draft, validates the who
 change, and saves once. Unknown item fields and comments are retained.
 
 Panels contains size and margin settings; Items contains the Start/Center/End
-editor and a separate selected-item/group inspector. Appearance contains the
-background policy and links to group surfaces. The preview stays above the
-scrolling content. Tab changes do not save config. The current top panel is the
+editor and a separate selected-item/group inspector. The inspector sits beside
+the editor when space permits and below it in narrow windows. Appearance shows
+background choices and a list of groups with their current surface settings.
+The preview stays above the scrolling content. Tab changes do not save config. The current top panel is the
 only panel listed; unsupported creation, edge selection, display targeting, and
 visibility policies are not exposed.
 

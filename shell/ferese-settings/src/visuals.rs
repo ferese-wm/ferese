@@ -8,6 +8,49 @@ use crate::Message;
 use crate::schema::Page;
 use crate::store::{Edit, Snapshot, set};
 
+/// Panel controls use fill changes for selection, hover, and keyboard focus.
+pub fn panel_button(p: Palette, selected: bool) -> cosmic::theme::Button {
+    use cosmic::iced::border::Shape;
+    let paint = move |hover: bool, focused: bool, enabled: bool| {
+        let highlighted = hover || focused;
+        let background = if selected && enabled {
+            ferese_theme::mix(p.card, p.accent, if highlighted { 0.28 } else { 0.16 })
+        } else if highlighted && enabled {
+            ferese_theme::mix(p.card, p.text, 0.09)
+        } else {
+            p.card
+        };
+        cosmic::widget::button::Style {
+            shape: Some(Shape::Continuous),
+            background: Some(background.into()),
+            text_color: Some(if enabled {
+                ferese_theme::foreground(background, p.text)
+            } else {
+                p.muted
+            }),
+            icon_color: Some(if enabled { p.text } else { p.muted }),
+            border_radius: 8.into(),
+            border_width: 0.,
+            outline_width: 0.,
+            outline: None,
+            ..Default::default()
+        }
+    };
+    cosmic::theme::Button::Custom {
+        active: Box::new(move |focused, _| paint(false, focused, true)),
+        hovered: Box::new(move |focused, _| paint(true, focused, true)),
+        pressed: Box::new(move |focused, _| paint(true, focused, true)),
+        disabled: Box::new(move |_| paint(false, false, false)),
+    }
+}
+
+pub fn panel_select<'a>(
+    content: impl Into<Element<'a, Message>>,
+    p: Palette,
+) -> cosmic::widget::Container<'a, Message, cosmic::Theme> {
+    cosmic::widget::container(content).class(surface(ferese_theme::mix(p.card, p.text, 0.035), 7.))
+}
+
 pub fn color(value: &str, fallback: Color) -> Color {
     ferese_theme::parse_color(value).unwrap_or(fallback)
 }

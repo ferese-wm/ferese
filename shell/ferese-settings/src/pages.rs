@@ -525,7 +525,7 @@ impl App {
                             bottom: 8.,
                             left: 20.,
                         })
-                        .max_width(840)
+                        .max_width(if self.page == Page::Bar { 1120 } else { 840 })
                         .width(Length::Fill)
                         .height(Length::Fill),
                 )

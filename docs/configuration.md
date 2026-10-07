@@ -810,7 +810,8 @@ settings below generate the usual arrangement. An explicit panel replaces that
 arrangement, including its background, title, and battery percentage settings.
 Settings → **Panel & Shell** separates panel size and margins under **Panels**,
 composition under **Items**, and backgrounds/group surfaces under **Appearance**.
-The preview stays visible while the settings below it scroll.
+The preview stays visible while the settings below it scroll. The inspector sits
+beside the item editor in wide windows and below it in narrow windows.
 **Items → Edit panel** starts from the current arrangement. Drag an item's handle
 to reorder it or move it into another group. Dropping into an empty zone creates
 a group. Select an item to open its inspector, choose another group under

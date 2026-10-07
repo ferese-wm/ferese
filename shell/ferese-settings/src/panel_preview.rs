@@ -269,7 +269,7 @@ impl App {
             .padding([4, 7])
             .height(28)
             .on_press(action)
-            .class(visuals::button_style(
+            .class(visuals::panel_button(
                 palette,
                 self.panel_selection.as_ref() == Some(&item.id),
             ))
