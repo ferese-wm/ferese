@@ -10,7 +10,7 @@ use ferese_protocols::shell::v1::client::ferese_shell_v1;
 use ferese_protocols::shell::v1::client::ferese_shell_v1::FereseShellV1;
 use wayland_client::globals::{GlobalListContents, registry_queue_init};
 use wayland_client::protocol::wl_registry;
-use wayland_client::{Connection, Dispatch, Proxy, QueueHandle, WEnum, delegate_noop};
+use wayland_client::{Connection, Dispatch, Proxy, QueueHandle, delegate_noop};
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct ShellSnapshot {
@@ -48,11 +48,20 @@ pub(crate) struct WorkspaceSnapshot {
 
 #[derive(Clone, Debug)]
 pub(crate) struct WindowSnapshot {
+    #[cfg_attr(not(test), expect(dead_code, reason = "Retained for window-targeted shell views."))]
+    pub(crate) id: u64,
     pub(crate) workspace: u64,
     pub(crate) app_id: String,
     pub(crate) title: String,
     pub(crate) focused: bool,
+    #[cfg_attr(not(test), expect(dead_code, reason = "The current bar does not display urgency."))]
+    pub(crate) urgent: bool,
     pub(crate) fullscreen: bool,
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "The current bar does not display window placement.")
+    )]
+    pub(crate) floating: bool,
 }
 
 pub(crate) struct ShellControl {
@@ -192,6 +201,36 @@ impl ShellControl {
         let _ = self.connection.flush();
     }
 
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "Window-targeting API; the current UI targets workspaces.")
+    )]
+    pub(crate) fn activate_window(&self, id: u64) {
+        let (hi, lo) = split_id(id);
+        self.shell.activate_window(hi, lo);
+        let _ = self.connection.flush();
+    }
+
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "Window-targeting API; the current UI targets workspaces.")
+    )]
+    pub(crate) fn close_window(&self, id: u64) {
+        let (hi, lo) = split_id(id);
+        self.shell.close_window(hi, lo);
+        let _ = self.connection.flush();
+    }
+
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "Window-targeting API; the current UI targets workspaces.")
+    )]
+    pub(crate) fn select_overview_window(&self, id: u64) {
+        let (hi, lo) = split_id(id);
+        self.shell.select_overview_window(hi, lo);
+        let _ = self.connection.flush();
+    }
+
     pub(crate) fn confirm_logout(&self, serial: u32, revision: u32, token: u32, force: bool) {
         self.shell
             .confirm_logout_with_inhibitors(serial, revision, token, u32::from(force));
@@ -322,28 +361,26 @@ impl Dispatch<FereseShellV1, ()> for ControlState {
                 });
             }
             ferese_shell_v1::Event::Window {
-                window_hi: _,
-                window_lo: _,
+                window_hi,
+                window_lo,
                 workspace_hi,
                 workspace_lo,
                 app_id,
                 title,
                 state: window_state,
             } => {
-                let (focused, fullscreen) = match window_state {
-                    WEnum::Value(flags) => (
-                        flags.contains(ferese_shell_v1::WindowState::Focused),
-                        flags.contains(ferese_shell_v1::WindowState::Fullscreen),
-                    ),
-                    WEnum::Unknown(_) => (false, false),
-                };
+                // WEnum::Unknown holds the entire bitfield, not just new bits.
+                let flags = ferese_shell_v1::WindowState::from_bits_truncate(u32::from(window_state));
 
                 state.pending.windows.push(WindowSnapshot {
+                    id: join_id(window_hi, window_lo),
                     workspace: join_id(workspace_hi, workspace_lo),
                     app_id,
                     title,
-                    focused,
-                    fullscreen,
+                    focused: flags.contains(ferese_shell_v1::WindowState::Focused),
+                    urgent: flags.contains(ferese_shell_v1::WindowState::Urgent),
+                    fullscreen: flags.contains(ferese_shell_v1::WindowState::Fullscreen),
+                    floating: flags.contains(ferese_shell_v1::WindowState::Floating),
                 });
             }
             ferese_shell_v1::Event::Capabilities { .. } => {
@@ -377,6 +414,9 @@ impl Dispatch<FereseShellV1, ()> for ControlState {
 
 delegate_noop!(ControlState: ignore FereseShellManagerV1);
 
+#[cfg(test)]
+delegate_noop!(ControlState: ignore wl_registry::WlRegistry);
+
 fn split_id(id: u64) -> (u32, u32) {
     ((id >> 32) as u32, id as u32)
 }
@@ -397,7 +437,212 @@ fn append_config_chunk(config: &mut Option<String>, source: &str) {
 
 #[cfg(test)]
 mod tests {
+    use std::io::Read;
+    use std::time::Duration;
+
     use super::*;
+
+    fn read_request(peer: &mut UnixStream) -> (u32, u16, Vec<u8>) {
+        let mut header = [0; 8];
+        peer.read_exact(&mut header).unwrap();
+        let object = u32::from_ne_bytes(header[..4].try_into().unwrap());
+        let size_opcode = u32::from_ne_bytes(header[4..].try_into().unwrap());
+        let mut args = vec![0; (size_opcode >> 16) as usize - 8];
+        peer.read_exact(&mut args).unwrap();
+        (object, size_opcode as u16, args)
+    }
+
+    fn control_fixture() -> (
+        ShellControl,
+        ControlState,
+        wayland_client::EventQueue<ControlState>,
+        UnixStream,
+    ) {
+        let (socket, mut peer) = UnixStream::pair().unwrap();
+        peer.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
+        let connection = Connection::from_socket(socket).unwrap();
+        let queue = connection.new_event_queue::<ControlState>();
+        let qh = queue.handle();
+        let registry = connection.display().get_registry(&qh, ());
+        let manager = registry.bind::<FereseShellManagerV1, _, _>(1, 6, &qh, ());
+        let shell = manager.get_shell(&qh, ());
+        let (sender, updates) = mpsc::channel();
+        let wake = Wake(Arc::new(tokio::sync::Notify::new()));
+        let state = ControlState::new(UpdateSender {
+            sender,
+            wake: wake.clone(),
+        });
+        connection.flush().unwrap();
+        // Consume get_registry, bind and get_shell before checking UI requests.
+        for _ in 0..3 {
+            read_request(&mut peer);
+        }
+        let control = ShellControl {
+            connection,
+            _manager: manager,
+            shell,
+            updates,
+            wake,
+        };
+        (control, state, queue, peer)
+    }
+
+    fn dispatch_event(
+        control: &ShellControl,
+        state: &mut ControlState,
+        queue: &wayland_client::EventQueue<ControlState>,
+        event: ferese_shell_v1::Event,
+    ) {
+        <ControlState as Dispatch<FereseShellV1, ()>>::event(
+            state,
+            &control.shell,
+            event,
+            &(),
+            &control.connection,
+            &queue.handle(),
+        );
+    }
+
+    fn window_event(id: u64, flags: u32) -> ferese_shell_v1::Event {
+        let (window_hi, window_lo) = split_id(id);
+        ferese_shell_v1::Event::Window {
+            window_hi,
+            window_lo,
+            workspace_hi: 0x1234_5678,
+            workspace_lo: 0x9abc_def0,
+            app_id: "dev.ferese.Test".into(),
+            title: "Same title".into(),
+            state: flags.into(),
+        }
+    }
+
+    #[test]
+    fn window_id_words_round_trip_without_truncation() {
+        for (id, hi, lo) in [
+            (0, 0, 0),
+            (u64::from(u32::MAX), 0, u32::MAX),
+            (1 << 32, 1, 0),
+            (0x1234_5678_9abc_def0, 0x1234_5678, 0x9abc_def0),
+            (u64::MAX, u32::MAX, u32::MAX),
+        ] {
+            assert_eq!(split_id(id), (hi, lo));
+            assert_eq!(join_id(hi, lo), id);
+        }
+    }
+
+    #[test]
+    fn snapshot_retains_identity_and_floating_state_for_identical_window_metadata() {
+        let (control, mut state, queue, _peer) = control_fixture();
+        dispatch_event(
+            &control,
+            &mut state,
+            &queue,
+            ferese_shell_v1::Event::SnapshotBegin { serial: 7 },
+        );
+        let ids = [0x1234_5678_9abc_def0, 0xfedc_ba98_7654_3210];
+        for (id, flags) in [(ids[0], 0), (ids[1], ferese_shell_v1::WindowState::Floating.bits())] {
+            dispatch_event(&control, &mut state, &queue, window_event(id, flags));
+        }
+        assert!(control.poll().snapshot.is_none());
+        dispatch_event(
+            &control,
+            &mut state,
+            &queue,
+            ferese_shell_v1::Event::SnapshotEnd { serial: 7 },
+        );
+        let snapshot = control.poll().snapshot.unwrap().clone();
+        assert_eq!(snapshot.windows.iter().map(|window| window.id).collect::<Vec<_>>(), ids);
+        let [tiled, floating] = snapshot.windows.as_slice() else {
+            panic!("expected two windows")
+        };
+        assert_eq!(tiled.workspace, 0x1234_5678_9abc_def0);
+        assert_eq!(tiled.workspace, floating.workspace);
+        assert_eq!(tiled.app_id, floating.app_id);
+        assert_eq!(tiled.title, floating.title);
+        assert!(!tiled.floating);
+        assert!(floating.floating);
+        assert_ne!(tiled.id, floating.id);
+    }
+
+    #[test]
+    fn known_window_flags_survive_unknown_future_bits() {
+        use ferese_shell_v1::WindowState as Flags;
+        let (control, mut state, queue, _peer) = control_fixture();
+        let known = Flags::Focused | Flags::Urgent | Flags::Fullscreen | Flags::Floating;
+        let future = 1 << 31;
+        assert!(matches!(
+            wayland_client::WEnum::<Flags>::from(known.bits() | future),
+            wayland_client::WEnum::Unknown(_)
+        ));
+        let cases = [
+            (known.bits(), [true, true, true, true]),
+            (known.bits() | future, [true, true, true, true]),
+            (Flags::Focused.bits() | future, [true, false, false, false]),
+            (Flags::Urgent.bits() | future, [false, true, false, false]),
+            (Flags::Fullscreen.bits() | future, [false, false, true, false]),
+            (Flags::Floating.bits() | future, [false, false, false, true]),
+            (future, [false; 4]),
+            (0, [false; 4]),
+        ];
+        dispatch_event(
+            &control,
+            &mut state,
+            &queue,
+            ferese_shell_v1::Event::SnapshotBegin { serial: 1 },
+        );
+        for (index, (bits, _)) in cases.iter().enumerate() {
+            dispatch_event(&control, &mut state, &queue, window_event(index as u64 + 1, *bits));
+        }
+        dispatch_event(
+            &control,
+            &mut state,
+            &queue,
+            ferese_shell_v1::Event::SnapshotEnd { serial: 1 },
+        );
+        let snapshot = control.poll().snapshot.unwrap();
+        for (window, (_, expected)) in snapshot.windows.iter().zip(cases) {
+            assert_eq!(
+                [window.focused, window.urgent, window.fullscreen, window.floating],
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn window_helpers_send_the_exact_snapshot_id_for_each_action() {
+        let (control, mut state, queue, mut peer) = control_fixture();
+        dispatch_event(
+            &control,
+            &mut state,
+            &queue,
+            ferese_shell_v1::Event::SnapshotBegin { serial: 8 },
+        );
+        let ids = [0x1234_5678_9abc_def0, 0xfedc_ba98_7654_3210];
+        for id in ids {
+            dispatch_event(&control, &mut state, &queue, window_event(id, 0));
+        }
+        dispatch_event(
+            &control,
+            &mut state,
+            &queue,
+            ferese_shell_v1::Event::SnapshotEnd { serial: 8 },
+        );
+        for window in control.poll().snapshot.unwrap().windows {
+            control.activate_window(window.id);
+            control.close_window(window.id);
+            control.select_overview_window(window.id);
+            for opcode in [0, 1, 5] {
+                let (object, actual_opcode, args) = read_request(&mut peer);
+                assert_eq!(object, control.shell.id().protocol_id());
+                assert_eq!(actual_opcode, opcode);
+                assert_eq!(args.len(), 8);
+                let hi = u32::from_ne_bytes(args[..4].try_into().unwrap());
+                let lo = u32::from_ne_bytes(args[4..].try_into().unwrap());
+                assert_eq!(join_id(hi, lo), window.id);
+                assert_eq!((hi, lo), split_id(window.id));
+            }
+        }
+    }
 
     #[test]
     fn config_transfer_is_bounded_and_requires_begin() {

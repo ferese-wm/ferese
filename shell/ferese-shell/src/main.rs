@@ -1295,11 +1295,14 @@ mod tests {
             }],
             workspaces: Vec::new(),
             windows: vec![WindowSnapshot {
+                id: 42,
                 workspace,
                 app_id: "dev.ferese.Test".to_owned(),
                 title: "Test".to_owned(),
                 focused: true,
+                urgent: false,
                 fullscreen: true,
+                floating: false,
             }],
         }
     }
