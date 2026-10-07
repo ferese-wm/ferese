@@ -109,6 +109,7 @@ impl Endpoint {
         prepare_directory(&instances)?;
         let instance = tempfile::Builder::new()
             .prefix(&format!("{}-", std::process::id()))
+            .permissions(fs::Permissions::from_mode(0o700))
             .tempdir_in(instances)?;
         Ok(Self {
             path: instance.path().join("control.sock"),
@@ -1939,6 +1940,32 @@ mod tests {
     }
 
     #[test]
+    fn nested_endpoint_permissions_do_not_depend_on_session_umask() {
+        for mask in [0o000, 0o022, 0o077] {
+            // Set the mask after exec so the parent and its parallel tests
+            // retain their umask and socket ownership.
+            let output = std::process::Command::new("sh")
+                .arg("-c")
+                .arg(format!("umask {mask:03o}\nexec \"$@\""))
+                .arg("ferese-ipc-umask-test")
+                .arg(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "ipc::tests::nested_endpoints_reserve_private_unique_directories_and_preserve_the_default",
+                    "--nocapture",
+                ])
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "umask {mask:03o}:\n{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    }
+
+    #[test]
     fn nested_endpoint_rejects_an_instances_symlink() {
         let runtime = tempfile::tempdir().unwrap();
         let default = runtime.path().join("ferese/control.sock");
@@ -1953,6 +1980,28 @@ mod tests {
 
     #[test]
     fn listener_reclaims_only_a_stale_owned_socket() {
+        // A concurrent test can fork while this listener is open, retaining
+        // its descriptor until exec. Keep the close/rebind check in a process
+        // that does not spawn other children during the assertion.
+        const CHILD: &str = "FERESE_STALE_SOCKET_TEST_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "ipc::tests::listener_reclaims_only_a_stale_owned_socket",
+                    "--nocapture",
+                ])
+                .env(CHILD, "1")
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
         let root = unique_test_directory("stale-socket");
         fs::create_dir(&root).unwrap();
         let socket = root.join("control.sock");

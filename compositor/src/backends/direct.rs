@@ -6,6 +6,7 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 pub(crate) mod capture;
+mod crtc_assignment;
 mod lid;
 mod mirror;
 mod output_power;
@@ -770,8 +771,7 @@ pub(crate) fn validate_live_outputs(state: &Ferese, profiles: &[OutputProfile]) 
     resolve_output_positions(backend, &mut desired)?;
     let mut usable = 0;
     for device in backend.devices.values() {
-        let scan =
-            select_outputs(&device.drm, &backend.monitors, &desired, backend.low_power).map_err(|e| e.to_string())?;
+        let scan = select_outputs(device, &backend.monitors, &desired, backend.low_power).map_err(|e| e.to_string())?;
         transaction::validate_device(device, &scan).map_err(|error| error.to_string())?;
         usable += scan.selections.len();
     }
@@ -1471,12 +1471,7 @@ fn rescan_device(state: &mut Ferese, node: DrmNode) -> Result<bool, ()> {
     let Some(mut device) = backend.devices.remove(&node) else {
         return Err(());
     };
-    let scan = select_outputs(
-        &device.drm,
-        &backend.monitors,
-        &backend.desired_outputs,
-        backend.low_power,
-    );
+    let scan = select_outputs(&device, &backend.monitors, &backend.desired_outputs, backend.low_power);
     let result = scan
         .map_err(|error| error.to_string())
         .and_then(|scan| transaction::apply_device(state, node, &mut device, scan));
@@ -1492,12 +1487,7 @@ fn rescan_device(state: &mut Ferese, node: DrmNode) -> Result<bool, ()> {
 fn refresh_connected_info(state: &mut Ferese) {
     let backend = state.direct_backend.as_mut().unwrap();
     for device in backend.devices.values_mut() {
-        if let Ok(scan) = select_outputs(
-            &device.drm,
-            &backend.monitors,
-            &backend.desired_outputs,
-            backend.low_power,
-        ) {
+        if let Ok(scan) = select_outputs(device, &backend.monitors, &backend.desired_outputs, backend.low_power) {
             device.connected_outputs = scan.connected_outputs;
         }
         transaction::update_applied_info(device);
@@ -1567,13 +1557,8 @@ fn remember_applied_configuration(state: &mut Ferese) {
 fn validate_desired_outputs(state: &Ferese) -> Result<(), String> {
     let backend = state.direct_backend.as_ref().ok_or("direct backend unavailable")?;
     for device in backend.devices.values() {
-        let scan = select_outputs(
-            &device.drm,
-            &backend.monitors,
-            &backend.desired_outputs,
-            backend.low_power,
-        )
-        .map_err(|error| error.to_string())?;
+        let scan = select_outputs(device, &backend.monitors, &backend.desired_outputs, backend.low_power)
+            .map_err(|error| error.to_string())?;
         transaction::validate_device(device, &scan).map_err(|error| error.to_string())?;
     }
     Ok(())
@@ -1878,11 +1863,12 @@ fn send_frame_callbacks(state: &mut Ferese, output: &Output) {
 }
 
 fn select_outputs(
-    drm: &DrmDevice,
+    device: &DirectDevice,
     monitors: &[Monitor],
     desired: &DesiredOutputConfiguration,
     low_power: bool,
 ) -> io::Result<OutputScan> {
+    let drm = &device.drm;
     let resources = drm.resource_handles()?;
     let connected = resources
         .connectors()
@@ -1895,7 +1881,8 @@ fn select_outputs(
     let device_key = drm_device_key(drm);
     let mut selections = Vec::new();
     let mut connected_outputs = Vec::new();
-    let mut used_crtcs = HashSet::new();
+    let mut candidates = Vec::new();
+    let mut requests = Vec::new();
 
     for connector in connected {
         let key = format!("{device_key}/{}", connector);
@@ -1982,27 +1969,50 @@ fn select_outputs(
             continue;
         };
 
-        let current_crtc = connector
+        let applied = device
+            .outputs
+            .iter()
+            .find(|(_, output)| output.connector == connector.handle())
+            .map(|(crtc, _)| *crtc);
+        let kernel = connector
             .current_encoder()
             .and_then(|handle| drm.get_encoder(handle).ok())
-            .and_then(|encoder| encoder.crtc())
-            .filter(|crtc| !used_crtcs.contains(crtc));
-        let compatible_crtc = connector.encoders().iter().find_map(|handle| {
-            let encoder = drm.get_encoder(*handle).ok()?;
-            resources
-                .filter_crtcs(encoder.possible_crtcs())
-                .into_iter()
-                .find(|crtc| !used_crtcs.contains(crtc))
+            .and_then(|encoder| encoder.crtc());
+        let mut compatible = Vec::new();
+        for handle in connector.encoders() {
+            if let Ok(encoder) = drm.get_encoder(*handle) {
+                for crtc in resources.filter_crtcs(encoder.possible_crtcs()) {
+                    if !compatible.contains(&crtc) {
+                        compatible.push(crtc);
+                    }
+                }
+            }
+        }
+        requests.push(crtc_assignment::Candidates {
+            applied,
+            kernel,
+            compatible,
         });
-        if let Some(crtc) = current_crtc.or(compatible_crtc) {
-            used_crtcs.insert(crtc);
+        candidates.push((
+            connector,
+            mode,
+            settings,
+            identity,
+            desired_output.mirror_source.clone(),
+        ));
+    }
+
+    for ((connector, mode, settings, identity, mirror_source), crtc) in
+        candidates.into_iter().zip(crtc_assignment::assign(&requests))
+    {
+        if let Some(crtc) = crtc {
             selections.push(OutputSelection {
                 connector,
                 crtc,
                 mode,
                 settings,
                 identity,
-                mirror_source: desired_output.mirror_source.clone(),
+                mirror_source,
             });
         }
     }
@@ -2245,8 +2255,8 @@ fn resolve_output_positions(
 ) -> Result<(), String> {
     let mut placements = Vec::new();
     for device in backend.devices.values() {
-        let scan = select_outputs(&device.drm, &backend.monitors, desired, backend.low_power)
-            .map_err(|error| error.to_string())?;
+        let scan =
+            select_outputs(device, &backend.monitors, desired, backend.low_power).map_err(|error| error.to_string())?;
         for selection in scan.selections {
             let size =
                 output_transform(selection.settings.transform).transform_size(OutputMode::from(selection.mode).size);
