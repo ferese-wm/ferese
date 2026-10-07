@@ -84,8 +84,13 @@ mod tests {
         );
         let mut resources = RenderResources::default();
         let programs = corner_program(&mut resources, &mut renderer, CornerShape::Continuous).unwrap();
-        for scale in [1.0, 1.25, 1.5, 2.0] {
+        for (scale, focus_alpha) in [1.0, 1.25, 1.5, 2.0]
+            .into_iter()
+            .flat_map(|scale| [1.0, 0.8].map(|alpha| (scale, alpha)))
+        {
             let live = crate::presentation::WindowPresentation {
+                focus_alpha,
+                dim: 0.0,
                 id: ferese_layout::WindowId(1),
                 bounds: AnimatedRect::new(ferese_layout::Rect::new(20.25, 20.5, 32.25, 24.25)),
                 opacity: AnimatedValue::new(1.0),
@@ -147,7 +152,16 @@ mod tests {
                 pixels.push(renderer.map_texture(&mapping).unwrap().to_vec());
             }
             assert_eq!(pixels[0], pixels[1], "close handoff changed pixels at scale {scale}");
-            assert!(pixels[0].chunks_exact(4).any(|pixel| pixel[3] == 255));
+            let expected = (focus_alpha * 255.0).round() as u8;
+            assert!(
+                pixels[0].chunks_exact(4).any(|pixel| pixel[3].abs_diff(expected) <= 1),
+                "snapshot alpha must be applied once"
+            );
+            assert!(
+                pixels[0]
+                    .chunks_exact(4)
+                    .all(|pixel| pixel[3] <= expected.saturating_add(1))
+            );
             let mut retained = super::super::closing::ClosedWindow {
                 presentation: closing,
                 output: ferese_core::OutputId(1),
@@ -157,7 +171,6 @@ mod tests {
                 radius: 8.0,
                 shape: CornerShape::Continuous,
                 decorations: 1.0,
-                dim: 0.0,
                 fill: None,
                 material: None,
             };
@@ -166,6 +179,7 @@ mod tests {
             retained.handoff.as_mut().unwrap().0.elapsed = Duration::from_millis(20);
             let mut predicted = retained.clone();
             predicted.advance(Duration::from_millis(20), Default::default());
+            assert_eq!(predicted.presentation.focus_alpha, focus_alpha);
             let faded = &predicted.handoff.as_ref().unwrap().0;
             assert_eq!(faded.elapsed, Duration::from_millis(40));
             assert_eq!(retained.handoff.as_ref().unwrap().0.elapsed, Duration::from_millis(20));

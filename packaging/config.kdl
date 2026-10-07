@@ -102,9 +102,11 @@ animations {
 }
 
 appearance {
-    inactive-dim {
-        enabled #false
-        amount 0.15
+    focus-effect {
+        enabled #true
+        active-opacity 1.0
+        inactive-opacity 1.0
+        inactive-dim 0.0
         duration-ms 150
     }
 }

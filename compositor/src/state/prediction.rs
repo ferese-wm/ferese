@@ -13,7 +13,6 @@ pub(crate) struct FrameScene {
 pub(crate) struct WindowFrame {
     pub geometry: WindowGeometry,
     pub presentation: crate::presentation::WindowPresentation,
-    pub dim: f64,
 }
 
 impl Ferese {
@@ -26,6 +25,26 @@ impl Ferese {
             self.workspace_slide_offset(id),
             Duration::ZERO,
         ))
+    }
+
+    fn window_focus_effect(&self, id: WindowId, delta: Duration, overview_opacity: f32) -> (f32, f64) {
+        let target = crate::focus_effect::target(self.focus_effect, self.focused_window, id);
+        let mut focus = self
+            .windows
+            .record(id)
+            .and_then(|record| record.focus_transition.clone())
+            .unwrap_or_else(|| crate::focus_effect::BoundedFade::new(target));
+        focus.advance_visual(
+            target,
+            delta,
+            if self.animations_enabled && self.focus_effect.enabled {
+                self.focus_effect.duration_ms
+            } else {
+                0.0
+            },
+        );
+        self.focus_effect
+            .resolve(focus.current, self.focused_window.is_some(), overview_opacity)
     }
 
     fn compose_window_presentation(
@@ -110,8 +129,11 @@ impl Ferese {
         );
         bounds.current = crate::presentation::scaled_visual_rect(bounds.current, presence_scale);
         bounds.target = bounds.current;
+        let (focus_alpha, dim) = self.window_focus_effect(id, delta, overview.opacity());
         crate::presentation::WindowPresentation {
             id,
+            focus_alpha,
+            dim,
             bounds,
             opacity,
             emphasis,
@@ -161,13 +183,8 @@ impl Ferese {
                         .shadow
                         .as_ref()
                         .is_some_and(|shadow| shadow.needs_update(if selected == Some(id) { 1.0 } else { 0.0 }))
-                    || record.dimming.as_ref().is_some_and(|dim| {
-                        dim.needs_update(crate::dimming::target(
-                            self.inactive_dim,
-                            self.focused_window,
-                            id,
-                            self.overview.is_presenting(),
-                        ))
+                    || record.focus_transition.as_ref().is_some_and(|transition| {
+                        transition.needs_update(crate::focus_effect::target(self.focus_effect, self.focused_window, id))
                     }))
         })
     }
@@ -209,7 +226,10 @@ impl Ferese {
                 || self.render.snapshot(&id).is_some()
                 || record.focus.as_ref().is_some_and(|focus| focus.is_animating())
                 || record.shadow.as_ref().is_some_and(|shadow| shadow.is_animating())
-                || record.dimming.as_ref().is_some_and(|dim| dim.is_animating())
+                || record
+                    .focus_transition
+                    .as_ref()
+                    .is_some_and(|transition| transition.is_animating())
             {
                 return true;
             }
@@ -298,18 +318,7 @@ impl Ferese {
                 .and_then(|workspace| slide_offsets.get(&workspace).copied())
                 .unwrap_or_default();
             let presentation = self.compose_window_presentation(id, geometry, &overview, offset, delta);
-            let mut dim = record.dimming.clone();
-            if let Some(dim) = &mut dim {
-                dim.predict(delta, self.inactive_dim.duration_ms);
-            }
-            windows.insert(
-                id,
-                WindowFrame {
-                    geometry,
-                    presentation,
-                    dim: dim.map_or(0.0, |dim| dim.current),
-                },
-            );
+            windows.insert(id, WindowFrame { geometry, presentation });
         }
 
         FrameScene {
@@ -374,6 +383,124 @@ fn predict_geometry(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[ignore = "requires a private XDG_RUNTIME_DIR and permission to bind test sockets"]
+    fn focus_effect_sampling_preserves_activation_and_output_local_progress() {
+        let runtime = std::path::PathBuf::from(std::env::var_os("XDG_RUNTIME_DIR").unwrap());
+        assert!(runtime.starts_with(std::env::temp_dir()));
+        let mut event_loop = EventLoop::try_new().unwrap();
+        let mut state = Ferese::new(
+            &mut event_loop,
+            Display::new().unwrap(),
+            crate::config::Config::default().runtime_config().unwrap(),
+        )
+        .unwrap();
+        state.focus_effect = crate::config::FocusEffectSettings {
+            enabled: true,
+            active_opacity: 0.9,
+            inactive_opacity: 0.6,
+            inactive_dim: 0.2,
+            duration_ms: 150.0,
+        };
+        let mut outputs = Vec::new();
+        for index in 0..2 {
+            let output = Output::new(
+                format!("focus-{index}"),
+                smithay::output::PhysicalProperties {
+                    size: (0, 0).into(),
+                    subpixel: smithay::output::Subpixel::Unknown,
+                    make: "test".into(),
+                    model: "test".into(),
+                },
+            );
+            output.change_current_state(
+                Some(smithay::output::Mode {
+                    size: (800, 600).into(),
+                    refresh: 60_000,
+                }),
+                Some(smithay::utils::Transform::Normal),
+                None,
+                Some((index * 800, 0).into()),
+            );
+            state.space.map_output(&output, (index * 800, 0));
+            state.register_output(&output, format!("focus-{index}"));
+            let workspace = state
+                .output_workspaces
+                .active_workspace(state.output_id(&output).unwrap())
+                .unwrap();
+            let id = WindowId(index as u64 + 1);
+            let rect = Rect::new(index as f64 * 800.0, 0.0, 400.0, 300.0);
+            state
+                .workspaces
+                .insert_floating_window(id, workspace, rect, false)
+                .unwrap();
+            state.windows.records.insert(
+                id,
+                super::super::window_registry::WindowRecord {
+                    geometry: Some(WindowGeometry::new(rect, Some(ClientSize::from_rect(rect)))),
+                    focus_transition: Some(crate::focus_effect::BoundedFade::new(if index == 0 {
+                        1.0
+                    } else {
+                        0.0
+                    })),
+                    ..Default::default()
+                },
+            );
+            outputs.push(output);
+        }
+        let first = WindowId(1);
+        let second = WindowId(2);
+        state.focused_window = Some(first);
+        assert_eq!(state.current_window_presentation(first).unwrap().alpha(), 0.9);
+        assert_eq!(state.current_window_presentation(second).unwrap().alpha(), 0.6);
+        // Only emphasis follows overview selection; activation and its fade remain unchanged.
+        state.set_overview_active(true);
+        state.overview.select_window(second);
+        assert_eq!(state.focused_window, Some(first));
+        assert_eq!(state.current_window_presentation(first).unwrap().alpha(), 0.9);
+        assert_eq!(state.current_window_presentation(second).unwrap().alpha(), 0.6);
+        state.set_overview_active(false);
+        state.focused_window = Some(second);
+        let transition = state
+            .windows
+            .record_mut(first)
+            .unwrap()
+            .focus_transition
+            .as_mut()
+            .unwrap();
+        transition.advance_visual(0.0, Duration::ZERO, 150.0);
+        let previous = transition.current;
+        assert!(state.output_has_pending_visual_changes(&outputs[0]));
+        let frame = state.sample_frame(&outputs[0], Duration::from_millis(75));
+        assert!((frame.windows[&first].presentation.alpha() - 0.75).abs() < 1e-6);
+        assert!(!frame.windows.contains_key(&second));
+        assert_eq!(
+            state
+                .windows
+                .record(first)
+                .unwrap()
+                .focus_transition
+                .as_ref()
+                .unwrap()
+                .current,
+            previous
+        );
+        // A pending client configure must not stop focus presentation from progressing.
+        state.windows.set_transaction(
+            first,
+            crate::resize_transaction::ResizeTransaction::new(9.into(), Duration::ZERO),
+        );
+        let waiting = state.sample_frame(&outputs[0], Duration::from_millis(75));
+        assert_eq!(
+            waiting.windows[&first].presentation.alpha(),
+            frame.windows[&first].presentation.alpha()
+        );
+        assert!(state.windows.transaction(&first).is_some());
+        state.animations_enabled = false;
+        assert_eq!(state.current_window_presentation(first).unwrap().alpha(), 0.6);
+        assert_eq!(state.current_window_presentation(second).unwrap().alpha(), 0.9);
+    }
 
     #[test]
     #[ignore = "requires a private XDG_RUNTIME_DIR and permission to bind test sockets"]

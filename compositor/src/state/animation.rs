@@ -125,14 +125,9 @@ impl Ferese {
 
         self.windows.records().any(|(&id, record)| {
             let focus = if selected == Some(id) { 1.0 } else { 0.0 };
-            let dim = crate::dimming::target(
-                self.inactive_dim,
-                self.focused_window,
-                id,
-                self.overview.is_presenting(),
-            );
+            let activation = crate::focus_effect::target(self.focus_effect, self.focused_window, id);
 
-            record_needs_tick(record, focus, dim, || {
+            record_needs_tick(record, focus, activation, || {
                 self.windows
                     .window(id)
                     .is_some_and(|window| self.space.element_location(window).is_some())
@@ -196,14 +191,14 @@ impl Ferese {
             active
         });
 
-        let dim_settings = self.inactive_dim;
-        let duration = if self.animations_enabled {
-            dim_settings.duration_ms
+        let effect = self.focus_effect;
+        let duration = if self.animations_enabled && effect.enabled {
+            effect.duration_ms
         } else {
             0.0
         };
 
-        let mut dim_changed = false;
+        let mut appearance_changed = false;
         // Include hidden workspace windows: overview can present them too.
         // Read selection once so these immutable fields can be borrowed alongside
         // each record without allocating a temporary window-ID vector.
@@ -228,7 +223,7 @@ impl Ferese {
             } else {
                 focus.snap();
             }
-            dim_changed |= previous != focus.current;
+            appearance_changed |= previous != focus.current;
             let shadow = record.shadow.get_or_insert_with(|| AnimatedValue::new(target));
             let previous = shadow.current;
             let changed = shadow.target != target;
@@ -241,24 +236,15 @@ impl Ferese {
             } else {
                 shadow.snap();
             }
-            dim_changed |= previous != shadow.current;
-        }
+            appearance_changed |= previous != shadow.current;
 
-        for window in self.space.elements() {
-            let Some(id) = self.windows.ids().get(window).copied() else {
-                continue;
-            };
-            let target = crate::dimming::target(dim_settings, self.focused_window, id, self.overview.is_presenting());
-            let Some(record) = self.windows.record_mut(id) else {
-                continue;
-            };
-
-            let dim = record
-                .dimming
-                .get_or_insert_with(|| crate::dimming::DimAnimation::new(target));
-            let previous = dim.current;
-            active_animation |= dim.advance_visual(target, delta, duration);
-            dim_changed |= previous != dim.current;
+            let target = crate::focus_effect::target(effect, self.focused_window, id);
+            let transition = record
+                .focus_transition
+                .get_or_insert_with(|| crate::focus_effect::BoundedFade::new(target));
+            let previous = transition.current;
+            active_animation |= transition.advance_visual(target, delta, duration);
+            appearance_changed |= previous != transition.current;
         }
 
         for (_, record) in self.windows.records_mut() {
@@ -540,7 +526,7 @@ impl Ferese {
         self.refresh_workspace_slide_offsets();
         self.sync_window_stacking();
 
-        active_animation |= dim_changed;
+        active_animation |= appearance_changed;
         active_animation
     }
 
@@ -640,7 +626,7 @@ pub(super) fn sync_scrolling_coordinates(
 fn record_needs_tick(
     record: &super::window_registry::WindowRecord,
     focus: f64,
-    dim: f64,
+    activation: f64,
     mapped: impl FnOnce() -> bool,
 ) -> bool {
     if record.resize.is_some()
@@ -652,7 +638,10 @@ fn record_needs_tick(
     }
 
     let moving = |value: &AnimatedValue| value.current != value.target || value.velocity != 0.0;
-    let pending = record.dimming.as_ref().is_none_or(|motion| motion.needs_update(dim))
+    let pending = record
+        .focus_transition
+        .as_ref()
+        .is_none_or(|motion| motion.needs_update(activation))
         || record.world_x.as_ref().is_some_and(|(_, world)| moving(world))
         || record.coupled_width.is_some()
         || record.geometry.is_some_and(|geometry| {
@@ -665,7 +654,6 @@ fn record_needs_tick(
                     && geometry.client.last_configured_size != Some(ClientSize::from_rect(geometry.logical)))
         });
 
-    // Hidden geometry and dimming do not advance in the full path.
     // A stale hidden target must not keep waking the whole desktop.
     pending && mapped()
 }
@@ -684,24 +672,24 @@ mod tests {
             geometry: Some(geometry),
             focus: Some(AnimatedValue::new(1.0)),
             shadow: Some(AnimatedValue::new(1.0)),
-            dimming: Some(DimAnimation::new(0.0)),
+            focus_transition: Some(BoundedFade::new(1.0)),
             ..Default::default()
         }
     }
 
     #[test]
-    fn idle_check_skips_mapping_lookup_but_new_focus_and_dim_targets_wake_it() {
+    fn idle_check_skips_mapping_lookup_but_new_focus_and_activation_targets_wake_it() {
         let record = settled();
 
         for _ in 0..100 {
-            assert!(!record_needs_tick(&record, 1.0, 0.0, || panic!(
+            assert!(!record_needs_tick(&record, 1.0, 1.0, || panic!(
                 "settled record needs no mapping lookup"
             )));
         }
 
-        assert!(record_needs_tick(&record, 0.0, 0.0, || true));
-        assert!(record_needs_tick(&record, 1.0, 0.15, || true));
-        assert!(!record_needs_tick(&record, 1.0, 0.15, || false));
+        assert!(record_needs_tick(&record, 0.0, 1.0, || true));
+        assert!(record_needs_tick(&record, 1.0, 0.0, || true));
+        assert!(!record_needs_tick(&record, 1.0, 0.0, || false));
     }
 
     #[test]
@@ -710,12 +698,12 @@ mod tests {
         let shadow = record.shadow.as_mut().unwrap();
         shadow.current = 0.9;
         shadow.velocity = 0.2;
-        assert!(record_needs_tick(&record, 1.0, 0.0, || false));
+        assert!(record_needs_tick(&record, 1.0, 1.0, || false));
         record.shadow.as_mut().unwrap().advance(
             Duration::from_secs(3),
             crate::presentation::shadow_spring(SpringConfig::default()),
         );
-        assert!(!record_needs_tick(&record, 1.0, 0.0, || false));
+        assert!(!record_needs_tick(&record, 1.0, 1.0, || false));
     }
 
     #[test]
@@ -727,8 +715,8 @@ mod tests {
             .unwrap()
             .visual
             .set_target(Rect::new(10.0, 0.0, 400.0, 300.0));
-        assert!(record_needs_tick(&record, 1.0, 0.0, || true));
-        assert!(!record_needs_tick(&record, 1.0, 0.0, || false));
+        assert!(record_needs_tick(&record, 1.0, 1.0, || true));
+        assert!(!record_needs_tick(&record, 1.0, 1.0, || false));
 
         let mut record = settled();
         record.geometry.as_mut().unwrap().client.request_size(
@@ -738,23 +726,23 @@ mod tests {
             },
             Duration::ZERO,
         );
-        assert!(record_needs_tick(&record, 1.0, 0.0, || true));
+        assert!(record_needs_tick(&record, 1.0, 1.0, || true));
         record.resize = Some(crate::resize_transaction::ResizeTransaction::new(
             1.into(),
             Duration::ZERO,
         ));
-        assert!(record_needs_tick(&record, 1.0, 0.0, || false));
+        assert!(record_needs_tick(&record, 1.0, 1.0, || false));
     }
 
     #[test]
     fn opening_and_coupled_width_cleanup_still_get_their_final_tick() {
         let mut record = settled();
         record.opening = Some(AnimatedValue::new(0.0));
-        assert!(record_needs_tick(&record, 1.0, 0.0, || false));
+        assert!(record_needs_tick(&record, 1.0, 1.0, || false));
         record.opening = None;
-        assert!(!record_needs_tick(&record, 1.0, 0.0, || true));
+        assert!(!record_needs_tick(&record, 1.0, 1.0, || true));
         record.coupled_width = Some((WorkspaceId(1), AnimatedValue::new(400.0)));
-        assert!(record_needs_tick(&record, 1.0, 0.0, || true));
+        assert!(record_needs_tick(&record, 1.0, 1.0, || true));
     }
 
     #[test]

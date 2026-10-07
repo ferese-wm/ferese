@@ -15,7 +15,6 @@ pub(crate) struct ClosedWindow {
     pub radius: f64,
     pub shape: CornerShape,
     pub decorations: f64,
-    pub dim: f64,
     pub fill: Option<[f32; 4]>,
     pub material: Option<(
         smithay::reexports::wayland_server::protocol::wl_surface::WlSurface,
@@ -110,7 +109,7 @@ pub(super) fn grouped_elements(
             window.presentation.id,
             constrain,
             corners,
-            [0.0, 0.0, 0.0, window.dim as f32 * alpha],
+            [0.0, 0.0, 0.0, window.presentation.dim as f32 * alpha],
             false,
             output,
         ) {

@@ -153,10 +153,17 @@ fn scene_elements(
         }
         let sample = frame.windows.get(&id)?;
         let visual = sample.presentation.bounds.current;
-        let close_alpha = sample.presentation.alpha();
+        let presentation_alpha = sample.presentation.alpha();
         let decoration_progress = sample.geometry.decorations.clamp(0.0, 1.0);
 
-        Some((window.clone(), id, sample, visual, decoration_progress, close_alpha))
+        Some((
+            window.clone(),
+            id,
+            sample,
+            visual,
+            decoration_progress,
+            presentation_alpha,
+        ))
     };
     let windows = if state.overview.is_active() {
         state
@@ -180,7 +187,7 @@ fn scene_elements(
         windows.iter().map(|(_, id, ..)| *id),
         frame.delta,
     );
-    for (window, id, sample, visual, decoration_progress, close_alpha) in windows {
+    for (window, id, sample, visual, decoration_progress, presentation_alpha) in windows {
         if let Some(group) = closing.remove(&Some(id)) {
             elements.extend(group);
         }
@@ -205,14 +212,14 @@ fn scene_elements(
         let scale_content = sample.presentation.scale_content;
         let behavior = resize_content_behavior(scale_content);
 
-        let dim = sample.dim;
+        let dim = sample.presentation.dim;
         if let Some(overlay) = window_tint_element(
             &mut state.render,
             renderer,
             id,
             constrain,
             corners,
-            [0.0, 0.0, 0.0, dim as f32 * close_alpha],
+            [0.0, 0.0, 0.0, dim as f32 * presentation_alpha],
             false,
             output,
         ) {
@@ -244,7 +251,7 @@ fn scene_elements(
                 border_color,
                 gradient,
                 focus as f32,
-                close_alpha * decoration_progress as f32,
+                presentation_alpha * decoration_progress as f32,
                 output,
                 &programs,
             ) {
@@ -260,7 +267,7 @@ fn scene_elements(
                 scale,
                 shadow_offset_y * offset_factor,
                 shadow_blur * blur_factor,
-                shadow_opacity * opacity_factor * f64::from(close_alpha) * decoration_progress,
+                shadow_opacity * opacity_factor * f64::from(presentation_alpha) * decoration_progress,
                 shadow_color,
                 output,
                 &programs,
@@ -286,7 +293,7 @@ fn scene_elements(
                 &window,
                 corners,
                 scale,
-                close_alpha,
+                presentation_alpha,
                 sample.geometry.presentation_changed || corner_shape_changed,
                 output,
                 programs.clone(),
@@ -299,7 +306,7 @@ fn scene_elements(
                 && (source.w < constrain.size.w || source.h < constrain.size.h)
             {
                 let mut color = state.theme_settings.surface_base_color.0;
-                color[3] = close_alpha;
+                color[3] = presentation_alpha;
                 if let Some(fill) =
                     window_tint_element(&mut state.render, renderer, id, constrain, corners, color, true, output)
                 {
@@ -321,7 +328,7 @@ fn scene_elements(
                         corners,
                         index: 0,
                         capture_geometry: constrain,
-                        alpha: close_alpha,
+                        alpha: presentation_alpha,
                     },
                 )
             {
@@ -335,7 +342,7 @@ fn scene_elements(
                 renderer,
                 &window,
                 constrain.loc,
-                close_alpha,
+                presentation_alpha,
                 scale,
                 constrain,
                 ConstrainBehavior {

@@ -570,7 +570,6 @@ fn capture_privacy_pixels_and_policy_transitions() {
         radius: 0.0,
         shape: crate::presentation::CornerShape::Continuous,
         decorations: 0.0,
-        dim: 0.0,
         fill: None,
         material: None,
     });

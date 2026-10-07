@@ -532,7 +532,7 @@ impl Ferese {
                     self.dismissing_popups.push((
                         root.clone(),
                         popup,
-                        crate::dimming::DimAnimation::new(f64::from(opacity)),
+                        crate::focus_effect::BoundedFade::new(f64::from(opacity)),
                     ));
                     pointer.unset_grab(self, serial, event.time_msec());
                     self.focus_window_at(pointer.current_location(), serial, true);

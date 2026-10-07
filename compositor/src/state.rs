@@ -83,7 +83,7 @@ use window_registry::WindowRegistry;
 use crate::backends::direct::DirectBackendState;
 use crate::config::{Binding, BindingSet, DaemonConfig, InputSettings, OutputProfile, ThemeSettings};
 use crate::cursor::NamedCursor;
-use crate::dimming::DimAnimation;
+use crate::focus_effect::BoundedFade;
 use crate::gestures::{Swipe, SwipeDirection};
 use crate::handlers::screencopy::PendingScreencopy;
 use crate::handlers::screenshot::{Coordinator, PartSender};
@@ -460,7 +460,7 @@ pub struct Ferese {
     workspace_auto_back_and_forth: bool,
     pub(crate) window_rules: Vec<WindowRule>,
     pub(crate) theme_settings: ThemeSettings,
-    pub(crate) inactive_dim: crate::config::InactiveDimSettings,
+    pub(crate) focus_effect: crate::config::FocusEffectSettings,
     animations_enabled: bool,
     animation_speed: f64,
     pub(crate) spring_config: SpringConfig,
@@ -505,7 +505,7 @@ pub struct Ferese {
     #[cfg(test)]
     animation_test_time: Option<Duration>,
     pub popups: PopupManager,
-    pub(crate) dismissing_popups: Vec<(WlSurface, PopupKind, DimAnimation)>,
+    pub(crate) dismissing_popups: Vec<(WlSurface, PopupKind, BoundedFade)>,
     pub seat: Seat<Self>,
     pub alpha_modifier_state: AlphaModifierState,
     pub compositor_state: CompositorState,
@@ -551,7 +551,7 @@ pub struct RuntimeConfig {
     pub workspace_auto_back_and_forth: bool,
     pub window_rules: Vec<WindowRule>,
     pub theme_settings: ThemeSettings,
-    pub inactive_dim: crate::config::InactiveDimSettings,
+    pub focus_effect: crate::config::FocusEffectSettings,
     pub default_column_width: ColumnWidth,
     pub scrolling_focus_strategy: ViewportFocusStrategy,
     pub column_width_presets: Vec<ColumnWidth>,
@@ -717,7 +717,7 @@ impl Ferese {
             workspace_auto_back_and_forth: config.workspace_auto_back_and_forth,
             window_rules: config.window_rules,
             theme_settings: config.theme_settings,
-            inactive_dim: config.inactive_dim,
+            focus_effect: config.focus_effect,
             animations_enabled: config.animations_enabled,
             animation_speed: config.animation_speed,
             spring_config: config.spring_config,
@@ -905,7 +905,7 @@ impl Ferese {
         let idle_policy_changed = self.idle_inhibit != config.idle_inhibit || old_rules != self.window_rules;
         self.idle_inhibit = config.idle_inhibit;
         self.theme_settings = config.theme_settings;
-        self.inactive_dim = config.inactive_dim;
+        self.focus_effect = config.focus_effect;
         self.column_width_presets = config.column_width_presets;
         self.animations_enabled = config.animations_enabled;
         if !self.animations_enabled {

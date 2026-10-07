@@ -23,7 +23,7 @@ pub(crate) struct WindowRecord {
     pub resize: Option<ResizeTransaction>,
     pub focus: Option<AnimatedValue>,
     pub shadow: Option<AnimatedValue>,
-    pub dimming: Option<crate::dimming::DimAnimation>,
+    pub focus_transition: Option<crate::focus_effect::BoundedFade>,
     pub opening: Option<AnimatedValue>,
     pub mapped_once: bool,
     pub world_x: Option<(WorkspaceId, AnimatedValue)>,

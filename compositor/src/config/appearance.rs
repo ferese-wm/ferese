@@ -1,14 +1,14 @@
 use super::*;
 
 impl Config {
-    pub(crate) fn inactive_dim_settings(&self) -> Result<InactiveDimSettings, ConfigError> {
-        Ok(InactiveDimSettings {
-            enabled: self.appearance.inactive_dim.enabled,
-            amount: unit_theme_value(self.appearance.inactive_dim.amount, "appearance.inactive_dim.amount")?,
-            duration_ms: nonnegative_theme_value(
-                self.appearance.inactive_dim.duration_ms,
-                "appearance.inactive_dim.duration_ms",
-            )?,
+    pub(crate) fn focus_effect_settings(&self) -> Result<FocusEffectSettings, ConfigError> {
+        let effect = &self.appearance.focus_effect;
+        Ok(FocusEffectSettings {
+            enabled: effect.enabled,
+            active_opacity: unit_theme_value(effect.active_opacity, "appearance.focus_effect.active_opacity")?,
+            inactive_opacity: unit_theme_value(effect.inactive_opacity, "appearance.focus_effect.inactive_opacity")?,
+            inactive_dim: unit_theme_value(effect.inactive_dim, "appearance.focus_effect.inactive_dim")?,
+            duration_ms: nonnegative_theme_value(effect.duration_ms, "appearance.focus_effect.duration_ms")?,
         })
     }
 
@@ -242,32 +242,39 @@ pub enum MaterialStyle {
 }
 
 #[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct AppearanceConfig {
     pub(super) corner_radius: Option<f64>,
     #[serde(default)]
-    pub(super) inactive_dim: InactiveDimConfig,
+    pub(super) focus_effect: FocusEffectConfig,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct InactiveDimSettings {
+pub struct FocusEffectSettings {
     pub enabled: bool,
-    pub amount: f64,
+    pub active_opacity: f64,
+    pub inactive_opacity: f64,
+    pub inactive_dim: f64,
     pub duration_ms: f64,
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(default)]
-pub(super) struct InactiveDimConfig {
+#[serde(default, deny_unknown_fields)]
+pub(super) struct FocusEffectConfig {
     pub(super) enabled: bool,
-    pub(super) amount: f64,
+    pub(super) active_opacity: f64,
+    pub(super) inactive_opacity: f64,
+    pub(super) inactive_dim: f64,
     pub(super) duration_ms: f64,
 }
 
-impl Default for InactiveDimConfig {
+impl Default for FocusEffectConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
-            amount: 0.15,
+            enabled: true,
+            active_opacity: 1.0,
+            inactive_opacity: 1.0,
+            inactive_dim: 0.0,
             duration_ms: 150.0,
         }
     }

@@ -22,8 +22,10 @@ pub(crate) const SNAPSHOT_BUDGET: usize = 64 * 1024 * 1024;
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct WindowPresentation {
     pub id: ferese_layout::WindowId,
-    pub bounds: ferese_animation::AnimatedRect,
+    pub bounds: AnimatedRect,
     pub opacity: ferese_animation::AnimatedValue,
+    pub focus_alpha: f32,
+    pub dim: f64,
     pub emphasis: ferese_animation::AnimatedValue,
     pub shadow: ferese_animation::AnimatedValue,
     pub scale_content: bool,
@@ -32,7 +34,7 @@ pub(crate) struct WindowPresentation {
 
 impl WindowPresentation {
     pub fn alpha(self) -> f32 {
-        self.opacity.current.clamp(0.0, 1.0) as f32
+        self.focus_alpha * self.opacity.current.clamp(0.0, 1.0) as f32
     }
 
     pub fn focus(self) -> f64 {
@@ -41,7 +43,7 @@ impl WindowPresentation {
 
     /// A thumbnail is another view of the same content and lifecycle state.
     pub fn thumbnail(mut self, rect: ferese_layout::Rect) -> Self {
-        self.bounds = ferese_animation::AnimatedRect::new(rect);
+        self.bounds = AnimatedRect::new(rect);
         self.scale_content = true;
         self.native_size = None;
         self
@@ -362,9 +364,33 @@ impl RenderElement<GlesRenderer> for NativeTextureElement {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn activation_alpha_composes_with_lifecycle_without_retargeting_it() {
+        let mut presentation = moving_presentation();
+        presentation.focus_alpha = 0.8;
+        presentation.opacity.current = 0.5;
+        let lifecycle = presentation.opacity;
+        assert!((presentation.alpha() - 0.4).abs() < 1e-6);
+        presentation.focus_alpha = 0.9;
+        assert_eq!(presentation.opacity, lifecycle);
+        assert!((presentation.alpha() - 0.45).abs() < 1e-6);
+        presentation.close();
+        assert_eq!(presentation.focus_alpha, 0.9);
+        assert_eq!(presentation.opacity.current, 0.5);
+        assert_eq!(presentation.opacity.target, 0.0);
+        assert_eq!(
+            presentation
+                .thumbnail(ferese_layout::Rect::new(0.0, 0.0, 100.0, 100.0))
+                .alpha(),
+            presentation.alpha()
+        );
+    }
+
     fn moving_presentation() -> WindowPresentation {
         use ferese_animation::{AnimatedRect, AnimatedValue, RectVelocity};
         WindowPresentation {
+            focus_alpha: 1.0,
+            dim: 0.0,
             id: ferese_layout::WindowId(7),
             bounds: AnimatedRect {
                 velocity: RectVelocity {

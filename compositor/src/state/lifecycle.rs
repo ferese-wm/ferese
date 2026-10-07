@@ -49,7 +49,6 @@ impl Ferese {
         let record = self.windows.record(id).unwrap();
         let geometry = record.geometry.unwrap();
         let decorations = geometry.decorations.clamp(0.0, 1.0);
-        let dim = record.dimming.as_ref().map_or(0.0, |dim| dim.current);
         let handoff_size = (!presentation.scale_content).then(|| {
             presentation
                 .native_size
@@ -138,7 +137,6 @@ impl Ferese {
                     radius,
                     shape: crate::render::window_corner_shape(window),
                     decorations,
-                    dim,
                     fill,
                     material,
                 });

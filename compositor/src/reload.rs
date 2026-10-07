@@ -407,6 +407,7 @@ mod tests {
                 .env_remove("FERESE_SOCKET")
                 .output()
                 .unwrap();
+
             assert!(
                 result.status.success(),
                 "{}\n{}",
@@ -458,7 +459,7 @@ mod tests {
     }
 
     #[test]
-    fn live_reload_keeps_dimming_policy_independent_of_theme_transitions() {
+    fn live_reload_keeps_focus_effect_independent_of_theme_transitions() {
         if std::env::var_os("FERESE_DIM_RELOAD_TEST_CHILD").is_none() {
             use std::os::unix::fs::PermissionsExt;
 
@@ -467,7 +468,7 @@ mod tests {
             let output = std::process::Command::new(std::env::current_exe().unwrap())
                 .args([
                     "--exact",
-                    "reload::tests::live_reload_keeps_dimming_policy_independent_of_theme_transitions",
+                    "reload::tests::live_reload_keeps_focus_effect_independent_of_theme_transitions",
                     "--nocapture",
                 ])
                 .env("FERESE_DIM_RELOAD_TEST_CHILD", "1")
@@ -484,7 +485,7 @@ mod tests {
             );
             return;
         }
-        let source = "appearance { inactive-dim { enabled #true; amount 0.25; }; }";
+        let source = "appearance { focus-effect { inactive-opacity 0.8; inactive-dim 0.25; }; }";
         let directory = Directory::new();
         let (_, runtime, candidate) = crate::theme::prepare(source, &directory.0).unwrap();
         let mut event_loop = smithay::reexports::calloop::EventLoop::try_new().unwrap();
@@ -494,23 +495,37 @@ mod tests {
         state.theme_engine.live.theme = candidate.theme.clone();
         state.theme_engine.live.presented = candidate.theme;
 
-        for enabled in [false, true, false] {
-            let source = format!("appearance {{ inactive-dim {{ enabled #{enabled}; amount 0.25; }}; }}");
+        for inactive_opacity in [1.0, 0.75, 0.9] {
+            let source =
+                format!("appearance {{ focus-effect {{ inactive-opacity {inactive_opacity}; inactive-dim 0.25; }}; }}");
             state.reload_config_source(source).unwrap();
-            assert_eq!(state.inactive_dim.enabled, enabled);
-            let opacity = crate::dimming::target(
-                state.inactive_dim,
-                Some(ferese_layout::WindowId(1)),
-                ferese_layout::WindowId(2),
-                false,
-            );
-            assert_eq!(opacity, if enabled { 0.25 } else { 0.0 });
+            assert_eq!(state.focus_effect.inactive_opacity, inactive_opacity);
+            let (alpha, dim) = state.focus_effect.resolve(0.0, true, 0.0);
+            assert_eq!(alpha, inactive_opacity as f32);
+            assert_eq!(dim, 0.25);
         }
+        for enabled in [false, true] {
+            state.reload_config_source(format!("appearance {{ focus-effect {{ enabled #{enabled}; active-opacity 0.95; inactive-opacity 0.8; inactive-dim 0.25; }}; }}")).unwrap();
+            assert_eq!(state.focus_effect.enabled, enabled);
+            assert_eq!(state.focus_effect.inactive_opacity, 0.8);
+            assert_eq!(state.focus_effect.inactive_dim, 0.25);
+            assert_eq!(
+                state.focus_effect.resolve(0.0, true, 0.0),
+                if enabled { (0.8, 0.25) } else { (1.0, 0.0) }
+            );
+        }
+        let previous = state.focus_effect;
+        assert!(
+            state
+                .reload_config_source("appearance { focus-effect { active-opacity 1.1; }; }".into())
+                .is_err()
+        );
+        assert_eq!(state.focus_effect, previous);
         state
-            .reload_config_source("appearance { inactive-dim { enabled #false; }; }; theme { mode \"light\"; }".into())
+            .reload_config_source("appearance { focus-effect { inactive-dim 0; }; }; theme { mode \"light\"; }".into())
             .unwrap();
         state.poll_theme();
-        assert!(!state.inactive_dim.enabled);
+        assert_eq!(state.focus_effect.inactive_dim, 0.0);
     }
 
     /// The status endpoint must be able to tell "the live service is running

@@ -12,7 +12,7 @@ use std::path::PathBuf;
 
 pub(crate) use self::xwayland::{XwaylandConfig, XwaylandStartup};
 use appearance::*;
-pub use appearance::{BorderGradient, InactiveDimSettings, MaterialStyle, ThemeSettings};
+pub use appearance::{BorderGradient, FocusEffectSettings, MaterialStyle, ThemeSettings};
 use bindings::*;
 pub use bindings::{Binding, BindingAction};
 pub(crate) use bindings::{BindingSet, physical_keymap};
@@ -137,7 +137,7 @@ impl Config {
             bindings,
             window_rules: self.window_rules()?,
             theme_settings: self.theme_settings()?,
-            inactive_dim: self.inactive_dim_settings()?,
+            focus_effect: self.focus_effect_settings()?,
             default_column_width: self.default_column_width()?,
             scrolling_focus_strategy: self.scrolling_focus_strategy(),
             column_width_presets: self.width_presets()?,
@@ -880,31 +880,43 @@ mod tests {
     }
 
     #[test]
-    fn inactive_dimming_is_opt_in_and_configurable() {
-        let defaults = parse("").inactive_dim_settings().unwrap();
-        assert!(!defaults.enabled);
-        assert_eq!(defaults.amount, 0.15);
+    fn focus_effect_defaults_and_validation() {
+        let defaults = parse("").focus_effect_settings().unwrap();
+        assert!(defaults.enabled);
+        assert_eq!(defaults.active_opacity, 1.0);
+        assert_eq!(defaults.inactive_opacity, 1.0);
+        assert_eq!(defaults.inactive_dim, 0.0);
         assert_eq!(defaults.duration_ms, 150.0);
-        let settings =
-            parse("appearance {\n    inactive-dim {\n        enabled #true\n        amount 0.25\n        duration-ms 100\n    }\n}\n")
-                .inactive_dim_settings()
-                .unwrap();
+        let settings = parse("appearance { focus-effect { active-opacity 0.9; inactive-opacity 0.8; inactive-dim 0.25; duration-ms 100; }; }")
+            .focus_effect_settings().unwrap();
         assert!(settings.enabled);
-        assert_eq!(settings.amount, 0.25);
+        assert_eq!(settings.active_opacity, 0.9);
+        assert_eq!(settings.inactive_opacity, 0.8);
+        assert_eq!(settings.inactive_dim, 0.25);
         assert_eq!(settings.duration_ms, 100.0);
-        for (key, value) in [
-            ("amount", "-0.1"),
-            ("amount", "1.1"),
-            ("amount", "#nan"),
-            ("duration_ms", "-1"),
-            ("duration_ms", "#inf"),
-        ] {
+        for key in ["active-opacity", "inactive-opacity", "inactive-dim"] {
+            for value in ["-0.1", "1.1", "#nan", "#inf"] {
+                assert!(
+                    Config::parse_source(&format!("appearance {{ focus-effect {{ {key} {value}; }} }}"))
+                        .and_then(|config| config.runtime_config())
+                        .is_err()
+                );
+            }
+        }
+        for value in ["-1", "#nan", "#inf"] {
             assert!(
-                Config::parse_source(&format!("appearance {{ inactive-dim {{ {key} {value}; }} }}"))
+                Config::parse_source(&format!("appearance {{ focus-effect {{ duration-ms {value}; }} }}"))
                     .and_then(|config| config.runtime_config())
                     .is_err()
             );
         }
+        let disabled = parse("appearance { focus-effect { enabled #false; active-opacity 0.9; inactive-opacity 0.8; inactive-dim 0.25; }; }")
+            .focus_effect_settings().unwrap();
+        assert!(!disabled.enabled);
+        assert_eq!(disabled.active_opacity, 0.9);
+        assert_eq!(disabled.inactive_opacity, 0.8);
+        assert_eq!(disabled.inactive_dim, 0.25);
+        assert!(Config::parse_source("appearance { inactive-dim { enabled #true; }; }").is_err());
     }
 
     #[test]

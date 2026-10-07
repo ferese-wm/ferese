@@ -274,9 +274,11 @@ one appearance.
 | `theme.accessibility.increase-contrast` | boolean | `false` | Strengthen text and borders |
 | `theme.accessibility.reduce-transparency` | boolean | `false` | Solid surfaces; skip background blur |
 | `appearance.corner-radius` | number ≥ 0 | unset | Legacy fallback for shell radius |
-| `appearance.inactive-dim.enabled` | boolean | `false` | Dim unfocused windows |
-| `appearance.inactive-dim.amount` | number 0–1 | `0.15` | Darkening strength |
-| `appearance.inactive-dim.duration-ms` | number ≥ 0 | `150` | Dimming transition; 0 snaps |
+| `appearance.focus-effect.enabled` | boolean | `true` | Apply window opacity and dimming; disabling keeps the configured values |
+| `appearance.focus-effect.active-opacity` | number 0–1 | `1` | Active application opacity, including fullscreen |
+| `appearance.focus-effect.inactive-opacity` | number 0–1 | `1` | Other application window opacity |
+| `appearance.focus-effect.inactive-dim` | number 0–1 | `0` | Darkening strength for inactive windows; 0 disables |
+| `appearance.focus-effect.duration-ms` | number ≥ 0 | `150` | Shared opacity and dimming transition; 0 snaps |
 | `theme.typography.font-family` | string | `"Inter"` | Shell, Settings and overview font |
 | `theme.background.path` | string | matching light/dark wallpaper | Shared wallpaper; an explicit path overrides both bundled defaults |
 | `theme.light.background.path`, `theme.dark.background.path` | string | shared path, or matching default | Wallpaper for one appearance; overrides the shared path |
@@ -286,6 +288,12 @@ one appearance.
 | `theme.material.opacity` | number 0–1 | `0.78` | Shared shell background opacity for bars, menus, popovers, notifications and themed dialogs. Text/icons stay opaque; 0 hides the material. Solid mode is always opaque |
 | `theme.material.tint-strength` | number 0–1 | Dark `0.5`, light `1` | Color strength over the blurred backdrop |
 | `theme.material.blur-radius` | number ≥ 0 | `12` | Translucent backdrop blur, capped at 32; 0 disables |
+
+Window opacity follows the active application. Giving keyboard focus to a shell
+menu does not change it. Overview selection changes the highlight, while window
+opacity still follows activation; dimming fades out as overview opens. Fullscreen
+windows use the same opacity settings. Opening and closing fades multiply window
+opacity. Reduced motion disables the focus transition.
 
 Settings → Wallpaper shows the current image and both bundled defaults. Use
 **Apply to** to change both modes or just one. **Match appearance** restores the
