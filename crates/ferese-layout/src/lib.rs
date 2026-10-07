@@ -165,15 +165,23 @@ impl LayoutTree {
         self.windows.keys().copied()
     }
 
+    pub fn preferred_window(&self) -> Option<WindowId> {
+        let leaf = self.first_window(self.root?).ok()?;
+        match self.nodes.get(&leaf)? {
+            Node::Window(window) => Some(*window),
+            _ => None,
+        }
+    }
+
+    /// Include every structural leaf, even inactive stack members. Preserve
+    /// stack child order when their positions coincide.
     pub fn window_ids_in_reading_order(&self, bounds: Rect) -> Result<Vec<WindowId>, LayoutError> {
-        let geometry = self.geometry(bounds)?;
-        let mut windows = geometry.into_iter().collect::<Vec<_>>();
-        windows.sort_by(|(left_window, left), (right_window, right)| {
-            left.x
-                .total_cmp(&right.x)
-                .then_with(|| left.y.total_cmp(&right.y))
-                .then_with(|| left_window.0.cmp(&right_window.0))
-        });
+        self.validate()?;
+        let mut windows = Vec::with_capacity(self.windows.len());
+        if let Some(root) = self.root {
+            self.collect_window_positions(root, bounds, &mut windows)?;
+        }
+        windows.sort_by(|(_, left), (_, right)| left.x.total_cmp(&right.x).then_with(|| left.y.total_cmp(&right.y)));
         Ok(windows.into_iter().map(|(window, _)| window).collect())
     }
 
@@ -622,6 +630,34 @@ impl LayoutTree {
         self.next_node += 1;
         self.nodes.insert(id, node);
         id
+    }
+
+    fn collect_window_positions(
+        &self,
+        node: NodeId,
+        bounds: Rect,
+        windows: &mut Vec<(WindowId, Rect)>,
+    ) -> Result<(), LayoutError> {
+        match self.nodes.get(&node) {
+            Some(Node::Window(window)) => windows.push((*window, bounds)),
+            Some(Node::Split {
+                axis,
+                ratio,
+                first,
+                second,
+            }) => {
+                let (first_bounds, second_bounds) = split_rect(bounds, *axis, *ratio);
+                self.collect_window_positions(*first, first_bounds, windows)?;
+                self.collect_window_positions(*second, second_bounds, windows)?;
+            }
+            Some(Node::Stack { children, .. }) => {
+                for child in children {
+                    self.collect_window_positions(*child, bounds, windows)?;
+                }
+            }
+            None => return Err(LayoutError::InvalidTree("node is missing")),
+        }
+        Ok(())
     }
 
     fn first_window(&self, node: NodeId) -> Result<NodeId, LayoutError> {
@@ -1230,6 +1266,99 @@ mod tests {
         assert_eq!(geometry.len(), 1);
         assert_eq!(geometry[&WindowId(2)], Rect::new(0.0, 0.0, 100.0, 80.0));
         assert!(tree.validate().is_ok());
+    }
+
+    #[test]
+    fn structural_reading_order_includes_all_stack_members_independently_of_activation() {
+        let mut tree = LayoutTree::default();
+        let ids = [WindowId(30), WindowId(10), WindowId(20), WindowId(5)];
+        tree.insert(ids[0], None, Axis::Horizontal, 0.5).unwrap();
+        for pair in ids.windows(2) {
+            tree.insert(pair[1], Some(pair[0]), Axis::Horizontal, 0.5).unwrap();
+            tree.stack_window(pair[1], pair[0]).unwrap();
+        }
+        let bounds = Rect::new(0.0, 0.0, 1_000.0, 800.0);
+        for active in ids {
+            tree.activate_window(active).unwrap();
+            assert_eq!(
+                tree.geometry(bounds).unwrap().keys().copied().collect::<Vec<_>>(),
+                vec![active]
+            );
+            assert_eq!(tree.window_ids_in_reading_order(bounds).unwrap(), ids);
+            assert_eq!(tree.preferred_window(), Some(active));
+            assert!(tree.validate().is_ok());
+        }
+    }
+
+    #[test]
+    fn flat_stack_reading_order_preserves_every_inactive_member() {
+        let mut tree = LayoutTree::default();
+        let ids = [WindowId(900), WindowId(7), WindowId(400), WindowId(10)];
+        let children = ids
+            .iter()
+            .map(|window| {
+                let leaf = tree.insert_node(Node::Window(*window));
+                tree.windows.insert(*window, leaf);
+                leaf
+            })
+            .collect::<Vec<_>>();
+        let root = tree.insert_node(Node::Stack {
+            children: children.clone(),
+            active: 2,
+        });
+        for child in children {
+            tree.parents.insert(child, root);
+        }
+        tree.root = Some(root);
+        let bounds = Rect::new(0.0, 0.0, 1_000.0, 800.0);
+        assert!(tree.validate().is_ok());
+        assert_eq!(tree.geometry(bounds).unwrap().len(), 1);
+        assert_eq!(tree.preferred_window(), Some(ids[2]));
+        assert_eq!(tree.window_ids_in_reading_order(bounds).unwrap(), ids);
+    }
+
+    #[test]
+    fn structural_reading_order_retains_xy_order_through_splits_and_stacks() {
+        let mut tree = LayoutTree::default();
+        tree.insert(WindowId(40), None, Axis::Horizontal, 0.5).unwrap();
+        tree.insert(WindowId(10), Some(WindowId(40)), Axis::Vertical, 0.5)
+            .unwrap();
+        tree.insert(WindowId(30), Some(WindowId(40)), Axis::Horizontal, 0.5)
+            .unwrap();
+        tree.insert(WindowId(20), Some(WindowId(40)), Axis::Vertical, 0.5)
+            .unwrap();
+        tree.stack_window(WindowId(20), WindowId(40)).unwrap();
+        tree.insert(WindowId(50), Some(WindowId(10)), Axis::Horizontal, 0.5)
+            .unwrap();
+        let bounds = Rect::new(25.0, 40.0, 1_000.0, 800.0);
+        let expected = [40, 20, 10, 30, 50].map(WindowId);
+        assert_eq!(tree.window_ids_in_reading_order(bounds).unwrap(), expected);
+        assert_eq!(tree.geometry(bounds).unwrap().len(), 4);
+        let collapsed = tree.window_ids_in_reading_order(Rect::default()).unwrap();
+        assert_eq!(collapsed.len(), expected.len());
+        assert_eq!(
+            collapsed.into_iter().collect::<HashSet<_>>(),
+            expected.into_iter().collect()
+        );
+        assert!(tree.validate().is_ok());
+    }
+
+    #[test]
+    fn tree_preference_follows_first_split_branch_and_active_stack_children() {
+        let mut tree = LayoutTree::default();
+        assert_eq!(tree.preferred_window(), None);
+        assert!(tree.window_ids_in_reading_order(Rect::default()).unwrap().is_empty());
+        tree.insert(WindowId(30), None, Axis::Horizontal, 0.5).unwrap();
+        tree.insert(WindowId(10), Some(WindowId(30)), Axis::Horizontal, 0.5)
+            .unwrap();
+        tree.insert(WindowId(20), Some(WindowId(30)), Axis::Vertical, 0.5)
+            .unwrap();
+        tree.stack_window(WindowId(20), WindowId(30)).unwrap();
+        assert_eq!(tree.preferred_window(), Some(WindowId(20)));
+        tree.activate_window(WindowId(30)).unwrap();
+        assert_eq!(tree.preferred_window(), Some(WindowId(30)));
+        tree.activate_window(WindowId(10)).unwrap();
+        assert_eq!(tree.preferred_window(), Some(WindowId(30)));
     }
 
     #[test]

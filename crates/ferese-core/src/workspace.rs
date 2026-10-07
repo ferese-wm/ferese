@@ -67,7 +67,7 @@ impl WorkspaceLayout {
     pub fn preferred_window(&self) -> Option<WindowId> {
         match self {
             Self::Scrolling(layout) => layout.active_window(),
-            Self::Tree(layout) => layout.window_ids().next(),
+            Self::Tree(layout) => layout.preferred_window(),
         }
     }
 
@@ -1481,6 +1481,99 @@ mod tests {
         assert_eq!(workspaces.active().layout.mode(), LayoutMode::Scrolling);
         assert_eq!(workspaces.active().last_focused, Some(WindowId(2)));
         assert!(workspaces.validate().is_ok());
+    }
+
+    fn tree_stack_workspaces(ids: &[WindowId]) -> WorkspaceSet {
+        let mut workspaces = WorkspaceSet::new(
+            LayoutMode::Tree,
+            ColumnWidth::Proportion(0.5),
+            ViewportFocusStrategy::Minimal,
+        );
+        workspaces.insert_window(ids[0], Axis::Horizontal, 0.5).unwrap();
+        for pair in ids.windows(2) {
+            workspaces.insert_window(pair[1], Axis::Horizontal, 0.5).unwrap();
+            workspaces.stack_window(pair[1], pair[0]).unwrap();
+        }
+        workspaces
+    }
+
+    #[test]
+    fn stacked_tree_mode_conversions_preserve_membership_focus_and_order() {
+        let bounds = Rect::new(0.0, 0.0, 1_000.0, 800.0);
+        let all_ids = [WindowId(30), WindowId(10), WindowId(20), WindowId(5), WindowId(40)];
+        for count in [2, 3, 5] {
+            let ids = &all_ids[..count];
+            let expected = ids.iter().copied().collect::<HashSet<_>>();
+            for focused in ids {
+                // Fresh maps have independent hash seeds; structural ordering
+                // must give the same result for each conversion.
+                for _ in 0..8 {
+                    let mut workspaces = tree_stack_workspaces(ids);
+                    workspaces.focus_window(*focused).unwrap();
+                    // A saved valid focus may refer to an inactive stack member.
+                    let WorkspaceLayout::Tree(tree) = &mut workspaces.active_mut().layout else {
+                        panic!()
+                    };
+                    tree.activate_window(ids[1]).unwrap();
+                    assert_eq!(tree.geometry(bounds).unwrap().len(), 1);
+                    assert_eq!(workspaces.active().last_focused, Some(*focused));
+                    assert!(workspaces.validate().is_ok());
+
+                    for mode in [LayoutMode::Scrolling, LayoutMode::Tree, LayoutMode::Scrolling] {
+                        assert!(workspaces.set_active_layout_mode(mode, bounds).unwrap());
+                        let windows = workspaces.active().layout.window_ids().collect::<Vec<_>>();
+                        assert_eq!(windows.len(), ids.len());
+                        assert_eq!(windows.iter().copied().collect::<HashSet<_>>(), expected);
+                        assert_eq!(workspaces.active().last_focused, Some(*focused));
+                        assert!(workspaces.validate().is_ok());
+                        if let WorkspaceLayout::Scrolling(layout) = &workspaces.active().layout {
+                            assert_eq!(windows, ids);
+                            assert_eq!(layout.active_window(), Some(*focused));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn nested_tree_splits_and_stacks_survive_round_trip_conversion() {
+        let bounds = Rect::new(0.0, 0.0, 1_000.0, 800.0);
+        let mut workspaces = tree_stack_workspaces(&[WindowId(30), WindowId(10), WindowId(20)]);
+        workspaces.focus_window(WindowId(10)).unwrap();
+        workspaces.insert_window(WindowId(5), Axis::Vertical, 0.5).unwrap();
+        workspaces.insert_window(WindowId(40), Axis::Horizontal, 0.5).unwrap();
+        workspaces.insert_window(WindowId(50), Axis::Vertical, 0.5).unwrap();
+        workspaces.stack_window(WindowId(50), WindowId(40)).unwrap();
+        workspaces.focus_window(WindowId(40)).unwrap();
+        let before = workspaces.active().layout.window_ids().collect::<HashSet<_>>();
+        assert_eq!(before.len(), 6);
+        assert!(workspaces.active().layout.geometry(bounds).unwrap().len() < before.len());
+        for mode in [LayoutMode::Scrolling, LayoutMode::Tree, LayoutMode::Scrolling] {
+            assert!(workspaces.set_active_layout_mode(mode, bounds).unwrap());
+            let windows = workspaces.active().layout.window_ids().collect::<Vec<_>>();
+            assert_eq!(windows.len(), before.len());
+            assert_eq!(windows.into_iter().collect::<HashSet<_>>(), before);
+            assert_eq!(workspaces.active().last_focused, Some(WindowId(40)));
+            assert!(workspaces.validate().is_ok());
+            if let WorkspaceLayout::Scrolling(layout) = &workspaces.active().layout {
+                assert_eq!(layout.active_window(), Some(WindowId(40)));
+            }
+        }
+    }
+
+    #[test]
+    fn tree_preferred_window_is_deterministic_without_a_saved_focus() {
+        for _ in 0..32 {
+            let mut workspaces = tree_stack_workspaces(&[WindowId(30), WindowId(20), WindowId(40)]);
+            workspaces.active_mut().last_focused = None;
+            assert_eq!(workspaces.active().layout.preferred_window(), Some(WindowId(40)));
+            workspaces.insert_window(WindowId(10), Axis::Horizontal, 0.5).unwrap();
+            workspaces.remove_window(WindowId(10)).unwrap();
+            assert_eq!(workspaces.active().last_focused, Some(WindowId(40)));
+            assert_eq!(workspaces.active().layout.preferred_window(), Some(WindowId(40)));
+            assert!(workspaces.validate().is_ok());
+        }
     }
 
     #[test]
