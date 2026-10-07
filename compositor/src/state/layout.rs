@@ -20,7 +20,7 @@ impl Ferese {
             .output_workspaces
             .reconcile_workspaces(&mut self.workspaces, visible)
         {
-            self.viewport_animations.remove(&workspace);
+            self.viewports.remove(&workspace);
         }
     }
 
@@ -201,7 +201,7 @@ impl Ferese {
             let layout =
                 match workspace
                     .layout
-                    .geometry_with_constraints(bounds, self.gap_config, &constraints, focused)
+                    .resolve_geometry_with_constraints(bounds, self.gap_config, &constraints, focused)
                 {
                     Ok(layout) => layout,
                     Err(error) => {
@@ -212,15 +212,11 @@ impl Ferese {
             let viewport_target = workspace.layout.viewport_x();
             let viewport_motion = viewport_target.map(|target| {
                 let viewport = self
-                    .viewport_animations
+                    .viewports
                     .entry(workspace_id)
-                    .or_insert_with(|| AnimatedValue::new(target));
-                let target_changed = (viewport.target - target).abs() > 0.001;
-                viewport.retarget_preserving_motion(target);
-                if !self.animations_enabled {
-                    viewport.snap();
-                }
-                (viewport.current, target_changed)
+                    .or_insert_with(|| ViewportPresentation::new(target));
+                let target_changed = viewport.retarget(target, self.animations_enabled);
+                (viewport.motion().current, target_changed)
             });
             let viewport_current = viewport_motion.map(|(current, _)| current);
             let viewport_target_changed = viewport_motion.is_some_and(|(_, changed)| changed);
@@ -351,9 +347,9 @@ impl Ferese {
                         let mut world = AnimatedValue::new(restored_world_x);
                         world.velocity = geometry.visual.velocity.x
                             + self
-                                .viewport_animations
+                                .viewports
                                 .get(&workspace)
-                                .map_or(0.0, |viewport| viewport.velocity);
+                                .map_or(0.0, |viewport| viewport.motion().velocity);
                         world
                     });
                 animated_world_x.set_target(world_x);
@@ -361,11 +357,11 @@ impl Ferese {
                     animated_world_x.snap();
                 }
 
-                if let Some(viewport) = self.viewport_animations.get(&workspace) {
+                if let Some(viewport) = self.viewports.get(&workspace) {
                     super::animation::sync_scrolling_coordinates(
                         geometry,
                         &mut animated_world_x,
-                        viewport,
+                        viewport.motion(),
                         geometry.is_zooming(),
                     );
                 }
@@ -557,10 +553,12 @@ impl Ferese {
     pub(super) fn tiled_layout(&mut self, bounds: Rect) -> Result<LayoutResult, ferese_layout::LayoutError> {
         let constraints = self.window_constraints();
         let focused = self.focused_window;
-        self.workspaces
-            .active_mut()
-            .layout
-            .geometry_with_constraints(bounds, self.gap_config, &constraints, focused)
+        self.workspaces.active_mut().layout.resolve_geometry_with_constraints(
+            bounds,
+            self.gap_config,
+            &constraints,
+            focused,
+        )
     }
 
     pub(super) fn window_constraints(&self) -> HashMap<WindowId, SizeConstraints> {

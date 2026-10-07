@@ -149,6 +149,20 @@ impl ViewportTarget {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum PendingFocusRequest {
+    Reveal(WindowId),
+    Slide { from: WindowId, to: WindowId },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum PendingViewportRequest {
+    Focus(PendingFocusRequest),
+    // Width cycling takes precedence. Keep the focus request only in case a
+    // subsequent no-op cycle cancels the width request before layout resolves.
+    WidthCycle(Option<PendingFocusRequest>),
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct ScrollingLayout {
     columns: Vec<Column>,
@@ -156,9 +170,7 @@ pub struct ScrollingLayout {
     viewport_x: f64,
     default_width: ColumnWidth,
     focus_strategy: ViewportFocusStrategy,
-    reveal_pending: Option<WindowId>,
-    swipe_focus_pending: Option<(WindowId, WindowId)>,
-    width_cycle_pending: bool,
+    pending_viewport: Option<PendingViewportRequest>,
     last_viewport_width: Option<f64>,
     allocated_widths: HashMap<WindowId, f64>,
     viewport_basis: Option<ViewportTarget>,
@@ -172,9 +184,7 @@ impl Default for ScrollingLayout {
             viewport_x: 0.0,
             default_width: ColumnWidth::default(),
             focus_strategy: ViewportFocusStrategy::Minimal,
-            reveal_pending: None,
-            swipe_focus_pending: None,
-            width_cycle_pending: false,
+            pending_viewport: None,
             last_viewport_width: None,
             allocated_widths: HashMap::new(),
             viewport_basis: None,
@@ -183,6 +193,28 @@ impl Default for ScrollingLayout {
 }
 
 impl ScrollingLayout {
+    fn pending_focus(&self) -> Option<PendingFocusRequest> {
+        match self.pending_viewport {
+            Some(PendingViewportRequest::Focus(request)) => Some(request),
+            Some(PendingViewportRequest::WidthCycle(request)) => request,
+            None => None,
+        }
+    }
+
+    fn request_focus(&mut self, request: Option<PendingFocusRequest>) {
+        self.pending_viewport = if matches!(self.pending_viewport, Some(PendingViewportRequest::WidthCycle(_))) {
+            Some(PendingViewportRequest::WidthCycle(request))
+        } else {
+            request.map(PendingViewportRequest::Focus)
+        };
+    }
+
+    fn request_reveal(&mut self, window: Option<WindowId>) {
+        if !matches!(self.pending_focus(), Some(PendingFocusRequest::Slide { .. })) {
+            self.request_focus(window.map(PendingFocusRequest::Reveal));
+        }
+    }
+
     pub fn set_default_width(&mut self, width: ColumnWidth) {
         self.default_width = normalized_width(width);
     }
@@ -196,8 +228,7 @@ impl ScrollingLayout {
 
     pub fn set_focus_strategy(&mut self, strategy: ViewportFocusStrategy) {
         self.focus_strategy = strategy;
-        self.reveal_pending = self.active_window();
-        self.swipe_focus_pending = None;
+        self.request_focus(self.active_window().map(PendingFocusRequest::Reveal));
     }
 
     pub fn default_width(&self) -> ColumnWidth {
@@ -282,7 +313,7 @@ impl ScrollingLayout {
             .unwrap_or(self.columns.len());
         self.columns.insert(index, Column::new(window, self.default_width));
         self.active_column = Some(index);
-        self.reveal_pending = (self.columns.len() > 1).then_some(window);
+        self.request_reveal((self.columns.len() > 1).then_some(window));
 
         debug_assert!(self.validate().is_ok());
         Ok(())
@@ -307,11 +338,11 @@ impl ScrollingLayout {
             column.active = column.active.min(column.windows.len() - 1);
             column.normalize_heights();
         }
-        if self.reveal_pending == Some(window)
+        if self.pending_focus() == Some(PendingFocusRequest::Reveal(window))
             || removed_active_column
             || self.focus_strategy == ViewportFocusStrategy::Paged
         {
-            self.reveal_pending = self.active_window();
+            self.request_reveal(self.active_window());
         }
 
         debug_assert!(self.validate().is_ok());
@@ -324,7 +355,7 @@ impl ScrollingLayout {
         self.active_column = Some(column);
         self.columns[column].active = index;
         if changed_column {
-            self.reveal_pending = Some(window);
+            self.request_reveal(Some(window));
         }
         Ok(())
     }
@@ -341,8 +372,7 @@ impl ScrollingLayout {
     /// An explicit selection must reveal even a window already focused by hover.
     pub fn focus_and_reveal(&mut self, window: WindowId) -> Result<(), LayoutError> {
         self.focus_without_reveal(window)?;
-        self.reveal_pending = Some(window);
-        self.swipe_focus_pending = None;
+        self.request_focus(Some(PendingFocusRequest::Reveal(window)));
         Ok(())
     }
 
@@ -353,8 +383,10 @@ impl ScrollingLayout {
             return self.focus_and_reveal(focused);
         }
         self.focus_without_reveal(focused)?;
-        self.reveal_pending = None;
-        self.swipe_focus_pending = Some((previous, focused));
+        self.request_focus(Some(PendingFocusRequest::Slide {
+            from: previous,
+            to: focused,
+        }));
         Ok(())
     }
 
@@ -374,7 +406,7 @@ impl ScrollingLayout {
         column.active = insertion;
         column.normalize_heights();
         self.active_column = Some(target_column);
-        self.reveal_pending = self.active_window();
+        self.request_reveal(self.active_window());
 
         debug_assert!(self.validate().is_ok());
         Ok(())
@@ -391,7 +423,7 @@ impl ScrollingLayout {
         let insertion = (source + 1).min(self.columns.len());
         self.columns.insert(insertion, Column::new(window, self.default_width));
         self.active_column = Some(insertion);
-        self.reveal_pending = self.active_window();
+        self.request_reveal(self.active_window());
 
         debug_assert!(self.validate().is_ok());
         Ok(())
@@ -400,7 +432,7 @@ impl ScrollingLayout {
     pub fn set_column_width(&mut self, window: WindowId, width: ColumnWidth) -> Result<(), LayoutError> {
         let (column, _) = self.window_location(window).ok_or(LayoutError::UnknownWindow(window))?;
         self.columns[column].width = normalized_width(width);
-        self.reveal_pending = self.active_window();
+        self.request_reveal(self.active_window());
         Ok(())
     }
 
@@ -418,7 +450,12 @@ impl ScrollingLayout {
             .map(|index| presets[(index + 1) % presets.len()])
             .unwrap_or(presets[0]);
         self.columns[column].width = next;
-        self.width_cycle_pending = next != current;
+        let focus = self.pending_focus();
+        self.pending_viewport = if next != current {
+            Some(PendingViewportRequest::WidthCycle(focus))
+        } else {
+            focus.map(PendingViewportRequest::Focus)
+        };
         Ok(next != current)
     }
 
@@ -430,7 +467,7 @@ impl ScrollingLayout {
         constraints: &HashMap<WindowId, SizeConstraints>,
     ) -> Result<bool, LayoutError> {
         let before = self.viewport_x;
-        let result = self.geometry_with_constraints(bounds, gaps, constraints, Some(window))?;
+        let result = self.resolve_geometry_with_constraints(bounds, gaps, constraints, Some(window))?;
         let rect = result
             .geometry
             .get(&window)
@@ -476,7 +513,7 @@ impl ScrollingLayout {
                     }),
             ),
         );
-        self.geometry_with_constraints(bounds, gaps, constraints, Some(window))?;
+        self.resolve_geometry_with_constraints(bounds, gaps, constraints, Some(window))?;
 
         Ok(self.viewport_x != before)
     }
@@ -552,7 +589,8 @@ impl ScrollingLayout {
         Ok(changed)
     }
 
-    pub fn geometry_with_constraints(
+    /// Consume pending viewport policy requests and solve the logical layout.
+    pub fn resolve_geometry_with_constraints(
         &mut self,
         bounds: Rect,
         gaps: GapConfig,
@@ -616,50 +654,60 @@ impl ScrollingLayout {
             .collect();
         let viewport_resized = self.last_viewport_width != Some(viewport_width);
         self.last_viewport_width = Some(viewport_width);
-        if self.width_cycle_pending {
-            if let Some(active) = self.active_column {
-                self.record_viewport_basis(
-                    &column_positions,
-                    inner,
-                    viewport_width,
-                    ViewportRequest::WidthCycle(active),
-                );
+        match self.pending_viewport.take() {
+            Some(PendingViewportRequest::WidthCycle(_)) => {
+                if let Some(active) = self.active_column {
+                    self.record_viewport_basis(
+                        &column_positions,
+                        inner,
+                        viewport_width,
+                        ViewportRequest::WidthCycle(active),
+                    );
+                }
+                self.retarget_after_width_cycle(&column_positions, viewport_width);
             }
-            self.retarget_after_width_cycle(&column_positions, viewport_width);
-            self.width_cycle_pending = false;
-            self.reveal_pending = None;
-            self.swipe_focus_pending = None;
-        } else if let Some((previous, focused)) = self.swipe_focus_pending.take() {
-            if let (Some((from, _)), Some((to, _))) = (self.window_location(previous), self.window_location(focused)) {
-                self.record_viewport_basis(
-                    &column_positions,
-                    inner,
-                    viewport_width,
-                    ViewportRequest::Slide(from, to),
-                );
-                let last_end = column_positions
-                    .last()
-                    .map(|(start, width)| start + width)
-                    .unwrap_or(0.0);
-                let max_offset = (last_end - viewport_width).max(0.0);
-                self.viewport_x =
-                    (self.viewport_x + column_positions[to].0 - column_positions[from].0).clamp(0.0, max_offset);
+            Some(PendingViewportRequest::Focus(PendingFocusRequest::Slide {
+                from: previous,
+                to: focused,
+            })) => {
+                if let (Some((from, _)), Some((to, _))) =
+                    (self.window_location(previous), self.window_location(focused))
+                {
+                    self.record_viewport_basis(
+                        &column_positions,
+                        inner,
+                        viewport_width,
+                        ViewportRequest::Slide(from, to),
+                    );
+                    let last_end = column_positions
+                        .last()
+                        .map(|(start, width)| start + width)
+                        .unwrap_or(0.0);
+                    let max_offset = (last_end - viewport_width).max(0.0);
+                    self.viewport_x =
+                        (self.viewport_x + column_positions[to].0 - column_positions[from].0).clamp(0.0, max_offset);
+                }
             }
-            self.reveal_pending = None;
-        } else {
-            let reveal = self.reveal_pending.take().or_else(|| {
-                (viewport_resized && self.focus_strategy == ViewportFocusStrategy::Paged)
-                    .then(|| self.active_window())
-                    .flatten()
-            });
-            if let Some((column, _)) = reveal.and_then(|window| self.window_location(window)) {
-                self.record_viewport_basis(
-                    &column_positions,
-                    inner,
-                    viewport_width,
-                    ViewportRequest::Reveal(column),
-                );
-                self.reveal_column(&column_positions, viewport_width, column);
+            request => {
+                let reveal = match request {
+                    Some(PendingViewportRequest::Focus(PendingFocusRequest::Reveal(window))) => Some(window),
+                    None => None,
+                    _ => unreachable!(),
+                }
+                .or_else(|| {
+                    (viewport_resized && self.focus_strategy == ViewportFocusStrategy::Paged)
+                        .then(|| self.active_window())
+                        .flatten()
+                });
+                if let Some((column, _)) = reveal.and_then(|window| self.window_location(window)) {
+                    self.record_viewport_basis(
+                        &column_positions,
+                        inner,
+                        viewport_width,
+                        ViewportRequest::Reveal(column),
+                    );
+                    self.reveal_column(&column_positions, viewport_width, column);
+                }
             }
         }
 
@@ -780,7 +828,7 @@ impl ScrollingLayout {
         if self.columns[source].windows.len() == 1 {
             self.columns.swap(source, destination);
             self.active_column = Some(destination);
-            self.reveal_pending = self.active_window();
+            self.request_reveal(self.active_window());
             return Ok(());
         }
 
@@ -789,7 +837,7 @@ impl ScrollingLayout {
         let insertion = insertion.min(self.columns.len());
         self.columns.insert(insertion, Column::new(window, self.default_width));
         self.active_column = Some(insertion);
-        self.reveal_pending = self.active_window();
+        self.request_reveal(self.active_window());
         Ok(())
     }
 
@@ -913,6 +961,86 @@ mod tests {
     }
 
     #[test]
+    fn pending_request_preserves_slide_and_width_cycle_precedence() {
+        let bounds = Rect::new(0.0, 0.0, 200.0, 100.0);
+        let mut layout = ScrollingLayout::with_default_width(ColumnWidth::Fixed(150.0));
+        let a = window(1);
+        let b = window(2);
+        layout.insert(a, None).unwrap();
+        layout.insert(b, Some(a)).unwrap();
+        layout.set_focus_strategy(ViewportFocusStrategy::Center);
+        layout
+            .resolve_geometry_with_constraints(bounds, GapConfig::default(), &HashMap::new(), Some(b))
+            .unwrap();
+        layout.slide_focus_from(b, a).unwrap();
+        // Ordinary reveal requests must not replace a pending slide.
+        layout.focus(b).unwrap();
+        assert_eq!(
+            layout.pending_focus(),
+            Some(PendingFocusRequest::Slide { from: b, to: a })
+        );
+        layout
+            .cycle_column_width(b, &[ColumnWidth::Fixed(150.0), ColumnWidth::Fixed(100.0)])
+            .unwrap();
+        assert!(matches!(
+            layout.pending_viewport,
+            Some(PendingViewportRequest::WidthCycle(_))
+        ));
+        layout.focus_and_reveal(a).unwrap();
+        assert_eq!(
+            layout.pending_viewport,
+            Some(PendingViewportRequest::WidthCycle(Some(PendingFocusRequest::Reveal(a))))
+        );
+        layout
+            .resolve_geometry_with_constraints(bounds, GapConfig::default(), &HashMap::new(), Some(a))
+            .unwrap();
+        assert!(matches!(
+            layout.viewport_target().unwrap().request,
+            ViewportRequest::WidthCycle(_)
+        ));
+        assert!(layout.pending_viewport.is_none());
+    }
+
+    #[test]
+    fn canceled_width_cycle_restores_focus_request_and_solver_consumes_it_once() {
+        let bounds = Rect::new(0.0, 0.0, 200.0, 100.0);
+        let mut layout = ScrollingLayout::with_default_width(ColumnWidth::Fixed(150.0));
+        let a = window(1);
+        let b = window(2);
+        layout.insert(a, None).unwrap();
+        layout.insert(b, Some(a)).unwrap();
+        layout.set_focus_strategy(ViewportFocusStrategy::Center);
+        layout
+            .resolve_geometry_with_constraints(bounds, GapConfig::default(), &HashMap::new(), Some(b))
+            .unwrap();
+        layout.slide_focus_from(b, a).unwrap();
+        assert!(layout.cycle_column_width(a, &[ColumnWidth::Fixed(100.0)]).unwrap());
+        assert!(!layout.cycle_column_width(a, &[ColumnWidth::Fixed(100.0)]).unwrap());
+        assert_eq!(
+            layout.pending_viewport,
+            Some(PendingViewportRequest::Focus(PendingFocusRequest::Slide {
+                from: b,
+                to: a
+            }))
+        );
+        layout
+            .resolve_geometry_with_constraints(bounds, GapConfig::default(), &HashMap::new(), Some(a))
+            .unwrap();
+        assert!(matches!(
+            layout.viewport_target().unwrap().request,
+            ViewportRequest::Slide(_, _)
+        ));
+        let viewport = layout.viewport_x();
+        let provenance = layout.viewport_target().cloned();
+        layout
+            .resolve_geometry_with_constraints(bounds, GapConfig::default(), &HashMap::new(), Some(a))
+            .unwrap();
+        assert_eq!(layout.viewport_x(), viewport);
+        assert_eq!(layout.viewport_target(), provenance.as_ref());
+        assert!(layout.pending_viewport.is_none());
+    }
+
+    #[test]
     fn explicit_center_replays_maximum_even_when_only_held_width_crosses_it() {
         let bounds = Rect::new(0.0, 0.0, 200.0, 100.0);
         let gaps = GapConfig {
@@ -973,11 +1101,11 @@ mod tests {
             layout.insert(b, Some(a)).unwrap();
             layout.insert(c, Some(b)).unwrap();
             layout
-                .geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(c))
+                .resolve_geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(c))
                 .unwrap();
             layout.set_column_width(b, ColumnWidth::Fixed(150.0)).unwrap();
             layout
-                .geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(c))
+                .resolve_geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(c))
                 .unwrap();
             assert!(layout.viewport_depends_on_width(b, 100.0, 150.0), "{strategy:?}");
             assert!(
@@ -986,12 +1114,12 @@ mod tests {
             );
             // An unrelated relayout does not erase the last calculation.
             layout
-                .geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(c))
+                .resolve_geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(c))
                 .unwrap();
             assert!(layout.viewport_depends_on_width(b, 100.0, 150.0));
             layout.focus_and_reveal(a).unwrap();
             layout
-                .geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(a))
+                .resolve_geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(a))
                 .unwrap();
             assert!(
                 !layout.viewport_depends_on_width(b, 100.0, 150.0),
@@ -1020,7 +1148,7 @@ mod tests {
             },
         )]);
         let result = layout
-            .geometry_with_constraints(bounds, gaps, &constraints, Some(c))
+            .resolve_geometry_with_constraints(bounds, gaps, &constraints, Some(c))
             .unwrap();
         assert_eq!(layout.allocated_column_width(b), Some(150.0));
         assert_eq!(result.geometry[&b].width, 150.0, "minimum wins inconsistent maximum");
@@ -1073,11 +1201,11 @@ mod tests {
                 layout.focus_and_reveal(window(target)).unwrap();
                 let mut expected = layout.clone();
                 expected
-                    .geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(target)))
+                    .resolve_geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(target)))
                     .unwrap();
                 layout.focus_without_reveal(window(2)).unwrap();
                 layout
-                    .geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(2)))
+                    .resolve_geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(2)))
                     .unwrap();
                 assert_eq!(layout.active_window(), Some(window(2)));
                 assert_eq!(layout.viewport_x(), expected.viewport_x(), "{strategy:?}");
@@ -1087,7 +1215,7 @@ mod tests {
             layout.remove(window(3)).unwrap();
             assert!(
                 layout
-                    .geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(2)))
+                    .resolve_geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(2)))
                     .is_ok()
             );
         }
@@ -1107,7 +1235,7 @@ mod tests {
         };
 
         let result = layout
-            .geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(4)))
+            .resolve_geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(4)))
             .unwrap();
 
         assert_eq!(layout.viewport_x(), 1_000.0);
@@ -1182,7 +1310,7 @@ mod tests {
         for (focused, expected) in [(1, 0.0), (2, 500.0), (3, 1500.0), (2, 1000.0), (2, 1000.0)] {
             layout.focus_and_reveal(window(focused)).unwrap();
             layout
-                .geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(focused)))
+                .resolve_geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(focused)))
                 .unwrap();
             assert_eq!(layout.viewport_x(), expected);
         }
@@ -1200,7 +1328,7 @@ mod tests {
             smart: false,
         };
         let result = layout
-            .geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(2)))
+            .resolve_geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(2)))
             .unwrap();
         assert_eq!(layout.viewport_x(), 1010.0);
         assert_eq!(result.geometry[&window(2)].x, 0.0);
@@ -1208,7 +1336,7 @@ mod tests {
         assert!(previous.x + previous.width <= 0.0);
         layout.focus_and_reveal(window(1)).unwrap();
         let result = layout
-            .geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(1)))
+            .resolve_geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(1)))
             .unwrap();
         assert_eq!(layout.viewport_x(), 0.0);
         assert_eq!(result.geometry[&window(1)].x, 0.0);
@@ -1234,7 +1362,7 @@ mod tests {
             for (focused, offset) in [1, 3, 2, 1].into_iter().zip(offsets) {
                 layout.focus_and_reveal(window(focused)).unwrap();
                 let result = layout
-                    .geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(focused)))
+                    .resolve_geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(focused)))
                     .unwrap();
                 let rect = result.geometry[&window(focused)];
                 assert_eq!(layout.viewport_x(), offset, "width={width:?}, focused={focused}");
@@ -1264,11 +1392,11 @@ mod tests {
         };
 
         let first = layout
-            .geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(1)))
+            .resolve_geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(1)))
             .unwrap();
         assert_eq!(layout.viewport_x(), 0.0);
         let second = layout
-            .geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(2)))
+            .resolve_geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(2)))
             .unwrap();
 
         assert_eq!(layout.viewport_x(), 0.0);
@@ -1285,12 +1413,12 @@ mod tests {
             .set_column_width(window(2), ColumnWidth::Proportion(1.0))
             .unwrap();
         let zoomed = layout
-            .geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(2)))
+            .resolve_geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(2)))
             .unwrap();
         assert_eq!(zoomed.geometry[&window(2)].width, 980.0);
         layout.insert(window(3), Some(window(2))).unwrap();
         let opened = layout
-            .geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(3)))
+            .resolve_geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(3)))
             .unwrap();
         let previous = opened.geometry[&window(2)];
         let new = opened.geometry[&window(3)];
@@ -1302,7 +1430,7 @@ mod tests {
             .set_column_width(window(2), ColumnWidth::Proportion(0.5))
             .unwrap();
         let restored = layout
-            .geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(2)))
+            .resolve_geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(2)))
             .unwrap();
         assert_eq!(restored.geometry[&window(2)].width, 485.0);
     }
@@ -1321,7 +1449,7 @@ mod tests {
         let (mut layout, bounds, gaps) = paged_layout(6);
         for focused in [1, 2, 3, 4, 5, 6, 5, 4, 3, 2, 1] {
             let geometry = layout
-                .geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(focused)))
+                .resolve_geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(focused)))
                 .unwrap()
                 .geometry;
             let first = (focused - 1) / 2 * 2 + 1;
@@ -1349,12 +1477,12 @@ mod tests {
         };
         layout.focus_and_reveal(window(1)).unwrap();
         layout
-            .geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(1)))
+            .resolve_geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(1)))
             .unwrap();
         for (previous, focused, expected) in [(1, 2, 0.0), (2, 3, 500.0), (3, 2, 500.0), (2, 1, 0.0)] {
             layout.slide_focus_from(window(previous), window(focused)).unwrap();
             layout
-                .geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(focused)))
+                .resolve_geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(focused)))
                 .unwrap();
             assert_eq!(layout.viewport_x(), expected);
         }
@@ -1364,7 +1492,7 @@ mod tests {
     fn swipe_focus_slides_one_column_at_a_time_in_paged_layout() {
         let (mut layout, bounds, gaps) = paged_layout(5);
         layout
-            .geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(1)))
+            .resolve_geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(1)))
             .unwrap();
         assert_eq!(layout.viewport_x(), 0.0);
 
@@ -1372,7 +1500,7 @@ mod tests {
             layout.focus_and_reveal(window(focused)).unwrap();
             layout.slide_focus_from(window(previous), window(focused)).unwrap();
             let result = layout
-                .geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(focused)))
+                .resolve_geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(focused)))
                 .unwrap();
 
             assert_eq!(layout.viewport_x(), expected);
@@ -1384,11 +1512,11 @@ mod tests {
     fn paged_focus_realigns_after_output_resize() {
         let (mut layout, bounds, gaps) = paged_layout(6);
         layout
-            .geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(5)))
+            .resolve_geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(5)))
             .unwrap();
         let bounds = Rect::new(20.0, 48.0, 1400.0, 800.0);
         let result = layout
-            .geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(5)))
+            .resolve_geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(5)))
             .unwrap();
         assert_eq!(layout.viewport_x(), 2780.0);
         assert_eq!(result.geometry[&window(5)].x, 30.0);
@@ -1400,12 +1528,12 @@ mod tests {
         let (mut layout, bounds, gaps) = paged_layout(4);
         layout.center_window(window(2), bounds, gaps, &HashMap::new()).unwrap();
         let result = layout
-            .geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(2)))
+            .resolve_geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(2)))
             .unwrap();
         let rect = result.geometry[&window(2)];
         assert_eq!(rect.x + rect.width / 2.0, 500.0);
         let result = layout
-            .geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(1)))
+            .resolve_geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(1)))
             .unwrap();
         assert_eq!(result.geometry[&window(1)].x, 10.0);
     }
@@ -1415,12 +1543,12 @@ mod tests {
         let (mut layout, bounds, gaps) = paged_layout(4);
         layout.columns[0].width = ColumnWidth::Full;
         let result = layout
-            .geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(3)))
+            .resolve_geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(3)))
             .unwrap();
         assert_eq!(result.geometry[&window(2)].x, 10.0);
         assert_eq!(result.geometry[&window(3)].x, 505.0);
         let result = layout
-            .geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(4)))
+            .resolve_geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(4)))
             .unwrap();
         assert_eq!(result.geometry[&window(4)].x, 10.0);
     }
@@ -1436,7 +1564,7 @@ mod tests {
             },
         )]);
         let result = layout
-            .geometry_with_constraints(bounds, gaps, &constraints, Some(window(2)))
+            .resolve_geometry_with_constraints(bounds, gaps, &constraints, Some(window(2)))
             .unwrap();
         assert!(layout.viewport_x() > 0.0);
         let rect = result.geometry[&window(2)];
@@ -1452,7 +1580,7 @@ mod tests {
         let bounds = Rect::new(13.25, 48.5, 1000.5, 800.25);
         for focused in [1, 2, 3, 4, 5, 6, 5, 4, 3, 2, 1] {
             let result = layout
-                .geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(focused)))
+                .resolve_geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(focused)))
                 .unwrap();
             let first = (focused - 1) / 3 * 3 + 1;
             assert!((result.geometry[&window(first)].x - 23.25).abs() < 1e-6);
@@ -1470,7 +1598,7 @@ mod tests {
         }
         for (focused, first) in [(1, 1), (2, 1), (3, 3), (4, 3), (5, 3), (2, 1)] {
             let result = layout
-                .geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(focused)))
+                .resolve_geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(focused)))
                 .unwrap();
             assert_eq!(result.geometry[&window(first)].x, 10.0);
             let rect = result.geometry[&window(focused)];
@@ -1489,13 +1617,13 @@ mod tests {
             },
         )]);
         let result = layout
-            .geometry_with_constraints(bounds, gaps, &constraints, Some(window(2)))
+            .resolve_geometry_with_constraints(bounds, gaps, &constraints, Some(window(2)))
             .unwrap();
         assert_eq!(result.geometry[&window(2)].x, 10.0);
         assert_eq!(result.geometry[&window(3)].x, 505.0);
         layout.remove(window(1)).unwrap();
         let result = layout
-            .geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(2)))
+            .resolve_geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(2)))
             .unwrap();
         assert_eq!(layout.viewport_x(), 0.0);
         assert_eq!(result.geometry[&window(2)].x, 10.0);
@@ -1515,14 +1643,14 @@ mod tests {
         for id in 1..=3 {
             layout.insert(window(id), (id > 1).then(|| window(id - 1))).unwrap();
             layout
-                .geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(id)))
+                .resolve_geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(id)))
                 .unwrap();
         }
         let before = layout.viewport_x();
 
         layout.resize_window(window(3), Direction::Right, 0.5).unwrap();
         layout
-            .geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(3)))
+            .resolve_geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(3)))
             .unwrap();
 
         assert_eq!(layout.viewport_x(), before);
@@ -1542,10 +1670,10 @@ mod tests {
             layout.insert(window(id), None).unwrap();
         }
         layout
-            .geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(3)))
+            .resolve_geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(3)))
             .unwrap();
         layout
-            .geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(1)))
+            .resolve_geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(1)))
             .unwrap();
 
         assert_eq!(layout.viewport_x(), 0.0);
@@ -1565,13 +1693,13 @@ mod tests {
             layout.insert(window(id), None).unwrap();
         }
         layout
-            .geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(4)))
+            .resolve_geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(4)))
             .unwrap();
         let before = layout.viewport_x();
 
         layout.remove(window(1)).unwrap();
         layout
-            .geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(4)))
+            .resolve_geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(4)))
             .unwrap();
 
         assert_eq!(layout.viewport_x(), before);
@@ -1605,13 +1733,13 @@ mod tests {
             ..GapConfig::default()
         };
         let first = layout
-            .geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(1)))
+            .resolve_geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(1)))
             .unwrap()
             .geometry[&window(1)];
 
         layout.insert(window(2), Some(window(1))).unwrap();
         let second = layout
-            .geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(1)))
+            .resolve_geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(1)))
             .unwrap()
             .geometry[&window(1)];
 
@@ -1698,11 +1826,11 @@ mod tests {
 
         layout.focus(window(1)).unwrap();
         layout
-            .geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(1)))
+            .resolve_geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(1)))
             .unwrap();
         layout.cycle_column_width(window(1), &presets).unwrap();
         let zoomed = layout
-            .geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(1)))
+            .resolve_geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(1)))
             .unwrap();
 
         assert_eq!(layout.viewport_x(), 0.0);
@@ -1712,7 +1840,7 @@ mod tests {
 
         layout.cycle_column_width(window(1), &presets).unwrap();
         let restored = layout
-            .geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(1)))
+            .resolve_geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(1)))
             .unwrap();
 
         assert_eq!(layout.viewport_x(), 0.0);
@@ -1726,11 +1854,11 @@ mod tests {
         let presets = [ColumnWidth::Proportion(0.5), ColumnWidth::Full];
 
         layout
-            .geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(2)))
+            .resolve_geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(2)))
             .unwrap();
         layout.cycle_column_width(window(2), &presets).unwrap();
         let zoomed = layout
-            .geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(2)))
+            .resolve_geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(2)))
             .unwrap();
 
         assert_eq!(layout.viewport_x(), 495.0);
@@ -1740,7 +1868,7 @@ mod tests {
 
         layout.cycle_column_width(window(2), &presets).unwrap();
         let restored = layout
-            .geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(2)))
+            .resolve_geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(2)))
             .unwrap();
 
         assert_eq!(layout.viewport_x(), 0.0);
@@ -1779,12 +1907,12 @@ mod tests {
             smart: false,
         };
         layout
-            .geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(4)))
+            .resolve_geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(4)))
             .unwrap();
 
         assert!(layout.center_window(window(2), bounds, gaps, &HashMap::new()).unwrap());
         let result = layout
-            .geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(2)))
+            .resolve_geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(2)))
             .unwrap();
         let rect = result.geometry[&window(2)];
 

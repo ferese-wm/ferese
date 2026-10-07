@@ -24,7 +24,7 @@ impl Ferese {
         gesture_direction: SwipeDirection,
         progress: f64,
     ) {
-        if self.focus_swipe.is_none() {
+        if self.focus_swipe().is_none() {
             if self.swipe.preview_started() || !self.animations_enabled || self.overview.is_presenting() {
                 return;
             }
@@ -40,9 +40,9 @@ impl Ferese {
             let to = neighbor.unwrap_or(from);
             let workspace_id = workspace.id;
             let start = self
-                .viewport_animations
+                .viewports
                 .get(&workspace_id)
-                .map(|viewport| viewport.current)
+                .map(|viewport| viewport.motion().current)
                 .or_else(|| workspace.layout.viewport_x())
                 .unwrap_or(0.0);
             let mut candidate = workspace.layout.clone();
@@ -53,12 +53,12 @@ impl Ferese {
                 return;
             }
             if candidate
-                .geometry_with_constraints(bounds, self.gap_config, &self.window_constraints(), Some(to))
+                .resolve_geometry_with_constraints(bounds, self.gap_config, &self.window_constraints(), Some(to))
                 .is_err()
             {
                 return;
             }
-            self.focus_swipe = Some(FocusSwipe {
+            let swipe = FocusSwipe {
                 workspace: workspace_id,
                 from,
                 to,
@@ -76,17 +76,20 @@ impl Ferese {
                     WorkspaceLayout::Scrolling(layout) => Some(layout),
                     _ => None,
                 },
-            });
+            };
+            self.viewports
+                .entry(workspace_id)
+                .or_insert_with(|| ViewportPresentation::new(start))
+                .begin_gesture(swipe);
             self.rebuild_presentation_dependencies();
             self.swipe.mark_preview_started();
         }
-        if let Some(swipe) = &mut self.focus_swipe {
-            swipe.progress = progress;
+        if let Some(workspace) = self.focus_swipe().map(|swipe| swipe.workspace) {
+            self.viewports.get_mut(&workspace).unwrap().update_gesture(progress);
         }
 
         if let Some(output) = self
-            .focus_swipe
-            .as_ref()
+            .focus_swipe()
             .and_then(|swipe| self.output_workspaces.output_for_workspace(swipe.workspace))
             .and_then(|id| self.outputs_by_id.get(&id))
             .cloned()
@@ -96,25 +99,27 @@ impl Ferese {
     }
 
     pub(crate) fn finish_focus_swipe(&mut self, direction: Option<SwipeDirection>) -> bool {
-        let Some(swipe) = self.focus_swipe.take() else {
+        let Some(swipe) = self.focus_swipe() else {
             return false;
         };
-        let current = self.focus_swipe_is_current(&swipe);
+        let current = self.focus_swipe_is_current(swipe);
         let blocked = self
             .presentation_dependencies
             .viewport_blocked(swipe.workspace, &self.windows);
-        self.presentation_dependencies
-            .restore_viewport(swipe.workspace, swipe.dependencies.clone());
         // Release from the last input position even if no frame rendered that update.
-        if current
-            && !blocked
-            && let Some(viewport) = self.viewport_animations.get_mut(&swipe.workspace)
-        {
-            viewport.current = swipe.position();
-            viewport.velocity = swipe
-                .release_velocity(self.swipe.release_velocity, self.swipe.unbounded_release_velocity)
-                / self.animation_speed;
-        }
+        let velocity = (current && !blocked).then(|| {
+            swipe.release_velocity(self.swipe.release_velocity, self.swipe.unbounded_release_velocity)
+                / self.animation_speed
+        });
+        let workspace = swipe.workspace;
+        let swipe = self
+            .viewports
+            .get_mut(&workspace)
+            .unwrap()
+            .end_gesture(velocity)
+            .unwrap();
+        self.presentation_dependencies
+            .restore_viewport(workspace, swipe.dependencies.clone());
         let neighbor = self.output_bounds().and_then(|bounds| {
             self.workspaces
                 .active()

@@ -50,15 +50,15 @@ impl Ferese {
             let viewport = self
                 .presentation_dependencies
                 .viewport_blocked(workspace, &self.windows)
-                && self.viewport_animations.get(&workspace).is_some_and(moving)
+                && self
+                    .viewports
+                    .get(&workspace)
+                    .is_some_and(ViewportPresentation::spring_is_moving)
                 && self
                     .output_workspaces
                     .output_for_workspace(workspace)
                     .is_some_and(|output| self.output_workspaces.active_workspace(output) == Some(workspace))
-                && self
-                    .focus_swipe
-                    .as_ref()
-                    .is_none_or(|swipe| swipe.workspace != workspace);
+                && self.focus_swipe().is_none_or(|swipe| swipe.workspace != workspace);
             let others = self.workspaces.workspace(workspace).is_some_and(|workspace| {
                 workspace
                     .layout
@@ -95,7 +95,7 @@ impl Ferese {
     }
 
     fn animations_need_tick(&self) -> bool {
-        if self.focus_swipe.is_some()
+        if self.focus_swipe().is_some()
             || self.presentation_dependencies.needs_tick()
             || !self.workspace_slides.is_empty()
             || !self.render.closing.is_empty()
@@ -106,13 +106,11 @@ impl Ferese {
             return true;
         }
 
-        let moving = |value: &AnimatedValue| value.current != value.target || value.velocity != 0.0;
-
-        if self.viewport_animations.iter().any(|(workspace, viewport)| {
+        if self.viewports.iter().any(|(workspace, viewport)| {
             self.output_workspaces
                 .output_for_workspace(*workspace)
                 .is_some_and(|output| self.output_workspaces.active_workspace(output) == Some(*workspace))
-                && moving(viewport)
+                && viewport.needs_tick()
         }) {
             return true;
         }
@@ -151,12 +149,12 @@ impl Ferese {
         }
 
         let delta = delta.mul_f64(self.animation_speed);
-        if self
-            .focus_swipe
-            .as_ref()
-            .is_some_and(|swipe| !self.focus_swipe_is_current(swipe))
-            && let Some(swipe) = self.focus_swipe.take()
+        if let Some(workspace) = self
+            .focus_swipe()
+            .filter(|swipe| !self.focus_swipe_is_current(swipe))
+            .map(|swipe| swipe.workspace)
         {
+            let swipe = self.viewports.get_mut(&workspace).unwrap().end_gesture(None).unwrap();
             self.presentation_dependencies
                 .restore_viewport(swipe.workspace, swipe.dependencies);
             self.release_presentation_dependencies();
@@ -284,7 +282,15 @@ impl Ferese {
         }
 
         // Capture holds before expiry so waiting wall time never steps reflow.
-        let (mut held_reflow, mut held_viewport) = self.presentation_dependencies.holds(&self.windows);
+        for (workspace, viewport) in &mut self.viewports {
+            if self
+                .presentation_dependencies
+                .viewport_blocked(*workspace, &self.windows)
+            {
+                viewport.reconcile_hold(true, true);
+            }
+        }
+        let mut held_reflow = self.presentation_dependencies.holds(&self.windows);
         #[cfg(feature = "resize-metrics")]
         self.measure_resize_pauses(now);
         #[cfg(feature = "resize-metrics")]
@@ -304,9 +310,8 @@ impl Ferese {
             self.release_presentation_dependencies();
         }
 
-        let (released_reflow, released_viewport) = self.presentation_dependencies.holds(&self.windows);
+        let released_reflow = self.presentation_dependencies.holds(&self.windows);
         held_reflow.extend(released_reflow);
-        held_viewport.extend(released_viewport);
         let animations_enabled = self.animations_enabled;
         let animation_speed = self.animation_speed;
         #[cfg(feature = "resize-metrics")]
@@ -353,9 +358,8 @@ impl Ferese {
         });
         active_animation |= self.render.snapshots().next().is_some();
         // Keep scheduling frames while waiting, so the deadline cannot stall.
-        active_animation |=
-            self.windows.resizing().next().is_some() || !held_reflow.is_empty() || !held_viewport.is_empty();
-        for (workspace, viewport) in &mut self.viewport_animations {
+        active_animation |= self.windows.resizing().next().is_some() || !held_reflow.is_empty();
+        for (workspace, viewport) in &mut self.viewports {
             if self
                 .output_workspaces
                 .output_for_workspace(*workspace)
@@ -364,18 +368,13 @@ impl Ferese {
                 continue;
             }
 
-            if held_viewport.contains(workspace) {
-                continue;
-            }
-
-            if let Some(swipe) = self.focus_swipe.as_ref().filter(|swipe| swipe.workspace == *workspace) {
-                viewport.current = swipe.position();
-                viewport.velocity = 0.0;
-            } else if self.animations_enabled {
-                active_animation |= viewport.advance(delta, self.viewport_spring_config);
-            } else {
-                viewport.snap();
-            }
+            active_animation |= viewport.advance(
+                delta,
+                self.viewport_spring_config,
+                self.animations_enabled,
+                self.presentation_dependencies
+                    .viewport_blocked(*workspace, &self.windows),
+            );
         }
 
         let mut remaps = Vec::new();
@@ -417,10 +416,10 @@ impl Ferese {
             }
 
             if let Some((workspace, world_x)) = record.world_x.as_mut()
-                && let Some(viewport) = self.viewport_animations.get(workspace)
+                && let Some(viewport) = self.viewports.get(workspace)
             {
                 if zooming {
-                    sync_scrolling_coordinates(geometry, world_x, viewport, true);
+                    sync_scrolling_coordinates(geometry, world_x, viewport.motion(), true);
                 } else if !held && self.animations_enabled {
                     active_animation |= world_x.advance(delta, self.spring_config);
                 } else if !held {
@@ -432,10 +431,7 @@ impl Ferese {
                     if held {
                         presented_world.velocity = 0.0;
                     }
-                    let mut presented_viewport = *viewport;
-                    if held_viewport.contains(workspace) {
-                        presented_viewport.velocity = 0.0;
-                    }
+                    let presented_viewport = viewport.presented_motion();
                     sync_scrolling_coordinates(geometry, &mut presented_world, &presented_viewport, false);
                 }
             }
@@ -748,9 +744,9 @@ mod tests {
     #[test]
     fn scrolling_target_changes_and_zoom_ownership_switches_are_continuous() {
         let config = SpringConfig::default();
-        let mut viewport = AnimatedValue::new(100.0);
-        viewport.set_target(400.0);
-        viewport.advance_with_policy(Duration::from_millis(40), config, CrossingPolicy::NoCrossing);
+        let mut viewport = ViewportPresentation::new(100.0);
+        viewport.retarget(400.0, true);
+        viewport.advance(Duration::from_millis(40), config, true, false);
         let mut world = AnimatedValue::new(500.0);
         world.set_target(900.0);
         world.advance_with_policy(Duration::from_millis(40), config, CrossingPolicy::NoCrossing);
@@ -758,25 +754,25 @@ mod tests {
         width.set_target(700.0);
         width.advance_with_policy(Duration::from_millis(40), config, CrossingPolicy::NoCrossing);
         let mut geometry = WindowGeometry::new(
-            Rect::new(world.current - viewport.current, 0.0, width.current, 300.0),
+            Rect::new(world.current - viewport.motion().current, 0.0, width.current, 300.0),
             None,
         );
-        let target = Rect::new(world.target - viewport.target, 0.0, width.target, 300.0);
+        let target = Rect::new(world.target - viewport.motion().target, 0.0, width.target, 300.0);
         geometry.set_logical_target(target, Duration::from_millis(40));
-        sync_scrolling_coordinates(&mut geometry, &mut world, &viewport, false);
+        sync_scrolling_coordinates(&mut geometry, &mut world, viewport.motion(), false);
         geometry.visual.velocity.width = width.velocity;
         let before = geometry.visual.current;
-        viewport.retarget_preserving_motion(300.0);
+        viewport.retarget(300.0, true);
         world.retarget_preserving_motion(1000.0);
         width.retarget_preserving_motion(600.0);
         geometry.set_logical_target(
-            Rect::new(world.target - viewport.target, 0.0, width.target, 300.0),
+            Rect::new(world.target - viewport.motion().target, 0.0, width.target, 300.0),
             Duration::from_millis(40),
         );
-        sync_scrolling_coordinates(&mut geometry, &mut world, &viewport, false);
+        sync_scrolling_coordinates(&mut geometry, &mut world, viewport.motion(), false);
         assert_eq!(geometry.visual.current, before);
-        assert_eq!(geometry.visual.velocity.x, world.velocity - viewport.velocity);
-        assert_eq!(geometry.logical.x, world.target - viewport.target);
+        assert_eq!(geometry.visual.velocity.x, world.velocity - viewport.motion().velocity);
+        assert_eq!(geometry.logical.x, world.target - viewport.motion().target);
 
         for mode in [
             PresentationMode::Maximized,
@@ -785,9 +781,9 @@ mod tests {
         ] {
             let before = geometry.visual.current;
             geometry.set_presentation_mode(Rect::new(0.0, 0.0, 1920.0, 1080.0), mode, Duration::from_millis(40));
-            sync_scrolling_coordinates(&mut geometry, &mut world, &viewport, true);
+            sync_scrolling_coordinates(&mut geometry, &mut world, viewport.motion(), true);
             assert_eq!(geometry.visual.current, before);
-            assert_eq!(world.current, geometry.visual.current.x + viewport.current);
+            assert_eq!(world.current, geometry.visual.current.x + viewport.motion().current);
             geometry.advance(Duration::ZERO, config, true);
             assert_eq!(geometry.visual.current, before);
             geometry.advance(Duration::from_millis(16), config, true);
@@ -799,7 +795,7 @@ mod tests {
             let zoom_owned = geometry.is_zooming();
             geometry.advance(Duration::from_millis(16), config, true);
             if zoom_owned {
-                sync_scrolling_coordinates(&mut geometry, &mut world, &viewport, true);
+                sync_scrolling_coordinates(&mut geometry, &mut world, viewport.motion(), true);
             }
             if !geometry.is_zooming() {
                 break;
@@ -807,8 +803,8 @@ mod tests {
         }
         assert!(!geometry.is_zooming());
         let before = geometry.visual.current;
-        world.set_target(geometry.logical.x + viewport.target);
-        sync_scrolling_coordinates(&mut geometry, &mut world, &viewport, false);
+        world.set_target(geometry.logical.x + viewport.motion().target);
+        sync_scrolling_coordinates(&mut geometry, &mut world, viewport.motion(), false);
         assert_eq!(geometry.visual.current, before);
     }
 
@@ -870,9 +866,11 @@ mod tests {
         state.windows.records.insert(id, settled());
         let mut viewport = AnimatedValue::new(0.0);
         viewport.set_target(500.0);
-        state.viewport_animations.insert(workspace, viewport);
+        state
+            .viewports
+            .insert(workspace, ViewportPresentation::from_motion(viewport));
         state.advance_animations_at(Duration::from_millis(40), Duration::from_millis(40));
-        let frozen = state.viewport_animations[&workspace];
+        let frozen = *state.viewports[&workspace].motion();
         assert!(frozen.current > 0.0 && frozen.current < 500.0);
 
         // No intervening dispatch at all: expiration happens on the 300ms tick.
@@ -886,7 +884,7 @@ mod tests {
             .wait_for_viewport(workspace, id, 1.into());
         state.advance_animations_at(Duration::from_millis(300), Duration::from_millis(340));
         assert!(state.windows.transaction(&id).is_none());
-        assert_eq!(state.viewport_animations[&workspace], frozen);
+        assert_eq!(*state.viewports[&workspace].motion(), frozen);
         state.advance_animations_at(Duration::from_millis(16), Duration::from_millis(356));
         let mut expected = frozen;
         expected.advance_with_policy(
@@ -894,7 +892,7 @@ mod tests {
             state.viewport_spring_config,
             CrossingPolicy::NoCrossing,
         );
-        assert_eq!(state.viewport_animations[&workspace], expected);
+        assert_eq!(*state.viewports[&workspace].motion(), expected);
 
         // A commit releases the barrier between ticks. Drop that release tick's
         // elapsed pause too, then resume at the next normal 16ms interval.
@@ -907,10 +905,10 @@ mod tests {
             .presentation_dependencies
             .wait_for_viewport(workspace, id, 2.into());
         state.advance_animations_at(Duration::from_millis(100), Duration::from_millis(456));
-        let frozen = state.viewport_animations[&workspace];
+        let frozen = *state.viewports[&workspace].motion();
         state.windows.clear_transaction(&id);
         state.advance_animations_at(Duration::from_millis(200), Duration::from_millis(656));
-        assert_eq!(state.viewport_animations[&workspace], frozen);
+        assert_eq!(*state.viewports[&workspace].motion(), frozen);
         state.advance_animations_at(Duration::from_millis(16), Duration::from_millis(672));
         let mut expected = frozen;
         expected.advance_with_policy(
@@ -918,14 +916,14 @@ mod tests {
             state.viewport_spring_config,
             CrossingPolicy::NoCrossing,
         );
-        assert_eq!(state.viewport_animations[&workspace], expected);
+        assert_eq!(*state.viewports[&workspace].motion(), expected);
 
-        let frozen = state.viewport_animations[&workspace];
+        let frozen = *state.viewports[&workspace].motion();
         let instant = Instant::now();
         state.last_animation_tick = instant;
         state.session_lock.sleeping = true;
         state.advance_animations(instant + Duration::from_millis(300));
-        assert_eq!(state.viewport_animations[&workspace], frozen);
+        assert_eq!(*state.viewports[&workspace].motion(), frozen);
         state.session_lock.sleeping = false;
         state.advance_animations(instant + Duration::from_millis(316));
         let mut expected = frozen;
@@ -934,11 +932,11 @@ mod tests {
             state.viewport_spring_config,
             CrossingPolicy::NoCrossing,
         );
-        assert_eq!(state.viewport_animations[&workspace], expected);
+        assert_eq!(*state.viewports[&workspace].motion(), expected);
 
         // Wake paths reset the global clock even when nothing dispatched while
         // asleep. This excludes a whole undelivered pause interval as well.
-        let frozen = state.viewport_animations[&workspace];
+        let frozen = *state.viewports[&workspace].motion();
         state.last_animation_tick = Instant::now() - Duration::from_secs(5);
         state.reset_animation_clock();
         let resumed = state.last_animation_tick;
@@ -949,11 +947,12 @@ mod tests {
             state.viewport_spring_config,
             CrossingPolicy::NoCrossing,
         );
-        assert_eq!(state.viewport_animations[&workspace], expected);
+        assert_eq!(*state.viewports[&workspace].motion(), expected);
 
         // A settled transaction still has to flush its resume guard; otherwise
         // the next unrelated animation would inherit an old paused workspace.
-        state.viewport_animations.get_mut(&workspace).unwrap().snap();
+        let target = state.viewports[&workspace].motion().target;
+        state.viewports.get_mut(&workspace).unwrap().retarget(target, false);
         state.windows.record_mut(id).unwrap().focus = Some(AnimatedValue::new(0.0));
         state.windows.set_transaction(
             id,
@@ -964,9 +963,11 @@ mod tests {
             .presentation_dependencies
             .wait_for_viewport(workspace, id, 3.into());
         state.advance_animations_at(Duration::from_millis(100), Duration::from_millis(900));
-        assert!(state.presentation_dependencies.needs_tick());
+        assert!(state.viewports[&workspace].is_held());
         state.windows.clear_transaction(&id);
         state.advance_animations_at(Duration::from_millis(16), Duration::from_millis(916));
         assert!(!state.presentation_dependencies.needs_tick());
+        assert!(!state.viewports[&workspace].is_held());
+        assert!(!state.viewports[&workspace].needs_tick());
     }
 }

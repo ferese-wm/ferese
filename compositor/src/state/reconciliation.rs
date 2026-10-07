@@ -471,10 +471,12 @@ mod tests {
         let c_workspace = state.output_workspaces.active_workspace(c_id).unwrap();
         let mut viewport = AnimatedValue::new(0.0);
         viewport.set_target(200.0);
-        state.viewport_animations.insert(c_workspace, viewport);
+        state
+            .viewports
+            .insert(c_workspace, ViewportPresentation::from_motion(viewport));
         let now = state.start_time.elapsed();
         state.advance_animations_at(Duration::from_millis(16), now + Duration::from_millis(16));
-        assert!(state.viewport_animations[&c_workspace].current > 0.0);
+        assert!(state.viewports[&c_workspace].motion().current > 0.0);
         assert!(state.windows.transaction(&slow_id).is_some());
         state.advance_animations_at(Duration::from_millis(334), now + Duration::from_millis(350));
         assert!(state.windows.transaction(&slow_id).is_none());

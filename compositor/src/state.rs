@@ -14,8 +14,11 @@ mod prediction;
 mod presentation_dependencies;
 pub(crate) use prediction::FrameScene;
 mod lifecycle;
+mod viewport;
 mod window_registry;
 mod windows;
+
+use viewport::ViewportPresentation;
 
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
@@ -146,6 +149,7 @@ impl SlideOffset {
     }
 }
 
+#[derive(Clone, PartialEq)]
 struct FocusSwipe {
     workspace: WorkspaceId,
     from: WindowId,
@@ -444,11 +448,10 @@ pub struct Ferese {
     pub(crate) pending_logout: Option<u32>,
     pub(crate) logout_query: Option<u32>,
     pub(crate) logout_owner: Option<ObjectId>,
-    viewport_animations: HashMap<WorkspaceId, AnimatedValue>,
+    viewports: HashMap<WorkspaceId, ViewportPresentation>,
     presentation_dependencies: presentation_dependencies::PresentationDependencies,
     #[cfg(feature = "resize-metrics")]
     pub(crate) resize_metrics: crate::resize_metrics::ResizeMetrics,
-    focus_swipe: Option<FocusSwipe>,
     workspace_slides: HashMap<OutputId, WorkspaceSlide>,
     workspace_slide_offsets: HashMap<WorkspaceId, (f64, f64)>,
     pub focused_window: Option<WindowId>,
@@ -721,11 +724,10 @@ impl Ferese {
             pending_logout: None,
             logout_query: None,
             logout_owner: None,
-            viewport_animations: HashMap::new(),
+            viewports: HashMap::new(),
             presentation_dependencies: Default::default(),
             #[cfg(feature = "resize-metrics")]
             resize_metrics: crate::resize_metrics::ResizeMetrics::default(),
-            focus_swipe: None,
             workspace_slides: HashMap::new(),
             workspace_slide_offsets: HashMap::new(),
             focused_window: None,

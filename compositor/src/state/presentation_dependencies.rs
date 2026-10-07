@@ -7,19 +7,19 @@ struct ClientCommit {
     serial: Serial,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 struct ViewportCommit {
     commit: ClientCommit,
     width: (f64, f64),
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 struct ViewportStep {
     target: ferese_layout::ViewportTarget,
     inputs: Vec<ViewportCommit>,
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone, Default, PartialEq)]
 pub(super) struct ViewportDependencies {
     steps: Vec<ViewportStep>,
     waits: Vec<ClientCommit>,
@@ -35,10 +35,10 @@ const MAX_VIEWPORT_STEPS: usize = 32;
 #[derive(Default)]
 pub(super) struct PresentationDependencies {
     reflow: HashMap<WindowId, Vec<ClientCommit>>,
+    // Provenance and configure serials only; ViewportPresentation owns holds.
     viewport: HashMap<WorkspaceId, ViewportDependencies>,
-    // A release tick consumes waiting wall time without stepping held springs.
+    // A reflow release tick consumes waiting wall time without stepping springs.
     paused_reflow: HashSet<WindowId>,
-    paused_viewport: HashSet<WorkspaceId>,
 }
 
 impl PresentationDependencies {
@@ -66,7 +66,7 @@ impl PresentationDependencies {
     }
 
     pub(super) fn needs_tick(&self) -> bool {
-        !self.paused_reflow.is_empty() || !self.paused_viewport.is_empty()
+        !self.paused_reflow.is_empty()
     }
 
     fn pending<W: std::hash::Hash + Eq + Clone>(
@@ -101,23 +101,15 @@ impl PresentationDependencies {
     pub(super) fn holds<W: std::hash::Hash + Eq + Clone>(
         &mut self,
         windows: &window_registry::WindowRegistry<W>,
-    ) -> (HashSet<WindowId>, HashSet<WorkspaceId>) {
+    ) -> HashSet<WindowId> {
         let reflow = self
             .reflow
             .keys()
             .copied()
             .filter(|id| self.reflow_blocked(*id, windows))
             .collect::<HashSet<_>>();
-        let viewport = self
-            .viewport
-            .keys()
-            .copied()
-            .filter(|workspace| self.viewport_blocked(*workspace, windows))
-            .collect::<HashSet<_>>();
         let mut held_reflow = std::mem::replace(&mut self.paused_reflow, reflow.clone());
-        let mut held_viewport = std::mem::replace(&mut self.paused_viewport, viewport.clone());
         held_reflow.extend(reflow);
-        held_viewport.extend(viewport);
         self.reflow.retain(|_, waits| {
             waits.retain(|wait| Self::pending(*wait, windows));
             !waits.is_empty()
@@ -132,7 +124,7 @@ impl PresentationDependencies {
             }
             !waits.steps.is_empty() || !waits.waits.is_empty()
         });
-        (held_reflow, held_viewport)
+        held_reflow
     }
 }
 
@@ -264,13 +256,15 @@ fn viewport_dependencies(
 impl Ferese {
     pub(super) fn release_presentation_dependencies(&mut self) {
         let paused_reflow = self.presentation_dependencies.paused_reflow.clone();
-        let paused_viewport = self.presentation_dependencies.paused_viewport.clone();
-        self.rebuild_presentation_dependencies();
+        self.rebuild_presentation_dependencies_with_release(true);
         self.presentation_dependencies.paused_reflow.extend(paused_reflow);
-        self.presentation_dependencies.paused_viewport.extend(paused_viewport);
     }
 
     pub(super) fn rebuild_presentation_dependencies(&mut self) {
+        self.rebuild_presentation_dependencies_with_release(false);
+    }
+
+    fn rebuild_presentation_dependencies_with_release(&mut self, release_tick: bool) {
         let mut reflow = HashMap::new();
         let mut viewport = HashMap::new();
         let mut previous_viewport = std::mem::take(&mut self.presentation_dependencies.viewport);
@@ -326,8 +320,7 @@ impl Ferese {
         }
         for workspace in self.workspaces.iter() {
             let layout = self
-                .focus_swipe
-                .as_ref()
+                .focus_swipe()
                 .filter(|swipe| swipe.workspace == workspace.id)
                 .and_then(|swipe| swipe.layout.as_ref())
                 .or(match &workspace.layout {
@@ -356,11 +349,15 @@ impl Ferese {
         self.presentation_dependencies
             .paused_reflow
             .retain(|id| reflow.contains_key(id));
-        self.presentation_dependencies
-            .paused_viewport
-            .retain(|id| viewport.get(id).is_some_and(|waits| !waits.waits.is_empty()));
         self.presentation_dependencies.reflow = reflow;
         self.presentation_dependencies.viewport = viewport;
+        for (workspace, presentation) in &mut self.viewports {
+            presentation.reconcile_hold(
+                self.presentation_dependencies
+                    .viewport_blocked(*workspace, &self.windows),
+                release_tick,
+            );
+        }
     }
 }
 
@@ -389,7 +386,7 @@ mod tests {
         layout.set_column_width(a, ColumnWidth::Fixed(150.0)).unwrap();
         layout.set_column_width(b, ColumnWidth::Fixed(300.0)).unwrap();
         layout
-            .geometry_with_constraints(bounds, gaps, &constraints, Some(b))
+            .resolve_geometry_with_constraints(bounds, gaps, &constraints, Some(b))
             .unwrap();
         let pending = [(
             a,
@@ -399,7 +396,7 @@ mod tests {
         assert_eq!(first.waits.len(), 1);
         layout.slide_focus_from(b, a).unwrap();
         layout
-            .geometry_with_constraints(bounds, gaps, &constraints, Some(a))
+            .resolve_geometry_with_constraints(bounds, gaps, &constraints, Some(a))
             .unwrap();
         assert_eq!(layout.viewport_x(), 50.0);
         let canceled = viewport_dependencies(&layout, &pending, first);
@@ -413,7 +410,7 @@ mod tests {
         layout.insert(b, Some(a)).unwrap();
         layout.insert(c, Some(b)).unwrap();
         layout
-            .geometry_with_constraints(bounds, gaps, &constraints, Some(c))
+            .resolve_geometry_with_constraints(bounds, gaps, &constraints, Some(c))
             .unwrap();
         let pending = [
             (
@@ -438,7 +435,7 @@ mod tests {
         layout.set_column_width(a, ColumnWidth::Fixed(150.0)).unwrap();
         layout.set_column_width(b, ColumnWidth::Fixed(300.0)).unwrap();
         layout
-            .geometry_with_constraints(bounds, gaps, &constraints, Some(b))
+            .resolve_geometry_with_constraints(bounds, gaps, &constraints, Some(b))
             .unwrap();
         let pending = [(
             a,
@@ -449,7 +446,7 @@ mod tests {
             let (from, to) = if index % 2 == 0 { (b, a) } else { (a, b) };
             layout.slide_focus_from(from, to).unwrap();
             layout
-                .geometry_with_constraints(bounds, gaps, &constraints, Some(to))
+                .resolve_geometry_with_constraints(bounds, gaps, &constraints, Some(to))
                 .unwrap();
             graph = viewport_dependencies(&layout, &pending, graph);
             assert!(graph.steps.len() <= MAX_VIEWPORT_STEPS);
@@ -496,16 +493,15 @@ mod tests {
         assert!(windows.transaction(&a).is_none());
         assert!(windows.transaction(&b).is_some());
         assert!(dependencies.reflow_blocked(neighbor, &windows));
-        let (held, _) = dependencies.holds(&windows);
+        let held = dependencies.holds(&windows);
         assert!(held.contains(&a), "release tick must not charge waiting time");
-        let (held, _) = dependencies.holds(&windows);
+        let held = dependencies.holds(&windows);
         assert!(!held.contains(&a));
         // Unmap removes the serial owner; both properties retire on the tick.
         windows.remove(&"b");
         assert!(!dependencies.viewport_blocked(workspace, &windows));
-        let (_, held) = dependencies.holds(&windows);
-        assert!(held.contains(&workspace));
-        assert!(dependencies.holds(&windows).1.is_empty());
+        dependencies.holds(&windows);
+        dependencies.holds(&windows);
         assert!(!dependencies.needs_tick());
         assert!(dependencies.reflow.is_empty() && dependencies.viewport.is_empty());
     }
@@ -539,7 +535,7 @@ mod tests {
 
         layout.focus(ids[4]).unwrap();
         layout
-            .geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(ids[4]))
+            .resolve_geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(ids[4]))
             .unwrap();
         assert_eq!(layout.viewport_x(), 160.0);
         let widths = [
@@ -607,6 +603,31 @@ mod tests {
             if remaining.is_empty() {
                 assert!(partial.steps.is_empty() && partial.waits.is_empty());
             }
+            // Feed each precise partial-commit result through the presentation
+            // owner. Remaining unrelated configures must not keep it held.
+            let mut windows = window_registry::WindowRegistry::default();
+            for id in ids {
+                windows.register(id, id);
+            }
+            for (id, transaction) in &remaining {
+                windows.set_transaction(*id, *transaction);
+            }
+            let workspace = WorkspaceId(1);
+            let mut dependencies = PresentationDependencies::default();
+            dependencies.viewport.insert(workspace, partial);
+            let blocked = dependencies.viewport_blocked(workspace, &windows);
+            let mut viewport = ViewportPresentation::new(0.0);
+            viewport.retarget(layout.viewport_x(), true);
+            viewport.reconcile_hold(true, false);
+            viewport.reconcile_hold(blocked, true);
+            viewport.advance(Duration::from_secs(3), SpringConfig::default(), true, blocked);
+            assert_eq!(viewport.motion().current, 0.0, "release consumed waiting time: {mask}");
+            viewport.advance(Duration::from_millis(16), SpringConfig::default(), true, blocked);
+            assert_eq!(
+                viewport.motion().current == 0.0,
+                blocked,
+                "incorrect held owner: {mask}"
+            );
         }
     }
 }

@@ -65,10 +65,10 @@ impl Ferese {
                 && !self
                     .presentation_dependencies
                     .viewport_blocked(*workspace, &self.windows)
-                && let Some(viewport) = self.viewport_animations.get(workspace)
+                && let Some(viewport) = self.viewports.get(workspace)
             {
                 visual.velocity.x = if delta.is_zero() {
-                    -viewport.velocity
+                    -viewport.presented_motion().velocity
                 } else {
                     predicted_x_velocity
                 };
@@ -242,17 +242,13 @@ impl Ferese {
                 return false;
             };
 
-            self.viewport_animations.get(&workspace).is_some_and(|viewport| {
-                let mut viewport = *viewport;
-                let held = self
-                    .focus_swipe
-                    .as_ref()
-                    .is_some_and(|swipe| swipe.workspace == workspace);
-                !held && viewport.advance(Duration::ZERO, self.viewport_spring_config)
-            }) || record.coupled_width.as_ref().is_some_and(|(_, width)| {
-                let mut width = *width;
-                width.advance(Duration::ZERO, self.viewport_spring_config)
-            })
+            self.viewports
+                .get(&workspace)
+                .is_some_and(ViewportPresentation::needs_tick)
+                || record.coupled_width.as_ref().is_some_and(|(_, width)| {
+                    let mut width = *width;
+                    width.advance(Duration::ZERO, self.viewport_spring_config)
+                })
         })
     }
 
@@ -283,18 +279,16 @@ impl Ferese {
             }
 
             let world = record.world_x.as_ref().and_then(|(workspace, world)| {
-                let viewport = self.viewport_animations.get(workspace)?;
-                let held = self
-                    .focus_swipe
-                    .as_ref()
-                    .is_some_and(|swipe| swipe.workspace == *workspace);
-
+                let viewport = self.viewports.get(workspace)?;
                 Some((
                     *world,
-                    *viewport,
-                    held || self
-                        .presentation_dependencies
-                        .viewport_blocked(*workspace, &self.windows),
+                    viewport.sample(
+                        delta,
+                        self.viewport_spring_config,
+                        self.animations_enabled,
+                        self.presentation_dependencies
+                            .viewport_blocked(*workspace, &self.windows),
+                    ),
                 ))
             });
             let width = record.coupled_width.as_ref().map(|(_, width)| *width);
@@ -335,7 +329,7 @@ fn predict_geometry(
     delta: Duration,
     spring: SpringConfig,
     viewport_spring: SpringConfig,
-    world: Option<(AnimatedValue, AnimatedValue, bool)>,
+    world: Option<(AnimatedValue, AnimatedValue)>,
     width: Option<AnimatedValue>,
     reflow_held: bool,
 ) -> WindowGeometry {
@@ -352,18 +346,13 @@ fn predict_geometry(
         predicted.visual.velocity = Default::default();
     }
     predicted.visual.target.width = original.visual.target.width;
-    if let Some((mut world, mut viewport, held)) = world
+    if let Some((mut world, viewport)) = world
         && !zooming
     {
         if !reflow_held {
             world.advance(delta, spring);
         } else {
             world.velocity = 0.0;
-        }
-        if !held {
-            viewport.advance(delta, viewport_spring);
-        } else {
-            viewport.velocity = 0.0;
         }
 
         super::animation::sync_scrolling_coordinates(&mut predicted, &mut world, &viewport, false);
@@ -916,12 +905,13 @@ mod tests {
         width.set_target(500.);
         let spring = SpringConfig::default();
         let delta = Duration::from_millis(10);
+        let sampled_viewport = ViewportPresentation::from_motion(viewport).sample(delta, spring, true, false);
         let predicted = predict_geometry(
             geometry,
             delta,
             spring,
             spring,
-            Some((world, viewport, false)),
+            Some((world, sampled_viewport)),
             Some(width),
             false,
         );

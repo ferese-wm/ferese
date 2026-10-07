@@ -683,12 +683,13 @@ fn resize_dependencies_protocol_and_pixels() {
         .center_window(a_id, bounds, state.gap_config, &state.window_constraints())
         .unwrap();
     state.relayout();
-    let before = state.viewport_animations[&workspace].current;
+    let before = state.viewports[&workspace].motion().current;
     let held_size = state.windows.geometry(&b_id).unwrap().visual.current.width;
     let held_world = state.windows.record(b_id).unwrap().world_x.unwrap().1;
     state.advance_animations_at(Duration::from_millis(16), Duration::ZERO);
     assert_ne!(
-        state.viewport_animations[&workspace].current, before,
+        state.viewports[&workspace].motion().current,
+        before,
         "independent viewport stalled before delayed buffer commit"
     );
     assert_eq!(state.windows.geometry(&b_id).unwrap().visual.current.width, held_size);
@@ -711,7 +712,7 @@ fn resize_dependencies_protocol_and_pixels() {
     assert!((origin.x - geometry.visual.current.x).abs() < 0.001);
     let forecast = state.sample_frame(&output, Duration::from_millis(8));
     let predicted = &forecast.windows[&b_id];
-    let mut viewport = state.viewport_animations[&workspace];
+    let mut viewport = *state.viewports[&workspace].motion();
     viewport.advance(
         Duration::from_millis(8).mul_f64(state.animation_speed),
         state.viewport_spring_config,
@@ -779,9 +780,9 @@ fn resize_dependencies_protocol_and_pixels() {
             .presentation_dependencies
             .viewport_blocked(workspace, &state.windows)
     );
-    let frozen = state.viewport_animations[&workspace];
+    let frozen = *state.viewports[&workspace].motion();
     state.advance_animations_at(Duration::from_millis(16), Duration::from_millis(32));
-    assert_eq!(state.viewport_animations[&workspace], frozen);
+    assert_eq!(*state.viewports[&workspace].motion(), frozen);
     // Supersede the acknowledged size, then commit the older acknowledgement.
     set_width(&mut state, b_id, 96.0);
     let latest = *state.windows.transaction(&b_id).unwrap();
@@ -813,9 +814,9 @@ fn resize_dependencies_protocol_and_pixels() {
             .presentation_dependencies
             .viewport_blocked(workspace, &state.windows)
     );
-    let frozen = state.viewport_animations[&workspace].current;
+    let frozen = state.viewports[&workspace].motion().current;
     state.advance_animations_at(Duration::from_millis(16), Duration::from_millis(48));
-    assert_ne!(state.viewport_animations[&workspace].current, frozen);
+    assert_ne!(state.viewports[&workspace].motion().current, frozen);
     let client = b.toplevel().unwrap().wl_surface().client().unwrap();
     let shm = client
         .create_resource::<WlShm, (), Ferese>(&state.display_handle, 1, ())
@@ -900,7 +901,7 @@ fn resize_dependencies_protocol_and_pixels() {
             .viewport_blocked(workspace, &state.windows)
     );
     state.preview_focus_swipe(Direction::Right, SwipeDirection::Left, 0.5);
-    assert!(state.focus_swipe.is_some());
+    assert!(state.focus_swipe().is_some());
     assert!(
         state
             .presentation_dependencies

@@ -137,14 +137,14 @@ impl WorkspaceLayout {
             Self::Scrolling(layout) => {
                 let mut layout = layout.clone();
                 layout
-                    .geometry_with_constraints(bounds, GapConfig::default(), &HashMap::new(), None)
+                    .resolve_geometry_with_constraints(bounds, GapConfig::default(), &HashMap::new(), None)
                     .map(|result| result.geometry)
             }
             Self::Tree(layout) => layout.geometry(bounds),
         }
     }
 
-    pub fn geometry_with_constraints(
+    pub fn resolve_geometry_with_constraints(
         &mut self,
         bounds: Rect,
         gaps: GapConfig,
@@ -152,7 +152,7 @@ impl WorkspaceLayout {
         focused: Option<WindowId>,
     ) -> Result<LayoutResult, LayoutError> {
         match self {
-            Self::Scrolling(layout) => layout.geometry_with_constraints(
+            Self::Scrolling(layout) => layout.resolve_geometry_with_constraints(
                 bounds,
                 gaps,
                 constraints,
@@ -1121,7 +1121,7 @@ mod tests {
         let first = workspaces
             .active_mut()
             .layout
-            .geometry_with_constraints(
+            .resolve_geometry_with_constraints(
                 Rect::new(0.0, 0.0, 1_000.0, 800.0),
                 GapConfig::default(),
                 &HashMap::new(),
@@ -1277,7 +1277,7 @@ mod tests {
             let before = workspaces
                 .active_mut()
                 .layout
-                .geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(WindowId(2)))
+                .resolve_geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(WindowId(2)))
                 .unwrap();
             let scroll = workspaces.active().layout.viewport_x();
             // Rapid right/middle/left hover must never scroll or skip a focus target,
@@ -1289,7 +1289,7 @@ mod tests {
                 let after = workspaces
                     .active_mut()
                     .layout
-                    .geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(id))
+                    .resolve_geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(id))
                     .unwrap();
                 assert_eq!(before.geometry, after.geometry, "{strategy:?}");
                 assert_eq!(scroll, workspaces.active().layout.viewport_x());
@@ -1299,7 +1299,7 @@ mod tests {
             let clicked = workspaces
                 .active_mut()
                 .layout
-                .geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(WindowId(3)))
+                .resolve_geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(WindowId(3)))
                 .unwrap();
             let rect = clicked.geometry[&WindowId(3)];
             assert!(rect.x >= 0.0 && rect.x + rect.width <= bounds.width);
@@ -1321,7 +1321,7 @@ mod tests {
         let before = workspaces
             .active_mut()
             .layout
-            .geometry_with_constraints(bounds, GapConfig::default(), &HashMap::new(), Some(WindowId(4)))
+            .resolve_geometry_with_constraints(bounds, GapConfig::default(), &HashMap::new(), Some(WindowId(4)))
             .unwrap();
         let scroll = workspaces.active().layout.viewport_x();
         workspaces
@@ -1335,7 +1335,7 @@ mod tests {
         let after = workspaces
             .active_mut()
             .layout
-            .geometry_with_constraints(bounds, GapConfig::default(), &HashMap::new(), Some(WindowId(5)))
+            .resolve_geometry_with_constraints(bounds, GapConfig::default(), &HashMap::new(), Some(WindowId(5)))
             .unwrap();
         assert_eq!(before.geometry, after.geometry);
         assert_eq!(scroll, workspaces.active().layout.viewport_x());
