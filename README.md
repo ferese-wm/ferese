@@ -1,9 +1,5 @@
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/branding/ferese-blue-dark.svg">
-    <source media="(prefers-color-scheme: light)" srcset="assets/branding/ferese-blue-light.svg">
-    <img src="assets/branding/ferese-blue-flat.svg" width="160" height="160" alt="Ferese">
-  </picture>
+  <img src="assets/branding/ferese.svg" width="160" height="160" alt="Ferese">
 </p>
 
 <p align="center"><strong>A configurable Wayland desktop</strong></p>

@@ -38,15 +38,21 @@ documentation](https://docs.github.com/en/pages/getting-started-with-github-page
 
 ## Brand assets
 
-The Ferese symbols live in `assets/branding`. The website uses
-`ferese-blue-dark.svg`. The README chooses the light or dark SVG to match
-the reader's appearance and uses the flat blue SVG as its fallback. Keep their
-1024×1024 canvas square so the symbol and glow are not stretched or cropped.
+`assets/branding/ferese.svg` is the canonical blue Fe mark used by the README,
+website, favicons and installed application icons. Its square 950×950 viewBox is
+shared with `ferese-symbolic.svg`, which uses the same shape and `currentColor`
+for shell and notification icons. Keep both variants in sync.
 
-The favicon uses the flat blue symbol. `site/assets/favicon-32.png` is 32×32;
-`site/assets/favicon.ico` contains 16×16, 32×32 and 48×48 images. These files are
-checked in, so building the site needs no icon renderer. Their links work at
-both the site root and the GitHub Pages project path.
+Regenerate the symbolic icon and raster favicons after updating the canonical SVG:
+
+```sh
+python3 scripts/update-branding.py
+```
+
+The exporter requires Python PyGObject, Pycairo, Pillow and librsvg. The generated
+`site/assets/favicon-32.png` is 32×32; `site/assets/favicon.ico` contains 16×16,
+32×32 and 48×48 images. They are checked in, so the site build needs no renderer.
+The links work at both the site root and the GitHub Pages project path.
 
 The light and dark wallpapers live in `assets/wallpapers`. Both are
 3840×2160 and are bundled by the installer. Ferese selects the matching image

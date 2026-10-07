@@ -130,14 +130,14 @@
       "policy": "managed"
     },
     {
-      "source": "packaging/icons/ferese.svg",
+      "source": "assets/branding/ferese.svg",
       "target": "integration/usr/local/share/icons/hicolor/scalable/apps/ferese.svg",
       "mode": "0644",
       "destination": "/usr/local/share/icons/hicolor/scalable/apps/ferese.svg",
       "policy": "managed"
     },
     {
-      "source": "packaging/icons/ferese.svg",
+      "source": "assets/branding/ferese.svg",
       "target": "integration/usr/local/share/icons/hicolor/scalable/apps/dev.ferese.Settings.svg",
       "mode": "0644",
       "destination": "/usr/local/share/icons/hicolor/scalable/apps/dev.ferese.Settings.svg",

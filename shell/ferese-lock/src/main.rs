@@ -557,10 +557,7 @@ fn line_icon(path: &str, size: u16) -> widget::icon::Icon {
 }
 
 fn ferese_symbol() -> widget::icon::Icon {
-    widget::icon(
-        widget::icon::from_svg_bytes(include_bytes!("../../../packaging/icons/ferese.svg").as_slice()).symbolic(true),
-    )
-    .size(30)
+    widget::icon(widget::icon::from_svg_bytes(ferese_theme::icons::FERESE).symbolic(true)).size(30)
 }
 
 #[cfg(test)]

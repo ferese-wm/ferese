@@ -11,7 +11,7 @@ pub const DISPLAY_EXTERNAL: &[u8] = include_bytes!("../assets/icons/display-exte
 pub const DISPLAY_EXTEND: &[u8] = include_bytes!("../assets/icons/display-extend.svg");
 pub const DISPLAY_MIRROR: &[u8] = include_bytes!("../assets/icons/display-mirror.svg");
 pub const DISPLAY: &[u8] = include_bytes!("../assets/icons/display.svg");
-pub const FERESE: &[u8] = include_bytes!("../assets/icons/ferese.svg");
+pub const FERESE: &[u8] = include_bytes!("../../../assets/branding/ferese-symbolic.svg");
 pub const OVERVIEW: &[u8] = include_bytes!("../assets/icons/overview.svg");
 pub const AIRPLANE: &[u8] = include_bytes!("../assets/icons/status/airplane.svg");
 pub const BATTERY_25: &[u8] = include_bytes!("../assets/icons/status/battery-25.svg");
@@ -66,7 +66,7 @@ pub const WIFI_OFF: &[u8] = include_bytes!("../assets/icons/status/wifi-off.svg"
 pub const VOLUME: &[u8] = include_bytes!("../assets/icons/volume.svg");
 pub const WIFI: &[u8] = include_bytes!("../assets/icons/wifi.svg");
 
-pub const APPLICATION: &[u8] = include_bytes!("../../../packaging/icons/ferese.svg");
+pub const APPLICATION: &[u8] = include_bytes!("../../../assets/branding/ferese.svg");
 
 pub fn tinted(source: &'static [u8], size: u16, foreground: Color) -> icon::Icon {
     accented(source, size, foreground, foreground)

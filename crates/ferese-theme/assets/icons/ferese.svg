@@ -1,6 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1058" height="650" viewBox="105 314 1058 650" role="img" aria-labelledby="title desc">
-  <title id="title">Ferese</title>
-  <desc id="desc">Ferese symbol with smooth cubic Bezier paths and a transparent background.</desc>
-  <path id="sweep-left" fill="currentColor" d="M 698 380 C 585 378 397 451 280 530 C 197 586 145 655 145 724 C 145 811 227 867 355 857 C 299 803 295 755 325 689 C 367 598 462 520 567 467 C 620 440 670 423 712 407 C 732 399 736 391 721 385 C 715 382 707 380 698 380 Z"/>
-  <path id="sweep-right" fill="currentColor" d="M 795 373 C 849 354 922 351 982 358 C 1071 368 1123 404 1123 461 C 1123 552 1027 681 906 780 C 782 881 643 927 524 921 C 453 918 397 898 355 857 C 496 845 671 797 807 720 C 932 649 992 573 986 516 C 980 456 928 423 844 408 C 821 404 799 401 787 395 C 774 389 780 379 795 373 Z"/>
-</svg>
