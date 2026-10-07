@@ -182,11 +182,10 @@ impl App {
                 body = body.push(self.wallpaper_controls());
             }
             if self.page == Page::Bar {
-                body = body.push(self.panel_preview());
                 body = body.push(self.panel_controls());
             }
             let fields = if self.page == Page::Bar {
-                self.bar_fields()
+                Vec::new()
             } else if self.page == Page::Wallpaper {
                 self.wallpaper_fields()
             } else {
@@ -438,6 +437,9 @@ impl App {
                 .on_press(Message::DragWindow)
                 .interaction(cosmic::iced::mouse::Interaction::Grab),
         );
+        if self.page == Page::Bar && self.search.is_empty() {
+            content = content.push(self.panel_tabs()).push(self.panel_preview());
+        }
 
         if let Some(error) = &self.error {
             content = content.push(

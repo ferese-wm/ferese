@@ -25,6 +25,8 @@ pub(super) enum Action {
     Earlier(ItemId),
     Later(ItemId),
     Move(ItemId, Destination),
+    Place(ItemId, Destination, Option<ItemId>),
+    PlaceInZone(ItemId, Zone),
     Remove(ItemId),
     Set(ItemId, String, Value),
     Add(ItemKind, Destination),
@@ -155,17 +157,80 @@ pub(super) fn plan(snapshot: &Snapshot, action: Action) -> Result<Vec<Edit>, Str
             items.swap(index, next);
             vec![set(&path, items)]
         }
-        Action::Move(id, destination) => {
+        Action::Place(id, destination, before) => {
             let (source, index) = locate(panel, &id)?;
             let target = group_path(panel, &destination)?;
-            if source == target {
+            if before.as_ref() == Some(&id) && source == target {
                 return Ok(Vec::new());
             }
             let mut from = records(snapshot, &source);
+            let original = from.clone();
             let item = from.remove(index);
-            let mut to = records(snapshot, &target);
-            to.push(item);
-            vec![set(&source, from), set(&target, to)]
+            let mut to = if source == target {
+                from.clone()
+            } else {
+                records(snapshot, &target)
+            };
+            let insertion = match before {
+                Some(before) => to
+                    .iter()
+                    .position(|item| item["id"].as_str() == Some(&before.0))
+                    .ok_or("The drop target changed. Try dragging again.")?,
+                None => to.len(),
+            };
+            to.insert(insertion, item);
+            if source == target {
+                if to == original {
+                    Vec::new()
+                } else {
+                    vec![set(&target, to)]
+                }
+            } else {
+                vec![set(&source, from), set(&target, to)]
+            }
+        }
+        Action::Move(id, destination) => {
+            let (source, _) = locate(panel, &id)?;
+            if source == group_path(panel, &destination)? {
+                return Ok(Vec::new());
+            }
+            return plan(snapshot, Action::Place(id, destination, None));
+        }
+        Action::PlaceInZone(id, zone) => {
+            if let Some(group) = zone.definition(panel).groups.last() {
+                return plan(
+                    snapshot,
+                    Action::Place(
+                        id,
+                        Destination {
+                            zone: zone.key(),
+                            group: group.id.clone(),
+                        },
+                        None,
+                    ),
+                );
+            }
+            let mut edits = plan(snapshot, Action::AddGroup(zone))?;
+            let mut candidate = snapshot.clone();
+            for edit in &edits {
+                candidate.edit(edit)?;
+            }
+            let group = records(&candidate, &format!("panels.0.{}.groups", zone.key()))[0]["id"]
+                .as_str()
+                .unwrap()
+                .to_owned();
+            edits.extend(plan(
+                &candidate,
+                Action::Place(
+                    id,
+                    Destination {
+                        zone: zone.key(),
+                        group: GroupId(group),
+                    },
+                    None,
+                ),
+            )?);
+            edits
         }
         Action::Remove(id) => {
             let (path, index) = locate(panel, &id)?;
@@ -552,5 +617,77 @@ animations { speed 0.8; }
         }
         assert!(plan(&snapshot, Action::MoveGroup(GroupId("missing".into()), Zone::Start)).is_err());
         assert_eq!(snapshot.source, original);
+    }
+
+    #[test]
+    fn drop_reorders_exact_instances_and_preserves_authored_fields() {
+        let mut snapshot = snapshot();
+        let id = ItemId("clock".into());
+        apply(&mut snapshot, Action::Place(id.clone(), target("end", "status"), None));
+        assert_eq!(
+            ids(&snapshot, "panels.0.end.groups.0.items"),
+            ["clock-2", "network", "clock"]
+        );
+        assert_eq!(snapshot.string("panels.0.end.groups.0.items.2.custom_note", ""), "keep");
+        assert!(
+            plan(&snapshot, Action::Place(id.clone(), target("end", "status"), None))
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            plan(
+                &snapshot,
+                Action::Place(id.clone(), target("end", "status"), Some(id.clone()))
+            )
+            .unwrap()
+            .is_empty()
+        );
+        apply(
+            &mut snapshot,
+            Action::Place(id.clone(), target("end", "status"), Some(ItemId("clock-2".into()))),
+        );
+        assert_eq!(
+            ids(&snapshot, "panels.0.end.groups.0.items"),
+            ["clock", "clock-2", "network"]
+        );
+        apply(
+            &mut snapshot,
+            Action::Place(id, target("center", "title"), Some(ItemId("title".into()))),
+        );
+        assert_eq!(ids(&snapshot, "panels.0.center.groups.0.items"), ["clock", "title"]);
+        assert_eq!(ids(&snapshot, "panels.0.end.groups.0.items"), ["clock-2", "network"]);
+        assert!(snapshot.source.contains("// first clock"));
+    }
+
+    #[test]
+    fn stale_drop_targets_reject_the_whole_edit_and_empty_zone_drop_creates_one_group() {
+        let mut snapshot = snapshot();
+        let original = snapshot.source.clone();
+        assert!(
+            plan(
+                &snapshot,
+                Action::Place(
+                    ItemId("clock".into()),
+                    target("start", "navigation"),
+                    Some(ItemId("missing".into()))
+                )
+            )
+            .is_err()
+        );
+        assert_eq!(snapshot.source, original);
+        apply(&mut snapshot, Action::Remove(ItemId("title".into())));
+        apply(&mut snapshot, Action::RemoveGroup(GroupId("title".into())));
+        let edits = plan(&snapshot, Action::PlaceInZone(ItemId("clock".into()), Zone::Center)).unwrap();
+        assert_eq!(edits.len(), 3, "create and move through one save");
+        for edit in edits {
+            snapshot.edit(&edit).unwrap();
+        }
+        let snapshot = Snapshot::parse(snapshot.source).unwrap();
+        assert_eq!(snapshot.records("panels.0.center.groups"), 1);
+        assert_eq!(ids(&snapshot, "panels.0.center.groups.0.items"), ["clock"]);
+        assert_eq!(
+            snapshot.string("panels.0.center.groups.0.items.0.custom_note", ""),
+            "keep"
+        );
     }
 }

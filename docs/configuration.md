@@ -808,16 +808,23 @@ intentionally turning off the last working one.
 Ferese shows one top panel on each output. Without a `panel` block, the status
 settings below generate the usual arrangement. An explicit panel replaces that
 arrangement, including its background, title, and battery percentage settings.
-Settings → Menu bar → **Customize items** saves the current arrangement and adds
-per-item visibility, overflow, and preferred-size controls. Select an item to open
-its inspector, choose another group under **Placement**, or use the arrow buttons
-to reorder it within its group. Each group has an **Add item** menu; remove an
-instance with its remove button. Changes use the existing save and Undo controls.
+Settings → **Panel & Shell** separates panel size and margins under **Panels**,
+composition under **Items**, and backgrounds/group surfaces under **Appearance**.
+The preview stays visible while the settings below it scroll.
+**Items → Edit panel** starts from the current arrangement. Drag an item's handle
+to reorder it or move it into another group. Dropping into an empty zone creates
+a group. Select an item to open its inspector, choose another group under
+**Placement**, or use **Move earlier / Move later** for keyboard reordering.
+Each group has an **Add item** menu. The inspector contains visibility, overflow,
+preferred-size, and removal controls. Changes use the existing save and Undo controls.
 `ferese-settings --page bar` opens this page directly.
 
 Use **Add group** in Start, Center, or End to create an empty group. Select its
-name to change placement, surface, spacing, and padding. The arrow buttons move
-groups within a zone. Move or remove a group's items before removing the group.
+name to change placement, surface, spacing, and padding. **Move earlier / Move
+later** reorder groups within a zone. Move or remove a group's items before removing it.
+
+Dragging changes the drop hint until release, then saves the complete move once.
+Escape, focus loss, and release outside a drop target cancel without saving.
 
 The composition preview follows the draft and adapts to the Settings window's
 width. It uses sample content with every service available. Select a preview

@@ -27,8 +27,13 @@ impl App {
         };
         let mut rows = column([])
             .spacing(6)
-            .push(self.label("Panel preview", 14.))
-            .push(self.note("Sample content. Resize this window to see items adapt. Select a control to edit it."))
+            .push(
+                row([])
+                    .align_y(Alignment::Center)
+                    .push(self.label("Composition preview", 14.).width(Length::Fill))
+                    .push(self.note("Top panel · All displays")),
+            )
+            .push(self.note("Sample content. Select a control to edit it; resize this window to see it adapt."))
             .push(self.panel_preview_frame(panel.clone()));
         if self.panel_preview_overflow {
             let mut items = column([]).spacing(2);
@@ -46,7 +51,13 @@ impl App {
                 rows = rows.push(container(crate::scrollable(items).height(Length::Shrink)).max_height(160.));
             }
         }
-        rows.into()
+        let palette = visuals::Palette::from_resolved(&self.resolved.presented);
+        container(rows)
+            .id("panel-composition-preview")
+            .padding(12)
+            .width(Length::Fill)
+            .class(visuals::surface(palette.card, 14.))
+            .into()
     }
 
     fn preview_panel(&self) -> Result<Panel, String> {

@@ -24,10 +24,11 @@ pub(super) struct RevealRow {
 
 impl RevealRow {
     pub(super) fn new(list: &str, row: usize) -> Self {
-        Self {
-            target: gallery_row_id(list, row),
-            bounds: None,
-        }
+        Self::for_target(gallery_row_id(list, row))
+    }
+
+    pub(super) fn for_target(target: Id) -> Self {
+        Self { target, bounds: None }
     }
 }
 

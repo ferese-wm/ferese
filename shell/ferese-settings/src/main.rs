@@ -3,7 +3,9 @@ mod form_controls;
 mod navigation;
 mod pages;
 mod panel_controls;
+mod panel_drag;
 mod panel_edit;
+mod panel_inspector;
 mod panel_preview;
 mod theme_controls;
 
@@ -105,6 +107,7 @@ enum Message {
     Search(String),
     Change(Edit),
     CustomizePanel,
+    PanelTab(panel_controls::PanelTab),
     PanelSelect(ferese_config::panel::ItemId),
     PanelGroupSelect(ferese_config::panel::GroupId),
     PanelPreviewResolved(ferese_config::panel::layout::Resolution),
@@ -183,6 +186,7 @@ struct App {
     auto_details: bool,
     advanced_theme: bool,
     panel_selection: Option<ferese_config::panel::ItemId>,
+    panel_tab: panel_controls::PanelTab,
     panel_group_selection: Option<ferese_config::panel::GroupId>,
     panel_preview_resolution: ferese_config::panel::layout::Resolution,
     panel_preview_overflow: bool,
@@ -297,6 +301,7 @@ impl cosmic::Application for App {
             auto_details: false,
             advanced_theme: false,
             panel_selection: None,
+            panel_tab: Default::default(),
             panel_group_selection: None,
             panel_preview_resolution: Default::default(),
             panel_preview_overflow: false,
@@ -610,6 +615,7 @@ impl cosmic::Application for App {
                 }
             }
             Message::PanelSelect(id) => {
+                self.panel_tab = panel_controls::PanelTab::Items;
                 self.panel_group_selection = None;
                 self.panel_selection = if self.panel_selection.as_ref() == Some(&id) {
                     None
@@ -618,21 +624,46 @@ impl cosmic::Application for App {
                 };
                 if self.draft.item("panels").is_none() {
                     match panel_controls::initialize(&self.draft) {
-                        Ok(edit) => return self.change(edit),
+                        Ok(edit) => {
+                            return Task::batch([
+                                self.change(edit),
+                                cosmic::iced::advanced::widget::operate(navigation::RevealRow::for_target(
+                                    widget::Id::new("panel-inspector"),
+                                )),
+                            ]);
+                        }
                         Err(error) => self.error = Some(error),
                     }
                 }
+                if self.panel_selection.is_some() {
+                    return cosmic::iced::advanced::widget::operate(navigation::RevealRow::for_target(
+                        widget::Id::new("panel-inspector"),
+                    ));
+                }
             }
             Message::PanelGroupSelect(id) => {
+                self.panel_tab = panel_controls::PanelTab::Items;
                 self.panel_selection = None;
                 self.panel_group_selection = if self.panel_group_selection.as_ref() == Some(&id) {
                     None
                 } else {
                     Some(id)
                 };
+                if self.panel_group_selection.is_some() {
+                    return cosmic::iced::advanced::widget::operate(navigation::RevealRow::for_target(
+                        widget::Id::new("panel-inspector"),
+                    ));
+                }
             }
             Message::PanelPreviewResolved(resolution) => self.panel_preview_resolution = resolution,
             Message::PanelPreviewOverflow => self.panel_preview_overflow = !self.panel_preview_overflow,
+            Message::PanelTab(tab) => {
+                self.panel_tab = tab;
+                return cosmic::iced::widget::scrollable::snap_to(
+                    widget::Id::new("settings-content"),
+                    cosmic::iced::widget::scrollable::RelativeOffset::START.into(),
+                );
+            }
             Message::PanelEdit(action) => match panel_edit::plan(&self.draft, action) {
                 Ok(edits) => {
                     self.inputs.retain(|path, _| !path.starts_with("panels."));
@@ -642,6 +673,7 @@ impl cosmic::Application for App {
                 Err(error) => self.error = Some(error),
             },
             Message::CustomizePanel if self.draft.item("panels").is_none() => {
+                self.panel_tab = panel_controls::PanelTab::Items;
                 match panel_controls::initialize(&self.draft) {
                     Ok(edit) => return self.change(edit),
                     Err(error) => self.error = Some(error),
@@ -1193,6 +1225,62 @@ mod tests {
         assert_eq!(app.panel_selection, Some(id));
         assert!(app.draft.item("panels").is_some());
         assert_eq!(app.pending.len(), 1);
+    }
+
+    #[test]
+    fn panel_tabs_do_not_save_and_selection_opens_the_items_inspector() {
+        let mut app = app();
+        app.page = Page::Bar;
+        for tab in [
+            panel_controls::PanelTab::Items,
+            panel_controls::PanelTab::Appearance,
+            panel_controls::PanelTab::Panels,
+        ] {
+            let _ = app.update(Message::PanelTab(tab));
+            let _ = app.page_view();
+            assert_eq!(app.panel_tab, tab);
+            assert!(app.pending.is_empty());
+            assert!(app.draft.item("panels").is_none());
+        }
+        app.saving = true;
+        let _ = app.update(Message::PanelSelect(ferese_config::panel::ItemId("clock".into())));
+        assert_eq!(app.panel_tab, panel_controls::PanelTab::Items);
+        assert!(app.panel_group_selection.is_none());
+        let _ = app.update(Message::PanelGroupSelect(ferese_config::panel::GroupId(
+            "status".into(),
+        )));
+        assert!(app.panel_selection.is_none());
+        assert_eq!(app.panel_tab, panel_controls::PanelTab::Items);
+    }
+
+    #[test]
+    fn dropped_items_follow_queued_group_moves_and_are_saved_once() {
+        use ferese_config::panel::{GroupId, ItemId};
+        let mut app = app();
+        let mut initial = Snapshot::parse(String::new()).unwrap();
+        initial.edit(&panel_controls::initialize(&initial).unwrap()).unwrap();
+        app.current = initial.clone();
+        app.draft = initial.clone();
+        app.saving = true;
+        let _ = app.update(Message::PanelEdit(panel_edit::Action::MoveGroup(
+            GroupId("time".into()),
+            panel_edit::Zone::Center,
+        )));
+        let _ = app.update(Message::PanelEdit(panel_edit::Action::Place(
+            ItemId("network".into()),
+            panel_edit::Destination {
+                zone: "end",
+                group: GroupId("time".into()),
+            },
+            Some(ItemId("clock".into())),
+        )));
+        assert_eq!(app.pending.len(), 4);
+        let expected = app.draft.doc.value().clone();
+        let _ = app.update(Message::Saved(Ok((initial, false))));
+        assert_eq!(app.draft.doc.value(), &expected);
+        assert!(app.saving && app.pending.is_empty());
+        assert_eq!(app.draft.string("panels.0.center.groups.1.items.0.id", ""), "network");
+        assert_eq!(app.draft.string("panels.0.center.groups.1.items.1.id", ""), "clock");
     }
 
     #[test]

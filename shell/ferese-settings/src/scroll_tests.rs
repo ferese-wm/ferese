@@ -34,6 +34,86 @@ impl Operation for ScrollPosition {
 }
 
 #[test]
+fn panel_preview_stays_visible_while_the_items_editor_scrolls() {
+    #[derive(Default)]
+    struct Bounds {
+        preview: Option<Rectangle>,
+        viewport: Option<Rectangle>,
+    }
+    impl Operation for Bounds {
+        fn traverse(&mut self, children: &mut dyn FnMut(&mut dyn Operation)) {
+            children(self);
+        }
+        fn container(&mut self, id: Option<&widget::Id>, bounds: Rectangle) {
+            if id == Some(&widget::Id::new("panel-composition-preview")) {
+                self.preview = Some(bounds);
+            }
+        }
+        fn scrollable(
+            &mut self,
+            id: Option<&widget::Id>,
+            bounds: Rectangle,
+            _: Rectangle,
+            _: Vector,
+            _: &mut dyn cosmic::iced::advanced::widget::operation::Scrollable,
+        ) {
+            if id == Some(&widget::Id::new("settings-content")) {
+                self.viewport = Some(bounds);
+            }
+        }
+    }
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let renderer = runtime
+        .block_on(<cosmic::Renderer as Headless>::new(
+            Font::default(),
+            Pixels(14.),
+            Some("tiny-skia"),
+        ))
+        .unwrap();
+    let mut app = App::init(
+        Core::default(),
+        ("/unused/editor.kdl".into(), Snapshot::parse(String::new()), None),
+    )
+    .0;
+    app.page = Page::Bar;
+    app.panel_tab = panel_controls::PanelTab::Items;
+    app.draft
+        .edit(&panel_controls::initialize(&app.draft).unwrap())
+        .unwrap();
+    let mut view = app.page_view();
+    let mut tree = Tree::new(&view);
+    let node = view.as_widget_mut().layout(
+        &mut tree,
+        &renderer,
+        &layout::Limits::new(Size::ZERO, Size::new(740., 650.)),
+    );
+    let mut before = Bounds::default();
+    view.as_widget_mut()
+        .operate(&mut tree, Layout::new(&node), &renderer, &mut before);
+    let mut scroll = cosmic::iced::advanced::widget::operation::scrollable::scroll_to::<()>(
+        widget::Id::new("settings-content"),
+        cosmic::iced::widget::scrollable::AbsoluteOffset { x: None, y: Some(200.) },
+    );
+    view.as_widget_mut()
+        .operate(&mut tree, Layout::new(&node), &renderer, &mut scroll);
+    let mut position = ScrollPosition::default();
+    view.as_widget_mut()
+        .operate(&mut tree, Layout::new(&node), &renderer, &mut position);
+    assert!(position.offset > 0. && position.content_height > position.viewport_height);
+    let mut after = Bounds::default();
+    view.as_widget_mut()
+        .operate(&mut tree, Layout::new(&node), &renderer, &mut after);
+    assert_eq!(before.preview, after.preview);
+    let preview = after.preview.unwrap();
+    let viewport = after.viewport.unwrap();
+    assert!(preview.y + preview.height <= viewport.y);
+    assert!(preview.height > 0. && viewport.height > 0.);
+}
+
+#[test]
 #[ignore = "release scroll/render sample; requires headless renderer backends"]
 fn appearance_scroll_preserves_progress_and_settles_visibility() {
     let runtime = tokio::runtime::Builder::new_current_thread()
