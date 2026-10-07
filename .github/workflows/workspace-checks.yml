@@ -1,4 +1,4 @@
-name: Compositor lifecycle and capture tests
+name: Workspace tests and capture checks
 on:
   pull_request:
     paths:
@@ -15,7 +15,7 @@ on:
       - "rustfmt.toml"
       - "Cargo.toml"
       - "Cargo.lock"
-      - ".github/workflows/compositor-checks.yml"
+      - ".github/workflows/workspace-checks.yml"
   push:
     branches: [main]
     paths:
@@ -32,33 +32,38 @@ on:
       - "rustfmt.toml"
       - "Cargo.toml"
       - "Cargo.lock"
-      - ".github/workflows/compositor-checks.yml"
+      - ".github/workflows/workspace-checks.yml"
   workflow_dispatch:
 permissions:
   contents: read
 concurrency:
-  group: compositor-checks-${{ github.ref }}
+  group: workspace-checks-${{ github.ref }}
   cancel-in-progress: true
 jobs:
-  protocol:
+  workspace:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 60
     env:
-      XDG_RUNTIME_DIR: /tmp/ferese-compositor-runtime
+      CARGO_BUILD_JOBS: "2"
+      CARGO_INCREMENTAL: "0"
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
+      XDG_RUNTIME_DIR: /tmp/ferese-workspace-runtime
     steps:
       - uses: actions/checkout@v6
-      - name: Install compositor build dependencies
+      - name: Install workspace build and test dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential pkg-config dbus-daemon libwayland-dev \
             libxkbcommon-dev xkb-data libinput-dev libudev-dev libseat-dev libgbm-dev \
-            libegl-dev libegl-mesa0 libgl1-mesa-dri libdrm-dev libfontconfig1-dev libfreetype-dev libexpat1-dev xauth
+            libegl-dev libegl-mesa0 libgl1-mesa-dri libdrm-dev libfontconfig1-dev libfreetype-dev libexpat1-dev xauth \
+            clang libclang-dev libpipewire-0.3-dev libspa-0.2-dev libglib2.0-dev libgstreamer1.0-dev libpam-modules
       - name: Create private test runtime directory
         run: install -d -m 0700 "$XDG_RUNTIME_DIR"
       - name: Install Rust
         run: rustup toolchain install 1.95.0 --profile minimal
-      - name: Test compositor policies, protocols and worker lifecycles
-        run: cargo +1.95.0 test --locked -p ferese -- --nocapture
+      - name: Test every workspace package
+        run: cargo +1.95.0 test --locked --workspace --no-fail-fast -- --nocapture
       - name: Test capture privacy, resize dependencies and cursor composition
         env:
           LIBGL_ALWAYS_SOFTWARE: "1"
