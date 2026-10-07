@@ -14,6 +14,7 @@ import subprocess
 import tempfile
 import time
 import unittest
+from session_socket import ipc_environment
 
 
 @unittest.skipUnless(os.environ.get("FERESE_TEST_PORTAL") == "1", "nested portal test is opt-in")
@@ -45,7 +46,7 @@ class PortalTest(unittest.TestCase):
             def launch(name, command, **kwargs):
                 log = (root / (name + ".log")).open("w")
                 logs.append(log)
-                child = subprocess.Popen(command, env=env, stderr=log,
+                child = subprocess.Popen(command, env=ipc_environment(env), stderr=log,
                                          stdout=kwargs.pop("stdout", log), start_new_session=True, **kwargs)
                 processes.append(child)
                 return child
@@ -95,6 +96,7 @@ class PortalTest(unittest.TestCase):
                 sockets = lambda: [p for p in runtime.glob("wayland-*") if not p.name.endswith(".lock")]
                 until(sockets)
                 env["WAYLAND_DISPLAY"] = str(sockets()[0])
+                env = ipc_environment(env)
                 # Private bus, including the real portal frontend and permission store.
                 bus = launch("bus", ["dbus-daemon", "--session", "--nofork", "--print-address=1"], stdout=subprocess.PIPE)
                 env["DBUS_SESSION_BUS_ADDRESS"] = bus.stdout.readline().decode().strip()

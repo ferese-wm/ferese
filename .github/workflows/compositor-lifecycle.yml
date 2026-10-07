@@ -1,9 +1,18 @@
-name: Compositor lifecycle and capture tests
+name: Workspace release checks
 on:
   pull_request:
     paths:
       - "compositor/**"
       - "crates/**"
+      - "shell/**"
+      - "portal/**"
+      - "feresectl/**"
+      - "scripts/**"
+      - "packaging/**"
+      - "assets/**"
+      - "LICENSE"
+      - "rust-toolchain.toml"
+      - "rustfmt.toml"
       - "Cargo.toml"
       - "Cargo.lock"
       - ".github/workflows/compositor-lifecycle.yml"
@@ -12,6 +21,15 @@ on:
     paths:
       - "compositor/**"
       - "crates/**"
+      - "shell/**"
+      - "portal/**"
+      - "feresectl/**"
+      - "scripts/**"
+      - "packaging/**"
+      - "assets/**"
+      - "LICENSE"
+      - "rust-toolchain.toml"
+      - "rustfmt.toml"
       - "Cargo.toml"
       - "Cargo.lock"
       - ".github/workflows/compositor-lifecycle.yml"
@@ -45,3 +63,39 @@ jobs:
           cargo +1.95.0 test --locked -p ferese state::capture_privacy::tests -- --ignored --nocapture
           cargo +1.95.0 test --locked -p ferese backends::direct::capture::tests::capture_recomposes_cursor_without_touching_the_display_target -- --ignored --nocapture
           cargo +1.95.0 test --locked -p ferese winit::tests::capture_failure_restores_display_target_and_subsequent_frames_render -- --ignored --nocapture
+
+  workspace:
+    runs-on: ubuntu-24.04
+    container: fedora:44
+    timeout-minutes: 60
+    env:
+      CARGO_BUILD_JOBS: "2"
+      CARGO_INCREMENTAL: "0"
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
+    steps:
+      - name: Install desktop build and test dependencies
+        run: |
+          dnf install -y --allowerasing python3 python3-gobject python3-pillow git curl gcc gcc-c++ make cmake pkgconf-pkg-config \
+            wayland-devel wayland-protocols-devel libxkbcommon-devel libinput-devel systemd-devel libseat-devel \
+            mesa-libgbm-devel mesa-libEGL-devel mesa-dri-drivers libdrm-devel fontconfig-devel \
+            freetype-devel expat-devel dbus-daemon dbus-tools desktop-file-utils foot pam \
+            clang clang-devel pipewire-devel pipewire wireplumber polkit polkit-libs libei \
+            xdg-desktop-portal xdg-desktop-portal-gtk \
+            gstreamer1-devel gstreamer1-plugins-base gstreamer1-plugins-good pipewire-gstreamer
+      - uses: actions/checkout@v6
+      - name: Install pinned Rust and checks
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o /tmp/rustup.sh
+          sh /tmp/rustup.sh -y --profile minimal --default-toolchain 1.95.0 --component rustfmt --component clippy
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      - name: Check formatting and all workspace lints
+        run: |
+          cargo fmt --all --check
+          cargo clippy --locked --workspace --all-targets -- -D warnings
+      - name: Build desktop binaries and test the complete workspace
+        run: |
+          cargo build --locked --workspace
+          cargo test --locked --workspace --no-fail-fast
+      - name: Test installer, session recovery and private portal contracts
+        run: python3 -m unittest discover -s scripts/tests -v

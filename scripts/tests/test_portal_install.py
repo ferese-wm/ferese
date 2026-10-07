@@ -113,14 +113,33 @@ m.main()
             self.assertEqual((self.bundles[0] / name).stat().st_mode & 0o777, 0o755)
 
     def without_appearance_wallpapers(self, bundle):
+        self.without_files(bundle, {'wallpapers/ferese-wallpaper-dark.jpg', 'wallpapers/ferese-wallpaper-light.png'})
+
+    def without_files(self, bundle, removed):
         manifest_path = bundle / 'manifest.json'
         manifest = json.loads(manifest_path.read_text())
-        removed = {'wallpapers/ferese-wallpaper-dark.jpg', 'wallpapers/ferese-wallpaper-light.png'}
         for target in removed:
             (bundle / target).unlink()
 
         manifest['files'] = [item for item in manifest['files'] if item['target'] not in removed]
         manifest_path.write_text(json.dumps(manifest))
+
+    def test_license_is_bundled_and_required_for_new_releases(self):
+        self.assertEqual((self.bundles[0] / 'licenses/Ferese-LICENSE.txt').read_bytes(), (REPO / 'LICENSE').read_bytes())
+        incomplete = Path(self.temporary.name) / 'incomplete'
+        shutil.copytree(self.bundles[0], incomplete)
+        self.without_files(incomplete, {'licenses/Ferese-LICENSE.txt'})
+        result = self.run_command('install', incomplete, success=False)
+        self.assertIn('Bundle is incomplete', result.stderr)
+        self.assertFalse((self.base / 'current').exists())
+
+    def test_upgrade_and_rollback_accept_installed_release_before_license(self):
+        self.install()
+        self.without_files(self.base / 'releases/first', {'licenses/Ferese-LICENSE.txt'})
+        self.install(1)
+        self.run_command('rollback')
+        self.assertEqual(os.readlink(self.base / 'current'), 'releases/first')
+        self.assertEqual(installer.Installation(self.root).manifest('first')['release'], 'first')
 
     def test_upgrade_and_rollback_accept_installed_release_before_appearance_wallpapers(self):
         self.install()

@@ -32,6 +32,34 @@ fn fixture() -> (smithay::reexports::calloop::EventLoop<'static, Ferese>, Ferese
 }
 
 #[test]
+fn floating_placement_reserves_the_full_opening_window_footprint() {
+    if !crate::startup_tests::private_runtime(
+        "state::window_lifecycle_tests::floating_placement_reserves_the_full_opening_window_footprint",
+    ) {
+        return;
+    }
+    let (mut events, mut state, _) = fixture();
+    let (window, _wire) = window(&mut state, &mut events, 0xff112233);
+    let id = state.windows.ids()[&window];
+    state.toggle_focused_floating();
+    let bounds = state.output_bounds().unwrap();
+    let logical = state.windows.geometry(&id).unwrap().logical;
+    state.animations_enabled = true;
+    state
+        .windows
+        .update(id, |record| record.opening = Some(AnimatedValue::new(0.0)));
+    let visual = state.presented_window_rect(id).unwrap();
+    assert!(visual.width < logical.width);
+    let obstacles = state.floating_obstacles(None, bounds);
+    assert_eq!(
+        obstacles,
+        vec![(id.0, crate::floating::intersection(logical, bounds).unwrap())]
+    );
+    let placed = crate::floating::min_overlap((80., 80.), bounds, &[obstacles[0].1], (logical.x, logical.y)).unwrap();
+    assert!(crate::floating::intersection(placed, logical).is_none());
+}
+
+#[test]
 fn keyboard_floating_move_and_resize_work_in_both_layouts() {
     if !crate::startup_tests::private_runtime(
         "state::window_lifecycle_tests::keyboard_floating_move_and_resize_work_in_both_layouts",
@@ -660,7 +688,10 @@ fn window_rule_minimum_size_replaces_the_client_advertised_minimum() {
     request(&mut wire, 4, 8, &[800, 600], None);
     request(&mut wire, 2, 6, &[], None);
     dispatch(&mut events, &mut state);
-    assert_eq!(state.effective_size_constraints(&window, (800, 600), (0,0)).0, (800, 600));
+    assert_eq!(
+        state.effective_size_constraints(&window, (800, 600), (0, 0)).0,
+        (800, 600)
+    );
     assert_eq!(state.window_constraints()[&id].min_width, 800.0);
     assert_eq!(state.window_constraints()[&id].min_height, 600.0);
 
@@ -669,7 +700,10 @@ fn window_rule_minimum_size_replaces_the_client_advertised_minimum() {
             .unwrap()
             .window_rules()
             .unwrap();
-    assert_eq!(state.effective_size_constraints(&window, (800, 600), (0,0)).0, (500, 400));
+    assert_eq!(
+        state.effective_size_constraints(&window, (800, 600), (0, 0)).0,
+        (500, 400)
+    );
     let constraints = state.window_constraints();
     assert_eq!(constraints[&id].min_width, 500.0);
     assert_eq!(constraints[&id].min_height, 400.0);
@@ -678,8 +712,14 @@ fn window_rule_minimum_size_replaces_the_client_advertised_minimum() {
         .unwrap()
         .window_rules()
         .unwrap();
-    assert_eq!(state.effective_size_constraints(&window, (800, 600), (0,0)).0, (800, 400));
+    assert_eq!(
+        state.effective_size_constraints(&window, (800, 600), (0, 0)).0,
+        (800, 400)
+    );
 
     state.window_rules.clear();
-    assert_eq!(state.effective_size_constraints(&window, (800, 600), (0,0)).0, (800, 600));
+    assert_eq!(
+        state.effective_size_constraints(&window, (800, 600), (0, 0)).0,
+        (800, 600)
+    );
 }

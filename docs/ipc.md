@@ -76,6 +76,15 @@ Clients launched by a nested compositor inherit its `FERESE_SOCKET`, so
 `feresectl outputs` inside that session connects to that instance.
 `autostart` launches desktop entries locally and does not use IPC.
 
+## Connection lifetimes
+
+The server permits 64 simultaneous connections. A new connection must begin its
+first request within five seconds; each frame then has five seconds to finish.
+Ordinary connections close after 30 idle seconds and blocked response writes
+expire after two seconds. These bounds release slots held by stalled clients.
+Accepted portal leases remain connected while idle, and pending long polls and
+event subscriptions do not have the ordinary idle deadline.
+
 ## Follow changes
 
 ```sh

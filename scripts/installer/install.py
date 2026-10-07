@@ -164,10 +164,11 @@ def validate_bundle(bundle, *, installed=False):
     actual = {str(path.relative_to(bundle)) for path in bundle.rglob('*') if path.is_file()}
     required = expected.keys()
     if installed:
-        # Installed releases may predate the appearance-specific wallpapers.
+        # Installed releases may predate the appearance wallpapers and license.
         # New bundles must include them; upgrades and rollback verify the older
         # release's recorded files without requiring these later additions.
-        required = required - {'wallpapers/ferese-wallpaper-dark.jpg', 'wallpapers/ferese-wallpaper-light.png'}
+        required = required - {'wallpapers/ferese-wallpaper-dark.jpg', 'wallpapers/ferese-wallpaper-light.png',
+                               'licenses/Ferese-LICENSE.txt'}
 
     if not required <= seen or actual != seen | {'manifest.json'}:
         fail('Bundle is incomplete or contains unlisted files')

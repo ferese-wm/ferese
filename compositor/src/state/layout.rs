@@ -572,11 +572,8 @@ impl Ferese {
                     let state = cached.current();
                     (state.min_size, state.max_size)
                 });
-                let (minimum, maximum) = self.effective_size_constraints(
-                    window,
-                    (minimum.w, minimum.h),
-                    (maximum.w, maximum.h),
-                );
+                let (minimum, maximum) =
+                    self.effective_size_constraints(window, (minimum.w, minimum.h), (maximum.w, maximum.h));
 
                 Some((
                     *id,

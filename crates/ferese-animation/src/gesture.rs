@@ -62,16 +62,17 @@ impl VelocityTracker {
                 let dt = last.saturating_sub(first).as_secs_f64();
                 return if dt > 0.0 { (origin - position) / dt } else { 0.0 };
             }
-            for entry in col..=degree + 1 {
-                matrix[col][entry] /= divisor;
+            for entry in &mut matrix[col][col..=degree + 1] {
+                *entry /= divisor;
             }
-            for row in 0..=degree {
+            let pivot_row = matrix[col];
+            for (row, values) in matrix.iter_mut().enumerate().take(degree + 1) {
                 if row == col {
                     continue;
                 }
-                let factor = matrix[row][col];
-                for entry in col..=degree + 1 {
-                    matrix[row][entry] -= factor * matrix[col][entry];
+                let factor = values[col];
+                for (entry, pivot) in values[col..=degree + 1].iter_mut().zip(&pivot_row[col..=degree + 1]) {
+                    *entry -= factor * pivot;
                 }
             }
         }

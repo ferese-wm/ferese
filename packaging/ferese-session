@@ -41,7 +41,7 @@ if [[ $backend == drm ]] && command -v systemctl >/dev/null; then
     systemctl --user stop swaync.service 2>/dev/null || true
 fi
 
-command=("$release_dir/ferese" --backend "$backend" --grant-effects
+command=("$release_dir/ferese" --backend "$backend" --supervise-client --grant-effects
     --grant-shell-control -- "$release_dir/ferese-session-shell")
 if [[ -z ${DBUS_SESSION_BUS_ADDRESS:-} ]]; then
     exec dbus-run-session -- "${command[@]}"

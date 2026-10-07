@@ -1,4 +1,5 @@
 use std::ffi::{OsStr, OsString};
+use std::os::unix::process::CommandExt;
 use std::process::Command;
 use std::sync::OnceLock;
 
@@ -18,6 +19,8 @@ pub(crate) fn configure_shell() {
 }
 
 pub(crate) fn configure_app(command: &mut Command) {
+    // Applications survive cleanup of a crashed desktop helper generation.
+    command.process_group(0);
     if let Some(backend) = APP_BACKEND.get() {
         apply_app_backend(command, backend.as_deref());
     }

@@ -10,6 +10,11 @@
   ],
   "files": [
     {
+      "source": "LICENSE",
+      "target": "licenses/Ferese-LICENSE.txt",
+      "mode": "0644"
+    },
+    {
       "source": "target/release/ferese",
       "target": "ferese",
       "mode": "0755",

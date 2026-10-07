@@ -11,7 +11,9 @@ use std::time::{Duration, Instant};
 use std::{fs, io, thread};
 
 use ferese_core::LayoutMode;
-use ferese_ipc::{Request, Response, VERSION, read_frame, write_frame};
+use ferese_ipc::{Request, Response, VERSION};
+
+mod transport;
 use ferese_layout::Direction;
 use serde_json::{Value, json};
 use smithay::output::Output;
@@ -478,8 +480,10 @@ fn serve_connection(mut stream: UnixStream, sender: channel::SyncSender<IpcEvent
         owner,
         sender: sender.clone(),
     };
+    let mut idle = Some(transport::FRAME_TIMEOUT);
+    let mut owns_lease = false;
     loop {
-        let request: Request = match read_frame(&mut stream) {
+        let request: Request = match transport::read_request(&stream, idle) {
             Ok(request) => request,
             Err(ferese_ipc::FrameError::Io(error))
                 if matches!(
@@ -502,7 +506,7 @@ fn serve_connection(mut stream: UnixStream, sender: channel::SyncSender<IpcEvent
                     Err(error) => Response::error(request.id, "invalid_config", error),
                 },
             };
-            if write_frame(&mut stream, &response).is_err() {
+            if transport::write_response(&stream, &response).is_err() {
                 return;
             }
             continue;
@@ -511,6 +515,14 @@ fn serve_connection(mut stream: UnixStream, sender: channel::SyncSender<IpcEvent
         let event_stream_requested = request.command == "event-stream";
         let (events, event_receiver) = sync_channel(crate::ipc_events::QUEUE_CAPACITY);
         let exit_requested = request.command == "exit";
+        let registers_lease = matches!(
+            request.command.as_str(),
+            "portal-inhibit"
+                | "portal-monitor-register"
+                | "portal-shortcuts-register"
+                | "input-capture-register"
+                | "begin-session-end"
+        );
         let screenshot_requested = matches!(request.command.as_str(), "screenshot" | "screenshot-window");
         let call = IpcEvent::Call(IpcCall {
             native_portal,
@@ -554,7 +566,9 @@ fn serve_connection(mut stream: UnixStream, sender: channel::SyncSender<IpcEvent
         };
         let exit_accepted = exit_requested && response.error.is_none();
         let event_stream_accepted = event_stream_requested && response.error.is_none();
-        if let Err(error) = write_frame(&mut stream, &response) {
+        owns_lease |= registers_lease && response.error.is_none();
+        idle = (!owns_lease).then_some(transport::IDLE_TIMEOUT);
+        if let Err(error) = transport::write_response(&stream, &response) {
             if screenshot_requested {
                 discard_undelivered_screenshot(&response);
             }
@@ -580,7 +594,7 @@ fn relay_events(stream: &mut UnixStream, events: std::sync::mpsc::Receiver<Arc<f
     loop {
         match events.recv_timeout(Duration::from_millis(250)) {
             Ok(event) => {
-                if write_frame(stream, event.as_ref()).is_err() {
+                if transport::write_response(stream, event.as_ref()).is_err() {
                     return;
                 }
             }
@@ -1808,6 +1822,38 @@ mod tests {
 
         assert_eq!(peer_uid(&left).unwrap(), effective_uid());
         assert_eq!(peer_uid(&right).unwrap(), effective_uid());
+    }
+
+    #[test]
+    fn silent_clients_release_all_connection_slots_after_the_initial_deadline() {
+        let active = Arc::new(AtomicUsize::new(0));
+        let (sender, _receiver) = channel::sync_channel(MAX_CONNECTIONS);
+        let event_loop = EventLoop::<()>::try_new().unwrap();
+        let mut clients = Vec::new();
+        let mut workers = Vec::new();
+        for owner in 0..MAX_CONNECTIONS {
+            let (client, server) = UnixStream::pair().unwrap();
+            clients.push(client);
+            let permit = try_acquire_connection(&active).unwrap();
+            let sender = sender.clone();
+            let signal = event_loop.get_signal();
+            workers.push(thread::spawn(move || {
+                let _permit = permit;
+                serve_connection(server, sender, signal, owner as u64);
+            }));
+        }
+        assert!(try_acquire_connection(&active).is_none());
+        let deadline = Instant::now() + transport::FRAME_TIMEOUT + Duration::from_secs(3);
+        while active.load(Ordering::Acquire) != 0 {
+            assert!(Instant::now() < deadline, "silent peers retained connection slots");
+            thread::sleep(Duration::from_millis(20));
+        }
+        assert!(try_acquire_connection(&active).is_some());
+        // Clients deliberately stay open: the server must recover on its own.
+        assert_eq!(clients.len(), MAX_CONNECTIONS);
+        for worker in workers {
+            worker.join().unwrap();
+        }
     }
 
     #[test]

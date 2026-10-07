@@ -490,6 +490,8 @@ fn encode_regions(regions: &[[f32; 5]]) -> Vec<u8> {
         .collect()
 }
 
+type EffectPresentation = (Vec<[f32; 5]>, u32, Vec<u32>, ferese_surface_effects_v1::Role);
+
 pub(super) struct EffectsBinding {
     connection: Connection,
     _manager: FereseEffectsManagerV1,
@@ -497,7 +499,7 @@ pub(super) struct EffectsBinding {
     _queue: EventQueue<EffectsState>,
     regions: std::cell::RefCell<Option<Vec<[f32; 5]>>>,
     opacity: std::cell::Cell<Option<u32>>,
-    presentation: std::cell::RefCell<Option<(Vec<[f32; 5]>, u32, Vec<u32>, ferese_surface_effects_v1::Role)>>,
+    presentation: std::cell::RefCell<Option<EffectPresentation>>,
 }
 
 impl EffectsBinding {

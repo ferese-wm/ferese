@@ -122,8 +122,22 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     info!(socket = ?state.socket_name, backend = ?launch.backend, "Ferese is accepting Wayland clients");
 
-    let child = spawn_client(&mut state, launch.client, launch.client_capabilities)
-        .map(|child| watch_client_exit(&state.loop_handle, child));
+    let (supervisor, child) = if launch.supervise_client {
+        (
+            Some(process::Supervisor::start(
+                &mut state,
+                launch.client,
+                launch.client_capabilities,
+            )),
+            None,
+        )
+    } else {
+        (
+            None,
+            spawn_client(&mut state, launch.client, launch.client_capabilities)
+                .map(|child| watch_client_exit(&state.loop_handle, child)),
+        )
+    };
     let runner = daemon::Runner::start(&mut state);
     state.daemons = Some(runner.clone());
     let result = event_loop.run(None, &mut state, after_dispatch);
@@ -136,6 +150,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     state.resize_metrics.dump();
 
     runner.borrow_mut().stop();
+    if let Some(supervisor) = supervisor {
+        supervisor.borrow_mut().stop(&state.loop_handle);
+    }
     if let Some(child) = child
         && let Some(mut child) = child.borrow_mut().take()
     {

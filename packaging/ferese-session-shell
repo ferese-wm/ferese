@@ -70,12 +70,33 @@ if ((manage_session)); then
     fi
 fi
 release_dir=$(dirname -- "$(readlink -f -- "$0")")
-env -u WAYLAND_SOCKET WAYLAND_DISPLAY="${FERESE_PUBLIC_WAYLAND_DISPLAY:-${WAYLAND_DISPLAY:-}}" \
-    "$release_dir/ferese-polkit-agent" &
+# Agent failures must not take down a healthy shell. The compositor supervises
+# this helper (and creates fresh private connections) when the shell itself exits.
+supervise_agent() {
+    local child= delay=1 started
+    trap 'trap - TERM INT; if [[ -n $child ]]; then kill "$child" 2>/dev/null || true; wait "$child" 2>/dev/null || true; fi; exit 0' TERM INT
+    while true; do
+        started=$SECONDS
+        env -u WAYLAND_SOCKET -u FERESE_SHELL_CONTROL_SOCKET \
+            WAYLAND_DISPLAY="${FERESE_PUBLIC_WAYLAND_DISPLAY:-${WAYLAND_DISPLAY:-}}" \
+            "$release_dir/ferese-polkit-agent" &
+        child=$!
+        wait "$child" || true
+        child=
+        if ((SECONDS - started >= 60)); then delay=1; fi
+        sleep "$delay" &
+        child=$!
+        wait "$child" || true
+        child=
+        if ((delay < 30)); then delay=$((delay * 2)); fi
+        if ((delay > 30)); then delay=30; fi
+    done
+}
+supervise_agent &
 agent_pid=$!
 "$release_dir/ferese-shell" &
 shell_pid=$!
-if ((manage_session)) && [[ -x $release_dir/feresectl ]]; then
+if ((manage_session)) && [[ ${FERESE_CLIENT_RESTART:-0} != 1 && -x $release_dir/feresectl ]]; then
     env WAYLAND_DISPLAY="${FERESE_PUBLIC_WAYLAND_DISPLAY:-${WAYLAND_DISPLAY:-}}" \
         "$release_dir/feresectl" autostart &
     autostart_pid=$!

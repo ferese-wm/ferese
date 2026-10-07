@@ -15,6 +15,9 @@ use tracing::{info, warn};
 use crate::Ferese;
 use crate::private_client::{self, ClientCapabilities};
 
+mod supervisor;
+pub(crate) use supervisor::Supervisor;
+
 pub(crate) fn command(program: impl AsRef<OsStr>) -> Command {
     let mut command = Command::new(program);
     // Calloop blocks these on the compositor thread; fork/exec inherits that
@@ -42,6 +45,15 @@ pub(crate) fn spawn_client<S: AsRef<OsStr>>(
     args: impl IntoIterator<Item = S>,
     capabilities: ClientCapabilities,
 ) -> Option<Child> {
+    spawn_client_inner(state, args, capabilities, None)
+}
+
+fn spawn_client_inner<S: AsRef<OsStr>>(
+    state: &mut Ferese,
+    args: impl IntoIterator<Item = S>,
+    capabilities: ClientCapabilities,
+    supervised_restart: Option<bool>,
+) -> Option<Child> {
     let mut args = args.into_iter();
     let Some(program) = args.next() else {
         info!("no client requested; pass one after `--`, for example `-- foot`");
@@ -51,6 +63,10 @@ pub(crate) fn spawn_client<S: AsRef<OsStr>>(
     let program = program.as_ref();
     let mut command = command(program);
     command.args(args);
+    if let Some(restarted) = supervised_restart {
+        command.process_group(0);
+        command.env("FERESE_CLIENT_RESTART", if restarted { "1" } else { "0" });
+    }
     // Workers may already exist. Change only this child's environment.
     // Apply before granting the child a private Wayland connection.
     state.session_environment.apply_public(&mut command);

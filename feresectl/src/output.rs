@@ -17,6 +17,8 @@ pub fn print(value: &Value, json: bool) -> Result<(), Box<dyn Error>> {
 fn write_plain(writer: &mut impl Write, value: &Value, indent: usize) -> io::Result<()> {
     match value {
         Value::Object(fields) => {
+            let mut fields = fields.iter().collect::<Vec<_>>();
+            fields.sort_unstable_by_key(|(key, _)| *key);
             for (key, value) in fields {
                 write!(writer, "{:indent$}{key}:", "")?;
                 if value.is_object() || value.is_array() {

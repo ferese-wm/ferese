@@ -13,7 +13,7 @@ SCRIPT = Path(__file__).resolve().parents[2] / 'packaging/ferese-session-shell'
 
 class SessionStartupTest(unittest.TestCase):
     def run_session(self, direct=True, fail_target=False, shell_status=0, terminate=False,
-                     display=None, xauthority=None, extra_env=None):
+                     display=None, xauthority=None, extra_env=None, programs_override=None):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             helper = root / 'ferese-session-shell'
@@ -27,6 +27,7 @@ class SessionStartupTest(unittest.TestCase):
                 'ferese-polkit-agent': 'exec sleep 30\n',
                 'ferese-shell': 'printf "shell:%s\\n" "$WAYLAND_SOCKET" >> "$TEST_ROOT/events"\nif [[ $TEST_WAIT == 1 ]]; then exec sleep 30; fi\nexit "$TEST_STATUS"\n',
             }
+            programs.update(programs_override or {})
             for name, body in programs.items():
                 path = root / name
                 path.write_text('#!/bin/bash\n' + body)
@@ -127,6 +128,37 @@ class SessionStartupTest(unittest.TestCase):
         status, events = self.run_session(terminate=True)
         self.assertEqual(status, 143)
         self.assertEqual(events[-1], '--user stop ferese-session.target')
+
+    def test_agent_failure_recovers_without_restarting_shell(self):
+        status, events = self.run_session(programs_override={
+            'ferese-polkit-agent': (
+                'echo agent >> "$TEST_ROOT/events"\n'
+                'if [[ ! -f $TEST_ROOT/agent-failed ]]; then touch "$TEST_ROOT/agent-failed"; exit 7; fi\n'
+                'touch "$TEST_ROOT/agent-recovered"\nexec sleep 30\n'),
+            'ferese-shell': (
+                'echo shell >> "$TEST_ROOT/events"\n'
+                'for ((i=0; i<200; i++)); do\n'
+                '  [[ -f $TEST_ROOT/agent-recovered ]] && exit 0\n'
+                '  sleep .01\ndone\nexit 1\n'),
+        })
+        self.assertEqual(status, 0)
+        self.assertEqual(events.count('agent'), 2)
+        self.assertEqual(events.count('shell'), 1)
+        self.assertEqual(events[-1], '--user stop ferese-session.target')
+
+    def test_recovered_shell_does_not_repeat_autostart(self):
+        programs = {
+            'feresectl': 'touch "$TEST_ROOT/autostarted"\necho autostart >> "$TEST_ROOT/events"\n',
+            'ferese-shell': (
+                'if [[ ${FERESE_CLIENT_RESTART:-0} == 1 ]]; then sleep .1; exit 0; fi\n'
+                'for ((i=0; i<100; i++)); do\n'
+                '  [[ -f $TEST_ROOT/autostarted ]] && exit 0\n'
+                '  sleep .01\ndone\nexit 1\n'),
+        }
+        for restarted in ('0', '1'):
+            status, events = self.run_session(extra_env={'FERESE_CLIENT_RESTART': restarted}, programs_override=programs)
+            self.assertEqual(status, 0)
+            self.assertEqual(events.count('autostart'), int(restarted == '0'))
 
 
 if __name__ == '__main__':

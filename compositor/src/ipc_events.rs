@@ -71,7 +71,7 @@ impl Subscribers {
                 generation: self.generation,
                 last: true,
                 change: Change::Snapshot {
-                    desktop: snapshot.clone(),
+                    desktop: Box::new(snapshot.clone()),
                 },
             })
         });

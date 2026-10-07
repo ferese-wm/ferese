@@ -199,6 +199,14 @@ For greetd, set this as the session command after authentication; see the [greet
 documentation](https://sr.ht/~kennylevinsen/greetd/). The launcher starts the
 compositor, shell and session services together.
 
+The session launcher supervises the desktop helper. If the shell exits, Ferese
+restarts the helper with fresh private Wayland connections after a delay of one
+second. Repeated failures increase that delay up to 30 seconds; a minute of
+uptime resets it. The polkit agent recovers independently, and shell recovery
+does not repeat desktop autostart. Compositor shutdown cancels pending restarts
+and stops the helper. Standalone clients passed to `ferese -- COMMAND` are only
+supervised when `--supervise-client` is explicitly supplied before `--`.
+
 ### From a TTY
 
 Log out of your graphical session and switch to a local console with **Ctrl+Alt+F2**, or

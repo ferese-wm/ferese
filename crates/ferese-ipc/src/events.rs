@@ -32,7 +32,7 @@ pub struct Snapshot {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Change {
-    Snapshot { desktop: Snapshot },
+    Snapshot { desktop: Box<Snapshot> },
     OutputsChanged { outputs: Value },
     WorkspacesChanged { workspaces: Value },
     WindowsChanged { windows: Value },

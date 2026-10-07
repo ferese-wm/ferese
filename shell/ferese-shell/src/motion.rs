@@ -98,6 +98,7 @@ impl PopupMotion {
         self.sample(now).current as f32
     }
 
+    #[cfg(test)]
     pub(crate) fn progress(&self) -> f32 {
         self.progress_at(std::time::Instant::now())
     }
@@ -544,7 +545,6 @@ mod tests {
                 duration_ms: Some(240.0),
                 bounce: 0.3,
                 overshoot: true,
-                ..Default::default()
             },
             ..Default::default()
         };

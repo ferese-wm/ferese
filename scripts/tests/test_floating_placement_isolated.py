@@ -69,13 +69,27 @@ class FloatingPlacementTest(unittest.TestCase):
                 return child
 
             def command(*args):
-                return json.loads(subprocess.check_output([str(repo / "target/debug/feresectl"), "-j", *args], env=ipc_environment(env), timeout=5))
+                return json.loads(subprocess.check_output([str(repo / os.environ.get("FERESE_TEST_CTL", "target/debug/feresectl")), "-j", *args], env=ipc_environment(env), timeout=5))
+
+            def settled_geometry(query, fields):
+                deadline = time.monotonic() + 5
+                stable_since, previous = time.monotonic(), None
+                while True:
+                    values = command(query)
+                    geometry = [tuple(value[field] for field in fields) for value in values]
+                    if geometry != previous:
+                        stable_since, previous = time.monotonic(), geometry
+                    if geometry and time.monotonic() - stable_since >= .5:
+                        return values
+                    if time.monotonic() > deadline:
+                        self.fail(f"{query} geometry did not settle: {geometry}")
+                    time.sleep(.025)
 
             with (root / "compositor.log").open("w") as log:
                 try:
                     bus = launch(["dbus-daemon", "--session", "--nofork", "--print-address=1"], stdout=subprocess.PIPE, text=True)
                     env["DBUS_SESSION_BUS_ADDRESS"] = bus.stdout.readline().strip()
-                    compositor = launch([str(repo / "target/debug/ferese"), "--backend", "nested"], stdout=log, stderr=log)
+                    compositor = launch([str(repo / os.environ.get("FERESE_TEST_BINARY", "target/debug/ferese")), "--backend", "nested"], stdout=log, stderr=log)
                     deadline = time.monotonic() + 10
                     while not (ipc_socket(runtime)).is_socket():
                         if compositor.poll() is not None or time.monotonic() > deadline:
@@ -83,6 +97,9 @@ class FloatingPlacementTest(unittest.TestCase):
                         time.sleep(.025)
                     socket = next(p for p in runtime.glob("wayland-*") if not p.name.endswith(".lock"))
                     env["WAYLAND_DISPLAY"] = str(socket)
+                    # The host configures the nested window after its initial
+                    # output is advertised. Restore memory against that final size.
+                    settled_geometry("outputs", ["name", "x", "y", "width", "height", "scale"])
                     for app in ["remembered", "second", "third"]:
                         launch([str(root / "client"), "ferese.test.placement." + app, "240", "160"], stdout=log, stderr=log)
                         deadline = time.monotonic() + 5
@@ -93,6 +110,10 @@ class FloatingPlacementTest(unittest.TestCase):
                             if time.monotonic() > deadline:
                                 self.fail((root / "compositor.log").read_text() + repr(windows))
                             time.sleep(.025)
+                    # IPC reports presented bounds. Let opening animations settle
+                    # before comparing the remembered rectangle with a later restore.
+                    # Mapping above remains rapid to exercise placement during opening.
+                    windows = settled_geometry("windows", ["app_id", "x", "y", "width", "height"])
                     remembered = next(w for w in windows if w["app_id"].endswith("remembered"))
                     output = next(o for o in command("get-outputs") if o["enabled"])
                     self.assertAlmostEqual(remembered["x"], output["x"] + .1 * output["width"], delta=1)

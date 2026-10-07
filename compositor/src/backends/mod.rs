@@ -21,6 +21,7 @@ pub struct LaunchConfig {
     pub(crate) session_policy: SessionPolicy,
     pub client: Vec<OsString>,
     pub client_capabilities: ClientCapabilities,
+    pub supervise_client: bool,
 }
 
 impl LaunchConfig {
@@ -35,6 +36,7 @@ impl LaunchConfig {
         let mut requested_backend = None;
         let mut client = Vec::new();
         let mut client_capabilities = ClientCapabilities::default();
+        let mut supervise_client = false;
 
         while let Some(argument) = args.next() {
             if argument == "--" {
@@ -50,6 +52,10 @@ impl LaunchConfig {
             }
             if argument == "--grant-effects" {
                 client_capabilities.insert(ClientCapabilities::EFFECTS);
+                continue;
+            }
+            if argument == "--supervise-client" {
+                supervise_client = true;
                 continue;
             }
             if argument == "--grant-shell-control" {
@@ -75,6 +81,9 @@ impl LaunchConfig {
             BackendKind::Drm
         });
 
+        if supervise_client && client.is_empty() {
+            return Err("--supervise-client requires a client command".into());
+        }
         Ok(Self {
             backend,
             session_policy: match backend {
@@ -83,6 +92,7 @@ impl LaunchConfig {
             },
             client,
             client_capabilities,
+            supervise_client,
         })
     }
 }
@@ -119,6 +129,26 @@ mod tests {
         assert_eq!(config.session_policy, SessionPolicy::Embedded);
         assert_eq!(config.client, [OsString::from("foot")]);
         assert!(config.client_capabilities.is_empty());
+        assert!(!config.supervise_client);
+    }
+
+    #[test]
+    fn supervision_requires_an_explicit_client() {
+        assert!(LaunchConfig::parse([OsString::from("--supervise-client")], true).is_err());
+        let config = LaunchConfig::parse(
+            [
+                "--supervise-client",
+                "--grant-shell-control",
+                "--",
+                "ferese-session-shell",
+            ]
+            .map(OsString::from),
+            true,
+        )
+        .unwrap();
+        assert!(config.supervise_client);
+        assert_eq!(config.client, [OsString::from("ferese-session-shell")]);
+        assert!(config.client_capabilities.contains(ClientCapabilities::SHELL_CONTROL));
     }
 
     #[test]

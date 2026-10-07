@@ -6,11 +6,20 @@ Install the [build dependencies](installation.md#requirements), then run:
 cargo build --release --locked --workspace
 cargo test --workspace --locked
 cargo fmt --all --check
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo build --workspace --locked
+python3 -m unittest discover -s scripts/tests -v
 ```
 
 Use release builds for performance and animation checks. Preview changes in a
 [nested session](installation.md#preview-and-logs) before testing hardware behavior.
 Keep another desktop available for direct-session recovery.
+
+CI checks formatting, lints and tests across the whole workspace, including the
+shell, settings, portal and CLI. The Fedora workspace job also builds desktop
+binaries and runs installer, session-recovery and private portal-contract checks. The
+compositor job runs offscreen capture regressions with software Mesa. Opt-in
+nested and hardware checks remain separate.
 
 ## Test guides
 

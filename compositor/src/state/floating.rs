@@ -308,7 +308,9 @@ impl Ferese {
                 {
                     return None;
                 }
-                let rect = self.presented_window_rect(id)?;
+                // Opening/overview animation bounds are temporary. Reserve the
+                // final layout footprint so neighbors cannot grow into a new window.
+                let rect = self.windows.geometry(&id)?.logical;
                 crate::floating::intersection(rect, work).map(|visible| (id.0, visible))
             })
             .collect()
