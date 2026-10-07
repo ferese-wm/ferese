@@ -4,6 +4,7 @@ mod navigation;
 mod pages;
 mod panel_controls;
 mod panel_edit;
+mod panel_preview;
 mod theme_controls;
 
 use theme_controls::*;
@@ -105,6 +106,9 @@ enum Message {
     Change(Edit),
     CustomizePanel,
     PanelSelect(ferese_config::panel::ItemId),
+    PanelGroupSelect(ferese_config::panel::GroupId),
+    PanelPreviewResolved(ferese_config::panel::layout::Resolution),
+    PanelPreviewOverflow,
     PanelEdit(panel_edit::Action),
     SelectFont(String, String),
     Draft(String, String),
@@ -179,6 +183,9 @@ struct App {
     auto_details: bool,
     advanced_theme: bool,
     panel_selection: Option<ferese_config::panel::ItemId>,
+    panel_group_selection: Option<ferese_config::panel::GroupId>,
+    panel_preview_resolution: ferese_config::panel::layout::Resolution,
+    panel_preview_overflow: bool,
     theme_file_target: usize,
     wallpaper: wallpaper_controls::State,
 }
@@ -290,6 +297,9 @@ impl cosmic::Application for App {
             auto_details: false,
             advanced_theme: false,
             panel_selection: None,
+            panel_group_selection: None,
+            panel_preview_resolution: Default::default(),
+            panel_preview_overflow: false,
             theme_file_target: 0,
             wallpaper: Default::default(),
         };
@@ -600,12 +610,29 @@ impl cosmic::Application for App {
                 }
             }
             Message::PanelSelect(id) => {
+                self.panel_group_selection = None;
                 self.panel_selection = if self.panel_selection.as_ref() == Some(&id) {
                     None
                 } else {
                     Some(id)
                 };
+                if self.draft.item("panels").is_none() {
+                    match panel_controls::initialize(&self.draft) {
+                        Ok(edit) => return self.change(edit),
+                        Err(error) => self.error = Some(error),
+                    }
+                }
             }
+            Message::PanelGroupSelect(id) => {
+                self.panel_selection = None;
+                self.panel_group_selection = if self.panel_group_selection.as_ref() == Some(&id) {
+                    None
+                } else {
+                    Some(id)
+                };
+            }
+            Message::PanelPreviewResolved(resolution) => self.panel_preview_resolution = resolution,
+            Message::PanelPreviewOverflow => self.panel_preview_overflow = !self.panel_preview_overflow,
             Message::PanelEdit(action) => match panel_edit::plan(&self.draft, action) {
                 Ok(edits) => {
                     self.inputs.retain(|path, _| !path.starts_with("panels."));
@@ -1125,6 +1152,47 @@ mod tests {
         let _ = app.page_view();
         assert!(app.error.is_none());
         assert_eq!(app.draft.string("panels.0.end.groups.1.items.0.id", ""), "");
+    }
+
+    #[test]
+    fn pending_group_moves_and_style_changes_save_one_coherent_draft() {
+        use ferese_config::panel::GroupId;
+        let mut app = app();
+        let mut initial = Snapshot::parse(String::new()).unwrap();
+        initial.edit(&panel_controls::initialize(&initial).unwrap()).unwrap();
+        app.current = initial.clone();
+        app.draft = initial.clone();
+        app.saving = true;
+        let id = GroupId("status".into());
+        let _ = app.update(Message::PanelGroupSelect(id.clone()));
+        let _ = app.update(Message::PanelEdit(panel_edit::Action::MoveGroup(
+            id.clone(),
+            panel_edit::Zone::Start,
+        )));
+        let _ = app.update(Message::PanelEdit(panel_edit::Action::SetGroup(
+            id.clone(),
+            "padding_horizontal".into(),
+            12.into(),
+        )));
+        let expected = app.draft.doc.value().clone();
+        let _ = app.update(Message::Saved(Ok((initial, false))));
+        assert!(app.saving);
+        assert!(app.pending.is_empty());
+        assert_eq!(app.draft.doc.value(), &expected);
+        assert_eq!(app.panel_group_selection, Some(id));
+        assert_eq!(app.draft.number("panels.0.start.groups.2.padding.1", 0.), 12.);
+        let _ = app.page_view();
+    }
+
+    #[test]
+    fn selecting_a_generated_preview_item_starts_editing_the_current_composition() {
+        let mut app = app();
+        app.saving = true;
+        let id = ferese_config::panel::ItemId("clock".into());
+        let _ = app.update(Message::PanelSelect(id.clone()));
+        assert_eq!(app.panel_selection, Some(id));
+        assert!(app.draft.item("panels").is_some());
+        assert_eq!(app.pending.len(), 1);
     }
 
     #[test]

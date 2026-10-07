@@ -6,9 +6,9 @@ use crate::panel::{Availability, GroupSurface, Item, ItemKind, PanelId, Zone};
 use cosmic::iced::border::Shape as BorderShape;
 use ferese_config::BarLayout;
 
-mod adaptive;
+use ferese_theme::panel as adaptive;
 pub(super) mod presentation;
-use crate::panel::{Group, GroupId, OverflowPolicy, Representation};
+use crate::panel::Representation;
 use crate::panel_layout::Placement;
 
 impl FereseShell {
@@ -63,21 +63,7 @@ impl FereseShell {
                     {
                         continue;
                     }
-                    let alternatives = item.kind.representations();
-                    let alternatives = if let Some(preferred) = item.representation {
-                        alternatives
-                            .iter()
-                            .copied()
-                            .filter(|representation| *representation as u8 >= preferred as u8)
-                            .collect::<Vec<_>>()
-                    } else {
-                        alternatives.to_vec()
-                    };
-                    let alternatives = if alternatives.is_empty() {
-                        vec![item.kind.representations()[0]]
-                    } else {
-                        alternatives
-                    };
+                    let alternatives = item.representations();
                     for representation in alternatives {
                         let view = self.view_panel_item(id, item, None, islands, representation).0;
                         samples.push(adaptive::Sample {
@@ -94,7 +80,7 @@ impl FereseShell {
                 }
             }
         }
-        let overflow_group = overflow_group(panel);
+        let overflow_group = panel.overflow_group();
         samples.push(adaptive::Sample {
             id: overflow_group.items[0].id.clone(),
             representation: Representation::Icon,
@@ -111,7 +97,7 @@ impl FereseShell {
                 0.0
             };
         let content = adaptive::frame(
-            panel,
+            std::borrow::Cow::Borrowed(panel),
             samples,
             overflow_width,
             output.map(|output| output.panel_resolution.clone()).unwrap_or_default(),
@@ -470,36 +456,6 @@ impl FereseShell {
             workspace_buttons = workspace_buttons.push(selector);
         }
         workspace_buttons.into()
-    }
-}
-
-fn overflow_group(panel: &crate::panel::Panel) -> Group {
-    let padding = panel
-        .end
-        .groups
-        .first()
-        .map_or(ferese_config::default_bar_island_padding(), |group| {
-            group.island_padding
-        });
-    Group {
-        id: GroupId("_overflow".into()),
-        items: vec![Item {
-            id: crate::panel::ItemId("_overflow".into()),
-            kind: ItemKind::Overflow,
-            gap_before: None,
-            representation: None,
-            visible: true,
-            overflow: OverflowPolicy::Never,
-            priority: 100,
-        }],
-        surface: if panel.background == BarLayout::Islands {
-            GroupSurface::Island
-        } else {
-            GroupSurface::Inset
-        },
-        spacing: 0.0,
-        padding: [2, 3],
-        island_padding: padding,
     }
 }
 

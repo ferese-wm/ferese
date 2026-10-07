@@ -138,6 +138,21 @@ pub struct Item {
 }
 
 impl Item {
+    /// Start at the configured preference and retain supported smaller forms.
+    pub fn representations(&self) -> Vec<Representation> {
+        let supported = self.kind.representations();
+        let preferred = self.representation.unwrap_or(supported[0]);
+        let alternatives: Vec<_> = supported
+            .iter()
+            .copied()
+            .filter(|representation| *representation as u8 >= preferred as u8)
+            .collect();
+        if alternatives.is_empty() {
+            vec![supported[0]]
+        } else {
+            alternatives
+        }
+    }
     pub fn new(id: &str, kind: ItemKind) -> Self {
         Self {
             id: ItemId(id.into()),
@@ -311,6 +326,34 @@ pub fn validate(panels: &[Panel]) -> Result<(), String> {
 }
 
 impl Panel {
+    /// The overflow trigger is generated, never persisted as a configured item.
+    pub fn overflow_group(&self) -> Group {
+        Group {
+            id: GroupId("_overflow".into()),
+            items: vec![Item {
+                id: ItemId("_overflow".into()),
+                kind: ItemKind::Overflow,
+                gap_before: None,
+                representation: None,
+                visible: true,
+                overflow: OverflowPolicy::Never,
+                priority: 100,
+            }],
+            surface: if self.background == BarLayout::Islands {
+                GroupSurface::Island
+            } else {
+                GroupSurface::Inset
+            },
+            spacing: 0.0,
+            padding: [2, 3],
+            island_padding: self
+                .end
+                .groups
+                .first()
+                .map_or(crate::default_bar_island_padding(), |group| group.island_padding),
+        }
+    }
+
     pub fn item(&self, id: &ItemId) -> Option<&Item> {
         [&self.start, &self.center, &self.end]
             .into_iter()

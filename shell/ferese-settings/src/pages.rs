@@ -155,7 +155,7 @@ impl App {
                 );
             }
         } else {
-            if self.page == Page::Windows || self.page == Page::Bar && self.draft.item("panels").is_none() {
+            if self.page == Page::Windows {
                 body = body.push(visuals::preview_resolved(&self.draft, &self.resolved.presented));
             }
             if self.page == Page::Appearance {
@@ -182,6 +182,7 @@ impl App {
                 body = body.push(self.wallpaper_controls());
             }
             if self.page == Page::Bar {
+                body = body.push(self.panel_preview());
                 body = body.push(self.panel_controls());
             }
             let fields = if self.page == Page::Bar {

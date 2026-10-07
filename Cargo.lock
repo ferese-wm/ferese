@@ -1917,6 +1917,7 @@ dependencies = [
  "iced_accessibility",
  "jiff",
  "libcosmic",
+ "tokio",
 ]
 
 [[package]]

@@ -815,6 +815,17 @@ to reorder it within its group. Each group has an **Add item** menu; remove an
 instance with its remove button. Changes use the existing save and Undo controls.
 `ferese-settings --page bar` opens this page directly.
 
+Use **Add group** in Start, Center, or End to create an empty group. Select its
+name to change placement, surface, spacing, and padding. The arrow buttons move
+groups within a zone. Move or remove a group's items before removing the group.
+
+The composition preview follows the draft and adapts to the Settings window's
+width. It uses sample content with every service available. Select a preview
+control to edit that instance; the chevron reveals overflow items. Selecting a
+control before customization saves the current arrangement first. The preview
+shares the shell's sizing resolver, but does not reproduce its live service state
+or exact vertical styling.
+
 ```kdl
 panel "main" {
     background "islands"

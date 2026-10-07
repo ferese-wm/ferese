@@ -1,18 +1,20 @@
-use crate::panel::{ItemId, Panel, Representation};
-use crate::panel_layout::{Measurement, Resolution, resolve};
+//! Measure item representations and resolve panel allocation for shell views and previews.
 use cosmic::iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, renderer, widget};
 use cosmic::iced::{Event, Length, Rectangle, Size, Vector};
 use cosmic::{Element, Theme};
+use ferese_config::panel::layout::{Measurement, Resolution, resolve};
+use ferese_config::panel::{ItemId, Panel, Representation};
+use std::borrow::Cow;
 
-pub(super) struct Sample<'a, M> {
+pub struct Sample<'a, M> {
     pub id: ItemId,
     pub representation: Representation,
     pub minimum: Option<f32>,
     pub view: Element<'a, M>,
 }
 
-pub(super) fn frame<'a, M: 'a>(
-    panel: &'a Panel,
+pub fn frame<'a, M: 'a>(
+    panel: Cow<'a, Panel>,
     samples: Vec<Sample<'a, M>>,
     overflow_width: f32,
     initial: Resolution,
@@ -37,7 +39,7 @@ struct State {
 }
 type Build<'a, M> = Box<dyn Fn(&Resolution) -> Element<'a, M> + 'a>;
 struct Adaptive<'a, M> {
-    panel: &'a Panel,
+    panel: Cow<'a, Panel>,
     samples: Vec<Sample<'a, M>>,
     overflow_width: f32,
     content: Element<'a, M>,
@@ -106,7 +108,7 @@ impl<M> Widget<M, Theme, cosmic::Renderer> for Adaptive<'_, M> {
             .map_or(0.0, |measurement| measurement.alternatives[0].1);
         let trigger = trigger.min((limits.max().width - self.overflow_width).max(0.0));
         self.resolution = resolve(
-            self.panel,
+            &self.panel,
             &measurements,
             limits.max().width,
             (self.overflow_width + trigger).min(limits.max().width),
@@ -209,11 +211,11 @@ impl<M> Widget<M, Theme, cosmic::Renderer> for Adaptive<'_, M> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::panel::{Defaults, OverflowPolicy};
-    use crate::panel_layout::Placement;
     use cosmic::iced::advanced::{clipboard, renderer::Headless};
     use cosmic::iced::{Font, Pixels, Point};
     use cosmic::widget::{button, text};
+    use ferese_config::panel::layout::Placement;
+    use ferese_config::panel::{Defaults, OverflowPolicy};
 
     #[derive(Clone, Debug)]
     enum Probe {
@@ -239,7 +241,7 @@ mod tests {
         panel.start.groups.clear();
         panel.center.groups.clear();
         panel.end.groups.retain(|group| group.id.0 == "time");
-        panel.end.groups[0].surface = crate::panel::GroupSurface::None;
+        panel.end.groups[0].surface = ferese_config::panel::GroupSurface::None;
         let id = ItemId("clock".into());
         let mut tree = None;
         for (width, always) in [(500., false), (75., false), (100., true), (500., false)] {
@@ -275,7 +277,7 @@ mod tests {
             .collect();
             let id = id.clone();
             let mut view = frame(
-                &panel,
+                Cow::Borrowed(&panel),
                 samples,
                 0.,
                 Resolution::default(),

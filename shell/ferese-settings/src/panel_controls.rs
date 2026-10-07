@@ -1,6 +1,6 @@
-use ferese_config::panel::{Defaults, ItemKind, Panel, Representation};
+use ferese_config::panel::{Defaults, Group, GroupSurface, ItemKind, Panel, Representation};
 
-use crate::panel_edit::{Action, Destination};
+use crate::panel_edit::{Action, Destination, Zone};
 use crate::{App, Element, Field, Kind, Message, schema::Page, store, widget};
 
 pub(super) fn initialize(snapshot: &store::Snapshot) -> Result<store::Edit, String> {
@@ -48,6 +48,14 @@ const CATALOG: [CatalogItem; 12] = [
     CatalogItem(ItemKind::DisplayMode),
 ];
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Pixels(f32);
+impl std::fmt::Display for Pixels {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "{} px", self.0)
+    }
+}
+
 impl App {
     pub(super) fn panel_controls(&self) -> Element<'_, Message> {
         let palette = crate::visuals::Palette::from_resolved(&self.resolved.presented);
@@ -68,11 +76,20 @@ impl App {
                 choices: &[("continuous", "Continuous"), ("islands", "Islands")],
             },
         )));
-        for (zone_name, zone) in [
-            ("start", &panels[0].start),
-            ("center", &panels[0].center),
-            ("end", &panels[0].end),
-        ] {
+        for placement in Zone::ALL {
+            let zone_name = placement.key();
+            let zone = placement.definition(&panels[0]);
+            rows = rows.push(
+                widget::row([])
+                    .align_y(cosmic::iced::Alignment::Center)
+                    .push(self.label(placement.to_string(), 15.).width(cosmic::iced::Length::Fill))
+                    .push(self.settings_button(
+                        "Add group",
+                        "M12 5v14 M5 12h14",
+                        Some(Message::PanelEdit(Action::AddGroup(placement))),
+                        false,
+                    )),
+            );
             for (group_index, group) in zone.groups.iter().enumerate() {
                 let destination = Destination {
                     zone: zone_name,
@@ -83,9 +100,39 @@ impl App {
                     widget::row([])
                         .spacing(8)
                         .align_y(cosmic::iced::Alignment::Center)
+                        .push(self.settings_button(
+                            &group.id.0,
+                            "M6 9l6 6 6-6",
+                            Some(Message::PanelGroupSelect(group.id.clone())),
+                            self.panel_group_selection.as_ref() == Some(&group.id),
+                        ))
+                        .push(widget::Space::new().width(cosmic::iced::Length::Fill))
+                        .push(self.settings_icon_button(
+                            "Move group earlier",
+                            "M6 15l6-6 6 6",
+                            (group_index > 0).then(|| Message::PanelEdit(Action::EarlierGroup(group.id.clone()))),
+                        ))
                         .push(
-                            self.label(destination.to_string(), 14.)
-                                .width(cosmic::iced::Length::Fill),
+                            self.settings_icon_button(
+                                "Move group later",
+                                "M6 9l6 6 6-6",
+                                (group_index + 1 < zone.groups.len())
+                                    .then(|| Message::PanelEdit(Action::LaterGroup(group.id.clone()))),
+                            ),
+                        )
+                        .push(
+                            self.settings_icon_button(
+                                if group.items.is_empty() {
+                                    "Remove group"
+                                } else {
+                                    "Move or remove items to remove this group"
+                                },
+                                "M6 6l12 12 M6 18L18 6",
+                                group
+                                    .items
+                                    .is_empty()
+                                    .then(|| Message::PanelEdit(Action::RemoveGroup(group.id.clone()))),
+                            ),
                         )
                         .push(ferese_theme::controls::select(
                             cosmic::iced::widget::pick_list(CATALOG.to_vec(), None::<CatalogItem>, move |kind| {
@@ -97,6 +144,9 @@ impl App {
                             palette,
                         )),
                 );
+                if self.panel_group_selection.as_ref() == Some(&group.id) {
+                    rows = rows.push(self.group_inspector(&panels[0], group, placement));
+                }
                 for (item_index, item) in group.items.iter().enumerate() {
                     let path = format!("panels.0.{zone_name}.groups.{group_index}.items.{item_index}");
                     let selected = self.panel_selection.as_ref() == Some(&item.id);
@@ -213,6 +263,86 @@ impl App {
                     }
                 }
             }
+        }
+        rows.into()
+    }
+
+    fn group_inspector(&self, panel: &Panel, group: &Group, placement: Zone) -> Element<'_, Message> {
+        let palette = crate::visuals::Palette::from_resolved(&self.resolved.presented);
+        let id = group.id.clone();
+        let path = crate::panel_edit::group_record_path(panel, &id).expect("existing group");
+        let mut rows = widget::column([]).spacing(4).push(
+            widget::row([])
+                .align_y(cosmic::iced::Alignment::Center)
+                .push(self.label("Placement", 13.).width(cosmic::iced::Length::Fill))
+                .push(ferese_theme::controls::select(
+                    cosmic::iced::widget::pick_list(Zone::ALL.to_vec(), Some(placement), move |zone| {
+                        Message::PanelEdit(Action::MoveGroup(id.clone(), zone))
+                    })
+                    .font(self.font)
+                    .text_size(12),
+                    palette,
+                )),
+        );
+        let id = group.id.clone();
+        rows = rows.push(
+            self.field(Field::new(
+                format!("{path}.surface"),
+                "Group surface",
+                "",
+                Kind::Choice {
+                    default: "inset",
+                    choices: &[("none", "None"), ("inset", "Inset"), ("island", "Island")],
+                },
+            ))
+            .map(move |message| match message {
+                Message::Change(store::Edit::Set(_, value)) => {
+                    Message::PanelEdit(Action::SetGroup(id.clone(), "surface".into(), value))
+                }
+                other => other,
+            }),
+        );
+        // Pick lists save once per choice and resolve the group ID at that time.
+        // They do not leave index-based slider drafts behind when groups move.
+        for (name, label, value, maximum) in [
+            ("spacing", "Item spacing", group.spacing, 64),
+            ("padding_vertical", "Vertical padding", f32::from(group.padding[0]), 32),
+            (
+                "padding_horizontal",
+                "Horizontal padding",
+                f32::from(group.padding[1]),
+                32,
+            ),
+            ("island_padding", "Island padding", group.island_padding, 32),
+        ] {
+            if group.surface == GroupSurface::None && name != "spacing"
+                || group.surface != GroupSurface::Island && name == "island_padding"
+            {
+                continue;
+            }
+            let mut options: Vec<_> = (0..=maximum).map(|number| Pixels(number as f32)).collect();
+            if !options.contains(&Pixels(value)) {
+                options.push(Pixels(value));
+            }
+            let id = group.id.clone();
+            rows = rows.push(
+                widget::row([])
+                    .align_y(cosmic::iced::Alignment::Center)
+                    .push(self.label(label, 13.).width(cosmic::iced::Length::Fill))
+                    .push(ferese_theme::controls::select(
+                        cosmic::iced::widget::pick_list(options, Some(Pixels(value)), move |value| {
+                            let value = if name.starts_with("padding_") {
+                                serde_json::json!(value.0 as u16)
+                            } else {
+                                serde_json::json!(value.0)
+                            };
+                            Message::PanelEdit(Action::SetGroup(id.clone(), name.into(), value))
+                        })
+                        .font(self.font)
+                        .text_size(12),
+                        palette,
+                    )),
+            );
         }
         rows.into()
     }

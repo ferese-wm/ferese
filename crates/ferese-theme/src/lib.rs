@@ -8,6 +8,7 @@ mod geometry;
 pub mod icons;
 pub mod menus;
 mod palette;
+pub mod panel;
 mod typography;
 
 pub use button::accent_button;

@@ -2,10 +2,10 @@
 
 Reviewed revision: `d4c8c10` (2026-10-07).
 
-The core integration covers composition, popup ownership, measured sizing,
-group surfaces, overflow, and KDL persistence. Ferese still creates one top
-panel per output. Panel Studio, multiple panels, output overrides, and external
-providers remain separate work.
+The integration covers composition, popup ownership, measured sizing, group
+surfaces, overflow, KDL persistence, and a Settings editor with a composition
+preview. Ferese still creates one top panel per output. Direct drag/drop editing,
+multiple panels, output overrides, and external providers remain separate work.
 
 ## What changed
 
@@ -95,9 +95,23 @@ inspector. Items can be added, removed, reordered within a group, or moved to an
 existing group. Editing resolves IDs against the latest draft, validates the whole
 change, and saves once. Unknown item fields and comments are retained.
 
-Group creation and presentation still use KDL. There is no drag/drop editor or
-live composition preview in this patch; the previous fixed preview is hidden for
-an authored panel. A live nested preview exposed date and spacing differences
+Each zone can gain new groups. Select a group to change its zone, surface,
+spacing, or padding; arrow buttons reorder groups within their zone. Removing a
+group requires moving or removing its items first. Group moves preserve item IDs
+and authored fields. Queued item placement follows the destination group's ID,
+including after that group moves between zones.
+
+The preview updates from the draft and uses the same measured allocation widget,
+representation preferences, overflow decoration, and pure resolver as the shell.
+The widget now lives in `ferese-theme::panel`; it owns measurement and allocation,
+not services or popup lifecycle. Settings supplies sample labels and icons, with
+all services marked available. Preview clicks select items for editing; its
+overflow chevron reveals displaced instances. Redraws do not save configuration.
+Selecting a generated item starts customization from the current status settings.
+
+This is a composition preview, not a pixel-for-pixel rendering of the running
+bar. Service state, control content, and vertical styling differ. There is no
+drag/drop editor yet. A live nested preview exposed date and spacing differences
 from the previous bar. Those remain for a separate visual compatibility pass.
 
 See [Panel composition in the configuration reference](configuration.md#panel-composition)
@@ -107,8 +121,8 @@ those controls through the shared item policy rather than a status-only list.
 
 ## Follow-up work
 
-Panel Studio should use the same composition and resolver for preview, keyboard
-editing, drag/drop, and undo. Multiple panels need surface ownership keyed by
+Direct editing should reuse the composition preview, stable IDs, and existing
+save/undo path. Multiple panels need surface ownership keyed by
 panel and output, plus reservations, hotplug cleanup, fullscreen policy, and
 popup placement for every supported edge. Output selectors should reuse the
 existing output-profile matcher.
@@ -127,7 +141,8 @@ performance or usability comparisons for this implementation.
 
 Tests cover default composition and availability, duplicate kinds, KDL edits and
 round-trips, empty groups, invalid IDs, config acceptance, stable item editing,
-queued cross-group saves, inspector selection, deterministic allocation,
+queued item/group moves and saves, group removal without item loss, inspector
+selection, preview adaptation and exact item selection, deterministic allocation,
 priority, resizing, widget measurement, input delivery, changed-state coalescing,
 undecorated input regions, scroll clipping, and popup anchor identity/removal.
 Widget tests use a headless Iced renderer. They do not replace live multi-output,
