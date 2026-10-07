@@ -585,7 +585,7 @@ pub fn note_fields(index: usize) -> Vec<Field> {
 }
 
 pub fn fields(page: Page) -> Vec<Field> {
-    match page {
+    let mut fields = match page {
         Page::LockScreen => vec![
             range(
                 "lock_screen.dim_after_seconds",
@@ -1179,5 +1179,39 @@ pub fn fields(page: Page) -> Vec<Field> {
             true,
         )],
         Page::Startup | Page::Displays | Page::Connections => vec![],
+    };
+    if page == Page::Bar {
+        fields.extend(ferese_config::status::StatusItem::ALL.into_iter().map(|item| {
+            toggle(
+                &format!("status.icons.{}", item.id()),
+                item.label(),
+                "Keep visible in the menu bar. When off, find it in the overflow menu.",
+                item.visible_by_default(),
+            )
+        }));
+    }
+    fields
+}
+
+#[cfg(test)]
+mod status_icon_tests {
+    use super::*;
+    use ferese_config::status::{StatusItem, StatusVisibility};
+
+    #[test]
+    fn menu_bar_exposes_every_stable_item_and_persists_partial_overrides() {
+        let fields = fields(Page::Bar);
+        let mut document = ferese_config::Document::parse("").unwrap();
+        for item in StatusItem::ALL {
+            let path = format!("status.icons.{}", item.id());
+            let matching: Vec<_> = fields.iter().filter(|field| field.path == path).collect();
+            assert_eq!(matching.len(), 1);
+            assert!(matches!(matching[0].kind, Kind::Toggle(default) if default == item.visible_by_default()));
+            document.set(&path, serde_json::json!(false)).unwrap();
+        }
+        let reloaded = ferese_config::Document::parse(&document.to_string()).unwrap();
+        let icons: StatusVisibility = serde_json::from_value(reloaded.get("status.icons").unwrap().clone()).unwrap();
+        assert!(icons.partition(|_| true).0.is_empty());
+        assert_eq!(icons.partition(|_| true).1, StatusItem::ALL);
     }
 }

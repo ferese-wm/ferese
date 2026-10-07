@@ -20,6 +20,7 @@ pub(crate) struct ShellConfig {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(default)]
 pub(crate) struct StatusConfig {
+    pub(crate) icons: ferese_config::status::StatusVisibility,
     pub(crate) bar_layout: ferese_config::BarLayout,
     #[serde(deserialize_with = "ferese_config::deserialize_bar_island_padding")]
     pub(crate) bar_island_padding: f32,
@@ -33,6 +34,7 @@ pub(crate) struct StatusConfig {
 impl Default for StatusConfig {
     fn default() -> Self {
         Self {
+            icons: Default::default(),
             bar_layout: ferese_config::BarLayout::Continuous,
             bar_island_padding: ferese_config::default_bar_island_padding(),
             keybinding_guide: true,
@@ -626,6 +628,18 @@ mod tests {
     fn parse_test_source(source: &str) -> Result<ShellConfig, ferese_config::Error> {
         let document = ferese_config::Document::parse(source)?;
         parse_document(&document, Default::default(), Default::default())
+    }
+
+    #[test]
+    fn status_visibility_reload_replaces_overrides_and_rejects_invalid_values() {
+        use ferese_config::status::StatusItem;
+        let changed = parse_test_source("status { icons { audio #false; system #false; }; }").unwrap();
+        assert!(!changed.status.icons.visible(StatusItem::Audio));
+        assert!(!changed.status.icons.visible(StatusItem::System));
+        assert!(parse_test_source("").unwrap().status.icons.visible(StatusItem::Audio));
+        for source in ["status { icons { audio 1; }; }", "status { icons { typo #false; }; }"] {
+            assert!(parse_test_source(source).is_err());
+        }
     }
 
     #[test]

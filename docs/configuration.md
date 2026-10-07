@@ -800,6 +800,7 @@ intentionally turning off the last working one.
 | `keybinding-guide` | boolean | `true` | Show the active shortcut guide at login until disabled in Settings → Shortcuts. |
 | `window-title` | boolean | `true` | Focused window title in the bar center when space allows |
 | `battery-percentage` | boolean | `true` | Show percentage beside icon |
+| `icons` | block of item booleans | Existing icons visible | Move disabled icons into the chevron overflow |
 | `low-battery-threshold` | integer 0–100 | `20` | Warning-color threshold |
 | `settings-command` | argument array | `["ferese-settings"]` | Settings launcher; `[]` hides the action |
 
@@ -815,6 +816,32 @@ status {
 The gaps between islands are transparent and let clicks pass through. Each island uses the bar background around the existing section's border and fill, with the theme's bar radius and material opacity. Changing the bar layout leaves modal transparency unchanged; there is no need to set the shared opacity to zero. The bar reserves the same space above windows in either layout.
 
 Use **Island side padding** in Settings → Bar to tighten the space around each section. It applies only to islands; continuous bars keep their existing padding.
+
+### Status icon visibility
+
+The Menu bar page in Settings has a visibility toggle for each status item. Changes
+apply immediately. A disabled icon moves into the compact chevron overflow at the
+left of the status group; its existing menu or recording action remains available.
+Opening overflow does not expand the bar or move the clock.
+
+```kdl
+status {
+    icons {
+        media #false
+        recording #false
+        bluetooth #true
+    }
+}
+```
+
+Stable IDs, in presentation order: `media`, `system`, `network`, `bluetooth`,
+`audio`, `recording`, `notifications`, `battery`. Order cannot be changed by
+reordering configuration entries. Omitted IDs keep their defaults: all visible
+except Bluetooth, which is available through overflow (and Control Center).
+Unavailable services and absent media players appear in neither group. The clock
+and calendar are independent of these controls. Unknown IDs and non-boolean
+values are rejected. Removing an override restores its default on reload.
+
 
 ### Now Playing
 

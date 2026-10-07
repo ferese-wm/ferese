@@ -12,6 +12,7 @@ mod system;
 
 use bar::status_icon;
 use controls::{control_card, menu_button, toggle_row};
+use cosmic::iced::Rectangle;
 use cosmic::iced::border::Shape as BorderShape;
 use cosmic::widget::column;
 use status::{Action, Snapshot};
@@ -41,6 +42,7 @@ pub enum Menu {
     Media,
     Notifications,
     System,
+    Overflow,
 }
 
 impl Menu {
@@ -59,6 +61,7 @@ impl Menu {
 
     fn width(self) -> f32 {
         match self {
+            Self::Overflow => 240.0,
             Self::System => 360.0,
             Self::Battery => 328.0,
             Self::Calendar => 268.0,
@@ -73,6 +76,7 @@ impl Menu {
 
     fn title(self) -> &'static str {
         match self {
+            Self::Overflow => "More controls",
             Self::System => "Control Center",
             Self::Network => "Wi-Fi",
             Self::Bluetooth => "Bluetooth",
@@ -93,12 +97,13 @@ impl Menu {
             Self::Battery => status.battery.is_some(),
             Self::Calendar | Self::Recording | Self::Media => true,
             Self::Notifications => status.notifications.is_some(),
-            Self::System => true,
+            Self::System | Self::Overflow => true,
         }
     }
 }
 
 pub struct OpenMenu {
+    pub anchor: Rectangle<i32>,
     pub id: window::Id,
     pub kind: Menu,
     pub motion: super::motion::PopupMotion,
@@ -211,6 +216,7 @@ impl FereseShell {
             rows = rows.push(heading);
         }
         rows = match kind {
+            Menu::Overflow => self.view_status_overflow(rows, style),
             Menu::System => system::view(self, rows, style),
             Menu::Network => network::view(self, rows, style),
             Menu::Bluetooth => bluetooth::view(self, rows, style),
@@ -377,6 +383,7 @@ mod tests {
         let mut motion = super::motion::PopupMotion::new(Default::default());
         motion.begin(past);
         let menu = OpenMenu {
+            anchor: Rectangle::default(),
             id: window::Id::unique(),
             kind: Menu::Network,
             motion,
@@ -393,5 +400,139 @@ mod tests {
         assert!(!Menu::Network.available(&s));
         assert!(!Menu::Notifications.available(&s));
         assert!(Menu::System.available(&s));
+    }
+}
+
+impl From<ferese_config::status::StatusItem> for Menu {
+    fn from(item: ferese_config::status::StatusItem) -> Self {
+        use ferese_config::status::StatusItem;
+        match item {
+            StatusItem::Media => Self::Media,
+            StatusItem::System => Self::System,
+            StatusItem::Network => Self::Network,
+            StatusItem::Bluetooth => Self::Bluetooth,
+            StatusItem::Audio => Self::Audio,
+            StatusItem::Recording => Self::Recording,
+            StatusItem::Notifications => Self::Notifications,
+            StatusItem::Battery => Self::Battery,
+        }
+    }
+}
+
+impl FereseShell {
+    fn status_items(
+        &self,
+    ) -> (
+        Vec<ferese_config::status::StatusItem>,
+        Vec<ferese_config::status::StatusItem>,
+    ) {
+        self.config.status.icons.partition(|item| {
+            Menu::from(item).available(&self.status)
+                && (item != ferese_config::status::StatusItem::Media || self.media.snapshot.selected.is_some())
+        })
+    }
+
+    fn view_status_overflow<'a>(&'a self, mut rows: MenuRows<'a>, style: MenuStyle) -> MenuRows<'a> {
+        let (_, hidden) = self.status_items();
+        for item in hidden {
+            let label = if item == ferese_config::status::StatusItem::Recording && self.recorder.busy() {
+                self.recorder.label()
+            } else {
+                item.label()
+            };
+            let content = row![
+                accented_icon(
+                    status_icon(item.into(), &self.status).0,
+                    16,
+                    style.primary,
+                    color(style.theme.accent)
+                ),
+                text(label).size(13),
+            ]
+            .spacing(8)
+            .align_y(cosmic::iced::Alignment::Center);
+            rows = rows.push(motion::button(
+                button::custom(content)
+                    .name(label)
+                    .width(Length::Fill)
+                    .padding([6, 8])
+                    .on_press(cosmic::Action::App(Message::ActivateStatusItem(item))),
+                style.primary,
+                false,
+                style.opacity,
+            ));
+        }
+        rows.spacing(4)
+    }
+
+    pub(crate) fn activate_status_item(&mut self, item: ferese_config::status::StatusItem) -> Task<Message> {
+        let Some(menu) = &self.menu else {
+            return Task::none();
+        };
+        // Popup row coordinates are not bar coordinates. Keep the original bar anchor.
+        let anchor = menu.anchor;
+        if menu.kind != Menu::Overflow || menu.motion.closing() || !self.status_items().1.contains(&item) {
+            return Task::none();
+        }
+        let message = status_item_action(item.into(), self.recorder.busy(), anchor);
+        match message {
+            Message::OpenMenu(kind, anchor) => self.open_menu(kind, anchor),
+            action => self
+                .close_menu()
+                .chain(cosmic::task::message(cosmic::Action::App(action))),
+        }
+    }
+}
+
+fn status_item_action(kind: Menu, recording_busy: bool, anchor: Rectangle<i32>) -> Message {
+    if kind == Menu::Recording {
+        if recording_busy {
+            Message::StopRecording
+        } else {
+            Message::StartRecording
+        }
+    } else {
+        Message::OpenMenu(kind, anchor)
+    }
+}
+
+#[cfg(test)]
+mod overflow_tests {
+    use super::*;
+    use ferese_config::status::{StatusItem, StatusVisibility};
+
+    #[test]
+    fn hidden_items_dispatch_existing_actions_with_the_bar_anchor() {
+        let anchor = Rectangle {
+            x: 800,
+            y: 0,
+            width: 24,
+            height: 28,
+        };
+        for item in StatusItem::ALL {
+            for busy in [false, true] {
+                match status_item_action(item.into(), busy, anchor) {
+                    Message::StartRecording => assert_eq!((item, busy), (StatusItem::Recording, false)),
+                    Message::StopRecording => assert_eq!((item, busy), (StatusItem::Recording, true)),
+                    Message::OpenMenu(kind, actual) => {
+                        assert_ne!(item, StatusItem::Recording);
+                        assert_eq!(kind, Menu::from(item));
+                        assert_eq!(actual, anchor);
+                    }
+                    _ => panic!("status item lost its action"),
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn service_availability_applies_to_both_groups() {
+        let status = Snapshot::default();
+        let (visible, hidden) = StatusVisibility::default().partition(|item| Menu::from(item).available(&status));
+        assert_eq!(
+            visible,
+            vec![StatusItem::Media, StatusItem::System, StatusItem::Recording]
+        );
+        assert!(hidden.is_empty());
     }
 }

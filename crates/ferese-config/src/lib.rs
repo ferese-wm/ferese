@@ -2,6 +2,7 @@ pub mod desktop;
 pub mod families;
 pub mod notifications;
 pub mod presets;
+pub mod status;
 pub mod theme;
 
 use std::fmt;

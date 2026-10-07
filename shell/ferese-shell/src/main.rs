@@ -273,6 +273,7 @@ enum Message {
     ToggleNotificationGroup(String),
     RemoveNotificationGroup(String),
     AnimateMenu,
+    ActivateStatusItem(ferese_config::status::StatusItem),
     OpenMenu(status_ui::Menu, cosmic::iced::Rectangle<i32>),
     OpenMenuOn(window::Id, status_ui::Menu, cosmic::iced::Rectangle<i32>),
     Control(status::Action),
@@ -676,6 +677,7 @@ impl cosmic::Application for FereseShell {
                 self.sync_notification_surface()
             }
             Message::AnimateMenu => self.animate_menu(),
+            Message::ActivateStatusItem(item) => self.activate_status_item(item),
             Message::OpenMenu(kind, anchor) => self.open_menu(kind, anchor),
             Message::OpenMenuOn(id, kind, anchor) => {
                 if self.bar_surface_id != id {
@@ -960,6 +962,7 @@ impl FereseShell {
         self.status_service
             .update_settings(config.status.settings_command.clone());
 
+        let status_icons_changed = self.config.status.icons != config.status.icons;
         let old = self.config.theme;
         let old_clock = &self.config.desktop_widgets.clock;
         let old_notes = &self.config.desktop_widgets.notes;
@@ -993,6 +996,10 @@ impl FereseShell {
         } else {
             Task::none()
         }];
+
+        if status_icons_changed {
+            tasks.push(self.destroy_menu());
+        }
 
         if !self.guide_load.manual
             && !self.config.status.keybinding_guide

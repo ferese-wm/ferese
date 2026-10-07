@@ -13,19 +13,10 @@ impl FereseShell {
         let islands = self.config.status.bar_layout == ferese_config::BarLayout::Islands;
         let metrics = BarMetrics::from(theme);
         let mut controls = row::with_capacity(7).spacing(1).align_y(Alignment::Center);
-        if self.media.snapshot.selected.is_some() {
-            controls = controls.push(super::media::bar(self, theme, metrics));
-        }
-
-        for kind in [
-            Menu::System,
-            Menu::Network,
-            Menu::Audio,
-            Menu::Recording,
-            Menu::Notifications,
-            Menu::Battery,
-        ] {
-            if !kind.available(&self.status) {
+        let (visible, overflow) = self.status_items();
+        for kind in bar_items(visible, !overflow.is_empty()) {
+            if kind == Menu::Media {
+                controls = controls.push(super::media::bar(self, theme, metrics));
                 continue;
             }
             let (source, enabled) = if kind == Menu::Recording {
@@ -109,15 +100,9 @@ impl FereseShell {
                 .padding([0.0, ((metrics.height - f32::from(metrics.icon_size)) * 0.5).max(4.0)])
                 .height(metrics.group_item_height)
                 .on_press_with_rectangle(move |offset, bounds| {
-                    if kind == Menu::Recording {
-                        return cosmic::Action::App(if recording_busy {
-                            Message::StopRecording
-                        } else {
-                            Message::StartRecording
-                        });
-                    }
-                    cosmic::Action::App(Message::OpenMenu(
+                    cosmic::Action::App(super::status_item_action(
                         kind,
+                        recording_busy,
                         Rectangle {
                             x: (bounds.x - offset.x).round() as i32,
                             y: (bounds.y - offset.y).round() as i32,
@@ -138,6 +123,14 @@ impl FereseShell {
             .class(theme::Container::custom(move |_| crate::bar::bar_group_style(theme)))
             .into()
     }
+}
+
+// Opening a popup is deliberately not an input: overflow never expands the bar.
+fn bar_items(visible: Vec<ferese_config::status::StatusItem>, has_overflow: bool) -> impl Iterator<Item = Menu> {
+    has_overflow
+        .then_some(Menu::Overflow)
+        .into_iter()
+        .chain(visible.into_iter().map(Menu::from))
 }
 
 fn status_label(kind: Menu, s: &Snapshot) -> String {
@@ -166,6 +159,7 @@ fn status_label(kind: Menu, s: &Snapshot) -> String {
             || "Battery: unavailable".into(),
             |b| format!("Battery: {}%, {}", b.percent, b.status),
         ),
+        Menu::Overflow => "More status controls".into(),
         Menu::System => "Control Center".into(),
     }
 }
@@ -235,6 +229,7 @@ pub(super) fn status_icon(kind: Menu, s: &Snapshot) -> (&'static [u8], bool) {
                 (ferese_theme::icons::NOTIFICATIONS, true)
             }
         }
+        Menu::Overflow => (ferese_theme::icons::CHEVRON_DOWN, true),
         Menu::System => (ferese_theme::icons::CONTROL_CENTER, true),
     }
 }
@@ -243,6 +238,22 @@ pub(super) fn status_icon(kind: Menu, s: &Snapshot) -> (&'static [u8], bool) {
 mod tests {
     use super::*;
     use crate::status;
+    #[test]
+    fn overflow_is_leftmost_and_never_inserts_hidden_items_or_clock() {
+        use ferese_config::status::StatusItem;
+        let visible = vec![StatusItem::System, StatusItem::Audio];
+        assert_eq!(
+            bar_items(visible.clone(), false).collect::<Vec<_>>(),
+            vec![Menu::System, Menu::Audio]
+        );
+        assert_eq!(
+            bar_items(visible, true).collect::<Vec<_>>(),
+            vec![Menu::Overflow, Menu::System, Menu::Audio]
+        );
+        assert_eq!(bar_items(vec![], true).collect::<Vec<_>>(), vec![Menu::Overflow]);
+        assert_eq!(bar_items(vec![], false).count(), 0);
+    }
+
     #[test]
     fn icons_follow_real_states() {
         let mut s = Snapshot {

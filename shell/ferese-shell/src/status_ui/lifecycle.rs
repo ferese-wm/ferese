@@ -102,6 +102,7 @@ impl FereseShell {
             ..Default::default()
         };
         if let Some(menu) = &mut self.menu {
+            menu.anchor = anchor;
             menu.switch_panel(kind, self.config.animations, Instant::now());
             return Task::batch([
                 notifications,
@@ -110,6 +111,7 @@ impl FereseShell {
         }
         let id = window::Id::unique();
         self.menu = Some(OpenMenu {
+            anchor,
             id,
             kind,
             motion: crate::motion::PopupMotion::new(self.config.animations),
@@ -219,10 +221,36 @@ mod tests {
     use std::time::Duration;
 
     #[test]
+    fn overflow_selection_keeps_parent_surface_and_bar_anchor() {
+        let anchor = Rectangle {
+            x: 1200,
+            y: 0,
+            width: 28,
+            height: 28,
+        };
+        let mut menu = OpenMenu {
+            anchor,
+            id: window::Id::unique(),
+            kind: Menu::Overflow,
+            motion: PopupMotion::new(Settings::default()),
+            effects: None,
+            regions: Default::default(),
+        };
+        let id = menu.id;
+        for item in ferese_config::status::StatusItem::ALL {
+            menu.switch_panel(item.into(), Settings::default(), Instant::now());
+            assert_eq!(menu.id, id);
+            assert_eq!(menu.anchor, anchor);
+            assert!(!menu.motion.closing());
+        }
+    }
+
+    #[test]
     fn switching_panels_replays_entrance_on_the_same_surface() {
         let now = Instant::now();
         let settings = Settings::default();
         let mut menu = OpenMenu {
+            anchor: Rectangle::default(),
             id: window::Id::unique(),
             kind: Menu::Battery,
             motion: PopupMotion::new(settings),
@@ -267,6 +295,7 @@ mod tests {
     fn panel_switch_respects_reduced_motion_and_speed() {
         let now = Instant::now();
         let mut menu = OpenMenu {
+            anchor: Rectangle::default(),
             id: window::Id::unique(),
             kind: Menu::Battery,
             motion: PopupMotion::new(Settings::default()),
