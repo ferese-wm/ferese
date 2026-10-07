@@ -3,6 +3,7 @@ mod form_controls;
 mod navigation;
 mod pages;
 mod panel_controls;
+mod panel_edit;
 mod theme_controls;
 
 use theme_controls::*;
@@ -48,14 +49,15 @@ fn main() -> cosmic::iced::Result {
                     Some("connections" | "wifi") => Some(InitialPage::Connections(connections::Tab::Wifi)),
                     Some("bluetooth") => Some(InitialPage::Connections(connections::Tab::Bluetooth)),
                     Some("wallpaper") => Some(InitialPage::Wallpaper),
+                    Some("bar") => Some(InitialPage::Bar),
                     _ => {
-                        eprintln!("--page accepts connections, wifi, bluetooth, or wallpaper");
+                        eprintln!("--page accepts connections, wifi, bluetooth, wallpaper, or bar");
                         return Ok(());
                     }
                 };
             }
             _ => {
-                eprintln!("Usage: ferese-settings [--config PATH] [--page connections|wifi|bluetooth|wallpaper]");
+                eprintln!("Usage: ferese-settings [--config PATH] [--page connections|wifi|bluetooth|wallpaper|bar]");
                 return Ok(());
             }
         }
@@ -79,6 +81,7 @@ fn main() -> cosmic::iced::Result {
 enum InitialPage {
     Connections(connections::Tab),
     Wallpaper,
+    Bar,
 }
 
 #[derive(Clone, Debug)]
@@ -101,6 +104,8 @@ enum Message {
     Search(String),
     Change(Edit),
     CustomizePanel,
+    PanelSelect(ferese_config::panel::ItemId),
+    PanelEdit(panel_edit::Action),
     SelectFont(String, String),
     Draft(String, String),
     Commit(Field),
@@ -173,6 +178,7 @@ struct App {
     undo_revision: u64,
     auto_details: bool,
     advanced_theme: bool,
+    panel_selection: Option<ferese_config::panel::ItemId>,
     theme_file_target: usize,
     wallpaper: wallpaper_controls::State,
 }
@@ -263,6 +269,7 @@ impl cosmic::Application for App {
             page: match initial_page {
                 Some(InitialPage::Connections(_)) => Page::Connections,
                 Some(InitialPage::Wallpaper) => Page::Wallpaper,
+                Some(InitialPage::Bar) => Page::Bar,
                 None => Page::Appearance,
             },
             profile_pages: std::env::var_os("FERESE_PROFILE_SETTINGS").is_some(),
@@ -282,6 +289,7 @@ impl cosmic::Application for App {
             undo_revision: 0,
             auto_details: false,
             advanced_theme: false,
+            panel_selection: None,
             theme_file_target: 0,
             wallpaper: Default::default(),
         };
@@ -591,6 +599,21 @@ impl cosmic::Application for App {
                     return self.change(edit);
                 }
             }
+            Message::PanelSelect(id) => {
+                self.panel_selection = if self.panel_selection.as_ref() == Some(&id) {
+                    None
+                } else {
+                    Some(id)
+                };
+            }
+            Message::PanelEdit(action) => match panel_edit::plan(&self.draft, action) {
+                Ok(edits) => {
+                    self.inputs.retain(|path, _| !path.starts_with("panels."));
+                    self.ranges.retain(|path, _| !path.starts_with("panels."));
+                    return self.edit_many(edits);
+                }
+                Err(error) => self.error = Some(error),
+            },
             Message::CustomizePanel if self.draft.item("panels").is_none() => {
                 match panel_controls::initialize(&self.draft) {
                     Ok(edit) => return self.change(edit),
@@ -1044,6 +1067,64 @@ mod tests {
 
     fn tree_nodes(tree: &cosmic::iced::advanced::widget::Tree) -> usize {
         1 + tree.children.iter().map(tree_nodes).sum::<usize>()
+    }
+
+    #[test]
+    fn pending_panel_moves_save_both_groups_together_and_keep_the_selected_instance() {
+        use ferese_config::panel::{GroupId, ItemId};
+        let mut app = app();
+        let mut initial = Snapshot::parse(String::new()).unwrap();
+        initial.edit(&panel_controls::initialize(&initial).unwrap()).unwrap();
+        app.current = initial.clone();
+        app.draft = initial.clone();
+        app.saving = true; // An earlier save has not completed yet.
+        let id = ItemId("network".into());
+        let _ = app.update(Message::PanelSelect(id.clone()));
+        let _ = app.update(Message::PanelEdit(panel_edit::Action::Move(
+            id.clone(),
+            panel_edit::Destination {
+                zone: "start",
+                group: GroupId("workspaces".into()),
+            },
+        )));
+        let _ = app.update(Message::PanelEdit(panel_edit::Action::Set(
+            id.clone(),
+            "overflow".into(),
+            "always".into(),
+        )));
+        assert_eq!(app.pending.len(), 3);
+        assert_eq!(app.panel_selection, Some(id.clone()));
+        let expected = app.draft.doc.value().clone();
+        let _ = app.update(Message::Saved(Ok((initial, false))));
+        assert!(app.saving, "the complete queued draft is saved once");
+        assert!(app.pending.is_empty());
+        assert_eq!(app.draft.doc.value(), &expected);
+        let panels: Vec<ferese_config::panel::Panel> =
+            serde_json::from_value(app.draft.item("panels").unwrap().clone()).unwrap();
+        ferese_config::panel::validate(&panels).unwrap();
+        assert_eq!(panels[0].start.groups[1].items[1].id, id);
+        assert_eq!(
+            panels[0].start.groups[1].items[1].overflow,
+            ferese_config::panel::OverflowPolicy::Always
+        );
+        assert!(!panels[0].end.groups[0].items.iter().any(|item| item.id == id));
+    }
+
+    #[test]
+    fn panel_inspector_builds_only_for_the_selected_instance_and_survives_removal() {
+        let mut app = app();
+        app.page = Page::Bar;
+        let edit = panel_controls::initialize(&app.draft).unwrap();
+        app.draft.edit(&edit).unwrap();
+        let collapsed = tree_nodes(&cosmic::iced::advanced::widget::Tree::new(app.page_view().as_widget()));
+        let id = ferese_config::panel::ItemId("clock".into());
+        let _ = app.update(Message::PanelSelect(id.clone()));
+        let expanded = tree_nodes(&cosmic::iced::advanced::widget::Tree::new(app.page_view().as_widget()));
+        assert!(expanded > collapsed);
+        let _ = app.update(Message::PanelEdit(panel_edit::Action::Remove(id)));
+        let _ = app.page_view();
+        assert!(app.error.is_none());
+        assert_eq!(app.draft.string("panels.0.end.groups.1.items.0.id", ""), "");
     }
 
     #[test]

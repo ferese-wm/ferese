@@ -90,10 +90,15 @@ Settings uses its existing backup, validation, reload, and undo path.
 
 Settings → Menu bar → Customize items starts from the current generated panel.
 It then exposes item visibility, overflow policy, supported representation
-preferences, title visibility, and battery percentage. Composition order and
-group presentation can be edited in KDL. There is no drag/drop editor or live
-composition preview in this patch; the previous fixed preview is hidden for an
-authored panel.
+preferences, title visibility, and battery percentage. Select an item to open its
+inspector. Items can be added, removed, reordered within a group, or moved to another
+existing group. Editing resolves IDs against the latest draft, validates the whole
+change, and saves once. Unknown item fields and comments are retained.
+
+Group creation and presentation still use KDL. There is no drag/drop editor or
+live composition preview in this patch; the previous fixed preview is hidden for
+an authored panel. A live nested preview exposed date and spacing differences
+from the previous bar. Those remain for a separate visual compatibility pass.
 
 See [Panel composition in the configuration reference](configuration.md#panel-composition)
 for syntax and defaults. [Issue #2](https://github.com/ferese-wm/ferese/issues/2)
@@ -121,7 +126,8 @@ performance or usability comparisons for this implementation.
 ## Verification
 
 Tests cover default composition and availability, duplicate kinds, KDL edits and
-round-trips, empty groups, invalid IDs, config acceptance, deterministic allocation,
+round-trips, empty groups, invalid IDs, config acceptance, stable item editing,
+queued cross-group saves, inspector selection, deterministic allocation,
 priority, resizing, widget measurement, input delivery, changed-state coalescing,
 undecorated input regions, scroll clipping, and popup anchor identity/removal.
 Widget tests use a headless Iced renderer. They do not replace live multi-output,

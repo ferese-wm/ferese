@@ -809,7 +809,11 @@ Ferese shows one top panel on each output. Without a `panel` block, the status
 settings below generate the usual arrangement. An explicit panel replaces that
 arrangement, including its background, title, and battery percentage settings.
 Settings → Menu bar → **Customize items** saves the current arrangement and adds
-per-item visibility, overflow, and preferred-size controls.
+per-item visibility, overflow, and preferred-size controls. Select an item to open
+its inspector, choose another group under **Placement**, or use the arrow buttons
+to reorder it within its group. Each group has an **Add item** menu; remove an
+instance with its remove button. Changes use the existing save and Undo controls.
+`ferese-settings --page bar` opens this page directly.
 
 ```kdl
 panel "main" {
