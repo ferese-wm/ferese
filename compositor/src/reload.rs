@@ -436,9 +436,16 @@ mod tests {
                 std::fs::remove_file(&path).unwrap();
             }
             let already_applied = state.config_source.as_deref() == Some(valid);
-            let before = state.theme_engine.revision;
+            let before = state.ipc_events.config_revision;
+            let theme_before = state.theme_engine.live.theme.clone();
             let (reply, received) = std::sync::mpsc::sync_channel(1);
             state.queue_config_reload(index == 1, Some((42, reply))).unwrap();
+            if index == 1 {
+                // Present a frame while the duplicate reload is queued. Theme
+                // revisions include these frames; config revisions do not.
+                std::thread::sleep(Duration::from_millis(20));
+                state.poll_theme();
+            }
             let deadline = Instant::now() + Duration::from_secs(5);
             let response = loop {
                 event_loop.dispatch(Duration::from_millis(10), &mut state).unwrap();
@@ -454,9 +461,10 @@ mod tests {
                 Duration::from_millis(200)
             );
             assert_eq!(state.config_source.as_deref(), Some(valid));
-            // An initial revision can describe defaults rather than this source.
-            if source == Some(valid) && already_applied {
-                assert_eq!(state.theme_engine.revision, before);
+            let applied = source == Some(valid) && !already_applied;
+            assert_eq!(state.ipc_events.config_revision, before + u64::from(applied));
+            if already_applied {
+                assert_eq!(state.theme_engine.live.theme, theme_before);
             }
         }
     }
