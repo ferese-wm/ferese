@@ -122,6 +122,13 @@ struct Hover {
 }
 
 impl WorkspaceUi {
+    pub(super) fn hover_target(&self, bar: window::Id) -> Option<(u64, Id)> {
+        self.hovered
+            .as_ref()
+            .filter(|hover| hover.bar == bar)
+            .map(|hover| (hover.workspace, hover.target.clone()))
+    }
+
     pub(super) fn hovering(&self, bar: window::Id, target: &Id) -> bool {
         self.hovered
             .as_ref()
@@ -661,6 +668,155 @@ mod tests {
         operation.set_window_id(bar);
         operation.container(Some(&target), bounds);
         assert_eq!(operation.found, Some(bounds));
+    }
+
+    #[test]
+    fn workspace_widget_exit_cancels_pending_and_visible_tooltips() {
+        use cosmic::Application;
+        use cosmic::iced::advanced::renderer::Headless;
+        use cosmic::iced::advanced::{Layout, Shell, clipboard, layout, mouse, widget};
+        use cosmic::iced::{Event, Font, Pixels, Point, Size};
+        use ferese_config::panel::WorkspaceStyle;
+
+        #[derive(Clone, Copy, Debug)]
+        enum Pointer {
+            Inside,
+            Beside,
+            LeaveAvailable,
+            LeaveUnavailable,
+        }
+
+        fn send_pointer(
+            app: &mut FereseShell,
+            renderer: &cosmic::Renderer,
+            tree: &mut widget::Tree,
+            pointer: Pointer,
+            captured: bool,
+        ) -> (Rectangle, usize) {
+            let bar = app.outputs[0].bar;
+            let target = Id::new(format!("workspace:{bar:?}:workspaces:1"));
+            let viewport = Rectangle::with_size(Size::new(1200., 36.));
+            let mut view = app.view_layer(bar);
+            tree.diff(view.as_widget_mut());
+            let node = view
+                .as_widget_mut()
+                .layout(tree, renderer, &layout::Limits::new(Size::ZERO, viewport.size()));
+            let mut find = FindBounds {
+                target,
+                bar,
+                window: Some(bar),
+                found: None,
+            };
+            view.as_widget_mut()
+                .operate(tree, Layout::new(&node), renderer, &mut operation::black_box(&mut find));
+            let bounds = find.found.expect("the real panel must contain the workspace target");
+            let inside = Point::new(bounds.center_x(), bounds.center_y());
+            let (event, cursor) = match pointer {
+                Pointer::Inside | Pointer::Beside => {
+                    let position = if matches!(pointer, Pointer::Inside) {
+                        inside
+                    } else {
+                        Point::new(bounds.x - 2., bounds.center_y())
+                    };
+                    (
+                        Event::Mouse(mouse::Event::CursorMoved { position }),
+                        mouse::Cursor::Available(position),
+                    )
+                }
+                Pointer::LeaveAvailable => (Event::Mouse(mouse::Event::CursorLeft), mouse::Cursor::Available(inside)),
+                Pointer::LeaveUnavailable => (Event::Mouse(mouse::Event::CursorLeft), mouse::Cursor::Unavailable),
+            };
+            let mut messages = Vec::new();
+            let mut shell = Shell::new(&mut messages);
+            if captured {
+                shell.capture_event();
+            }
+            view.as_widget_mut().update(
+                tree,
+                &event,
+                Layout::new(&node),
+                cursor,
+                renderer,
+                &mut clipboard::Null,
+                &mut shell,
+                &viewport,
+            );
+            drop(view);
+            let mut hover_messages = 0;
+            for message in messages {
+                if let cosmic::Action::App(message @ Message::HoverWorkspace(..)) = message {
+                    hover_messages += 1;
+                    drop(app.update(message));
+                }
+            }
+            (bounds, hover_messages)
+        }
+
+        let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
+        let renderer = runtime
+            .block_on(<cosmic::Renderer as Headless>::new(
+                Font::default(),
+                Pixels(14.),
+                Some("tiny-skia"),
+            ))
+            .unwrap();
+        for style in [
+            WorkspaceStyle::Numbers,
+            WorkspaceStyle::Dots,
+            WorkspaceStyle::Tabs,
+            WorkspaceStyle::WindowStacks,
+            WorkspaceStyle::AppIcons,
+        ] {
+            for visible in [false, true] {
+                for (exit, captured) in [
+                    (Pointer::Beside, true),
+                    (Pointer::Beside, false),
+                    (Pointer::LeaveAvailable, false),
+                    (Pointer::LeaveAvailable, true),
+                    (Pointer::LeaveUnavailable, false),
+                    (Pointer::LeaveUnavailable, true),
+                ] {
+                    let mut app = crate::tests::shell_with_measured_panel();
+                    app.snapshot = snapshot(1);
+                    for group in &mut app.config.panels[0].start.groups {
+                        for item in &mut group.items {
+                            if matches!(item.kind, crate::panel::ItemKind::Workspaces { .. }) {
+                                item.kind = crate::panel::ItemKind::Workspaces { style };
+                            }
+                        }
+                    }
+                    let mut tree = widget::Tree::empty();
+                    let (bounds, messages) = send_pointer(&mut app, &renderer, &mut tree, Pointer::Inside, false);
+                    assert!(messages > 0, "{style:?} must enter its actual workspace widget");
+                    assert!(app.workspace_ui.hovered.is_some());
+                    let serial = app.workspace_ui.serial;
+                    if visible {
+                        drop(app.show_workspace_tooltip(serial, Some(bounds)));
+                        assert!(app.workspace_ui.tooltip.is_some());
+                    }
+                    send_pointer(&mut app, &renderer, &mut tree, Pointer::Inside, false);
+                    assert_eq!(
+                        app.workspace_ui.serial, serial,
+                        "movement inside {style:?} must not restart the delay"
+                    );
+                    send_pointer(&mut app, &renderer, &mut tree, exit, captured);
+                    assert!(
+                        app.workspace_ui.hovered.is_none() && app.workspace_ui.tooltip.is_none(),
+                        "{style:?}: {exit:?}, captured={captured}, visible={visible} must cancel the hover"
+                    );
+                    drop(app.show_workspace_tooltip(serial, Some(bounds)));
+                    assert!(
+                        app.workspace_ui.tooltip.is_none(),
+                        "an expired delay must stay cancelled"
+                    );
+                    send_pointer(&mut app, &renderer, &mut tree, Pointer::Inside, false);
+                    assert!(
+                        app.workspace_ui.hovered.is_some(),
+                        "reentry must restore {style:?} hover"
+                    );
+                }
+            }
+        }
     }
 
     #[test]

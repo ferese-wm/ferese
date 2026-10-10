@@ -18,6 +18,7 @@ pub(super) fn frame<'a, M: 'a>(
     mode: PanelSurface,
     radius: f32,
     materials: Vec<(widget::Id, f32)>,
+    hover: Option<HoverTarget<'a, M>>,
     present: impl Fn(&[[f32; 5]], &[f32]) + 'a,
     changed: impl Fn(Vec<[f32; 5]>) -> M + 'a,
 ) -> Element<'a, M> {
@@ -26,6 +27,7 @@ pub(super) fn frame<'a, M: 'a>(
         mode,
         radius,
         materials,
+        hover,
         present: Box::new(present),
         changed: Box::new(changed),
     })
@@ -42,6 +44,28 @@ struct State {
     opacity_scratch: Vec<f32>,
 }
 
+pub(super) struct HoverTarget<'a, M> {
+    pub(super) id: widget::Id,
+    pub(super) exited: Box<dyn Fn() -> M + 'a>,
+}
+
+struct HoverBounds<'a> {
+    target: &'a widget::Id,
+    bounds: Option<Rectangle>,
+}
+
+impl widget::Operation for HoverBounds<'_> {
+    fn traverse(&mut self, children: &mut dyn FnMut(&mut dyn widget::Operation)) {
+        children(self);
+    }
+
+    fn container(&mut self, id: Option<&widget::Id>, bounds: Rectangle) {
+        if id == Some(self.target) {
+            self.bounds = Some(bounds);
+        }
+    }
+}
+
 type Present<'a> = Box<dyn Fn(&[[f32; 5]], &[f32]) + 'a>;
 
 struct Presentation<'a, M> {
@@ -49,6 +73,7 @@ struct Presentation<'a, M> {
     mode: PanelSurface,
     radius: f32,
     materials: Vec<(widget::Id, f32)>,
+    hover: Option<HoverTarget<'a, M>>,
     present: Present<'a>,
     changed: Box<dyn Fn(Vec<[f32; 5]>) -> M + 'a>,
 }
@@ -105,6 +130,32 @@ impl<M> Widget<M, Theme, cosmic::Renderer> for Presentation<'_, M> {
         shell: &mut Shell<'_, M>,
         viewport: &Rectangle,
     ) {
+        // The stack may stop dispatching after another control captures input.
+        // Reconcile the active tooltip before any child handles the pointer.
+        if matches!(
+            event,
+            Event::Mouse(mouse::Event::CursorMoved { .. } | mouse::Event::CursorLeft)
+        ) && let Some(hover) = &self.hover
+        {
+            let mut target = HoverBounds {
+                target: &hover.id,
+                bounds: None,
+            };
+            self.content
+                .as_widget_mut()
+                .operate(&mut tree.children[0], layout, renderer, &mut target);
+            if matches!(event, Event::Mouse(mouse::Event::CursorLeft))
+                || !cursor.is_over(*viewport)
+                || !target.bounds.is_some_and(|bounds| cursor.is_over(bounds))
+            {
+                shell.publish((hover.exited)());
+            }
+        }
+        let cursor = if matches!(event, Event::Mouse(mouse::Event::CursorLeft)) {
+            mouse::Cursor::Unavailable
+        } else {
+            cursor
+        };
         self.content.as_widget_mut().update(
             &mut tree.children[0],
             event,
@@ -362,6 +413,7 @@ mod tests {
                 PanelSurface::None,
                 12.,
                 vec![(id.clone(), opacity)],
+                None,
                 |regions, opacities| published.borrow_mut().push((regions.to_vec(), opacities.to_vec())),
                 |regions| regions,
             );
@@ -441,6 +493,7 @@ mod tests {
                 mode,
                 14.,
                 vec![],
+                None,
                 |_, _| {},
                 |regions| {
                     cosmic::Action::App(crate::Message::BarRegionsChanged(
@@ -532,6 +585,7 @@ mod tests {
             PanelSurface::None,
             14.,
             vec![],
+            None,
             |regions, _| *materials.borrow_mut() = regions.to_vec(),
             |regions| regions,
         );

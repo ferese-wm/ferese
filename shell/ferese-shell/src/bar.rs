@@ -218,6 +218,14 @@ impl FereseShell {
             mode,
             corners.max(),
             materials,
+            self.workspace_ui
+                .hover_target(id)
+                .map(|(workspace, target)| presentation::HoverTarget {
+                    id: target.clone(),
+                    exited: Box::new(move || {
+                        cosmic::Action::App(Message::HoverWorkspace(id, workspace, target.clone(), false))
+                    }),
+                }),
             move |regions, opacities| {
                 if let Some(effects) = effects
                     && let Err(error) = effects.set_presentation(
