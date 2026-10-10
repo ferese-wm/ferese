@@ -153,6 +153,37 @@ m.main()
         with self.assertRaisesRegex(ValueError, 'Checksum mismatch'):
             installer.Installation(self.root).manifest('first')
 
+    def replace_dark_wallpaper_with_jpeg(self, bundle):
+        source = bundle / 'wallpapers/ferese-wallpaper-dark.png'
+        source.rename(source.with_suffix('.jpg'))
+        path = bundle / 'manifest.json'
+        manifest = json.loads(path.read_text())
+        for item in manifest['files']:
+            if item['target'] == 'wallpapers/ferese-wallpaper-dark.png':
+                item['target'] = 'wallpapers/ferese-wallpaper-dark.jpg'
+        path.write_text(json.dumps(manifest))
+
+    def test_upgrade_and_rollback_verify_installed_jpeg_wallpaper(self):
+        self.install()
+        installed = self.base / 'releases/first'
+        self.replace_dark_wallpaper_with_jpeg(installed)
+        self.assertEqual(installer.Installation(self.root).manifest('first')['release'], 'first')
+        self.install(1)
+        self.assertTrue((self.base / 'current/wallpapers/ferese-wallpaper-dark.png').is_file())
+        self.assertFalse((self.base / 'current/wallpapers/ferese-wallpaper-dark.jpg').exists())
+        self.run_command('rollback')
+        self.assertTrue((self.base / 'current/wallpapers/ferese-wallpaper-dark.jpg').is_file())
+        (installed / 'wallpapers/ferese-wallpaper-dark.jpg').write_bytes(b'corrupt asset')
+        with self.assertRaisesRegex(ValueError, 'Checksum mismatch: wallpapers/ferese-wallpaper-dark.jpg'):
+            installer.Installation(self.root).manifest('first')
+
+    def test_new_bundle_rejects_jpeg_in_place_of_required_png(self):
+        changed = Path(self.temporary.name) / 'jpeg-bundle'
+        shutil.copytree(self.bundles[0], changed)
+        self.replace_dark_wallpaper_with_jpeg(changed)
+        with self.assertRaisesRegex(ValueError, 'Invalid inventory entry: wallpapers/ferese-wallpaper-dark.jpg'):
+            installer.validate_bundle(changed)
+
     def test_new_bundle_requires_appearance_wallpapers(self):
         incomplete = Path(self.temporary.name) / 'incomplete'
         shutil.copytree(self.bundles[0], incomplete)

@@ -145,6 +145,8 @@ def validate_bundle(bundle, *, installed=False):
         allowed = expected.get(target)
         # Older releases bundled this retired source asset. Keep their manifests
         # verifiable for upgrades and rollback without adding it to new bundles.
+        if allowed is None and installed and re.fullmatch(r'wallpapers/[A-Za-z0-9._-]+\.jpe?g', target):
+            allowed = {'target': target, 'mode': '0644'}
         if allowed is None and target == 'wallpapers/ferese.svg':
             allowed = {'target': target, 'mode': '0644'}
         if allowed is None and re.fullmatch(r'licenses/theme-[A-Za-z0-9._-]+\.txt', target):
