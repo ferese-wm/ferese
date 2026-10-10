@@ -1,45 +1,57 @@
 # Screenshots
 
-Click an image to open it at full size.
+Click an image to open the original 2880 × 1800 capture.
 
-## Ferese Blue dark
+## The desktop
 
-Appearance settings with the default dark wallpaper.
+A translucent panel over a mountain lake at dusk.
 
-[![Ferese Blue dark desktop with Appearance settings.](images/screenshots/ferese-blue-dark.webp)](images/screenshots/ferese-blue-dark.webp)
-
-## Ferese Blue light
-
-Appearance settings and the calendar with the default light wallpaper.
-
-[![Ferese Blue light desktop with Appearance settings and the calendar.](images/screenshots/ferese-blue-light.webp)](images/screenshots/ferese-blue-light.webp)
+[![Ferese desktop with Now Playing controls above a mountain lake at dusk.](images/screenshots/ferese-desktop-lake.webp)](images/screenshots/ferese-desktop-lake.webp)
 
 ## Workspace overview
 
-Terminal and Settings windows, with previews of three workspaces.
+Open windows and previews of three workspaces.
 
-[![Ferese Blue overview with a terminal, Settings and three workspace cards.](images/screenshots/ferese-blue-overview.webp)](images/screenshots/ferese-blue-overview.webp)
+[![Ferese Overview with terminal and reading windows.](images/screenshots/ferese-overview.webp)](images/screenshots/ferese-overview.webp)
 
-## Everforest
+## Workspace previews
 
-Appearance settings and the calendar over a custom forest wallpaper.
+Thumbnails of three workspaces, with the current workspace highlighted.
 
-[![Everforest desktop with Appearance settings and the calendar.](images/screenshots/everforest-desktop.webp)](images/screenshots/everforest-desktop.webp)
+[![Workspace previews above a browser window on the city desktop.](images/screenshots/ferese-workspace-preview.webp)](images/screenshots/ferese-workspace-preview.webp)
 
-## Gruvbox
+## Windows side by side
 
-Appearance settings and the calendar over a custom landscape wallpaper.
+A terminal and reading window share the desktop.
 
-[![Gruvbox desktop with Appearance settings and the calendar.](images/screenshots/gruvbox-desktop.webp)](images/screenshots/gruvbox-desktop.webp)
+[![Terminal and reading windows arranged side by side.](images/screenshots/ferese-window-layout.webp)](images/screenshots/ferese-window-layout.webp)
 
-## Rosé Pine dark
+## Appearance
 
-Theme previews, Control Center and a file manager.
+Six themes, each with paired light and dark colours.
 
-[![Rosé Pine dark desktop with Settings, Control Center and a file manager.](images/screenshots/rose-pine-dark.webp)](images/screenshots/rose-pine-dark.webp)
+[![Ferese Appearance settings with six theme previews.](images/screenshots/ferese-appearance.webp)](images/screenshots/ferese-appearance.webp)
 
-## Rosé Pine light
+## Panel & Shell
 
-Appearance settings and a file manager over the same custom wallpaper.
+Panel composition, position and surface settings.
 
-[![Rosé Pine light desktop with Settings and a file manager.](images/screenshots/rose-pine-light.webp)](images/screenshots/rose-pine-light.webp)
+[![Panel and Shell settings with a composition preview and island surfaces.](images/screenshots/ferese-panel-settings.webp)](images/screenshots/ferese-panel-settings.webp)
+
+## Now playing
+
+Spotify artwork and playback controls in a translucent popup.
+
+[![Ferese Now Playing popup above the city wallpaper.](images/screenshots/ferese-media.webp)](images/screenshots/ferese-media.webp)
+
+## Spotify and the terminal
+
+Two windows over a mountain lake at dusk.
+
+[![Spotify and a terminal open over the mountain lake wallpaper.](images/screenshots/ferese-spotify.webp)](images/screenshots/ferese-spotify.webp)
+
+## Bottom panel
+
+The panel along the bottom edge, with a notification above it.
+
+[![Bottom panel and a screenshot notification over the city wallpaper.](images/screenshots/ferese-bottom-panel.webp)](images/screenshots/ferese-bottom-panel.webp)

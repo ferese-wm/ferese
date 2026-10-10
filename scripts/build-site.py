@@ -28,7 +28,7 @@ md = MarkdownIt('commonmark', {'html': False}).enable('table')
 if OUTPUT.exists():
     shutil.rmtree(OUTPUT)
 OUTPUT.mkdir(parents=True)
-for name in ('index.html', 'styles.css', 'app.js'):
+for name in ('index.html', 'home.css', 'handbook.css', 'styles.css', 'app.js'):
     shutil.copy2(ROOT / 'site' / name, OUTPUT / name)
 (OUTPUT / 'assets').mkdir(exist_ok=True)
 shutil.copytree(ROOT / 'site/assets', OUTPUT / 'assets', dirs_exist_ok=True)
@@ -91,25 +91,80 @@ for page_number, (slug, title, source) in enumerate(PAGES):
     search_index.extend(sections)
     body = md.renderer.render(tokens, md.options, {})
     body = body.replace('<table>', '<div class="table-scroll" tabindex="0" role="region" aria-label="Reference table"><table>').replace('</table>', '</table></div>')
-    navigation = ''.join(f'<a href="{s}.html"' + (' aria-current="page"' if s == slug else '') + f'>{escape(t)}</a>' for s, t, _ in PAGES if s != 'animation-model')
+    navigation = ''.join(f'<a href="{s}.html"' + (' aria-current="page"' if s == slug else '') + f'>{escape(t)}</a>' for s, t, _ in PAGES)
     contents = ''.join(f'<a href="#{anchor}">{escape(heading)}</a>' for anchor, heading in toc)
     pager = ''
     if page_number:
         prev = PAGES[page_number - 1]
-        pager += f'<a href="{prev[0]}.html"><small>PREVIOUS</small>← {escape(prev[1])}</a>'
+        pager += f'<a class="pager-previous" href="{prev[0]}.html"><small>Previous</small>← {escape(prev[1])}</a>'
     if page_number + 1 < len(PAGES):
         nxt = PAGES[page_number + 1]
-        pager += f'<a href="{nxt[0]}.html"><small>NEXT</small>{escape(nxt[1])} →</a>'
+        pager += f'<a class="pager-next" href="{nxt[0]}.html"><small>Next</small>{escape(nxt[1])} →</a>'
+    mobile_contents = (
+        f'<details class="mobile-contents"><summary>On this page</summary><nav aria-label="Page sections">{contents}</nav></details>'
+        if contents else ''
+    )
     doc = f'''<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="theme-color" content="#10151c"><title>{escape(title)} — Ferese handbook</title><meta name="description" content="{escape(title)} in the Ferese handbook: setup, configuration, and guides for your Wayland desktop.">
-<link rel="icon" href="../assets/branding/ferese.svg" type="image/svg+xml"><link rel="icon" href="../assets/favicon.ico" sizes="16x16 32x32 48x48"><link rel="icon" href="../assets/favicon-32.png" type="image/png" sizes="32x32"><link rel="stylesheet" href="../styles.css"><script src="../app.js" defer></script></head>
-<body class="docs-page"><a class="skip" href="#main">Skip to content</a>
-<header class="site-header"><div class="header-inner"><a class="brand" href="../" aria-label="Ferese home"><img class="brand-icon" src="../assets/branding/ferese.svg" width="950" height="950" alt=""><span class="brand-name">Ferese</span></a><nav aria-label="Main navigation"><a href="../">Overview</a><a href="./" aria-current="page">Documentation</a><a href="{REPO}">GitHub <svg class="link-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M7 17 17 7M7 7h10v10"/></svg></a></nav></div></header>
-<div class="docs-layout"><aside class="docs-sidebar"><div class="docs-search" hidden><label class="sr-only" for="docs-search">Search the handbook</label><input id="docs-search" type="search" placeholder="Search the handbook…" autocomplete="off" aria-controls="search-results"><div class="search-results" id="search-results" hidden></div><p class="sr-only" id="search-status" role="status"></p></div><details open><summary>FERESE HANDBOOK</summary><nav aria-label="Documentation">{navigation}</nav></details><div class="sidebar-links"><a href="{REPO}/issues">Report an issue <svg class="link-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M7 17 17 7M7 7h10v10"/></svg></a><a href="../">Back to Ferese ←</a></div></aside>
-<main class="docs-article" id="main"><div class="breadcrumb"><a href="./">Handbook</a><span aria-hidden="true">/</span><span>{escape(title)}</span></div><article class="prose">{body}</article><a class="edit-link" href="{REPO}/blob/main/{source.relative_to(ROOT)}">View this guide on GitHub <svg class="link-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M7 17 17 7M7 7h10v10"/></svg></a><nav class="docs-pager" aria-label="Previous and next guide">{pager}</nav></main>
-<aside class="docs-toc" aria-label="On this page">{'<p>ON THIS PAGE</p><nav>' + contents + '</nav>' if contents else ''}</aside></div>
-<footer class="site-footer page-width"><a class="brand" href="../" aria-label="Ferese home"><img class="brand-icon" src="../assets/branding/ferese.svg" width="950" height="950" alt=""></a><p>A Wayland desktop with scrolling layouts.</p><a href="{REPO}">Built in the open <svg class="link-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M7 17 17 7M7 7h10v10"/></svg></a></footer></body></html>'''
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#111821">
+  <title>{escape(title)} — Ferese handbook</title>
+  <meta name="description" content="{escape(title)} in the Ferese handbook: setup, configuration, and guides for your Wayland desktop.">
+  <link rel="icon" href="../assets/branding/ferese.svg" type="image/svg+xml">
+  <link rel="icon" href="../assets/favicon.ico" sizes="16x16 32x32 48x48">
+  <link rel="icon" href="../assets/favicon-32.png" type="image/png" sizes="32x32">
+  <link rel="stylesheet" href="../styles.css">
+  <link rel="stylesheet" href="../handbook.css">
+  <script src="../app.js" defer></script>
+</head>
+<body class="docs-page">
+  <svg class="icon-definitions" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><defs>
+    <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></symbol>
+    <symbol id="i-external" viewBox="0 0 24 24"><path d="M7 17 17 7M7 7h10v10"/></symbol>
+  </defs></svg>
+  <a class="skip" href="#main">Skip to content</a>
+  <header class="site-header">
+    <div class="header-inner page-width">
+      <a class="brand" href="../" aria-label="Ferese home"><img src="../assets/branding/ferese.svg" width="34" height="34" alt=""><span>Ferese</span></a>
+      <nav aria-label="Main navigation"><a href="../#make-room">The desktop</a><a href="../#appearance">Appearance</a><a href="./" aria-current="page">Handbook</a></nav>
+      <div class="header-actions"><a class="small-button" href="installation.html">Get Ferese</a></div>
+    </div>
+  </header>
+  <div class="docs-layout page-width">
+    <aside class="docs-sidebar" aria-label="Handbook navigation">
+      <div class="docs-search" hidden>
+        <label class="sr-only" for="docs-search">Search the handbook</label>
+        <input id="docs-search" type="search" placeholder="Search the handbook…" autocomplete="off" aria-controls="search-results">
+        <div class="search-results" id="search-results" hidden></div>
+        <p class="sr-only" id="search-status" role="status"></p>
+      </div>
+      <details class="handbook-navigation" open>
+        <summary>Browse the handbook <svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></summary>
+        <nav aria-label="Documentation">{navigation}</nav>
+      </details>
+      <div class="sidebar-links">
+        <a href="{REPO}/issues">Report an issue <svg class="icon" aria-hidden="true"><use href="#i-external"/></svg></a>
+        <a href="../">Back to Ferese</a>
+      </div>
+    </aside>
+    <main class="docs-article" id="main">
+      <div class="breadcrumb"><a href="./">Handbook</a><span aria-hidden="true">/</span><span>{escape(title)}</span></div>
+      {mobile_contents}
+      <article class="prose">{body}</article>
+      <a class="edit-link" href="{REPO}/blob/main/{source.relative_to(ROOT)}">View this guide on GitHub <svg class="icon" aria-hidden="true"><use href="#i-external"/></svg></a>
+      <nav class="docs-pager" aria-label="Previous and next guide">{pager}</nav>
+    </main>
+    <aside class="docs-toc" aria-label="On this page">{'<p>On this page</p><nav>' + contents + '</nav>' if contents else ''}</aside>
+  </div>
+  <footer class="site-footer page-width">
+    <a class="brand" href="../" aria-label="Ferese home"><img src="../assets/branding/ferese.svg" width="28" height="28" alt=""><span>Ferese</span></a>
+    <span>Built in the open for Linux.</span>
+    <nav aria-label="Footer navigation"><a href="./">Handbook</a><a href="{REPO}">GitHub <svg class="icon" aria-hidden="true"><use href="#i-external"/></svg></a></nav>
+  </footer>
+</body>
+</html>'''
     (OUTPUT / 'docs' / f'{slug}.html').write_text(doc)
 (OUTPUT / 'docs/search-index.json').write_text(json.dumps(search_index, ensure_ascii=False))
 print(f'Built website and {len(PAGES)} handbook pages at {OUTPUT}')

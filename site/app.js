@@ -1,4 +1,14 @@
 // Progressive enhancement for the handbook. Navigation and content work without JS.
+const handbookNavigation = document.querySelector('.handbook-navigation');
+if (handbookNavigation) {
+  const compactLayout = matchMedia('(max-width: 900px)');
+  const updateNavigation = () => { handbookNavigation.open = !compactLayout.matches; };
+  updateNavigation();
+  compactLayout.addEventListener('change', updateNavigation);
+  handbookNavigation.addEventListener('click', (event) => {
+    if (compactLayout.matches && event.target.closest('nav a')) handbookNavigation.open = false;
+  });
+}
 const search = document.querySelector("#docs-search");
 const results = document.querySelector("#search-results");
 const status = document.querySelector("#search-status");

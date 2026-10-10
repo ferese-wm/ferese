@@ -15,7 +15,9 @@ python3 -m http.server 8080 --bind 127.0.0.1 --directory build/site
 Open http://localhost:8080 for the homepage or http://localhost:8080/docs/ for the
 handbook. Rebuild and refresh the browser after changing the site sources or guides.
 
-- `site/index.html` and `site/styles.css`: homepage and shared visual design.
+- `site/index.html` and `site/home.css`: homepage and desktop screenshots.
+- `site/styles.css`: shared dark appearance, typography and navigation.
+- `site/handbook.css`: handbook layout, search and reference tables.
 - `site/content/index.md`: handbook introduction.
 - `docs/*.md`: guides; published pages are listed in `scripts/build-site.py`.
 - `scripts/build-site.py`: renders Markdown, resolves links, generates section
@@ -60,4 +62,5 @@ when no custom wallpaper is set. Settings keeps both defaults available below
 the current wallpaper preview.
 
 Screenshots live in `docs/images/screenshots` and are shared by the README and
-website. They use lossless WebP at the original 2880×1800 resolution.
+website. Full captures retain their original 2880×1800 resolution, while the
+homepage uses smaller WebP versions for narrower screens.

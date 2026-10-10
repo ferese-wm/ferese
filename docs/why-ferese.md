@@ -12,7 +12,7 @@ Settings and `~/.config/ferese/config.kdl` are two ways to edit the same configu
 
 The shared settings have a defined scope. Ferese can coordinate the surfaces it draws and the transitions it manages; it does not control every animation an application draws inside its own window. That distinction matters when describing a consistent desktop: consistency between Ferese’s components should not be confused with taking over application behaviour.
 
-[![Rosé Pine dark desktop with Settings, Control Center and a file manager.](images/screenshots/rose-pine-dark.webp)](images/screenshots/rose-pine-dark.webp)
+[![Ferese Appearance settings with six paired light and dark themes.](images/screenshots/ferese-appearance.webp)](images/screenshots/ferese-appearance.webp)
 
 ## Different work needs different arrangements
 
@@ -22,7 +22,7 @@ Ferese supports both, with the layout selected per workspace. Floating windows a
 
 Even within scrolling, moving focus does not always need to move the desktop. Ferese’s minimal focus strategy leaves a fully visible column where it is and scrolls only far enough to reveal a hidden edge. Other strategies centre the focused column or arrange columns into viewport-sized pages. These choices affect how much the desktop moves while you work, so they belong in the layout’s behaviour rather than being treated as visual decoration.
 
-[![Ferese Blue overview with a terminal, Settings and three workspace previews.](images/screenshots/ferese-blue-overview.webp)](images/screenshots/ferese-blue-overview.webp)
+[![Ferese Overview with open windows and three workspace previews.](images/screenshots/ferese-overview.webp)](images/screenshots/ferese-overview.webp)
 
 ## Movement that responds to what you do next
 

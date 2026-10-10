@@ -13,7 +13,7 @@
 
 Ferese combines a window manager and desktop shell with one configuration.
 
-![Ferese Blue dark desktop with Appearance settings](docs/images/screenshots/ferese-blue-dark.webp)
+![Ferese desktop with a translucent Now Playing popup showing Spotify artwork and playback controls](docs/images/screenshots/ferese-media.webp)
 
 [View more screenshots](docs/screenshots.md)
 
