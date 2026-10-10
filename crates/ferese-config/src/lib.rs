@@ -372,6 +372,12 @@ impl Document {
         }
         let mut candidate = self.clone();
         let (name, parents) = path.rsplit_once('.').map_or((path, ""), |(p, n)| (n, p));
+        if unset_property(&mut candidate.doc, &path.split('.').collect::<Vec<_>>(), "")? {
+            format_document(&mut candidate.doc);
+            candidate.refresh()?;
+            *self = candidate;
+            return Ok(());
+        }
         let doc = section_mut(
             &mut candidate.doc,
             &parents.split('.').filter(|s| !s.is_empty()).collect::<Vec<_>>(),
@@ -552,6 +558,59 @@ fn section_mut<'a>(doc: &'a mut KdlDocument, parts: &[&str], parent: &str) -> Re
     let child = node.children_mut().get_or_insert_with(KdlDocument::new);
 
     section_mut(child, &parts[used..], key)
+}
+
+/// Scalar settings in record nodes can be KDL properties rather than children.
+fn unset_property(doc: &mut KdlDocument, parts: &[&str], parent: &str) -> Result<bool, Error> {
+    if parts.len() < 2 {
+        return Ok(false);
+    }
+    let key = parts[0];
+    let record = is_records(key, parent);
+    let used = if record { 2 } else { 1 };
+    let index = if record {
+        parts
+            .get(1)
+            .and_then(|part| part.parse::<usize>().ok())
+            .ok_or_else(|| Error("Record index missing".into()))?
+    } else {
+        0
+    };
+    let Some(node) = doc
+        .nodes_mut()
+        .iter_mut()
+        .filter(|node| field(node.name().value(), parent) == key)
+        .nth(index)
+    else {
+        return Ok(false);
+    };
+    if parts.len() == used + 1 {
+        if let Some(index) = node
+            .entries()
+            .iter()
+            .position(|entry| entry.name().is_some_and(|name| field(name.value(), key) == parts[used]))
+        {
+            let entry = node.entries_mut().remove(index);
+            if let Some(format) = entry.format() {
+                let comments = [&format.leading, &format.trailing]
+                    .into_iter()
+                    .filter(|part| part.contains("//") || part.contains("/*"))
+                    .cloned()
+                    .collect::<String>();
+                if !comments.is_empty() {
+                    let mut format = node.format().cloned().unwrap_or_default();
+                    format.leading.push_str(&comments);
+                    node.set_format(format);
+                }
+            }
+            return Ok(true);
+        }
+    }
+    if let Some(children) = node.children_mut() {
+        unset_property(children, &parts[used..], key)
+    } else {
+        Ok(false)
+    }
 }
 
 fn set_in(doc: &mut KdlDocument, parts: &[&str], parent: &str, value: Value) -> Result<(), Error> {

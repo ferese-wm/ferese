@@ -42,8 +42,10 @@ impl std::fmt::Display for CatalogItem {
 }
 const CATALOG: [CatalogItem; 12] = [
     CatalogItem(ItemKind::Overview),
-    CatalogItem(ItemKind::Workspaces),
-    CatalogItem(ItemKind::FocusedWindow { enabled: true }),
+    CatalogItem(ItemKind::Workspaces {
+        style: ferese_config::panel::WorkspaceStyle::Dots,
+    }),
+    CatalogItem(ItemKind::FocusedWindow),
     CatalogItem(ItemKind::Media),
     CatalogItem(ItemKind::QuickSettings),
     CatalogItem(ItemKind::Network),
@@ -708,8 +710,8 @@ pub(super) fn item_icon(kind: ItemKind, tint: cosmic::iced::Color) -> widget::ic
     use ferese_theme::icons;
     let source = match kind {
         ItemKind::Overview => icons::FERESE,
-        ItemKind::Workspaces => icons::OVERVIEW,
-        ItemKind::FocusedWindow { .. } => icons::DISPLAY,
+        ItemKind::Workspaces { .. } => icons::OVERVIEW,
+        ItemKind::FocusedWindow => icons::DISPLAY,
         ItemKind::Media => icons::MEDIA,
         ItemKind::QuickSettings => icons::CONTROL_CENTER,
         ItemKind::Network => icons::WIFI_FULL,
@@ -736,10 +738,8 @@ mod tests {
         let panels: Vec<Panel> = serde_json::from_value(snapshot.item("panels").unwrap().clone()).unwrap();
         assert_eq!(panels[0].background, ferese_config::BarLayout::Islands);
         assert_eq!(panels[0].end.groups[0].island_padding, 9.5);
-        assert_eq!(
-            panels[0].center.groups[0].items[0].kind,
-            ItemKind::FocusedWindow { enabled: false }
-        );
+        assert_eq!(panels[0].center.groups[0].items[0].kind, ItemKind::FocusedWindow);
+        assert!(!panels[0].center.groups[0].items[0].visible);
         assert_eq!(
             panels[0].end.groups[0].items[6].kind,
             ItemKind::Battery { percentage: false }

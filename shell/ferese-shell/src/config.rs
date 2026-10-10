@@ -383,6 +383,7 @@ pub(crate) fn parse_source(source: &str) -> Result<ShellConfig, ferese_config::E
         snapshot.presented.appearance,
         snapshot.mode,
     )?;
+
     config.apply_theme(&snapshot.presented);
     Ok(config)
 }
@@ -399,6 +400,7 @@ fn parse_document(
             if let Some(panels) = &config.panels {
                 ferese_config::panel::validate(panels).map_err(ferese_config::Error::from)?;
             }
+
             config.animations.validate().map_err(ferese_config::Error::from)?;
             config.notifications.validate().map_err(ferese_config::Error::from)?;
             config.desktop_widgets.validate().map_err(ferese_config::Error::from)?;
@@ -448,6 +450,7 @@ impl ShellConfig {
         self.theme.bar_radius = self.theme.material_radius;
         self.font_family = Some(theme.tokens.typography.font_family.clone());
         self.wallpaper = config.background;
+
         if std::env::var_os("FERESE_COMPOSITOR_WALLPAPER").is_some() {
             self.wallpaper.path = None;
         }
@@ -687,10 +690,8 @@ mod tests {
         let panel = &current.panels[0];
         assert_eq!(panel.background, ferese_config::BarLayout::Islands);
         assert_eq!(panel.end.groups[0].island_padding, 9.5);
-        assert_eq!(
-            panel.center.groups[0].items[0].kind,
-            ItemKind::FocusedWindow { enabled: false }
-        );
+        assert_eq!(panel.center.groups[0].items[0].kind, ItemKind::FocusedWindow);
+        assert!(!panel.center.groups[0].items[0].visible);
         assert_eq!(
             panel.end.groups[0].items[6].kind,
             ItemKind::Battery { percentage: false }

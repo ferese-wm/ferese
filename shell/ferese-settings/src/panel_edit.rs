@@ -278,12 +278,28 @@ pub(super) fn plan(snapshot: &Snapshot, action: Action) -> Result<Vec<Edit>, Str
         Action::Set(id, field, value) => {
             if !matches!(
                 field.as_str(),
-                "visible" | "overflow" | "representation" | "percentage" | "enabled" | "workspace_style"
+                "visible" | "overflow" | "representation" | "percentage" | "style"
             ) {
                 return Err("Unknown panel item setting.".into());
             }
             let (path, index) = locate(panel, &id)?;
-            vec![set(&format!("{path}.{index}.{field}"), value)]
+            if field == "style" && !matches!(panel.item(&id).unwrap().kind, ItemKind::Workspaces { .. }) {
+                return Err("Workspace style belongs to Workspaces items.".into());
+            }
+            let mut edits = Vec::new();
+            let legacy = match field.as_str() {
+                "style" => Some("workspace_style"),
+                "visible" if panel.item(&id).unwrap().kind == ItemKind::FocusedWindow => Some("enabled"),
+                _ => None,
+            };
+            if let Some(legacy) = legacy {
+                let legacy = format!("{path}.{index}.{legacy}");
+                if snapshot.item(&legacy).is_some() {
+                    edits.push(Edit::Unset(legacy));
+                }
+            }
+            edits.push(set(&format!("{path}.{index}.{field}"), value));
+            edits
         }
         Action::Add(kind, destination) => {
             if kind == ItemKind::Overflow {
@@ -879,17 +895,13 @@ animations { speed 0.8; }
         for style in ferese_config::panel::WorkspaceStyle::ALL {
             apply(
                 &mut snapshot,
-                Action::Set(
-                    ItemId("workspaces".into()),
-                    "workspace_style".into(),
-                    style.key().into(),
-                ),
+                Action::Set(ItemId("workspaces".into()), "style".into(), style.key().into()),
             );
             let panels: Vec<Panel> = serde_json::from_value(snapshot.item("panels").unwrap().clone()).unwrap();
             let panel = &panels[0];
             assert_eq!(
-                panel.item(&ItemId("workspaces".into())).unwrap().workspace_style,
-                Some(style)
+                panel.item(&ItemId("workspaces".into())).unwrap().kind,
+                ItemKind::Workspaces { style }
             );
             assert!(snapshot.source.contains("// keep"));
             assert_eq!(
@@ -905,8 +917,28 @@ animations { speed 0.8; }
         let panels: Vec<Panel> = serde_json::from_value(snapshot.item("panels").unwrap().clone()).unwrap();
         let panel = &panels[0];
         assert_eq!(
-            panel.item(&ItemId("workspaces".into())).unwrap().workspace_style,
-            Some(ferese_config::panel::WorkspaceStyle::AppIcons)
+            panel.item(&ItemId("workspaces".into())).unwrap().kind,
+            ItemKind::Workspaces {
+                style: ferese_config::panel::WorkspaceStyle::AppIcons
+            }
         );
+    }
+
+    #[test]
+    fn editing_legacy_item_settings_removes_competing_fields_without_losing_comments() {
+        let mut snapshot = Snapshot::parse("// keep\npanel main { start { group nav { item spaces kind=\"workspaces\" workspace-style=\"numbers\" custom-note=\"keep\"; }; }; center { group title { item title kind=\"focused-window\" enabled=#false; }; }; }".into()).unwrap();
+        apply(
+            &mut snapshot,
+            Action::Set(ItemId("spaces".into()), "style".into(), "dots".into()),
+        );
+        apply(
+            &mut snapshot,
+            Action::Set(ItemId("title".into()), "visible".into(), true.into()),
+        );
+        assert!(!snapshot.source.contains("workspace-style"));
+        assert!(!snapshot.source.contains("enabled"));
+        assert!(snapshot.source.contains("// keep") && snapshot.source.contains("custom-note"));
+        let panels: Vec<Panel> = serde_json::from_value(snapshot.item("panels").unwrap().clone()).unwrap();
+        assert!(panels[0].item(&ItemId("title".into())).unwrap().visible);
     }
 }

@@ -20,7 +20,14 @@ impl FereseShell {
         .into_iter()
         .flat_map(|zone| &zone.groups)
         .flat_map(|group| &group.items)
-        .any(|item| item.workspace_style == Some(ferese_config::panel::WorkspaceStyle::AppIcons));
+        .any(|item| {
+            matches!(
+                item.kind,
+                crate::panel::ItemKind::Workspaces {
+                    style: ferese_config::panel::WorkspaceStyle::AppIcons
+                }
+            )
+        });
         self.workspace_ui
             .update(&self.snapshot, self.config.animations, needs_icons);
         if self.workspace_ui.hovered.as_ref().is_some_and(|hover| {

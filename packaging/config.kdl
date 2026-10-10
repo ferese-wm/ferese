@@ -171,7 +171,7 @@ panel "main" {
     center {
         group "title" {
             padding 0 0
-            item "focused-window" kind="focused-window" enabled=#true overflow="never"
+            item "focused-window" kind="focused-window" visible=#true overflow="never"
         }
     }
     end {

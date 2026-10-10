@@ -16,7 +16,7 @@ const SAMPLE_AVAILABILITY: Availability = Availability {
 };
 
 fn available(item: &Item) -> bool {
-    item.available(SAMPLE_AVAILABILITY) && !matches!(item.kind, ItemKind::FocusedWindow { enabled: false })
+    item.available(SAMPLE_AVAILABILITY)
 }
 
 impl App {
@@ -111,7 +111,7 @@ impl App {
                         id: item.id.clone(),
                         representation,
                         minimum: match item.kind {
-                            ItemKind::Workspaces => Some(24.),
+                            ItemKind::Workspaces { .. } => Some(24.),
                             _ => None,
                         },
                         view: self.preview_control(item, representation, None),
@@ -303,9 +303,8 @@ impl App {
     ) -> Element<'static, Message> {
         use ferese_theme::icons;
         let palette = visuals::Palette::from_resolved(&self.resolved.presented);
-        if item.kind == ItemKind::Workspaces {
-            let sample =
-                ferese_theme::workspaces::sample(item.workspace_style.unwrap_or_default(), palette, self.font, 20.);
+        if let ItemKind::Workspaces { style } = item.kind {
+            let sample = ferese_theme::workspaces::sample(style, palette, self.font, 20.);
             let control = button::custom(container(sample).id(format!("preview-icon:{}", item.id.0)))
                 .name("Edit Workspaces")
                 .padding([4, 2])
@@ -320,8 +319,8 @@ impl App {
         }
         let source = match item.kind {
             ItemKind::Overview => icons::FERESE,
-            ItemKind::Workspaces => icons::OVERVIEW,
-            ItemKind::FocusedWindow { .. } => icons::DISPLAY,
+            ItemKind::Workspaces { .. } => icons::OVERVIEW,
+            ItemKind::FocusedWindow => icons::DISPLAY,
             ItemKind::Media => icons::MEDIA,
             ItemKind::QuickSettings => icons::CONTROL_CENTER,
             ItemKind::Network => icons::WIFI_FULL,
@@ -334,8 +333,8 @@ impl App {
             ItemKind::Overflow => icons::CHEVRON_DOWN,
         };
         let label = match (item.kind, representation) {
-            (ItemKind::Workspaces, _) => "1  2  3",
-            (ItemKind::FocusedWindow { .. }, _) => "Settings",
+            (ItemKind::Workspaces { .. }, _) => "1  2  3",
+            (ItemKind::FocusedWindow, _) => "Settings",
             (ItemKind::Media, Representation::Wide) => "Song title · Artist  ▷",
             (ItemKind::Media, Representation::Compact) => "Song title",
             (ItemKind::Battery { percentage: true }, Representation::Wide) => "75%",

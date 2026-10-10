@@ -62,9 +62,8 @@ impl FereseShell {
         for zone in [&panel.center, &panel.start, &panel.end] {
             for group in &zone.groups {
                 for item in group.items.iter().filter(|item| item.available(availability)) {
-                    if matches!(item.kind, ItemKind::FocusedWindow { enabled: false })
-                        || matches!(item.kind, ItemKind::FocusedWindow { .. })
-                            && focused_bar_title(&self.snapshot, self.output_for_bar(id)).is_empty()
+                    if matches!(item.kind, ItemKind::FocusedWindow)
+                        && focused_bar_title(&self.snapshot, self.output_for_bar(id)).is_empty()
                     {
                         continue;
                     }
@@ -75,8 +74,8 @@ impl FereseShell {
                             id: item.id.clone(),
                             representation,
                             minimum: match item.kind {
-                                ItemKind::FocusedWindow { .. } => Some(48.0),
-                                ItemKind::Workspaces => Some(24.0),
+                                ItemKind::FocusedWindow => Some(48.0),
+                                ItemKind::Workspaces { .. } => Some(24.0),
                                 _ => None,
                             },
                             view,
@@ -241,8 +240,8 @@ impl FereseShell {
                 self.overview_active,
                 1.0,
             ),
-            ItemKind::Workspaces => {
-                let workspaces = self.view_workspace_item(id, item.workspace_style.unwrap_or_default(), &item.id.0);
+            ItemKind::Workspaces { style } => {
+                let workspaces = self.view_workspace_item(id, style, &item.id.0);
                 if let Some(width) = width {
                     cosmic::iced::widget::scrollable(workspaces)
                         .direction(cosmic::iced::widget::scrollable::Direction::Horizontal(
@@ -256,8 +255,8 @@ impl FereseShell {
                     workspaces
                 }
             }
-            ItemKind::FocusedWindow { enabled } => {
-                let title = if enabled && width.is_none_or(|width| width > 0.) {
+            ItemKind::FocusedWindow => {
+                let title = if item.visible && width.is_none_or(|width| width > 0.) {
                     focused_bar_title(&self.snapshot, focused_output)
                 } else {
                     ""
@@ -528,7 +527,7 @@ fn view_zone<'a>(
             }
             let (element, content) = render(item);
             has_content |= content;
-            let element: Element<'_, cosmic::Action<Message>> = if matches!(item.kind, ItemKind::FocusedWindow { .. }) {
+            let element: Element<'_, cosmic::Action<Message>> = if matches!(item.kind, ItemKind::FocusedWindow) {
                 element
             } else {
                 container(element).id(presentation::input_id()).into()
@@ -784,19 +783,19 @@ mod island_tests {
         let view = view_zone(panel, zone, availability, theme, true, |item| {
             let width = match item.kind {
                 ItemKind::Overview => 28.,
-                ItemKind::Workspaces => 72.,
-                ItemKind::FocusedWindow { .. } => 80.,
+                ItemKind::Workspaces { .. } => 72.,
+                ItemKind::FocusedWindow => 80.,
                 ItemKind::Clock => 60.,
                 _ => 20.,
             };
-            let height = if matches!(item.kind, ItemKind::FocusedWindow { .. }) {
+            let height = if matches!(item.kind, ItemKind::FocusedWindow) {
                 24.
             } else {
                 20.
             };
             (
                 container(cosmic::iced::widget::Space::new().width(width).height(height)).into(),
-                !matches!(item.kind, ItemKind::FocusedWindow { .. }) || title_content,
+                !matches!(item.kind, ItemKind::FocusedWindow) || title_content,
             )
         });
         let mut view: Element<'_, cosmic::Action<Message>> = container(view)

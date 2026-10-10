@@ -71,7 +71,7 @@ impl App {
             Field::new(format!("{path}.visible"), "Show item", "", Kind::Toggle(true)),
         ));
         rows = rows.push(self.panel_divider());
-        if item.kind == ItemKind::Workspaces {
+        if matches!(item.kind, ItemKind::Workspaces { .. }) {
             rows = rows.push(self.workspace_style_picker(item));
             rows = rows.push(self.panel_divider());
         }
@@ -117,12 +117,6 @@ impl App {
                 ),
             ));
         }
-        if matches!(item.kind, ItemKind::FocusedWindow { .. }) {
-            rows = rows.push(self.panel_field(
-                item,
-                Field::new(format!("{path}.enabled"), "Window title", "", Kind::Toggle(true)),
-            ));
-        }
         let group = Zone::ALL
             .into_iter()
             .flat_map(|zone| &zone.definition(panel).groups)
@@ -145,7 +139,9 @@ impl App {
 
     fn workspace_style_picker(&self, item: &Item) -> Element<'static, Message> {
         let palette = crate::visuals::Palette::from_resolved(&self.resolved.presented);
-        let selected = item.workspace_style.unwrap_or_default();
+        let ItemKind::Workspaces { style: selected } = item.kind else {
+            unreachable!()
+        };
         let mut choices = widget::column([])
             .spacing(6)
             .push(self.label("Workspace style", 13.))
@@ -163,13 +159,10 @@ impl App {
                 .padding([8, 10])
                 .width(Length::Fill)
                 .class(crate::visuals::panel_button(palette, style == selected))
-                .on_press_maybe((style != selected).then(|| {
-                    Message::PanelEdit(Action::Set(
-                        item.id.clone(),
-                        "workspace_style".into(),
-                        style.key().into(),
-                    ))
-                })),
+                .on_press_maybe(
+                    (style != selected)
+                        .then(|| Message::PanelEdit(Action::Set(item.id.clone(), "style".into(), style.key().into()))),
+                ),
             );
         }
         choices.into()

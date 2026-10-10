@@ -287,7 +287,7 @@ mod tests {
                     (Representation::Compact, 40.0),
                     (Representation::Icon, 24.0),
                 ],
-                minimum: matches!(item.kind, crate::panel::ItemKind::FocusedWindow { .. }).then_some(48.0),
+                minimum: matches!(item.kind, crate::panel::ItemKind::FocusedWindow).then_some(48.0),
             })
             .collect()
     }

@@ -130,11 +130,11 @@ impl WorkspaceStyle {
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum ItemKind {
     Overview,
-    Workspaces,
-    FocusedWindow {
-        #[serde(default = "yes")]
-        enabled: bool,
+    Workspaces {
+        #[serde(default)]
+        style: WorkspaceStyle,
     },
+    FocusedWindow,
     Media,
     QuickSettings,
     Network,
@@ -154,8 +154,8 @@ impl ItemKind {
     pub fn label(self) -> &'static str {
         match self {
             Self::Overview => "Overview",
-            Self::Workspaces => "Workspaces",
-            Self::FocusedWindow { .. } => "Focused window",
+            Self::Workspaces { .. } => "Workspaces",
+            Self::FocusedWindow => "Focused window",
             Self::Media => "Media",
             Self::QuickSettings => "Quick Settings",
             Self::Network => "Network",
@@ -173,13 +173,13 @@ impl ItemKind {
         match self {
             Self::Media | Self::Clock => &[Wide, Compact, Icon],
             Self::Battery { percentage: true } => &[Wide, Icon],
-            Self::Workspaces | Self::FocusedWindow { .. } => &[Wide],
+            Self::Workspaces { .. } | Self::FocusedWindow => &[Wide],
             _ => &[Icon],
         }
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Item {
     pub id: ItemId,
     #[serde(flatten)]
@@ -193,10 +193,69 @@ pub struct Item {
     pub priority: u8,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub representation: Option<Representation>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub workspace_style: Option<WorkspaceStyle>,
     #[serde(default = "yes")]
     pub visible: bool,
+}
+
+impl<'de> Deserialize<'de> for Item {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        // Upgrade earlier drafts at the boundary. The runtime model has one
+        // visibility flag and keeps kind-specific settings in ItemKind.
+        let mut value = serde_json::Value::deserialize(deserializer)?;
+        let fields = value
+            .as_object_mut()
+            .ok_or_else(|| serde::de::Error::custom("expected a panel item"))?;
+        let workspaces = fields.get("kind").and_then(serde_json::Value::as_str) == Some("workspaces");
+        if let Some(style) = fields.remove("workspace_style") {
+            if !workspaces {
+                return Err(serde::de::Error::custom(
+                    "workspace-style is only supported by Workspaces items",
+                ));
+            }
+            fields.entry("style").or_insert(style);
+        }
+        if fields.contains_key("style") && !workspaces {
+            return Err(serde::de::Error::custom("style is only supported by Workspaces items"));
+        }
+        if let Some(enabled) = fields.remove("enabled") {
+            if fields.get("kind").and_then(serde_json::Value::as_str) == Some("focused-window") {
+                let enabled = enabled
+                    .as_bool()
+                    .ok_or_else(|| serde::de::Error::custom("enabled must be boolean"))?;
+                let visible = fields
+                    .get("visible")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(true);
+                fields.insert("visible".into(), (visible && enabled).into());
+            }
+        }
+        #[derive(Deserialize)]
+        struct Fields {
+            id: ItemId,
+            #[serde(flatten)]
+            kind: ItemKind,
+            #[serde(default)]
+            gap_before: Option<f32>,
+            #[serde(default)]
+            overflow: OverflowPolicy,
+            #[serde(default = "priority")]
+            priority: u8,
+            #[serde(default)]
+            representation: Option<Representation>,
+            #[serde(default = "yes")]
+            visible: bool,
+        }
+        let item: Fields = serde_json::from_value(value).map_err(serde::de::Error::custom)?;
+        Ok(Self {
+            id: item.id,
+            kind: item.kind,
+            gap_before: item.gap_before,
+            overflow: item.overflow,
+            priority: item.priority,
+            representation: item.representation,
+            visible: item.visible,
+        })
+    }
 }
 
 impl Item {
@@ -221,17 +280,16 @@ impl Item {
             kind,
             gap_before: None,
             representation: None,
-            workspace_style: None,
             visible: true,
             overflow: if matches!(
                 kind,
-                ItemKind::Overview | ItemKind::Workspaces | ItemKind::FocusedWindow { .. }
+                ItemKind::Overview | ItemKind::Workspaces { .. } | ItemKind::FocusedWindow
             ) {
                 OverflowPolicy::Never
             } else {
                 OverflowPolicy::Auto
             },
-            priority: if matches!(kind, ItemKind::Overview | ItemKind::Workspaces) {
+            priority: if matches!(kind, ItemKind::Overview | ItemKind::Workspaces { .. }) {
                 100
             } else {
                 50
@@ -387,9 +445,6 @@ pub fn validate(panels: &[Panel]) -> Result<(), String> {
                     return Err("invalid panel group spacing or padding".into());
                 }
                 for item in &group.items {
-                    if item.workspace_style.is_some() && item.kind != ItemKind::Workspaces {
-                        return Err("workspace-style is only supported by Workspaces items".into());
-                    }
                     if !valid_id(&item.id.0) || !item_ids.insert(&item.id.0) {
                         return Err(format!("invalid or duplicate item ID {:?}", item.id.0));
                     }
@@ -441,7 +496,6 @@ impl Panel {
                 kind: ItemKind::Overflow,
                 gap_before: None,
                 representation: None,
-                workspace_style: None,
                 visible: true,
                 overflow: OverflowPolicy::Never,
                 priority: 100,
@@ -473,13 +527,14 @@ impl Panel {
         let item = Item::new;
         let padding = status.bar_island_padding;
         let overview = item("overview", Overview);
-        let workspaces = item("workspaces", Workspaces);
-        let title = item(
-            "focused-window",
-            FocusedWindow {
-                enabled: status.window_title,
+        let workspaces = item(
+            "workspaces",
+            Workspaces {
+                style: WorkspaceStyle::default(),
             },
         );
+        let mut title = item("focused-window", FocusedWindow);
+        title.visible = status.window_title;
         let controls = vec![
             item("media", Media),
             item("quick-settings", QuickSettings),
@@ -677,10 +732,8 @@ mod tests {
             window_title: false,
             battery_percentage: false,
         });
-        assert_eq!(
-            panel.center.groups[0].items[0].kind,
-            ItemKind::FocusedWindow { enabled: false }
-        );
+        assert_eq!(panel.center.groups[0].items[0].kind, ItemKind::FocusedWindow);
+        assert!(!panel.center.groups[0].items[0].visible);
         let all = items(&panel);
         assert_eq!(
             all.iter().find(|item| item.id.0 == "battery").unwrap().kind,
@@ -831,29 +884,51 @@ animations { speed 0.8; }
     }
     #[test]
     fn workspace_styles_round_trip_and_only_apply_to_workspaces() {
-        assert_eq!(
-            Item::new("spaces", ItemKind::Workspaces)
-                .workspace_style
-                .unwrap_or_default(),
-            WorkspaceStyle::Dots
-        );
         for style in WorkspaceStyle::ALL {
-            let source = format!(
-                "panel main {{ start {{ group nav {{ item spaces kind=\"workspaces\" workspace-style=\"{}\"; }} }} }}",
-                style.key()
-            );
-            let document = crate::Document::parse(&source).unwrap();
-            let panels: Vec<Panel> = serde_json::from_value(document.get("panels").unwrap().clone()).unwrap();
-            validate(&panels).unwrap();
-            assert_eq!(panels[0].start.groups[0].items[0].workspace_style, Some(style));
-            let mut wrong_kind = panels.clone();
-            wrong_kind[0].start.groups[0].items[0].kind = ItemKind::Clock;
-            assert!(validate(&wrong_kind).unwrap_err().contains("workspace-style"));
-            let restored: Vec<Panel> = serde_json::from_value(serde_json::to_value(&panels).unwrap()).unwrap();
-            assert_eq!(restored, panels);
+            for key in ["style", "workspace-style"] {
+                let source = format!(
+                    "panel main {{ start {{ group nav {{ item spaces kind=\"workspaces\" {key}=\"{}\"; }} }} }}",
+                    style.key()
+                );
+                let document = crate::Document::parse(&source).unwrap();
+                let panels: Vec<Panel> = serde_json::from_value(document.get("panels").unwrap().clone()).unwrap();
+                validate(&panels).unwrap();
+                assert_eq!(panels[0].start.groups[0].items[0].kind, ItemKind::Workspaces { style });
+                let mut wrong_kind = serde_json::to_value(&panels[0].start.groups[0].items[0]).unwrap();
+                wrong_kind["kind"] = "clock".into();
+                assert!(serde_json::from_value::<Item>(wrong_kind).is_err());
+                let restored: Vec<Panel> = serde_json::from_value(serde_json::to_value(&panels).unwrap()).unwrap();
+                assert_eq!(restored, panels);
+            }
         }
-        let mut item = serde_json::to_value(Item::new("spaces", ItemKind::Workspaces)).unwrap();
-        item["workspace_style"] = "unsupported".into();
+        let mut item = serde_json::json!({"id": "spaces", "kind": "workspaces"});
+        assert_eq!(
+            serde_json::from_value::<Item>(item.clone()).unwrap().kind,
+            ItemKind::Workspaces {
+                style: WorkspaceStyle::Dots
+            }
+        );
+        item["style"] = "unsupported".into();
         assert!(serde_json::from_value::<Item>(item).is_err());
+    }
+
+    #[test]
+    fn legacy_title_flags_normalize_to_one_visibility_field() {
+        for (visible, enabled, expected) in [
+            (true, true, true),
+            (true, false, false),
+            (false, true, false),
+            (false, false, false),
+        ] {
+            let item: Item = serde_json::from_value(
+                serde_json::json!({ "id": "title", "kind": "focused-window", "visible": visible, "enabled": enabled }),
+            )
+            .unwrap();
+            assert_eq!(item.kind, ItemKind::FocusedWindow);
+            assert_eq!(item.visible, expected);
+            let saved = serde_json::to_value(&item).unwrap();
+            assert!(saved.get("enabled").is_none());
+            assert_eq!(serde_json::from_value::<Item>(saved).unwrap(), item);
+        }
     }
 }

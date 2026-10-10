@@ -938,9 +938,9 @@ currently share the same clock format and timezone.
 | Item `priority` | integer 0–100; default 50 | Lower priorities yield space first |
 | Item `representation` | omit, `wide`, `compact`, `icon` | Preferred supported form; smaller forms may be used |
 | Item `gap-before` | 0–64; unset | Override the preceding gap within a group |
-| Workspaces `workspace-style` | `numbers`, `dots` (default), `tabs`, `window-stacks`, `app-icons` | Workspace indicators; choose in the Workspaces item inspector |
+| Workspaces `style` | `numbers`, `dots` (default), `tabs`, `window-stacks`, `app-icons` | Workspace indicators; choose in the Workspaces item inspector |
 | Battery `percentage` | boolean; default `true` | Include percentage in its full form |
-| Focused window `enabled` | boolean; default `true` | Include the title |
+| Focused window `visible` | boolean; default `true` | Include the title |
 
 Earlier per-group `surface` and `background-opacity` fields remain readable but
 no longer control styling. New edits use the panel-level settings above.
@@ -955,8 +955,13 @@ for the active workspace, a filled dot for an occupied workspace, and an outline
 for an empty one. Tabs show workspace names, window stacks show up to three
 window outlines, and app icons show up to two distinct running applications.
 Hover for the workspace name and window count. Active transitions follow the
-animation and reduced-motion settings. Explicitly set `workspace-style="numbers"`
+animation and reduced-motion settings. Explicitly set `style="numbers"`
 to retain numbered indicators.
+
+Item-specific settings belong to their kind: Workspaces uses `style`, Battery
+uses `percentage`, and Focused window uses the shared `visible` flag. Earlier
+`workspace-style` and focused-window `enabled` values remain readable; editing
+these settings writes the canonical field and removes its legacy equivalent.
 
 The center stays screen-centered. When controls cannot fit, lower-priority items
 adapt first, with definition order breaking ties. The overflow chevron appears
