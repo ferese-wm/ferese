@@ -270,6 +270,7 @@ enum Message {
     HoverWorkspace(window::Id, u64, cosmic::iced::advanced::widget::Id, bool),
     WorkspaceTooltipDelay(u64),
     WorkspaceTooltipBounds(u64, Option<cosmic::iced::Rectangle>),
+    WorkspaceIconsLoaded(Result<workspace_ui::IconIndex, String>),
     ToggleOverview,
     StatusUpdated(status::Update),
     StartRecording,
@@ -937,6 +938,7 @@ impl cosmic::Application for FereseShell {
             }
             Message::WorkspaceTooltipDelay(serial) => self.locate_workspace_tooltip(serial),
             Message::WorkspaceTooltipBounds(serial, bounds) => self.show_workspace_tooltip(serial, bounds),
+            Message::WorkspaceIconsLoaded(result) => self.workspace_icons_loaded(result),
             Message::ToggleOverview => {
                 self.overview_active = !self.overview_active;
                 if let Some(control) = &self.control {

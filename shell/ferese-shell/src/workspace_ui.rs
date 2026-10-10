@@ -1,4 +1,5 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::{Element, Message, container, text};
@@ -21,16 +22,17 @@ impl FereseShell {
         .flat_map(|zone| &zone.groups)
         .flat_map(|group| &group.items)
         .any(|item| {
-            matches!(
-                item.kind,
-                crate::panel::ItemKind::Workspaces {
-                    style: ferese_config::panel::WorkspaceStyle::AppIcons
-                }
-            )
+            item.visible
+                && matches!(
+                    item.kind,
+                    crate::panel::ItemKind::Workspaces {
+                        style: ferese_config::panel::WorkspaceStyle::AppIcons
+                    }
+                )
         });
-        self.workspace_ui
-            .update(&self.snapshot, self.config.animations, needs_icons);
-        if self.workspace_ui.hovered.as_ref().is_some_and(|hover| {
+        self.workspace_ui.update(&self.snapshot, self.config.animations);
+        let icons = self.workspace_ui.load_icons(&self.snapshot, needs_icons);
+        let tooltip = if self.workspace_ui.hovered.as_ref().is_some_and(|hover| {
             !self
                 .snapshot
                 .workspaces
@@ -40,14 +42,71 @@ impl FereseShell {
             self.dismiss_workspace_tooltip()
         } else {
             Task::none()
+        };
+        Task::batch([icons, tooltip])
+    }
+
+    pub(super) fn workspace_icons_loaded(&mut self, result: Result<IconIndex, String>) -> Task<Message> {
+        self.workspace_ui.icons_loading = false;
+        match result {
+            Ok(index) => {
+                self.workspace_ui.entries = Some(index.entries);
+                self.workspace_ui.icons.extend(index.icons);
+                // Windows may have changed while discovery was in flight.
+                self.update_workspace_ui()
+            }
+            Err(error) => {
+                eprintln!("ferese-shell: could not load workspace icons: {error}");
+                Task::none()
+            }
         }
     }
 }
 
+#[derive(Clone, Debug)]
+pub(super) struct IconIndex {
+    entries: Arc<Vec<fde::DesktopEntry>>,
+    icons: HashMap<String, icon::Handle>,
+}
+
+fn discover_icons(entries: Option<Arc<Vec<fde::DesktopEntry>>>, app_ids: Vec<String>) -> IconIndex {
+    let entries = entries.unwrap_or_else(|| {
+        let mut seen = HashSet::new();
+        Arc::new(
+            fde::Iter::new(fde::default_paths())
+                .entries::<&str>(None)
+                .filter(|entry| seen.insert(entry.appid.clone()))
+                .filter(|entry| !entry.hidden())
+                .collect(),
+        )
+    });
+    let icons = app_ids
+        .into_iter()
+        .map(|app_id| {
+            let entry = fde::find_app_by_id(&entries, fde::unicase::Ascii::new(app_id.as_str()));
+            let source = entry
+                .and_then(fde::DesktopEntry::icon)
+                .unwrap_or("application-x-executable");
+            let handle = if source.starts_with('/') {
+                icon::from_path(source.into())
+            } else {
+                icon::from_name(source)
+                    .prefer_svg(true)
+                    .size(32)
+                    .fallback(Some(icon::IconFallback::Names(vec!["application-x-executable".into()])))
+                    .handle()
+            };
+            (app_id, handle)
+        })
+        .collect();
+    IconIndex { entries, icons }
+}
+
 #[derive(Default)]
 pub(super) struct WorkspaceUi {
-    entries: Option<Vec<fde::DesktopEntry>>,
+    entries: Option<Arc<Vec<fde::DesktopEntry>>>,
     icons: HashMap<String, icon::Handle>,
+    icons_loading: bool,
     transitions: HashMap<u64, Transition>,
     hovered: Option<Hover>,
     pub(super) tooltip: Option<window::Id>,
@@ -283,11 +342,11 @@ impl Transition {
 }
 
 impl WorkspaceUi {
-    pub(super) fn update(&mut self, snapshot: &ShellSnapshot, settings: motion::Settings, needs_icons: bool) {
-        self.update_at(snapshot, settings, needs_icons, Instant::now());
+    pub(super) fn update(&mut self, snapshot: &ShellSnapshot, settings: motion::Settings) {
+        self.update_at(snapshot, settings, Instant::now());
     }
 
-    fn update_at(&mut self, snapshot: &ShellSnapshot, settings: motion::Settings, needs_icons: bool, now: Instant) {
+    fn update_at(&mut self, snapshot: &ShellSnapshot, settings: motion::Settings, now: Instant) {
         let duration = if settings.motion_enabled() {
             Duration::from_secs_f64(0.16 / settings.speed)
         } else {
@@ -319,38 +378,34 @@ impl WorkspaceUi {
                 };
             }
         }
-        if needs_icons {
-            let entries = self.entries.get_or_insert_with(|| {
-                let mut seen = HashSet::new();
-                fde::Iter::new(fde::default_paths())
-                    .entries::<&str>(None)
-                    .filter(|entry| seen.insert(entry.appid.clone()))
-                    .filter(|entry| !entry.hidden())
-                    .collect()
-            });
-            for app_id in snapshot
-                .windows
-                .iter()
-                .map(|window| &window.app_id)
-                .filter(|id| !id.is_empty())
-            {
-                self.icons.entry(app_id.clone()).or_insert_with(|| {
-                    let entry = fde::find_app_by_id(entries, fde::unicase::Ascii::new(app_id.as_str()));
-                    let source = entry
-                        .and_then(fde::DesktopEntry::icon)
-                        .unwrap_or("application-x-executable");
-                    if source.starts_with('/') {
-                        icon::from_path(source.into())
-                    } else {
-                        icon::from_name(source)
-                            .prefer_svg(true)
-                            .size(32)
-                            .fallback(Some(icon::IconFallback::Names(vec!["application-x-executable".into()])))
-                            .handle()
-                    }
-                });
-            }
+    }
+
+    fn load_icons(&mut self, snapshot: &ShellSnapshot, needed: bool) -> Task<Message> {
+        if !needed || self.icons_loading {
+            return Task::none();
         }
+        let app_ids: Vec<_> = snapshot
+            .windows
+            .iter()
+            .map(|window| &window.app_id)
+            .filter(|id| !id.is_empty() && !self.icons.contains_key(*id))
+            .cloned()
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        if app_ids.is_empty() {
+            return Task::none();
+        }
+        self.icons_loading = true;
+        let entries = self.entries.clone();
+        Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || discover_icons(entries, app_ids))
+                    .await
+                    .map_err(|error| error.to_string())
+            },
+            |result| cosmic::Action::App(Message::WorkspaceIconsLoaded(result)),
+        )
     }
 
     pub(super) fn transition(&self, workspace: u64, active: bool) -> Transition {
@@ -371,7 +426,12 @@ impl WorkspaceUi {
             .collect::<BTreeSet<_>>()
             .into_iter()
             .take(2)
-            .filter_map(|id| self.icons.get(id).cloned())
+            .map(|id| {
+                self.icons
+                    .get(id)
+                    .cloned()
+                    .unwrap_or_else(|| icon::from_svg_bytes(ferese_theme::icons::APPLICATION))
+            })
             .collect()
     }
 }
@@ -405,17 +465,93 @@ mod tests {
         }
     }
 
+    fn add_window(snapshot: &mut ShellSnapshot, app_id: &str) {
+        snapshot.windows.push(crate::control::WindowSnapshot {
+            id: snapshot.windows.len() as u64,
+            workspace: 1,
+            app_id: app_id.into(),
+            title: String::new(),
+            focused: false,
+            urgent: false,
+            fullscreen: false,
+            floating: false,
+        });
+    }
+
+    #[test]
+    fn discovery_is_deferred_and_only_one_request_runs_at_a_time() {
+        let mut ui = WorkspaceUi::default();
+        let mut snapshot = snapshot(1);
+        add_window(&mut snapshot, "new-app");
+        ui.update(&snapshot, motion::Settings::default());
+        assert!(ui.entries.is_none());
+        assert_eq!(ui.load_icons(&snapshot, false).units(), 0);
+        assert!(!ui.icons_loading);
+        assert_eq!(ui.load_icons(&snapshot, true).units(), 1);
+        assert!(ui.icons_loading);
+        assert!(ui.entries.is_none(), "scheduling must not perform filesystem discovery");
+        assert_eq!(ui.apps(1, &snapshot).len(), 1, "new apps have a bundled placeholder");
+        assert_eq!(ui.load_icons(&snapshot, true).units(), 0);
+        assert!(ui.entries.is_none());
+        assert!(ui.icons.is_empty());
+    }
+
+    #[test]
+    fn icon_publication_preserves_existing_icons_and_queues_new_windows() {
+        let mut shell = crate::tests::shell_with_measured_panel();
+        for group in &mut shell.config.panels[0].start.groups {
+            for item in &mut group.items {
+                if matches!(item.kind, crate::panel::ItemKind::Workspaces { .. }) {
+                    item.kind = crate::panel::ItemKind::Workspaces {
+                        style: ferese_config::panel::WorkspaceStyle::AppIcons,
+                    };
+                }
+            }
+        }
+        shell.snapshot = snapshot(1);
+        add_window(&mut shell.snapshot, "existing");
+        add_window(&mut shell.snapshot, "discovered");
+        shell
+            .workspace_ui
+            .icons
+            .insert("existing".into(), icon::from_svg_bytes(ferese_theme::icons::SETTINGS));
+        use std::hash::{Hash, Hasher};
+        let identity = |handle: &icon::Handle| {
+            let mut hash = std::collections::hash_map::DefaultHasher::new();
+            handle.hash(&mut hash);
+            hash.finish()
+        };
+        let existing = identity(&shell.workspace_ui.icons["existing"]);
+        drop(shell.update_workspace_ui());
+        assert!(shell.workspace_ui.icons_loading);
+        assert_eq!(identity(&shell.workspace_ui.icons["existing"]), existing);
+        add_window(&mut shell.snapshot, "arrived-during-discovery");
+        drop(shell.workspace_icons_loaded(Ok(IconIndex {
+            entries: Arc::new(Vec::new()),
+            icons: HashMap::from([("discovered".into(), icon::from_svg_bytes(ferese_theme::icons::OVERVIEW))]),
+        })));
+        assert_eq!(identity(&shell.workspace_ui.icons["existing"]), existing);
+        assert!(shell.workspace_ui.icons.contains_key("discovered"));
+        assert!(
+            shell.workspace_ui.icons_loading,
+            "newly arrived windows need a follow-up request"
+        );
+        drop(shell.workspace_icons_loaded(Err("discovery failed".into())));
+        assert!(!shell.workspace_ui.icons_loading);
+        assert_eq!(identity(&shell.workspace_ui.icons["existing"]), existing);
+    }
+
     #[test]
     fn switching_during_a_transition_preserves_position_and_reduced_motion_snaps() {
         let mut ui = WorkspaceUi::default();
         let now = Instant::now();
         let settings = motion::Settings::default();
-        ui.update_at(&snapshot(1), settings, false, now);
+        ui.update_at(&snapshot(1), settings, now);
         assert_eq!(ui.transition(1, true).progress(now), 1.);
-        ui.update_at(&snapshot(2), settings, false, now);
+        ui.update_at(&snapshot(2), settings, now);
         let midpoint = now + Duration::from_millis(80);
         assert_eq!(ui.transition(1, false).progress(midpoint), 0.5);
-        ui.update_at(&snapshot(1), settings, false, midpoint);
+        ui.update_at(&snapshot(1), settings, midpoint);
         assert_eq!(ui.transition(1, true).progress(midpoint), 0.5);
         assert_eq!(ui.transition(2, false).progress(midpoint), 0.5);
         assert_eq!(
@@ -428,14 +564,13 @@ mod tests {
                 reduced_motion: true,
                 ..settings
             },
-            false,
             midpoint,
         );
         assert_eq!(ui.transition(1, false).progress(midpoint), 0.);
         assert_eq!(ui.transition(2, true).progress(midpoint), 1.);
         assert!(!ui.transition(2, true).active(midpoint));
         assert!(ui.entries.is_none(), "other styles must not scan desktop applications");
-        ui.update_at(&ShellSnapshot::default(), settings, false, midpoint);
+        ui.update_at(&ShellSnapshot::default(), settings, midpoint);
         assert!(ui.transitions.is_empty());
     }
 
@@ -444,7 +579,7 @@ mod tests {
         let mut ui = WorkspaceUi::default();
         let mut snapshot = snapshot(1);
         snapshot.workspaces[0].output = Some(5);
-        ui.update(&snapshot, motion::Settings::default(), false);
+        ui.update(&snapshot, motion::Settings::default());
         assert_eq!(ui.transition(1, false).progress(Instant::now()), 0.);
     }
 
