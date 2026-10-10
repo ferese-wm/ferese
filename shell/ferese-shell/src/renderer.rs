@@ -30,7 +30,7 @@ fn apply_app_backend(command: &mut Command, backend: Option<&OsStr>) {
     if let Some(backend) = backend {
         command.env("ICED_BACKEND", backend);
     } else {
-        // The shell's automatic software preference must not leak into Settings.
+        // Applications choose their own default rendering backend.
         command.env_remove("ICED_BACKEND");
     }
 }

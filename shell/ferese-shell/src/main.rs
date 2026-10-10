@@ -24,6 +24,7 @@ mod renderer;
 mod status;
 mod status_ui;
 mod system_modal;
+mod workspace_ui;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
@@ -170,6 +171,7 @@ struct FereseShell {
     wallpaper: Option<image::Handle>,
     control: Option<ShellControl>,
     snapshot: ShellSnapshot,
+    workspace_ui: workspace_ui::WorkspaceUi,
     overview_active: bool,
     clock: String,
     clock_service: clock::Service,
@@ -262,6 +264,9 @@ enum Message {
     MediaArt(media::Artwork),
     ControlReady,
     ActivateWorkspace(u64),
+    HoverWorkspace(window::Id, u64, cosmic::iced::advanced::widget::Id, bool),
+    WorkspaceTooltipDelay(u64),
+    WorkspaceTooltipBounds(u64, Option<cosmic::iced::Rectangle>),
     ToggleOverview,
     StatusUpdated(status::Update),
     StartRecording,
@@ -356,6 +361,7 @@ impl cosmic::Application for FereseShell {
                 })
                 .ok(),
             snapshot: ShellSnapshot::default(),
+            workspace_ui: Default::default(),
             overview_active: false,
             clock: current_time(),
             desktop_clock,
@@ -701,7 +707,10 @@ impl cosmic::Application for FereseShell {
                 close.chain(action)
             }
             Message::OpenMenu(..) => Task::none(), // Bar views attach an explicit item/surface anchor.
-            Message::OpenPopover(kind, anchor) => self.open_menu(kind, anchor),
+            Message::OpenPopover(kind, anchor) => {
+                let tooltip = self.dismiss_workspace_tooltip();
+                Task::batch([tooltip, self.open_menu(kind, anchor)])
+            }
             Message::ShowGuide => {
                 if self.guide_shown
                     || self.guide_load.loading
@@ -846,15 +855,18 @@ impl cosmic::Application for FereseShell {
 
                     if let Some(active) = poll.overview_active {
                         self.overview_active = active;
+                        if active {
+                            reload_task = self.dismiss_workspace_tooltip();
+                        }
                     }
 
                     if let Some(source) = poll.config {
-                        reload_task = self.reload_config(source);
+                        reload_task = Task::batch([reload_task, self.reload_config(source)]);
                     }
 
                     if let Some(snapshot) = poll.snapshot {
                         self.snapshot = snapshot;
-                        let mut tasks = vec![reload_task];
+                        let mut tasks = vec![reload_task, self.update_workspace_ui()];
                         let mut visibility_changed = false;
 
                         for entry in &mut self.outputs {
@@ -890,6 +902,7 @@ impl cosmic::Application for FereseShell {
                             tasks.push(self.destroy_menu());
                         }
                         if visibility_changed {
+                            tasks.push(self.dismiss_workspace_tooltip());
                             self.refresh_media_art(false);
                         }
 
@@ -914,14 +927,19 @@ impl cosmic::Application for FereseShell {
                 if let Some(control) = &self.control {
                     control.activate_workspace(id);
                 }
-                Task::none()
+                self.dismiss_workspace_tooltip()
             }
+            Message::HoverWorkspace(bar, workspace, target, entered) => {
+                self.hover_workspace(bar, workspace, target, entered)
+            }
+            Message::WorkspaceTooltipDelay(serial) => self.locate_workspace_tooltip(serial),
+            Message::WorkspaceTooltipBounds(serial, bounds) => self.show_workspace_tooltip(serial, bounds),
             Message::ToggleOverview => {
                 self.overview_active = !self.overview_active;
                 if let Some(control) = &self.control {
                     control.set_overview_active(self.overview_active);
                 }
-                Task::none()
+                self.dismiss_workspace_tooltip()
             }
         }
     }
@@ -1004,17 +1022,21 @@ impl FereseShell {
         self.notifications.configure(config.notifications.clone());
         self.clock_service.configure(&config.desktop_widgets.clock);
         self.config = config;
+        let workspace_task = self.update_workspace_ui();
         self.desktop_clock = self
             .config
             .desktop_widgets
             .clock
             .labels(&Zoned::now())
             .unwrap_or_default();
-        let mut tasks = vec![if clock_changed {
-            self.rebuild_clocks(true)
-        } else {
-            Task::none()
-        }];
+        let mut tasks = vec![
+            workspace_task,
+            if clock_changed {
+                self.rebuild_clocks(true)
+            } else {
+                Task::none()
+            },
+        ];
 
         if composition_changed {
             tasks.push(self.destroy_menu());
@@ -1073,6 +1095,7 @@ impl FereseShell {
             tasks.push(self.update_panel_margin(bar, edge_changed || old.bar_margin_top != theme.bar_margin_top));
         }
         if geometry_changed {
+            tasks.push(self.dismiss_workspace_tooltip());
             if let Some(surface) = self.notification_surface.take() {
                 tasks.push(destroy_layer_surface(surface.id));
             }
@@ -1122,7 +1145,7 @@ fn color_with_opacity(mut value: [u8; 4], opacity: f32) -> Color {
 mod tests {
     use super::*;
     use crate::control::{OutputSnapshot, WindowSnapshot};
-    fn shell_with_measured_panel() -> FereseShell {
+    pub(super) fn shell_with_measured_panel() -> FereseShell {
         let config = ShellConfig::default();
         // This output is never dispatched; tests use only its stored geometry.
         let (socket, _peer) = std::os::unix::net::UnixStream::pair().unwrap();
@@ -1158,6 +1181,7 @@ mod tests {
             wallpaper: None,
             control: None,
             snapshot: Default::default(),
+            workspace_ui: Default::default(),
             overview_active: false,
             clock: String::new(),
             desktop_clock: Default::default(),
@@ -1360,29 +1384,6 @@ mod tests {
         assert_eq!(before.border, after.border);
         assert_eq!(before.background, after.background);
         assert_eq!(before.border.color, color(theme.border));
-        assert_eq!(
-            workspace_selector_style(false, false, true, theme).background,
-            workspace_selector_style(false, false, true, contrasted).background,
-        );
-    }
-
-    #[test]
-    fn workspace_selector_has_distinct_active_paint() {
-        let theme = ShellTheme::default();
-        let active = workspace_selector_style(true, false, false, theme);
-        let occupied = workspace_selector_style(false, false, true, theme);
-        let inactive = workspace_selector_style(false, false, false, theme);
-        let remote = workspace_selector_style(false, true, false, theme);
-        assert!(active.background.is_some());
-        assert_eq!(
-            active.background,
-            Some(Background::Color(color_with_opacity(theme.accent, 0.16)))
-        );
-        assert!(occupied.background.is_some());
-        assert!(inactive.background.is_none());
-        assert_eq!(inactive.border.width, 0.0);
-        assert_eq!(remote.border.width, 1.0);
-        assert!(remote.background.is_none());
     }
 
     #[test]

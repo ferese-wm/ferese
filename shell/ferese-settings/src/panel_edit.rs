@@ -278,7 +278,7 @@ pub(super) fn plan(snapshot: &Snapshot, action: Action) -> Result<Vec<Edit>, Str
         Action::Set(id, field, value) => {
             if !matches!(
                 field.as_str(),
-                "visible" | "overflow" | "representation" | "percentage" | "enabled"
+                "visible" | "overflow" | "representation" | "percentage" | "enabled" | "workspace_style"
             ) {
                 return Err("Unknown panel item setting.".into());
             }
@@ -871,6 +871,42 @@ animations { speed 0.8; }
         assert_eq!(
             snapshot.string("panels.0.center.groups.0.items.0.custom_note", ""),
             "keep"
+        );
+    }
+    #[test]
+    fn workspace_style_selection_preserves_other_preferences_and_moves_with_the_item() {
+        let mut snapshot = Snapshot::parse("// keep\nstatus { battery-percentage #false; }".into()).unwrap();
+        for style in ferese_config::panel::WorkspaceStyle::ALL {
+            apply(
+                &mut snapshot,
+                Action::Set(
+                    ItemId("workspaces".into()),
+                    "workspace_style".into(),
+                    style.key().into(),
+                ),
+            );
+            let panels: Vec<Panel> = serde_json::from_value(snapshot.item("panels").unwrap().clone()).unwrap();
+            let panel = &panels[0];
+            assert_eq!(
+                panel.item(&ItemId("workspaces".into())).unwrap().workspace_style,
+                Some(style)
+            );
+            assert!(snapshot.source.contains("// keep"));
+            assert_eq!(
+                panel.item(&ItemId("battery".into())).unwrap().kind,
+                ItemKind::Battery { percentage: false }
+            );
+            Snapshot::parse(snapshot.source.clone()).unwrap();
+        }
+        apply(
+            &mut snapshot,
+            Action::Move(ItemId("workspaces".into()), target("end", "status")),
+        );
+        let panels: Vec<Panel> = serde_json::from_value(snapshot.item("panels").unwrap().clone()).unwrap();
+        let panel = &panels[0];
+        assert_eq!(
+            panel.item(&ItemId("workspaces".into())).unwrap().workspace_style,
+            Some(ferese_config::panel::WorkspaceStyle::AppIcons)
         );
     }
 }

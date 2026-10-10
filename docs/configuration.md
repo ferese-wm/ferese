@@ -938,6 +938,7 @@ currently share the same clock format and timezone.
 | Item `priority` | integer 0–100; default 50 | Lower priorities yield space first |
 | Item `representation` | omit, `wide`, `compact`, `icon` | Preferred supported form; smaller forms may be used |
 | Item `gap-before` | 0–64; unset | Override the preceding gap within a group |
+| Workspaces `workspace-style` | `numbers`, `dots` (default), `tabs`, `window-stacks`, `app-icons` | Workspace indicators; choose in the Workspaces item inspector |
 | Battery `percentage` | boolean; default `true` | Include percentage in its full form |
 | Focused window `enabled` | boolean; default `true` | Include the title |
 
@@ -948,6 +949,14 @@ Media and clock support all three representations. Battery with a percentage
 supports `wide` and `icon`; other controls keep their existing form. Unsupported
 preferences use the kind's normal form. The title can shrink and ellipsize;
 workspace controls scroll within their allocation. The panel itself does not scroll.
+
+Workspace indicators keep the same width as their state changes. Dots use a pill
+for the active workspace, a filled dot for an occupied workspace, and an outline
+for an empty one. Tabs show workspace names, window stacks show up to three
+window outlines, and app icons show up to two distinct running applications.
+Hover for the workspace name and window count. Active transitions follow the
+animation and reduced-motion settings. Explicitly set `workspace-style="numbers"`
+to retain numbered indicators.
 
 The center stays screen-centered. When controls cannot fit, lower-priority items
 adapt first, with definition order breaking ties. The overflow chevron appears

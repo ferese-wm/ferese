@@ -35,6 +35,12 @@ use schema::{Field, Kind, Page};
 use store::{Edit, Snapshot, set};
 
 fn main() -> cosmic::iced::Result {
+    if std::env::var_os("ICED_BACKEND").is_none() {
+        // The GPU text path can omit labels inside clipped scrolling content.
+        // Prefer the reliable software path while preserving explicit overrides.
+        // SAFETY: process entry, before the toolkit or font workers start threads.
+        unsafe { std::env::set_var("ICED_BACKEND", "tiny-skia,wgpu") };
+    }
     let mut args = std::env::args_os().skip(1);
     let mut path = store::config_path();
     let mut initial_page = None;

@@ -146,9 +146,10 @@ impl FereseShell {
     }
 
     pub fn destroy_menu(&mut self) -> Task<Message> {
+        let tooltip = self.dismiss_workspace_tooltip();
         crate::EFFECT_FRAME_PENDING.store(false, std::sync::atomic::Ordering::Relaxed);
         let Some(menu) = self.menu.take() else {
-            return Task::none();
+            return tooltip;
         };
         self.refresh_media_art(false);
         if menu.kind == Menu::Notifications {
@@ -156,6 +157,7 @@ impl FereseShell {
             self.notifications.hovered = None;
         }
         Task::batch([
+            tooltip,
             cosmic::task::message(cosmic::Action::Surface(cosmic::surface::action::destroy_popup(menu.id))),
             self.sync_notification_surface(),
         ])

@@ -309,6 +309,12 @@ fn render_panel_review_states() {
             ("motion", panel_controls::PanelPage::Panels, None, None),
             ("items", panel_controls::PanelPage::Arrange, None, None),
             (
+                "workspace-styles",
+                panel_controls::PanelPage::Arrange,
+                Some("workspaces"),
+                None,
+            ),
+            (
                 "selected-item",
                 panel_controls::PanelPage::Arrange,
                 Some("battery"),

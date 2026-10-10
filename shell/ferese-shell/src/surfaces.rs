@@ -35,6 +35,7 @@ impl FereseShell {
                     Task::none()
                 };
                 let mut tasks = vec![
+                    self.dismiss_workspace_tooltip(),
                     menu.chain(destroy_layer_surface(entry.bar)),
                     self.rebuild_system_modal(),
                 ];
@@ -337,6 +338,10 @@ impl FereseShell {
                 ..
             }) if self.menu.is_some() => self.close_menu(),
             Event::PlatformSpecific(PlatformSpecific::Wayland(wayland::Event::Popup(event, surface, popup_id))) => {
+                if self.workspace_ui.tooltip == Some(popup_id) && matches!(event, wayland::PopupEvent::Done) {
+                    self.workspace_ui.tooltip = None;
+                    return self.dismiss_workspace_tooltip();
+                }
                 if let Some(menu) = &mut self.menu
                     && menu.id == popup_id
                 {
@@ -362,6 +367,10 @@ impl FereseShell {
                 self.menu = None;
                 EFFECT_FRAME_PENDING.store(false, Ordering::Relaxed);
                 Task::none()
+            }
+            Event::Window(window::Event::Closed) if self.workspace_ui.tooltip == Some(id) => {
+                self.workspace_ui.tooltip = None;
+                self.dismiss_workspace_tooltip()
             }
             Event::Window(window::Event::Closed)
                 if self.system_modal.as_ref().is_some_and(|modal| modal.contains(id)) =>

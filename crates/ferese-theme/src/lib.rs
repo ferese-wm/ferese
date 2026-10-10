@@ -10,6 +10,7 @@ pub mod menus;
 mod palette;
 pub mod panel;
 mod typography;
+pub mod workspaces;
 
 pub use button::accent_button;
 pub use contrast::{accent_color, accent_pair, apply, composite, contrast, foreground, luminance};

@@ -85,6 +85,47 @@ pub enum OverflowPolicy {
     Always,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum WorkspaceStyle {
+    Numbers,
+    #[default]
+    Dots,
+    Tabs,
+    WindowStacks,
+    AppIcons,
+}
+
+impl WorkspaceStyle {
+    pub const ALL: [Self; 5] = [
+        Self::Numbers,
+        Self::Dots,
+        Self::Tabs,
+        Self::WindowStacks,
+        Self::AppIcons,
+    ];
+
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Numbers => "numbers",
+            Self::Dots => "dots",
+            Self::Tabs => "tabs",
+            Self::WindowStacks => "window-stacks",
+            Self::AppIcons => "app-icons",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Numbers => "Numbers",
+            Self::Dots => "Dots",
+            Self::Tabs => "Tabs",
+            Self::WindowStacks => "Window stacks",
+            Self::AppIcons => "App icons",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum ItemKind {
@@ -152,6 +193,8 @@ pub struct Item {
     pub priority: u8,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub representation: Option<Representation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_style: Option<WorkspaceStyle>,
     #[serde(default = "yes")]
     pub visible: bool,
 }
@@ -178,6 +221,7 @@ impl Item {
             kind,
             gap_before: None,
             representation: None,
+            workspace_style: None,
             visible: true,
             overflow: if matches!(
                 kind,
@@ -343,6 +387,9 @@ pub fn validate(panels: &[Panel]) -> Result<(), String> {
                     return Err("invalid panel group spacing or padding".into());
                 }
                 for item in &group.items {
+                    if item.workspace_style.is_some() && item.kind != ItemKind::Workspaces {
+                        return Err("workspace-style is only supported by Workspaces items".into());
+                    }
                     if !valid_id(&item.id.0) || !item_ids.insert(&item.id.0) {
                         return Err(format!("invalid or duplicate item ID {:?}", item.id.0));
                     }
@@ -394,6 +441,7 @@ impl Panel {
                 kind: ItemKind::Overflow,
                 gap_before: None,
                 representation: None,
+                workspace_style: None,
                 visible: true,
                 overflow: OverflowPolicy::Never,
                 priority: 100,
@@ -780,5 +828,32 @@ animations { speed 0.8; }
         assert!(crate::from_str::<serde_json::Value>("panel \"main\" { edge \"bottom\"; }").is_ok());
         let doc = crate::Document::parse("panel \"main\" { edge \"left\"; }").unwrap();
         assert!(serde_json::from_value::<Vec<Panel>>(doc.get("panels").unwrap().clone()).is_err());
+    }
+    #[test]
+    fn workspace_styles_round_trip_and_only_apply_to_workspaces() {
+        assert_eq!(
+            Item::new("spaces", ItemKind::Workspaces)
+                .workspace_style
+                .unwrap_or_default(),
+            WorkspaceStyle::Dots
+        );
+        for style in WorkspaceStyle::ALL {
+            let source = format!(
+                "panel main {{ start {{ group nav {{ item spaces kind=\"workspaces\" workspace-style=\"{}\"; }} }} }}",
+                style.key()
+            );
+            let document = crate::Document::parse(&source).unwrap();
+            let panels: Vec<Panel> = serde_json::from_value(document.get("panels").unwrap().clone()).unwrap();
+            validate(&panels).unwrap();
+            assert_eq!(panels[0].start.groups[0].items[0].workspace_style, Some(style));
+            let mut wrong_kind = panels.clone();
+            wrong_kind[0].start.groups[0].items[0].kind = ItemKind::Clock;
+            assert!(validate(&wrong_kind).unwrap_err().contains("workspace-style"));
+            let restored: Vec<Panel> = serde_json::from_value(serde_json::to_value(&panels).unwrap()).unwrap();
+            assert_eq!(restored, panels);
+        }
+        let mut item = serde_json::to_value(Item::new("spaces", ItemKind::Workspaces)).unwrap();
+        item["workspace_style"] = "unsupported".into();
+        assert!(serde_json::from_value::<Item>(item).is_err());
     }
 }

@@ -1,9 +1,8 @@
 use super::{
-    Background, BarMetrics, Border, Color, Element, FereseShell, Length, Message, ShellSnapshot, ShellTheme, alignment,
-    bar_icon, button, color, color_with_opacity, container, control, motion, row, status_ui, text, theme, window,
+    Background, BarMetrics, Color, Element, FereseShell, Length, Message, ShellSnapshot, ShellTheme, alignment,
+    bar_icon, button, color, container, control, motion, row, status_ui, text, theme, window,
 };
 use crate::panel::{Availability, Item, ItemKind, Panel, Zone};
-use cosmic::iced::border::Shape as BorderShape;
 use ferese_config::BarLayout;
 
 use ferese_theme::panel as adaptive;
@@ -243,7 +242,7 @@ impl FereseShell {
                 1.0,
             ),
             ItemKind::Workspaces => {
-                let workspaces = self.view_workspace_item(id);
+                let workspaces = self.view_workspace_item(id, item.workspace_style.unwrap_or_default(), &item.id.0);
                 if let Some(width) = width {
                     cosmic::iced::widget::scrollable(workspaces)
                         .direction(cosmic::iced::widget::scrollable::Direction::Horizontal(
@@ -407,7 +406,12 @@ impl FereseShell {
         rows
     }
 
-    fn view_workspace_item(&self, id: window::Id) -> Element<'_, cosmic::Action<Message>> {
+    fn view_workspace_item(
+        &self,
+        id: window::Id,
+        style: ferese_config::panel::WorkspaceStyle,
+        instance: &str,
+    ) -> Element<'_, cosmic::Action<Message>> {
         let focused_output = self.output_for_bar(id);
         let shell_theme = self.config.theme.for_bar();
         let bar = BarMetrics::from(shell_theme);
@@ -422,26 +426,43 @@ impl FereseShell {
             let owner = workspace
                 .output
                 .and_then(|id| self.snapshot.outputs.iter().find(|output| output.id == id));
-            let occupied = workspace.window_count > 0;
-            let indicator = workspace_indicator(
-                &workspace.name,
+            let transition = self.workspace_ui.transition(workspace.id, active);
+            let apps = if style == ferese_config::panel::WorkspaceStyle::AppIcons {
+                self.workspace_ui.apps(workspace.id, &self.snapshot)
+            } else {
+                Vec::new()
+            };
+            let details = ferese_theme::workspaces::Workspace {
+                name: (&workspace.name).into(),
+                index: workspace.index,
+                window_count: workspace.window_count,
                 active,
-                workspace.visible && !active,
-                occupied,
-                bar,
-                shell_theme,
+                visible_elsewhere: workspace.visible && !active,
+            };
+            let accessible_name = ferese_theme::workspaces::tooltip_label(&details);
+            let indicator = motion::frame_driven(
+                transition.revision(),
+                move |now| {
+                    ferese_theme::workspaces::indicator(
+                        style,
+                        details.clone(),
+                        shell_theme.palette(),
+                        super::shell_font(),
+                        bar.group_item_height,
+                        transition.progress(now),
+                        apps.iter()
+                            .map(|handle| cosmic::widget::icon::icon(handle.clone()).size(16).into())
+                            .collect(),
+                    )
+                },
+                move |now| transition.active(now),
+                |_| {},
+                |_| None,
             );
             let workspace_button = button::custom(indicator)
                 .name(format!(
-                    "Workspace {}{}{}",
-                    workspace.index,
-                    if workspace.focused {
-                        ", focused"
-                    } else if active {
-                        ", visible"
-                    } else {
-                        ""
-                    },
+                    "{accessible_name}{}{}",
+                    if workspace.focused { ", focused" } else { "" },
                     owner.map_or(String::new(), |output| format!(", on {}", output.name))
                 ))
                 .height(bar.group_item_height)
@@ -458,9 +479,21 @@ impl FereseShell {
                 false,
                 1.0,
             );
-            // Iced tooltips are overlays inside this bar-height layer surface;
-            // viewport clamping puts them back over the selector. Keep the
-            // accessible button name, without an overlay stealing its target.
+            let target =
+                cosmic::iced::advanced::widget::Id::new(format!("workspace:{id:?}:{instance}:{}", workspace.id));
+            let selector = cosmic::widget::mouse_area(container(selector).id(target.clone()))
+                .on_enter(cosmic::Action::App(Message::HoverWorkspace(
+                    id,
+                    workspace.id,
+                    target.clone(),
+                    true,
+                )))
+                .on_exit(cosmic::Action::App(Message::HoverWorkspace(
+                    id,
+                    workspace.id,
+                    target,
+                    false,
+                )));
             workspace_buttons = workspace_buttons.push(selector);
         }
         workspace_buttons.into()
@@ -585,35 +618,6 @@ pub(super) fn output_bar_hidden(snapshot: &ShellSnapshot, output: Option<u64>) -
     })
 }
 
-pub(super) fn workspace_indicator(
-    name: &str,
-    active: bool,
-    active_elsewhere: bool,
-    occupied: bool,
-    bar: BarMetrics,
-    shell_theme: ShellTheme,
-) -> Element<'static, cosmic::Action<Message>> {
-    let foreground = if active {
-        shell_theme.accent
-    } else if occupied {
-        shell_theme.text_primary
-    } else {
-        shell_theme.text_muted
-    };
-    bar_content(
-        text(name.to_owned())
-            .size(12)
-            .class(theme::Text::Color(color(foreground))),
-        bar.group_item_height,
-    )
-    .width(24)
-    .align_x(alignment::Horizontal::Center)
-    .class(theme::Container::custom(move |_| {
-        workspace_selector_style(active, active_elsewhere, occupied, shell_theme)
-    }))
-    .into()
-}
-
 pub(super) fn focused_bar_title<'a>(snapshot: &'a ShellSnapshot, output: Option<&control::OutputSnapshot>) -> &'a str {
     let Some(output) = output else {
         return "";
@@ -633,31 +637,6 @@ pub(super) fn focused_bar_title<'a>(snapshot: &'a ShellSnapshot, output: Option<
 
 pub(super) fn workspace_active_on_bar(workspace: u64, output: Option<&control::OutputSnapshot>) -> bool {
     output.is_some_and(|output| output.active_workspace == workspace)
-}
-
-pub(super) fn workspace_selector_style(
-    active: bool,
-    active_elsewhere: bool,
-    occupied: bool,
-    shell_theme: ShellTheme,
-) -> container::Style {
-    container::Style {
-        background: if active {
-            Some(Background::Color(color_with_opacity(shell_theme.accent, 0.16)))
-        } else if occupied {
-            Some(Background::Color(color_with_opacity(shell_theme.border, 0.3)))
-        } else {
-            None
-        },
-        border: Border {
-            shape: BorderShape::Continuous,
-            color: color_with_opacity(shell_theme.accent, 0.55),
-            width: if active_elsewhere { 1.0 } else { 0.0 },
-            radius: shell_theme.material_radius.min(14.0).into(),
-            ..Default::default()
-        },
-        ..Default::default()
-    }
 }
 
 pub(super) fn bar_style(theme: ShellTheme, compositor_material: bool, islands: bool) -> container::Style {

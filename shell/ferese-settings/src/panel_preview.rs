@@ -303,6 +303,21 @@ impl App {
     ) -> Element<'static, Message> {
         use ferese_theme::icons;
         let palette = visuals::Palette::from_resolved(&self.resolved.presented);
+        if item.kind == ItemKind::Workspaces {
+            let sample =
+                ferese_theme::workspaces::sample(item.workspace_style.unwrap_or_default(), palette, self.font, 20.);
+            let control = button::custom(container(sample).id(format!("preview-icon:{}", item.id.0)))
+                .name("Edit Workspaces")
+                .padding([4, 2])
+                .height(28)
+                .on_press(Message::PanelSelect(item.id.clone()))
+                .class(preview_button(palette, self.panel_selection.as_ref() == Some(&item.id)));
+            return container(control)
+                .id(format!("preview-item:{}", item.id.0))
+                .width(width.map_or(Length::Shrink, Length::Fixed))
+                .clip(true)
+                .into();
+        }
         let source = match item.kind {
             ItemKind::Overview => icons::FERESE,
             ItemKind::Workspaces => icons::OVERVIEW,

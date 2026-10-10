@@ -71,6 +71,10 @@ impl App {
             Field::new(format!("{path}.visible"), "Show item", "", Kind::Toggle(true)),
         ));
         rows = rows.push(self.panel_divider());
+        if item.kind == ItemKind::Workspaces {
+            rows = rows.push(self.workspace_style_picker(item));
+            rows = rows.push(self.panel_divider());
+        }
         rows = rows.push(self.panel_field(
             item,
             Field::new(
@@ -137,6 +141,38 @@ impl App {
                 Some(Message::PanelEdit(Action::Remove(item.id.clone()))),
             ))
             .into()
+    }
+
+    fn workspace_style_picker(&self, item: &Item) -> Element<'static, Message> {
+        let palette = crate::visuals::Palette::from_resolved(&self.resolved.presented);
+        let selected = item.workspace_style.unwrap_or_default();
+        let mut choices = widget::column([])
+            .spacing(6)
+            .push(self.label("Workspace style", 13.))
+            .push(self.note("A sample of active, occupied and empty workspaces."));
+        for style in ferese_config::panel::WorkspaceStyle::ALL {
+            let sample = ferese_theme::workspaces::sample(style, palette, self.font, 22.);
+            choices = choices.push(
+                widget::button::custom(
+                    widget::row![self.label(style.label(), 12.).width(Length::Fill), sample,]
+                        .spacing(10)
+                        .align_y(Alignment::Center),
+                )
+                .id(format!("workspace-style:{}", style.key()).into())
+                .name(format!("Workspace style: {}", style.label()))
+                .padding([8, 10])
+                .width(Length::Fill)
+                .class(crate::visuals::panel_button(palette, style == selected))
+                .on_press_maybe((style != selected).then(|| {
+                    Message::PanelEdit(Action::Set(
+                        item.id.clone(),
+                        "workspace_style".into(),
+                        style.key().into(),
+                    ))
+                })),
+            );
+        }
+        choices.into()
     }
 
     pub(super) fn group_inspector(&self, panel: &Panel, group: &Group, placement: Zone) -> Element<'static, Message> {
