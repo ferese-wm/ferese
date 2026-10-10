@@ -127,12 +127,12 @@ impl App {
             view: self.preview_control(&overflow.items[0], Representation::Icon, None),
         });
         let overflow_width = 2. * f32::from(overflow.padding[1])
-            + if panel.background == ferese_config::BarLayout::Islands {
+            + if panel.resolved_surface(&overflow) == ferese_config::panel::GroupSurface::Island {
                 2. * overflow.island_padding
             } else {
                 0.
             };
-        let continuous = panel.background == ferese_config::BarLayout::Continuous;
+        let continuous = panel.surface == ferese_config::panel::PanelSurface::Solid;
         let corners = panel
             .resolved_radius(self.resolved.presented.tokens.geometry.shell_radius as f32)
             .at_edge(panel.edge, panel.geometry.edge_margin == 0)
@@ -252,9 +252,13 @@ impl App {
         controls: Element<'static, Message>,
     ) -> Element<'static, Message> {
         let palette = visuals::Palette::from_resolved(&self.resolved.presented);
+        let surface = panel.resolved_surface(group);
         let radius = panel
             .resolved_radius(self.resolved.presented.tokens.geometry.shell_radius as f32)
-            .at_edge(panel.edge, panel.geometry.edge_margin == 0)
+            .at_edge(
+                panel.edge,
+                surface == ferese_config::panel::GroupSurface::Island && panel.geometry.edge_margin == 0,
+            )
             .0;
         let tokens = &self.resolved.presented.tokens;
         let inherited = if tokens.material.style == "translucent" {
@@ -270,16 +274,21 @@ impl App {
                 ferese_theme::panel::group_border(palette.muted.scale_alpha(0.4), radius, border)
             }))
             .into();
-        if panel.background == ferese_config::BarLayout::Continuous {
+        if surface == ferese_config::panel::GroupSurface::None {
             return content;
         }
+        let parent_solid = panel.surface == ferese_config::panel::PanelSurface::Solid;
         container(content)
-            .padding([2., group.island_padding])
+            .padding(if surface == ferese_config::panel::GroupSurface::Island {
+                [2., group.island_padding]
+            } else {
+                [0., 0.]
+            })
             .class(cosmic::theme::Container::custom(move |_| {
                 let mut style = ferese_theme::controls::surface_appearance(
                     cosmic::iced::Color {
-                        a: opacity,
-                        ..palette.card
+                        a: if parent_solid { opacity * 0.08 } else { opacity },
+                        ..if parent_solid { palette.text } else { palette.card }
                     },
                     0.,
                 );
@@ -589,12 +598,12 @@ mod tests {
             ),
         )
         .0;
-        for background in [ferese_config::BarLayout::Continuous, ferese_config::BarLayout::Islands] {
-            let mut panel = Panel::from_defaults(&ferese_config::panel::Defaults {
-                bar_layout: ferese_config::BarLayout::Islands,
-                ..Default::default()
-            });
-            panel.background = background;
+        for background in [
+            ferese_config::PanelPreset::Continuous,
+            ferese_config::PanelPreset::Islands,
+        ] {
+            let mut panel = Panel::from_preset(ferese_config::PanelPreset::Islands);
+            panel.apply_preset(background);
             // Match a three-group layout with media in navigation and a larger status group.
             let media = panel.end.groups[0].items.remove(0);
             panel.start.groups[0].items.push(media);
@@ -682,11 +691,11 @@ mod tests {
             ),
         )
         .0;
-        for background in [ferese_config::BarLayout::Continuous, ferese_config::BarLayout::Islands] {
-            let panel = Panel::from_defaults(&ferese_config::panel::Defaults {
-                bar_layout: background,
-                ..Default::default()
-            });
+        for background in [
+            ferese_config::PanelPreset::Continuous,
+            ferese_config::PanelPreset::Islands,
+        ] {
+            let panel = Panel::from_preset(background);
             let ids: Vec<_> = [&panel.start, &panel.center, &panel.end]
                 .into_iter()
                 .flat_map(|zone| &zone.groups)
@@ -849,17 +858,18 @@ mod tests {
     }
 
     #[test]
-    fn invalid_legacy_status_reports_a_preview_error_instead_of_panicking() {
+    fn invalid_source_is_reported_before_preview_layout() {
         let app = App::init(
             crate::Core::default(),
             (
                 "/unused/preview-test.kdl".into(),
-                crate::store::Snapshot::parse("status { bar-layout unknown; }".into()),
+                crate::store::Snapshot::parse("panel main { group-surface unknown; }".into()),
                 None,
             ),
         )
         .0;
-        assert!(app.preview_panel().is_err());
+        assert!(app.error.is_some());
+        assert!(app.preview_panel().is_ok());
         let _ = app.panel_preview();
         assert!(app.pending.is_empty());
     }

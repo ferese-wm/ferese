@@ -247,8 +247,8 @@ mod tests {
     use cosmic::iced::advanced::{clipboard, renderer::Headless};
     use cosmic::iced::{Font, Pixels, Point};
     use cosmic::widget::{button, text};
+    use ferese_config::panel::OverflowPolicy;
     use ferese_config::panel::layout::Placement;
-    use ferese_config::panel::{Defaults, OverflowPolicy};
 
     #[derive(Clone, Debug)]
     enum Probe {
@@ -345,7 +345,7 @@ mod tests {
                 Some("tiny-skia"),
             ))
             .unwrap();
-        let mut panel = Panel::from_defaults(&Defaults::default());
+        let mut panel = Panel::default();
         panel.start.groups.clear();
         panel.center.groups.clear();
         panel.end.groups.retain(|group| group.id.0 == "time");

@@ -97,7 +97,7 @@ impl FereseShell {
         let bar_surface_id = window::Id::unique();
         let wallpaper_surface_id = window::Id::unique();
         let geometry = self.config.panels[0].geometry;
-        let bar_layout = self.config.panels[0].background;
+        let panel_surface = self.config.panels[0].surface;
         let (edge_anchor, margin) = panel_placement(self.config.panels[0].edge, geometry.edge_margin, 0);
         let bar = BarMetrics::from(geometry);
         let wallpaper_output = output.clone();
@@ -150,7 +150,7 @@ impl FereseShell {
             |_| Default::default(),
             move |_| SctkLayerSurfaceSettings {
                 id: bar_surface_id,
-                input_zone: super::bar::input_region(bar_layout, hidden, &[]),
+                input_zone: super::bar::input_region(panel_surface, hidden, &[]),
                 layer: Layer::Top,
                 keyboard_interactivity: KeyboardInteractivity::None,
                 anchor: edge_anchor | Anchor::LEFT | Anchor::RIGHT,
@@ -425,7 +425,7 @@ impl FereseShell {
 
     pub(super) fn attach_effects(&mut self, id: window::Id, surface: &wl_surface::WlSurface) {
         let hidden = self.bar_hidden(id);
-        let islands = self.config.panels[0].background == ferese_config::BarLayout::Islands;
+        let islands = self.config.panels[0].surface == ferese_config::panel::PanelSurface::None;
         let Some(entry) = self.outputs.iter_mut().find(|entry| entry.bar == id) else {
             return;
         };

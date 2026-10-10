@@ -3,7 +3,7 @@ pub(crate) mod geometry;
 pub mod layout;
 pub use geometry::PanelGeometry;
 mod radius;
-use crate::BarLayout;
+use crate::PanelPreset;
 pub use radius::CornerRadii;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -22,23 +22,6 @@ fn spacing() -> f32 {
 }
 fn padding() -> [u16; 2] {
     [2, 3]
-}
-
-pub struct Defaults {
-    pub bar_layout: BarLayout,
-    pub bar_island_padding: f32,
-    pub window_title: bool,
-    pub battery_percentage: bool,
-}
-impl Default for Defaults {
-    fn default() -> Self {
-        Self {
-            bar_layout: BarLayout::Continuous,
-            bar_island_padding: crate::default_bar_island_padding(),
-            window_title: true,
-            battery_percentage: true,
-        }
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
@@ -201,35 +184,23 @@ pub struct Item {
 
 impl<'de> Deserialize<'de> for Item {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        // Upgrade earlier drafts at the boundary. The runtime model has one
-        // visibility flag and keeps kind-specific settings in ItemKind.
-        let mut value = serde_json::Value::deserialize(deserializer)?;
+        let value = serde_json::Value::deserialize(deserializer)?;
         let fields = value
-            .as_object_mut()
+            .as_object()
             .ok_or_else(|| serde::de::Error::custom("expected a panel item"))?;
-        let workspaces = fields.get("kind").and_then(serde_json::Value::as_str) == Some("workspaces");
-        if let Some(style) = fields.remove("workspace_style") {
-            if !workspaces {
-                return Err(serde::de::Error::custom(
-                    "workspace-style is only supported by Workspaces items",
-                ));
-            }
-            fields.entry("style").or_insert(style);
+        if fields.contains_key("enabled") || fields.contains_key("workspace_style") {
+            return Err(serde::de::Error::custom("use item visible and Workspaces style"));
         }
-        if fields.contains_key("style") && !workspaces {
+        if fields.contains_key("style") && fields.get("kind").and_then(serde_json::Value::as_str) != Some("workspaces")
+        {
             return Err(serde::de::Error::custom("style is only supported by Workspaces items"));
         }
-        if let Some(enabled) = fields.remove("enabled") {
-            if fields.get("kind").and_then(serde_json::Value::as_str) == Some("focused-window") {
-                let enabled = enabled
-                    .as_bool()
-                    .ok_or_else(|| serde::de::Error::custom("enabled must be boolean"))?;
-                let visible = fields
-                    .get("visible")
-                    .and_then(serde_json::Value::as_bool)
-                    .unwrap_or(true);
-                fields.insert("visible".into(), (visible && enabled).into());
-            }
+        if fields.contains_key("percentage")
+            && fields.get("kind").and_then(serde_json::Value::as_str) != Some("battery")
+        {
+            return Err(serde::de::Error::custom(
+                "percentage is only supported by Battery items",
+            ));
         }
         #[derive(Deserialize)]
         struct Fields {
@@ -325,22 +296,46 @@ pub struct Availability {
     pub external_display: bool,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PanelSurface {
+    None,
+    #[default]
+    Solid,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum GroupSurface {
+    #[default]
+    None,
+    Inset,
+    Island,
+}
+
+impl GroupSurface {
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Inset => "inset",
+            Self::Island => "island",
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Group {
     pub id: GroupId,
     #[serde(default)]
     pub items: Vec<Item>,
-    #[serde(default, rename = "surface", skip_serializing)]
-    legacy_surface: serde::de::IgnoredAny,
-    // Read earlier panel drafts without retaining an individual opacity setting.
-    #[serde(default, rename = "background_opacity", skip_serializing)]
-    legacy_background_opacity: serde::de::IgnoredAny,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub surface: Option<GroupSurface>,
     #[serde(default = "spacing")]
     pub spacing: f32,
     #[serde(default = "padding")]
     pub padding: [u16; 2],
-    #[serde(default = "crate::default_bar_island_padding")]
+    #[serde(default = "crate::default_island_padding")]
     pub island_padding: f32,
 }
 
@@ -349,8 +344,7 @@ impl Group {
         Self {
             id: GroupId(id.into()),
             items,
-            legacy_surface: serde::de::IgnoredAny,
-            legacy_background_opacity: serde::de::IgnoredAny,
+            surface: None,
             spacing: 1.0,
             padding,
             island_padding,
@@ -374,9 +368,9 @@ pub struct Panel {
     #[serde(default)]
     pub geometry: PanelGeometry,
     #[serde(default)]
-    pub background: BarLayout,
-    #[serde(default, rename = "group_surface", skip_serializing)]
-    legacy_group_surface: serde::de::IgnoredAny,
+    pub surface: PanelSurface,
+    #[serde(default)]
+    pub group_surface: GroupSurface,
     #[serde(default)]
     pub border: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -470,7 +464,45 @@ pub fn validate(panels: &[Panel]) -> Result<(), String> {
     Ok(())
 }
 
+impl Default for Panel {
+    fn default() -> Self {
+        Self::from_preset(PanelPreset::Continuous)
+    }
+}
+
 impl Panel {
+    pub fn resolved_surface(&self, group: &Group) -> GroupSurface {
+        group.surface.unwrap_or(self.group_surface)
+    }
+
+    pub fn preset(&self) -> Option<PanelPreset> {
+        if [&self.start, &self.center, &self.end]
+            .into_iter()
+            .flat_map(|zone| &zone.groups)
+            .any(|group| group.surface.is_some_and(|surface| surface != self.group_surface))
+        {
+            return None;
+        }
+        match (self.surface, self.group_surface) {
+            (PanelSurface::Solid, GroupSurface::None) => Some(PanelPreset::Continuous),
+            (PanelSurface::None, GroupSurface::Island) => Some(PanelPreset::Islands),
+            _ => None,
+        }
+    }
+
+    pub fn apply_preset(&mut self, preset: PanelPreset) {
+        (self.surface, self.group_surface) = match preset {
+            PanelPreset::Continuous => (PanelSurface::Solid, GroupSurface::None),
+            PanelPreset::Islands => (PanelSurface::None, GroupSurface::Island),
+        };
+        for group in [&mut self.start, &mut self.center, &mut self.end]
+            .into_iter()
+            .flat_map(|zone| &mut zone.groups)
+        {
+            group.surface = None;
+        }
+    }
+
     pub fn group_count(&self) -> usize {
         [&self.start, &self.center, &self.end]
             .into_iter()
@@ -480,12 +512,25 @@ impl Panel {
 
     /// Appearance changes do not replace item ownership or measured allocation.
     pub fn same_composition(&self, other: &Self) -> bool {
+        let same_zone = |left: &Zone, right: &Zone| {
+            left.spacing == right.spacing
+                && left.groups.len() == right.groups.len()
+                && left.groups.iter().zip(&right.groups).all(|(left, right)| {
+                    left.id == right.id
+                        && left.items == right.items
+                        && left.spacing == right.spacing
+                        && left.padding == right.padding
+                        && left.island_padding == right.island_padding
+                        && (self.resolved_surface(left) == GroupSurface::Island)
+                            == (other.resolved_surface(right) == GroupSurface::Island)
+                })
+        };
         self.id == other.id
             && self.edge == other.edge
-            && self.background == other.background
-            && self.start == other.start
-            && self.center == other.center
-            && self.end == other.end
+            && self.surface == other.surface
+            && same_zone(&self.start, &other.start)
+            && same_zone(&self.center, &other.center)
+            && same_zone(&self.end, &other.end)
     }
 
     pub fn resolved_radius(&self, shell_radius: f32) -> CornerRadii {
@@ -505,15 +550,14 @@ impl Panel {
                 overflow: OverflowPolicy::Never,
                 priority: 100,
             }],
-            legacy_surface: serde::de::IgnoredAny,
-            legacy_background_opacity: serde::de::IgnoredAny,
+            surface: None,
             spacing: 0.0,
             padding: [2, 3],
             island_padding: self
                 .end
                 .groups
                 .first()
-                .map_or(crate::default_bar_island_padding(), |group| group.island_padding),
+                .map_or(crate::default_island_padding(), |group| group.island_padding),
         }
     }
 
@@ -525,12 +569,12 @@ impl Panel {
             .find(|item| &item.id == id)
     }
 
-    /// Translate existing settings once when loading config, not on every frame.
-    pub fn from_defaults(status: &Defaults) -> Self {
+    /// Build a stable initial composition; presets are an editor convenience.
+    pub fn from_preset(preset: PanelPreset) -> Self {
         use ItemKind::*;
 
         let item = Item::new;
-        let padding = status.bar_island_padding;
+        let padding = crate::default_island_padding();
         let overview = item("overview", Overview);
         let workspaces = item(
             "workspaces",
@@ -538,8 +582,7 @@ impl Panel {
                 style: WorkspaceStyle::default(),
             },
         );
-        let mut title = item("focused-window", FocusedWindow);
-        title.visible = status.window_title;
+        let title = item("focused-window", FocusedWindow);
         let controls = vec![
             item("media", Media),
             item("quick-settings", QuickSettings),
@@ -547,18 +590,13 @@ impl Panel {
             item("audio", Audio),
             item("recording", Recording),
             item("notifications", Notifications),
-            item(
-                "battery",
-                Battery {
-                    percentage: status.battery_percentage,
-                },
-            ),
+            item("battery", Battery { percentage: true }),
         ];
         let clock = item("clock", Clock);
         let display = item("display-mode", DisplayMode);
 
-        let (start, center, end) = match status.bar_layout {
-            BarLayout::Continuous => (
+        let (start, center, end) = match preset {
+            PanelPreset::Continuous => (
                 vec![
                     Group::new("overview", vec![overview], [0, 0], padding),
                     Group::new("workspaces", vec![workspaces], [2, 3], padding),
@@ -570,7 +608,7 @@ impl Panel {
                     Group::new("display", vec![display], [0, 0], padding),
                 ],
             ),
-            BarLayout::Islands => {
+            PanelPreset::Islands => {
                 let mut controls = controls;
                 controls.extend([clock, display]);
                 (
@@ -585,18 +623,22 @@ impl Panel {
             id: PanelId("main".into()),
             edge: Edge::Top,
             geometry: PanelGeometry::default(),
-            background: status.bar_layout,
-            legacy_group_surface: serde::de::IgnoredAny,
+            surface: if preset == PanelPreset::Continuous {
+                PanelSurface::Solid
+            } else {
+                PanelSurface::None
+            },
+            group_surface: if preset == PanelPreset::Continuous {
+                GroupSurface::None
+            } else {
+                GroupSurface::Island
+            },
             border: false,
             background_opacity: Option::None,
             corner_radius: Option::None,
             start: Zone {
                 groups: start,
-                spacing: if status.bar_layout == BarLayout::Islands {
-                    8.0
-                } else {
-                    3.0
-                },
+                spacing: if preset == PanelPreset::Islands { 8.0 } else { 3.0 },
             },
             center: Zone {
                 groups: vec![center],
@@ -616,11 +658,8 @@ mod tests {
 
     #[test]
     fn group_capacity_reserves_overflow_even_for_empty_groups() {
-        for background in [BarLayout::Continuous, BarLayout::Islands] {
-            let mut panel = Panel::from_defaults(&Defaults {
-                bar_layout: background,
-                ..Default::default()
-            });
+        for background in [PanelPreset::Continuous, PanelPreset::Islands] {
+            let mut panel = Panel::from_preset(background);
             panel.start.groups.clear();
             panel.center.groups.clear();
             panel.end.groups = (0..MAX_GROUPS)
@@ -637,14 +676,31 @@ mod tests {
     }
 
     #[test]
-    fn removed_group_surface_is_accepted_but_not_retained() {
-        for style in ["none", "inset", "island"] {
-            let document =
-                crate::Document::parse(&format!("panel main {{ group-surface {style}; border #true; }}")).unwrap();
-            let panel: Vec<Panel> = serde_json::from_value(document.get("panels").unwrap().clone()).unwrap();
-            assert!(panel[0].border);
-            assert!(serde_json::to_value(&panel).unwrap()[0].get("group_surface").is_none());
-        }
+    fn group_surfaces_round_trip_and_overrides_are_preserved() {
+        let source = "// keep\npanel main { surface none; group-surface island; start { group nav { item overview kind=overview; }; }; center { group title { surface none; item title kind=focused-window; }; }; end { group media { surface inset; item media kind=media; }; }; }";
+        let mut doc = crate::Document::parse(source).unwrap();
+        let panel: Vec<Panel> = serde_json::from_value(doc.get("panels").unwrap().clone()).unwrap();
+        let panel = &panel[0];
+        assert_eq!(panel.resolved_surface(&panel.start.groups[0]), GroupSurface::Island);
+        assert_eq!(panel.resolved_surface(&panel.center.groups[0]), GroupSurface::None);
+        assert_eq!(panel.resolved_surface(&panel.end.groups[0]), GroupSurface::Inset);
+        assert_eq!(panel.preset(), None);
+        doc.set("panels", serde_json::to_value(vec![panel]).unwrap()).unwrap();
+        let restored = crate::Document::parse(&doc.to_string()).unwrap();
+        let panels: Vec<Panel> = serde_json::from_value(restored.get("panels").unwrap().clone()).unwrap();
+        assert_eq!(&panels[0], panel);
+        assert!(doc.to_string().contains("// keep"));
+        let mut preset = panel.clone();
+        let ids: Vec<_> = items(panel).iter().map(|item| item.id.clone()).collect();
+        preset.apply_preset(PanelPreset::Continuous);
+        assert_eq!(preset.preset(), Some(PanelPreset::Continuous));
+        assert_eq!(
+            items(&preset).iter().map(|item| item.id.clone()).collect::<Vec<_>>(),
+            ids
+        );
+        assert!(preset.center.groups[0].surface.is_none());
+        preset.apply_preset(PanelPreset::Islands);
+        assert_eq!(preset.preset(), Some(PanelPreset::Islands));
     }
 
     fn items(panel: &Panel) -> Vec<&Item> {
@@ -657,12 +713,8 @@ mod tests {
 
     #[test]
     fn defaults_preserve_order_and_ids_across_background_changes() {
-        let status = Defaults::default();
-        let continuous = Panel::from_defaults(&status);
-        let islands = Panel::from_defaults(&Defaults {
-            bar_layout: BarLayout::Islands,
-            ..status
-        });
+        let continuous = Panel::default();
+        let islands = Panel::from_preset(PanelPreset::Islands);
         let expected = [
             "overview",
             "workspaces",
@@ -680,13 +732,7 @@ mod tests {
         for panel in [&continuous, &islands] {
             let ids: Vec<_> = items(panel).iter().map(|item| item.id.0.as_str()).collect();
             assert_eq!(ids, expected);
-            assert_eq!(
-                Panel::from_defaults(&Defaults {
-                    bar_layout: panel.background,
-                    ..Default::default()
-                }),
-                *panel
-            );
+            assert_eq!(Panel::from_preset(panel.preset().unwrap()), *panel);
         }
         assert_eq!(continuous.start.groups.len(), 2);
         assert_eq!(continuous.end.groups.len(), 3);
@@ -697,7 +743,7 @@ mod tests {
 
     #[test]
     fn availability_filters_without_removing_or_reidentifying_instances() {
-        let panel = Panel::from_defaults(&Defaults::default());
+        let panel = Panel::default();
         let all = items(&panel);
         let visible = |availability| {
             all.iter()
@@ -732,12 +778,20 @@ mod tests {
 
     #[test]
     fn settings_map_to_instances_and_group_presentation() {
-        let panel = Panel::from_defaults(&Defaults {
-            bar_layout: BarLayout::Islands,
-            bar_island_padding: 13.0,
-            window_title: false,
-            battery_percentage: false,
-        });
+        let mut panel = Panel::from_preset(PanelPreset::Islands);
+        panel.center.groups[0].items[0].visible = false;
+        let battery = panel.end.groups[0]
+            .items
+            .iter_mut()
+            .find(|item| item.id.0 == "battery")
+            .unwrap();
+        battery.kind = ItemKind::Battery { percentage: false };
+        for group in [&mut panel.start, &mut panel.center, &mut panel.end]
+            .into_iter()
+            .flat_map(|zone| &mut zone.groups)
+        {
+            group.island_padding = 13.;
+        }
         assert_eq!(panel.center.groups[0].items[0].kind, ItemKind::FocusedWindow);
         assert!(!panel.center.groups[0].items[0].visible);
         let all = items(&panel);
@@ -764,11 +818,11 @@ mod tests {
     fn composition_round_trips_kdl_and_edits_keep_ids_order_and_comments() {
         let source = r#"// panel comment
 panel "main" {
-    background "islands"
+    surface "none"
+    group-surface "island"
     end {
         group "status" {
             surface "island"
-            background-opacity 0.45
             padding 2 3
             // network comment
             item "network" kind="network" overflow="always"
@@ -837,7 +891,7 @@ animations { speed 0.8; }
 
     #[test]
     fn panel_background_opacity_inherits_until_overridden_and_validates_bounds() {
-        let doc = crate::Document::parse("panel main { end { group status { background-opacity 0.4; }; }; }").unwrap();
+        let doc = crate::Document::parse("panel main { end { group status { surface inset; }; }; }").unwrap();
         let mut panels: Vec<Panel> = serde_json::from_value(doc.get("panels").unwrap().clone()).unwrap();
         assert_eq!(panels[0].background_opacity, None);
         assert!(
@@ -876,7 +930,7 @@ animations { speed 0.8; }
 
     #[test]
     fn validation_rejects_duplicate_ids_and_unsupported_surface_configuration() {
-        let mut panel = Panel::from_defaults(&Defaults::default());
+        let mut panel = Panel::default();
         validate(std::slice::from_ref(&panel)).unwrap();
         panel.end.groups[0].items[1].id = panel.start.groups[0].items[0].id.clone();
         assert!(validate(std::slice::from_ref(&panel)).is_err());
@@ -891,21 +945,19 @@ animations { speed 0.8; }
     #[test]
     fn workspace_styles_round_trip_and_only_apply_to_workspaces() {
         for style in WorkspaceStyle::ALL {
-            for key in ["style", "workspace-style"] {
-                let source = format!(
-                    "panel main {{ start {{ group nav {{ item spaces kind=\"workspaces\" {key}=\"{}\"; }} }} }}",
-                    style.key()
-                );
-                let document = crate::Document::parse(&source).unwrap();
-                let panels: Vec<Panel> = serde_json::from_value(document.get("panels").unwrap().clone()).unwrap();
-                validate(&panels).unwrap();
-                assert_eq!(panels[0].start.groups[0].items[0].kind, ItemKind::Workspaces { style });
-                let mut wrong_kind = serde_json::to_value(&panels[0].start.groups[0].items[0]).unwrap();
-                wrong_kind["kind"] = "clock".into();
-                assert!(serde_json::from_value::<Item>(wrong_kind).is_err());
-                let restored: Vec<Panel> = serde_json::from_value(serde_json::to_value(&panels).unwrap()).unwrap();
-                assert_eq!(restored, panels);
-            }
+            let source = format!(
+                "panel main {{ start {{ group nav {{ item spaces kind=\"workspaces\" style=\"{}\"; }} }} }}",
+                style.key()
+            );
+            let document = crate::Document::parse(&source).unwrap();
+            let panels: Vec<Panel> = serde_json::from_value(document.get("panels").unwrap().clone()).unwrap();
+            validate(&panels).unwrap();
+            assert_eq!(panels[0].start.groups[0].items[0].kind, ItemKind::Workspaces { style });
+            let mut wrong_kind = serde_json::to_value(&panels[0].start.groups[0].items[0]).unwrap();
+            wrong_kind["kind"] = "clock".into();
+            assert!(serde_json::from_value::<Item>(wrong_kind).is_err());
+            let restored: Vec<Panel> = serde_json::from_value(serde_json::to_value(&panels).unwrap()).unwrap();
+            assert_eq!(restored, panels);
         }
         let mut item = serde_json::json!({"id": "spaces", "kind": "workspaces"});
         assert_eq!(
@@ -919,22 +971,25 @@ animations { speed 0.8; }
     }
 
     #[test]
-    fn legacy_title_flags_normalize_to_one_visibility_field() {
-        for (visible, enabled, expected) in [
-            (true, true, true),
-            (true, false, false),
-            (false, true, false),
-            (false, false, false),
+    fn removed_item_fields_are_rejected() {
+        for value in [
+            serde_json::json!({"id":"title", "kind":"focused-window", "enabled":false}),
+            serde_json::json!({"id":"spaces", "kind":"workspaces", "workspace_style":"numbers"}),
         ] {
-            let item: Item = serde_json::from_value(
-                serde_json::json!({ "id": "title", "kind": "focused-window", "visible": visible, "enabled": enabled }),
-            )
-            .unwrap();
-            assert_eq!(item.kind, ItemKind::FocusedWindow);
-            assert_eq!(item.visible, expected);
-            let saved = serde_json::to_value(&item).unwrap();
-            assert!(saved.get("enabled").is_none());
-            assert_eq!(serde_json::from_value::<Item>(saved).unwrap(), item);
+            assert!(serde_json::from_value::<Item>(value).is_err());
         }
+    }
+    #[test]
+    fn surface_changes_only_replace_composition_when_item_geometry_changes() {
+        let panel = Panel::default();
+        let mut changed = panel.clone();
+        changed.group_surface = GroupSurface::Inset;
+        assert!(panel.same_composition(&changed));
+        changed.end.groups[0].surface = Some(GroupSurface::Island);
+        assert!(!panel.same_composition(&changed));
+        changed.end.groups[0].surface = Some(GroupSurface::None);
+        assert!(panel.same_composition(&changed));
+        changed.end.groups[0].padding[1] += 1;
+        assert!(!panel.same_composition(&changed));
     }
 }

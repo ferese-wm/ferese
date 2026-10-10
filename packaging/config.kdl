@@ -129,7 +129,6 @@ theme {
         shell-radius 12
         border-width 1
         focus-ring-width 1
-        panel-padding 12
         control-gap 12
     }
     shadow {
@@ -157,7 +156,8 @@ panel "main" {
         window-clearance 4
     }
     edge "top"
-    background "continuous"
+    surface "solid"
+    group-surface "none"
     border #false
     start {
         spacing 3

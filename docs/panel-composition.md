@@ -40,8 +40,9 @@ The pure resolver contains no widgets, clocks, services, or Wayland resources.
 
 The center stays physically centered, with space reserved against the larger
 side. Flexible title/workspace content yields space first, then controls use
-smaller supported representations. Lower-priority items yield before higher
-priorities; equal priorities follow definition order. Eligible items move to
+smaller supported representations. Measurements are indexed by ItemId. Lower-priority items yield before higher
+priorities; equal priorities follow Start/Center/End composition order. Restoration
+uses the reverse priority order; renderer sample order has no layout semantics. Eligible items move to
 overflow when representations cannot fit. Each resolution starts from configured
 intent, so controls return to their preferred form as space returns.
 
@@ -68,9 +69,9 @@ Repeated clicks toggle only the same instance on the same surface.
 Displaced items anchor their popup at the overflow chevron rather than at
 coordinates inside the overflow surface. Toast requests use the focused output's
 bar as an explicit notification fallback. Output removal and fullscreen hiding
-close the popup belonging to that surface. Changes to membership, placement or
-background arrangement close the current popup. Opacity, corner and border edits
-keep it open. Reload retains the last measured allocation and effective margins
+close the popup belonging to that surface. Changes to membership, placement,
+island geometry, or panel fill close the current popup. Opacity, corner, border,
+and None/Inset surface edits keep it open. Reload retains the last measured allocation and effective margins
 until the adaptive widget publishes its replacement. Invalid config keeps the
 previous config.
 
@@ -102,8 +103,8 @@ existing group. Editing resolves IDs against the latest draft, validates the who
 change, and saves once. Unknown item fields and comments are retained.
 
 Each panel owns `PanelGeometry`: height, edge margin, side margins, window
-clearance, and inner padding. Older theme geometry is imported for configurations
-without a panel geometry block; appearance changes do not resize an authored panel.
+clearance, and inner padding. The theme contains appearance tokens, and
+appearance changes do not resize a panel.
 
 Panels contains background, size, margin, and corner-radius settings. Edit panel
 opens Arrange, which contains the Start/Center/End editor and a separate
@@ -121,18 +122,23 @@ Navigation does not save config. The current panel is the only panel listed; Top
 Unsupported creation, display targeting, and visibility policies
 are not exposed.
 
-Panels → Size & spacing owns the shared Group borders and Background opacity
-controls. Continuous and Islands use the same background styling; Islands splits
-it around the groups. Borders default to off. Groups paint no extra fill, so a
-50% background remains 50% under their content. The earlier Group surface
-selector has been removed.
+Continuous and Islands are presets that set `Panel.surface` and its default
+`group_surface`, clearing per-group surface overrides without regrouping items.
+Groups inherit that default or choose None, Inset, or Island. None adds no fill,
+Inset follows the padded content height, and Island uses the full panel height and
+extra island padding. A filled panel can contain a media island; a transparent
+panel can contain navigation/status islands and an undecorated center title.
+The resolver counts island padding only for groups whose resolved surface is Island.
 
-The opacity slider overrides shell opacity for panel backgrounds and compositor
-materials without fading controls or changing popups. Use shell opacity restores
-inheritance. Group inspectors contain placement and spacing controls. Earlier
-per-group surface and opacity fields, and the panel's former `group-surface`,
-are accepted for existing drafts but no longer affect appearance. They are
-omitted when serializing the model.
+Group borders default to off. Background opacity and corner radius apply to the
+panel and its decorated groups. On a filled parent, group surfaces use a subtle
+local tint; the compositor publishes one parent material region rather than
+adding overlapping blur regions. On a transparent parent, only decorated groups
+publish material regions. Undecorated actionable controls retain input regions,
+and gaps remain click-through. The opacity slider leaves text and popups unchanged;
+Use shell opacity restores inheritance. Group inspectors contain placement,
+surface, spacing, and padding controls.
+
 The editor fades hidden controls and uses icon buttons for Up, Down, and Remove.
 
 One optional `panel.corner-radius` override applies to all surfaces on that
@@ -144,7 +150,7 @@ blur, and shadow, transformed into framebuffer coordinates. Existing material
 requests still carry geometry and opacity; shared config supplies the panel
 radii, so this change does not require another protocol version.
 
-Panel backgrounds use the full panel height in either arrangement. At zero edge
+The panel fill and islands use the full panel height; inset surfaces follow their padded content. At zero edge
 margin they render square corners along the selected edge in both the shell and compositor; saved radius values
 stay unchanged. Island gaps retain their configured sizes.
 
@@ -156,7 +162,7 @@ updates it after content, configuration, or output-size changes. Normal overflow
 still handles outputs that cannot fit the controls even at zero inset.
 
 Each zone can gain new groups. Select a group to change its zone,
-spacing, or padding; inspector buttons reorder groups within their zone. Removing a
+surface, spacing, or padding; inspector buttons reorder groups within their zone. Removing a
 group requires moving or removing its items first. Group moves preserve item IDs
 and authored fields. Queued item placement follows the destination group's ID,
 including after that group moves between zones.
@@ -182,8 +188,6 @@ bar. Service state, control content, and vertical styling differ. The editor liv
 inside Settings; it does not create a separate desktop editing surface. Group
 fill, outline, opacity, and corner-radius changes also apply to the running panel
 renderer.
-A live nested preview exposed date and spacing differences
-from the previous bar. Those remain for a separate visual compatibility pass.
 
 See [Panel composition in the configuration reference](configuration.md#panel-composition)
 for syntax and defaults. [Issue #2](https://github.com/ferese-wm/ferese/issues/2)

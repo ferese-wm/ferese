@@ -85,14 +85,9 @@ pub(crate) struct DaemonConfig {
 // Validate shell-only fields too, before publishing an accepted source.
 #[derive(Debug, Default, Deserialize)]
 #[allow(dead_code)]
+#[serde(deny_unknown_fields)]
 struct ShellStatusConfig {
-    bar_layout: Option<ferese_config::BarLayout>,
-    #[serde(
-        default = "ferese_config::default_bar_island_padding",
-        deserialize_with = "ferese_config::deserialize_bar_island_padding"
-    )]
-    bar_island_padding: f32,
-    battery_percentage: Option<bool>,
+    keybinding_guide: Option<bool>,
     low_battery_threshold: Option<u8>,
     settings_command: Option<Vec<String>>,
 }
@@ -436,25 +431,31 @@ mod tests {
     }
 
     #[test]
-    fn bar_layout_is_validated_before_live_publication() {
-        for layout in ["continuous", "islands"] {
-            let source = format!("status {{ bar-layout \"{layout}\"; }}");
+    fn panel_surfaces_are_validated_before_live_publication() {
+        for surface in ["none", "inset", "island"] {
+            let source = format!(
+                "panel main {{ surface solid; group-surface {surface}; end {{ group status {{ surface {surface}; }}; }}; }}"
+            );
             Config::parse_source(&source).unwrap().runtime_config().unwrap();
         }
-
-        assert!(Config::parse_source("status { bar-layout \"invalid\"; }").is_err());
+        assert!(Config::parse_source("panel main { group-surface invalid; }").is_err());
+        assert!(Config::parse_source("panel main { background islands; }").is_err());
+        assert!(Config::parse_source("status { bar-layout islands; }").is_err());
     }
 
     #[test]
-    fn island_padding_is_validated_before_live_publication() {
+    fn group_padding_is_validated_before_live_publication() {
         for padding in ["0", "4.5", "12", "32"] {
-            let source = format!("status {{ bar-island-padding {padding}; }}");
+            let source = format!("panel main {{ end {{ group status {{ island-padding {padding}; }}; }}; }}");
             Config::parse_source(&source).unwrap().runtime_config().unwrap();
         }
-
         for padding in ["-1", "32.5", "\"small\""] {
-            let source = format!("status {{ bar-island-padding {padding}; }}");
-            assert!(Config::parse_source(&source).is_err());
+            let source = format!("panel main {{ end {{ group status {{ island-padding {padding}; }}; }}; }}");
+            assert!(
+                Config::parse_source(&source)
+                    .map(|config| config.runtime_config().is_err())
+                    .unwrap_or(true)
+            );
         }
     }
 

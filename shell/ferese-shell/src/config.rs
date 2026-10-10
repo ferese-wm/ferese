@@ -1,7 +1,6 @@
 use std::fs;
 use std::path::PathBuf;
 
-use ferese_config::panel::PanelGeometry;
 use serde::Deserialize;
 
 const DEFAULT_BACKGROUND: [u8; 3] = [11, 15, 20];
@@ -30,21 +29,16 @@ impl Default for ShellConfig {
             wallpaper: Default::default(),
             theme: Default::default(),
             theme_mode: Default::default(),
-            panels: vec![crate::panel::from_status(&status)],
+            panels: vec![crate::panel::Panel::default()],
             status,
         }
     }
 }
 
 #[derive(Clone, Debug, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub(crate) struct StatusConfig {
-    pub(crate) bar_layout: ferese_config::BarLayout,
-    #[serde(deserialize_with = "ferese_config::deserialize_bar_island_padding")]
-    pub(crate) bar_island_padding: f32,
     pub(crate) keybinding_guide: bool,
-    pub(crate) battery_percentage: bool,
-    pub(crate) window_title: bool,
     pub(crate) low_battery_threshold: u8,
     pub(crate) settings_command: Option<Vec<String>>,
 }
@@ -52,11 +46,7 @@ pub(crate) struct StatusConfig {
 impl Default for StatusConfig {
     fn default() -> Self {
         Self {
-            bar_layout: ferese_config::BarLayout::Continuous,
-            bar_island_padding: ferese_config::default_bar_island_padding(),
             keybinding_guide: true,
-            battery_percentage: true,
-            window_title: true,
             low_battery_threshold: 20,
             settings_command: Some(vec!["ferese-settings".into()]),
         }
@@ -402,14 +392,7 @@ fn parse_document(
                 wallpaper: config.theme.background,
                 theme,
                 theme_mode: mode,
-                panels: config.panels.map_or_else(
-                    || {
-                        let mut panel = crate::panel::from_status(&config.status);
-                        panel.geometry = PanelGeometry::from_legacy(document)?;
-                        Ok::<_, ferese_config::Error>(vec![panel])
-                    },
-                    Ok,
-                )?,
+                panels: config.panels.unwrap_or_else(|| vec![crate::panel::Panel::default()]),
                 status: StatusConfig {
                     low_battery_threshold: config.status.low_battery_threshold.min(100),
                     ..config.status
@@ -625,85 +608,66 @@ mod tests {
     }
 
     #[test]
-    fn config_loading_translates_existing_settings_into_composition() {
-        use crate::panel::ItemKind;
-
-        let fallback = ShellConfig::default();
+    fn config_loading_uses_only_authored_panel_settings() {
+        use crate::panel::{GroupSurface, ItemKind, PanelSurface};
         let defaults = parse_test_source("").unwrap();
-        assert_eq!(fallback.panels, defaults.panels);
-        let source = "status { bar-layout \"islands\"; bar-island-padding 9.5; window-title #false; battery-percentage #false; }";
+        assert_eq!(ShellConfig::default().panels, defaults.panels);
+        let source = "panel main { surface none; group-surface island; geometry { height 36; edge-margin 6; }; center { group title { surface none; item title kind=focused-window visible=#false; }; }; end { group status { island-padding 9.5; item battery kind=battery percentage=#false; }; }; }";
         let current = parse_test_source(source).unwrap();
-        assert!(parse_test_source("status { bar-island-padding -1; }").is_err());
-        assert_eq!(current.panels.len(), 1);
         let panel = &current.panels[0];
-        assert_eq!(panel.background, ferese_config::BarLayout::Islands);
+        assert_eq!(panel.surface, PanelSurface::None);
+        assert_eq!(panel.group_surface, GroupSurface::Island);
+        assert_eq!(panel.geometry.height, 36.);
+        assert_eq!(panel.geometry.edge_margin, 6);
         assert_eq!(panel.end.groups[0].island_padding, 9.5);
-        assert_eq!(panel.center.groups[0].items[0].kind, ItemKind::FocusedWindow);
         assert!(!panel.center.groups[0].items[0].visible);
         assert_eq!(
-            panel.end.groups[0].items[6].kind,
+            panel.end.groups[0].items[0].kind,
             ItemKind::Battery { percentage: false }
         );
-        let reloaded = parse_test_source("").unwrap();
-        assert_eq!(reloaded.panels, defaults.panels);
+        assert_eq!(parse_test_source("").unwrap().panels, defaults.panels);
     }
 
     #[test]
-    fn authored_composition_overrides_legacy_arrangement_and_rejects_invalid_reload_data() {
-        let source = r#"status { bar-layout "continuous"; }
-panel "custom" { background "islands"; end { group "clocks" { item "one" kind="clock"; item "two" kind="clock"; }; }; }
-"#;
+    fn authored_composition_rejects_invalid_reload_data() {
+        let source = r#"panel "custom" { surface "none"; group-surface "island"; end { group "clocks" { item "one" kind="clock"; item "two" kind="clock"; }; }; }"#;
         let config = parse_test_source(source).unwrap();
         assert_eq!(config.panels[0].id.0, "custom");
-        assert_eq!(config.panels[0].background, ferese_config::BarLayout::Islands);
+        assert_eq!(config.panels[0].surface, crate::panel::PanelSurface::None);
         assert_eq!(config.panels[0].end.groups[0].items.len(), 2);
         assert!(parse_test_source(&source.replace("item \"two\"", "item \"one\"")).is_err());
-        assert!(parse_test_source("panel \"one\"; panel \"two\";").is_err());
-        assert!(parse_test_source("panel \"one\" { edge \"left\"; }").is_err());
-        assert_eq!(config.panels[0].end.groups[0].items[1].id.0, "two");
+        assert!(parse_test_source("panel one; panel two;").is_err());
+        assert!(parse_test_source("panel one { edge left; }").is_err());
     }
 
     #[test]
-    fn island_layout_is_opt_in_and_does_not_change_modal_opacity() {
-        assert_eq!(
-            parse_test_source("").unwrap().status.bar_layout,
-            ferese_config::BarLayout::Continuous
-        );
-        let normal = parse_test_source("theme { material { style \"translucent\"; opacity 0.7; }; }").unwrap();
-        let islands = parse_test_source(
-            "status { bar-layout \"islands\"; }\ntheme { material { style \"translucent\"; opacity 0.7; }; }",
-        )
-        .unwrap();
-        assert_eq!(islands.status.bar_layout, ferese_config::BarLayout::Islands);
+    fn group_surfaces_do_not_change_modal_opacity() {
+        let normal = parse_test_source("theme { material { style translucent; opacity 0.7; }; }").unwrap();
+        let islands = parse_test_source("panel main { surface none; group-surface island; }\ntheme { material { style translucent; opacity 0.7; }; }").unwrap();
         assert_eq!(islands.theme.surface_popover, normal.theme.surface_popover);
         assert_eq!(islands.theme.surface_base, normal.theme.surface_base);
         assert_eq!(islands.theme.bar_background, normal.theme.bar_background);
-        assert!(parse_test_source("status { bar-layout \"invalid\"; }").is_err());
+        assert!(parse_test_source("panel main { surface islands; }").is_err());
+        assert!(parse_test_source("status { bar-layout islands; }").is_err());
     }
 
     #[test]
-    fn island_padding_accepts_compact_and_fractional_values_without_changing_panel_padding() {
-        let defaults = parse_test_source("").unwrap();
-        assert_eq!(defaults.status.bar_island_padding, 4.);
-        assert_eq!(
-            parse_test_source("status { bar-layout \"islands\"; }")
-                .unwrap()
-                .status
-                .bar_island_padding,
-            4.
-        );
+    fn island_padding_accepts_fractional_values_independently_of_panel_geometry() {
         for padding in [0., 4., 4.5, 32.] {
-            let source = format!("status {{ bar-island-padding {padding}; }}");
-            let config = parse_test_source(&source).unwrap();
-            assert_eq!(config.status.bar_island_padding, padding);
-            assert_eq!(
-                config.panels[0].geometry.inner_padding,
-                defaults.panels[0].geometry.inner_padding
+            let source = format!(
+                "panel main {{ geometry {{ inner-padding 12; }}; end {{ group status {{ island-padding {padding}; }}; }}; }}"
             );
+            let config = parse_test_source(&source).unwrap();
+            assert_eq!(config.panels[0].end.groups[0].island_padding, padding);
+            assert_eq!(config.panels[0].geometry.inner_padding, 12.);
         }
-
         for value in ["-1", "32.5", "\"small\""] {
-            assert!(parse_test_source(&format!("status {{ bar-island-padding {value}; }}")).is_err());
+            assert!(
+                parse_test_source(&format!(
+                    "panel main {{ end {{ group status {{ island-padding {value}; }}; }}; }}"
+                ))
+                .is_err()
+            );
         }
     }
 
@@ -760,9 +724,9 @@ theme {
         );
         assert_eq!(config.theme.background.mode, WallpaperMode::Fill);
         let theme = shell_theme(&config.theme);
-        assert_eq!(PanelGeometry::default().edge_margin, 0);
-        assert_eq!(PanelGeometry::default().height, 28.0);
-        assert_eq!(PanelGeometry::default().side_margins, 0);
+        assert_eq!(crate::panel::PanelGeometry::default().edge_margin, 0);
+        assert_eq!(crate::panel::PanelGeometry::default().height, 28.0);
+        assert_eq!(crate::panel::PanelGeometry::default().side_margins, 0);
         assert_eq!(theme.bar_radius, 14.0);
         assert_eq!(theme.bar_background[3], 255);
         assert_eq!(theme.for_bar().text_primary, theme.bar_text_primary);

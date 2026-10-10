@@ -361,7 +361,7 @@ mod tests {
     }
     #[test]
     fn popup_anchors_reject_removed_hidden_items_and_other_panel_definitions() {
-        let mut panel = crate::panel::Panel::from_defaults(&crate::panel::Defaults::default());
+        let mut panel = crate::panel::Panel::default();
         let anchor = PopoverAnchor {
             parent: window::Id::unique(),
             panel: panel.id.clone(),

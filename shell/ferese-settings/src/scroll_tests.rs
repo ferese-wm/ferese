@@ -302,6 +302,13 @@ fn render_panel_review_states() {
         app.native_palette = visuals::Palette::from_resolved(&app.resolved.presented);
         for (name, tab, item, group) in [
             ("panels", panel_controls::PanelPage::Panels, None, None),
+            ("mixed-surfaces", panel_controls::PanelPage::Panels, None, None),
+            (
+                "surface-inspector",
+                panel_controls::PanelPage::Arrange,
+                None,
+                Some("title"),
+            ),
             ("corners", panel_controls::PanelPage::Panels, None, None),
             ("preview-hover", panel_controls::PanelPage::Panels, None, None),
             ("navigation", panel_controls::PanelPage::Arrange, None, None),
@@ -333,6 +340,15 @@ fn render_panel_review_states() {
                 _ => Page::Bar,
             };
             app.draft = Snapshot::parse(String::new()).unwrap();
+            if matches!(name, "mixed-surfaces" | "surface-inspector") {
+                let mut panel = ferese_config::panel::Panel::from_preset(ferese_config::PanelPreset::Islands);
+                panel.center.groups[0].surface = Some(ferese_config::panel::GroupSurface::None);
+                panel.end.groups[0].surface = Some(ferese_config::panel::GroupSurface::Inset);
+                panel.geometry.edge_margin = 6;
+                app.draft
+                    .edit(&crate::store::set("panels", serde_json::to_value(vec![panel]).unwrap()))
+                    .unwrap();
+            }
             if name == "corners" {
                 for edit in crate::panel_edit::plan(
                     &app.draft,

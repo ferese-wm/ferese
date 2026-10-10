@@ -3,7 +3,9 @@ use super::{
     bar_icon, button, color, container, control, motion, row, status_ui, text, theme, window,
 };
 use crate::panel::{Availability, Item, ItemKind, Panel, Zone};
-use ferese_config::BarLayout;
+#[cfg(test)]
+use ferese_config::PanelPreset;
+use ferese_config::panel::{GroupSurface, PanelSurface};
 
 use ferese_theme::panel as adaptive;
 pub(super) mod presentation;
@@ -45,8 +47,8 @@ impl FereseShell {
         let corners = panel
             .resolved_radius(shell_theme.bar_radius)
             .at_edge(panel.edge, panel.geometry.edge_margin == 0);
-        let mode = panel.background;
-        let islands = mode == BarLayout::Islands;
+        let mode = panel.surface;
+        let islands = mode == PanelSurface::None;
         let output = self.outputs.iter().find(|output| output.bar == id);
         let effects = output.and_then(|output| output.effects.as_ref());
         let compositor_material = effects.is_some();
@@ -69,7 +71,15 @@ impl FereseShell {
                     }
                     let alternatives = item.representations();
                     for representation in alternatives {
-                        let view = self.view_panel_item(id, item, None, islands, representation).0;
+                        let view = self
+                            .view_panel_item(
+                                id,
+                                item,
+                                None,
+                                panel.resolved_surface(group) == GroupSurface::Island,
+                                representation,
+                            )
+                            .0;
                         samples.push(adaptive::Sample {
                             id: item.id.clone(),
                             representation,
@@ -90,12 +100,18 @@ impl FereseShell {
             representation: Representation::Icon,
             minimum: None,
             view: self
-                .view_panel_item(id, &overflow_group.items[0], None, islands, Representation::Icon)
+                .view_panel_item(
+                    id,
+                    &overflow_group.items[0],
+                    None,
+                    panel.resolved_surface(&overflow_group) == GroupSurface::Island,
+                    Representation::Icon,
+                )
                 .0,
         });
         // Measure the control itself; reserve group decoration separately.
         let overflow_width = 2.0 * f32::from(overflow_group.padding[1])
-            + if islands {
+            + if panel.resolved_surface(&overflow_group) == GroupSurface::Island {
                 2.0 * overflow_group.island_padding
             } else {
                 0.0
@@ -104,7 +120,7 @@ impl FereseShell {
             .into_iter()
             .flat_map(|zone| &zone.groups)
             .chain(std::iter::once(&overflow_group))
-            .filter(|_| islands)
+            .filter(|group| islands && panel.resolved_surface(group) != GroupSurface::None)
             .map(|group| (group_material_id(panel, group), 1.))
             .collect();
         let content = adaptive::frame(
@@ -120,12 +136,26 @@ impl FereseShell {
                     for group in &mut zone.groups {
                         group.items.retain(|item| matches!(resolution.items.get(&item.id), Some(Placement::Visible { width, .. }) if *width > 0.0));
                     }
-                    view_zone(panel, &zone, availability, shell_theme, compositor_material, |item| {
-                        let Some(Placement::Visible { representation, width }) = resolution.items.get(&item.id) else {
-                            unreachable!()
-                        };
-                        self.view_panel_item(id, item, Some(*width), islands, *representation)
-                    })
+                    view_zone(
+                        panel,
+                        &zone,
+                        availability,
+                        shell_theme,
+                        compositor_material,
+                        |item, surface| {
+                            let Some(Placement::Visible { representation, width }) = resolution.items.get(&item.id)
+                            else {
+                                unreachable!()
+                            };
+                            self.view_panel_item(
+                                id,
+                                item,
+                                Some(*width),
+                                surface == GroupSurface::Island,
+                                *representation,
+                            )
+                        },
+                    )
                 };
                 let start = zone(&panel.start);
                 let center = zone(&panel.center);
@@ -142,12 +172,12 @@ impl FereseShell {
                         availability,
                         shell_theme,
                         compositor_material,
-                        |item| {
+                        |item, surface| {
                             self.view_panel_item(
                                 id,
                                 item,
                                 Some(resolution.overflow_trigger_width),
-                                islands,
+                                surface == GroupSurface::Island,
                                 Representation::Icon,
                             )
                         },
@@ -510,13 +540,14 @@ fn view_zone<'a>(
     availability: Availability,
     shell_theme: ShellTheme,
     compositor_material: bool,
-    render: impl Fn(&Item) -> (Element<'a, cosmic::Action<Message>>, bool),
+    render: impl Fn(&Item, GroupSurface) -> (Element<'a, cosmic::Action<Message>>, bool),
 ) -> Element<'a, cosmic::Action<Message>> {
     let bar = BarMetrics::from(panel.geometry);
     let mut groups = row::with_capacity(zone.groups.len())
         .spacing(zone.spacing)
         .align_y(cosmic::iced::Alignment::Center);
     for group in &zone.groups {
+        let surface = panel.resolved_surface(group);
         let mut controls = row::with_capacity(group.items.len()).align_y(cosmic::iced::Alignment::Center);
         let mut count = 0;
         let mut has_content = false;
@@ -525,7 +556,7 @@ fn view_zone<'a>(
                 controls =
                     controls.push(cosmic::iced::widget::Space::new().width(item.gap_before.unwrap_or(group.spacing)));
             }
-            let (element, content) = render(item);
+            let (element, content) = render(item, surface);
             has_content |= content;
             let element: Element<'_, cosmic::Action<Message>> = if matches!(item.kind, ItemKind::FocusedWindow) {
                 element
@@ -541,7 +572,10 @@ fn view_zone<'a>(
         let opacity = panel.background_opacity.unwrap_or(color(shell_theme.bar_background).a);
         let corners = panel
             .resolved_radius(shell_theme.bar_radius)
-            .at_edge(panel.edge, panel.geometry.edge_margin == 0)
+            .at_edge(
+                panel.edge,
+                surface == GroupSurface::Island && panel.geometry.edge_margin == 0,
+            )
             .0;
         let border = panel.border;
         let content: Element<'_, cosmic::Action<Message>> = container(controls)
@@ -555,15 +589,38 @@ fn view_zone<'a>(
         let content = container(content)
             .id(format!("panel:{}:group:{}", panel.id.0, group.id.0))
             .into();
-        groups = groups.push(island(
-            content,
-            shell_theme,
-            panel.geometry,
-            group.island_padding,
-            panel.background == BarLayout::Islands && has_content,
-            compositor_material && panel.background == BarLayout::Islands,
-            Some((group_material_id(panel, group), opacity, corners)),
-        ));
+        let panel_surface = panel.surface;
+        let material = compositor_material && panel.surface == PanelSurface::None;
+        let content = match surface {
+            GroupSurface::None => content,
+            GroupSurface::Inset => container(content)
+                .id(group_material_id(panel, group))
+                .class(theme::Container::custom(move |_| {
+                    group_surface_style(shell_theme, panel_surface, material, opacity, corners)
+                }))
+                .into(),
+            GroupSurface::Island => {
+                let content = island(
+                    content,
+                    shell_theme,
+                    panel.geometry,
+                    group.island_padding,
+                    has_content,
+                    material || panel.surface == PanelSurface::Solid,
+                    Some((group_material_id(panel, group), opacity, corners)),
+                );
+                if panel.surface == PanelSurface::Solid {
+                    container(content)
+                        .class(theme::Container::custom(move |_| {
+                            group_surface_style(shell_theme, PanelSurface::Solid, false, opacity, corners)
+                        }))
+                        .into()
+                } else {
+                    content
+                }
+            }
+        };
+        groups = groups.push(content);
     }
     groups.into()
 }
@@ -694,8 +751,28 @@ pub(super) fn island<'a>(
         .into()
 }
 
+fn group_surface_style(
+    theme: ShellTheme,
+    parent: PanelSurface,
+    material: bool,
+    opacity: f32,
+    corners: [f32; 4],
+) -> cosmic::widget::container::Style {
+    let mut style = bar_style(theme, material, false);
+    style.border.radius = corners.into();
+    if parent == PanelSurface::Solid {
+        style.background = Some(Background::Color(Color {
+            a: opacity * 0.08,
+            ..color(theme.text_primary)
+        }));
+    } else if let Some(Background::Color(fill)) = style.background {
+        style.background = Some(Background::Color(Color { a: opacity, ..fill }));
+    }
+    style
+}
+
 pub(super) fn input_region(
-    mode: BarLayout,
+    mode: PanelSurface,
     hidden: bool,
     regions: &[[f32; 5]],
 ) -> Option<Vec<cosmic::iced::Rectangle>> {
@@ -703,7 +780,7 @@ pub(super) fn input_region(
         return Some(Vec::new());
     }
 
-    if mode == BarLayout::Continuous {
+    if mode == PanelSurface::Solid {
         return None;
     }
 
@@ -782,7 +859,7 @@ mod island_tests {
                 Some("tiny-skia"),
             ))
             .unwrap();
-        let view = view_zone(panel, zone, availability, theme, true, |item| {
+        let view = view_zone(panel, zone, availability, theme, true, |item, _| {
             let width = match item.kind {
                 ItemKind::Overview => 28.,
                 ItemKind::Workspaces { .. } => 72.,
@@ -841,10 +918,7 @@ mod island_tests {
 
     #[test]
     fn islands_cover_the_full_panel_height_independently_of_group_decoration() {
-        let mut panel = crate::panel::from_status(&crate::config::StatusConfig {
-            bar_layout: BarLayout::Islands,
-            ..Default::default()
-        });
+        let mut panel = Panel::from_preset(PanelPreset::Islands);
         for margin in [0, 6] {
             let theme = ShellTheme::default();
             panel.geometry.height = 36.;
@@ -865,18 +939,20 @@ mod island_tests {
     #[test]
     fn composition_preserves_default_group_gaps_and_material_geometry() {
         for padding in [0., 4., 13.5] {
-            for background in [BarLayout::Continuous, BarLayout::Islands] {
-                let panel = crate::panel::from_status(&crate::config::StatusConfig {
-                    bar_layout: background,
-                    bar_island_padding: padding,
-                    ..Default::default()
-                });
+            for background in [PanelPreset::Continuous, PanelPreset::Islands] {
+                let mut panel = Panel::from_preset(background);
+                for group in [&mut panel.start, &mut panel.center, &mut panel.end]
+                    .into_iter()
+                    .flat_map(|zone| &mut zone.groups)
+                {
+                    group.island_padding = padding;
+                }
                 let start = measure_zone(&panel, &panel.start, Availability::default(), true);
                 assert_eq!(
                     start.items.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(),
                     ["overview", "workspaces"]
                 );
-                let islands = background == BarLayout::Islands;
+                let islands = background == PanelPreset::Islands;
                 assert_eq!(start.items[0].1.x, if islands { padding + 3. } else { 0. });
                 assert_eq!(start.items[1].1.x - start.items[0].1.x, if islands { 29. } else { 34. });
                 assert_eq!(start.islands.len(), usize::from(islands));
@@ -916,10 +992,7 @@ mod island_tests {
 
     #[test]
     fn group_renderer_obeys_order_and_instance_identity_and_skips_unavailable_groups() {
-        let mut panel = crate::panel::from_status(&crate::config::StatusConfig {
-            bar_layout: BarLayout::Islands,
-            ..Default::default()
-        });
+        let mut panel = Panel::from_preset(PanelPreset::Islands);
         let group = &mut panel.end.groups[0];
         let mut clock = group
             .items
@@ -960,26 +1033,23 @@ mod island_tests {
     #[test]
     fn island_gaps_are_click_through_and_fullscreen_disables_every_input_region() {
         let regions = [[12.25, 2.5, 80.5, 24., 14.], [400., 2., 160., 24., 14.]];
-        let input = input_region(BarLayout::Islands, false, &regions).unwrap();
+        let input = input_region(PanelSurface::None, false, &regions).unwrap();
         assert_eq!(input.len(), 2);
         assert_eq!(
             input[0],
             cosmic::iced::Rectangle::new((12., 2.).into(), (81., 25.).into())
         );
         assert!(!input.iter().any(|region| region.contains((240., 14.).into())));
-        assert_eq!(input_region(BarLayout::Islands, true, &regions), Some(Vec::new()));
-        assert_eq!(input_region(BarLayout::Continuous, false, &regions), None);
-        assert_eq!(input_region(BarLayout::Continuous, true, &regions), Some(Vec::new()));
+        assert_eq!(input_region(PanelSurface::None, true, &regions), Some(Vec::new()));
+        assert_eq!(input_region(PanelSurface::Solid, false, &regions), None);
+        assert_eq!(input_region(PanelSurface::Solid, true, &regions), Some(Vec::new()));
     }
 
     #[test]
     fn default_groups_have_no_fill_or_outline_in_either_arrangement() {
         let theme = ShellTheme::default();
-        for background in [BarLayout::Continuous, BarLayout::Islands] {
-            let panel = Panel::from_defaults(&ferese_config::panel::Defaults {
-                bar_layout: background,
-                ..Default::default()
-            });
+        for background in [PanelPreset::Continuous, PanelPreset::Islands] {
+            let panel = Panel::from_preset(background);
             let group = ferese_theme::panel::group_border(color(theme.border), theme.bar_radius, panel.border);
             assert!(group.background.is_none());
             assert_eq!(group.border.width, 0.);
@@ -1009,5 +1079,29 @@ mod island_tests {
         let inner = bar_group_style(theme);
         assert!(inner.background.is_none());
         assert_eq!(inner.border.width, 1.);
+    }
+    #[test]
+    fn mixed_group_surfaces_use_independent_heights_and_padding() {
+        let mut panel = Panel::from_preset(PanelPreset::Islands);
+        panel.geometry.height = 36.;
+        panel.center.groups[0].surface = Some(GroupSurface::None);
+        panel.end.groups[0].surface = Some(GroupSurface::Inset);
+        let navigation = measure_zone(&panel, &panel.start, Availability::default(), true);
+        let title = measure_zone(&panel, &panel.center, Availability::default(), true);
+        let status = measure_zone(&panel, &panel.end, Availability::default(), true);
+        assert_eq!(navigation.islands.len(), 1);
+        assert_eq!(navigation.islands[0].height, 36.);
+        assert!(title.islands.is_empty());
+        assert_eq!(title.items.len(), 1);
+        assert_eq!(status.islands.len(), 1);
+        assert_eq!(status.islands[0].height, BarMetrics::from(panel.geometry).group_height);
+        assert_eq!(status.islands[0].width, status.groups[0].width);
+        assert!(navigation.islands[0].width > navigation.groups[0].width);
+        // The same media island can sit on a continuous panel.
+        panel.surface = PanelSurface::Solid;
+        panel.group_surface = GroupSurface::None;
+        panel.end.groups[0].surface = Some(GroupSurface::Island);
+        let status = measure_zone(&panel, &panel.end, Availability::default(), true);
+        assert_eq!(status.islands[0].height, 36.);
     }
 }

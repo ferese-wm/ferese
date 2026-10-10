@@ -462,7 +462,7 @@ impl cosmic::Application for FereseShell {
                 output.bar_regions = regions;
                 set_input_zone(
                     id,
-                    bar::input_region(self.config.panels[0].background, output.hidden, &output.bar_regions),
+                    bar::input_region(self.config.panels[0].surface, output.hidden, &output.bar_regions),
                 )
             }
 
@@ -891,7 +891,7 @@ impl cosmic::Application for FereseShell {
                             }
                             tasks.push(set_input_zone(
                                 entry.bar,
-                                bar::input_region(self.config.panels[0].background, hidden, &entry.bar_regions),
+                                bar::input_region(self.config.panels[0].surface, hidden, &entry.bar_regions),
                             ));
                         }
                         if self
@@ -1043,7 +1043,7 @@ impl FereseShell {
                 // publishes its replacement through PanelResolved.
                 tasks.push(set_input_zone(
                     output.bar,
-                    bar::input_region(self.config.panels[0].background, output.hidden, &output.bar_regions),
+                    bar::input_region(self.config.panels[0].surface, output.hidden, &output.bar_regions),
                 ));
             }
         }

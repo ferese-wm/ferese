@@ -1,4 +1,4 @@
-use ferese_config::panel::{Defaults, Edge, ItemKind, Panel};
+use ferese_config::panel::{Edge, ItemKind, Panel};
 
 use crate::panel_edit::{Action, Destination, Zone};
 use crate::{App, Element, Message, schema::Page, store, widget};
@@ -10,24 +10,8 @@ pub(super) enum PanelPage {
     Arrange,
 }
 
-pub(super) fn initialize(snapshot: &store::Snapshot) -> Result<store::Edit, String> {
-    let mut panel = Panel::from_defaults(&Defaults {
-        bar_layout: serde_json::from_value(
-            snapshot
-                .item("status.bar_layout")
-                .cloned()
-                .unwrap_or_else(|| "continuous".into()),
-        )
-        .map_err(|error| error.to_string())?,
-        bar_island_padding: snapshot.number(
-            "status.bar_island_padding",
-            f64::from(ferese_config::default_bar_island_padding()),
-        ) as f32,
-        window_title: snapshot.boolean("status.window_title", true),
-        battery_percentage: snapshot.boolean("status.battery_percentage", true),
-    });
-    panel.geometry =
-        ferese_config::panel::PanelGeometry::from_legacy(&snapshot.doc).map_err(|error| error.to_string())?;
+pub(super) fn initialize(_snapshot: &store::Snapshot) -> Result<store::Edit, String> {
+    let panel = Panel::default();
     ferese_config::panel::validate(std::slice::from_ref(&panel))?;
     Ok(store::set(
         "panels",
@@ -119,10 +103,11 @@ impl App {
                     .width(cosmic::iced::Length::Fill)
                     .class(crate::visuals::surface(palette.card, 14.)),
                 );
-                let path = if self.draft.item("panels").is_some() {
-                    "panels.0.background"
-                } else {
-                    "status.bar_layout"
+                let preset = self.preview_panel().ok().and_then(|panel| panel.preset());
+                let preset_key = match preset {
+                    Some(ferese_config::PanelPreset::Continuous) => "continuous",
+                    Some(ferese_config::PanelPreset::Islands) => "islands",
+                    None => "custom",
                 };
                 let position = widget::row([Edge::Top, Edge::Bottom].into_iter().map(|position| {
                     let label = if position == Edge::Top { "Top" } else { "Bottom" };
@@ -154,13 +139,38 @@ impl App {
                     .push(self.panel_heading("Appearance", 15.))
                     .push(self.panel_appearance_row(
                         "Background",
-                        "One surface or separate groups.",
+                        "Apply a preset, then customize each group.",
                         self.panel_surface_choices(
-                            &self.draft.string(path, "continuous"),
+                            preset_key,
                             &[("continuous", "Continuous"), ("islands", "Islands")],
-                            move |key| Message::Change(store::set(path, key)),
+                            move |key| {
+                                Message::PanelEdit(Action::ApplyPreset(if key == "islands" {
+                                    ferese_config::PanelPreset::Islands
+                                } else {
+                                    ferese_config::PanelPreset::Continuous
+                                }))
+                            },
                         ),
                     ))
+                    .push(
+                        self.panel_appearance_row(
+                            "Default group surface",
+                            "Groups can override this in their inspector.",
+                            self.panel_surface_choices(
+                                self.preview_panel()
+                                    .map_or(ferese_config::panel::GroupSurface::None, |panel| panel.group_surface)
+                                    .key(),
+                                &[("none", "None"), ("inset", "Inset"), ("island", "Island")],
+                                |key| {
+                                    Message::PanelEdit(Action::SetDefaultSurface(match key {
+                                        "inset" => ferese_config::panel::GroupSurface::Inset,
+                                        "island" => ferese_config::panel::GroupSurface::Island,
+                                        _ => ferese_config::panel::GroupSurface::None,
+                                    }))
+                                },
+                            ),
+                        ),
+                    )
                     .push(self.panel_divider())
                     .push(self.panel_opacity_controls())
                     .push(self.panel_divider())
@@ -518,10 +528,11 @@ impl App {
                     .spacing(8)
                     .align_y(Alignment::Center)
                     .push(crate::visuals::action_icon(
-                        if key == "continuous" {
-                            "M3 7h18v10H3z"
-                        } else {
-                            "M2 7h5v10H2z M10 7h4v10h-4z M17 7h5v10h-5z"
+                        match key {
+                            "continuous" => "M3 7h18v10H3z",
+                            "none" => "M4 4l16 16 M4 20L20 4",
+                            "inset" => "M3 5h18v14H3z M7 9h10v6H7z",
+                            _ => "M2 7h5v10H2z M10 7h4v10h-4z M17 7h5v10h-5z",
                         },
                         palette.muted,
                     ))
@@ -736,20 +747,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn customization_starts_from_current_settings_and_retains_other_fields() {
-        let mut snapshot = store::Snapshot::parse("// keep\nstatus { bar-layout \"islands\"; bar-island-padding 9.5; battery-percentage #false; window-title #false; }\nanimations { speed 0.8; }\n".into()).unwrap();
+    fn customization_uses_canonical_defaults_and_retains_other_fields() {
+        let mut snapshot = store::Snapshot::parse("// keep\nanimations { speed 0.8; }\n".into()).unwrap();
         snapshot.edit(&initialize(&snapshot).unwrap()).unwrap();
         let snapshot = store::Snapshot::parse(snapshot.source).unwrap();
         let panels: Vec<Panel> = serde_json::from_value(snapshot.item("panels").unwrap().clone()).unwrap();
-        assert_eq!(panels[0].background, ferese_config::BarLayout::Islands);
-        assert_eq!(panels[0].end.groups[0].island_padding, 9.5);
-        assert_eq!(panels[0].center.groups[0].items[0].kind, ItemKind::FocusedWindow);
-        assert!(!panels[0].center.groups[0].items[0].visible);
-        assert_eq!(
-            panels[0].end.groups[0].items[6].kind,
-            ItemKind::Battery { percentage: false }
-        );
-        assert_eq!(snapshot.number("animations.speed", 1.0), 0.8);
+        assert_eq!(panels[0].preset(), Some(ferese_config::PanelPreset::Continuous));
+        assert_eq!(panels[0].geometry, ferese_config::panel::PanelGeometry::default());
+        assert!(panels[0].center.groups[0].items[0].visible);
+        assert_eq!(snapshot.number("animations.speed", 1.), 0.8);
         assert!(snapshot.source.contains("// keep"));
         let id = snapshot.string("panels.0.end.groups.0.items.2.id", "");
         let mut changed = snapshot;
@@ -758,7 +764,6 @@ mod tests {
             .unwrap();
         let changed = store::Snapshot::parse(changed.source).unwrap();
         assert_eq!(changed.string("panels.0.end.groups.0.items.2.id", ""), id);
-        assert_eq!(changed.string("panels.0.end.groups.0.items.2.overflow", ""), "always");
     }
 
     #[test]
@@ -796,7 +801,7 @@ mod tests {
             ("/unused/editor.kdl".into(), store::Snapshot::parse(String::new()), None),
         )
         .0;
-        let panel = Panel::from_defaults(&Defaults::default());
+        let panel = Panel::default();
         for width in [280., 560., 900.] {
             let mut view = app.panel_editor(&panel);
             let mut tree = advanced::Tree::new(&view);

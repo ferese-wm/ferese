@@ -16,25 +16,14 @@ pub const DEFAULT_MATERIAL_OPACITY: f64 = 0.78;
 
 #[derive(Clone, Copy, Debug, Default, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum BarLayout {
+pub enum PanelPreset {
     #[default]
     Continuous,
     Islands,
 }
 
-pub const fn default_bar_island_padding() -> f32 {
+pub const fn default_island_padding() -> f32 {
     4.0
-}
-
-pub fn deserialize_bar_island_padding<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<f32, D::Error> {
-    let padding = <f32 as serde::Deserialize>::deserialize(deserializer)?;
-    if !padding.is_finite() || !(0.0..=32.0).contains(&padding) {
-        return Err(serde::de::Error::custom(
-            "bar-island-padding must be between 0 and 32 logical pixels",
-        ));
-    }
-
-    Ok(padding)
 }
 
 #[derive(Debug)]
@@ -251,8 +240,7 @@ pub struct Document {
 impl Document {
     pub fn parse(source: &str) -> Result<Self, Error> {
         let doc = source.parse::<KdlDocument>().map_err(|e| Error(format!("{e:?}")))?;
-        let mut value = Value::Object(object(&doc, "")?);
-        panel::geometry::migrate(&mut value)?;
+        let value = Value::Object(object(&doc, "")?);
 
         Ok(Self { doc, value })
     }
@@ -284,7 +272,6 @@ impl Document {
 
     fn refresh(&mut self) -> Result<(), Error> {
         self.value = Value::Object(object(&self.doc, "")?);
-        panel::geometry::migrate(&mut self.value)?;
         Ok(())
     }
 
@@ -586,27 +573,26 @@ fn unset_property(doc: &mut KdlDocument, parts: &[&str], parent: &str) -> Result
     else {
         return Ok(false);
     };
-    if parts.len() == used + 1 {
-        if let Some(index) = node
+    if parts.len() == used + 1
+        && let Some(index) = node
             .entries()
             .iter()
             .position(|entry| entry.name().is_some_and(|name| field(name.value(), key) == parts[used]))
-        {
-            let entry = node.entries_mut().remove(index);
-            if let Some(format) = entry.format() {
-                let comments = [&format.leading, &format.trailing]
-                    .into_iter()
-                    .filter(|part| part.contains("//") || part.contains("/*"))
-                    .cloned()
-                    .collect::<String>();
-                if !comments.is_empty() {
-                    let mut format = node.format().cloned().unwrap_or_default();
-                    format.leading.push_str(&comments);
-                    node.set_format(format);
-                }
+    {
+        let entry = node.entries_mut().remove(index);
+        if let Some(format) = entry.format() {
+            let comments = [&format.leading, &format.trailing]
+                .into_iter()
+                .filter(|part| part.contains("//") || part.contains("/*"))
+                .cloned()
+                .collect::<String>();
+            if !comments.is_empty() {
+                let mut format = node.format().cloned().unwrap_or_default();
+                format.leading.push_str(&comments);
+                node.set_format(format);
             }
-            return Ok(true);
         }
+        return Ok(true);
     }
     if let Some(children) = node.children_mut() {
         unset_property(children, &parts[used..], key)

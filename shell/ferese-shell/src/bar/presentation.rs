@@ -1,7 +1,7 @@
 use cosmic::iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, renderer, widget};
 use cosmic::iced::{Event, Length, Rectangle, Size, Vector};
 use cosmic::{Element, Theme};
-use ferese_config::BarLayout;
+use ferese_config::panel::PanelSurface;
 
 pub(crate) fn island_id() -> widget::Id {
     static ID: std::sync::OnceLock<widget::Id> = std::sync::OnceLock::new();
@@ -15,7 +15,7 @@ pub(crate) fn input_id() -> widget::Id {
 
 pub(super) fn frame<'a, M: 'a>(
     content: Element<'a, M>,
-    mode: BarLayout,
+    mode: PanelSurface,
     radius: f32,
     materials: Vec<(widget::Id, f32)>,
     present: impl Fn(&[[f32; 5]], &[f32]) + 'a,
@@ -33,7 +33,7 @@ pub(super) fn frame<'a, M: 'a>(
 
 #[derive(Default)]
 struct State {
-    mode: Option<BarLayout>,
+    mode: Option<PanelSurface>,
     current: Vec<[f32; 5]>,
     scratch: Vec<[f32; 5]>,
     input: Vec<[f32; 5]>,
@@ -46,7 +46,7 @@ type Present<'a> = Box<dyn Fn(&[[f32; 5]], &[f32]) + 'a>;
 
 struct Presentation<'a, M> {
     content: Element<'a, M>,
-    mode: BarLayout,
+    mode: PanelSurface,
     radius: f32,
     materials: Vec<(widget::Id, f32)>,
     present: Present<'a>,
@@ -132,7 +132,7 @@ impl<M> Widget<M, Theme, cosmic::Renderer> for Presentation<'_, M> {
         collector.opacities.clear();
         collector.input.clear();
         collector.scroll_starts.clear();
-        if self.mode == BarLayout::Islands {
+        if self.mode == PanelSurface::None {
             self.content
                 .as_widget_mut()
                 .operate(&mut tree.children[0], layout, renderer, &mut collector);
@@ -152,7 +152,7 @@ impl<M> Widget<M, Theme, cosmic::Renderer> for Presentation<'_, M> {
             state.mode = Some(self.mode);
             state.current.clone_from(&collector.regions);
             state.input.clone_from(&collector.input);
-            shell.publish((self.changed)(if self.mode == BarLayout::Continuous {
+            shell.publish((self.changed)(if self.mode == PanelSurface::Solid {
                 collector.regions.clone()
             } else {
                 collector.input.clone()
@@ -359,7 +359,7 @@ mod tests {
                 .into();
             let mut view = frame(
                 content,
-                BarLayout::Islands,
+                PanelSurface::None,
                 12.,
                 vec![(id.clone(), opacity)],
                 |regions, opacities| published.borrow_mut().push((regions.to_vec(), opacities.to_vec())),
@@ -407,11 +407,11 @@ mod tests {
         };
 
         for (mode, padding) in [
-            (BarLayout::Islands, 12.),
-            (BarLayout::Islands, 4.),
-            (BarLayout::Islands, 0.),
-            (BarLayout::Continuous, 32.),
-            (BarLayout::Islands, 12.),
+            (PanelSurface::None, 12.),
+            (PanelSurface::None, 4.),
+            (PanelSurface::None, 0.),
+            (PanelSurface::Solid, 32.),
+            (PanelSurface::None, 12.),
         ] {
             let section = |width| {
                 let inner = container(widgets::Space::new().width(width).height(24))
@@ -424,7 +424,7 @@ mod tests {
                     theme,
                     crate::panel::PanelGeometry::default(),
                     padding,
-                    mode == BarLayout::Islands,
+                    mode == PanelSurface::None,
                     true,
                     None,
                 )
@@ -470,7 +470,7 @@ mod tests {
             }
 
             assert_eq!(messages.len(), 1, "unchanged frames must not rebuild input regions");
-            let expected = if mode == BarLayout::Islands {
+            let expected = if mode == PanelSurface::None {
                 vec![
                     [12., 0., 100. + 2. * padding, 28., 14.],
                     [172. + 2. * padding, 0., 200. + 2. * padding, 28., 14.],
@@ -529,7 +529,7 @@ mod tests {
         let materials = std::cell::RefCell::new(Vec::new());
         let mut view = frame(
             content,
-            BarLayout::Islands,
+            PanelSurface::None,
             14.,
             vec![],
             |regions, _| *materials.borrow_mut() = regions.to_vec(),

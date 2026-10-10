@@ -207,8 +207,7 @@ pub fn default_tokens() -> Tokens {
                 "accent":"#3D7BE6", "on_accent":"#FFFFFF", "border":"#FFFFFF18", "shadow":"#00000055"},
             "material":{"style":"solid","opacity":0.78,"blur_radius":12.0,"tint_strength":0.5},
             "geometry":{"border_width":1.0,"focus_ring_width":2.0,"window_radius":14.0,"shell_radius":14.0,
-                "top_bar_height":28.0,"top_bar_margin_top":0,"top_bar_margin_horizontal":0,
-                "top_bar_window_gap":0,"panel_padding":12.0,"control_gap":12.0},
+                "control_gap":12.0},
             "typography":{"font_family":"Inter"},
             "background":{"path":crate::default_wallpaper(),"lock_path":null,"mode":"fill"},
             "surface":{"bar":{"background":"#111821","text_primary":"#F4F7FB","text_muted":"#8793A2"}},
@@ -718,9 +717,6 @@ fn validate(tokens: &Tokens) -> Result<(), String> {
     }
     if !["fill", "fit"].contains(&tokens.background.mode.as_str()) {
         return Err("Unknown wallpaper mode".into());
-    }
-    if tokens.geometry.top_bar_height <= 0. {
-        return Err("top-bar-height must be positive".into());
     }
     if tokens.typography.font_family.len() > 128 {
         return Err("font-family exceeds 128 bytes".into());

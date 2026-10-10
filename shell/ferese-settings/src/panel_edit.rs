@@ -26,6 +26,9 @@ impl std::fmt::Display for Destination {
 
 #[derive(Clone, Debug)]
 pub(super) enum Action {
+    ApplyPreset(ferese_config::PanelPreset),
+    SetDefaultSurface(ferese_config::panel::GroupSurface),
+    ClearGroupSurface(GroupId),
     SetEdge(ferese_config::panel::Edge),
     SetGeometry(String, Value),
     SetRadius(String),
@@ -170,6 +173,25 @@ pub(super) fn plan(snapshot: &Snapshot, action: Action) -> Result<Vec<Edit>, Str
     let earlier = matches!(&action, Action::Earlier(_));
     let earlier_group = matches!(&action, Action::EarlierGroup(_));
     let edits = match action {
+        Action::ApplyPreset(preset) => {
+            let mut edited = panel.clone();
+            edited.apply_preset(preset);
+            let mut edits = vec![
+                set("panels.0.surface", serde_json::to_value(edited.surface).unwrap()),
+                set(
+                    "panels.0.group_surface",
+                    serde_json::to_value(edited.group_surface).unwrap(),
+                ),
+            ];
+            for group in Zone::ALL.into_iter().flat_map(|zone| &zone.definition(panel).groups) {
+                if group.surface.is_some() {
+                    edits.push(Edit::Unset(format!("{}.surface", group_record_path(panel, &group.id)?)));
+                }
+            }
+            edits
+        }
+        Action::SetDefaultSurface(surface) => vec![set("panels.0.group_surface", surface.key())],
+        Action::ClearGroupSurface(id) => vec![Edit::Unset(format!("{}.surface", group_record_path(panel, &id)?))],
         Action::SetEdge(edge) => vec![set("panels.0.edge", edge.key())],
         Action::SetGeometry(field, value) => {
             if !matches!(
@@ -296,20 +318,7 @@ pub(super) fn plan(snapshot: &Snapshot, action: Action) -> Result<Vec<Edit>, Str
             if field == "style" && !matches!(panel.item(&id).unwrap().kind, ItemKind::Workspaces { .. }) {
                 return Err("Workspace style belongs to Workspaces items.".into());
             }
-            let mut edits = Vec::new();
-            let legacy = match field.as_str() {
-                "style" => Some("workspace_style"),
-                "visible" if panel.item(&id).unwrap().kind == ItemKind::FocusedWindow => Some("enabled"),
-                _ => None,
-            };
-            if let Some(legacy) = legacy {
-                let legacy = format!("{path}.{index}.{legacy}");
-                if snapshot.item(&legacy).is_some() {
-                    edits.push(Edit::Unset(legacy));
-                }
-            }
-            edits.push(set(&format!("{path}.{index}.{field}"), value));
-            edits
+            vec![set(&format!("{path}.{index}.{field}"), value)]
         }
         Action::Add(kind, destination) => {
             if kind == ItemKind::Overflow {
@@ -398,7 +407,7 @@ pub(super) fn plan(snapshot: &Snapshot, action: Action) -> Result<Vec<Edit>, Str
                 }
                 _ => (field, value),
             };
-            if !matches!(field.as_str(), "spacing" | "padding" | "island_padding") {
+            if !matches!(field.as_str(), "spacing" | "padding" | "island_padding" | "surface") {
                 return Err("Unknown panel group setting.".into());
             }
             vec![set(&format!("{}.{field}", group_record_path(panel, &id)?), value)]
@@ -417,18 +426,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn first_geometry_edit_materializes_the_panel_and_preserves_imported_spacing() {
-        let mut snapshot =
-            Snapshot::parse("// keep\ntheme { geometry { top-bar-height 36; top-bar-margin-top 6; }; }".into())
-                .unwrap();
+    fn first_geometry_edit_materializes_the_panel_atomically() {
+        let mut snapshot = Snapshot::parse("// keep\nanimations { speed 0.8; }".into()).unwrap();
         let edits = plan(&snapshot, Action::SetGeometry("side_margins".into(), 18.into())).unwrap();
         assert_eq!(edits.len(), 2, "initialize and edit share one save/undo transaction");
         for edit in edits {
             snapshot.edit(&edit).unwrap();
         }
         let panels: Vec<Panel> = serde_json::from_value(snapshot.item("panels").unwrap().clone()).unwrap();
-        assert_eq!(panels[0].geometry.height, 36.);
-        assert_eq!(panels[0].geometry.edge_margin, 6);
+        assert_eq!(panels[0].geometry.height, 28.);
+        assert_eq!(panels[0].geometry.edge_margin, 0);
         assert_eq!(panels[0].geometry.side_margins, 18);
         assert!(snapshot.source.contains("// keep"));
         assert!(plan(&snapshot, Action::SetGeometry("height".into(), 12.into())).is_err());
@@ -511,7 +518,7 @@ animations { speed 0.8; }
 
     #[test]
     fn border_toggle_materializes_once_and_preserves_every_group() {
-        let mut snapshot = Snapshot::parse("status { bar-layout islands; }".into()).unwrap();
+        let mut snapshot = Snapshot::parse(String::new()).unwrap();
         let original: Vec<Panel> = {
             let Edit::Set(_, value) = crate::panel_controls::initialize(&snapshot).unwrap() else {
                 unreachable!()
@@ -577,11 +584,11 @@ animations { speed 0.8; }
 
     #[test]
     fn changing_edge_materializes_preferences_and_round_trips_without_moving_items() {
-        let mut snapshot = Snapshot::parse("status { battery-percentage #false; }".into()).unwrap();
+        let mut snapshot = Snapshot::parse("".into()).unwrap();
         apply(&mut snapshot, Action::SetEdge(ferese_config::panel::Edge::Bottom));
         let before = snapshot.item("panels.0.start").unwrap().clone();
         assert_eq!(snapshot.string("panels.0.edge", ""), "bottom");
-        assert!(!snapshot.boolean("panels.0.end.groups.0.items.6.percentage", true));
+        assert!(snapshot.boolean("panels.0.end.groups.0.items.6.percentage", false));
         apply(&mut snapshot, Action::SetEdge(ferese_config::panel::Edge::Top));
         assert_eq!(snapshot.string("panels.0.edge", ""), "top");
         assert_eq!(snapshot.item("panels.0.start"), Some(&before));
@@ -589,8 +596,8 @@ animations { speed 0.8; }
     }
 
     #[test]
-    fn first_edit_materializes_legacy_settings_and_the_change_together() {
-        let mut snapshot = Snapshot::parse("// preserved\nstatus { battery-percentage #false; }\n".into()).unwrap();
+    fn first_edit_materializes_default_settings_and_the_change_together() {
+        let mut snapshot = Snapshot::parse("// preserved\n\n".into()).unwrap();
         let original = snapshot.source.clone();
         assert!(
             plan(
@@ -610,7 +617,7 @@ animations { speed 0.8; }
             snapshot.edit(&edit).unwrap();
         }
         assert!(!snapshot.boolean("panels.0.end.groups.0.items.6.visible", true));
-        assert!(!snapshot.boolean("panels.0.end.groups.0.items.6.percentage", true));
+        assert!(snapshot.boolean("panels.0.end.groups.0.items.6.percentage", false));
         assert!(snapshot.source.contains("// preserved"));
         Snapshot::parse(snapshot.source).unwrap();
     }
@@ -802,7 +809,7 @@ animations { speed 0.8; }
 
     #[test]
     fn empty_zones_can_gain_unique_groups_and_nonempty_groups_cannot_be_removed() {
-        let mut snapshot = Snapshot::parse("panel \"main\" { background islands; }".into()).unwrap();
+        let mut snapshot = Snapshot::parse("panel \"main\" { surface none; group-surface island; }".into()).unwrap();
         for _ in 0..3 {
             apply(&mut snapshot, Action::AddGroup(Zone::End));
         }
@@ -919,7 +926,11 @@ animations { speed 0.8; }
     }
     #[test]
     fn workspace_style_selection_preserves_other_preferences_and_moves_with_the_item() {
-        let mut snapshot = Snapshot::parse("// keep\nstatus { battery-percentage #false; }".into()).unwrap();
+        let mut snapshot = Snapshot::parse("// keep\n".into()).unwrap();
+        apply(
+            &mut snapshot,
+            Action::Set(ItemId("battery".into()), "percentage".into(), false.into()),
+        );
         for style in ferese_config::panel::WorkspaceStyle::ALL {
             apply(
                 &mut snapshot,
@@ -953,8 +964,8 @@ animations { speed 0.8; }
     }
 
     #[test]
-    fn editing_legacy_item_settings_removes_competing_fields_without_losing_comments() {
-        let mut snapshot = Snapshot::parse("// keep\npanel main { start { group nav { item spaces kind=\"workspaces\" workspace-style=\"numbers\" custom-note=\"keep\"; }; }; center { group title { item title kind=\"focused-window\" enabled=#false; }; }; }".into()).unwrap();
+    fn editing_item_settings_preserves_comments_and_custom_fields() {
+        let mut snapshot = Snapshot::parse("// keep\npanel main { start { group nav { item spaces kind=\"workspaces\" style=\"numbers\" custom-note=\"keep\"; }; }; center { group title { item title kind=\"focused-window\" visible=#false; }; }; }".into()).unwrap();
         apply(
             &mut snapshot,
             Action::Set(ItemId("spaces".into()), "style".into(), "dots".into()),
@@ -963,10 +974,43 @@ animations { speed 0.8; }
             &mut snapshot,
             Action::Set(ItemId("title".into()), "visible".into(), true.into()),
         );
-        assert!(!snapshot.source.contains("workspace-style"));
-        assert!(!snapshot.source.contains("enabled"));
         assert!(snapshot.source.contains("// keep") && snapshot.source.contains("custom-note"));
         let panels: Vec<Panel> = serde_json::from_value(snapshot.item("panels").unwrap().clone()).unwrap();
         assert!(panels[0].item(&ItemId("title".into())).unwrap().visible);
+    }
+    #[test]
+    fn group_surface_edits_and_presets_preserve_composition_and_comments() {
+        let mut snapshot = Snapshot::parse("// keep\npanel main { surface none; group-surface island; center { group title surface=none { item title kind=focused-window; }; }; end { group media { item media kind=media; }; }; }".into()).unwrap();
+        let items = snapshot.item("panels.0.center.groups.0.items").unwrap().clone();
+        let media = GroupId("media".into());
+        apply(
+            &mut snapshot,
+            Action::SetGroup(media.clone(), "surface".into(), "inset".into()),
+        );
+        assert_eq!(snapshot.string("panels.0.end.groups.0.surface", ""), "inset");
+        apply(&mut snapshot, Action::ClearGroupSurface(media));
+        assert!(snapshot.item("panels.0.end.groups.0.surface").is_none());
+        apply(
+            &mut snapshot,
+            Action::ApplyPreset(ferese_config::PanelPreset::Continuous),
+        );
+        assert_eq!(snapshot.string("panels.0.surface", ""), "solid");
+        assert!(snapshot.item("panels.0.center.groups.0.surface").is_none());
+        assert_eq!(snapshot.item("panels.0.center.groups.0.items"), Some(&items));
+        assert!(snapshot.source.contains("// keep"));
+        apply(
+            &mut snapshot,
+            Action::SetGroup(GroupId("title".into()), "surface".into(), "none".into()),
+        );
+        apply(&mut snapshot, Action::ApplyPreset(ferese_config::PanelPreset::Islands));
+        let panels: Vec<Panel> = serde_json::from_value(snapshot.item("panels").unwrap().clone()).unwrap();
+        assert_eq!(panels[0].preset(), Some(ferese_config::PanelPreset::Islands));
+        assert!(
+            plan(
+                &snapshot,
+                Action::SetGroup(GroupId("title".into()), "surface".into(), "unsupported".into())
+            )
+            .is_err()
+        );
     }
 }

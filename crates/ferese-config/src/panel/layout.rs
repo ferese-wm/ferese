@@ -26,7 +26,7 @@ pub struct Resolution {
     pub minimum_width: f32,
 }
 
-fn zone_width(background: crate::BarLayout, zone: &Zone, items: &BTreeMap<ItemId, Placement>) -> f32 {
+fn zone_width(panel: &Panel, zone: &Zone, items: &BTreeMap<ItemId, Placement>) -> f32 {
     let mut groups = Vec::new();
     for group in &zone.groups {
         let mut widths = Vec::new();
@@ -42,7 +42,7 @@ fn zone_width(background: crate::BarLayout, zone: &Zone, items: &BTreeMap<ItemId
         }
         if !widths.is_empty() {
             let padding = 2.0 * f32::from(group.padding[1]);
-            let island = if background == crate::BarLayout::Islands {
+            let island = if panel.resolved_surface(group) == super::GroupSurface::Island {
                 2.0 * group.island_padding
             } else {
                 0.0
@@ -56,9 +56,9 @@ fn zone_width(background: crate::BarLayout, zone: &Zone, items: &BTreeMap<ItemId
 impl Resolution {
     fn update_widths(&mut self, panel: &Panel, overflow_width: f32) {
         self.zone_widths = [
-            zone_width(panel.background, &panel.start, &self.items),
-            zone_width(panel.background, &panel.center, &self.items),
-            zone_width(panel.background, &panel.end, &self.items),
+            zone_width(panel, &panel.start, &self.items),
+            zone_width(panel, &panel.center, &self.items),
+            zone_width(panel, &panel.end, &self.items),
         ];
         if !self.overflow.is_empty() {
             self.zone_widths[2] += overflow_width
@@ -253,12 +253,11 @@ pub fn resolve_with_gap(
 
 #[cfg(test)]
 mod tests {
-    use super::super::Defaults as StatusConfig;
     use super::*;
 
     #[test]
     fn allocation_is_independent_of_measurement_order_even_for_flexible_items() {
-        let panel = Panel::from_defaults(&StatusConfig::default());
+        let panel = Panel::default();
         let mut measured = measurements(&panel);
         for measurement in &mut measured {
             measurement.minimum = Some(24.);
@@ -294,11 +293,8 @@ mod tests {
 
     #[test]
     fn narrow_panels_adapt_deterministically_and_keep_every_item_reachable() {
-        for background in [crate::BarLayout::Continuous, crate::BarLayout::Islands] {
-            let panel = Panel::from_defaults(&StatusConfig {
-                bar_layout: background,
-                ..Default::default()
-            });
+        for background in [crate::PanelPreset::Continuous, crate::PanelPreset::Islands] {
+            let panel = Panel::from_preset(background);
             let measured = measurements(&panel);
             for width in [2400., 1200., 800., 400., 160., 80., 32.] {
                 let resolution = resolve(&panel, &measured, width, 32.);
@@ -317,24 +313,21 @@ mod tests {
 
     #[test]
     fn decoration_and_borders_do_not_change_background_arrangement_or_allocation() {
-        for background in [crate::BarLayout::Continuous, crate::BarLayout::Islands] {
-            let mut panel = Panel::from_defaults(&super::super::Defaults {
-                bar_layout: background,
-                ..Default::default()
-            });
+        for background in [crate::PanelPreset::Continuous, crate::PanelPreset::Islands] {
+            let mut panel = Panel::from_preset(background);
             let measurements = measurements(&panel);
             let plain = resolve(&panel, &measurements, 1000., 32.);
             assert!(!panel.border);
             panel.border = true;
             panel.background_opacity = Some(0.4);
             assert_eq!(resolve(&panel, &measurements, 1000., 32.), plain);
-            assert_eq!(panel.background, background);
+            assert_eq!(panel.preset(), Some(background));
         }
     }
 
     #[test]
     fn side_margins_stop_before_overflow_and_use_each_outputs_logical_width() {
-        let panel = Panel::from_defaults(&super::super::Defaults::default());
+        let panel = Panel::default();
         let measurements = measurements(&panel);
         let full = resolve(&panel, &measurements, 4000., 32.);
         assert!(full.minimum_width < full.required_width());
@@ -358,7 +351,7 @@ mod tests {
 
     #[test]
     fn margin_limit_includes_group_padding_and_authored_overflow_without_dependence_on_current_surface_width() {
-        let mut panel = Panel::from_defaults(&super::super::Defaults::default());
+        let mut panel = Panel::default();
         panel.end.groups[0].items[0].overflow = OverflowPolicy::Always;
         let measurements = measurements(&panel);
         let full = resolve(&panel, &measurements, 4000., 32.);
@@ -376,7 +369,7 @@ mod tests {
 
     #[test]
     fn asymmetric_sides_reserve_a_real_screen_center() {
-        let panel = Panel::from_defaults(&StatusConfig::default());
+        let panel = Panel::default();
         let resolution = resolve(&panel, &measurements(&panel), 1500., 32.);
         let [start, center, end] = resolution.zone_widths;
         assert!(end > start);
@@ -386,7 +379,7 @@ mod tests {
 
     #[test]
     fn always_overflow_is_reserved_and_unavailable_items_are_not_allocated() {
-        let mut panel = Panel::from_defaults(&StatusConfig::default());
+        let mut panel = Panel::default();
         panel.end.groups[0].items[2].overflow = OverflowPolicy::Always;
         let mut measured = measurements(&panel);
         measured.remove(3);
@@ -396,7 +389,7 @@ mod tests {
     }
     #[test]
     fn priority_controls_displacement_and_expansion_restores_requested_sizes() {
-        let mut panel = Panel::from_defaults(&StatusConfig::default());
+        let mut panel = Panel::default();
         panel.start.groups.clear();
         panel.center.groups.clear();
         panel.end.groups.retain(|group| group.id.0 == "time");
@@ -432,5 +425,22 @@ mod tests {
             }
             assert_eq!(panel, initial, "resolution must not rewrite configuration intent");
         }
+    }
+    #[test]
+    fn only_island_groups_reserve_island_padding() {
+        let mut panel = Panel::from_preset(crate::PanelPreset::Islands);
+        let measured = measurements(&panel);
+        let initial = resolve(&panel, &measured, 2400., 32.);
+        let title_padding = 2. * panel.center.groups[0].island_padding;
+        panel.center.groups[0].surface = Some(super::super::GroupSurface::None);
+        let plain = resolve(&panel, &measured, 2400., 32.);
+        assert_eq!(plain.zone_widths[1], initial.zone_widths[1] - title_padding);
+        assert_eq!(plain.zone_widths[0], initial.zone_widths[0]);
+        assert_eq!(plain.zone_widths[2], initial.zone_widths[2]);
+        panel.center.groups[0].surface = Some(super::super::GroupSurface::Inset);
+        assert_eq!(resolve(&panel, &measured, 2400., 32.), plain);
+        // A parent panel fill cannot change a group's allocation policy.
+        panel.surface = super::super::PanelSurface::Solid;
+        assert_eq!(resolve(&panel, &measured, 2400., 32.), plain);
     }
 }

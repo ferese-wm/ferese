@@ -336,7 +336,6 @@ Filled controls choose a contrasting text color automatically.
 | `window-radius` | number ≥ 0 | `14` | Managed-window corners, independent of the shell |
 | `shell-radius` | number ≥ 0 | `14` | All shell surfaces, cards, widgets and interaction backgrounds; fractional radii are preserved; 0 makes them square |
 | `top-bar-radius` | number ≥ 0 | unset | Legacy fallback for shell radius |
-| `panel-padding` | number ≥ 0 | `12` | Bar inner padding |
 | `control-gap` | number ≥ 0 | `12` | Right-side control spacing |
 
 | Section / key | Type | Default | Meaning |
@@ -805,9 +804,9 @@ intentionally turning off the last working one.
 
 ## Panel composition
 
-Ferese shows one panel on each output, at the top by default. Without a `panel` block, the status
-settings below generate the usual arrangement. An explicit panel replaces that
-arrangement, including its background, title, and battery percentage settings.
+Ferese shows one panel on each output, at the top by default. Without a `panel`
+block, a stable default composition is generated. An explicit panel owns its
+geometry, surface defaults, ordered groups, and item settings.
 Settings → **Panel & Shell** opens **Panels**, with position, background, size, spacing,
 and corner-radius controls. **Edit panel** opens **Arrange**; **Back to Panels**
 returns to those controls. The preview stays visible while the editor and
@@ -818,9 +817,8 @@ the desktop, and window clearance follows the selected edge. In KDL, set
 `edge "top"` or `edge "bottom"` inside the panel. **Edge margin** sets the gap
 from that screen edge. Each panel owns a `geometry` block: `height` (24–128),
 `edge-margin`, `side-margins`, `window-clearance` (0–4096), and `inner-padding`
-(0–64). Defaults are 28, 0, 0, 0, and 12 logical pixels respectively. Older
-`theme.geometry.top-bar-*` values and `panel-padding` import only when a panel
-has no geometry block. Appearance changes do not resize an authored panel.
+(0–64). Defaults are 28, 0, 0, 0, and 12 logical pixels respectively.
+Appearance changes do not resize a panel.
 
 Drag a control's handle to reorder it or move it into another group. Dropping
 into an empty zone creates a group. Select a control to open its inspector,
@@ -831,18 +829,24 @@ preferred-size, and removal controls. Changes use the existing save and Undo con
 `ferese-settings --page bar` opens this page directly.
 
 Use **Add group** in Start, Center, or End to create an empty group. Select its
-name to change placement, spacing, and padding.
+name to change placement, surface, spacing, and padding.
 Arrow buttons reorder groups within a zone. Move or remove a group's controls
 before removing the group.
 
-**Panels → Size & spacing** owns the panel's shared styling. **Background**
-chooses one continuous background or the same background split around groups
-(Islands). Both arrangements share their color, opacity, corners, and shadow.
+**Background** offers Continuous and Islands presets. Continuous sets the panel
+surface to `solid` (a full panel fill) and the default group surface to `none`.
+Islands sets the panel surface to `none` and the default group surface to `island`.
+Applying a preset clears group surface overrides and preserves composition.
 
-**Group borders** controls all group outlines and defaults to off in both
-arrangements. Groups do not paint an extra fill over the panel background.
-Individual groups have no surface, border, opacity, or corner controls.
-Earlier `group-surface` values are accepted but no longer affect appearance.
+**Default group surface** sets the inherited surface. Each group inspector offers
+Default, None, Inset, and Island. None adds no fill; Inset adds a rounded surface
+around the padded content; Island adds a full-height surface and island padding.
+Groups on a filled panel use a subtle local tint. This allows a continuous panel
+with one media island, or navigation and status islands with an undecorated title.
+Mixed settings leave both preset buttons unselected.
+
+**Group borders** controls all group outlines and defaults to off. Opacity and
+corner radii remain panel-wide settings.
 
 **Background opacity** overrides shell opacity for the panel background in either
 arrangement, without fading controls or changing popups. **Use shell opacity**
@@ -885,7 +889,9 @@ or exact vertical styling.
 
 ```kdl
 panel "main" {
-    background "islands"
+    surface "none"
+    group-surface "island"
+    geometry { height 30; edge-margin 6; side-margins 18; window-clearance 4; }
     border #false
     background-opacity 0.85
     start {
@@ -896,6 +902,7 @@ panel "main" {
     }
     center {
         group "title" {
+            surface "none"
             item "title" kind="focused-window" overflow="never"
         }
     }
@@ -923,7 +930,10 @@ currently share the same clock format and timezone.
 
 | Scope / key | Values / default | Meaning |
 | --- | --- | --- |
-| Panel `background` | `continuous` (default), `islands` | Whole-panel background or transparent gaps |
+| Panel `surface` | `solid` (default), `none` | Full panel fill or transparent space between decorated groups |
+| Panel `group-surface` | `none` (default), `inset`, `island` | Inherited group surface |
+| Group `surface` | omit to inherit, `none`, `inset`, `island` | Override surface independently of other groups |
+| Panel `geometry` | height 28, edge/side margins 0, window clearance 0, inner padding 12 | Dimensions independent of the theme |
 | Panel `border` | boolean; default `false` | Show group outlines |
 | Panel `corner-radius` | optional px string, e.g. `"4px 8px"` | Override shell radius for all panel surfaces |
 | Zone `spacing` | 0–64; default 8 | Gap between groups |
@@ -941,9 +951,6 @@ currently share the same clock format and timezone.
 | Battery `percentage` | boolean; default `true` | Include percentage in its full form |
 | Focused window `visible` | boolean; default `true` | Include the title |
 
-Earlier per-group `surface` and `background-opacity` fields remain readable but
-no longer control styling. New edits use the panel-level settings above.
-
 Media and clock support all three representations. Battery with a percentage
 supports `wide` and `icon`; other controls keep their existing form. Unsupported
 preferences use the kind's normal form. The title can shrink and ellipsize;
@@ -958,9 +965,8 @@ animation and reduced-motion settings. Explicitly set `style="numbers"`
 to retain numbered indicators.
 
 Item-specific settings belong to their kind: Workspaces uses `style`, Battery
-uses `percentage`, and Focused window uses the shared `visible` flag. Earlier
-`workspace-style` and focused-window `enabled` values remain readable; editing
-these settings writes the canonical field and removes its legacy equivalent.
+uses `percentage`, and Focused window uses the shared `visible` flag.
+Only these canonical fields are supported.
 
 The center stays screen-centered. When controls cannot fit, lower-priority items
 adapt first, with definition order breaking ties. The overflow chevron appears
@@ -974,29 +980,14 @@ The [integration notes](panel-composition.md) describe ownership and remaining w
 
 | `status` key | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `bar-layout` | `"continuous"` or `"islands"` | `"continuous"` | One bar background or separate backgrounds around its sections |
-| `bar-island-padding` | number 0–32 | `4` | Horizontal space on each side between an island's background and its bordered controls, in logical pixels |
 | `keybinding-guide` | boolean | `true` | Show the active shortcut guide at login until disabled in Settings → Keyboard & mouse → Shortcuts. |
-| `window-title` | boolean | `true` | Focused window title in the bar center when space allows |
-| `battery-percentage` | boolean | `true` | Show percentage beside icon |
 | `low-battery-threshold` | integer 0–100 | `20` | Warning-color threshold |
 | `settings-command` | argument array | `["ferese-settings"]` | Settings launcher; `[]` hides the action |
 
-Choose **Islands** in Settings → Bar, or set it in KDL:
-
-```kdl
-status {
-    bar-layout "islands"
-    bar-island-padding 4
-}
-```
-
-The gaps between islands are transparent and let clicks pass through. Each island
-uses the bar background, the panel's resolved corner radius, and material opacity.
-Changing the bar layout leaves modal transparency unchanged. The bar reserves the
-same space above windows in either layout.
-
-Use **Island side padding** in Settings → Bar to tighten the space around each section. It applies only to islands; continuous bars keep their existing padding.
+Configure panel surfaces in **Panel & Shell** or in the `panel` block above.
+Transparent gaps pass clicks through. Group islands use panel opacity and corner
+radii; changing their surface leaves modal transparency and window clearance
+unchanged. Island padding belongs to each group and applies only to islands.
 
 ### Now Playing
 

@@ -56,11 +56,6 @@ pub struct Geometry {
     pub focus_ring_width: f64,
     pub window_radius: f64,
     pub shell_radius: f64,
-    pub top_bar_height: f64,
-    pub top_bar_margin_top: i32,
-    pub top_bar_margin_horizontal: i32,
-    pub top_bar_window_gap: i32,
-    pub panel_padding: f64,
     pub control_gap: f64,
 }
 
