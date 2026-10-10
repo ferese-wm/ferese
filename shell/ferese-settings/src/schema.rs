@@ -17,6 +17,53 @@ pub enum Page {
 }
 
 impl Page {
+    pub const NAVIGATION: [(&'static str, &'static [Self]); 3] = [
+        (
+            "Desktop",
+            &[Self::Appearance, Self::Wallpaper, Self::Desktop, Self::Bar],
+        ),
+        ("Interaction", &[Self::Windows, Self::Keyboard, Self::Accessibility]),
+        (
+            "System",
+            &[
+                Self::Displays,
+                Self::Connections,
+                Self::Notifications,
+                Self::LockScreen,
+                Self::Startup,
+            ],
+        ),
+    ];
+
+    /// Subpages share one entry in navigation and search.
+    pub fn navigation_page(self) -> Self {
+        match self {
+            Self::Motion => Self::Windows,
+            Self::Shortcuts => Self::Keyboard,
+            _ => self,
+        }
+    }
+
+    pub fn subpages(self) -> &'static [(Self, &'static str)] {
+        match self.navigation_page() {
+            Self::Windows => &[(Self::Windows, "Windows"), (Self::Motion, "Motion")],
+            Self::Keyboard => &[(Self::Keyboard, "Keyboard & mouse"), (Self::Shortcuts, "Shortcuts")],
+            _ => &[],
+        }
+    }
+
+    pub fn search_destination(self, query: &str) -> Self {
+        if !self.matches_own(query) {
+            for &(page, _) in self.subpages() {
+                if page.matches_own(query) {
+                    return page;
+                }
+            }
+        }
+        self
+    }
+
+    #[cfg(test)]
     pub const ALL: [Self; 14] = [
         Self::Appearance,
         Self::Accessibility,
@@ -58,14 +105,14 @@ impl Page {
             Self::Appearance => "A desktop that feels like yours.",
             Self::Accessibility => "Make the desktop easier to see and use.",
             Self::Wallpaper => "Set the scene for your workspace.",
-            Self::Desktop => "A clock that feels at home on your wallpaper.",
+            Self::Desktop => "Clock and sticky notes on your desktop.",
             Self::Bar => "Arrange panel items and groups.",
             Self::Notifications => "Stay informed on your terms.",
             Self::LockScreen => "Your desktop, safely put away.",
-            Self::Windows => "Make room for the way you work.",
-            Self::Motion => "Find your rhythm.",
-            Self::Keyboard => "Fine-tune the everyday details.",
-            Self::Shortcuts => "Your most-used actions, a keystroke away.",
+            Self::Windows => "Window layouts, spacing and focus effects.",
+            Self::Motion => "Animations and transition speed.",
+            Self::Keyboard => "Keyboard layouts, pointer behavior and touchpad gestures.",
+            Self::Shortcuts => "Keyboard shortcuts and swipe actions.",
             Self::Startup => "Ready when you sign in.",
             Self::Displays => "A place for every screen.",
             Self::Connections => "Wi-Fi networks and Bluetooth devices.",
@@ -98,6 +145,10 @@ impl Page {
     }
 
     pub fn matches(self, query: &str) -> bool {
+        self.matches_own(query) || self.subpages().iter().any(|(page, _)| page.matches_own(query))
+    }
+
+    fn matches_own(self, query: &str) -> bool {
         let query = query.to_lowercase();
         self.title().to_lowercase().contains(&query)
             || self.subtitle().to_lowercase().contains(&query)

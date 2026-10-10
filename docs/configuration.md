@@ -49,6 +49,10 @@ The dotted paths in the reference tables below describe nested sections.
 Settings preserves comments and custom fields when editing, while normalizing
 indentation.
 
+The Settings sidebar groups pages under Desktop, Interaction, and System.
+Windows includes a Motion view; Keyboard & mouse includes a Shortcuts view.
+Search finds settings in both views and opens the matching one directly.
+
 ## Saving and validation
 
 Settings saves text when you press Enter or leave the field, and sliders when
@@ -115,7 +119,7 @@ Changing default width preserves manually resized columns.
 ## Animations
 
 Continuum is Ferese's shared compositor and shell motion system. Set animation
-speed in Settings → Motion or edit the `animations` block in
+speed in Settings → Windows → Motion or edit the `animations` block in
 `~/.config/ferese/config.kdl`. Changes apply live. Start with `speed` if you only
 want faster or slower transitions; you do not need to change the springs.
 
@@ -469,7 +473,7 @@ by other monitors and stop at the first/last workspace. Short or cancelled navig
 swipes slide back; diagonal swipes do not navigate. Navigation pauses while locked, during
 window grabs, or when an application inhibits shortcuts.
 
-Assign swipes in **Settings → Shortcuts** using the same actions and arguments as
+Assign swipes in **Settings → Keyboard & mouse → Shortcuts** using the same actions and arguments as
 keyboard bindings. Choose a "Customize swipe" button to add an override. The
 gesture keys are `Swipe3Up`, `Swipe3Down`, `Swipe3Left`, and `Swipe3Right`; 4 or 5
 fingers are also supported. Changes reload live:
@@ -953,7 +957,7 @@ The [integration notes](panel-composition.md) describe ownership and remaining w
 | --- | --- | --- | --- |
 | `bar-layout` | `"continuous"` or `"islands"` | `"continuous"` | One bar background or separate backgrounds around its sections |
 | `bar-island-padding` | number 0–32 | `4` | Horizontal space on each side between an island's background and its bordered controls, in logical pixels |
-| `keybinding-guide` | boolean | `true` | Show the active shortcut guide at login until disabled in Settings → Shortcuts. |
+| `keybinding-guide` | boolean | `true` | Show the active shortcut guide at login until disabled in Settings → Keyboard & mouse → Shortcuts. |
 | `window-title` | boolean | `true` | Focused window title in the bar center when space allows |
 | `battery-percentage` | boolean | `true` | Show percentage beside icon |
 | `low-battery-threshold` | integer 0–100 | `20` | Warning-color threshold |

@@ -1,7 +1,7 @@
 # Shortcuts and gestures
 
 `Super` is usually the Windows key. These are the built-in defaults. Open
-**Settings → Shortcuts** to change bindings and gestures or disable the login
+**Settings → Keyboard & mouse → Shortcuts** to change bindings and gestures or disable the login
 guide. Your saved bindings can override these defaults.
 The [example config](../packaging/config.kdl) adds the app, media and arrow-key
 shortcuts listed below.

@@ -15,7 +15,7 @@ use.
 ## Default shortcuts
 
 Use `Super`, usually the Windows key, for the shortcuts below, and make them your own in
-**Settings → Shortcuts**.
+**Settings → Keyboard & mouse → Shortcuts**.
 
 | Control | Action |
 | --- | --- |
@@ -32,7 +32,7 @@ Use `Super`, usually the Windows key, for the shortcuts below, and make them you
 | Super + right-button drag | Resize a floating window |
 | Three-finger swipe up / down | Next / previous workspace |
 | Three-finger swipe left / right | Focus the window to the right / left |
-| Login shortcut guide | Appears at login; disable in Settings → Shortcuts |
+| Login shortcut guide | Appears at login; disable in Settings → Keyboard & mouse → Shortcuts |
 
 The [shortcuts and mouse actions guide](shortcuts.md) covers the rest, including how to
 group windows, resize them and move between workspaces.

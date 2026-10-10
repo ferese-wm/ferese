@@ -305,6 +305,8 @@ fn render_panel_review_states() {
             ("corners", panel_controls::PanelPage::Panels, None, None),
             ("preview-hover", panel_controls::PanelPage::Panels, None, None),
             ("navigation", panel_controls::PanelPage::Arrange, None, None),
+            ("shortcuts", panel_controls::PanelPage::Panels, None, None),
+            ("motion", panel_controls::PanelPage::Panels, None, None),
             ("items", panel_controls::PanelPage::Arrange, None, None),
             (
                 "selected-item",
@@ -319,6 +321,11 @@ fn render_panel_review_states() {
                 Some("status"),
             ),
         ] {
+            app.page = match name {
+                "shortcuts" => Page::Shortcuts,
+                "motion" => Page::Motion,
+                _ => Page::Bar,
+            };
             app.draft = Snapshot::parse(String::new()).unwrap();
             if name == "corners" {
                 for edit in crate::panel_edit::plan(

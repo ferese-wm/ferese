@@ -50,28 +50,32 @@ impl App {
                 false,
             ));
         }
-        let mut navigation = column([]).spacing(3);
-        for page in Page::ALL {
-            navigation = navigation.push(
-                button::custom(
-                    row([])
-                        .spacing(8)
-                        .align_y(Alignment::Center)
-                        .push(visuals::icon(
-                            page,
-                            if self.page == page {
-                                palette.accent
-                            } else {
-                                palette.muted
-                            },
-                        ))
-                        .push(self.label(page.title(), 13.)),
-                )
-                .width(Length::Fill)
-                .padding([8, 8])
-                .class(visuals::navigation_style(palette, self.page == page))
-                .on_press(Message::Page(page)),
+        let mut navigation = column([]).spacing(16);
+        for (title, pages) in Page::NAVIGATION {
+            let mut section = column([]).spacing(3).push(
+                container(self.label(title, 11.).class(cosmic::theme::Text::Color(palette.muted))).padding([0, 8]),
             );
+            for &page in pages {
+                let selected = self.page.navigation_page() == page;
+                section = section.push(
+                    button::custom(
+                        row([])
+                            .spacing(8)
+                            .align_y(Alignment::Center)
+                            .push(visuals::icon(
+                                page,
+                                if selected { palette.accent } else { palette.muted },
+                            ))
+                            .push(self.label(page.title(), 13.)),
+                    )
+                    .width(Length::Fill)
+                    .padding([8, 8])
+                    .class(visuals::navigation_style(palette, selected))
+                    .name(page.title())
+                    .on_press(Message::Page(if selected { self.page } else { page })),
+                );
+            }
+            navigation = navigation.push(section);
         }
         let sidebar = container(sidebar.push(scrollable(navigation).height(Length::Fill)))
             .id("settings-sidebar")
@@ -84,7 +88,7 @@ impl App {
                 .spacing(3)
                 .push(self.label(
                     if self.search.is_empty() {
-                        self.page.title()
+                        self.page.navigation_page().title()
                     } else {
                         "Search"
                     },
@@ -159,21 +163,27 @@ impl App {
         let mut body = column([]).spacing(6);
 
         if !self.search.is_empty() {
-            if !Page::ALL.into_iter().any(|p| p.matches(&self.search)) {
+            let pages = || {
+                Page::NAVIGATION
+                    .into_iter()
+                    .flat_map(|(_, pages)| pages.iter().copied())
+            };
+            if !pages().any(|p| p.matches(&self.search)) {
                 body = body.push(self.note("No matching settings. Try wallpaper, keyboard, or motion."));
             }
-            for page in Page::ALL.into_iter().filter(|p| p.matches(&self.search)) {
+            for page in pages().filter(|p| p.matches(&self.search)) {
+                let destination = page.search_destination(&self.search);
                 body = body.push(
                     button::custom(
                         column([])
                             .spacing(3)
                             .push(self.label(page.title(), 16.))
-                            .push(self.label(page.subtitle(), 12.)),
+                            .push(self.label(destination.subtitle(), 12.)),
                     )
                     .width(Length::Fill)
                     .padding(10)
                     .class(visuals::button_style(palette, false))
-                    .on_press(Message::Page(page)),
+                    .on_press(Message::Page(destination)),
                 );
             }
         } else {
@@ -473,6 +483,23 @@ impl App {
         let mut content = column([])
             .spacing(if self.page == Page::Bar { 16 } else { 8 })
             .push(page_heading);
+        if self.search.is_empty() && !self.page.subpages().is_empty() {
+            content = content.push(
+                container(
+                    row(self.page.subpages().iter().map(|&(page, title)| {
+                        button::custom(self.label(title, 13.))
+                            .name(format!("{}: {title}", self.page.navigation_page().title()))
+                            .padding([7, 12])
+                            .class(visuals::panel_button(palette, self.page == page))
+                            .on_press(Message::Page(page))
+                            .into()
+                    }))
+                    .spacing(2),
+                )
+                .padding(3)
+                .class(visuals::surface(palette.sidebar, 9.)),
+            );
+        }
         if self.page == Page::Bar && self.search.is_empty() {
             if self.panel_page == crate::panel_controls::PanelPage::Arrange {
                 content = content.push(self.panel_navigation());

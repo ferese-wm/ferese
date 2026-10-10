@@ -1478,6 +1478,31 @@ mod tests {
     }
 
     #[test]
+    fn merged_navigation_finds_subpages_and_browsing_does_not_save() {
+        for (parent, query, destination) in [
+            (Page::Windows, "motion", Page::Motion),
+            (Page::Windows, "animation speed", Page::Motion),
+            (Page::Keyboard, "shortcuts", Page::Shortcuts),
+            (Page::Keyboard, "swipe actions", Page::Shortcuts),
+            (Page::Keyboard, "touchpad", Page::Keyboard),
+        ] {
+            assert!(parent.matches(query));
+            assert_eq!(parent.search_destination(query), destination);
+            assert_eq!(destination.navigation_page(), parent);
+            let mut app = app();
+            let before = app.draft.source.clone();
+            let _ = app.update(Message::Page(parent));
+            let _ = app.update(Message::Search(query.into()));
+            let _ = app.update(Message::Page(destination));
+            assert_eq!(app.page, destination);
+            assert!(app.search.is_empty());
+            assert_eq!(app.draft.source, before);
+            assert!(app.pending.is_empty());
+            assert!(!app.saving);
+        }
+    }
+
+    #[test]
     fn navigation_resets_scroll_but_reselecting_the_same_page_does_not() {
         let mut app = app();
         app.visible_rows.insert(("theme", 2));

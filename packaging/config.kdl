@@ -148,9 +148,52 @@ theme {
 
 status {
     keybinding-guide #true
-    window-title #true
-    battery-percentage #true
     low-battery-threshold 20
+}
+
+// Panel composition is explicit; visibility and item options belong to each item.
+// Background opacity and corner radius inherit from the shell unless overridden here.
+panel "main" {
+    background "continuous"
+    border #false
+    start {
+        spacing 3
+        group "overview" {
+            padding 0 0
+            item "overview" kind="overview" overflow="never" priority=100
+        }
+        group "workspaces" {
+            padding 2 3
+            item "workspaces" kind="workspaces" overflow="never" priority=100
+        }
+    }
+    center {
+        group "title" {
+            padding 0 0
+            item "focused-window" kind="focused-window" enabled=#true overflow="never"
+        }
+    }
+    end {
+        spacing 8
+        group "status" {
+            padding 2 3
+            item "media" kind="media"
+            item "quick-settings" kind="quick-settings"
+            item "network" kind="network"
+            item "audio" kind="audio"
+            item "recording" kind="recording"
+            item "notifications" kind="notifications"
+            item "battery" kind="battery" percentage=#true
+        }
+        group "time" {
+            padding 2 3
+            item "clock" kind="clock"
+        }
+        group "display" {
+            padding 0 0
+            item "display-mode" kind="display-mode"
+        }
+    }
 }
 
 window-rule app-id="dev.ferese.Settings" floating=#true
