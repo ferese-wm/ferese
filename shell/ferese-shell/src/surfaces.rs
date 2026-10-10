@@ -7,19 +7,38 @@ use super::{
     registry_queue_init, set_margin, status_ui, text, theme, wayland, window, wl_output, wl_registry, wl_surface,
 };
 
+pub(super) fn panel_placement(edge: ferese_config::panel::Edge, margin: i32, side: i32) -> (Anchor, IcedMargin) {
+    let (anchor, top, bottom) = match edge {
+        ferese_config::panel::Edge::Top => (Anchor::TOP, margin, 0),
+        ferese_config::panel::Edge::Bottom => (Anchor::BOTTOM, 0, margin),
+    };
+    (
+        anchor,
+        IcedMargin {
+            top,
+            right: side,
+            bottom,
+            left: side,
+        },
+    )
+}
+
 impl FereseShell {
     pub(super) fn output_event(&mut self, event: wayland::OutputEvent, output: wl_output::WlOutput) -> Task<Message> {
         if matches!(event, wayland::OutputEvent::Removed) {
             if let Some(index) = self.outputs.iter().position(|entry| entry.output == output) {
                 let entry = self.outputs.remove(index);
                 self.refresh_media_art(false);
-                let menu = if self.bar_surface_id == entry.bar {
+                let menu = if self.menu.as_ref().is_some_and(|menu| menu.anchor.parent == entry.bar) {
                     self.destroy_menu()
                 } else {
                     Task::none()
                 };
-
-                let mut tasks = vec![destroy_layer_surface(entry.bar), menu, self.rebuild_system_modal()];
+                let mut tasks = vec![
+                    self.dismiss_workspace_tooltip(),
+                    menu.chain(destroy_layer_surface(entry.bar)),
+                    self.rebuild_system_modal(),
+                ];
                 if self.note_drag.as_ref().is_some_and(|drag| {
                     entry.clock == Some(drag.source) || entry.notes.iter().any(|(_, id)| *id == drag.source)
                 }) {
@@ -57,6 +76,7 @@ impl FereseShell {
         };
 
         if let Some(entry) = self.outputs.iter_mut().find(|entry| entry.output == output) {
+            let resized = size.is_some() && entry.size != size;
             if size.is_some() {
                 entry.size = size;
             }
@@ -66,18 +86,37 @@ impl FereseShell {
                 entry.name = name;
             }
 
-            return if changed {
-                Task::batch([self.rebuild_clocks(true), self.rebuild_notes(true)])
+            let bar = entry.bar;
+            let margin = self.update_panel_margin(bar, false);
+            let popup = if resized && self.menu.as_ref().is_some_and(|menu| menu.anchor.parent == bar) {
+                self.destroy_menu()
             } else {
                 Task::none()
+            };
+            let tooltip = if resized {
+                self.dismiss_workspace_tooltip_for_bar(bar)
+            } else {
+                Task::none()
+            };
+            return if changed {
+                Task::batch([
+                    margin,
+                    popup,
+                    tooltip,
+                    self.rebuild_clocks(true),
+                    self.rebuild_notes(true),
+                ])
+            } else {
+                Task::batch([margin, popup, tooltip])
             };
         }
 
         let bar_surface_id = window::Id::unique();
         let wallpaper_surface_id = window::Id::unique();
-        let shell_theme = self.config.theme;
-        let bar_layout = self.config.status.bar_layout;
-        let bar = BarMetrics::from(shell_theme);
+        let geometry = self.config.panels[0].geometry;
+        let panel_surface = self.config.panels[0].surface;
+        let (edge_anchor, margin) = panel_placement(self.config.panels[0].edge, geometry.edge_margin, 0);
+        let bar = BarMetrics::from(geometry);
         let wallpaper_output = output.clone();
         let bar_output = output.clone();
         let hidden = output_bar_hidden(
@@ -97,6 +136,8 @@ impl FereseShell {
                 .then_some(wallpaper_surface_id),
             effects: None,
             bar_regions: Vec::new(),
+            panel_resolution: Default::default(),
+            bar_margin_horizontal: 0,
             clock: None,
             notes: Vec::new(),
             size,
@@ -126,23 +167,18 @@ impl FereseShell {
             |_| Default::default(),
             move |_| SctkLayerSurfaceSettings {
                 id: bar_surface_id,
-                input_zone: super::bar::input_region(bar_layout, hidden, &[]),
+                input_zone: super::bar::input_region(panel_surface, hidden, &[]),
                 layer: Layer::Top,
                 keyboard_interactivity: KeyboardInteractivity::None,
-                anchor: Anchor::TOP | Anchor::LEFT | Anchor::RIGHT,
+                anchor: edge_anchor | Anchor::LEFT | Anchor::RIGHT,
                 output: IcedOutput::Output(bar_output.clone()),
                 namespace: "ferese-shell-top-bar".to_owned(),
-                margin: IcedMargin {
-                    top: shell_theme.bar_margin_top,
-                    right: shell_theme.bar_margin_horizontal,
-                    bottom: 0,
-                    left: shell_theme.bar_margin_horizontal,
-                },
+                // Measure at full width before applying the requested side inset.
+                margin,
                 size: Some((None, Some(bar.height.round() as u32))),
                 size_limits: Limits::NONE,
-                // Reserve breathing room below the visible bar; layer-shell
-                // accounts for the top margin separately.
-                exclusive_zone: (bar.height.round() as i32).saturating_add(shell_theme.bar_window_gap),
+                // Reserve space toward the desktop; layer-shell accounts for the edge margin.
+                exclusive_zone: (bar.height.round() as i32).saturating_add(geometry.window_clearance),
             },
             Some(Box::new(move |app| app.view_layer(bar_surface_id))),
         );
@@ -168,6 +204,9 @@ impl FereseShell {
     }
 
     pub(super) fn handle_event(&mut self, event: Event, id: window::Id) -> Task<Message> {
+        if matches!(event, Event::Mouse(cosmic::iced::mouse::Event::CursorLeft)) {
+            return self.dismiss_workspace_tooltip_for_bar(id);
+        }
         if let Event::Mouse(cosmic::iced::mouse::Event::ButtonPressed(_)) = &event
             && let Some(modal) = &mut self.system_modal
             && modal.contains(id)
@@ -319,6 +358,10 @@ impl FereseShell {
                 ..
             }) if self.menu.is_some() => self.close_menu(),
             Event::PlatformSpecific(PlatformSpecific::Wayland(wayland::Event::Popup(event, surface, popup_id))) => {
+                if self.workspace_ui.tooltip == Some(popup_id) && matches!(event, wayland::PopupEvent::Done) {
+                    self.workspace_ui.tooltip = None;
+                    return self.dismiss_workspace_tooltip();
+                }
                 if let Some(menu) = &mut self.menu
                     && menu.id == popup_id
                 {
@@ -344,6 +387,10 @@ impl FereseShell {
                 self.menu = None;
                 EFFECT_FRAME_PENDING.store(false, Ordering::Relaxed);
                 Task::none()
+            }
+            Event::Window(window::Event::Closed) if self.workspace_ui.tooltip == Some(id) => {
+                self.workspace_ui.tooltip = None;
+                self.dismiss_workspace_tooltip()
             }
             Event::Window(window::Event::Closed)
                 if self.system_modal.as_ref().is_some_and(|modal| modal.contains(id)) =>
@@ -398,7 +445,7 @@ impl FereseShell {
 
     pub(super) fn attach_effects(&mut self, id: window::Id, surface: &wl_surface::WlSurface) {
         let hidden = self.bar_hidden(id);
-        let islands = self.config.status.bar_layout == ferese_config::BarLayout::Islands;
+        let islands = self.config.panels[0].surface == ferese_config::panel::PanelSurface::None;
         let Some(entry) = self.outputs.iter_mut().find(|entry| entry.bar == id) else {
             return;
         };
@@ -490,6 +537,17 @@ fn encode_regions(regions: &[[f32; 5]]) -> Vec<u8> {
         .collect()
 }
 
+fn validate_region_counts(regions: usize, opacities: usize) -> Result<(), std::io::Error> {
+    let limit = ferese_protocols::effects::v1::MAX_REGIONS;
+    if regions > limit || opacities > limit {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("effects presentation exceeds the {limit}-region limit"),
+        ));
+    }
+    Ok(())
+}
+
 type EffectPresentation = (Vec<[f32; 5]>, u32, Vec<u32>, ferese_surface_effects_v1::Role);
 
 pub(super) struct EffectsBinding {
@@ -556,9 +614,9 @@ impl EffectsBinding {
         let opacity = (opacity.clamp(0.0, 1.0) * 1000.0).round() as u32;
         let values: Vec<u32> = region_opacities
             .into_iter()
-            .take(32)
             .map(|value| (value.clamp(0.0, 1.0) * 1000.0).round() as u32)
             .collect();
+        validate_region_counts(regions.len(), values.len())?;
         let next = (regions.to_vec(), opacity, values, role);
         if self.presentation.borrow().as_ref() != Some(&next) {
             self.surface.set_presentation(
@@ -582,6 +640,7 @@ impl EffectsBinding {
         regions: &[[f32; 5]],
         role: ferese_surface_effects_v1::Role,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        validate_region_counts(regions.len(), 0)?;
         if self.regions.borrow().as_deref() == Some(regions) {
             return Ok(());
         }
@@ -638,6 +697,15 @@ delegate_noop!(EffectsState: ignore FereseSurfaceEffectsV1);
 
 #[cfg(test)]
 mod region_encoding_tests {
+    #[test]
+    fn oversized_presentations_are_rejected_without_truncation() {
+        let limit = ferese_protocols::effects::v1::MAX_REGIONS;
+        assert!(super::validate_region_counts(0, 0).is_ok());
+        assert!(super::validate_region_counts(limit, limit).is_ok());
+        assert!(super::validate_region_counts(limit + 1, limit).is_err());
+        assert!(super::validate_region_counts(limit, limit + 1).is_err());
+    }
+
     #[test]
     fn fractional_region_encoding_preserves_values() {
         let regions = [[0.25, -0.75, 100.5, 40.25, 14.0]];

@@ -129,11 +129,6 @@ theme {
         shell-radius 12
         border-width 1
         focus-ring-width 1
-        top-bar-height 30
-        top-bar-margin-horizontal 18
-        top-bar-margin-top 6
-        top-bar-window-gap 4
-        panel-padding 12
         control-gap 12
     }
     shadow {
@@ -148,9 +143,60 @@ theme {
 
 status {
     keybinding-guide #true
-    window-title #true
-    battery-percentage #true
     low-battery-threshold 20
+}
+
+// Panel composition is explicit; visibility and item options belong to each item.
+// Background opacity and corner radius inherit from the shell unless overridden here.
+panel "main" {
+    geometry {
+        height 30
+        side-margins 18
+        edge-margin 6
+        window-clearance 4
+    }
+    edge "top"
+    surface "solid"
+    group-surface "none"
+    border #false
+    start {
+        spacing 3
+        group "overview" {
+            padding 0 0
+            item "overview" kind="overview" overflow="never" priority=100
+        }
+        group "workspaces" {
+            padding 2 3
+            item "workspaces" kind="workspaces" overflow="never" priority=100
+        }
+    }
+    center {
+        group "title" {
+            padding 0 0
+            item "focused-window" kind="focused-window" visible=#true overflow="never"
+        }
+    }
+    end {
+        spacing 8
+        group "status" {
+            padding 2 3
+            item "media" kind="media"
+            item "quick-settings" kind="quick-settings"
+            item "network" kind="network"
+            item "audio" kind="audio"
+            item "recording" kind="recording"
+            item "notifications" kind="notifications"
+            item "battery" kind="battery" percentage=#true
+        }
+        group "time" {
+            padding 2 3
+            item "clock" kind="clock"
+        }
+        group "display" {
+            padding 0 0
+            item "display-mode" kind="display-mode"
+        }
+    }
 }
 
 window-rule app-id="dev.ferese.Settings" floating=#true

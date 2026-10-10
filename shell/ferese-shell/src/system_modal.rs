@@ -170,7 +170,15 @@ impl FereseShell {
                     .iter()
                     .position(|output| output.name.as_deref() == Some(name))
             })
-            .or_else(|| self.outputs.iter().position(|output| output.bar == self.bar_surface_id))
+            .or_else(|| {
+                self.menu
+                    .as_ref()
+                    .and_then(|menu| self.outputs.iter().position(|output| output.bar == menu.anchor.parent))
+            })
+            .or_else(|| {
+                self.active_bar()
+                    .and_then(|bar| self.outputs.iter().position(|output| output.bar == bar))
+            })
             .unwrap_or(0);
         let mut tasks = vec![
             self.destroy_system_modal(true),
@@ -536,9 +544,10 @@ impl FereseShell {
                             row![
                                 Space::new().width(Length::Fill),
                                 ferese_theme::controls::text_button("Cancel", shell_font(), palette, false)
-                                    .class(ferese_theme::controls::button_style_with_focus(
+                                    .class(ferese_theme::controls::material_button_style_with_focus(
                                         palette,
                                         false,
+                                        theme.material_opacity(),
                                         modal.focus_visible,
                                     ))
                                     .id("ferese-modal-cancel".into())

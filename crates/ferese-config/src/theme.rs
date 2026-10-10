@@ -207,8 +207,7 @@ pub fn default_tokens() -> Tokens {
                 "accent":"#3D7BE6", "on_accent":"#FFFFFF", "border":"#FFFFFF18", "shadow":"#00000055"},
             "material":{"style":"solid","opacity":0.78,"blur_radius":12.0,"tint_strength":0.5},
             "geometry":{"border_width":1.0,"focus_ring_width":2.0,"window_radius":14.0,"shell_radius":14.0,
-                "top_bar_height":28.0,"top_bar_margin_top":0,"top_bar_margin_horizontal":0,
-                "top_bar_window_gap":0,"panel_padding":12.0,"control_gap":12.0},
+                "control_gap":12.0},
             "typography":{"font_family":"Inter"},
             "background":{"path":crate::default_wallpaper(),"lock_path":null,"mode":"fill"},
             "surface":{"bar":{"background":"#111821","text_primary":"#F4F7FB","text_muted":"#8793A2"}},
@@ -384,17 +383,6 @@ pub fn resolve_with_context(
             .map(|preset| preset.gradient_end)
             .filter(|end| *end != authored_accent);
         let mut explicit_surfaces = std::collections::HashSet::new();
-        if root
-            .get("geometry")
-            .and_then(|value| value.get("shell_radius"))
-            .is_none()
-            && let Some(radius) = document
-                .get("appearance.corner_radius")
-                .and_then(Value::as_f64)
-                .or_else(|| document.get("theme.geometry.top_bar_radius").and_then(Value::as_f64))
-        {
-            tokens.geometry.shell_radius = radius;
-        }
         let mut value = token_value(&tokens)?;
         for file in [&policy.file, &selection.file].into_iter().flatten() {
             let path = theme_path(directory, file);
@@ -418,16 +406,16 @@ pub fn resolve_with_context(
                     explicit_surfaces.insert(role);
                 }
             }
-            merge(&mut value, layer, "", &mut warnings, false)?;
+            merge(&mut value, layer, "", false)?;
         }
-        merge(&mut value, &root, "", &mut warnings, true)?;
+        merge(&mut value, &root, "", true)?;
         let mut overrides = selection.overrides.clone();
         if !split && policy.family.is_some() {
             for key in ["colors", "surface"] {
                 overrides.remove(key);
             }
         }
-        merge(&mut value, &Value::Object(overrides.clone()), "", &mut warnings, false)?;
+        merge(&mut value, &Value::Object(overrides.clone()), "", false)?;
         tokens = serde_json::from_value(value).map_err(|e| e.to_string())?;
         for layer in [&root, &Value::Object(overrides.clone())] {
             for role in ["surface_raised", "application_background"] {
@@ -516,13 +504,21 @@ fn token_value(tokens: &Tokens) -> Result<Value, String> {
     Ok(value)
 }
 
-fn merge(
-    target: &mut Value,
-    layer: &Value,
-    prefix: &str,
-    warnings: &mut Vec<String>,
-    inline: bool,
-) -> Result<(), String> {
+/// Check authored tokens before replacing them with a runtime theme snapshot.
+pub fn validate_overrides(document: &Document) -> Result<(), String> {
+    let Some(root) = document.get("theme") else {
+        return Ok(());
+    };
+    let policy: Policy = serde_json::from_value(root.clone()).map_err(|error| error.to_string())?;
+    let mut tokens = token_value(&default_tokens())?;
+    merge(&mut tokens, root, "", true)?;
+    for selection in [&policy.light, &policy.dark] {
+        merge(&mut tokens, &Value::Object(selection.overrides.clone()), "", false)?;
+    }
+    Ok(())
+}
+
+fn merge(target: &mut Value, layer: &Value, prefix: &str, inline: bool) -> Result<(), String> {
     let map = layer
         .as_object()
         .ok_or_else(|| format!("theme {prefix} must be a section"))?;
@@ -545,23 +541,19 @@ fn merge(
         {
             continue;
         }
-        if prefix == "geometry" && key == "top_bar_radius" {
-            continue;
-        }
         let path = if prefix.is_empty() {
             key.clone()
         } else {
             format!("{prefix}.{key}")
         };
         let Some(current) = target.get_mut(key) else {
-            warnings.push(format!("Unknown theme token: {path}"));
-            continue;
+            return Err(format!("Unknown theme token: {path}"));
         };
         if current.is_null() && path.ends_with(".gradient") && value.is_object() {
             *current = json!({"from": "#3D7BE6", "to": "#3D7BE6", "angle": 0.0});
         }
         if current.is_object() {
-            merge(current, value, &path, warnings, inline)?;
+            merge(current, value, &path, inline)?;
         } else {
             *current = value.clone();
         }
@@ -718,9 +710,6 @@ fn validate(tokens: &Tokens) -> Result<(), String> {
     }
     if !["fill", "fit"].contains(&tokens.background.mode.as_str()) {
         return Err("Unknown wallpaper mode".into());
-    }
-    if tokens.geometry.top_bar_height <= 0. {
-        return Err("top-bar-height must be positive".into());
     }
     if tokens.typography.font_family.len() > 128 {
         return Err("font-family exceeds 128 bytes".into());
@@ -910,7 +899,7 @@ pub fn import_family(id: &str, source: &str) -> Result<ImportedFamily, String> {
                 appearance,
             )?;
             let mut value = token_value(&base)?;
-            merge(&mut value, layer, "", &mut warnings, false)?;
+            merge(&mut value, layer, "", false)?;
             let tokens: Tokens = serde_json::from_value(value).map_err(|e| e.to_string())?;
             validate(&tokens)?;
             warnings.extend(authored_warnings(&tokens));
@@ -922,7 +911,7 @@ pub fn import_family(id: &str, source: &str) -> Result<ImportedFamily, String> {
     }
     for key in root.as_object().ok_or("Theme file must be a section")?.keys() {
         if !matches!(key.as_str(), "name" | "light" | "dark") {
-            warnings.push(format!("Unknown theme token: {key}"));
+            return Err(format!("Unknown theme token: {key}"));
         }
     }
     let [light, dark] = variants;
@@ -1295,7 +1284,7 @@ mod tests {
             &document,
             Path::new("/tmp"),
             "2026-09-30T12:00:00Z".parse().unwrap(),
-            |_| Ok(r##"theme { name "Test"; light { colors { accent "#8F5300"; }; future-token 2; }; }"##.into()),
+            |_| Ok(r##"theme { name "Test"; light { colors { accent "#8F5300"; }; }; }"##.into()),
         )
         .unwrap();
         assert_eq!(resolved.theme.requested_accent, "#8F5300");
@@ -1307,7 +1296,6 @@ mod tests {
         assert_eq!(imported.name, "Test");
         assert!(imported.dark.is_none());
         assert!(resolved.files.contains(&PathBuf::from("/tmp/test.kdl")));
-        assert!(resolved.warnings.iter().any(|warning| warning.contains("future_token")));
         assert!(
             resolve(&document, Path::new("/tmp"), Timestamp::now(), |_| Ok(
                 r#"theme { light { colors { accent "invalid"; }; }; }"#.into()
@@ -1397,7 +1385,7 @@ mod tests {
     }
 
     #[test]
-    fn partial_files_merge_per_token_and_unknown_tokens_warn() {
+    fn partial_files_merge_per_token() {
         let doc = Document::parse(
             "theme { file \"themes/shared.kdl\"; light { file \"themes/light.kdl\"; }; mode \"light\"; }",
         )
@@ -1405,7 +1393,7 @@ mod tests {
         let result = resolve(&doc, Path::new("/config/ferese"), Timestamp::now(), |path| {
             match path.to_str().unwrap() {
                 "/config/ferese/themes/shared.kdl" => {
-                    Ok("colors { accent \"#12AABB\"; text-primary \"#182234\"; }; future-token 1".into())
+                    Ok("colors { accent \"#12AABB\"; text-primary \"#182234\"; }".into())
                 }
                 "/config/ferese/themes/light.kdl" => Ok("theme { colors { accent \"#315090\"; }; }".into()),
                 _ => panic!("wrong relative path"),
@@ -1415,8 +1403,61 @@ mod tests {
         assert_eq!(result.theme.requested_accent, "#315090");
         assert_eq!(result.theme.tokens.colors.text_primary, "#182234");
         assert_eq!(result.files.len(), 2);
-        assert!(result.warnings.iter().any(|s| s.contains("future_token")));
         assert!(candidate("theme { colors { accent \"invalid\"; }; }").is_err());
+    }
+
+    #[test]
+    fn unknown_theme_tokens_are_rejected_in_every_authored_layer() {
+        for key in [
+            "top-bar-radius",
+            "top-bar-height",
+            "top-bar-margin-top",
+            "top-bar-margin-horizontal",
+            "top-bar-window-clearance",
+            "shell-raduis",
+        ] {
+            for section in ["", "light", "dark"] {
+                let geometry = format!("geometry {{ {key} 8; }}");
+                let layer = if section.is_empty() {
+                    geometry
+                } else {
+                    format!("{section} {{ {geometry}; }}")
+                };
+                let document = Document::parse(&format!("theme {{ {layer}; }}")).unwrap();
+                assert!(
+                    validate_overrides(&document)
+                        .unwrap_err()
+                        .contains(&key.replace('-', "_"))
+                );
+                assert!(
+                    candidate(&document.to_string())
+                        .err()
+                        .unwrap()
+                        .contains(&key.replace('-', "_"))
+                );
+            }
+        }
+        let document = Document::parse("theme { file \"bad.kdl\"; }").unwrap();
+        assert!(
+            resolve(&document, Path::new("/tmp"), Timestamp::now(), |_| Ok(
+                "future-token 1".into()
+            ))
+            .err()
+            .unwrap()
+            .contains("future_token")
+        );
+        assert!(
+            import_family("bad", "theme { light { geometry { top-bar-radius 8; }; }; }")
+                .err()
+                .unwrap()
+                .contains("geometry.top_bar_radius")
+        );
+        assert!(
+            import_family("bad", "theme { name Test; future-token 1; light {}; }")
+                .err()
+                .unwrap()
+                .contains("future_token")
+        );
     }
 
     #[test]

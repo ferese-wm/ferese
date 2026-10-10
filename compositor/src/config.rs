@@ -32,6 +32,8 @@ use crate::window_rules::{WindowRule, WindowRuleConfig};
 #[derive(Debug, Default, Deserialize)]
 pub struct Config {
     #[serde(default)]
+    panels: Option<Vec<ferese_config::panel::Panel>>,
+    #[serde(default)]
     notifications: ferese_config::notifications::NotificationConfig,
     #[serde(default)]
     lock_screen: crate::session_lock::IdleSettings,
@@ -83,14 +85,9 @@ pub(crate) struct DaemonConfig {
 // Validate shell-only fields too, before publishing an accepted source.
 #[derive(Debug, Default, Deserialize)]
 #[allow(dead_code)]
+#[serde(deny_unknown_fields)]
 struct ShellStatusConfig {
-    bar_layout: Option<ferese_config::BarLayout>,
-    #[serde(
-        default = "ferese_config::default_bar_island_padding",
-        deserialize_with = "ferese_config::deserialize_bar_island_padding"
-    )]
-    bar_island_padding: f32,
-    battery_percentage: Option<bool>,
+    keybinding_guide: Option<bool>,
     low_battery_threshold: Option<u8>,
     settings_command: Option<Vec<String>>,
 }
@@ -112,10 +109,15 @@ impl Config {
                 .expect("resolved theme matches runtime schema"),
             ..Self::default()
         };
-        config.theme_settings()
+        let mut settings = config.theme_settings()?;
+        settings.reduce_transparency = theme.accessibility.reduce_transparency;
+        Ok(settings)
     }
 
     pub(crate) fn runtime_config(&self) -> Result<crate::RuntimeConfig, ConfigError> {
+        if let Some(panels) = &self.panels {
+            ferese_config::panel::validate(panels).map_err(ConfigError::Binding)?;
+        }
         self.notifications.validate().map_err(ConfigError::Binding)?;
         self.desktop_widgets.validate().map_err(ConfigError::Binding)?;
         self.xwayland.validate().map_err(ConfigError::Binding)?;
@@ -137,6 +139,16 @@ impl Config {
             bindings,
             window_rules: self.window_rules()?,
             theme_settings: self.theme_settings()?,
+            panel_corner_radius: self
+                .panels
+                .as_ref()
+                .and_then(|panels| panels.first())
+                .and_then(|panel| panel.corner_radius),
+            panel_background_opacity: self
+                .panels
+                .as_ref()
+                .and_then(|panels| panels.first())
+                .and_then(|panel| panel.background_opacity),
             focus_effect: self.focus_effect_settings()?,
             default_column_width: self.default_column_width()?,
             scrolling_focus_strategy: self.scrolling_focus_strategy(),
@@ -372,25 +384,107 @@ pub(crate) fn config_path() -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn bar_layout_is_validated_before_live_publication() {
-        for layout in ["continuous", "islands"] {
-            let source = format!("status {{ bar-layout \"{layout}\"; }}");
-            Config::parse_source(&source).unwrap().runtime_config().unwrap();
+    fn geometry_rejects_removed_and_misspelled_keys_in_both_consumption_paths() {
+        for key in [
+            "top-bar-radius",
+            "top-bar-height",
+            "top-bar-margin-top",
+            "top-bar-margin-horizontal",
+            "top-bar-window-clearance",
+            "shell-raduis",
+        ] {
+            let source = format!("theme {{ geometry {{ {key} 8; }}; }}");
+            assert!(
+                Config::parse_source(&source)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("unknown field")
+            );
+            assert!(
+                crate::theme::prepare(&source, std::path::Path::new("/tmp"))
+                    .err()
+                    .unwrap()
+                    .contains(&key.replace('-', "_"))
+            );
         }
-
-        assert!(Config::parse_source("status { bar-layout \"invalid\"; }").is_err());
+        Config::parse_source("theme { geometry { border-width 1; focus-ring-width 2; window-radius 12; shell-radius 14; control-gap 8; }; }").unwrap();
     }
 
     #[test]
-    fn island_padding_is_validated_before_live_publication() {
-        for padding in ["0", "4.5", "12", "32"] {
-            let source = format!("status {{ bar-island-padding {padding}; }}");
+    fn panel_background_opacity_override_leaves_the_shell_material_unchanged() {
+        let config = Config::parse_source(
+            "theme { material { style translucent; opacity 0.3; }; }; panel main { background-opacity 0.8; }",
+        )
+        .unwrap();
+        let runtime = config.runtime_config().unwrap();
+        assert_eq!(runtime.panel_background_opacity, Some(0.8));
+        assert!((runtime.theme_settings.shell_opacity - 0.3).abs() < 0.001);
+        let inherited = Config::parse_source("panel main;").unwrap().runtime_config().unwrap();
+        assert!(inherited.panel_background_opacity.is_none());
+    }
+
+    #[test]
+    fn panel_corner_override_does_not_replace_shell_radius() {
+        let config = Config::parse_source(
+            "theme { geometry { shell-radius 20; }; }; panel \"main\" { corner-radius \"4px 8px 12px 16px\"; }",
+        )
+        .unwrap();
+        let runtime = config.runtime_config().unwrap();
+        assert_eq!(runtime.panel_corner_radius.unwrap().0, [4., 8., 12., 16.]);
+        assert_eq!(runtime.theme_settings.material_radius, 20.);
+        let inherited = Config::parse_source("theme { geometry { shell-radius 20; }; }")
+            .unwrap()
+            .runtime_config()
+            .unwrap();
+        assert!(inherited.panel_corner_radius.is_none());
+        assert_eq!(inherited.theme_settings.panel_radius, 20.);
+    }
+
+    #[test]
+    fn validates_shell_composition_before_publishing_config() {
+        let source = r#"panel "main" { end { group "status" { item "network" kind="network"; item "clock" kind="clock"; }; }; }"#;
+        assert!(Config::parse_source(source).unwrap().runtime_config().is_ok());
+        assert!(
+            Config::parse_source(&source.replace("item \"clock\"", "item \"network\""))
+                .unwrap()
+                .runtime_config()
+                .is_err()
+        );
+        assert!(
+            Config::parse_source("panel \"one\"; panel \"two\";")
+                .unwrap()
+                .runtime_config()
+                .is_err()
+        );
+        assert!(Config::parse_source("panel \"one\" { edge \"left\"; }").is_err());
+    }
+
+    #[test]
+    fn panel_surfaces_are_validated_before_live_publication() {
+        for surface in ["none", "inset", "island"] {
+            let source = format!(
+                "panel main {{ surface solid; group-surface {surface}; end {{ group status {{ surface {surface}; }}; }}; }}"
+            );
             Config::parse_source(&source).unwrap().runtime_config().unwrap();
         }
+        assert!(Config::parse_source("panel main { group-surface invalid; }").is_err());
+        assert!(Config::parse_source("panel main { background islands; }").is_err());
+        assert!(Config::parse_source("status { bar-layout islands; }").is_err());
+    }
 
+    #[test]
+    fn group_padding_is_validated_before_live_publication() {
+        for padding in ["0", "4.5", "12", "32"] {
+            let source = format!("panel main {{ end {{ group status {{ island-padding {padding}; }}; }}; }}");
+            Config::parse_source(&source).unwrap().runtime_config().unwrap();
+        }
         for padding in ["-1", "32.5", "\"small\""] {
-            let source = format!("status {{ bar-island-padding {padding}; }}");
-            assert!(Config::parse_source(&source).is_err());
+            let source = format!("panel main {{ end {{ group status {{ island-padding {padding}; }}; }}; }}");
+            assert!(
+                Config::parse_source(&source)
+                    .map(|config| config.runtime_config().is_err())
+                    .unwrap_or(true)
+            );
         }
     }
 
@@ -712,10 +806,10 @@ mod tests {
     }
 
     #[test]
-    fn shell_radius_is_independent_of_windows_and_overrides_legacy_keys() {
+    fn shell_radius_is_independent_of_windows() {
         for radius in [0.0, 18.0] {
             let config = parse(&format!(
-                "appearance {{\n corner-radius 9\n}}\ntheme {{\n geometry {{\n shell-radius {radius}\n top-bar-radius 5\n window-radius 23\n }}\n}}"
+                "theme {{\n geometry {{\n shell-radius {radius}\n window-radius 23\n }}\n}}"
             ));
             let theme = config.theme_settings().unwrap();
             assert_eq!(theme.material_radius, radius);
@@ -762,6 +856,7 @@ mod tests {
                 material_tint_strength: 0.5,
                 material_radius: 14.0,
                 panel_radius: 14.0,
+                reduce_transparency: false,
             }
         );
         assert!(invalid_color.theme_settings().is_err());

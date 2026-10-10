@@ -73,11 +73,13 @@ pub(super) fn bar<'a>(
     shell: &'a FereseShell,
     palette: ShellTheme,
     metrics: BarMetrics,
+    representation: crate::panel::Representation,
+    selected: bool,
+    width: Option<f32>,
 ) -> Element<'a, cosmic::Action<Message>> {
     let Some(player) = &shell.media.snapshot.selected else {
         return text("").into();
     };
-    let selected = shell.menu.as_ref().is_some_and(|menu| menu.kind == Menu::Media);
     let foreground = color(if selected { palette.accent } else { palette.text_primary });
     let height = (metrics.group_item_height - 4.0).max(0.0);
     let side = height.min(24.0);
@@ -111,9 +113,21 @@ pub(super) fn bar<'a>(
         .height(height)
         .align_y(cosmic::iced::alignment::Vertical::Center)
         .class(theme::Text::Color(foreground));
-    let label = container(label).max_width(112);
+    let compact = representation == crate::panel::Representation::Compact;
+    let preferred_label_width: f32 = if compact { 112. } else { 320. };
+    // Outer padding, the transport button, details padding, and cover spacing
+    // share the allocation with the label.
+    let chrome = 4. + 2. + f32::from(metrics.icon_size) + 12. + 8. + if compact { 0. } else { side + 8. };
+    let label_width = width.map_or(preferred_label_width, |width| {
+        (width - chrome).max(0.).min(preferred_label_width)
+    });
+    let label = container(label).max_width(label_width);
     let details = button::custom(bar_content(
-        row![cover, label].spacing(8).align_y(Alignment::Center),
+        if representation == crate::panel::Representation::Compact {
+            row![label].align_y(Alignment::Center)
+        } else {
+            row![cover, label].spacing(8).align_y(Alignment::Center)
+        },
         height,
     ))
     .name(format!("Now playing: {}", player.label()))
@@ -149,9 +163,10 @@ pub(super) fn bar<'a>(
         )));
     }
 
-    let mut bar_style = crate::bar::bar_group_style(palette);
-    bar_style.border = bar_style.border.width(0.0);
-    bar_style.background = Some(super::Background::Color(color_with_opacity(palette.border, 0.30)));
+    let bar_style = ferese_theme::controls::surface_appearance(
+        color_with_opacity(palette.border, 0.30),
+        palette.material_radius.min(16.),
+    );
 
     let controls = container(
         row![

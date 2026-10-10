@@ -39,15 +39,20 @@ output-profile "docked" {
 }
 ```
 
-Use repeated `binding`, `window-rule`, `output-profile`, `output`, `note` and
-`autostart` nodes for lists of settings. Bindings accept keys, an action and its
-argument positionally. Profiles, outputs and notes accept a positional name,
-match or ID; other fields can be properties or child nodes. Autostart commands
-use positional arguments. Duplicate fields are rejected.
-The dotted paths in the reference tables below describe nested sections.
+Lists use repeated `panel`, `group`, `item`, `binding`, `window-rule`,
+`output-profile`, `output`, `note`, and `autostart` nodes. Bindings take their keys,
+action, and argument positionally; profiles, outputs, and notes take a positional
+name, match, or ID. Panels, groups, and items use positional IDs, while autostart
+commands use positional arguments. Other fields can be properties or child nodes,
+but duplicate fields are rejected. The dotted paths in the reference tables
+below describe nested sections.
 
 Settings preserves comments and custom fields when editing, while normalizing
 indentation.
+
+The Settings sidebar groups pages under Desktop, Interaction, and System, with
+Motion under Windows and Shortcuts under Keyboard & mouse. Search includes both
+views and opens the matching setting directly.
 
 ## Saving and validation
 
@@ -57,9 +62,14 @@ without merging unfinished drafts. Wallpaper browsing needs `zenity`, but you
 can also enter a path directly.
 Settings keeps `config.kdl.settings-backup` before saving.
 
-File edits reload automatically, including atomic editor saves. Invalid changes
-keep the last working configuration. Appearance, wallpaper, motion, input,
-bindings, rules, layouts, displays, widgets and login items update live.
+File edits reload automatically, including atomic editor saves, so changes to
+appearance, wallpaper, motion, input, bindings, rules, layouts, displays, widgets,
+and login items take effect live. If a reload is invalid, Ferese reports the error
+and keeps the last working configuration.
+
+When the shell starts, it loads your configuration or, if no file exists, uses
+the defaults. An invalid file stops startup with an error message, leaving your
+configuration untouched.
 
 ```sh
 feresectl reload-config          # reload with error feedback
@@ -115,7 +125,7 @@ Changing default width preserves manually resized columns.
 ## Animations
 
 Continuum is Ferese's shared compositor and shell motion system. Set animation
-speed in Settings → Motion or edit the `animations` block in
+speed in Settings → Windows → Motion or edit the `animations` block in
 `~/.config/ferese/config.kdl`. Changes apply live. Start with `speed` if you only
 want faster or slower transitions; you do not need to change the springs.
 
@@ -273,7 +283,6 @@ one appearance.
 | `theme.schedule.light-at`, `theme.schedule.dark-at` | `HH:MM` | `"07:00"`, `"19:00"` | Auto boundaries; times must differ |
 | `theme.accessibility.increase-contrast` | boolean | `false` | Strengthen text and borders |
 | `theme.accessibility.reduce-transparency` | boolean | `false` | Solid surfaces; skip background blur |
-| `appearance.corner-radius` | number ≥ 0 | unset | Legacy fallback for shell radius |
 | `appearance.focus-effect.enabled` | boolean | `true` | Apply window opacity and dimming; disabling keeps the configured values |
 | `appearance.focus-effect.active-opacity` | number 0–1 | `1` | Active application opacity, including fullscreen |
 | `appearance.focus-effect.inactive-opacity` | number 0–1 | `1` | Other application window opacity |
@@ -331,12 +340,6 @@ Filled controls choose a contrasting text color automatically.
 | `focus-ring-width` | number ≥ 0 | `2` | Focused border thickness |
 | `window-radius` | number ≥ 0 | `14` | Managed-window corners, independent of the shell |
 | `shell-radius` | number ≥ 0 | `14` | All shell surfaces, cards, widgets and interaction backgrounds; fractional radii are preserved; 0 makes them square |
-| `top-bar-height` | number > 0 | `28` | Menu-bar height |
-| `top-bar-margin-top` | integer ≥ 0 | `0` | Space above bar |
-| `top-bar-window-gap` | integer ≥ 0 | `0` | Clearance below bar |
-| `top-bar-margin-horizontal` | integer ≥ 0 | `0` | Bar side margins |
-| `top-bar-radius` | number ≥ 0 | unset | Legacy fallback for shell radius |
-| `panel-padding` | number ≥ 0 | `12` | Bar inner padding |
 | `control-gap` | number ≥ 0 | `12` | Right-side control spacing |
 
 | Section / key | Type | Default | Meaning |
@@ -469,7 +472,7 @@ by other monitors and stop at the first/last workspace. Short or cancelled navig
 swipes slide back; diagonal swipes do not navigate. Navigation pauses while locked, during
 window grabs, or when an application inhibits shortcuts.
 
-Assign swipes in **Settings → Shortcuts** using the same actions and arguments as
+Assign swipes in **Settings → Keyboard & mouse → Shortcuts** using the same actions and arguments as
 keyboard bindings. Choose a "Customize swipe" button to add an override. The
 gesture keys are `Swipe3Up`, `Swipe3Down`, `Swipe3Left`, and `Swipe3Right`; 4 or 5
 fingers are also supported. Changes reload live:
@@ -803,30 +806,196 @@ test-only validation. Hardware failures can still prevent every monitor from
 working; Ferese tries preferred modes to recover a display instead of
 intentionally turning off the last working one.
 
+## Panel composition
+
+Ferese shows one panel on each output, at the top by default. You can use the
+default arrangement or define a `panel` block with its own geometry, surface
+defaults, ordered groups, and item settings.
+
+In Settings → **Panel & Shell**, **Panels** contains the position, background,
+size, spacing, and corner-radius controls. Choose **Edit panel** to open
+**Arrange**, where you can organize groups and items while the composition preview
+stays visible above the independently scrolling editor and inspector.
+**Back to Panels** returns to the panel controls.
+
+Use **Position** to choose Top or Bottom, or set `edge "top"` or `edge "bottom"`
+inside the KDL panel block. Menus and notifications open toward the desktop, with
+window clearance and **Edge margin** following that screen edge. Panel dimensions
+live in a separate `geometry` block, so appearance changes do not resize the
+panel. Its fields are `height` (24–128), `edge-margin`, `side-margins`, and
+`window-clearance` (0–4096), plus `inner-padding` (0–64); their defaults are 28, 0,
+0, 0, and 12 logical pixels respectively.
+
+Each group has an **Add item** menu. Select a control to open its inspector, where
+you can change visibility, overflow, preferred size, and placement, or remove the
+item. To reorder it, use the **Up / Down** arrow buttons or drag its handle; dragging
+also lets you move it to another group, and dropping into an empty zone creates a
+group. Hidden controls remain in the editor with faded icons and labels. These
+changes use the existing save and Undo controls, and `ferese-settings --page bar`
+opens the page directly.
+
+Use **Add group** in Start, Center, or End to create an empty group, then select
+its name to change placement, surface, spacing, and padding. Arrow buttons reorder
+groups within a zone; before removing a group, move or remove its controls.
+
+The **Background** presets set the panel fill and default group surface together:
+Continuous uses `solid` for the panel and `none` for groups, while Islands uses
+`none` for the panel and `island` for groups. Applying either preset clears group
+surface overrides while keeping your arrangement intact.
+
+Use **Default group surface** to choose what groups inherit, or select Default,
+None, Inset, or Island in an individual group's inspector. None adds no fill,
+Inset wraps the padded content in a rounded surface, and Island adds a full-height
+surface with island padding. Groups on a filled panel use a subtle local tint,
+allowing arrangements such as a continuous panel with one media island or
+navigation and status islands around an undecorated title. With mixed settings,
+neither preset button is selected.
+
+**Group borders** controls the outlines of all groups and is off by default,
+while opacity and corner radii apply across the panel.
+
+**Background opacity** overrides shell opacity for the panel background in either
+arrangement, without fading controls or changing popups. **Use shell opacity**
+restores inheritance.
+
+Choose **Customize corners** to override the radius for the whole panel,
+including its groups. The four sliders control top left, top right, bottom right,
+and bottom left, saving each change when you release the slider.
+
+In KDL, pixel values follow CSS shorthand: one value sets all corners; two set
+top-left/bottom-right and top-right/bottom-left; three set
+top-left, top-right/bottom-left, and bottom-right; four run clockwise from
+top-left. For example, `4px 8px 12px 16px` gives each corner a different radius.
+Values must be finite and nonnegative; percentages and elliptical `/` syntax are
+not supported. Radii are clamped to half the shorter surface dimension.
+
+At zero edge margin, panel backgrounds reach the selected screen edge with square
+corners where they touch it, without changing the saved radii. Islands preserve
+the gaps between groups, while Continuous fills the whole panel.
+
+**Side margins** moves the left and right ends inward together over a range of
+0–4096 px. The shell limits the requested inset for each output using measured
+content widths: controls may compact, but the inset stops before causing
+additional overflow. As content grows or the output gets smaller, the applied
+inset shrinks to make room. If the controls cannot fit even at zero margin, the
+panel uses its normal overflow behavior.
+
+The panel follows the shell radius unless you set an override, which stays in
+place when the shell radius changes. **Use shell radius** clears that override
+without changing the arrangement; **Remove custom panel** restores both the
+default arrangement and its inherited radius.
+
+Dragging changes the drop hint until release, then saves the complete move once.
+Escape, focus loss, and release outside a drop target cancel without saving.
+
+The composition preview follows your draft and adapts to the Settings window's
+width using sample content with every service available. Select a preview control
+to edit that instance, or use the chevron to reveal overflow items. Browsing and
+selection do not save anything: the first edit saves the composition and the
+change together. The preview shares the shell's sizing resolver, while live
+service state and exact vertical styling can differ.
+
+```kdl
+panel "main" {
+    surface "none"
+    group-surface "island"
+    geometry { height 30; edge-margin 6; side-margins 18; window-clearance 4; }
+    border #false
+    background-opacity 0.85
+    start {
+        group "navigation" {
+            item "overview" kind="overview" overflow="never"
+            item "workspaces" kind="workspaces" overflow="never"
+        }
+    }
+    center {
+        group "title" {
+            surface "none"
+            item "title" kind="focused-window" overflow="never"
+        }
+    }
+    end {
+        group "status" {
+            item "network" kind="network" overflow="always"
+            item "audio" kind="audio"
+            item "battery" kind="battery" percentage=#true
+            item "clock" kind="clock" representation="compact"
+        }
+    }
+}
+```
+
+Start, center, and end contain ordered groups of item instances. Their IDs must
+be unique within the panel, contain 1–128 ASCII letters/digits or `-_.:@`, and not
+start with `_`. Exactly one panel can be configured, without per-output overrides.
+
+Built-in kinds are `overview`, `workspaces`, `focused-window`, `media`,
+`quick-settings`, `network`, `audio`, `recording`, `notifications`, `battery`,
+`clock`, and `display-mode`. Availability still follows the associated service
+or hardware. Duplicate kinds are allowed when their IDs differ; clock instances
+currently share the same clock format and timezone.
+
+| Scope / key | Values / default | Meaning |
+| --- | --- | --- |
+| Panel `surface` | `solid` (default), `none` | Full panel fill or transparent space between decorated groups |
+| Panel `group-surface` | `none` (default), `inset`, `island` | Inherited group surface |
+| Group `surface` | omit to inherit, `none`, `inset`, `island` | Override surface independently of other groups |
+| Panel `geometry` | height 28, edge/side margins 0, window clearance 0, inner padding 12 | Dimensions independent of the theme |
+| Panel `border` | boolean; default `false` | Show group outlines |
+| Panel `corner-radius` | optional px string, e.g. `"4px 8px"` | Override shell radius for all panel surfaces |
+| Zone `spacing` | 0–64; default 8 | Gap between groups |
+| Panel `background-opacity` | optional 0–1; inherits shell opacity | Override panel background opacity in either arrangement |
+| Groups per panel | at most 31 | Reserves one of the 32 material regions for overflow |
+| Group `spacing` | 0–64; default 1 | Gap between items |
+| Group `padding` | two integers 0–32; default `2 3` | Vertical and horizontal inner padding |
+| Group `island-padding` | 0–32; default 4 | Additional horizontal padding for islands |
+| Item `visible` | boolean; default `true` | Allow the item when available |
+| Item `overflow` | `auto` (default), `never`, `always` | Move when needed, keep visible, or place in overflow |
+| Item `priority` | integer 0–100; default 50 | Lower priorities yield space first |
+| Item `representation` | omit, `wide`, `compact`, `icon` | Preferred supported form; smaller forms may be used |
+| Item `gap-before` | 0–64; unset | Override the preceding gap within a group |
+| Item `metadata` | optional section | Custom data preserved by the editor; no shell behavior |
+| Workspaces `style` | `numbers`, `dots` (default), `tabs`, `window-stacks`, `app-icons` | Workspace indicators; choose in the Workspaces item inspector |
+| Battery `percentage` | boolean; default `true` | Include percentage in its full form |
+| Focused window `visible` | boolean; default `true` | Include the title |
+
+Media and clock support all three representations. Battery with a percentage
+supports `wide` and `icon`; other controls keep their existing form. Unsupported
+preferences use the kind's normal form. The title can shrink and ellipsize;
+workspace controls scroll within their allocation. The panel itself does not scroll.
+
+Workspace indicators keep the same width as their state changes. Dots use a pill
+for the active workspace, a filled dot for an occupied workspace, and an outline
+for an empty one. Tabs show workspace names, window stacks show up to three
+window outlines, and app icons show up to two distinct running applications.
+Hover for the workspace name and window count. Active transitions follow the
+animation and reduced-motion settings. Explicitly set `style="numbers"`
+to retain numbered indicators.
+
+Item-specific settings belong to their kind: Workspaces uses `style`, Battery
+uses `percentage`, and Focused window uses the shared `visible` flag. Unrecognized
+options, including misspellings, are rejected, so custom data belongs in an
+explicit `metadata` section such as
+`item "clock" kind="clock" { metadata { note "Desk clock"; }; }`.
+
+The center stays screen-centered. When controls cannot fit, lower-priority items
+adapt first, with definition order breaking ties. The overflow chevron appears
+before the end controls and opens displaced items through their usual menus.
+`never` moves to overflow only when the mandatory controls cannot fit. A surface
+narrower than the chevron's padded minimum clips that control.
+
 ## Status controls
 
 | `status` key | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `bar-layout` | `"continuous"` or `"islands"` | `"continuous"` | One bar background or separate backgrounds around its sections |
-| `bar-island-padding` | number 0–32 | `4` | Horizontal space on each side between an island's background and its bordered controls, in logical pixels |
-| `keybinding-guide` | boolean | `true` | Show the active shortcut guide at login until disabled in Settings → Shortcuts. |
-| `window-title` | boolean | `true` | Focused window title in the bar center when space allows |
-| `battery-percentage` | boolean | `true` | Show percentage beside icon |
+| `keybinding-guide` | boolean | `true` | Show the active shortcut guide at login until disabled in Settings → Keyboard & mouse → Shortcuts. |
 | `low-battery-threshold` | integer 0–100 | `20` | Warning-color threshold |
 | `settings-command` | argument array | `["ferese-settings"]` | Settings launcher; `[]` hides the action |
 
-Choose **Islands** in Settings → Bar, or set it in KDL:
-
-```kdl
-status {
-    bar-layout "islands"
-    bar-island-padding 4
-}
-```
-
-The gaps between islands are transparent and let clicks pass through. Each island uses the bar background around the existing section's border and fill, with the theme's bar radius and material opacity. Changing the bar layout leaves modal transparency unchanged; there is no need to set the shared opacity to zero. The bar reserves the same space above windows in either layout.
-
-Use **Island side padding** in Settings → Bar to tighten the space around each section. It applies only to islands; continuous bars keep their existing padding.
+Configure panel surfaces in **Panel & Shell** or in the `panel` block above.
+Transparent gaps pass clicks through. Group islands use panel opacity and corner
+radii; changing their surface leaves modal transparency and window clearance
+unchanged. Island padding belongs to each group and applies only to islands.
 
 ### Now Playing
 
@@ -970,10 +1139,8 @@ The shell and compositor use the same squircle profile for fills, borders, shado
 and blur masks. Small controls cap the radius to fit their size; circles and pills
 keep circular outlines. The measured profile has small tangent and curvature
 discontinuities at its internal segment joins. Window rounding remains under
-Settings → Windows. `theme.geometry.shell-radius` takes precedence over the old
-`appearance.corner-radius` and then `theme.geometry.top-bar-radius` keys; when
-none are set, the shell uses 14 px. Legacy clock/note radius fields no longer
-override shell rounding.
+Settings → Windows. Shell rounding comes from `theme.geometry.shell-radius`,
+which defaults to 14 px, with an optional corner override for each panel.
 
 ## X11 support (xwayland-satellite)
 

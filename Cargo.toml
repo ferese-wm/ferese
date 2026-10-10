@@ -31,7 +31,7 @@ bitflags = "2.9.4"
 calloop = { version = "0.14.4", features = ["signals"] }
 jiff = "0.2.37"
 libc = "0.2.176"
-libcosmic = { git = "https://github.com/ferese-wm/libcosmic", tag = "ferese-v0.1.0", default-features = false, features = ["multi-window", "tokio", "wayland"] }
+libcosmic = { git = "https://github.com/ferese-wm/libcosmic", tag = "ferese-v0.1.1", default-features = false, features = ["multi-window", "tokio", "wayland"] }
 smithay = { version = "0.7.0", default-features = false, features = [
     "backend_drm",
     "backend_gbm",

@@ -14,11 +14,37 @@ impl App {
         ferese_theme::text(text, self.font).size(size)
     }
 
+    pub(super) fn panel_heading(
+        &self,
+        text: impl Into<std::borrow::Cow<'static, str>> + 'static,
+        size: f32,
+    ) -> widget::Text<'static, cosmic::Theme, cosmic::Renderer> {
+        self.label(text, size).font(cosmic::iced::Font {
+            weight: cosmic::iced::font::Weight::Semibold,
+            ..self.font
+        })
+    }
+
     pub(super) fn note(&self, text: &str) -> Element<'static, Message> {
         let palette = visuals::Palette::from_resolved(&self.resolved.presented);
-        self.label(text.to_owned(), 11.)
-            .class(cosmic::theme::Text::Color(palette.muted))
-            .into()
+        self.label(
+            text.to_owned(),
+            if self.page == crate::schema::Page::Bar {
+                12.
+            } else {
+                11.
+            },
+        )
+        .class(cosmic::theme::Text::Color(palette.muted))
+        .into()
+    }
+
+    fn control_button_style(&self, palette: visuals::Palette, selected: bool) -> cosmic::theme::Button {
+        if self.page == crate::schema::Page::Bar {
+            visuals::panel_button(palette, selected)
+        } else {
+            visuals::button_style(palette, selected)
+        }
     }
 
     pub(super) fn settings_button(
@@ -33,12 +59,15 @@ impl App {
             row([])
                 .spacing(5)
                 .align_y(Alignment::Center)
-                .push(visuals::action_icon(icon, palette.text))
+                .push(visuals::action_icon(
+                    icon,
+                    if message.is_some() { palette.text } else { palette.muted },
+                ))
                 .push(self.label(label.to_owned(), 12.)),
         )
         .name(label.to_owned())
         .padding([4, 8])
-        .class(visuals::button_style(palette, selected))
+        .class(self.control_button_style(palette, selected))
         .on_press_maybe(message)
         .into()
     }
@@ -51,11 +80,14 @@ impl App {
     ) -> Element<'static, Message> {
         let palette = visuals::Palette::from_resolved(&self.resolved.presented);
         widget::tooltip(
-            button::custom(visuals::action_icon(icon, palette.text))
-                .name(label.to_owned())
-                .padding(4)
-                .class(visuals::button_style(palette, false))
-                .on_press_maybe(message),
+            button::custom(visuals::action_icon(
+                icon,
+                if message.is_some() { palette.text } else { palette.muted },
+            ))
+            .name(label.to_owned())
+            .padding(4)
+            .class(self.control_button_style(palette, false))
+            .on_press_maybe(message),
             self.label(label.to_owned(), 11.),
             widget::tooltip::Position::Top,
         )
@@ -146,34 +178,45 @@ impl App {
             Kind::Range {
                 default,
                 min,
-                max,
+                mut max,
                 step,
                 suffix,
                 integer,
             } => {
+                let margin_limit = (path == "panels.0.geometry.side_margins").then(|| self.panel_side_margin_limit());
+                if let Some(limit) = margin_limit {
+                    max = f64::from(limit.unwrap_or(0));
+                }
                 let value = self
                     .ranges
                     .get(&path)
                     .copied()
-                    .unwrap_or_else(|| self.draft.number(&path, default));
+                    .unwrap_or_else(|| self.draft.number(&path, default))
+                    .clamp(min, max);
                 let display = if integer || step >= 1. {
                     format!("{value:.0}{suffix}")
                 } else {
                     format!("{value:.2}{suffix}")
                 };
-                let release = field.clone();
-                row([])
-                    .align_y(Alignment::Center)
-                    .spacing(8)
-                    .push(
-                        slider(min..=max, value, move |value| Message::Range(field.clone(), value))
-                            .step(step)
-                            .class(ferese_theme::menus::slider(palette.accent, 1.))
-                            .on_release(Message::Release(release))
-                            .width(145),
-                    )
-                    .push(self.label(display, 12.).width(65))
-                    .into()
+                if margin_limit == Some(None) {
+                    self.label("—", 12.).into()
+                } else if max <= min {
+                    self.label(display, 12.).into()
+                } else {
+                    let release = field.clone();
+                    row([])
+                        .align_y(Alignment::Center)
+                        .spacing(8)
+                        .push(
+                            slider(min..=max, value, move |value| Message::Range(field.clone(), value))
+                                .step(step)
+                                .class(ferese_theme::menus::slider(palette.accent, 1.))
+                                .on_release(Message::Release(release))
+                                .width(145),
+                        )
+                        .push(self.label(display, 12.).width(65))
+                        .into()
+                }
             }
             Kind::Choice { default, choices } => {
                 let value = self.wallpaper_field_value(&path, default);
@@ -182,7 +225,7 @@ impl App {
                     options = options.push(
                         button::custom(self.label(*label, 12.))
                             .padding([4, 8])
-                            .class(visuals::button_style(palette, value == *key))
+                            .class(self.control_button_style(palette, value == *key))
                             .on_press(Message::Change(set(&path, *key))),
                     );
                 }

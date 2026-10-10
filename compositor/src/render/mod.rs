@@ -135,6 +135,7 @@ fn corner_shader_for(source: &str, shape: CornerShape) -> String {
             )
             .replace("precision mediump float;", "precision highp float;"),
     }
+    .replace("//_MATERIAL_CORNERS_", include_str!("shaders/material_corners.glsl"))
 }
 
 pub(crate) fn window_corner_shape(_window: &smithay::desktop::Window) -> CornerShape {
@@ -339,13 +340,13 @@ pub(crate) struct MaterialProgram(GlesPixelProgram);
 
 #[derive(Clone, Debug, PartialEq)]
 struct MaterialParameters {
+    corner_radii: [f32; 4],
     presentation_alpha: f32,
     background_opacity: f32,
     blur: f32,
     sample_geometry: Rectangle<i32, Logical>,
     sample_physical: Rectangle<i32, Physical>,
     sample_framebuffer: [f32; 4],
-    radius: f32,
     shadow_rect: [f32; 4],
     shadow_values: [f32; 2],
     shadow_bounds: Rectangle<i32, Logical>,
@@ -734,7 +735,7 @@ mod tests {
         ] {
             let uniforms = vec![
                 Uniform::new("visible_rect", [0.0f32, 0.0, 32.0, 32.0]),
-                Uniform::new("material_radius", 0.0f32),
+                Uniform::new("material_radii", [0.0f32; 4]),
                 Uniform::new("texture_size", [32.0f32, 32.0]),
                 Uniform::new("capture_origin", [0.0f32, 0.0]),
                 Uniform::new("blur_radius", 12.0f32),

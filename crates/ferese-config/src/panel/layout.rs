@@ -1,0 +1,688 @@
+//! Measured panel allocation. This module has no frame timing or service ownership.
+use super::{ItemId, OverflowPolicy, Panel, Representation, Zone};
+use std::collections::BTreeMap;
+
+#[derive(Clone, Debug)]
+pub struct Measurement {
+    pub id: ItemId,
+    pub alternatives: Vec<(Representation, f32)>,
+    pub minimum: Option<f32>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum Placement {
+    Visible { representation: Representation, width: f32 },
+    Overflow,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Resolution {
+    pub items: BTreeMap<ItemId, Placement>,
+    pub overflow: Vec<ItemId>,
+    pub zone_widths: [f32; 3],
+    /// Separation used when allocating these zones.
+    pub zone_gap: f32,
+    pub forced_overflow: bool,
+    pub overflow_trigger_width: f32,
+    /// Width needed by the smallest visible representations before automatic overflow.
+    pub minimum_width: f32,
+}
+
+fn zone_width(panel: &Panel, zone: &Zone, items: &BTreeMap<ItemId, Placement>) -> f32 {
+    let mut groups = Vec::new();
+    for group in &zone.groups {
+        let mut widths = Vec::new();
+        for item in &group.items {
+            if let Some(Placement::Visible { width, .. }) = items.get(&item.id)
+                && *width > 0.0
+            {
+                if !widths.is_empty() {
+                    widths.push(item.gap_before.unwrap_or(group.spacing));
+                }
+                widths.push(*width);
+            }
+        }
+        if !widths.is_empty() {
+            let padding = 2.0 * f32::from(group.padding[1]);
+            let island = if panel.resolved_surface(group) == super::GroupSurface::Island {
+                2.0 * group.island_padding
+            } else {
+                0.0
+            };
+            groups.push(widths.iter().sum::<f32>() + padding + island);
+        }
+    }
+    groups.iter().sum::<f32>() + zone.spacing * groups.len().saturating_sub(1) as f32
+}
+
+impl Resolution {
+    fn update_widths(&mut self, panel: &Panel, overflow_width: f32) {
+        self.zone_widths = [
+            zone_width(panel, &panel.start, &self.items),
+            zone_width(panel, &panel.center, &self.items),
+            zone_width(panel, &panel.end, &self.items),
+        ];
+        if !self.overflow.is_empty() {
+            self.zone_widths[2] += overflow_width
+                + if self.zone_widths[2] > 0.0 {
+                    panel.end.spacing
+                } else {
+                    0.0
+                };
+        }
+    }
+
+    fn required_width(&self) -> f32 {
+        self.required_width_with_gap(self.zone_gap)
+    }
+
+    fn required_width_with_gap(&self, gap: f32) -> f32 {
+        let [start, center, end] = self.zone_widths;
+        if center > 0.0 {
+            let side = start.max(end);
+            center + if side > 0.0 { 2.0 * (side + gap) } else { 0.0 }
+        } else {
+            start + end + if start > 0.0 && end > 0.0 { gap } else { 0.0 }
+        }
+    }
+
+    pub fn fits(&self, available: f32) -> bool {
+        self.required_width() <= available
+    }
+
+    /// Clamp a requested inset independently for each output. Content may still
+    /// overflow on an output too small to fit it even without an inset.
+    pub fn side_margin(&self, requested: i32, output_width: i32, padding: f32) -> i32 {
+        let maximum = ((output_width as f32 - 2. * padding - self.minimum_width) / 2.)
+            .floor()
+            .max(0.);
+        requested.max(0).min(maximum as i32)
+    }
+}
+
+pub fn resolve(panel: &Panel, measurements: &[Measurement], available: f32, overflow_width: f32) -> Resolution {
+    resolve_with_gap(panel, measurements, available, overflow_width, 8.)
+}
+
+/// Reserve separation between zones while keeping the center on the panel midpoint.
+pub fn resolve_with_gap(
+    panel: &Panel,
+    measurements: &[Measurement],
+    available: f32,
+    overflow_width: f32,
+    zone_gap: f32,
+) -> Resolution {
+    let available = available.max(0.0);
+    let zone_gap = zone_gap.max(0.);
+    let fits = |resolution: &Resolution| resolution.fits(available);
+    let mut result = Resolution {
+        zone_gap,
+        ..Resolution::default()
+    };
+    let ordered: Vec<_> = [&panel.start, &panel.center, &panel.end]
+        .into_iter()
+        .flat_map(|zone| &zone.groups)
+        .flat_map(|group| &group.items)
+        .collect();
+    let measurements: BTreeMap<_, _> = measurements.iter().map(|measured| (&measured.id, measured)).collect();
+    // Allocation policy follows composition, never the renderer's sample order.
+    // Lower priorities yield first; definition order breaks equal-priority ties.
+    let mut candidates: Vec<_> = ordered.iter().enumerate().collect();
+    candidates.sort_by_key(|(index, item)| (item.priority, *index));
+    for item in &ordered {
+        let Some(measured) = measurements.get(&item.id) else {
+            continue;
+        };
+        let Some(&(representation, width)) = measured.alternatives.first() else {
+            continue;
+        };
+        if item.overflow == OverflowPolicy::Always {
+            result.items.insert(item.id.clone(), Placement::Overflow);
+            result.overflow.push(item.id.clone());
+        } else {
+            result
+                .items
+                .insert(item.id.clone(), Placement::Visible { representation, width });
+        }
+    }
+    result.update_widths(panel, overflow_width);
+    let mut minimum = result.clone();
+    for measured in measurements.values() {
+        if let Some(Placement::Visible { width, .. }) = minimum.items.get_mut(&measured.id) {
+            for (_, alternative) in &measured.alternatives {
+                *width = width.min(*alternative);
+            }
+            if let Some(flexible) = measured.minimum {
+                *width = width.min(flexible);
+            }
+        }
+    }
+    minimum.update_widths(panel, overflow_width);
+    result.minimum_width = minimum.required_width();
+    // Flexible content yields space without changing the stored item preference.
+    for (_, item) in &candidates {
+        let Some(measured) = measurements.get(&item.id).filter(|measured| measured.minimum.is_some()) else {
+            continue;
+        };
+        if fits(&result) {
+            break;
+        }
+        let Some(Placement::Visible { representation, width }) = result.items.get(&measured.id).cloned() else {
+            continue;
+        };
+        let minimum = measured.minimum.unwrap().min(width);
+        result.items.insert(
+            measured.id.clone(),
+            Placement::Visible {
+                representation,
+                width: minimum,
+            },
+        );
+        result.update_widths(panel, overflow_width);
+    }
+    for (_, item) in &candidates {
+        if fits(&result) {
+            break;
+        }
+        let Some(measured) = measurements.get(&item.id) else {
+            continue;
+        };
+        for &(representation, width) in measured.alternatives.iter().skip(1) {
+            if let Some(Placement::Visible { width: previous, .. }) = result.items.get(&item.id)
+                && width < *previous
+            {
+                result
+                    .items
+                    .insert(item.id.clone(), Placement::Visible { representation, width });
+                result.update_widths(panel, overflow_width);
+                if fits(&result) {
+                    break;
+                }
+            }
+        }
+    }
+    // Never is honored whenever the mandatory minimums fit. On physically smaller
+    // surfaces, retain access through overflow instead of silently clipping actions.
+    for force in [false, true] {
+        for (_, item) in &candidates {
+            if fits(&result) {
+                break;
+            }
+            if item.overflow == OverflowPolicy::Never && !force {
+                continue;
+            }
+            if matches!(result.items.get(&item.id), Some(Placement::Visible { width, .. }) if *width > 0.0) {
+                result.items.insert(item.id.clone(), Placement::Overflow);
+                result.overflow.push(item.id.clone());
+                result.forced_overflow |= force && item.overflow == OverflowPolicy::Never;
+                result.update_widths(panel, overflow_width);
+            }
+        }
+    }
+    // A reduction on the shorter side can leave unused room after the other
+    // side shrinks. Restore preferred representations before expanding titles.
+    for (_, item) in candidates.iter().rev() {
+        let Some(measured) = measurements.get(&item.id) else {
+            continue;
+        };
+        let Some(previous @ Placement::Visible { representation, .. }) = result.items.get(&item.id).cloned() else {
+            continue;
+        };
+        for &(candidate, width) in measured
+            .alternatives
+            .iter()
+            .take_while(|(candidate, _)| *candidate != representation)
+        {
+            result.items.insert(
+                item.id.clone(),
+                Placement::Visible {
+                    representation: candidate,
+                    width: measured.minimum.map_or(width, |minimum| minimum.min(width)),
+                },
+            );
+            result.update_widths(panel, overflow_width);
+            if fits(&result) {
+                break;
+            }
+            result.items.insert(item.id.clone(), previous.clone());
+        }
+    }
+    result.update_widths(panel, overflow_width);
+    // Restore the most protected flexible items first, reversing the yield order.
+    for (_, item) in candidates.iter().rev() {
+        let Some(measured) = measurements.get(&item.id).filter(|measured| measured.minimum.is_some()) else {
+            continue;
+        };
+        let Some(Placement::Visible {
+            representation,
+            width: minimum,
+        }) = result.items.get(&measured.id).cloned()
+        else {
+            continue;
+        };
+        let Some(maximum) = measured
+            .alternatives
+            .iter()
+            .find_map(|(candidate, width)| (*candidate == representation).then_some(*width))
+        else {
+            continue;
+        };
+        let mut low = minimum;
+        let mut high = maximum;
+        for _ in 0..20 {
+            let width = (low + high) * 0.5;
+            result
+                .items
+                .insert(measured.id.clone(), Placement::Visible { representation, width });
+            result.update_widths(panel, overflow_width);
+            if fits(&result) { low = width } else { high = width }
+        }
+        result.items.insert(
+            measured.id.clone(),
+            Placement::Visible {
+                representation,
+                width: low,
+            },
+        );
+    }
+    result
+        .overflow
+        .sort_by_key(|id| ordered.iter().position(|item| &item.id == id).unwrap());
+    result.update_widths(panel, overflow_width);
+    result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_center_only_item_keeps_its_preferred_size_without_side_gaps() {
+        use super::super::{Group, Item, ItemKind};
+        let mut panel = Panel::default();
+        panel.start.groups.clear();
+        panel.end.groups.clear();
+        panel.center.groups = vec![Group::new(
+            "center",
+            vec![Item::new("media", ItemKind::Media)],
+            [0, 0],
+            0.,
+        )];
+        let measurements = [Measurement {
+            id: ItemId("media".into()),
+            alternatives: vec![
+                (Representation::Wide, 40.),
+                (Representation::Compact, 24.),
+                (Representation::Icon, 12.),
+            ],
+            minimum: None,
+        }];
+        for gap in [0., 8., 32.] {
+            for available in [40., 48.] {
+                let resolution = resolve_with_gap(&panel, &measurements, available, 24., gap);
+                assert_eq!(
+                    resolution.items[&ItemId("media".into())],
+                    Placement::Visible {
+                        representation: Representation::Wide,
+                        width: 40.
+                    }
+                );
+                assert!(resolution.overflow.is_empty());
+                assert!(resolution.fits(available));
+            }
+        }
+    }
+
+    #[test]
+    fn center_collision_spacing_applies_only_to_occupied_sides() {
+        for (widths, required) in [
+            ([0., 40., 0.], 40.),
+            ([20., 40., 0.], 96.),
+            ([0., 40., 20.], 96.),
+            ([20., 40., 30.], 116.),
+            ([20., 0., 30.], 58.),
+            ([0., 0., 30.], 30.),
+        ] {
+            let resolution = Resolution {
+                zone_widths: widths,
+                zone_gap: 8.,
+                ..Default::default()
+            };
+            assert!(resolution.fits(required));
+            assert!(!resolution.fits(required - 1.));
+        }
+    }
+
+    #[test]
+    fn a_crowded_opposite_zone_does_not_leave_media_compacted_in_unused_space() {
+        use super::super::{Group, Item, ItemKind};
+        let mut panel = Panel::default();
+        panel.start.groups = vec![Group::new(
+            "navigation",
+            vec![
+                Item::new("overview", ItemKind::Overview),
+                Item::new("media", ItemKind::Media),
+            ],
+            [0, 0],
+            0.,
+        )];
+        panel.center.groups = vec![Group::new(
+            "title",
+            vec![Item::new("title", ItemKind::FocusedWindow)],
+            [0, 0],
+            0.,
+        )];
+        panel.end.groups = vec![Group::new(
+            "status",
+            vec![Item::new("clock", ItemKind::Clock)],
+            [0, 0],
+            0.,
+        )];
+        let measured = vec![
+            Measurement {
+                id: ItemId("overview".into()),
+                alternatives: vec![(Representation::Icon, 28.)],
+                minimum: None,
+            },
+            Measurement {
+                id: ItemId("media".into()),
+                alternatives: vec![
+                    (Representation::Wide, 180.),
+                    (Representation::Compact, 100.),
+                    (Representation::Icon, 28.),
+                ],
+                minimum: None,
+            },
+            Measurement {
+                id: ItemId("title".into()),
+                alternatives: vec![(Representation::Wide, 48.)],
+                minimum: Some(48.),
+            },
+            Measurement {
+                id: ItemId("clock".into()),
+                alternatives: vec![
+                    (Representation::Wide, 340.),
+                    (Representation::Compact, 240.),
+                    (Representation::Icon, 140.),
+                ],
+                minimum: None,
+            },
+        ];
+        for mirrored in [false, true] {
+            if mirrored {
+                std::mem::swap(&mut panel.start, &mut panel.end);
+            }
+            let resolution = resolve(&panel, &measured, 550., 32.);
+            assert!(resolution.fits(550.));
+            assert_eq!(
+                resolution.items[&ItemId("media".into())],
+                Placement::Visible {
+                    representation: Representation::Wide,
+                    width: 180.
+                }
+            );
+            assert_eq!(
+                resolution.items[&ItemId("clock".into())],
+                Placement::Visible {
+                    representation: Representation::Compact,
+                    width: 240.
+                }
+            );
+        }
+        let mut measured = measured;
+        measured[1].alternatives[0].1 = 400.;
+        measured[1].minimum = Some(112.);
+        for mirrored in [false, true] {
+            if mirrored {
+                std::mem::swap(&mut panel.start, &mut panel.end);
+            }
+            let resolution = resolve(&panel, &measured, 550., 32.);
+            assert!(resolution.fits(550.));
+            assert!(
+                matches!(resolution.items[&ItemId("media".into())], Placement::Visible { representation: Representation::Wide, width } if width > 200. && width < 400.),
+                "flexible media must expand into the unused room beside the center"
+            );
+        }
+    }
+
+    #[test]
+    fn fits_uses_the_gap_that_was_resolved() {
+        let panel = Panel::default();
+        let measured = measurements(&panel);
+        for gap in [0., 2., 16., 48.] {
+            let result = resolve_with_gap(&panel, &measured, 2400., 32., gap);
+            assert_eq!(result.zone_gap, gap);
+            let required = result.required_width_with_gap(gap);
+            assert!(result.fits(required));
+            assert!(!result.fits(required - 1.));
+        }
+    }
+
+    #[test]
+    fn flexible_restoration_stays_within_the_selected_representation() {
+        let mut panel = Panel::default();
+        panel.start.groups.clear();
+        panel.center.groups.clear();
+        panel.end.groups.retain(|group| group.id.0 == "time");
+        let mut clock = super::super::Item::new("clock", super::super::ItemKind::Clock);
+        clock.overflow = OverflowPolicy::Never;
+        clock.priority = 0;
+        let audio = super::super::Item::new("audio", super::super::ItemKind::Audio);
+        panel.end.groups[0].items = vec![clock, audio];
+        let result = resolve(
+            &panel,
+            &[
+                Measurement {
+                    id: ItemId("clock".into()),
+                    alternatives: vec![(Representation::Wide, 80.), (Representation::Compact, 40.)],
+                    minimum: Some(60.),
+                },
+                Measurement {
+                    id: ItemId("audio".into()),
+                    alternatives: vec![(Representation::Icon, 100.)],
+                    minimum: None,
+                },
+            ],
+            96.,
+            32.,
+        );
+        assert_eq!(
+            result.items[&ItemId("clock".into())],
+            Placement::Visible {
+                representation: Representation::Compact,
+                width: 40.
+            }
+        );
+        assert_eq!(result.overflow, [ItemId("audio".into())]);
+        assert!(result.fits(96.));
+    }
+
+    #[test]
+    fn allocation_is_independent_of_measurement_order_even_for_flexible_items() {
+        let panel = Panel::default();
+        let mut measured = measurements(&panel);
+        for measurement in &mut measured {
+            measurement.minimum = Some(24.);
+        }
+        for width in [2400., 1400., 1000., 800., 400., 80., 32.] {
+            let expected = resolve_with_gap(&panel, &measured, width, 32., 16.);
+            for _ in 0..measured.len() {
+                measured.rotate_left(1);
+                assert_eq!(resolve_with_gap(&panel, &measured, width, 32., 16.), expected);
+                measured.reverse();
+                assert_eq!(resolve_with_gap(&panel, &measured, width, 32., 16.), expected);
+                measured.reverse();
+            }
+        }
+    }
+
+    fn measurements(panel: &Panel) -> Vec<Measurement> {
+        [&panel.start, &panel.center, &panel.end]
+            .into_iter()
+            .flat_map(|zone| &zone.groups)
+            .flat_map(|group| &group.items)
+            .map(|item| Measurement {
+                id: item.id.clone(),
+                alternatives: vec![
+                    (Representation::Wide, 80.0),
+                    (Representation::Compact, 40.0),
+                    (Representation::Icon, 24.0),
+                ],
+                minimum: matches!(item.kind, crate::panel::ItemKind::FocusedWindow).then_some(48.0),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn narrow_panels_adapt_deterministically_and_keep_every_item_reachable() {
+        for background in [crate::PanelPreset::Continuous, crate::PanelPreset::Islands] {
+            let panel = Panel::from_preset(background);
+            let measured = measurements(&panel);
+            for width in [2400., 1200., 800., 400., 160., 80., 32.] {
+                let resolution = resolve(&panel, &measured, width, 32.);
+                assert!(resolution.fits(width));
+                assert_eq!(resolution, resolve(&panel, &measured, width, 32.));
+                assert_eq!(resolution.items.len(), measured.len());
+                for id in &resolution.overflow {
+                    assert_eq!(resolution.items.get(id), Some(&Placement::Overflow));
+                }
+                if width >= 400. {
+                    assert!(!resolution.forced_overflow);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn decoration_and_borders_do_not_change_background_arrangement_or_allocation() {
+        for background in [crate::PanelPreset::Continuous, crate::PanelPreset::Islands] {
+            let mut panel = Panel::from_preset(background);
+            let measurements = measurements(&panel);
+            let plain = resolve(&panel, &measurements, 1000., 32.);
+            assert!(!panel.border);
+            panel.border = true;
+            panel.background_opacity = Some(0.4);
+            assert_eq!(resolve(&panel, &measurements, 1000., 32.), plain);
+            assert_eq!(panel.preset(), Some(background));
+        }
+    }
+
+    #[test]
+    fn side_margins_stop_before_overflow_and_use_each_outputs_logical_width() {
+        let panel = Panel::default();
+        let measurements = measurements(&panel);
+        let full = resolve(&panel, &measurements, 4000., 32.);
+        assert!(full.minimum_width < full.required_width());
+        for output_width in [1600, 2400, 3840] {
+            for requested in [0, 32, 400, 4096] {
+                let margin = full.side_margin(requested, output_width, 12.);
+                let available = output_width as f32 - 2. * (margin as f32 + 12.);
+                let result = resolve(&panel, &measurements, available, 32.);
+                assert!(result.overflow.is_empty(), "output {output_width}, margin {margin}");
+                assert!(result.fits(available));
+                assert!(margin <= requested);
+            }
+        }
+        assert!(full.side_margin(4096, 3840, 12.) > full.side_margin(4096, 1600, 12.));
+        assert_eq!(full.side_margin(4096, 100, 12.), 0);
+        assert!(
+            !resolve(&panel, &measurements, 76., 32.).overflow.is_empty(),
+            "physical output shortage still uses existing overflow"
+        );
+    }
+
+    #[test]
+    fn margin_limit_includes_group_padding_and_authored_overflow_without_dependence_on_current_surface_width() {
+        let mut panel = Panel::default();
+        panel.end.groups[0].items[0].overflow = OverflowPolicy::Always;
+        let measurements = measurements(&panel);
+        let full = resolve(&panel, &measurements, 4000., 32.);
+        let narrow = resolve(&panel, &measurements, 100., 32.);
+        assert_eq!(full.minimum_width, narrow.minimum_width);
+        let margin = full.side_margin(4096, 2400, 12.);
+        let result = resolve(&panel, &measurements, 2400. - 2. * (margin as f32 + 12.), 32.);
+        assert_eq!(result.overflow, full.overflow);
+        let original = full.minimum_width;
+        panel.end.groups[0].padding[1] += 10;
+        let padded = resolve(&panel, &measurements, 4000., 32.);
+        assert!(padded.minimum_width > original);
+        assert!(padded.side_margin(4096, 2400, 12.) < margin);
+    }
+
+    #[test]
+    fn asymmetric_sides_reserve_a_real_screen_center() {
+        let panel = Panel::default();
+        let resolution = resolve(&panel, &measurements(&panel), 1500., 32.);
+        let [start, center, end] = resolution.zone_widths;
+        assert!(end > start);
+        assert!(start + 8. <= (1500. - center) * 0.5);
+        assert!((1500. + center) * 0.5 + 8. <= 1500. - end);
+    }
+
+    #[test]
+    fn always_overflow_is_reserved_and_unavailable_items_are_not_allocated() {
+        let mut panel = Panel::default();
+        panel.end.groups[0].items[2].overflow = OverflowPolicy::Always;
+        let mut measured = measurements(&panel);
+        measured.remove(3);
+        let resolution = resolve(&panel, &measured, 2000., 32.);
+        assert!(!resolution.items.contains_key(&ItemId("media".into())));
+        assert_eq!(resolution.overflow, [ItemId("network".into())]);
+    }
+    #[test]
+    fn priority_controls_displacement_and_expansion_restores_requested_sizes() {
+        let mut panel = Panel::default();
+        panel.start.groups.clear();
+        panel.center.groups.clear();
+        panel.end.groups.retain(|group| group.id.0 == "time");
+        let mut first = panel.end.groups[0].items[0].clone();
+        first.id = ItemId("low".into());
+        first.priority = 0;
+        let mut second = first.clone();
+        second.id = ItemId("high".into());
+        second.priority = 100;
+        let mut third = first.clone();
+        third.id = ItemId("middle".into());
+        third.priority = 50;
+        panel.end.groups[0].items = vec![first, second, third];
+        let measured: Vec<_> = panel.end.groups[0]
+            .items
+            .iter()
+            .map(|item| Measurement {
+                id: item.id.clone(),
+                alternatives: vec![(Representation::Wide, 50.)],
+                minimum: None,
+            })
+            .collect();
+        let initial = panel.clone();
+        let small = resolve(&panel, &measured, 150., 32.);
+        assert_eq!(small.overflow, [ItemId("low".into())]);
+        assert!(small.fits(150.));
+        for width in [200., 150., 40., 200.] {
+            let result = resolve(&panel, &measured, width, 32.);
+            assert!(result.fits(width));
+            if width == 200. {
+                assert!(result.overflow.is_empty());
+                assert!(result.items.values().all(|placement| matches!(placement, Placement::Visible { representation: Representation::Wide, width } if *width == 50.)));
+            }
+            assert_eq!(panel, initial, "resolution must not rewrite configuration intent");
+        }
+    }
+    #[test]
+    fn only_island_groups_reserve_island_padding() {
+        let mut panel = Panel::from_preset(crate::PanelPreset::Islands);
+        let measured = measurements(&panel);
+        let initial = resolve(&panel, &measured, 2400., 32.);
+        let title_padding = 2. * panel.center.groups[0].island_padding;
+        panel.center.groups[0].surface = Some(super::super::GroupSurface::None);
+        let plain = resolve(&panel, &measured, 2400., 32.);
+        assert_eq!(plain.zone_widths[1], initial.zone_widths[1] - title_padding);
+        assert_eq!(plain.zone_widths[0], initial.zone_widths[0]);
+        assert_eq!(plain.zone_widths[2], initial.zone_widths[2]);
+        panel.center.groups[0].surface = Some(super::super::GroupSurface::Inset);
+        assert_eq!(resolve(&panel, &measured, 2400., 32.), plain);
+        // A parent panel fill cannot change a group's allocation policy.
+        panel.surface = super::super::PanelSurface::Solid;
+        assert_eq!(resolve(&panel, &measured, 2400., 32.), plain);
+    }
+}

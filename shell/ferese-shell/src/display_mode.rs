@@ -385,11 +385,7 @@ impl FereseShell {
 
     pub(super) fn display_mode_rows(&self) -> cosmic::widget::Column<'_, cosmic::Action<Message>, cosmic::Theme> {
         let palette = self.config.theme.palette();
-        let material_opacity = if self.config.theme.high_contrast {
-            1.0
-        } else {
-            f32::from(self.config.theme.surface_popover[3]) / 255.0
-        };
+        let material_opacity = self.config.theme.material_opacity();
         let model = &self.display_mode;
         let focus_visible = self.system_modal.as_ref().is_some_and(|modal| modal.focus_visible);
         let pending = model.pending();
@@ -506,9 +502,10 @@ impl FereseShell {
                             palette,
                             false
                         )
-                        .class(ferese_theme::controls::button_style_with_focus(
+                        .class(ferese_theme::controls::material_button_style_with_focus(
                             palette,
                             false,
+                            material_opacity,
                             focus_visible
                         ))
                         .id("ferese-modal-cancel".into())

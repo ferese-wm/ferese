@@ -239,7 +239,7 @@ pub(crate) fn surface_region_opacities(surface: &WlSurface) -> Vec<u32> {
 }
 
 fn decode_region_opacities(bytes: &[u8]) -> Option<Vec<u32>> {
-    if !bytes.len().is_multiple_of(4) || bytes.len() > 32 * 4 {
+    if !bytes.len().is_multiple_of(4) || bytes.len() > ferese_protocols::effects::v1::MAX_REGIONS * 4 {
         return None;
     }
     bytes
@@ -254,7 +254,7 @@ fn decode_region_opacities(bytes: &[u8]) -> Option<Vec<u32>> {
 }
 
 fn decode_regions(bytes: &[u8]) -> Option<Vec<[f64; 5]>> {
-    if !bytes.len().is_multiple_of(20) || bytes.len() > 32 * 20 {
+    if !bytes.len().is_multiple_of(20) || bytes.len() > ferese_protocols::effects::v1::MAX_REGIONS * 20 {
         return None;
     }
     bytes
@@ -614,6 +614,22 @@ mod tests {
             bad[index] = value;
             assert!(decode_regions(&encode(bad)).is_none());
         }
+    }
+
+    #[test]
+    fn maximum_panel_groups_and_overflow_fit_one_effects_publication() {
+        let count = ferese_config::panel::MAX_GROUPS + 1;
+        assert_eq!(count, ferese_protocols::effects::v1::MAX_REGIONS);
+        let region = [0.0f32, 0., 12., 36., 4.];
+        let bytes: Vec<_> = region.into_iter().flat_map(f32::to_ne_bytes).collect();
+        assert_eq!(decode_regions(&bytes.repeat(count)).unwrap().len(), count);
+        assert_eq!(
+            decode_region_opacities(&1000u32.to_ne_bytes().repeat(count))
+                .unwrap()
+                .len(),
+            count
+        );
+        assert!(decode_regions(&bytes.repeat(count + 1)).is_none());
     }
 
     #[test]

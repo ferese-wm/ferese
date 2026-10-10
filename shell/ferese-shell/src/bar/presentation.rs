@@ -1,24 +1,33 @@
 use cosmic::iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, renderer, widget};
 use cosmic::iced::{Event, Length, Rectangle, Size, Vector};
 use cosmic::{Element, Theme};
-use ferese_config::BarLayout;
+use ferese_config::panel::PanelSurface;
 
 pub(crate) fn island_id() -> widget::Id {
     static ID: std::sync::OnceLock<widget::Id> = std::sync::OnceLock::new();
     ID.get_or_init(widget::Id::unique).clone()
 }
 
+pub(crate) fn input_id() -> widget::Id {
+    static ID: std::sync::OnceLock<widget::Id> = std::sync::OnceLock::new();
+    ID.get_or_init(widget::Id::unique).clone()
+}
+
 pub(super) fn frame<'a, M: 'a>(
     content: Element<'a, M>,
-    mode: BarLayout,
+    mode: PanelSurface,
     radius: f32,
-    present: impl Fn(&[[f32; 5]]) + 'a,
+    materials: Vec<(widget::Id, f32)>,
+    hover: Option<HoverTarget<'a, M>>,
+    present: impl Fn(&[[f32; 5]], &[f32]) + 'a,
     changed: impl Fn(Vec<[f32; 5]>) -> M + 'a,
 ) -> Element<'a, M> {
     Element::new(Presentation {
         content,
         mode,
         radius,
+        materials,
+        hover,
         present: Box::new(present),
         changed: Box::new(changed),
     })
@@ -26,18 +35,45 @@ pub(super) fn frame<'a, M: 'a>(
 
 #[derive(Default)]
 struct State {
-    mode: Option<BarLayout>,
+    mode: Option<PanelSurface>,
     current: Vec<[f32; 5]>,
     scratch: Vec<[f32; 5]>,
-    scroll_starts: Vec<usize>,
+    input: Vec<[f32; 5]>,
+    input_scratch: Vec<[f32; 5]>,
+    scroll_starts: Vec<(usize, usize)>,
+    opacity_scratch: Vec<f32>,
 }
 
-type Present<'a> = Box<dyn Fn(&[[f32; 5]]) + 'a>;
+pub(super) struct HoverTarget<'a, M> {
+    pub(super) id: widget::Id,
+    pub(super) exited: Box<dyn Fn() -> M + 'a>,
+}
+
+struct HoverBounds<'a> {
+    target: &'a widget::Id,
+    bounds: Option<Rectangle>,
+}
+
+impl widget::Operation for HoverBounds<'_> {
+    fn traverse(&mut self, children: &mut dyn FnMut(&mut dyn widget::Operation)) {
+        children(self);
+    }
+
+    fn container(&mut self, id: Option<&widget::Id>, bounds: Rectangle) {
+        if id == Some(self.target) {
+            self.bounds = Some(bounds);
+        }
+    }
+}
+
+type Present<'a> = Box<dyn Fn(&[[f32; 5]], &[f32]) + 'a>;
 
 struct Presentation<'a, M> {
     content: Element<'a, M>,
-    mode: BarLayout,
+    mode: PanelSurface,
     radius: f32,
+    materials: Vec<(widget::Id, f32)>,
+    hover: Option<HoverTarget<'a, M>>,
     present: Present<'a>,
     changed: Box<dyn Fn(Vec<[f32; 5]>) -> M + 'a>,
 }
@@ -94,6 +130,32 @@ impl<M> Widget<M, Theme, cosmic::Renderer> for Presentation<'_, M> {
         shell: &mut Shell<'_, M>,
         viewport: &Rectangle,
     ) {
+        // The stack may stop dispatching after another control captures input.
+        // Reconcile the active tooltip before any child handles the pointer.
+        if matches!(
+            event,
+            Event::Mouse(mouse::Event::CursorMoved { .. } | mouse::Event::CursorLeft)
+        ) && let Some(hover) = &self.hover
+        {
+            let mut target = HoverBounds {
+                target: &hover.id,
+                bounds: None,
+            };
+            self.content
+                .as_widget_mut()
+                .operate(&mut tree.children[0], layout, renderer, &mut target);
+            if matches!(event, Event::Mouse(mouse::Event::CursorLeft))
+                || !cursor.is_over(*viewport)
+                || !target.bounds.is_some_and(|bounds| cursor.is_over(bounds))
+            {
+                shell.publish((hover.exited)());
+            }
+        }
+        let cursor = if matches!(event, Event::Mouse(mouse::Event::CursorLeft)) {
+            mouse::Cursor::Unavailable
+        } else {
+            cursor
+        };
         self.content.as_widget_mut().update(
             &mut tree.children[0],
             event,
@@ -111,12 +173,17 @@ impl<M> Widget<M, Theme, cosmic::Renderer> for Presentation<'_, M> {
         let state = tree.state.downcast_mut::<State>();
         let mut collector = Collect {
             regions: std::mem::take(&mut state.scratch),
+            input: std::mem::take(&mut state.input_scratch),
             scroll_starts: std::mem::take(&mut state.scroll_starts),
             radius: self.radius,
+            materials: &self.materials,
+            opacities: std::mem::take(&mut state.opacity_scratch),
         };
         collector.regions.clear();
+        collector.opacities.clear();
+        collector.input.clear();
         collector.scroll_starts.clear();
-        if self.mode == BarLayout::Islands {
+        if self.mode == PanelSurface::None {
             self.content
                 .as_widget_mut()
                 .operate(&mut tree.children[0], layout, renderer, &mut collector);
@@ -125,18 +192,27 @@ impl<M> Widget<M, Theme, cosmic::Renderer> for Presentation<'_, M> {
             collector
                 .regions
                 .push([bounds.x, bounds.y, bounds.width, bounds.height, self.radius]);
+            collector.opacities.push(1.);
         }
 
         collector.clip_from(0, layout.bounds(), Vector::ZERO);
-        collector.regions.retain(|region| region[2] > 0.0 && region[3] > 0.0);
-        (self.present)(&collector.regions);
-        if state.mode != Some(self.mode) || state.current != collector.regions {
+        collector.clip_input_from(0, layout.bounds(), Vector::ZERO);
+        collector.discard_empty();
+        (self.present)(&collector.regions, &collector.opacities);
+        if state.mode != Some(self.mode) || state.current != collector.regions || state.input != collector.input {
             state.mode = Some(self.mode);
             state.current.clone_from(&collector.regions);
-            shell.publish((self.changed)(collector.regions.clone()));
+            state.input.clone_from(&collector.input);
+            shell.publish((self.changed)(if self.mode == PanelSurface::Solid {
+                collector.regions.clone()
+            } else {
+                collector.input.clone()
+            }));
         }
 
+        state.opacity_scratch = collector.opacities;
         state.scratch = collector.regions;
+        state.input_scratch = collector.input;
         state.scroll_starts = collector.scroll_starts;
     }
 
@@ -194,13 +270,34 @@ impl<M> Widget<M, Theme, cosmic::Renderer> for Presentation<'_, M> {
     }
 }
 
-struct Collect {
+#[derive(Default)]
+struct Collect<'a> {
     regions: Vec<[f32; 5]>,
-    scroll_starts: Vec<usize>,
+    input: Vec<[f32; 5]>,
+    scroll_starts: Vec<(usize, usize)>,
     radius: f32,
+    materials: &'a [(widget::Id, f32)],
+    opacities: Vec<f32>,
 }
 
-impl Collect {
+impl Collect<'_> {
+    fn discard_empty(&mut self) {
+        let mut index = 0;
+        self.opacities.retain(|_| {
+            let keep = self.regions[index][2] > 0. && self.regions[index][3] > 0.;
+            index += 1;
+            keep
+        });
+        self.regions.retain(|region| region[2] > 0. && region[3] > 0.);
+        self.input.retain(|region| region[2] > 0. && region[3] > 0.);
+    }
+
+    fn clip_input_from(&mut self, start: usize, viewport: Rectangle, translation: Vector) {
+        std::mem::swap(&mut self.regions, &mut self.input);
+        self.clip_from(start, viewport, translation);
+        std::mem::swap(&mut self.regions, &mut self.input);
+    }
+
     fn clip_from(&mut self, start: usize, viewport: Rectangle, translation: Vector) {
         for region in &mut self.regions[start..] {
             let bounds = Rectangle {
@@ -215,22 +312,32 @@ impl Collect {
     }
 }
 
-impl widget::Operation for Collect {
+impl widget::Operation for Collect<'_> {
     fn traverse(&mut self, children: &mut dyn FnMut(&mut dyn widget::Operation)) {
         children(self);
     }
 
     fn container(&mut self, id: Option<&widget::Id>, bounds: Rectangle) {
-        if id == Some(&island_id()) {
+        let opacity = self
+            .materials
+            .iter()
+            .find(|(target, _)| Some(target) == id)
+            .map(|(_, opacity)| *opacity);
+        if opacity.is_some() || id == Some(&island_id()) || id == Some(&input_id()) {
+            self.input
+                .push([bounds.x, bounds.y, bounds.width, bounds.height, self.radius]);
+        }
+        if opacity.is_some() || id == Some(&island_id()) {
             self.regions
                 .push([bounds.x, bounds.y, bounds.width, bounds.height, self.radius]);
+            self.opacities.push(opacity.unwrap_or(1.));
         }
     }
 
     fn pre_operation(&mut self, _id: Option<&widget::Id>) {
         // Iced visits scrollable content before its scrollable callback. Record
         // the range so only that subtree receives its offset and viewport clip.
-        self.scroll_starts.push(self.regions.len());
+        self.scroll_starts.push((self.regions.len(), self.input.len()));
     }
 
     fn scrollable(
@@ -241,8 +348,9 @@ impl widget::Operation for Collect {
         translation: Vector,
         _state: &mut dyn widget::operation::Scrollable,
     ) {
-        if let Some(start) = self.scroll_starts.pop() {
+        if let Some((start, input_start)) = self.scroll_starts.pop() {
             self.clip_from(start, bounds, translation);
+            self.clip_input_from(input_start, bounds, translation);
         }
     }
 }
@@ -253,6 +361,82 @@ mod tests {
     use cosmic::iced::advanced::{clipboard, renderer::Headless};
     use cosmic::iced::{Font, Pixels, widget as widgets};
     use cosmic::widget::{container, row};
+
+    #[test]
+    fn clipping_preserves_group_opacity_and_transparent_groups_keep_input() {
+        use widget::Operation;
+        let ids = [widget::Id::unique(), widget::Id::unique(), widget::Id::unique()];
+        let materials = [(ids[0].clone(), 0.2), (ids[1].clone(), 0.), (ids[2].clone(), 0.7)];
+        let mut collector = Collect {
+            materials: &materials,
+            radius: 12.,
+            ..Default::default()
+        };
+        for (id, x) in ids.iter().zip([-80., 20., 80.]) {
+            collector.container(Some(id), Rectangle::new((x, 0.).into(), (30., 28.).into()));
+        }
+        let viewport = Rectangle::new((0., 0.).into(), (100., 28.).into());
+        collector.clip_from(0, viewport, Vector::ZERO);
+        collector.clip_input_from(0, viewport, Vector::ZERO);
+        collector.discard_empty();
+        assert_eq!(collector.regions, [[20., 0., 30., 28., 12.], [80., 0., 20., 28., 12.]]);
+        assert_eq!(collector.opacities, [0., 0.7]);
+        assert_eq!(
+            collector.input, collector.regions,
+            "background opacity does not disable controls"
+        );
+    }
+
+    #[test]
+    fn opacity_only_changes_publish_material_without_rebuilding_input() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let renderer = runtime
+            .block_on(<cosmic::Renderer as Headless>::new(
+                Font::default(),
+                Pixels(14.),
+                Some("tiny-skia"),
+            ))
+            .unwrap();
+        let viewport = Rectangle::new((0., 0.).into(), (100., 28.).into());
+        let id = widget::Id::unique();
+        let mut tree = None;
+        for (index, opacity) in [1., 0.5, 0.].into_iter().enumerate() {
+            let published = std::cell::RefCell::new(Vec::new());
+            let content = container(widgets::Space::new().width(60).height(28))
+                .id(id.clone())
+                .into();
+            let mut view = frame(
+                content,
+                PanelSurface::None,
+                12.,
+                vec![(id.clone(), opacity)],
+                None,
+                |regions, opacities| published.borrow_mut().push((regions.to_vec(), opacities.to_vec())),
+                |regions| regions,
+            );
+            let tree = tree.get_or_insert_with(|| widget::Tree::new(&view));
+            tree.diff(&mut view);
+            let node = view
+                .as_widget_mut()
+                .layout(tree, &renderer, &layout::Limits::new(Size::ZERO, viewport.size()));
+            let mut messages = Vec::new();
+            view.as_widget_mut().update(
+                tree,
+                &Event::Window(cosmic::iced::window::Event::RedrawRequested(std::time::Instant::now())),
+                Layout::new(&node),
+                mouse::Cursor::Unavailable,
+                &renderer,
+                &mut clipboard::Null,
+                &mut Shell::new(&mut messages),
+                &viewport,
+            );
+            assert_eq!(*published.borrow(), [(vec![[0., 0., 60., 28., 12.]], vec![opacity])]);
+            assert_eq!(messages.len(), usize::from(index == 0));
+        }
+    }
 
     #[test]
     fn measured_islands_and_live_layout_switches_publish_only_changed_bounds() {
@@ -270,18 +454,16 @@ mod tests {
         let viewport = Rectangle::new((0., 0.).into(), (600., 28.).into());
         let mut tree = None;
         let theme = crate::ShellTheme {
-            bar_height: 28.,
-            panel_padding: 12.,
             bar_radius: 14.,
             ..Default::default()
         };
 
         for (mode, padding) in [
-            (BarLayout::Islands, 12.),
-            (BarLayout::Islands, 4.),
-            (BarLayout::Islands, 0.),
-            (BarLayout::Continuous, 32.),
-            (BarLayout::Islands, 12.),
+            (PanelSurface::None, 12.),
+            (PanelSurface::None, 4.),
+            (PanelSurface::None, 0.),
+            (PanelSurface::Solid, 32.),
+            (PanelSurface::None, 12.),
         ] {
             let section = |width| {
                 let inner = container(widgets::Space::new().width(width).height(24))
@@ -289,7 +471,15 @@ mod tests {
                         crate::bar::bar_group_style(theme)
                     }))
                     .into();
-                crate::bar::island(inner, theme, padding, mode == BarLayout::Islands, true)
+                crate::bar::island(
+                    inner,
+                    theme,
+                    crate::panel::PanelGeometry::default(),
+                    padding,
+                    mode == PanelSurface::None,
+                    true,
+                    None,
+                )
             };
             let islands = row![section(100), section(200),].spacing(60);
             let content = container(islands)
@@ -302,7 +492,9 @@ mod tests {
                 content,
                 mode,
                 14.,
-                |_| {},
+                vec![],
+                None,
+                |_, _| {},
                 |regions| {
                     cosmic::Action::App(crate::Message::BarRegionsChanged(
                         cosmic::iced::window::Id::unique(),
@@ -331,7 +523,7 @@ mod tests {
             }
 
             assert_eq!(messages.len(), 1, "unchanged frames must not rebuild input regions");
-            let expected = if mode == BarLayout::Islands {
+            let expected = if mode == PanelSurface::None {
                 vec![
                     [12., 0., 100. + 2. * padding, 28., 14.],
                     [172. + 2. * padding, 0., 200. + 2. * padding, 28., 14.],
@@ -350,8 +542,10 @@ mod tests {
     fn scrolling_clips_only_its_own_islands_and_preserves_fractional_positions() {
         let mut collector = Collect {
             regions: vec![[400., 2., 80., 24., 14.], [10.25, 2., 180., 24., 14.]],
+            input: Vec::new(),
             scroll_starts: Vec::new(),
             radius: 14.,
+            ..Default::default()
         };
         collector.clip_from(
             1,
@@ -365,5 +559,67 @@ mod tests {
         collector.clip_from(0, Rectangle::new((0., 0.).into(), (200., 28.).into()), Vector::ZERO);
         collector.regions.retain(|region| region[2] > 0. && region[3] > 0.);
         assert_eq!(collector.regions, vec![[20., 2., 100., 24., 14.]]);
+    }
+    #[test]
+    fn undecorated_controls_have_input_regions_without_creating_material_or_gap_regions() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let renderer = runtime
+            .block_on(<cosmic::Renderer as Headless>::new(
+                Font::default(),
+                Pixels(14.),
+                Some("tiny-skia"),
+            ))
+            .unwrap();
+        let content = row![
+            container(widgets::Space::new().width(30).height(24)).id(input_id()),
+            container(widgets::Space::new().width(40).height(24)).id(input_id()),
+        ]
+        .spacing(20)
+        .into();
+        let materials = std::cell::RefCell::new(Vec::new());
+        let mut view = frame(
+            content,
+            PanelSurface::None,
+            14.,
+            vec![],
+            None,
+            |regions, _| *materials.borrow_mut() = regions.to_vec(),
+            |regions| regions,
+        );
+        let mut tree = widget::Tree::new(&view);
+        let viewport = Rectangle::new((0., 0.).into(), (100., 28.).into());
+        let node = view
+            .as_widget_mut()
+            .layout(&mut tree, &renderer, &layout::Limits::new(Size::ZERO, viewport.size()));
+        let mut messages = Vec::new();
+        view.as_widget_mut().update(
+            &mut tree,
+            &Event::Window(cosmic::iced::window::Event::RedrawRequested(std::time::Instant::now())),
+            Layout::new(&node),
+            mouse::Cursor::Unavailable,
+            &renderer,
+            &mut clipboard::Null,
+            &mut Shell::new(&mut messages),
+            &viewport,
+        );
+        assert!(materials.borrow().is_empty());
+        assert_eq!(messages, vec![vec![[0., 0., 30., 24., 14.], [50., 0., 40., 24., 14.]]]);
+        let mut collector = Collect {
+            regions: vec![[300., 0., 20., 24., 14.]],
+            input: messages.remove(0),
+            scroll_starts: Vec::new(),
+            radius: 14.,
+            ..Default::default()
+        };
+        collector.clip_input_from(
+            1,
+            Rectangle::new((40., 0.).into(), (20., 28.).into()),
+            Vector::new(10., 0.),
+        );
+        assert_eq!(collector.input, vec![[0., 0., 30., 24., 14.], [40., 0., 20., 24., 14.]]);
+        assert_eq!(collector.regions, vec![[300., 0., 20., 24., 14.]]);
     }
 }

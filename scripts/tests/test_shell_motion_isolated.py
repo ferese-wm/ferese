@@ -16,6 +16,18 @@ import time
 import unittest
 
 
+def panel_config(preset):
+    surface, group_surface = ("solid", "none") if preset == "continuous" else ("none", "island")
+    return f'''panel main {{
+    surface "{surface}"
+    group-surface "{group_surface}"
+    start {{ group navigation {{ island-padding 12; item overview kind=overview; item spaces kind=workspaces; }}; }}
+    center {{ group title {{ island-padding 12; item title kind=focused-window; }}; }}
+    end {{ group status {{ island-padding 12; item media kind=media; item quick kind=quick-settings; item network kind=network; item audio kind=audio; item recording kind=recording; item notifications kind=notifications; item battery kind=battery; item clock kind=clock; item display kind=display-mode; }}; }}
+}}
+'''
+
+
 @unittest.skipUnless(os.environ.get("FERESE_TEST_SHELL_MOTION") == "1", "opt-in nested shell test")
 class ShellMotionTest(unittest.TestCase):
     def test_notifications_and_modals_follow_frames_and_finish_closing(self):
@@ -35,7 +47,7 @@ class ShellMotionTest(unittest.TestCase):
             config_file = config / "config.kdl"
             config_file.write_text(
                 'animations { speed 0.5; }\n'
-                f'status {{ keybinding-guide #false; bar-layout "{bar_layout}"; bar-island-padding 12; }}\n')
+                'status { keybinding-guide #false; }\n' + panel_config(bar_layout))
             display = Path(os.environ["WAYLAND_DISPLAY"])
             if not display.is_absolute():
                 display = Path(os.environ["XDG_RUNTIME_DIR"]) / display
@@ -104,7 +116,7 @@ class ShellMotionTest(unittest.TestCase):
                     return None
 
                 updates = re.findall(
-                    r'ferese_surface_effects_v1[@#]' + effects[-1] + r'\.set_regions\(array\[(\d+)\]\)', trace)
+                    r'ferese_surface_effects_v1[@#]' + effects[-1] + r'\.set_presentation\(\d+, array\[(\d+)\],', trace)
                 return int(updates[-1]) // 20 if updates else None
 
             def bar_input_rectangles(surface):
@@ -121,9 +133,20 @@ class ShellMotionTest(unittest.TestCase):
                 if not creations:
                     return []
 
-                return [tuple(map(int, values)) for values in re.findall(
+                rectangles = [tuple(map(int, values)) for values in re.findall(
                     r'wl_region[@#]' + region + r'\.add\((-?\d+), (-?\d+), (\d+), (\d+)\)',
                     trace[creations[-1].start():update.start()])]
+                # Wayland regions are unions. Decorated groups can include
+                # redundant child control rectangles without changing coverage.
+                def contains(outer, inner):
+                    x, y, width, height = outer
+                    ix, iy, iw, ih = inner
+                    return x <= ix and y <= iy and x + width >= ix + iw and y + height >= iy + ih
+                return [rectangle for index, rectangle in enumerate(rectangles)
+                        if not any(other != rectangle and contains(other, rectangle)
+                                   or other == rectangle and other_index < index
+                                   for other_index, other in enumerate(rectangles))]
+
 
             with log_path.open("w") as log:
                 try:
@@ -179,9 +202,7 @@ class ShellMotionTest(unittest.TestCase):
 
                     if bar_layout == "islands":
                         for layout_name, expected_count in [("continuous", 1), ("islands", None)]:
-                            source = config_file.read_text()
-                            config_file.write_text(re.sub(
-                                r'bar-layout "[^"]+"', f'bar-layout "{layout_name}"', source))
+                            config_file.write_text('animations { speed 0.5; }\nstatus { keybinding-guide #false; }\n' + panel_config(layout_name))
                             subprocess.run([str(ctl), "reload-config"], env=ipc_environment(env), check=True, capture_output=True)
                             wait_for(lambda: bar_region_count(bar) == (expected_count or 2))
 
@@ -192,7 +213,7 @@ class ShellMotionTest(unittest.TestCase):
                         for padding in [4, 0]:
                             source = config_file.read_text()
                             config_file.write_text(re.sub(
-                                r'bar-island-padding \d+', f'bar-island-padding {padding}', source))
+                                r'island-padding \d+', f'island-padding {padding}', source))
                             subprocess.run([str(ctl), "reload-config"], env=ipc_environment(env), check=True, capture_output=True)
                             expected_width = original_input[0][2] - 2 * (12 - padding)
                             wait_for(lambda: len(bar_input_rectangles(bar)) == 2

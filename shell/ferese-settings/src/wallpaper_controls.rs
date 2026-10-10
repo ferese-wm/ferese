@@ -380,18 +380,10 @@ impl App {
             } else {
                 self.wallpaper_placeholder(preview.error.as_deref().unwrap_or("Loading preview…"), palette, 110.)
             };
-            let label_color = if preview.handle.is_none() {
-                palette.text
-            } else if appearance == Appearance::Light {
-                cosmic::iced::Color::from_rgb8(24, 33, 44)
-            } else {
-                cosmic::iced::Color::WHITE
-            };
-            let label = widget::container(self.label(name, 12.).class(cosmic::theme::Text::Color(label_color)))
-                .padding(8)
-                .width(Length::Fill)
-                .height(Length::Fill);
-            let tile = cosmic::iced::widget::stack([image, label.into()]);
+            let label = widget::container(self.label(name, 12.).class(cosmic::theme::Text::Color(palette.text)))
+                .padding([7, 10])
+                .width(Length::Fill);
+            let tile = column([]).push(image).push(label);
 
             defaults = defaults.push(
                 button::custom(tile)

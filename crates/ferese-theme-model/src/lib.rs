@@ -56,11 +56,6 @@ pub struct Geometry {
     pub focus_ring_width: f64,
     pub window_radius: f64,
     pub shell_radius: f64,
-    pub top_bar_height: f64,
-    pub top_bar_margin_top: i32,
-    pub top_bar_margin_horizontal: i32,
-    pub top_bar_window_gap: i32,
-    pub panel_padding: f64,
     pub control_gap: f64,
 }
 
@@ -158,4 +153,24 @@ pub struct ResolvedTheme {
     pub requested_accent: String,
     pub accessibility: Accessibility,
     pub reduced_motion: bool,
+}
+
+/// Accessibility takes precedence over a panel's authored opacity.
+pub fn effective_panel_opacity(inherited: f32, custom: Option<f32>, reduce_transparency: bool) -> f32 {
+    if reduce_transparency {
+        1.0
+    } else {
+        custom.unwrap_or(inherited)
+    }
+}
+
+impl ResolvedTheme {
+    pub fn panel_opacity(&self, custom: Option<f32>) -> f32 {
+        let inherited = if self.tokens.material.style == "translucent" {
+            self.tokens.material.opacity as f32
+        } else {
+            1.0
+        };
+        effective_panel_opacity(inherited, custom, self.accessibility.reduce_transparency)
+    }
 }

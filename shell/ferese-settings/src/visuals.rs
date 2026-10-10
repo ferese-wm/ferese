@@ -8,6 +8,57 @@ use crate::Message;
 use crate::schema::Page;
 use crate::store::{Edit, Snapshot, set};
 
+/// Keep focus distinct from selection and hover for keyboard navigation.
+pub fn panel_button(p: Palette, selected: bool) -> cosmic::theme::Button {
+    use cosmic::iced::border::Shape;
+    let paint = move |hover: bool, focused: bool, enabled: bool| {
+        let highlighted = hover || focused;
+        let background = if selected && enabled {
+            ferese_theme::mix(p.card, p.accent, if highlighted { 0.28 } else { 0.16 })
+        } else if highlighted && enabled {
+            ferese_theme::mix(p.card, p.text, 0.09)
+        } else {
+            p.card
+        };
+        cosmic::widget::button::Style {
+            shape: Some(Shape::Continuous),
+            background: Some(background.into()),
+            text_color: Some(if enabled {
+                ferese_theme::foreground(background, p.text)
+            } else {
+                p.muted
+            }),
+            icon_color: Some(if enabled { p.text } else { p.muted }),
+            border_radius: 8.into(),
+            border_width: if focused {
+                2.
+            } else if selected {
+                1.
+            } else {
+                0.
+            },
+            border_color: p.accent.scale_alpha(if focused { 1. } else { 0.45 }),
+            outline_width: 0.,
+            outline: None,
+            ..Default::default()
+        }
+    };
+    cosmic::theme::Button::Custom {
+        active: Box::new(move |focused, _| paint(false, focused, true)),
+        hovered: Box::new(move |focused, _| paint(true, focused, true)),
+        pressed: Box::new(move |focused, _| paint(true, focused, true)),
+        // A selected segment can be inert without losing its selection indicator.
+        disabled: Box::new(move |_| paint(false, false, selected)),
+    }
+}
+
+pub fn panel_select<'a>(
+    content: impl Into<Element<'a, Message>>,
+    p: Palette,
+) -> cosmic::widget::Container<'a, Message, cosmic::Theme> {
+    cosmic::widget::container(content).class(surface(ferese_theme::mix(p.card, p.text, 0.035), 7.))
+}
+
 pub fn color(value: &str, fallback: Color) -> Color {
     ferese_theme::parse_color(value).unwrap_or(fallback)
 }
@@ -205,9 +256,9 @@ fn preview(snapshot: &Snapshot, theme: &ferese_config::theme::ResolvedTheme) -> 
     let muted = hex(p.muted);
     let gap = snapshot.number("layout.inner_gap", 8.).clamp(0., 32.);
     let radius = snapshot.number("theme.geometry.window_radius", 14.).clamp(0., 28.);
-    let bar_y = snapshot.number("theme.geometry.top_bar_margin_top", 0.) * 0.5 + 12.;
-    let bar_margin = snapshot.number("theme.geometry.top_bar_margin_horizontal", 0.) * 0.5 + 14.;
-    let bar_height = snapshot.number("theme.geometry.top_bar_height", 30.) * 0.65;
+    let bar_y = snapshot.number("panels.0.geometry.edge_margin", 0.) * 0.5 + 12.;
+    let bar_margin = snapshot.number("panels.0.geometry.side_margins", 0.) * 0.5 + 14.;
+    let bar_height = snapshot.number("panels.0.geometry.height", 28.) * 0.65;
     let bar_radius = snapshot.number("theme.geometry.shell_radius", 14.) * 0.65;
     let opacity = if snapshot.string("theme.material.style", "solid") == "translucent" {
         snapshot

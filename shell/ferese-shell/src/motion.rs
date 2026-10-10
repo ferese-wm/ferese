@@ -358,11 +358,26 @@ impl<M> Widget<M, Theme, cosmic::Renderer> for Hover<'_, M> {
 }
 
 pub fn animated<'a, M: 'a>(content: Element<'a, M>, progress: f32, regions: Regions, radius: f32) -> Element<'a, M> {
+    animated_from_edge(content, progress, regions, radius, ferese_config::panel::Edge::Top)
+}
+
+pub fn animated_from_edge<'a, M: 'a>(
+    content: Element<'a, M>,
+    progress: f32,
+    regions: Regions,
+    radius: f32,
+    edge: ferese_config::panel::Edge,
+) -> Element<'a, M> {
     Element::new(Motion {
         content,
         progress,
         regions,
         radius,
+        direction: if edge == ferese_config::panel::Edge::Top {
+            -1.
+        } else {
+            1.
+        },
     })
 }
 
@@ -371,11 +386,12 @@ struct Motion<'a, M> {
     progress: f32,
     regions: Regions,
     radius: f32,
+    direction: f32,
 }
 
 impl<M> Motion<'_, M> {
     fn translation(&self) -> Vector {
-        Vector::new(0.0, -4.0 * (1.0 - self.progress))
+        Vector::new(0.0, self.direction * 4.0 * (1.0 - self.progress))
     }
 
     fn cursor(&self, cursor: mouse::Cursor) -> mouse::Cursor {

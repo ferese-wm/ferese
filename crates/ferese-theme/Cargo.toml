@@ -8,9 +8,10 @@ rust-version.workspace = true
 [dependencies]
 jiff.workspace = true
 ferese-theme-model = { path = "../ferese-theme-model" }
+ferese-config = { path = "../ferese-config" }
 libcosmic = { workspace = true, features = ["a11y"] }
 
-iced_accessibility = { git = "https://github.com/ferese-wm/libcosmic", tag = "ferese-v0.1.0" }
+iced_accessibility = { git = "https://github.com/ferese-wm/libcosmic", tag = "ferese-v0.1.1" }
 
 [dev-dependencies]
-ferese-config = { path = "../ferese-config" }
+tokio = { version = "1", features = ["rt"] }

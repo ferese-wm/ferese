@@ -2,6 +2,11 @@ mod connections;
 mod form_controls;
 mod navigation;
 mod pages;
+mod panel_controls;
+mod panel_drag;
+mod panel_edit;
+mod panel_inspector;
+mod panel_preview;
 mod theme_controls;
 
 use theme_controls::*;
@@ -30,6 +35,11 @@ use schema::{Field, Kind, Page};
 use store::{Edit, Snapshot, set};
 
 fn main() -> cosmic::iced::Result {
+    if std::env::var_os("ICED_BACKEND").is_none() {
+        // Settings repaints large scrolling surfaces; prefer GPU rendering.
+        // SAFETY: process entry, before the toolkit or font workers start threads.
+        unsafe { std::env::set_var("ICED_BACKEND", "wgpu,tiny-skia") };
+    }
     let mut args = std::env::args_os().skip(1);
     let mut path = store::config_path();
     let mut initial_page = None;
@@ -47,14 +57,15 @@ fn main() -> cosmic::iced::Result {
                     Some("connections" | "wifi") => Some(InitialPage::Connections(connections::Tab::Wifi)),
                     Some("bluetooth") => Some(InitialPage::Connections(connections::Tab::Bluetooth)),
                     Some("wallpaper") => Some(InitialPage::Wallpaper),
+                    Some("bar") => Some(InitialPage::Bar),
                     _ => {
-                        eprintln!("--page accepts connections, wifi, bluetooth, or wallpaper");
+                        eprintln!("--page accepts connections, wifi, bluetooth, wallpaper, or bar");
                         return Ok(());
                     }
                 };
             }
             _ => {
-                eprintln!("Usage: ferese-settings [--config PATH] [--page connections|wifi|bluetooth|wallpaper]");
+                eprintln!("Usage: ferese-settings [--config PATH] [--page connections|wifi|bluetooth|wallpaper|bar]");
                 return Ok(());
             }
         }
@@ -78,6 +89,7 @@ fn main() -> cosmic::iced::Result {
 enum InitialPage {
     Connections(connections::Tab),
     Wallpaper,
+    Bar,
 }
 
 #[derive(Clone, Debug)]
@@ -98,7 +110,15 @@ enum Message {
     PagePresented(Page),
     RowVisibility(&'static str, usize, bool),
     Search(String),
+    Sidebar(bool),
     Change(Edit),
+    PanelClearSelection,
+    PanelPage(panel_controls::PanelPage),
+    PanelSelect(ferese_config::panel::ItemId),
+    PanelGroupSelect(ferese_config::panel::GroupId),
+    PanelPreviewResolved(ferese_config::panel::layout::Resolution),
+    PanelPreviewOverflow,
+    PanelEdit(panel_edit::Action),
     SelectFont(String, String),
     Draft(String, String),
     Commit(Field),
@@ -159,6 +179,7 @@ struct App {
     visible_rows: std::collections::HashSet<(&'static str, usize)>,
     hidden_binding_rows: std::collections::HashSet<usize>,
     search: String,
+    sidebar_open: bool,
     inputs: HashMap<String, String>,
     ranges: HashMap<String, f64>,
     new_command: String,
@@ -171,6 +192,11 @@ struct App {
     undo_revision: u64,
     auto_details: bool,
     advanced_theme: bool,
+    panel_selection: Option<ferese_config::panel::ItemId>,
+    panel_page: panel_controls::PanelPage,
+    panel_group_selection: Option<ferese_config::panel::GroupId>,
+    panel_preview_resolution: ferese_config::panel::layout::Resolution,
+    panel_preview_overflow: bool,
     theme_file_target: usize,
     wallpaper: wallpaper_controls::State,
 }
@@ -233,7 +259,7 @@ impl cosmic::Application for App {
         let error = initial.as_ref().err().cloned();
         let current = initial.unwrap_or_else(|_| Snapshot::parse(String::new()).unwrap());
         let resolved = ferese_theme_client::service::current();
-        let font = ferese_theme::font(Some(&resolved.presented.tokens.typography.font_family));
+        let font = fonts::interface_font(&resolved.presented.tokens.typography.font_family);
         let native_palette = visuals::Palette::from_resolved(&resolved.presented);
         let family_sections = theme_controls::FamilySections::new(&resolved.families, &current);
         let mut app = Self {
@@ -261,11 +287,13 @@ impl cosmic::Application for App {
             page: match initial_page {
                 Some(InitialPage::Connections(_)) => Page::Connections,
                 Some(InitialPage::Wallpaper) => Page::Wallpaper,
+                Some(InitialPage::Bar) => Page::Bar,
                 None => Page::Appearance,
             },
             profile_pages: std::env::var_os("FERESE_PROFILE_SETTINGS").is_some(),
             page_transition: None,
             search: String::new(),
+            sidebar_open: false,
             visible_rows: initial_visible_rows(),
             hidden_binding_rows: Default::default(),
             inputs: HashMap::new(),
@@ -280,6 +308,11 @@ impl cosmic::Application for App {
             undo_revision: 0,
             auto_details: false,
             advanced_theme: false,
+            panel_selection: None,
+            panel_page: Default::default(),
+            panel_group_selection: None,
+            panel_preview_resolution: Default::default(),
+            panel_preview_overflow: false,
             theme_file_target: 0,
             wallpaper: Default::default(),
         };
@@ -296,7 +329,12 @@ impl cosmic::Application for App {
             Task::none()
         };
         let thumbnails = app.load_thumbnail();
-        (app, Task::batch([task, connections, thumbnails]))
+        let displays = if app.page == Page::Bar {
+            app.load_displays()
+        } else {
+            Task::none()
+        };
+        (app, Task::batch([task, connections, thumbnails, displays]))
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
@@ -345,7 +383,7 @@ impl cosmic::Application for App {
                 }
                 self.resolved = *snapshot;
                 if font_changed {
-                    self.font = ferese_theme::font(Some(&self.resolved.presented.tokens.typography.font_family));
+                    self.font = fonts::interface_font(&self.resolved.presented.tokens.typography.font_family);
                 }
 
                 let theme = self.update_theme();
@@ -426,7 +464,7 @@ impl cosmic::Application for App {
                         self.family_sections =
                             theme_controls::FamilySections::new(&self.resolved.families, &self.draft);
                         self.sync_notes();
-                        self.font = ferese_theme::font(Some(&self.resolved.presented.tokens.typography.font_family));
+                        self.font = fonts::interface_font(&self.resolved.presented.tokens.typography.font_family);
                         self.undo = None;
                         self.error = None;
                         self.status = "Updated from your config".into();
@@ -463,7 +501,14 @@ impl cosmic::Application for App {
             Message::LockPreviewStarted(Err(error)) => {
                 self.error = Some(error);
             }
+            Message::Sidebar(open) => {
+                self.sidebar_open = open;
+                if open {
+                    return cosmic::iced::widget::operation::focus(widget::Id::new("settings-search"));
+                }
+            }
             Message::Page(page) => {
+                self.sidebar_open = false;
                 if self.page == page && self.search.is_empty() {
                     return Task::none();
                 }
@@ -482,7 +527,7 @@ impl cosmic::Application for App {
                 if leaving {
                     let cleanup = self.leave_connections();
                     let load = match page {
-                        Page::Displays => self.load_displays(),
+                        Page::Displays | Page::Bar => self.load_displays(),
                         Page::Wallpaper => self.load_thumbnail(),
                         _ => Task::none(),
                     };
@@ -491,7 +536,7 @@ impl cosmic::Application for App {
                 if page == Page::Connections {
                     return Task::batch([reset, self.refresh_connections()]);
                 }
-                if page == Page::Displays {
+                if matches!(page, Page::Displays | Page::Bar) {
                     return Task::batch([reset, self.load_displays()]);
                 }
                 if page == Page::Wallpaper {
@@ -548,7 +593,23 @@ impl cosmic::Application for App {
             }
             Message::Release(field) => {
                 if let Some(value) = self.ranges.remove(&field.path) {
+                    if field.path == "panels.0.background_opacity" {
+                        return self.update(Message::PanelEdit(panel_edit::Action::SetOpacity(value as f32 / 100.)));
+                    }
+                    if let Some(index) = field.path.strip_prefix("panels.0.corner_radius.")
+                        && let Ok(index) = index.parse()
+                    {
+                        return self.update(Message::PanelEdit(panel_edit::Action::SetCorner(index, value as f32)));
+                    }
                     let integer = matches!(field.kind, Kind::Range { integer: true, .. });
+                    if let Some(key) = field.path.strip_prefix("panels.0.geometry.") {
+                        let value = if integer {
+                            serde_json::Value::from(value.round() as i64)
+                        } else {
+                            value.into()
+                        };
+                        return self.update(Message::PanelEdit(panel_edit::Action::SetGeometry(key.into(), value)));
+                    }
                     return self.change(if integer {
                         set(&field.path, value.round() as i64)
                     } else {
@@ -589,14 +650,80 @@ impl cosmic::Application for App {
                     return self.change(edit);
                 }
             }
-            Message::Change(edit) => return self.change(edit),
+            Message::PanelSelect(id) => {
+                let changed = self.panel_selection.as_ref() != Some(&id);
+                self.panel_page = panel_controls::PanelPage::Arrange;
+                self.panel_group_selection = None;
+                self.panel_selection = Some(id);
+                self.panel_preview_overflow = false;
+                if changed {
+                    return cosmic::iced::widget::scrollable::snap_to(
+                        widget::Id::new("panel-inspector-scroll"),
+                        cosmic::iced::widget::scrollable::RelativeOffset::START.into(),
+                    );
+                }
+            }
+            Message::PanelGroupSelect(id) => {
+                let changed = self.panel_group_selection.as_ref() != Some(&id);
+                self.panel_page = panel_controls::PanelPage::Arrange;
+                self.panel_selection = None;
+                self.panel_group_selection = Some(id);
+                if changed {
+                    return cosmic::iced::widget::scrollable::snap_to(
+                        widget::Id::new("panel-inspector-scroll"),
+                        cosmic::iced::widget::scrollable::RelativeOffset::START.into(),
+                    );
+                }
+            }
+            Message::PanelClearSelection => {
+                self.panel_selection = None;
+                self.panel_group_selection = None;
+            }
+            Message::PanelPreviewResolved(resolution) => self.panel_preview_resolution = resolution,
+            Message::PanelPreviewOverflow => self.panel_preview_overflow = !self.panel_preview_overflow,
+            Message::PanelPage(tab) => {
+                self.panel_page = tab;
+                return cosmic::iced::widget::scrollable::snap_to(
+                    widget::Id::new("settings-content"),
+                    cosmic::iced::widget::scrollable::RelativeOffset::START.into(),
+                );
+            }
+            Message::PanelEdit(action) => match panel_edit::plan(&self.draft, action) {
+                Ok(edits) => {
+                    self.inputs.retain(|path, _| !path.starts_with("panels."));
+                    self.ranges.retain(|path, _| !path.starts_with("panels."));
+                    let task = self.edit_many(edits);
+                    if let Ok(panel) = self.preview_panel() {
+                        if self.panel_selection.as_ref().is_some_and(|id| panel.item(id).is_none()) {
+                            self.panel_selection = None;
+                        }
+                        if self.panel_group_selection.as_ref().is_some_and(|id| {
+                            !panel_edit::Zone::ALL
+                                .into_iter()
+                                .any(|zone| zone.definition(&panel).groups.iter().any(|group| &group.id == id))
+                        }) {
+                            self.panel_group_selection = None;
+                        }
+                    }
+                    return task;
+                }
+                Err(error) => self.error = Some(error),
+            },
+            Message::Change(edit) => {
+                if matches!(&edit, Edit::Unset(path) if path == "panels") {
+                    self.inputs.retain(|path, _| !path.starts_with("panels."));
+                    self.panel_selection = None;
+                    self.panel_group_selection = None;
+                }
+                return self.change(edit);
+            }
             Message::Saved(result) => {
                 self.saving = false;
                 match result {
                     Ok((snapshot, live)) => {
                         self.undo = Some(std::mem::take(&mut self.saving_previous));
                         self.current = snapshot;
-                        self.font = ferese_theme::font(Some(&self.resolved.presented.tokens.typography.font_family));
+                        self.font = fonts::interface_font(&self.resolved.presented.tokens.typography.font_family);
                         self.draft = self.current.clone();
 
                         for edit in &self.pending {
@@ -640,7 +767,7 @@ impl cosmic::Application for App {
                     self.family_sections = theme_controls::FamilySections::new(&self.resolved.families, &self.draft);
                     self.note_editors.clear();
                     self.sync_notes();
-                    self.font = ferese_theme::font(Some(&self.resolved.presented.tokens.typography.font_family));
+                    self.font = fonts::interface_font(&self.resolved.presented.tokens.typography.font_family);
                     self.pending.clear();
                     self.inputs.clear();
                     self.ranges.clear();
@@ -840,9 +967,25 @@ impl cosmic::Application for App {
 
     fn subscription(&self) -> cosmic::iced::Subscription<Message> {
         cosmic::iced::Subscription::batch([
+            if self.sidebar_open {
+                cosmic::iced::event::listen_with(|event, _, _| match event {
+                    cosmic::iced::Event::Keyboard(cosmic::iced::keyboard::Event::KeyPressed {
+                        key: cosmic::iced::keyboard::Key::Named(cosmic::iced::keyboard::key::Named::Escape),
+                        ..
+                    }) => Some(Message::Sidebar(false)),
+                    cosmic::iced::Event::Window(cosmic::iced::window::Event::Resized(size))
+                        if size.width >= pages::SIDEBAR_BREAKPOINT =>
+                    {
+                        Some(Message::Sidebar(false))
+                    }
+                    _ => None,
+                })
+            } else {
+                cosmic::iced::Subscription::none()
+            },
             cosmic::iced::Subscription::run_with(self.path.clone(), |path| watch::changes(path)),
             ferese_theme_client::service::subscription().map(|snapshot| Message::ThemeChanged(Box::new(snapshot))),
-            if self.page == Page::Displays {
+            if matches!(self.page, Page::Displays | Page::Bar) {
                 cosmic::iced::time::every(std::time::Duration::from_secs(2)).map(|_| Message::RefreshDisplays)
             } else {
                 cosmic::iced::Subscription::none()
@@ -1039,6 +1182,214 @@ mod tests {
     }
 
     #[test]
+    fn corner_sliders_hold_changes_until_release_and_preserve_other_corners() {
+        let mut app = app();
+        for edit in panel_edit::plan(&app.draft, panel_edit::Action::SetRadius("4px 8px 12px 16px".into())).unwrap() {
+            app.draft.edit(&edit).unwrap();
+        }
+        app.draft = Snapshot::parse(app.draft.source.clone()).unwrap();
+        app.current = app.draft.clone();
+        app.saving = true; // Keep this test independent of disk and the live compositor.
+        let before = app.draft.source.clone();
+        let field = Field::new(
+            "panels.0.corner_radius.2",
+            "Bottom right",
+            "",
+            Kind::Range {
+                default: 12.,
+                min: 0.,
+                max: 64.,
+                step: 1.,
+                suffix: " px",
+                integer: false,
+            },
+        );
+        let _ = app.update(Message::Range(field.clone(), 23.));
+        assert_eq!(app.draft.source, before);
+        let _ = app.update(Message::Release(field));
+        let radii: ferese_config::panel::CornerRadii =
+            serde_json::from_value(app.draft.item("panels.0.corner_radius").unwrap().clone()).unwrap();
+        assert_eq!(radii.0, [4., 8., 23., 16.]);
+        assert!(app.ranges.is_empty());
+        assert_eq!(app.current.source, before);
+    }
+
+    #[test]
+    fn pending_panel_moves_save_both_groups_together_and_keep_the_selected_instance() {
+        use ferese_config::panel::{GroupId, ItemId};
+        let mut app = app();
+        let mut initial = Snapshot::parse(String::new()).unwrap();
+        initial.edit(&panel_controls::initialize(&initial).unwrap()).unwrap();
+        app.current = initial.clone();
+        app.draft = initial.clone();
+        app.saving = true; // An earlier save has not completed yet.
+        let id = ItemId("network".into());
+        let _ = app.update(Message::PanelSelect(id.clone()));
+        let _ = app.update(Message::PanelEdit(panel_edit::Action::Move(
+            id.clone(),
+            panel_edit::Destination {
+                zone: "start",
+                group: GroupId("workspaces".into()),
+            },
+        )));
+        let _ = app.update(Message::PanelEdit(panel_edit::Action::Set(
+            id.clone(),
+            "overflow".into(),
+            "always".into(),
+        )));
+        assert_eq!(app.pending.len(), 3);
+        assert_eq!(app.panel_selection, Some(id.clone()));
+        let expected = app.draft.doc.value().clone();
+        let _ = app.update(Message::Saved(Ok((initial, false))));
+        assert!(app.saving, "the complete queued draft is saved once");
+        assert!(app.pending.is_empty());
+        assert_eq!(app.draft.doc.value(), &expected);
+        let panels: Vec<ferese_config::panel::Panel> =
+            serde_json::from_value(app.draft.item("panels").unwrap().clone()).unwrap();
+        ferese_config::panel::validate(&panels).unwrap();
+        assert_eq!(panels[0].start.groups[1].items[1].id, id);
+        assert_eq!(
+            panels[0].start.groups[1].items[1].overflow,
+            ferese_config::panel::OverflowPolicy::Always
+        );
+        assert!(!panels[0].end.groups[0].items.iter().any(|item| item.id == id));
+    }
+
+    #[test]
+    fn panel_inspector_builds_only_for_the_selected_instance_and_survives_removal() {
+        let mut app = app();
+        app.page = Page::Bar;
+        let edit = panel_controls::initialize(&app.draft).unwrap();
+        app.draft.edit(&edit).unwrap();
+        use cosmic::iced::advanced::{layout, renderer::Headless, widget::Tree};
+        use cosmic::iced::{Font, Pixels, Size};
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let renderer = runtime
+            .block_on(<cosmic::Renderer as Headless>::new(
+                Font::default(),
+                Pixels(14.),
+                Some("tiny-skia"),
+            ))
+            .unwrap();
+        let nodes = |app: &App| {
+            let mut view = app.page_view();
+            let mut tree = Tree::new(&view);
+            view.as_widget_mut().layout(
+                &mut tree,
+                &renderer,
+                &layout::Limits::new(Size::ZERO, Size::new(1120., 840.)),
+            );
+            tree_nodes(&tree)
+        };
+        app.panel_page = panel_controls::PanelPage::Arrange;
+        let collapsed = nodes(&app);
+        let id = ferese_config::panel::ItemId("clock".into());
+        let _ = app.update(Message::PanelSelect(id.clone()));
+        let expanded = nodes(&app);
+        assert!(expanded > collapsed);
+        let _ = app.update(Message::PanelEdit(panel_edit::Action::Remove(id)));
+        let _ = app.page_view();
+        assert!(app.error.is_none());
+        assert_eq!(app.draft.string("panels.0.end.groups.1.items.0.id", ""), "");
+    }
+
+    #[test]
+    fn pending_group_moves_and_style_changes_save_one_coherent_draft() {
+        use ferese_config::panel::GroupId;
+        let mut app = app();
+        let mut initial = Snapshot::parse(String::new()).unwrap();
+        initial.edit(&panel_controls::initialize(&initial).unwrap()).unwrap();
+        app.current = initial.clone();
+        app.draft = initial.clone();
+        app.saving = true;
+        let id = GroupId("status".into());
+        let _ = app.update(Message::PanelGroupSelect(id.clone()));
+        let _ = app.update(Message::PanelEdit(panel_edit::Action::MoveGroup(
+            id.clone(),
+            panel_edit::Zone::Start,
+        )));
+        let _ = app.update(Message::PanelEdit(panel_edit::Action::SetGroup(
+            id.clone(),
+            "padding_horizontal".into(),
+            12.into(),
+        )));
+        let expected = app.draft.doc.value().clone();
+        let _ = app.update(Message::Saved(Ok((initial, false))));
+        assert!(app.saving);
+        assert!(app.pending.is_empty());
+        assert_eq!(app.draft.doc.value(), &expected);
+        assert_eq!(app.panel_group_selection, Some(id));
+        assert_eq!(app.draft.number("panels.0.start.groups.2.padding.1", 0.), 12.);
+        let _ = app.page_view();
+    }
+
+    #[test]
+    fn selecting_a_generated_preview_item_does_not_save_the_composition() {
+        let mut app = app();
+        app.saving = true;
+        let id = ferese_config::panel::ItemId("clock".into());
+        let _ = app.update(Message::PanelSelect(id.clone()));
+        assert_eq!(app.panel_selection, Some(id));
+        assert!(app.draft.item("panels").is_none());
+        assert!(app.pending.is_empty());
+    }
+
+    #[test]
+    fn panel_pages_do_not_save_and_selection_opens_the_items_inspector() {
+        let mut app = app();
+        app.page = Page::Bar;
+        for tab in [panel_controls::PanelPage::Arrange, panel_controls::PanelPage::Panels] {
+            let _ = app.update(Message::PanelPage(tab));
+            let _ = app.page_view();
+            assert_eq!(app.panel_page, tab);
+            assert!(app.pending.is_empty());
+            assert!(app.draft.item("panels").is_none());
+        }
+        app.saving = true;
+        let _ = app.update(Message::PanelSelect(ferese_config::panel::ItemId("clock".into())));
+        assert_eq!(app.panel_page, panel_controls::PanelPage::Arrange);
+        assert!(app.panel_group_selection.is_none());
+        let _ = app.update(Message::PanelGroupSelect(ferese_config::panel::GroupId(
+            "status".into(),
+        )));
+        assert!(app.panel_selection.is_none());
+        assert_eq!(app.panel_page, panel_controls::PanelPage::Arrange);
+    }
+
+    #[test]
+    fn dropped_items_follow_queued_group_moves_and_are_saved_once() {
+        use ferese_config::panel::{GroupId, ItemId};
+        let mut app = app();
+        let mut initial = Snapshot::parse(String::new()).unwrap();
+        initial.edit(&panel_controls::initialize(&initial).unwrap()).unwrap();
+        app.current = initial.clone();
+        app.draft = initial.clone();
+        app.saving = true;
+        let _ = app.update(Message::PanelEdit(panel_edit::Action::MoveGroup(
+            GroupId("time".into()),
+            panel_edit::Zone::Center,
+        )));
+        let _ = app.update(Message::PanelEdit(panel_edit::Action::Place(
+            ItemId("network".into()),
+            panel_edit::Destination {
+                zone: "end",
+                group: GroupId("time".into()),
+            },
+            Some(ItemId("clock".into())),
+        )));
+        assert_eq!(app.pending.len(), 4);
+        let expected = app.draft.doc.value().clone();
+        let _ = app.update(Message::Saved(Ok((initial, false))));
+        assert_eq!(app.draft.doc.value(), &expected);
+        assert!(app.saving && app.pending.is_empty());
+        assert_eq!(app.draft.string("panels.0.center.groups.1.items.0.id", ""), "network");
+        assert_eq!(app.draft.string("panels.0.center.groups.1.items.1.id", ""), "clock");
+    }
+
+    #[test]
     fn wallpaper_preview_uses_presented_state_and_tracks_mode_changes() {
         let mut app = app();
         app.path = store::config_path();
@@ -1102,9 +1453,32 @@ mod tests {
     fn shortcuts_build_controls_only_for_mounted_rows() {
         let mut app = shortcuts(100);
         app.visible_rows.extend((0..4).map(|index| ("bindings", index)));
-        let visible = tree_nodes(&cosmic::iced::advanced::widget::Tree::new(app.page_view().as_widget()));
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        use cosmic::iced::advanced::{layout, renderer::Headless, widget::Tree};
+        use cosmic::iced::{Font, Pixels, Size};
+        let renderer = runtime
+            .block_on(<cosmic::Renderer as Headless>::new(
+                Font::default(),
+                Pixels(14.),
+                Some("tiny-skia"),
+            ))
+            .unwrap();
+        let nodes = |app: &App| {
+            let mut view = app.page_view();
+            let mut tree = Tree::new(&view);
+            view.as_widget_mut().layout(
+                &mut tree,
+                &renderer,
+                &layout::Limits::new(Size::ZERO, Size::new(1100., 860.)),
+            );
+            tree_nodes(&tree)
+        };
+        let visible = nodes(&app);
         app.visible_rows.extend((0..100).map(|index| ("bindings", index)));
-        let eager = tree_nodes(&cosmic::iced::advanced::widget::Tree::new(app.page_view().as_widget()));
+        let eager = nodes(&app);
         assert!(eager > visible + 96 * 10, "visible={visible}, eager={eager}");
     }
 
@@ -1119,6 +1493,31 @@ mod tests {
         let _ = app.update(Message::Commit(schema::text("bindings.5.argument", "Argument", "", "")));
         assert!(!app.visible_rows.contains(&("bindings", 5)));
         assert_eq!(app.draft.string("bindings.5.argument", ""), "my command");
+    }
+
+    #[test]
+    fn merged_navigation_finds_subpages_and_browsing_does_not_save() {
+        for (parent, query, destination) in [
+            (Page::Windows, "motion", Page::Motion),
+            (Page::Windows, "animation speed", Page::Motion),
+            (Page::Keyboard, "shortcuts", Page::Shortcuts),
+            (Page::Keyboard, "swipe actions", Page::Shortcuts),
+            (Page::Keyboard, "touchpad", Page::Keyboard),
+        ] {
+            assert!(parent.matches(query));
+            assert_eq!(parent.search_destination(query), destination);
+            assert_eq!(destination.navigation_page(), parent);
+            let mut app = app();
+            let before = app.draft.source.clone();
+            let _ = app.update(Message::Page(parent));
+            let _ = app.update(Message::Search(query.into()));
+            let _ = app.update(Message::Page(destination));
+            assert_eq!(app.page, destination);
+            assert!(app.search.is_empty());
+            assert_eq!(app.draft.source, before);
+            assert!(app.pending.is_empty());
+            assert!(!app.saving);
+        }
     }
 
     #[test]

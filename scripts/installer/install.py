@@ -145,6 +145,8 @@ def validate_bundle(bundle, *, installed=False):
         allowed = expected.get(target)
         # Older releases bundled this retired source asset. Keep their manifests
         # verifiable for upgrades and rollback without adding it to new bundles.
+        if allowed is None and installed and re.fullmatch(r'wallpapers/[A-Za-z0-9._-]+\.jpe?g', target):
+            allowed = {'target': target, 'mode': '0644'}
         if allowed is None and target == 'wallpapers/ferese.svg':
             allowed = {'target': target, 'mode': '0644'}
         if allowed is None and re.fullmatch(r'licenses/theme-[A-Za-z0-9._-]+\.txt', target):
@@ -167,7 +169,7 @@ def validate_bundle(bundle, *, installed=False):
         # Installed releases may predate the appearance wallpapers and license.
         # New bundles must include them; upgrades and rollback verify the older
         # release's recorded files without requiring these later additions.
-        required = required - {'wallpapers/ferese-wallpaper-dark.jpg', 'wallpapers/ferese-wallpaper-light.png',
+        required = required - {'wallpapers/ferese-wallpaper-dark.png', 'wallpapers/ferese-wallpaper-light.png',
                                'licenses/Ferese-LICENSE.txt'}
 
     if not required <= seen or actual != seen | {'manifest.json'}:

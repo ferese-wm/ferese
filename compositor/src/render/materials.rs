@@ -130,6 +130,23 @@ fn material_region_geometry(
     Some((rect.to_i32_up(), corners))
 }
 
+/// Apply the same output transform as framebuffer_clip_rect to corner identity.
+fn framebuffer_corner_radii(radii: [f32; 4], transform: Transform) -> [f32; 4] {
+    let size = Size::<f64, Physical>::from((1., 1.));
+    let mut transformed = [0.; 4];
+    for (radius, point) in radii.into_iter().zip([(0., 0.), (1., 0.), (1., 1.), (0., 1.)]) {
+        let point = transform.transform_point_in(Point::<f64, Physical>::from(point), &size);
+        let index = match (point.x > 0.5, point.y > 0.5) {
+            (false, false) => 0,
+            (true, false) => 1,
+            (true, true) => 2,
+            (false, true) => 3,
+        };
+        transformed[index] = radius;
+    }
+    transformed
+}
+
 pub(super) struct MaterialSurface {
     pub geometry: Rectangle<i32, Logical>,
     pub corners: RoundedRect,
@@ -156,6 +173,22 @@ pub(super) fn material_element(
     )
 }
 
+fn resolve_surface_material(
+    role: crate::effects::SemanticRole,
+    settings: crate::config::ThemeSettings,
+    panel_opacity: Option<f32>,
+) -> crate::effects::ResolvedMaterial {
+    let mut material = crate::effects::resolve_material(role, settings.material_style, settings.shell_opacity as f32);
+    if role == crate::effects::SemanticRole::Panel {
+        material.opacity = ferese_config::theme::effective_panel_opacity(
+            material.opacity,
+            panel_opacity,
+            settings.reduce_transparency,
+        );
+    }
+    material
+}
+
 pub(super) fn material_element_with_role(
     state: &mut Ferese,
     renderer: &mut GlesRenderer,
@@ -171,11 +204,7 @@ pub(super) fn material_element_with_role(
         capture_geometry,
         alpha,
     } = surface_geometry;
-    let material = crate::effects::resolve_material(
-        role,
-        state.theme_settings.material_style,
-        state.theme_settings.shell_opacity as f32,
-    );
+    let material = resolve_surface_material(role, state.theme_settings, state.panel_background_opacity);
     let presentation_alpha = opacity * alpha;
     let mode = output.current_mode()?;
     let scale = output.current_scale().fractional_scale();
@@ -186,13 +215,42 @@ pub(super) fn material_element_with_role(
         state.theme_settings.surface_base_color
     };
     let [red, green, blue, _] = background.0;
-    let radius = corners.radius;
+    let logical_radii = if role == crate::effects::SemanticRole::Panel {
+        state.panel_corner_radius
+    } else {
+        None
+    };
+    let radii = logical_radii.map_or([corners.radius; 4], |radii| {
+        radii
+            .0
+            .map(|value| clamp_radius(f64::from(value) * scale, corners.rect.size))
+    });
+    let output_size = output
+        .current_transform()
+        .transform_size(mode.size)
+        .to_f64()
+        .to_logical(scale)
+        .to_i32_ceil();
+    let touches_top = role == crate::effects::SemanticRole::Panel && geometry.loc.y == 0;
+    let touches_bottom =
+        role == crate::effects::SemanticRole::Panel && geometry.loc.y + geometry.size.h >= output_size.h;
+    let radii = ferese_config::panel::CornerRadii(radii)
+        .at_top_edge(touches_top)
+        .at_edge(ferese_config::panel::Edge::Bottom, touches_bottom)
+        .0;
+    let radius = radii.into_iter().fold(0., f32::max);
+    let corner_radii = framebuffer_corner_radii(radii, transform);
     let [offset_y, shadow_blur, shadow_opacity] = material.shadow;
-    let edge_bar = role == crate::effects::SemanticRole::Panel && radius == 0.0 && geometry.loc.y == 0;
+    let edge_bar = radius == 0.0 && (touches_top || touches_bottom);
     let shadow_opacity = if edge_bar {
         0.0
     } else {
         shadow_opacity * (state.theme_settings.shadow_opacity / 0.2) * f64::from(presentation_alpha)
+    };
+    let shadow_opacity = if role == crate::effects::SemanticRole::Panel {
+        shadow_opacity * f64::from(material.opacity)
+    } else {
+        shadow_opacity
     };
     let shadow_geometry = Rectangle::new(
         (
@@ -204,22 +262,16 @@ pub(super) fn material_element_with_role(
     );
     let background_opacity = material.opacity;
     let blur = material_blur_radius(material.style, material.opacity, state.theme_settings.backdrop_blur);
-    let output_size = output
-        .current_transform()
-        .transform_size(mode.size)
-        .to_f64()
-        .to_logical(scale)
-        .to_i32_ceil();
     let sample_geometry = expanded_blur_region(capture_geometry, blur.ceil() as i32, output_size);
     let sample_physical = sample_geometry.to_physical_precise_round(scale);
     let mut parameters = MaterialParameters {
+        corner_radii,
         presentation_alpha,
         background_opacity,
         blur: (blur * scale) as f32,
         sample_geometry,
         sample_physical,
         sample_framebuffer: framebuffer_clip_rect(sample_physical, mode.size, transform),
-        radius,
         shadow_rect: framebuffer_clip_rect(shadow_geometry, mode.size, transform),
         shadow_values: [(shadow_blur * scale) as f32, shadow_opacity as f32],
         shadow_bounds: shadow_bounds(geometry, offset_y, shadow_blur),
@@ -323,7 +375,7 @@ pub(super) fn material_element_with_role(
         if cached.parameters.shadow_rect != parameters.shadow_rect
             || cached.parameters.shadow_values != parameters.shadow_values
             || cached.parameters.shadow_bounds != parameters.shadow_bounds
-            || cached.parameters.radius != parameters.radius
+            || cached.parameters.corner_radii != parameters.corner_radii
             || cached.parameters.visible_framebuffer != parameters.visible_framebuffer
         {
             cached.shadow.resize(parameters.shadow_bounds, None);
@@ -388,7 +440,7 @@ pub(super) fn blur_program(resources: &mut RenderResources, renderer: &mut GlesR
 pub(super) fn blur_uniform_names() -> [UniformName<'static>; 8] {
     [
         UniformName::new("visible_rect", UniformType::_4f),
-        UniformName::new("material_radius", UniformType::_1f),
+        UniformName::new("material_radii", UniformType::_4f),
         UniformName::new("texture_size", UniformType::_2f),
         UniformName::new("capture_origin", UniformType::_2f),
         UniformName::new("blur_radius", UniformType::_1f),
@@ -401,7 +453,7 @@ pub(super) fn blur_uniform_names() -> [UniformName<'static>; 8] {
 pub(super) fn blur_uniforms(p: &MaterialParameters) -> Vec<Uniform<'static>> {
     vec![
         Uniform::new("visible_rect", p.visible_framebuffer),
-        Uniform::new("material_radius", p.radius),
+        Uniform::new("material_radii", p.corner_radii),
         Uniform::new("texture_size", [p.sample_framebuffer[2], p.sample_framebuffer[3]]),
         Uniform::new("capture_origin", [p.sample_framebuffer[0], p.sample_framebuffer[1]]),
         Uniform::new("blur_radius", p.blur),
@@ -452,7 +504,7 @@ pub(super) fn material_program_for_corners(
 
     let uniforms = [
         UniformName::new("visible_rect", UniformType::_4f),
-        UniformName::new("material_radius", UniformType::_1f),
+        UniformName::new("material_radii", UniformType::_4f),
         UniformName::new("tint", UniformType::_4f),
         UniformName::new("paint_mode", UniformType::_1f),
         UniformName::new("shadow_rect", UniformType::_4f),
@@ -485,7 +537,7 @@ pub(super) fn decoration_uniforms(parameters: &MaterialParameters, paint_mode: f
         Uniform::new("shadow_rect", parameters.shadow_rect),
         Uniform::new("shadow_values", parameters.shadow_values),
         Uniform::new("visible_rect", parameters.visible_framebuffer),
-        Uniform::new("material_radius", parameters.radius),
+        Uniform::new("material_radii", parameters.corner_radii),
         Uniform::new("tint", parameters.tint),
     ]
 }
@@ -506,6 +558,60 @@ pub(super) fn blur_damage(
 #[cfg(test)]
 mod region_geometry_tests {
     use super::*;
+
+    #[test]
+    fn reduce_transparency_wins_over_continuous_and_island_panel_materials() {
+        use crate::effects::SemanticRole;
+        for surface in ["solid", "none"] {
+            for opacity in [0., 0.4, 1.] {
+                for reduce in [false, true] {
+                    let source = format!(
+                        "theme {{ material {{ style translucent; opacity 0.7; }}; accessibility {{ reduce-transparency #{reduce}; }}; }}; panel main {{ surface {surface}; group-surface island; background-opacity {opacity}; }}"
+                    );
+                    let (_, runtime, candidate) = crate::theme::prepare(&source, std::path::Path::new("/tmp")).unwrap();
+                    let material = resolve_surface_material(
+                        SemanticRole::Panel,
+                        runtime.theme_settings,
+                        runtime.panel_background_opacity,
+                    );
+                    assert_eq!(material.opacity, if reduce { 1. } else { opacity });
+                    assert_eq!(material.opacity, candidate.theme.panel_opacity(Some(opacity)));
+                    assert_eq!(
+                        material.style,
+                        if reduce {
+                            crate::config::MaterialStyle::Solid
+                        } else {
+                            crate::config::MaterialStyle::Translucent
+                        }
+                    );
+                    if reduce {
+                        assert_eq!(runtime.theme_settings.backdrop_blur, 0.);
+                    }
+                    let popover = resolve_surface_material(SemanticRole::Popover, runtime.theme_settings, Some(0.));
+                    assert!((popover.opacity - if reduce { 1. } else { 0.7 }).abs() < 0.001);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn framebuffer_transforms_preserve_each_logical_corner() {
+        let radii = [1., 2., 3., 4.];
+        assert_eq!(framebuffer_corner_radii(radii, Transform::Normal), radii);
+        assert_eq!(framebuffer_corner_radii(radii, Transform::Flipped180), [4., 3., 2., 1.]);
+        for (transform, expected) in [
+            (Transform::Normal, [1., 2., 3., 4.]),
+            (Transform::_90, [4., 1., 2., 3.]),
+            (Transform::_180, [3., 4., 1., 2.]),
+            (Transform::_270, [2., 3., 4., 1.]),
+            (Transform::Flipped, [2., 1., 4., 3.]),
+            (Transform::Flipped90, [1., 4., 3., 2.]),
+            (Transform::Flipped180, [4., 3., 2., 1.]),
+            (Transform::Flipped270, [3., 2., 1., 4.]),
+        ] {
+            assert_eq!(framebuffer_corner_radii(radii, transform), expected);
+        }
+    }
 
     #[test]
     fn fractional_regions_snap_once_in_output_pixels() {

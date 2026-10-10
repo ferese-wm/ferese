@@ -15,8 +15,11 @@ this at fractional scaling too.
 
 ## Compare renderers
 
-Repeat with `ICED_BACKEND=wgpu` and `ICED_BACKEND=tiny-skia`. The shell enables
-wgpu; software fallback can be slower when resampling wallpaper.
+Repeat the check with `ICED_BACKEND=wgpu` and `ICED_BACKEND=tiny-skia` to compare
+renderers. The shell and Settings prefer software rendering with GPU fallback,
+which keeps Settings labels visible inside scrolling content but can be slower
+when resampling wallpaper. Setting `ICED_BACKEND` explicitly overrides that
+preference.
 
 Follow the trace from host resize through layer configure, client acknowledgement,
 new buffer commit and compositor rendering. A quick acknowledgement does not mean

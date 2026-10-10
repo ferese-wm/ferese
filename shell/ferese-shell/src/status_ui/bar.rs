@@ -8,84 +8,96 @@ use crate::status::Snapshot;
 use crate::{BarMetrics, FereseShell, Message, accented_icon, bar_content, color, motion, recording, text};
 
 impl FereseShell {
-    pub fn view_status_bar(&self) -> Element<'_, cosmic::Action<Message>> {
+    pub(crate) fn view_media_item(
+        &self,
+        representation: crate::panel::Representation,
+        selected: bool,
+        width: Option<f32>,
+    ) -> Element<'_, cosmic::Action<Message>> {
         let theme = self.config.theme.for_bar();
-        let islands = self.config.status.bar_layout == ferese_config::BarLayout::Islands;
-        let metrics = BarMetrics::from(theme);
-        let mut controls = row::with_capacity(7).spacing(1).align_y(Alignment::Center);
-        if self.media.snapshot.selected.is_some() {
-            controls = controls.push(super::media::bar(self, theme, metrics));
+        if representation == crate::panel::Representation::Icon {
+            self.view_status_item(Menu::Media, false, selected)
+        } else {
+            super::media::bar(
+                self,
+                theme,
+                BarMetrics::from(self.config.panels[0].geometry),
+                representation,
+                selected,
+                width,
+            )
+        }
+    }
+
+    pub(crate) fn view_status_item(
+        &self,
+        kind: Menu,
+        battery_percentage: bool,
+        selected: bool,
+    ) -> Element<'_, cosmic::Action<Message>> {
+        let theme = self.config.theme.for_bar();
+        let metrics = BarMetrics::from(self.config.panels[0].geometry);
+        let (source, enabled) = if kind == Menu::Recording {
+            let source: &'static [u8] = match self.recorder.state {
+                recording::State::Selecting => ferese_theme::icons::RECORD_CANCEL,
+                recording::State::Recording(_) => ferese_theme::icons::RECORD_STOP,
+                recording::State::Saving => ferese_theme::icons::RECORD_SAVING,
+                _ => ferese_theme::icons::RECORD,
+            };
+            (source, true)
+        } else {
+            status_icon(kind, &self.status)
+        };
+        let selected =
+            selected || (kind == Menu::Recording && matches!(self.recorder.state, recording::State::Recording(_)));
+        let foreground = color(if selected {
+            theme.accent
+        } else if enabled {
+            theme.text_primary
+        } else {
+            theme.text_muted
+        });
+        let mut content = row![accented_icon(
+            source,
+            metrics.icon_size,
+            foreground,
+            color(theme.accent)
+        )]
+        .spacing(4)
+        .align_y(Alignment::Center);
+
+        if kind == Menu::Recording
+            && let Some(elapsed) = self.recorder.elapsed()
+        {
+            content = content.push(
+                text(elapsed)
+                    .size(metrics.text_size)
+                    .class(theme::Text::Color(foreground)),
+            );
         }
 
-        for kind in [
-            Menu::System,
-            Menu::Network,
-            Menu::Audio,
-            Menu::Recording,
-            Menu::Notifications,
-            Menu::Battery,
-        ] {
-            if !kind.available(&self.status) {
-                continue;
-            }
-            let (source, enabled) = if kind == Menu::Recording {
-                let source: &'static [u8] = match self.recorder.state {
-                    recording::State::Selecting => ferese_theme::icons::RECORD_CANCEL,
-                    recording::State::Recording(_) => ferese_theme::icons::RECORD_STOP,
-                    recording::State::Saving => ferese_theme::icons::RECORD_SAVING,
-                    _ => ferese_theme::icons::RECORD,
-                };
-                (source, true)
-            } else {
-                status_icon(kind, &self.status)
-            };
-            let selected = self.menu.as_ref().is_some_and(|m| m.kind == kind)
-                || (kind == Menu::Recording && matches!(self.recorder.state, recording::State::Recording(_)));
-            let foreground = color(if selected {
-                theme.accent
-            } else if enabled {
-                theme.text_primary
-            } else {
-                theme.text_muted
-            });
-            let mut content = row![accented_icon(
-                source,
-                metrics.icon_size,
-                foreground,
-                color(theme.accent)
-            )]
-            .spacing(4)
-            .align_y(Alignment::Center);
-
-            if kind == Menu::Recording
-                && let Some(elapsed) = self.recorder.elapsed()
-            {
-                content = content.push(
-                    text(elapsed)
-                        .size(metrics.text_size)
-                        .class(theme::Text::Color(foreground)),
-                );
-            }
-
-            if kind == Menu::Battery
-                && self.config.status.battery_percentage
-                && let Some(battery) = &self.status.battery
-            {
-                content = content.push(
-                    text(format!("{}%", battery.percent))
-                        .size(metrics.text_size)
-                        .class(theme::Text::Color(foreground)),
-                );
-            }
-            if kind == Menu::Notifications
-                && self
-                    .status
-                    .notifications
-                    .as_ref()
-                    .is_some_and(|n| n.count > 0 && !n.dnd)
-            {
-                content = content.push(container(text("")).width(4).height(4).class(theme::Container::custom(
-                    move |_| container::Style {
+        if kind == Menu::Battery
+            && battery_percentage
+            && let Some(battery) = &self.status.battery
+        {
+            content = content.push(
+                text(format!("{}%", battery.percent))
+                    .size(metrics.text_size)
+                    .class(theme::Text::Color(foreground)),
+            );
+        }
+        if kind == Menu::Notifications
+            && self
+                .status
+                .notifications
+                .as_ref()
+                .is_some_and(|n| n.count > 0 && !n.dnd)
+        {
+            content = content.push(
+                container(text(""))
+                    .width(4)
+                    .height(4)
+                    .class(theme::Container::custom(move |_| container::Style {
                         background: Some(Background::Color(foreground)),
                         border: Border {
                             shape: BorderShape::Continuous,
@@ -93,50 +105,40 @@ impl FereseShell {
                             ..Default::default()
                         },
                         ..Default::default()
+                    })),
+            );
+        }
+        let content = bar_content(content, metrics.group_item_height);
+        let recording_busy = kind == Menu::Recording && self.recorder.busy();
+        let control = button::custom(content)
+            .name(if recording_busy {
+                self.recorder.label().into()
+            } else if kind == Menu::Recording {
+                "Record a display".into()
+            } else {
+                status_label(kind, &self.status)
+            })
+            .padding([0.0, ((metrics.height - f32::from(metrics.icon_size)) * 0.5).max(4.0)])
+            .height(metrics.group_item_height)
+            .on_press_with_rectangle(move |offset, bounds| {
+                if kind == Menu::Recording {
+                    return cosmic::Action::App(if recording_busy {
+                        Message::StopRecording
+                    } else {
+                        Message::StartRecording
+                    });
+                }
+                cosmic::Action::App(Message::OpenMenu(
+                    kind,
+                    Rectangle {
+                        x: (bounds.x - offset.x).round() as i32,
+                        y: (bounds.y - offset.y).round() as i32,
+                        width: bounds.width.round() as i32,
+                        height: bounds.height.round() as i32,
                     },
-                )));
-            }
-            let content = bar_content(content, metrics.group_item_height);
-            let recording_busy = kind == Menu::Recording && self.recorder.busy();
-            let control = button::custom(content)
-                .name(if recording_busy {
-                    self.recorder.label().into()
-                } else if kind == Menu::Recording {
-                    "Record a display".into()
-                } else {
-                    status_label(kind, &self.status)
-                })
-                .padding([0.0, ((metrics.height - f32::from(metrics.icon_size)) * 0.5).max(4.0)])
-                .height(metrics.group_item_height)
-                .on_press_with_rectangle(move |offset, bounds| {
-                    if kind == Menu::Recording {
-                        return cosmic::Action::App(if recording_busy {
-                            Message::StopRecording
-                        } else {
-                            Message::StartRecording
-                        });
-                    }
-                    cosmic::Action::App(Message::OpenMenu(
-                        kind,
-                        Rectangle {
-                            x: (bounds.x - offset.x).round() as i32,
-                            y: (bounds.y - offset.y).round() as i32,
-                            width: bounds.width.round() as i32,
-                            height: bounds.height.round() as i32,
-                        },
-                    ))
-                });
-            controls = controls.push(motion::button(control, foreground, selected, 1.0));
-        }
-        if islands {
-            return controls.into();
-        }
-
-        container(controls)
-            .padding([2, 3])
-            .height(metrics.group_height)
-            .class(theme::Container::custom(move |_| crate::bar::bar_group_style(theme)))
-            .into()
+                ))
+            });
+        motion::button(control, foreground, selected, 1.0)
     }
 }
 
@@ -160,6 +162,7 @@ fn status_label(kind: Menu, s: &Snapshot) -> String {
             _ => "Notifications: unavailable".into(),
         },
         Menu::Calendar => "Calendar".into(),
+        Menu::Overflow => "More panel items".into(),
         Menu::Recording => "Screen recording".into(),
         Menu::Media => "Now playing".into(),
         Menu::Battery => s.battery.as_ref().map_or_else(
@@ -207,6 +210,7 @@ pub(super) fn status_icon(kind: Menu, s: &Snapshot) -> (&'static [u8], bool) {
             (audio_icon(a.volume, a.muted), !a.muted && a.volume > 0)
         }),
         Menu::Calendar => (ferese_theme::icons::CALENDAR, true),
+        Menu::Overflow => (ferese_theme::icons::CHEVRON_DOWN, true),
         Menu::Recording => (ferese_theme::icons::RECORD, true),
         Menu::Media => (ferese_theme::icons::MEDIA, true),
         Menu::Battery => {

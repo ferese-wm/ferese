@@ -22,9 +22,7 @@ def snapshot(appearance, accent, reduced_motion, contrast):
             "material": {"style": "solid", "opacity": 1.0, "blur_radius": 0.0, "tint_strength": 1.0},
             "geometry": {
                 "border_width": 1.0, "focus_ring_width": 2.0, "window_radius": 14.0,
-                "shell_radius": 14.0, "top_bar_height": 28.0, "top_bar_margin_top": 0,
-                "top_bar_margin_horizontal": 0, "top_bar_window_gap": 0,
-                "panel_padding": 12.0, "control_gap": 12.0,
+                "shell_radius": 14.0, "control_gap": 12.0,
             },
             "typography": {"font_family": "Inter"},
             "background": {"path": "", "lock_path": None, "mode": "fill"},

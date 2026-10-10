@@ -422,6 +422,7 @@ impl cosmic::Application for Prompt {
 
     fn view(&self) -> Element<'_, Message> {
         let palette = &self.appearance;
+        let material_opacity = if palette.high_contrast { 1.0 } else { palette.surface.a };
         let mut input = widget::text_input(&self.question, self.answer.as_str())
             .id(widget::Id::new("auth-response"))
             .font(palette.font)
@@ -487,7 +488,11 @@ impl cosmic::Application for Prompt {
                     )
                     .size(12),
                 )
-                .class(ferese_theme::controls::button_style(palette.palette(), false))
+                .class(ferese_theme::controls::material_button_style(
+                    palette.palette(),
+                    false,
+                    material_opacity,
+                ))
                 .padding([6, 10])
                 .on_press(Message::ToggleDetails),
             );
@@ -551,7 +556,11 @@ impl cosmic::Application for Prompt {
         body = body.push(
             row![
                 button::custom(ferese_theme::text("Cancel", palette.font).size(13))
-                    .class(ferese_theme::controls::button_style(palette.palette(), false))
+                    .class(ferese_theme::controls::material_button_style(
+                        palette.palette(),
+                        false,
+                        material_opacity,
+                    ))
                     .padding([8, 14])
                     .on_press(Message::Cancel),
                 action

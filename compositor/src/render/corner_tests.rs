@@ -408,6 +408,93 @@ fn apple_shoulder_extent_never_claims_transparent_pixels_as_opaque() {
 
 #[test]
 #[ignore = "requires an EGL rendering device"]
+fn docked_panel_fill_covers_the_entire_attached_edge() {
+    let mut renderer = renderer();
+    let mut resources = RenderResources::default();
+    let material = material_program_for_corners(&mut resources, &mut renderer, CornerShape::Circular).unwrap();
+    for edge in [ferese_config::panel::Edge::Top, ferese_config::panel::Edge::Bottom] {
+        let radii = ferese_config::panel::CornerRadii([14., 8., 12., 20.])
+            .at_edge(edge, true)
+            .0;
+        let pixels = rasterize(
+            &mut renderer,
+            &material.0,
+            &[
+                Uniform::new("visible_rect", [0.0f32, 0.0, 64.0, 36.0]),
+                Uniform::new("material_radii", radii),
+                Uniform::new("tint", [1.0f32; 4]),
+                Uniform::new("paint_mode", 0.0f32),
+                Uniform::new("shadow_rect", [0.0f32, 0.0, 64.0, 36.0]),
+                Uniform::new("shadow_values", [8.0f32, 1.0]),
+            ],
+        );
+        let (attached_row, free_row) = if edge == ferese_config::panel::Edge::Top {
+            (0, 35)
+        } else {
+            (35, 0)
+        };
+        for x in 0..64 {
+            assert_eq!(
+                pixels[(attached_row * 64 + x) * 4 + 3],
+                255,
+                "wallpaper exposed at {edge:?} pixel {x}"
+            );
+        }
+        assert_eq!(pixels[free_row * 64 * 4 + 3], 0, "opposite corners remain rounded");
+    }
+}
+
+#[test]
+#[ignore = "requires an EGL rendering device"]
+fn asymmetric_panel_fill_and_shadow_match_each_corner() {
+    let mut renderer = renderer();
+    let mut resources = RenderResources::default();
+    let material = material_program_for_corners(&mut resources, &mut renderer, CornerShape::Circular).unwrap();
+    let rect = [2.0f32, 2.0, 60.0, 60.0];
+    let radii = [0.0f32, 4.0, 12.0, 20.0];
+    for paint_mode in [0.0f32, 2.0] {
+        let pixels = rasterize(
+            &mut renderer,
+            &material.0,
+            &[
+                Uniform::new("visible_rect", rect),
+                Uniform::new("material_radii", radii),
+                Uniform::new("tint", [1.0f32; 4]),
+                Uniform::new("paint_mode", paint_mode),
+                Uniform::new("shadow_rect", rect),
+                Uniform::new("shadow_values", [8.0f32, 1.0]),
+            ],
+        );
+        for y in 0..64 {
+            for x in 0..64 {
+                let radius = match (x < 32, y < 32) {
+                    (true, true) => radii[0],
+                    (false, true) => radii[1],
+                    (false, false) => radii[2],
+                    (true, false) => radii[3],
+                };
+                let distance = reference_distance(
+                    [x as f64 + 0.5, y as f64 + 0.5],
+                    rect.map(f64::from),
+                    radius.into(),
+                    CornerShape::Circular,
+                );
+                let expected = if paint_mode == 0. {
+                    coverage(distance)
+                } else {
+                    (-0.5 * (distance.max(0.0) / 4.0).powi(2)).exp() * (1. - coverage(distance))
+                };
+                assert!(
+                    pixels[(y * 64 + x) * 4 + 3].abs_diff((expected * 255.).round() as u8) <= 2,
+                    "corner mismatch at ({x}, {y}), mode {paint_mode}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires an EGL rendering device"]
 fn apple_shadow_and_window_tint_match_the_same_outline() {
     let mut renderer = renderer();
     let mut resources = RenderResources::default();
@@ -431,7 +518,7 @@ fn apple_shadow_and_window_tint_match_the_same_outline() {
         &material.0,
         &[
             Uniform::new("visible_rect", rect),
-            Uniform::new("material_radius", radius),
+            Uniform::new("material_radii", [radius; 4]),
             Uniform::new("tint", [1.0f32; 4]),
             Uniform::new("paint_mode", 0.0f32),
             Uniform::new("shadow_rect", rect),

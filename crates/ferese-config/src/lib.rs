@@ -1,6 +1,7 @@
 pub mod desktop;
 pub mod families;
 pub mod notifications;
+pub mod panel;
 pub mod presets;
 pub mod theme;
 
@@ -15,25 +16,14 @@ pub const DEFAULT_MATERIAL_OPACITY: f64 = 0.78;
 
 #[derive(Clone, Copy, Debug, Default, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum BarLayout {
+pub enum PanelPreset {
     #[default]
     Continuous,
     Islands,
 }
 
-pub const fn default_bar_island_padding() -> f32 {
+pub const fn default_island_padding() -> f32 {
     4.0
-}
-
-pub fn deserialize_bar_island_padding<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<f32, D::Error> {
-    let padding = <f32 as serde::Deserialize>::deserialize(deserializer)?;
-    if !padding.is_finite() || !(0.0..=32.0).contains(&padding) {
-        return Err(serde::de::Error::custom(
-            "bar-island-padding must be between 0 and 32 logical pixels",
-        ));
-    }
-
-    Ok(padding)
 }
 
 #[derive(Debug)]
@@ -69,7 +59,7 @@ pub fn default_wallpaper_for(appearance: theme::Appearance) -> &'static str {
     static DARK: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     let (slot, name) = match appearance {
         theme::Appearance::Light => (&LIGHT, "ferese-wallpaper-light.png"),
-        theme::Appearance::Dark => (&DARK, "ferese-wallpaper-dark.jpg"),
+        theme::Appearance::Dark => (&DARK, "ferese-wallpaper-dark.png"),
     };
     slot.get_or_init(|| {
         let path = std::env::current_exe()
@@ -97,6 +87,9 @@ fn field(name: &str, parent: &str) -> String {
         "output-profile" => "output_profiles".into(),
         "output" => "outputs".into(),
         "note" => "notes".into(),
+        "panel" => "panels".into(),
+        "group" => "groups".into(),
+        "item" => "items".into(),
         _ => name.replace('-', "_"),
     }
 }
@@ -104,9 +97,13 @@ fn field(name: &str, parent: &str) -> String {
 fn is_records(key: &str, parent: &str) -> bool {
     matches!(
         (parent, key),
-        ("", "bindings" | "window_rules" | "output_profiles" | "autostart")
-            | ("output_profiles", "outputs")
+        (
+            "",
+            "bindings" | "window_rules" | "output_profiles" | "autostart" | "panels"
+        ) | ("output_profiles", "outputs")
             | ("desktop_widgets", "notes")
+            | ("start" | "center" | "end", "groups")
+            | ("groups", "items")
     )
 }
 
@@ -114,7 +111,7 @@ fn is_array(key: &str, parent: &str) -> bool {
     parent == "commands"
         || matches!(
             key,
-            "command" | "position" | "width_presets" | "xkb_options" | "settings_command" | "outputs"
+            "command" | "position" | "padding" | "width_presets" | "xkb_options" | "settings_command" | "outputs"
         )
 }
 
@@ -190,7 +187,7 @@ fn node_value(node: &KdlNode, key: &str, parent: &str) -> Result<Value, Error> {
             "bindings" => &["keys", "action", "argument"],
             "output_profiles" => &["name"],
             "outputs" => &["match"],
-            "notes" => &["id"],
+            "notes" | "panels" | "groups" | "items" => &["id"],
             "autostart" => &[],
             "window_rules" => &[],
             _ => unreachable!(),
@@ -364,6 +361,12 @@ impl Document {
         }
         let mut candidate = self.clone();
         let (name, parents) = path.rsplit_once('.').map_or((path, ""), |(p, n)| (n, p));
+        if unset_property(&mut candidate.doc, &path.split('.').collect::<Vec<_>>(), "")? {
+            format_document(&mut candidate.doc);
+            candidate.refresh()?;
+            *self = candidate;
+            return Ok(());
+        }
         let doc = section_mut(
             &mut candidate.doc,
             &parents.split('.').filter(|s| !s.is_empty()).collect::<Vec<_>>(),
@@ -546,12 +549,99 @@ fn section_mut<'a>(doc: &'a mut KdlDocument, parts: &[&str], parent: &str) -> Re
     section_mut(child, &parts[used..], key)
 }
 
+/// Scalar settings in record nodes can be KDL properties rather than children.
+fn unset_property(doc: &mut KdlDocument, parts: &[&str], parent: &str) -> Result<bool, Error> {
+    if parts.len() < 2 {
+        return Ok(false);
+    }
+    let key = parts[0];
+    let record = is_records(key, parent);
+    let used = if record { 2 } else { 1 };
+    let index = if record {
+        parts
+            .get(1)
+            .and_then(|part| part.parse::<usize>().ok())
+            .ok_or_else(|| Error("Record index missing".into()))?
+    } else {
+        0
+    };
+    let Some(node) = doc
+        .nodes_mut()
+        .iter_mut()
+        .filter(|node| field(node.name().value(), parent) == key)
+        .nth(index)
+    else {
+        return Ok(false);
+    };
+    if parts.len() == used + 1
+        && let Some(index) = node
+            .entries()
+            .iter()
+            .position(|entry| entry.name().is_some_and(|name| field(name.value(), key) == parts[used]))
+    {
+        let entry = node.entries_mut().remove(index);
+        if let Some(format) = entry.format() {
+            let comments = [&format.leading, &format.trailing]
+                .into_iter()
+                .filter(|part| part.contains("//") || part.contains("/*"))
+                .cloned()
+                .collect::<String>();
+            if !comments.is_empty() {
+                let mut format = node.format().cloned().unwrap_or_default();
+                format.leading.push_str(&comments);
+                node.set_format(format);
+            }
+        }
+        return Ok(true);
+    }
+    if let Some(children) = node.children_mut() {
+        unset_property(children, &parts[used..], key)
+    } else {
+        Ok(false)
+    }
+}
+
 fn set_in(doc: &mut KdlDocument, parts: &[&str], parent: &str, value: Value) -> Result<(), Error> {
     if parts.is_empty() {
         return Err(Error("Missing setting path".into()));
     }
 
     let key = parts[0];
+    if parts.len() == 1 && is_records(key, parent) {
+        let records = value
+            .as_array()
+            .ok_or_else(|| Error("Expected a list of records".into()))?;
+        let mut nodes = records
+            .iter()
+            .map(|value| value_node(key, value, parent))
+            .collect::<Result<Vec<_>, _>>()?;
+        let at = doc
+            .nodes()
+            .iter()
+            .position(|node| field(node.name().value(), parent) == key)
+            .unwrap_or(doc.nodes().len());
+        let mut comments = String::new();
+        for node in doc
+            .nodes()
+            .iter()
+            .filter(|node| field(node.name().value(), parent) == key)
+        {
+            collect_comments(node, &mut comments);
+        }
+        doc.nodes_mut().retain(|node| field(node.name().value(), parent) != key);
+        if let Some(first) = nodes.first_mut() {
+            first.set_format(kdl::KdlNodeFormat {
+                leading: comments,
+                ..Default::default()
+            });
+        } else if !comments.is_empty() {
+            let mut format = doc.format().cloned().unwrap_or_default();
+            format.trailing.push_str(&comments);
+            doc.set_format(format);
+        }
+        doc.nodes_mut().splice(at..at, nodes);
+        return Ok(());
+    }
     let i = node_index(doc, key, parent);
 
     if parts.len() == 1 {
@@ -588,7 +678,7 @@ fn set_in(doc: &mut KdlDocument, parts: &[&str], parent: &str, value: Value) -> 
                 "bindings" => &["keys", "action", "argument"],
                 "outputs" => &["match"],
                 "output_profiles" => &["name"],
-                "notes" => &["id"],
+                "notes" | "panels" | "groups" | "items" => &["id"],
                 _ => &[],
             };
             let position = positions.iter().position(|p| *p == rest[0]);
@@ -681,6 +771,9 @@ fn node_name(key: &str, parent: &str) -> String {
         "output_profiles" => "output-profile".into(),
         "outputs" => "output".into(),
         "notes" => "note".into(),
+        "panels" => "panel".into(),
+        "groups" => "group".into(),
+        "items" => "item".into(),
         _ => key.replace('_', "-"),
     }
 }
@@ -694,7 +787,7 @@ fn value_node(key: &str, value: &Value, parent: &str) -> Result<KdlNode, Error> 
                 "bindings" => &["keys", "action", "argument"],
                 "output_profiles" => &["name"],
                 "outputs" => &["match"],
-                "notes" => &["id"],
+                "notes" | "panels" | "groups" | "items" => &["id"],
                 _ => &[],
             };
             let mut child = KdlDocument::new();

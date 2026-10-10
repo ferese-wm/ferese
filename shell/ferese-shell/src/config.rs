@@ -5,7 +5,7 @@ use serde::Deserialize;
 
 const DEFAULT_BACKGROUND: [u8; 3] = [11, 15, 20];
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub(crate) struct ShellConfig {
     pub(crate) notifications: ferese_config::notifications::NotificationConfig,
     pub(crate) desktop_widgets: ferese_config::desktop::DesktopWidgets,
@@ -15,17 +15,30 @@ pub(crate) struct ShellConfig {
     pub(crate) theme: ShellTheme,
     pub(crate) theme_mode: ferese_config::theme::Mode,
     pub(crate) status: StatusConfig,
+    pub(crate) panels: Vec<crate::panel::Panel>,
+}
+
+impl Default for ShellConfig {
+    fn default() -> Self {
+        let status = StatusConfig::default();
+        Self {
+            notifications: Default::default(),
+            desktop_widgets: Default::default(),
+            animations: Default::default(),
+            font_family: None,
+            wallpaper: Default::default(),
+            theme: Default::default(),
+            theme_mode: Default::default(),
+            panels: vec![crate::panel::Panel::default()],
+            status,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub(crate) struct StatusConfig {
-    pub(crate) bar_layout: ferese_config::BarLayout,
-    #[serde(deserialize_with = "ferese_config::deserialize_bar_island_padding")]
-    pub(crate) bar_island_padding: f32,
     pub(crate) keybinding_guide: bool,
-    pub(crate) battery_percentage: bool,
-    pub(crate) window_title: bool,
     pub(crate) low_battery_threshold: u8,
     pub(crate) settings_command: Option<Vec<String>>,
 }
@@ -33,11 +46,7 @@ pub(crate) struct StatusConfig {
 impl Default for StatusConfig {
     fn default() -> Self {
         Self {
-            bar_layout: ferese_config::BarLayout::Continuous,
-            bar_island_padding: ferese_config::default_bar_island_padding(),
             keybinding_guide: true,
-            battery_percentage: true,
-            window_title: true,
             low_battery_threshold: 20,
             settings_command: Some(vec!["ferese-settings".into()]),
         }
@@ -48,6 +57,7 @@ impl Default for StatusConfig {
 pub(crate) struct ShellTheme {
     pub(crate) appearance: ferese_config::theme::Appearance,
     pub(crate) high_contrast: bool,
+    pub(crate) reduce_transparency: bool,
     pub(crate) bar_background: [u8; 4],
     pub(crate) bar_text_primary: [u8; 4],
     pub(crate) bar_text_muted: [u8; 4],
@@ -60,13 +70,8 @@ pub(crate) struct ShellTheme {
     pub(crate) on_accent: [u8; 4],
     pub(crate) border: [u8; 4],
     pub(crate) shadow: [u8; 4],
-    pub(crate) bar_height: f32,
-    pub(crate) bar_margin_top: i32,
-    pub(crate) bar_window_gap: i32,
-    pub(crate) bar_margin_horizontal: i32,
     pub(crate) bar_radius: f32,
     pub(crate) material_radius: f32,
-    pub(crate) panel_padding: f32,
     pub(crate) control_gap: f32,
     pub(crate) shadow_offset_y: f32,
     pub(crate) shadow_blur: f32,
@@ -78,6 +83,7 @@ impl Default for ShellTheme {
         Self {
             appearance: Default::default(),
             high_contrast: false,
+            reduce_transparency: false,
             bar_background: [28, 32, 46, 255],
             bar_text_primary: [240, 243, 250, 255],
             bar_text_muted: [170, 180, 199, 255],
@@ -90,13 +96,8 @@ impl Default for ShellTheme {
             on_accent: [244, 247, 251, 255],
             border: [255, 255, 255, 24],
             shadow: [0, 0, 0, 85],
-            bar_height: 28.0,
-            bar_margin_top: 0,
-            bar_window_gap: 0,
-            bar_margin_horizontal: 0,
             bar_radius: 14.0,
             material_radius: 14.0,
-            panel_padding: 12.0,
             control_gap: 12.0,
             shadow_offset_y: 4.0,
             shadow_blur: 18.0,
@@ -106,6 +107,22 @@ impl Default for ShellTheme {
 }
 
 impl ShellTheme {
+    pub(crate) fn panel_opacity(self, custom: Option<f32>) -> f32 {
+        ferese_config::theme::effective_panel_opacity(
+            f32::from(self.bar_background[3]) / 255.,
+            custom,
+            self.reduce_transparency,
+        )
+    }
+
+    pub(crate) fn material_opacity(self) -> f32 {
+        if self.high_contrast {
+            1.0
+        } else {
+            f32::from(self.surface_popover[3]) / 255.0
+        }
+    }
+
     pub(crate) fn palette(self) -> ferese_theme::Palette {
         let color = |[r, g, b, a]: [u8; 4]| cosmic::iced::Color::from_rgba8(r, g, b, f32::from(a) / 255.);
         let surface = color(self.surface_base);
@@ -165,22 +182,17 @@ pub(crate) enum WallpaperMode {
 #[derive(Debug, Default, Deserialize)]
 struct FereseConfig {
     #[serde(default)]
+    panels: Option<Vec<crate::panel::Panel>>,
+    #[serde(default)]
     notifications: ferese_config::notifications::NotificationConfig,
     #[serde(default)]
     desktop_widgets: ferese_config::desktop::DesktopWidgets,
     #[serde(default)]
     animations: crate::motion::Settings,
     #[serde(default)]
-    appearance: AppearanceConfig,
-    #[serde(default)]
     theme: ThemeConfig,
     #[serde(default)]
     status: StatusConfig,
-}
-
-#[derive(Debug, Default, Deserialize)]
-struct AppearanceConfig {
-    corner_radius: Option<f32>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -270,21 +282,16 @@ impl Default for ThemeColorsConfig {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ThemeGeometryConfig {
-    #[serde(default = "default_bar_height")]
-    top_bar_height: f32,
-    #[serde(default = "default_bar_margin_top")]
-    top_bar_margin_top: i32,
-    #[serde(default = "default_bar_window_gap")]
-    top_bar_window_gap: i32,
-    #[serde(default = "default_bar_margin_horizontal")]
-    top_bar_margin_horizontal: i32,
+    #[serde(default, rename = "border_width")]
+    _border_width: Option<f64>,
+    #[serde(default, rename = "focus_ring_width")]
+    _focus_ring_width: Option<f64>,
+    #[serde(default, rename = "window_radius")]
+    _window_radius: Option<f64>,
     #[serde(default)]
     shell_radius: Option<f32>,
-    #[serde(default)]
-    top_bar_radius: Option<f32>,
-    #[serde(default = "default_panel_padding")]
-    panel_padding: f32,
     #[serde(default = "default_control_gap")]
     control_gap: f32,
 }
@@ -292,13 +299,10 @@ struct ThemeGeometryConfig {
 impl Default for ThemeGeometryConfig {
     fn default() -> Self {
         Self {
-            top_bar_height: default_bar_height(),
-            top_bar_margin_top: default_bar_margin_top(),
-            top_bar_window_gap: default_bar_window_gap(),
-            top_bar_margin_horizontal: default_bar_margin_horizontal(),
+            _border_width: None,
+            _focus_ring_width: None,
+            _window_radius: None,
             shell_radius: None,
-            top_bar_radius: None,
-            panel_padding: default_panel_padding(),
             control_gap: default_control_gap(),
         }
     }
@@ -330,31 +334,33 @@ impl Default for SoftShadowConfig {
     }
 }
 
-pub(crate) fn load() -> ShellConfig {
+pub(crate) fn load() -> Result<ShellConfig, String> {
     let Some(path) = config_path() else {
-        return ShellConfig::default();
+        return Ok(ShellConfig::default());
     };
-    let Ok(source) = fs::read_to_string(&path) else {
-        return ShellConfig::default();
-    };
+    load_path(&path)
+}
 
-    match parse_source(&source) {
-        Ok(config) => config,
-        Err(error) => {
-            eprintln!("ferese-shell: failed to read {}: {error}", path.display());
-            ShellConfig::default()
-        }
+fn load_path(path: &std::path::Path) -> Result<ShellConfig, String> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(ShellConfig::default()),
+        Err(error) => return Err(format!("cannot read {}: {error}", path.display())),
     }
+    let source = fs::read_to_string(path).map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+    parse_source(&source).map_err(|error| format!("invalid configuration in {}: {error}", path.display()))
 }
 
 pub(crate) fn parse_source(source: &str) -> Result<ShellConfig, ferese_config::Error> {
     let document = ferese_config::Document::parse(source)?;
+    ferese_config::theme::validate_overrides(&document).map_err(ferese_config::Error::from)?;
     let snapshot = ferese_theme_client::service::current();
     let mut config = parse_document(
         &document.with_theme(&snapshot.presented),
         snapshot.presented.appearance,
         snapshot.mode,
     )?;
+
     config.apply_theme(&snapshot.presented);
     Ok(config)
 }
@@ -368,21 +374,16 @@ fn parse_document(
         .map_err(|error| ferese_config::Error::from(error.to_string()))
     {
         Ok(config) => {
+            if let Some(panels) = &config.panels {
+                ferese_config::panel::validate(panels).map_err(ferese_config::Error::from)?;
+            }
+
             config.animations.validate().map_err(ferese_config::Error::from)?;
             config.notifications.validate().map_err(ferese_config::Error::from)?;
             config.desktop_widgets.validate().map_err(ferese_config::Error::from)?;
             let mut theme = shell_theme(&config.theme);
             theme.appearance = appearance;
-            theme.material_radius = nonnegative_or(
-                config
-                    .theme
-                    .geometry
-                    .shell_radius
-                    .or(config.appearance.corner_radius)
-                    .or(config.theme.geometry.top_bar_radius)
-                    .unwrap_or(14.0),
-                14.0,
-            );
+            theme.material_radius = nonnegative_or(config.theme.geometry.shell_radius.unwrap_or(14.0), 14.0);
             theme.bar_radius = theme.material_radius;
 
             Ok(ShellConfig {
@@ -393,6 +394,7 @@ fn parse_document(
                 wallpaper: config.theme.background,
                 theme,
                 theme_mode: mode,
+                panels: config.panels.unwrap_or_else(|| vec![crate::panel::Panel::default()]),
                 status: StatusConfig {
                     low_battery_threshold: config.status.low_battery_threshold.min(100),
                     ..config.status
@@ -409,11 +411,13 @@ impl ShellConfig {
         self.theme = shell_theme(&config);
         self.theme.appearance = theme.appearance;
         self.theme.high_contrast = theme.accessibility.increase_contrast;
+        self.theme.reduce_transparency = theme.accessibility.reduce_transparency;
         self.theme.accent_gradient = ferese_theme::Palette::from_resolved(theme).accent_gradient;
         self.theme.material_radius = theme.tokens.geometry.shell_radius as f32;
         self.theme.bar_radius = self.theme.material_radius;
         self.font_family = Some(theme.tokens.typography.font_family.clone());
         self.wallpaper = config.background;
+
         if std::env::var_os("FERESE_COMPOSITOR_WALLPAPER").is_some() {
             self.wallpaper.path = None;
         }
@@ -439,6 +443,7 @@ fn shell_theme(theme: &ThemeConfig) -> ShellTheme {
     ShellTheme {
         appearance: defaults.appearance,
         high_contrast: defaults.high_contrast,
+        reduce_transparency: defaults.reduce_transparency,
         material_radius: defaults.material_radius,
         bar_background: {
             let mut background = parse_color(&theme.surface.bar.background).unwrap_or(defaults.bar_background);
@@ -460,19 +465,7 @@ fn shell_theme(theme: &ThemeConfig) -> ShellTheme {
         on_accent: parse_color(&theme.colors.on_accent).unwrap_or(defaults.on_accent),
         border: parse_color(&theme.colors.border).unwrap_or(defaults.border),
         shadow: parse_color(&theme.colors.shadow).unwrap_or(defaults.shadow),
-        bar_height: positive_or(theme.geometry.top_bar_height, defaults.bar_height),
-        bar_margin_top: theme.geometry.top_bar_margin_top.max(0),
-        bar_window_gap: theme.geometry.top_bar_window_gap.max(0),
-        bar_margin_horizontal: theme.geometry.top_bar_margin_horizontal.max(0),
-        bar_radius: nonnegative_or(
-            theme
-                .geometry
-                .shell_radius
-                .or(theme.geometry.top_bar_radius)
-                .unwrap_or(14.0),
-            defaults.bar_radius,
-        ),
-        panel_padding: nonnegative_or(theme.geometry.panel_padding, defaults.panel_padding),
+        bar_radius: nonnegative_or(theme.geometry.shell_radius.unwrap_or(14.0), defaults.bar_radius),
         control_gap: nonnegative_or(theme.geometry.control_gap, defaults.control_gap),
         shadow_offset_y: finite_or(theme.shadow.soft.offset_y, defaults.shadow_offset_y),
         shadow_blur: nonnegative_or(theme.shadow.soft.blur, defaults.shadow_blur),
@@ -496,14 +489,6 @@ pub(crate) fn parse_color(value: &str) -> Option<[u8; 4]> {
     };
 
     Some([red, green, blue, alpha])
-}
-
-fn positive_or(value: f32, fallback: f32) -> f32 {
-    if value.is_finite() && value > 0.0 {
-        value
-    } else {
-        fallback
-    }
 }
 
 fn nonnegative_or(value: f32, fallback: f32) -> f32 {
@@ -542,26 +527,6 @@ fn default_shadow() -> String {
     "#00000055".to_owned()
 }
 
-const fn default_bar_height() -> f32 {
-    28.0
-}
-
-const fn default_bar_window_gap() -> i32 {
-    0
-}
-
-const fn default_bar_margin_top() -> i32 {
-    0
-}
-
-const fn default_bar_margin_horizontal() -> i32 {
-    0
-}
-
-const fn default_panel_padding() -> f32 {
-    12.0
-}
-
 const fn default_control_gap() -> f32 {
     12.0
 }
@@ -588,6 +553,67 @@ pub(crate) fn config_path() -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn removed_geometry_is_rejected_before_a_runtime_snapshot_can_hide_it() {
+        for key in [
+            "top-bar-radius",
+            "top-bar-height",
+            "top-bar-margin-top",
+            "top-bar-margin-horizontal",
+            "top-bar-window-clearance",
+            "shell-raduis",
+        ] {
+            let source = format!("theme {{ geometry {{ {key} 8; }}; }}");
+            assert!(
+                parse_test_source(&source)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("unknown field")
+            );
+            for section in ["", "light", "dark"] {
+                let layer = if section.is_empty() {
+                    format!("geometry {{ {key} 8; }}")
+                } else {
+                    format!("{section} {{ geometry {{ {key} 8; }}; }}")
+                };
+                assert!(
+                    parse_source(&format!("theme {{ {layer}; }}"))
+                        .unwrap_err()
+                        .to_string()
+                        .contains(&key.replace('-', "_"))
+                );
+            }
+        }
+        parse_test_source("theme { geometry { border-width 1; focus-ring-width 2; window-radius 12; shell-radius 14; control-gap 8; }; }").unwrap();
+    }
+
+    #[test]
+    fn reduce_transparency_overrides_panel_opacity_for_both_surfaces() {
+        for surface in ["solid", "none"] {
+            for opacity in [0., 0.4, 1.] {
+                for reduce in [false, true] {
+                    let source = format!(
+                        "theme {{ material {{ style translucent; opacity 0.7; }}; accessibility {{ reduce-transparency #{reduce}; }}; }}; panel main {{ surface {surface}; group-surface island; background-opacity {opacity}; }}"
+                    );
+                    let document = ferese_config::Document::parse(&source).unwrap();
+                    let resolved = ferese_config::theme::resolve(
+                        &document,
+                        std::path::Path::new("/tmp"),
+                        jiff::Timestamp::now(),
+                        |_| unreachable!(),
+                    )
+                    .unwrap()
+                    .theme;
+                    let mut config = parse_test_source(&source).unwrap();
+                    config.apply_theme(&resolved);
+                    let effective = config.theme.panel_opacity(config.panels[0].background_opacity);
+                    assert_eq!(effective, if reduce { 1. } else { opacity });
+                    assert_eq!(effective, resolved.panel_opacity(config.panels[0].background_opacity));
+                }
+            }
+        }
+    }
+
     #[test]
     fn rejects_removed_physics_keys_before_publication() {
         for property in ["spring", "viewport-spring"] {
@@ -640,43 +666,66 @@ mod tests {
     }
 
     #[test]
-    fn island_layout_is_opt_in_and_does_not_change_modal_opacity() {
+    fn config_loading_uses_only_authored_panel_settings() {
+        use crate::panel::{GroupSurface, ItemKind, PanelSurface};
+        let defaults = parse_test_source("").unwrap();
+        assert_eq!(ShellConfig::default().panels, defaults.panels);
+        let source = "panel main { surface none; group-surface island; geometry { height 36; edge-margin 6; }; center { group title { surface none; item title kind=focused-window visible=#false; }; }; end { group status { island-padding 9.5; item battery kind=battery percentage=#false; }; }; }";
+        let current = parse_test_source(source).unwrap();
+        let panel = &current.panels[0];
+        assert_eq!(panel.surface, PanelSurface::None);
+        assert_eq!(panel.group_surface, GroupSurface::Island);
+        assert_eq!(panel.geometry.height, 36.);
+        assert_eq!(panel.geometry.edge_margin, 6);
+        assert_eq!(panel.end.groups[0].island_padding, 9.5);
+        assert!(!panel.center.groups[0].items[0].visible);
         assert_eq!(
-            parse_test_source("").unwrap().status.bar_layout,
-            ferese_config::BarLayout::Continuous
+            panel.end.groups[0].items[0].kind,
+            ItemKind::Battery { percentage: false }
         );
-        let normal = parse_test_source("theme { material { style \"translucent\"; opacity 0.7; }; }").unwrap();
-        let islands = parse_test_source(
-            "status { bar-layout \"islands\"; }\ntheme { material { style \"translucent\"; opacity 0.7; }; }",
-        )
-        .unwrap();
-        assert_eq!(islands.status.bar_layout, ferese_config::BarLayout::Islands);
-        assert_eq!(islands.theme.surface_popover, normal.theme.surface_popover);
-        assert_eq!(islands.theme.surface_base, normal.theme.surface_base);
-        assert_eq!(islands.theme.bar_background, normal.theme.bar_background);
-        assert!(parse_test_source("status { bar-layout \"invalid\"; }").is_err());
+        assert_eq!(parse_test_source("").unwrap().panels, defaults.panels);
     }
 
     #[test]
-    fn island_padding_accepts_compact_and_fractional_values_without_changing_panel_padding() {
-        let defaults = parse_test_source("").unwrap();
-        assert_eq!(defaults.status.bar_island_padding, 4.);
-        assert_eq!(
-            parse_test_source("status { bar-layout \"islands\"; }")
-                .unwrap()
-                .status
-                .bar_island_padding,
-            4.
-        );
-        for padding in [0., 4., 4.5, 32.] {
-            let source = format!("status {{ bar-island-padding {padding}; }}");
-            let config = parse_test_source(&source).unwrap();
-            assert_eq!(config.status.bar_island_padding, padding);
-            assert_eq!(config.theme.panel_padding, defaults.theme.panel_padding);
-        }
+    fn authored_composition_rejects_invalid_reload_data() {
+        let source = r#"panel "custom" { surface "none"; group-surface "island"; end { group "clocks" { item "one" kind="clock"; item "two" kind="clock"; }; }; }"#;
+        let config = parse_test_source(source).unwrap();
+        assert_eq!(config.panels[0].id.0, "custom");
+        assert_eq!(config.panels[0].surface, crate::panel::PanelSurface::None);
+        assert_eq!(config.panels[0].end.groups[0].items.len(), 2);
+        assert!(parse_test_source(&source.replace("item \"two\"", "item \"one\"")).is_err());
+        assert!(parse_test_source("panel one; panel two;").is_err());
+        assert!(parse_test_source("panel one { edge left; }").is_err());
+    }
 
+    #[test]
+    fn group_surfaces_do_not_change_modal_opacity() {
+        let normal = parse_test_source("theme { material { style translucent; opacity 0.7; }; }").unwrap();
+        let islands = parse_test_source("panel main { surface none; group-surface island; }\ntheme { material { style translucent; opacity 0.7; }; }").unwrap();
+        assert_eq!(islands.theme.surface_popover, normal.theme.surface_popover);
+        assert_eq!(islands.theme.surface_base, normal.theme.surface_base);
+        assert_eq!(islands.theme.bar_background, normal.theme.bar_background);
+        assert!(parse_test_source("panel main { surface islands; }").is_err());
+        assert!(parse_test_source("status { bar-layout islands; }").is_err());
+    }
+
+    #[test]
+    fn island_padding_accepts_fractional_values_independently_of_panel_geometry() {
+        for padding in [0., 4., 4.5, 32.] {
+            let source = format!(
+                "panel main {{ geometry {{ inner-padding 12; }}; end {{ group status {{ island-padding {padding}; }}; }}; }}"
+            );
+            let config = parse_test_source(&source).unwrap();
+            assert_eq!(config.panels[0].end.groups[0].island_padding, padding);
+            assert_eq!(config.panels[0].geometry.inner_padding, 12.);
+        }
         for value in ["-1", "32.5", "\"small\""] {
-            assert!(parse_test_source(&format!("status {{ bar-island-padding {value}; }}")).is_err());
+            assert!(
+                parse_test_source(&format!(
+                    "panel main {{ end {{ group status {{ island-padding {value}; }}; }}; }}"
+                ))
+                .is_err()
+            );
         }
     }
 
@@ -708,18 +757,44 @@ theme {
     }
 
     #[test]
-    fn shell_radius_unifies_surfaces_and_preserves_legacy_fallbacks() {
+    fn shell_radius_unifies_surfaces() {
         for radius in [0.0, 18.0] {
-            let config = parse_test_source(&format!("appearance {{\n corner-radius 9\n}}\ntheme {{\n geometry {{\n shell-radius {radius}\n top-bar-radius 5\n window-radius 23\n }}\n}}")).unwrap();
+            let config = parse_test_source(&format!(
+                "theme {{\n geometry {{\n shell-radius {radius}\n window-radius 23\n }}\n}}"
+            ))
+            .unwrap();
             assert_eq!(config.theme.material_radius, radius);
             assert_eq!(config.theme.bar_radius, radius);
         }
-        let legacy = parse_test_source("theme {\n geometry {\n top-bar-radius 7\n }\n}").unwrap();
-        assert_eq!(legacy.theme.material_radius, 7.0);
-        assert_eq!(legacy.theme.bar_radius, 7.0);
-        let legacy = parse_test_source("appearance {\n corner-radius 6\n}").unwrap();
-        assert_eq!(legacy.theme.material_radius, 6.0);
-        assert_eq!(legacy.theme.bar_radius, 6.0);
+    }
+
+    #[test]
+    fn startup_rejects_invalid_configuration_without_replacing_it() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("config.kdl");
+        let source =
+            "notifications { do-not-disturb #true; }\nstatus { bar-layout islands; battery-percentage #false; }";
+        std::fs::write(&path, source).unwrap();
+        let error = super::load_path(&path).unwrap_err();
+        assert!(error.contains("bar_layout"), "{error}");
+        assert!(error.contains(path.to_str().unwrap()), "{error}");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), source);
+        std::fs::write(&path, "panel main {").unwrap();
+        assert!(super::load_path(&path).is_err());
+    }
+
+    #[test]
+    fn startup_distinguishes_absent_configuration_from_read_errors() {
+        let directory = tempfile::tempdir().unwrap();
+        assert!(super::load_path(&directory.path().join("missing.kdl")).is_ok());
+        let error = super::load_path(directory.path()).unwrap_err();
+        assert!(error.contains("cannot read"), "{error}");
+        let path = directory.path().join("config.kdl");
+        std::os::unix::fs::symlink(directory.path().join("missing-target"), &path).unwrap();
+        assert!(
+            super::load_path(&path).is_err(),
+            "a broken config symlink is a read error"
+        );
     }
 
     #[test]
@@ -733,9 +808,9 @@ theme {
         );
         assert_eq!(config.theme.background.mode, WallpaperMode::Fill);
         let theme = shell_theme(&config.theme);
-        assert_eq!(theme.bar_margin_top, 0);
-        assert_eq!(theme.bar_height, 28.0);
-        assert_eq!(theme.bar_margin_horizontal, 0);
+        assert_eq!(crate::panel::PanelGeometry::default().edge_margin, 0);
+        assert_eq!(crate::panel::PanelGeometry::default().height, 28.0);
+        assert_eq!(crate::panel::PanelGeometry::default().side_margins, 0);
         assert_eq!(theme.bar_radius, 14.0);
         assert_eq!(theme.bar_background[3], 255);
         assert_eq!(theme.for_bar().text_primary, theme.bar_text_primary);

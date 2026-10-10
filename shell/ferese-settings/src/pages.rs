@@ -3,10 +3,19 @@ use super::{
     text_input, visuals, widget,
 };
 
+pub(super) const SIDEBAR_BREAKPOINT: f32 = 960.;
+
 impl App {
     pub(super) fn page_view(&self) -> Element<'_, Message> {
+        cosmic::iced::widget::responsive(move |size| self.page_layout(size.width < SIDEBAR_BREAKPOINT, size.height))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
+    }
+
+    fn page_layout(&self, compact: bool, height: f32) -> Element<'_, Message> {
         let palette = visuals::Palette::from_resolved(&self.resolved.presented);
-        let sidebar = column([])
+        let mut sidebar = column([])
             .spacing(3)
             .push(
                 widget::mouse_area(
@@ -14,7 +23,10 @@ impl App {
                         .spacing(8)
                         .align_y(Alignment::Center)
                         .push(visuals::brand_icon())
-                        .push(self.label("Ferese", 16.))
+                        .push(
+                            self.label("Ferese", 16.)
+                                .class(cosmic::theme::Text::Color(palette.text)),
+                        )
                         .width(Length::Fill),
                 )
                 .on_press(Message::DragWindow)
@@ -23,37 +35,51 @@ impl App {
             .push(widget::Space::new().height(14))
             .push(
                 text_input("Search settings", self.search.clone())
+                    .id(widget::Id::new("settings-search"))
                     .on_input(Message::Search)
                     .font(self.font)
                     .style(visuals::input_style(palette))
                     .size(12),
             )
             .push(widget::Space::new().height(8));
-        let mut navigation = column([]).spacing(3);
-        for page in Page::ALL {
-            navigation = navigation.push(
-                button::custom(
-                    row([])
-                        .spacing(8)
-                        .align_y(Alignment::Center)
-                        .push(visuals::icon(
-                            page,
-                            if self.page == page {
-                                palette.accent
-                            } else {
-                                palette.muted
-                            },
-                        ))
-                        .push(self.label(page.title(), 13.)),
-                )
-                .width(Length::Fill)
-                .padding([8, 8])
-                .class(visuals::navigation_style(palette, self.page == page))
-                .on_press(Message::Page(page)),
+        if compact {
+            sidebar = sidebar.push(self.settings_button(
+                "Close navigation",
+                "M6 6l12 12 M6 18L18 6",
+                Some(Message::Sidebar(false)),
+                false,
+            ));
+        }
+        let mut navigation = column([]).spacing(16);
+        for (title, pages) in Page::NAVIGATION {
+            let mut section = column([]).spacing(3).push(
+                container(self.label(title, 11.).class(cosmic::theme::Text::Color(palette.muted))).padding([0, 8]),
             );
+            for &page in pages {
+                let selected = self.page.navigation_page() == page;
+                section = section.push(
+                    button::custom(
+                        row([])
+                            .spacing(8)
+                            .align_y(Alignment::Center)
+                            .push(visuals::icon(
+                                page,
+                                if selected { palette.accent } else { palette.muted },
+                            ))
+                            .push(self.label(page.title(), 13.)),
+                    )
+                    .width(Length::Fill)
+                    .padding([8, 8])
+                    .class(visuals::navigation_style(palette, selected))
+                    .name(page.title())
+                    .on_press(Message::Page(if selected { self.page } else { page })),
+                );
+            }
+            navigation = navigation.push(section);
         }
         let sidebar = container(sidebar.push(scrollable(navigation).height(Length::Fill)))
-            .width(204)
+            .id("settings-sidebar")
+            .width(if compact { 244 } else { 204 })
             .height(Length::Fill)
             .padding([20, 10])
             .class(visuals::surface(palette.sidebar, 0.));
@@ -62,7 +88,7 @@ impl App {
                 .spacing(3)
                 .push(self.label(
                     if self.search.is_empty() {
-                        self.page.title()
+                        self.page.navigation_page().title()
                     } else {
                         "Search"
                     },
@@ -137,25 +163,31 @@ impl App {
         let mut body = column([]).spacing(6);
 
         if !self.search.is_empty() {
-            if !Page::ALL.into_iter().any(|p| p.matches(&self.search)) {
+            let pages = || {
+                Page::NAVIGATION
+                    .into_iter()
+                    .flat_map(|(_, pages)| pages.iter().copied())
+            };
+            if !pages().any(|p| p.matches(&self.search)) {
                 body = body.push(self.note("No matching settings. Try wallpaper, keyboard, or motion."));
             }
-            for page in Page::ALL.into_iter().filter(|p| p.matches(&self.search)) {
+            for page in pages().filter(|p| p.matches(&self.search)) {
+                let destination = page.search_destination(&self.search);
                 body = body.push(
                     button::custom(
                         column([])
                             .spacing(3)
                             .push(self.label(page.title(), 16.))
-                            .push(self.label(page.subtitle(), 12.)),
+                            .push(self.label(destination.subtitle(), 12.)),
                     )
                     .width(Length::Fill)
                     .padding(10)
                     .class(visuals::button_style(palette, false))
-                    .on_press(Message::Page(page)),
+                    .on_press(Message::Page(destination)),
                 );
             }
         } else {
-            if matches!(self.page, Page::Bar | Page::Windows) {
+            if self.page == Page::Windows {
                 body = body.push(visuals::preview_resolved(&self.draft, &self.resolved.presented));
             }
             if self.page == Page::Appearance {
@@ -181,7 +213,12 @@ impl App {
             if self.page == Page::Wallpaper {
                 body = body.push(self.wallpaper_controls());
             }
-            let fields = if self.page == Page::Wallpaper {
+            if self.page == Page::Bar && self.panel_page != crate::panel_controls::PanelPage::Arrange {
+                body = body.push(self.panel_controls());
+            }
+            let fields = if self.page == Page::Bar {
+                Vec::new()
+            } else if self.page == Page::Wallpaper {
                 self.wallpaper_fields()
             } else {
                 schema::fields(self.page)
@@ -427,11 +464,48 @@ impl App {
             }
         }
 
-        let mut content = column([]).spacing(8).push(
+        let mut page_heading = row([]).spacing(12).align_y(Alignment::Center);
+        if compact {
+            page_heading = page_heading.push(
+                container(self.settings_icon_button(
+                    "Show settings navigation",
+                    "M3 5h18v14H3z M9 5v14",
+                    Some(Message::Sidebar(true)),
+                ))
+                .id("settings-navigation-toggle"),
+            );
+        }
+        page_heading = page_heading.push(
             widget::mouse_area(heading.width(Length::Fill))
                 .on_press(Message::DragWindow)
                 .interaction(cosmic::iced::mouse::Interaction::Grab),
         );
+        let mut content = column([])
+            .spacing(if self.page == Page::Bar { 16 } else { 8 })
+            .push(page_heading);
+        if self.search.is_empty() && !self.page.subpages().is_empty() {
+            content = content.push(
+                container(
+                    row(self.page.subpages().iter().map(|&(page, title)| {
+                        button::custom(self.label(title, 13.))
+                            .name(format!("{}: {title}", self.page.navigation_page().title()))
+                            .padding([7, 12])
+                            .class(visuals::panel_button(palette, self.page == page))
+                            .on_press(Message::Page(page))
+                            .into()
+                    }))
+                    .spacing(2),
+                )
+                .padding(3)
+                .class(visuals::surface(palette.sidebar, 9.)),
+            );
+        }
+        if self.page == Page::Bar && self.search.is_empty() {
+            if self.panel_page == crate::panel_controls::PanelPage::Arrange {
+                content = content.push(self.panel_navigation());
+            }
+            content = content.push(self.panel_preview());
+        }
 
         if let Some(error) = &self.error {
             content = content.push(
@@ -442,25 +516,32 @@ impl App {
             );
         }
 
-        content = content.push(
-            scrollable(
-                container(cosmic::iced::widget::keyed_column([(self.page as usize, body.into())]))
-                    .padding(cosmic::iced::Padding {
-                        top: 0.,
-                        right: 12.,
-                        bottom: 0.,
-                        left: 2.,
-                    })
-                    .width(Length::Fill),
-            )
-            .id(widget::Id::new("settings-content"))
-            .direction(cosmic::iced::widget::scrollable::Direction::Vertical(
-                cosmic::iced::widget::scrollable::Scrollbar::new()
-                    .width(10)
-                    .scroller_width(3),
-            ))
-            .height(Length::Fill),
-        );
+        if self.page == Page::Bar
+            && self.search.is_empty()
+            && self.panel_page == crate::panel_controls::PanelPage::Arrange
+        {
+            content = content.push(self.panel_workspace());
+        } else {
+            content = content.push(
+                scrollable(
+                    container(cosmic::iced::widget::keyed_column([(self.page as usize, body.into())]))
+                        .padding(cosmic::iced::Padding {
+                            top: 0.,
+                            right: 12.,
+                            bottom: 0.,
+                            left: 2.,
+                        })
+                        .width(Length::Fill),
+                )
+                .id(widget::Id::new("settings-content"))
+                .direction(cosmic::iced::widget::scrollable::Direction::Vertical(
+                    cosmic::iced::widget::scrollable::Scrollbar::new()
+                        .width(10)
+                        .scroller_width(3),
+                ))
+                .height(Length::Fill),
+            );
+        }
         let footer = row([])
             .spacing(4)
             .align_y(Alignment::Center)
@@ -503,30 +584,72 @@ impl App {
             ));
         let footer: Element<'_, Message> = if self.page == Page::Connections {
             self.note("Connections are managed by the system. Passwords are not saved in your Ferese config.")
+        } else if self.page == Page::Bar {
+            container(
+                row([])
+                    .spacing(12)
+                    .align_y(Alignment::Center)
+                    .push(self.note(if self.saving { "Saving…" } else { &self.status }))
+                    .push(widget::Space::new().width(Length::Fill))
+                    .push(self.settings_button(
+                        "Undo",
+                        "M3 10h8 M3 10V3 M3 10c3-7 17-6 17 3a7 7 0 0 1-7 7",
+                        (self.undo.is_some() && !self.saving).then_some(Message::Undo),
+                        false,
+                    ))
+                    .push(self.settings_button(
+                        "Reload configuration",
+                        "M21 3v6h-6 M3 21v-6h6 M3 9a9 9 0 0 1 15-6l3 6 M21 15a9 9 0 0 1-15 6l-3-6",
+                        (!self.saving).then_some(Message::Reload),
+                        false,
+                    )),
+            )
+            .padding([10, 0])
+            .into()
         } else {
             footer.into()
         };
-        let view: Element<'_, Message> = row([])
-            .push(sidebar)
-            .push(
-                container(
-                    container(column([]).push(content.height(Length::Fill)).push(footer).spacing(6))
-                        .padding(cosmic::iced::Padding {
-                            top: 20.,
-                            right: 20.,
-                            bottom: 8.,
-                            left: 20.,
-                        })
-                        .max_width(840)
-                        .width(Length::Fill)
-                        .height(Length::Fill),
-                )
-                .width(Length::Fill)
-                .center_x(Length::Fill)
-                .height(Length::Fill)
-                .class(visuals::surface(palette.background, 0.)),
+        let mut drawer = None;
+        let sidebar: Element<'_, Message> = if compact {
+            if self.sidebar_open {
+                drawer = Some(sidebar);
+            }
+            widget::Space::new().width(0).into()
+        } else {
+            sidebar.into()
+        };
+        let view = row([]).push(sidebar).push(
+            container(
+                container(column([]).push(content.height(Length::Fill)).push(footer).spacing(6))
+                    .padding(cosmic::iced::Padding {
+                        top: 20.,
+                        right: 20.,
+                        bottom: 8.,
+                        left: 20.,
+                    })
+                    .max_width(if self.page == Page::Bar { 1120 } else { 840 })
+                    .width(Length::Fill)
+                    .height(Length::Fill),
             )
-            .into();
+            .width(Length::Fill)
+            .center_x(Length::Fill)
+            .height(Length::Fill)
+            .id("settings-page")
+            .class(visuals::surface(palette.background, 0.)),
+        );
+        // Keep the page mounted and full-width while compact navigation is open.
+        let mut view = widget::popover(view).modal(true);
+        if let Some(sidebar) = drawer {
+            let dismiss = widget::mouse_area(
+                container(widget::Space::new().width(Length::Fill).height(Length::Fill))
+                    .class(visuals::surface(cosmic::iced::Color::BLACK.scale_alpha(0.20), 0.)),
+            )
+            .on_press(Message::Sidebar(false));
+            view = view
+                .position(widget::popover::Position::Point(cosmic::iced::Point::ORIGIN))
+                .popup(row([]).push(sidebar).push(dismiss).width(Length::Fill).height(height));
+        }
+        let view: Element<'_, Message> = view.into();
         if self.profile_pages {
             let page = self.page;
             cosmic::iced::widget::sensor(view)

@@ -11,7 +11,7 @@ uniform sampler2D tex;
 #endif
 uniform float alpha;
 uniform vec4 visible_rect;
-uniform float material_radius;
+uniform vec4 material_radii;
 uniform vec2 texture_size;
 uniform vec2 capture_origin;
 uniform float blur_radius;
@@ -20,9 +20,10 @@ uniform float background_opacity;
 uniform vec4 tint;
 varying vec2 v_coords;
 //_CORNERS_
+//_MATERIAL_CORNERS_
 
 void main() {
-    float sdf = rounded_rect_distance(gl_FragCoord.xy, visible_rect, material_radius);
+    float sdf = rounded_rect_corners_distance(gl_FragCoord.xy, visible_rect, material_radii);
     float coverage = alpha * presentation_alpha * edge_coverage(sdf);
     if (coverage <= 0.0) { gl_FragColor = vec4(0.0); return; }
     vec2 coords = (gl_FragCoord.xy - capture_origin) / texture_size;

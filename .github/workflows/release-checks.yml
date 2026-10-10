@@ -25,7 +25,7 @@ jobs:
         run: |
           dnf install -y --allowerasing python3 python3-gobject python3-pillow git curl gcc gcc-c++ make cmake pkgconf-pkg-config \
             wayland-devel wayland-protocols-devel libxkbcommon-devel libinput-devel systemd-devel libseat-devel \
-            mesa-libgbm-devel mesa-libEGL-devel mesa-dri-drivers libdrm-devel fontconfig-devel \
+            mesa-libgbm-devel mesa-libEGL-devel mesa-dri-drivers mesa-vulkan-drivers libdrm-devel fontconfig-devel \
             freetype-devel expat-devel dbus-daemon dbus-tools desktop-file-utils foot pam xorg-x11-xauth \
             clang clang-devel pipewire-devel pipewire wireplumber polkit polkit-libs libei \
             xdg-desktop-portal xdg-desktop-portal-gtk \
