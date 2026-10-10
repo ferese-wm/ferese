@@ -315,10 +315,75 @@ fn appearance_scroll_preserves_progress_and_settles_visibility() {
     }
 }
 
-/// Reproducible sketches rendered from the actual widgets, with no live services.
 #[test]
-#[ignore = "writes Panel & Shell review images to /tmp/ferese-panel-review"]
-fn render_panel_review_states() {
+fn gpu_panel_text_survives_preview_clipping_and_scrolling() {
+    #[derive(Default)]
+    struct Labels {
+        labels: Vec<(String, Rectangle, Option<Rectangle>)>,
+        traversal_start: usize,
+    }
+    impl Operation for Labels {
+        fn traverse(&mut self, children: &mut dyn FnMut(&mut dyn Operation)) {
+            let start = self.labels.len();
+            children(self);
+            self.traversal_start = start;
+        }
+        fn text(&mut self, _: Option<&widget::Id>, bounds: Rectangle, text: &str) {
+            if matches!(
+                text,
+                "Top panel"
+                    | "Shown on all displays"
+                    | "Position"
+                    | "Background"
+                    | "Default group surface"
+                    | "Background opacity"
+                    | "Group borders"
+                    | "Corner radius"
+                    | "Size & spacing"
+                    | "Side margins"
+                    | "Window clearance"
+                    | "Arrangement"
+                    | "Start"
+                    | "Center"
+                    | "End"
+                    | "Add group"
+                    | "Add item"
+                    | "Overview"
+                    | "Workspaces"
+                    | "Battery"
+                    | "Placement"
+                    | "Show item"
+                    | "Overflow"
+                    | "Preferred size"
+                    | "Battery percentage"
+                    | "Make it your own"
+                    | "Surface"
+                    | "Item spacing"
+                    | "Vertical padding"
+                    | "Horizontal padding"
+                    | "Undo"
+                    | "Reload configuration"
+            ) {
+                self.labels.push((text.into(), bounds, None));
+            }
+        }
+        fn scrollable(
+            &mut self,
+            _: Option<&widget::Id>,
+            viewport: Rectangle,
+            _: Rectangle,
+            translation: Vector,
+            _: &mut dyn cosmic::iced::advanced::widget::operation::Scrollable,
+        ) {
+            // Scrollable reports its offset after traversing its content.
+            for (_, bounds, clip) in &mut self.labels[self.traversal_start..] {
+                *bounds = *bounds - translation;
+                *clip = Some(clip.map_or(viewport, |clip| {
+                    (clip - translation).intersection(&viewport).unwrap_or_default()
+                }));
+            }
+        }
+    }
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -327,11 +392,139 @@ fn render_panel_review_states() {
         .block_on(<cosmic::Renderer as Headless>::new(
             Font::default(),
             Pixels(14.),
-            Some("tiny-skia"),
+            Some("wgpu"),
+        ))
+        .expect("GPU panel rendering requires a hardware or software WGPU adapter");
+    for width in [740., 1100.] {
+        for scale in [1., 1.75] {
+            for selection in ["panels", "items", "battery", "status"] {
+                let mut app = App::init(
+                    Core::default(),
+                    (
+                        "/unused/panel-text.kdl".into(),
+                        Snapshot::parse("theme { mode dark; family \"ferese-blue\"; }".into()),
+                        Some(InitialPage::Bar),
+                    ),
+                )
+                .0;
+                app.panel_page = if selection == "panels" {
+                    panel_controls::PanelPage::Panels
+                } else {
+                    panel_controls::PanelPage::Arrange
+                };
+                app.panel_selection = (selection == "battery").then(|| ferese_config::panel::ItemId("battery".into()));
+                app.panel_group_selection =
+                    (selection == "status").then(|| ferese_config::panel::GroupId("status".into()));
+                let bounds = Rectangle::with_size(Size::new(width, 650.));
+                let physical = Size::new((width * scale) as u32, (650. * scale) as u32);
+                let theme = app.native_palette.native_theme();
+                let mut view = app.page_view();
+                let mut tree = Tree::new(&view);
+                let node =
+                    view.as_widget_mut()
+                        .layout(&mut tree, &renderer, &layout::Limits::new(Size::ZERO, bounds.size()));
+                let mut checked = 0;
+                for offset in [0., 180., 400.] {
+                    for id in ["settings-content", "panel-inspector-scroll"] {
+                        let mut scroll = cosmic::iced::advanced::widget::operation::scrollable::scroll_to::<()>(
+                            widget::Id::new(id),
+                            cosmic::iced::widget::scrollable::AbsoluteOffset {
+                                x: None,
+                                y: Some(offset),
+                            },
+                        );
+                        view.as_widget_mut()
+                            .operate(&mut tree, Layout::new(&node), &renderer, &mut scroll);
+                    }
+                    renderer.reset(bounds);
+                    view.as_widget().draw(
+                        &tree,
+                        &mut renderer,
+                        &theme,
+                        &renderer::Style {
+                            text_color: app.native_palette.text,
+                            icon_color: app.native_palette.text,
+                            scale_factor: scale as f64,
+                        },
+                        Layout::new(&node),
+                        mouse::Cursor::Unavailable,
+                        &bounds,
+                    );
+                    if let Some(mut overlay) =
+                        view.as_widget_mut()
+                            .overlay(&mut tree, Layout::new(&node), &renderer, &bounds, Vector::ZERO)
+                    {
+                        let overlay = overlay.as_overlay_mut();
+                        let node = overlay.layout(&renderer, bounds.size());
+                        renderer.with_layer(bounds, |renderer| {
+                            overlay.draw(
+                                renderer,
+                                &theme,
+                                &renderer::Style {
+                                    text_color: app.native_palette.text,
+                                    icon_color: app.native_palette.text,
+                                    scale_factor: scale as f64,
+                                },
+                                Layout::new(&node),
+                                mouse::Cursor::Unavailable,
+                            );
+                        });
+                    }
+                    let mut labels = Labels::default();
+                    view.as_widget_mut()
+                        .operate(&mut tree, Layout::new(&node), &renderer, &mut labels);
+                    let pixels = Headless::screenshot(&mut renderer, physical, scale, theme.cosmic().bg_color().into());
+                    for (label, rect, clip) in labels.labels {
+                        let clip = clip.unwrap_or(bounds);
+                        if rect.width <= 0.
+                            || rect.height <= 0.
+                            || rect.x < clip.x
+                            || rect.y < clip.y + 2.
+                            || rect.x + rect.width > clip.x + clip.width
+                            || rect.y + rect.height > clip.y + clip.height - 2.
+                        {
+                            continue;
+                        }
+                        let mut ink = 0;
+                        for y in (rect.y * scale).ceil() as u32..((rect.y + rect.height) * scale).floor() as u32 {
+                            for x in (rect.x * scale).ceil() as u32..((rect.x + rect.width) * scale).floor() as u32 {
+                                let index = ((y * physical.width + x) * 4) as usize;
+                                if pixels[index..index + 3].iter().any(|channel| *channel > 140) {
+                                    ink += 1;
+                                }
+                            }
+                        }
+                        assert!(
+                            ink > 12,
+                            "missing panel text {label:?}: state={selection} width={width} scale={scale} offset={offset} bounds={rect:?}"
+                        );
+                        checked += 1;
+                    }
+                }
+                assert!(checked >= 6, "state={selection} must exercise visible panel labels");
+            }
+        }
+    }
+}
+
+/// Reproducible sketches rendered from the actual widgets, with no live services.
+#[test]
+#[ignore = "writes Panel & Shell review images to /tmp/ferese-panel-review-{backend}"]
+fn render_panel_review_states() {
+    let backend = std::env::var("FERESE_REVIEW_BACKEND").unwrap_or_else(|_| "tiny-skia".into());
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let mut renderer = runtime
+        .block_on(<cosmic::Renderer as Headless>::new(
+            Font::default(),
+            Pixels(14.),
+            Some(&backend),
         ))
         .unwrap();
-    let directory = "/tmp/ferese-panel-review";
-    std::fs::create_dir_all(directory).unwrap();
+    let directory = format!("/tmp/ferese-panel-review-{backend}");
+    std::fs::create_dir_all(&directory).unwrap();
     let mut app = App::init(
         Core::default(),
         (

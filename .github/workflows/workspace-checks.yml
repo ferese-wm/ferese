@@ -56,7 +56,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential pkg-config dbus-daemon libwayland-dev \
             libxkbcommon-dev xkb-data libinput-dev libudev-dev libseat-dev libgbm-dev \
-            libegl-dev libegl-mesa0 libgl1-mesa-dri libdrm-dev libfontconfig1-dev libfreetype-dev libexpat1-dev xauth \
+            libegl-dev libegl-mesa0 libgl1-mesa-dri mesa-vulkan-drivers libdrm-dev libfontconfig1-dev libfreetype-dev libexpat1-dev xauth \
             clang libclang-dev libpipewire-0.3-dev libspa-0.2-dev libglib2.0-dev libgstreamer1.0-dev libpam-modules
       - name: Create private test runtime directory
         run: install -d -m 0700 "$XDG_RUNTIME_DIR"

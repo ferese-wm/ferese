@@ -11,7 +11,7 @@ ferese-theme-model = { path = "../ferese-theme-model" }
 ferese-config = { path = "../ferese-config" }
 libcosmic = { workspace = true, features = ["a11y"] }
 
-iced_accessibility = { git = "https://github.com/ferese-wm/libcosmic", tag = "ferese-v0.1.0" }
+iced_accessibility = { git = "https://github.com/ferese-wm/libcosmic", rev = "891a4e821687543f5c0debfa385b0b16cf7d9b2c" }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt"] }
