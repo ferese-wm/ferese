@@ -29,30 +29,34 @@ pub struct Resolution {
 }
 
 fn zone_width(panel: &Panel, zone: &Zone, items: &BTreeMap<ItemId, Placement>) -> f32 {
-    let mut groups = Vec::new();
+    let mut width = 0.0;
+    let mut group_count: usize = 0;
     for group in &zone.groups {
-        let mut widths = Vec::new();
+        let mut content_width = 0.0;
+        let mut occupied = false;
         for item in &group.items {
             if let Some(Placement::Visible { width, .. }) = items.get(&item.id)
                 && *width > 0.0
             {
-                if !widths.is_empty() {
-                    widths.push(item.gap_before.unwrap_or(group.spacing));
+                if occupied {
+                    content_width += item.gap_before.unwrap_or(group.spacing);
                 }
-                widths.push(*width);
+                content_width += *width;
+                occupied = true;
             }
         }
-        if !widths.is_empty() {
+        if occupied {
             let padding = 2.0 * f32::from(group.padding[1]);
             let island = if panel.resolved_surface(group) == super::GroupSurface::Island {
                 2.0 * group.island_padding
             } else {
                 0.0
             };
-            groups.push(widths.iter().sum::<f32>() + padding + island);
+            width += content_width + padding + island;
+            group_count += 1;
         }
     }
-    groups.iter().sum::<f32>() + zone.spacing * groups.len().saturating_sub(1) as f32
+    width + zone.spacing * group_count.saturating_sub(1) as f32
 }
 
 impl Resolution {
@@ -271,19 +275,14 @@ pub fn resolve_with_gap(
         let mut high = maximum;
         for _ in 0..20 {
             let width = (low + high) * 0.5;
-            result
-                .items
-                .insert(measured.id.clone(), Placement::Visible { representation, width });
+            *result.items.get_mut(&measured.id).unwrap() = Placement::Visible { representation, width };
             result.update_widths(panel, overflow_width);
             if fits(&result) { low = width } else { high = width }
         }
-        result.items.insert(
-            measured.id.clone(),
-            Placement::Visible {
-                representation,
-                width: low,
-            },
-        );
+        *result.items.get_mut(&measured.id).unwrap() = Placement::Visible {
+            representation,
+            width: low,
+        };
     }
     result
         .overflow
@@ -295,6 +294,55 @@ pub fn resolve_with_gap(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn zone_width_ignores_empty_groups_and_gaps_before_hidden_items() {
+        use super::super::{Group, GroupSurface, Item, ItemKind};
+        let mut panel = Panel::default();
+        let mut first = Item::new("first", ItemKind::Overview);
+        first.gap_before = Some(99.);
+        let hidden = Item::new("hidden", ItemKind::Network);
+        let mut last = Item::new("last", ItemKind::Clock);
+        last.gap_before = Some(7.);
+        let mut group = Group::new("content", vec![first, hidden, last], [0, 3], 5.);
+        group.surface = Some(GroupSurface::Island);
+        group.island_padding = 4.;
+        let empty = Group::new("empty", vec![Item::new("missing", ItemKind::Media)], [0, 99], 99.);
+        let trailing = Group::new(
+            "trailing",
+            vec![Item::new("trailing", ItemKind::Battery { percentage: false })],
+            [0, 2],
+            5.,
+        );
+        panel.start.groups = vec![empty.clone(), group, empty, trailing];
+        panel.start.spacing = 11.;
+        let items = [
+            (
+                ItemId("first".into()),
+                Placement::Visible {
+                    representation: Representation::Icon,
+                    width: 20.,
+                },
+            ),
+            (ItemId("hidden".into()), Placement::Overflow),
+            (
+                ItemId("last".into()),
+                Placement::Visible {
+                    representation: Representation::Wide,
+                    width: 30.,
+                },
+            ),
+            (
+                ItemId("trailing".into()),
+                Placement::Visible {
+                    representation: Representation::Icon,
+                    width: 10.,
+                },
+            ),
+        ]
+        .into();
+        assert_eq!(zone_width(&panel, &panel.start, &items), 96.);
+    }
 
     #[test]
     fn a_center_only_item_keeps_its_preferred_size_without_side_gaps() {

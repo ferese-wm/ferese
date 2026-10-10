@@ -74,7 +74,7 @@ fn discover_icons(entries: Option<Arc<Vec<fde::DesktopEntry>>>, app_ids: Vec<Str
         let mut seen = HashSet::new();
         Arc::new(
             fde::Iter::new(fde::default_paths())
-                .entries::<&str>(None)
+                .entries::<&str>(Some(&[]))
                 .filter(|entry| seen.insert(entry.appid.clone()))
                 .filter(|entry| !entry.hidden())
                 .collect(),
@@ -402,7 +402,14 @@ impl WorkspaceUi {
     }
 
     fn load_icons(&mut self, snapshot: &ShellSnapshot, needed: bool) -> Task<Message> {
-        if !needed || self.icons_loading {
+        if !needed {
+            self.entries = None;
+            self.icons = HashMap::new();
+            return Task::none();
+        }
+        self.icons
+            .retain(|id, _| snapshot.windows.iter().any(|window| &window.app_id == id));
+        if self.icons_loading {
             return Task::none();
         }
         let app_ids: Vec<_> = snapshot
@@ -515,6 +522,28 @@ mod tests {
         assert_eq!(ui.load_icons(&snapshot, true).units(), 0);
         assert!(ui.entries.is_none());
         assert!(ui.icons.is_empty());
+    }
+
+    #[test]
+    fn workspace_icon_storage_follows_running_apps_and_selected_style() {
+        let mut ui = WorkspaceUi::default();
+        let mut snapshot = snapshot(1);
+        add_window(&mut snapshot, "running");
+        ui.entries = Some(Arc::new(Vec::new()));
+        for id in ["running", "closed"] {
+            ui.icons
+                .insert(id.into(), icon::from_svg_bytes(ferese_theme::icons::APPLICATION));
+        }
+        assert_eq!(ui.load_icons(&snapshot, true).units(), 0);
+        assert!(ui.icons.contains_key("running"));
+        assert!(!ui.icons.contains_key("closed"));
+        assert!(ui.entries.is_some());
+        ui.icons_loading = true;
+        assert_eq!(ui.load_icons(&snapshot, false).units(), 0);
+        assert!(ui.icons.is_empty());
+        assert_eq!(ui.icons.capacity(), 0);
+        assert!(ui.entries.is_none());
+        assert!(ui.icons_loading, "an in-flight worker still owns its discovery request");
     }
 
     #[test]
