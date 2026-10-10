@@ -113,7 +113,7 @@ m.main()
             self.assertEqual((self.bundles[0] / name).stat().st_mode & 0o777, 0o755)
 
     def without_appearance_wallpapers(self, bundle):
-        self.without_files(bundle, {'wallpapers/ferese-wallpaper-dark.jpg', 'wallpapers/ferese-wallpaper-light.png'})
+        self.without_files(bundle, {'wallpapers/ferese-wallpaper-dark.png', 'wallpapers/ferese-wallpaper-light.png'})
 
     def without_files(self, bundle, removed):
         manifest_path = bundle / 'manifest.json'

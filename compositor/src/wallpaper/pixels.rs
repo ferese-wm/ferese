@@ -173,7 +173,7 @@ mod tests {
         let paths = [
             Path::new(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/../assets/wallpapers/ferese-wallpaper-dark.jpg"
+                "/../assets/wallpapers/ferese-wallpaper-dark.png"
             )),
             Path::new(concat!(
                 env!("CARGO_MANIFEST_DIR"),

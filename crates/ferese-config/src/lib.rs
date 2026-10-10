@@ -59,7 +59,7 @@ pub fn default_wallpaper_for(appearance: theme::Appearance) -> &'static str {
     static DARK: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     let (slot, name) = match appearance {
         theme::Appearance::Light => (&LIGHT, "ferese-wallpaper-light.png"),
-        theme::Appearance::Dark => (&DARK, "ferese-wallpaper-dark.jpg"),
+        theme::Appearance::Dark => (&DARK, "ferese-wallpaper-dark.png"),
     };
     slot.get_or_init(|| {
         let path = std::env::current_exe()
