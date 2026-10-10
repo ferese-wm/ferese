@@ -203,6 +203,22 @@ impl FereseShell {
         ])
     }
 
+    pub(super) fn owns_surface(&self, id: window::Id) -> bool {
+        self.outputs.iter().any(|entry| {
+            entry.bar == id
+                || entry.wallpaper == Some(id)
+                || entry.clock == Some(id)
+                || entry.notes.iter().any(|(_, surface)| *surface == id)
+        }) || self.menu.as_ref().is_some_and(|menu| menu.id == id)
+            || self.system_modal.as_ref().is_some_and(|modal| modal.contains(id))
+            || self
+                .notification_surface
+                .as_ref()
+                .is_some_and(|surface| surface.id == id)
+            || self.workspace_ui.tooltip == Some(id)
+            || self.note_drag.as_ref().is_some_and(|drag| drag.overlay == id)
+    }
+
     pub(super) fn handle_event(&mut self, event: Event, id: window::Id) -> Task<Message> {
         if matches!(event, Event::Mouse(cosmic::iced::mouse::Event::CursorLeft)) {
             return self.dismiss_workspace_tooltip_for_bar(id);
@@ -337,6 +353,15 @@ impl FereseShell {
         match event {
             Event::PlatformSpecific(PlatformSpecific::Wayland(wayland::Event::Output(event, output))) => {
                 self.output_event(event, output)
+            }
+            Event::Window(window::Event::Opened { .. }) if !self.owns_surface(id) => {
+                // Creation is asynchronous. A close can arrive before the
+                // surface exists, so dispose of any late opening once its
+                // owner has gone away. IDs are never reused by the shell.
+                Task::batch([
+                    destroy_layer_surface(id),
+                    cosmic::task::message(cosmic::Action::Surface(cosmic::surface::action::destroy_popup(id))),
+                ])
             }
             Event::Window(window::Event::Opened { .. })
                 if self.outputs.iter().any(|entry| entry.bar == id)
