@@ -10,7 +10,7 @@ ferese-theme-client = { path = "../../crates/ferese-theme-client" }
 ferese-theme = { path = "../../crates/ferese-theme" }
 ferese-config = { path = "../../crates/ferese-config" }
 libcosmic = { workspace = true, features = ["wgpu", "a11y", "xdg-portal"] }
-iced_accessibility = { git = "https://github.com/ferese-wm/libcosmic", rev = "891a4e821687543f5c0debfa385b0b16cf7d9b2c" }
+iced_accessibility = { git = "https://github.com/ferese-wm/libcosmic", tag = "ferese-v0.1.1" }
 ferese-ipc = { path = "../../crates/ferese-ipc" }
 serde_json.workspace = true
 tempfile.workspace = true
