@@ -79,7 +79,8 @@ impl Resolution {
     fn required_width_with_gap(&self, gap: f32) -> f32 {
         let [start, center, end] = self.zone_widths;
         if center > 0.0 {
-            2.0 * start.max(end) + center + 2.0 * gap
+            let side = start.max(end);
+            center + if side > 0.0 { 2.0 * (side + gap) } else { 0.0 }
         } else {
             start + end + if start > 0.0 && end > 0.0 { gap } else { 0.0 }
         }
@@ -294,6 +295,63 @@ pub fn resolve_with_gap(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_center_only_item_keeps_its_preferred_size_without_side_gaps() {
+        use super::super::{Group, Item, ItemKind};
+        let mut panel = Panel::default();
+        panel.start.groups.clear();
+        panel.end.groups.clear();
+        panel.center.groups = vec![Group::new(
+            "center",
+            vec![Item::new("media", ItemKind::Media)],
+            [0, 0],
+            0.,
+        )];
+        let measurements = [Measurement {
+            id: ItemId("media".into()),
+            alternatives: vec![
+                (Representation::Wide, 40.),
+                (Representation::Compact, 24.),
+                (Representation::Icon, 12.),
+            ],
+            minimum: None,
+        }];
+        for gap in [0., 8., 32.] {
+            for available in [40., 48.] {
+                let resolution = resolve_with_gap(&panel, &measurements, available, 24., gap);
+                assert_eq!(
+                    resolution.items[&ItemId("media".into())],
+                    Placement::Visible {
+                        representation: Representation::Wide,
+                        width: 40.
+                    }
+                );
+                assert!(resolution.overflow.is_empty());
+                assert!(resolution.fits(available));
+            }
+        }
+    }
+
+    #[test]
+    fn center_collision_spacing_applies_only_to_occupied_sides() {
+        for (widths, required) in [
+            ([0., 40., 0.], 40.),
+            ([20., 40., 0.], 96.),
+            ([0., 40., 20.], 96.),
+            ([20., 40., 30.], 116.),
+            ([20., 0., 30.], 58.),
+            ([0., 0., 30.], 30.),
+        ] {
+            let resolution = Resolution {
+                zone_widths: widths,
+                zone_gap: 8.,
+                ..Default::default()
+            };
+            assert!(resolution.fits(required));
+            assert!(!resolution.fits(required - 1.));
+        }
+    }
 
     #[test]
     fn a_crowded_opposite_zone_does_not_leave_media_compacted_in_unused_space() {

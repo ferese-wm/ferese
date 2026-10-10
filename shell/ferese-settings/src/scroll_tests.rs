@@ -317,6 +317,15 @@ fn appearance_scroll_preserves_progress_and_settles_visibility() {
 
 #[test]
 fn gpu_panel_text_survives_preview_clipping_and_scrolling() {
+    // Native startup preloads text fonts; headless renderers skip that step.
+    // Supply a bundled proportional font even on minimal CI images.
+    cosmic::iced::advanced::graphics::text::font_system()
+        .write()
+        .unwrap()
+        .load_font(std::borrow::Cow::Borrowed(include_bytes!(
+            "../../../assets/fonts/Comfortaa-Regular.otf"
+        )));
+
     #[derive(Default)]
     struct Labels {
         labels: Vec<(String, Rectangle, Option<Rectangle>)>,
@@ -407,6 +416,7 @@ fn gpu_panel_text_survives_preview_clipping_and_scrolling() {
                     ),
                 )
                 .0;
+                app.font = Font::with_name("Comfortaa");
                 app.panel_page = if selection == "panels" {
                     panel_controls::PanelPage::Panels
                 } else {
