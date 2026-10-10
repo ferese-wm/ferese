@@ -1,4 +1,3 @@
-pub mod desktop;
 pub mod families;
 pub mod notifications;
 pub mod panel;
@@ -86,7 +85,6 @@ fn field(name: &str, parent: &str) -> String {
         "window-rule" => "window_rules".into(),
         "output-profile" => "output_profiles".into(),
         "output" => "outputs".into(),
-        "note" => "notes".into(),
         "panel" => "panels".into(),
         "group" => "groups".into(),
         "item" => "items".into(),
@@ -101,7 +99,6 @@ fn is_records(key: &str, parent: &str) -> bool {
             "",
             "bindings" | "window_rules" | "output_profiles" | "autostart" | "panels"
         ) | ("output_profiles", "outputs")
-            | ("desktop_widgets", "notes")
             | ("start" | "center" | "end", "groups")
             | ("groups", "items")
     )
@@ -149,6 +146,9 @@ fn object(doc: &KdlDocument, parent: &str) -> Result<Map<String, Value>, Error> 
 
     for node in doc.nodes() {
         let key = field(node.name().value(), parent);
+        if parent.is_empty() && key == "desktop_widgets" {
+            return Err(Error("Unknown configuration section: desktop-widgets".into()));
+        }
         let value = node_value(node, &key, parent)?;
         if is_records(&key, parent) {
             let records = result.entry(key).or_insert_with(|| Value::Array(Vec::new()));
@@ -187,7 +187,7 @@ fn node_value(node: &KdlNode, key: &str, parent: &str) -> Result<Value, Error> {
             "bindings" => &["keys", "action", "argument"],
             "output_profiles" => &["name"],
             "outputs" => &["match"],
-            "notes" | "panels" | "groups" | "items" => &["id"],
+            "panels" | "groups" | "items" => &["id"],
             "autostart" => &[],
             "window_rules" => &[],
             _ => unreachable!(),
@@ -678,7 +678,7 @@ fn set_in(doc: &mut KdlDocument, parts: &[&str], parent: &str, value: Value) -> 
                 "bindings" => &["keys", "action", "argument"],
                 "outputs" => &["match"],
                 "output_profiles" => &["name"],
-                "notes" | "panels" | "groups" | "items" => &["id"],
+                "panels" | "groups" | "items" => &["id"],
                 _ => &[],
             };
             let position = positions.iter().position(|p| *p == rest[0]);
@@ -770,7 +770,6 @@ fn node_name(key: &str, parent: &str) -> String {
         "window_rules" => "window-rule".into(),
         "output_profiles" => "output-profile".into(),
         "outputs" => "output".into(),
-        "notes" => "note".into(),
         "panels" => "panel".into(),
         "groups" => "group".into(),
         "items" => "item".into(),
@@ -787,7 +786,7 @@ fn value_node(key: &str, value: &Value, parent: &str) -> Result<KdlNode, Error> 
                 "bindings" => &["keys", "action", "argument"],
                 "output_profiles" => &["name"],
                 "outputs" => &["match"],
-                "notes" | "panels" | "groups" | "items" => &["id"],
+                "panels" | "groups" | "items" => &["id"],
                 _ => &[],
             };
             let mut child = KdlDocument::new();
@@ -881,44 +880,6 @@ mod tests {
     }
 
     #[test]
-    fn widget_output_arrays_and_command_names_survive_edits() {
-        let source = r#"commands {
-    my_command "program"
-}
-desktop-widgets {
-    clock enabled=#true {
-        outputs "DP-1"
-    }
-    note "n" text="x" {
-        outputs "DP-2"
-    }
-}
-"#;
-        let mut doc = Document::parse(source).unwrap();
-        assert_eq!(doc.get("commands.my_command").unwrap(), &serde_json::json!(["program"]));
-        assert_eq!(
-            doc.get("desktop_widgets.clock.outputs").unwrap(),
-            &serde_json::json!(["DP-1"])
-        );
-        assert_eq!(
-            doc.get("desktop_widgets.notes.0.outputs").unwrap(),
-            &serde_json::json!(["DP-2"])
-        );
-        doc.set("commands.new_command", serde_json::json!(["two", "words"]))
-            .unwrap();
-        doc.set("desktop_widgets.clock.outputs", serde_json::json!([])).unwrap();
-        let reparsed = Document::parse(&doc.to_string()).unwrap();
-        assert_eq!(
-            reparsed.get("commands.new_command").unwrap(),
-            &serde_json::json!(["two", "words"])
-        );
-        assert_eq!(
-            reparsed.get("desktop_widgets.clock.outputs").unwrap(),
-            &serde_json::json!([])
-        );
-    }
-
-    #[test]
     fn inline_comments_and_failed_edits_leave_document_intact() {
         let mut doc = Document::parse("// header\nanimations {\n    speed 0.75 // keep inline\n}\n").unwrap();
         doc.set("animations.speed", 0.8.into()).unwrap();
@@ -971,6 +932,47 @@ autostart "program" "two words" enabled=#false
     }
 
     #[test]
+    fn output_arrays_and_command_names_survive_edits() {
+        let mut doc = Document::parse(
+            "output-profile desk { output match=\"DP-1\" { position 0 0; }; }\ncommands { lock-screen \"locker\"; }\n",
+        )
+        .unwrap();
+        doc.set("output_profiles.0.outputs.0.position", serde_json::json!([100, 200]))
+            .unwrap();
+        doc.set("commands.lock-screen", serde_json::json!(["ferese-lock", "--lock"]))
+            .unwrap();
+        let reparsed = Document::parse(&doc.to_string()).unwrap();
+        assert_eq!(
+            reparsed.get("output_profiles.0.outputs.0.position").unwrap(),
+            &serde_json::json!([100, 200])
+        );
+        assert_eq!(
+            reparsed.get("commands.lock-screen").unwrap(),
+            &serde_json::json!(["ferese-lock", "--lock"])
+        );
+    }
+
+    #[test]
+    fn edits_preserve_comments_and_multiline_authored_metadata() {
+        let mut doc = Document::parse("// keep this\ncustom { text \"old\"; }\n").unwrap();
+        doc.set("custom.text", "one\ntwo".into()).unwrap();
+        assert!(doc.to_string().contains("// keep this"));
+        let reparsed = Document::parse(&doc.to_string()).unwrap();
+        assert_eq!(reparsed.get("custom.text").unwrap(), "one\ntwo");
+    }
+
+    #[test]
+    fn removed_desktop_widgets_are_rejected_without_affecting_authored_metadata() {
+        for section in ["desktop-widgets", "desktop_widgets"] {
+            let source = format!("{section} {{ clock {{ enabled #true; }}; }}");
+            let error = Document::parse(&source).unwrap_err().to_string();
+            assert!(error.contains("Unknown configuration section"), "{error}");
+            assert!(crate::from_str::<serde_json::Value>(&source).is_err());
+        }
+        assert!(Document::parse("panel main { metadata { desktop-widgets \"custom\"; }; }").is_ok());
+    }
+
+    #[test]
     fn rejects_duplicate_fields_ambiguous_syntax_and_nonfinite_values() {
         for source in [
             "input { repeat-rate 25; repeat_rate 30; }",
@@ -981,32 +983,5 @@ autostart "program" "two words" enabled=#false
         ] {
             assert!(Document::parse(source).is_err(), "{source}");
         }
-    }
-
-    #[test]
-    fn edits_preserve_comments_commands_and_note_contents() {
-        let source = r#"// personal comment
-commands {
-    screenshot-full "ferese-screenshot" "--full"
-}
-binding "Swipe3Left" "move" "left"
-desktop-widgets {
-    note "a" text="line one"
-}
-"#;
-        let mut doc = Document::parse(source).unwrap();
-        doc.set("desktop_widgets.notes.0.text", "one\ntwo".into()).unwrap();
-        assert!(doc.to_string().contains("// personal comment"));
-        let reparsed = Document::parse(&doc.to_string()).unwrap();
-        assert_eq!(
-            reparsed.get("commands.screenshot-full").unwrap(),
-            &serde_json::json!(["ferese-screenshot", "--full"])
-        );
-        assert_eq!(reparsed.get("desktop_widgets.notes.0.text").unwrap(), "one\ntwo");
-        doc.add("desktop_widgets.notes", vec![("id".into(), "b".into())])
-            .unwrap();
-        assert_eq!(doc.get("desktop_widgets.notes").unwrap().as_array().unwrap().len(), 2);
-        doc.remove("desktop_widgets.notes", 0).unwrap();
-        assert_eq!(doc.get("desktop_widgets.notes.0.id").unwrap(), "b");
     }
 }

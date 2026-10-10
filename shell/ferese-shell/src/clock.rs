@@ -5,98 +5,32 @@ use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use cosmic::iced::{Subscription, futures};
-use ferese_config::desktop::Clock;
 use jiff::{Timestamp, Zoned, tz::TimeZone};
 
 const SECOND: i128 = 1_000_000_000;
 const MINUTE: i128 = 60 * SECOND;
 const UNNAMED_ZONE: &str = "ferese/unnamed-system-zone";
-// Fractional formats keep the previous sampling rate; nanosecond formats must
-// not turn into a nanosecond timer that continuously rebuilds the shell.
-const FRACTION_SAMPLE: i128 = SECOND / 2;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Labels {
-    pub bar: String,
-    pub desktop: (String, String),
+pub fn current_time() -> String {
+    labels(Timestamp::now(), &zones().0)
 }
 
-#[derive(Clone, Debug, Hash, PartialEq, Eq)]
-struct Format {
-    time: String,
-    date: Option<String>,
-    zone: Option<String>,
-    lowercase: bool,
-}
-
-#[derive(Clone, Debug, Hash, PartialEq, Eq)]
-struct Settings {
-    bar: bool,
-    desktop: Option<Arc<Format>>,
-}
-
-#[derive(Default)]
-pub struct Service {
-    desktop: Option<Arc<Format>>,
-}
-
-impl Service {
-    pub fn new(clock: &Clock) -> Self {
-        let mut service = Self::default();
-        service.configure(clock);
-        service
-    }
-
-    pub fn configure(&mut self, clock: &Clock) {
-        if !clock.enabled {
-            self.desktop = None;
-            return;
-        }
-
-        let date = clock.show_date.then_some(clock.date_format.as_str());
-        let zone = clock.time_zone.as_deref().filter(|zone| !zone.is_empty());
-        if self.desktop.as_ref().is_some_and(|format| {
-            format.time == clock.time_format
-                && format.date.as_deref() == date
-                && format.zone.as_deref() == zone
-                && format.lowercase == clock.lowercase
-        }) {
-            return;
-        }
-
-        self.desktop = Some(Arc::new(Format {
-            time: clock.time_format.clone(),
-            date: date.map(str::to_owned),
-            zone: zone.map(str::to_owned),
-            lowercase: clock.lowercase,
-        }));
-    }
-
-    pub fn subscription(&self, bar: bool, desktop_visible: bool) -> Subscription<Labels> {
-        self.settings(bar, desktop_visible)
-            .map_or_else(Subscription::none, |settings| Subscription::run_with(settings, stream))
-    }
-
-    fn settings(&self, bar: bool, desktop_visible: bool) -> Option<Settings> {
-        let desktop = if desktop_visible { self.desktop.clone() } else { None };
-        if !bar && desktop.is_none() {
-            return None;
-        }
-
-        Some(Settings { bar, desktop })
+pub fn subscription(visible: bool) -> Subscription<String> {
+    if visible {
+        Subscription::run_with((), stream)
+    } else {
+        Subscription::none()
     }
 }
 
-fn stream(settings: &Settings) -> impl futures::Stream<Item = Labels> + use<> {
-    let settings = settings.clone();
+fn stream(_: &()) -> impl futures::Stream<Item = String> + use<> {
     let (send, receive) = tokio::sync::mpsc::channel(1);
     let stop = match UnixStream::pair() {
         Ok((stop, cancel)) => {
             match std::thread::Builder::new().name("ferese-clock".into()).spawn(move || {
-                if let Err(error) = watch(&settings, send, cancel) {
+                if let Err(error) = watch(send, cancel) {
                     eprintln!("ferese-shell: clock subscription: {error}");
                 }
             }) {
@@ -118,22 +52,22 @@ fn stream(settings: &Settings) -> impl futures::Stream<Item = Labels> + use<> {
     })
 }
 
-fn watch(settings: &Settings, send: tokio::sync::mpsc::Sender<Labels>, cancel: UnixStream) -> io::Result<()> {
+fn watch(send: tokio::sync::mpsc::Sender<String>, cancel: UnixStream) -> io::Result<()> {
     let timer =
         owned_fd(unsafe { libc::timerfd_create(libc::CLOCK_REALTIME, libc::TFD_CLOEXEC | libc::TFD_NONBLOCK) })?;
-    let (mut system, mut desktop, mut paths) = zones(settings);
+    let (mut system, mut paths) = zones();
     let mut timezone = ZoneWatch::new(&paths)?;
     let mut previous = None;
     loop {
         let now = Timestamp::now();
-        let labels = labels(settings, now, &system, &desktop);
+        let labels = labels(now, &system);
         if previous.as_ref() != Some(&labels) {
             previous = Some(labels.clone());
             if send.blocking_send(labels).is_err() {
                 return Ok(());
             }
         }
-        if arm(&timer, deadline(settings, now, &system, &desktop))? {
+        if arm(&timer, zone_deadline(&now.to_zoned(system.clone())))? {
             continue;
         }
         let mut fds = [
@@ -170,7 +104,7 @@ fn watch(settings: &Settings, send: tokio::sync::mpsc::Sender<Labels>, cancel: U
         }
         if fds[1].revents != 0 && timezone.changed()? {
             jiff::tz::db().reset();
-            (system, desktop, paths) = zones(settings);
+            (system, paths) = zones();
             timezone = ZoneWatch::new(&paths)?;
         }
     }
@@ -220,7 +154,7 @@ fn read_timer(timer: &OwnedFd) -> io::Result<()> {
     Ok(())
 }
 
-fn zones(settings: &Settings) -> (TimeZone, TimeZone, Vec<PathBuf>) {
+fn zones() -> (TimeZone, Vec<PathBuf>) {
     let mut paths = vec![PathBuf::from("/etc/localtime"), PathBuf::from("/etc/timezone")];
     // Load the file directly: Jiff's system timezone cache lasts five minutes.
     let system = match std::env::var("TZ") {
@@ -228,13 +162,7 @@ fn zones(settings: &Settings) -> (TimeZone, TimeZone, Vec<PathBuf>) {
         Ok(zone) => named_zone(zone.trim_start_matches(':'), &mut paths).unwrap_or_else(TimeZone::system),
         Err(_) => file_zone(Path::new("/etc/localtime"), &mut paths).unwrap_or_else(TimeZone::system),
     };
-    let desktop = settings
-        .desktop
-        .as_ref()
-        .and_then(|format| format.zone.as_ref())
-        .and_then(|zone| named_zone(zone, &mut paths))
-        .unwrap_or_else(|| system.clone());
-    (system, desktop, paths)
+    (system, paths)
 }
 
 fn named_zone(name: &str, paths: &mut Vec<PathBuf>) -> Option<TimeZone> {
@@ -270,91 +198,18 @@ fn file_zone(path: &Path, paths: &mut Vec<PathBuf>) -> Option<TimeZone> {
     Some(zone)
 }
 
-fn labels(settings: &Settings, now: Timestamp, system: &TimeZone, desktop: &TimeZone) -> Labels {
-    let bar = if settings.bar {
-        ferese_theme::calendar::format_bar_time(&now.to_zoned(system.clone()))
-    } else {
-        String::new()
-    };
-    let desktop = settings
-        .desktop
-        .as_ref()
-        .map(|format| {
-            let now = now.to_zoned(desktop.clone());
-            let mut broken = jiff::fmt::strtime::BrokenDownTime::from(&now);
-            if desktop.iana_name() == Some(UNNAMED_ZONE) {
-                // Copied localtime files have no IANA name. Preserve Jiff's
-                // %Q offset fallback while retaining their DST/abbreviation.
-                broken.set_iana_time_zone(None);
-            }
-            let time = broken.to_string(&format.time).unwrap_or_default();
-            let date = format
-                .date
-                .as_ref()
-                .map(|date| broken.to_string(date).unwrap_or_default())
-                .unwrap_or_default();
-            if format.lowercase {
-                (time.to_lowercase(), date.to_lowercase())
-            } else {
-                (time, date)
-            }
-        })
-        .unwrap_or_default();
-    Labels { bar, desktop }
+fn labels(now: Timestamp, system: &TimeZone) -> String {
+    ferese_theme::calendar::format_bar_time(&now.to_zoned(system.clone()))
 }
 
-fn deadline(settings: &Settings, now: Timestamp, system: &TimeZone, desktop: &TimeZone) -> i128 {
-    let mut next = i128::MAX;
-    if settings.bar {
-        next = next.min(zone_deadline(&now.to_zoned(system.clone()), MINUTE));
-    }
-    if let Some(format) = &settings.desktop {
-        let precision =
-            format_precision(&format.time).min(format.date.as_deref().map(format_precision).unwrap_or(MINUTE));
-        next = next.min(zone_deadline(&now.to_zoned(desktop.clone()), precision));
-    }
-    next
-}
-
-fn zone_deadline(now: &Zoned, precision: i128) -> i128 {
-    let stamp = now.timestamp().as_nanosecond();
-    let next = if precision == MINUTE {
-        stamp + MINUTE - i128::from(now.second()) * SECOND - i128::from(now.subsec_nanosecond())
-    } else {
-        (stamp.div_euclid(precision) + 1) * precision
-    };
+fn zone_deadline(now: &Zoned) -> i128 {
+    let next = now.timestamp().as_nanosecond() + MINUTE
+        - i128::from(now.second()) * SECOND
+        - i128::from(now.subsec_nanosecond());
     now.time_zone()
         .following(now.timestamp())
         .next()
         .map_or(next, |transition| next.min(transition.timestamp().as_nanosecond()))
-}
-
-fn format_precision(format: &str) -> i128 {
-    let mut precision = MINUTE;
-    let mut chars = format.chars();
-    while let Some(character) = chars.next() {
-        if character != '%' {
-            continue;
-        }
-        let Some(mut directive) = chars.next() else {
-            break;
-        };
-        if directive == '%' {
-            continue;
-        }
-        while matches!(directive, '_' | '-' | '0' | '^' | '#' | ':' | '.') || directive.is_ascii_digit() {
-            let Some(next) = chars.next() else {
-                return precision;
-            };
-            directive = next;
-        }
-        precision = precision.min(match directive {
-            'f' | 'N' => FRACTION_SAMPLE,
-            'S' | 's' | 'T' | 'c' | 'r' | 'X' => SECOND,
-            _ => MINUTE,
-        });
-    }
-    precision
 }
 
 struct ZoneWatch {
@@ -433,142 +288,10 @@ impl ZoneWatch {
 mod tests {
     use super::*;
     use std::time::Duration;
-
-    fn settings(time: Option<&str>, date: Option<&str>) -> Settings {
-        Settings {
-            bar: true,
-            desktop: time.map(|time| {
-                Arc::new(Format {
-                    time: time.into(),
-                    date: date.map(str::to_owned),
-                    zone: None,
-                    lowercase: false,
-                })
-            }),
-        }
-    }
-
     #[test]
-    fn subscription_rebuilds_and_style_changes_keep_the_cached_format() {
-        let mut clock = Clock {
-            enabled: true,
-            time_zone: Some("Asia/Kathmandu".into()),
-            ..Clock::default()
-        };
-        let mut service = Service::new(&clock);
-        let first = service.settings(true, true).unwrap();
-        let format = first.desktop.as_ref().unwrap();
-        for _ in 0..100 {
-            let current = service.settings(true, true).unwrap();
-            assert!(Arc::ptr_eq(format, current.desktop.as_ref().unwrap()));
-            assert_eq!(first, current);
-        }
-
-        clock.time_size += 8.;
-        clock.margin_x += 10;
-        service.configure(&clock);
-        assert!(Arc::ptr_eq(format, service.desktop.as_ref().unwrap()));
-        assert!(service.settings(true, false).unwrap().desktop.is_none());
-        assert!(service.settings(false, false).is_none());
-        assert!(Arc::ptr_eq(
-            format,
-            service.settings(false, true).unwrap().desktop.as_ref().unwrap()
-        ));
-    }
-
-    #[test]
-    fn format_changes_replace_subscription_identity_without_mutating_the_worker_settings() {
-        let mut clock = Clock {
-            enabled: true,
-            ..Clock::default()
-        };
-        let mut service = Service::new(&clock);
-        let initial = service.settings(true, true).unwrap();
-        clock.time_format = "%H:%M:%S".into();
-        service.configure(&clock);
-        let seconds = service.settings(true, true).unwrap();
-        assert_ne!(initial, seconds);
-        assert_eq!(initial.desktop.as_ref().unwrap().time, "%-I:%M %p");
-
-        clock.show_date = false;
-        service.configure(&clock);
-        let no_date = service.settings(true, true).unwrap();
-        assert_ne!(seconds, no_date);
-        assert!(no_date.desktop.as_ref().unwrap().date.is_none());
-        clock.date_format = "%Y".into();
-        service.configure(&clock);
-        assert!(Arc::ptr_eq(
-            no_date.desktop.as_ref().unwrap(),
-            service.desktop.as_ref().unwrap()
-        ));
-
-        clock.time_zone = Some("UTC".into());
-        service.configure(&clock);
-        assert_ne!(no_date, service.settings(true, true).unwrap());
-        clock.lowercase = !clock.lowercase;
-        let previous = service.settings(true, true).unwrap();
-        service.configure(&clock);
-        assert_ne!(previous, service.settings(true, true).unwrap());
-        clock.enabled = false;
-        service.configure(&clock);
-        assert!(service.settings(false, true).is_none());
-        assert!(service.settings(true, true).unwrap().desktop.is_none());
-        clock.enabled = true;
-        service.configure(&clock);
-        assert!(service.settings(false, true).unwrap().desktop.is_some());
-    }
-
-    #[test]
-    fn production_subscription_uses_visible_outputs_formats_and_hidden_date() {
-        let mut clock = Clock {
-            enabled: true,
-            time_format: "%H:%M".into(),
-            date_format: "%S%.f".into(),
-            ..Clock::default()
-        };
-        assert_eq!(Service::new(&clock).subscription(false, false).units(), 0);
-        assert_eq!(Service::new(&clock).subscription(true, false).units(), 1);
-        let hidden = Service::new(&clock).settings(true, false).unwrap();
-        assert!(hidden.desktop.is_none());
-        let now: Timestamp = "2026-10-04T12:34:56.123Z".parse().unwrap();
-        assert_eq!(
-            deadline(&hidden, now, &TimeZone::UTC, &TimeZone::UTC),
-            "2026-10-04T12:35:00Z".parse::<Timestamp>().unwrap().as_nanosecond()
-        );
-        let visible = Service::new(&clock).settings(true, true).unwrap();
-        assert_eq!(
-            deadline(&visible, now, &TimeZone::UTC, &TimeZone::UTC),
-            "2026-10-04T12:34:56.5Z".parse::<Timestamp>().unwrap().as_nanosecond()
-        );
-        clock.show_date = false;
-        let hidden_date = Service::new(&clock).settings(true, true).unwrap();
-        assert_ne!(hidden_date, visible);
-        assert_eq!(
-            deadline(&hidden_date, now, &TimeZone::UTC, &TimeZone::UTC),
-            "2026-10-04T12:35:00Z".parse::<Timestamp>().unwrap().as_nanosecond()
-        );
-        clock.time_format = "%S".into();
-        assert_ne!(Service::new(&clock).settings(true, true).unwrap(), hidden_date);
-        clock.enabled = false;
-        assert_eq!(Service::new(&clock).subscription(false, true).units(), 0);
-    }
-
-    #[test]
-    fn named_zone_labels_match_configured_clock_including_aliases_and_case() {
-        let now: Timestamp = "2026-10-04T12:34:56.123Z".parse().unwrap();
-        for zone in ["America/New_York", "Etc/UTC", "Asia/Kathmandu", "UTC", "utc"] {
-            let clock = Clock {
-                enabled: true,
-                time_format: "%H:%M:%S%.3f %Q %Z".into(),
-                date_format: "%a %F".into(),
-                time_zone: Some(zone.into()),
-                ..Clock::default()
-            };
-            let settings = Service::new(&clock).settings(true, true).unwrap();
-            let desktop = named_zone(zone, &mut Vec::new()).unwrap_or_else(|| panic!("zone {zone} unavailable"));
-            let actual = labels(&settings, now, &TimeZone::UTC, &desktop).desktop;
-            assert_eq!(actual, clock.labels(&now.to_zoned(TimeZone::UTC)).unwrap(), "{zone}");
-        }
+    fn panel_subscription_stops_when_all_panels_are_hidden() {
+        assert_eq!(subscription(false).units(), 0);
+        assert_eq!(subscription(true).units(), 1);
     }
 
     #[test]
@@ -590,54 +313,31 @@ mod tests {
         std::fs::rename(replacement, &path).unwrap();
         assert!(watcher.changed().unwrap());
         let second = file_zone(&path, &mut Vec::new()).unwrap();
-        let bar_settings = settings(None, None);
-        assert_eq!(labels(&bar_settings, now, &first, &first).bar, "4 oct, 8:34 am");
-        assert_eq!(labels(&bar_settings, now, &second, &second).bar, "4 oct, 6:19 pm");
-        let settings = settings(Some("%Q %:Q %Z %z"), None);
-        assert_eq!(
-            labels(&settings, now, &first, &first).desktop.0,
-            "-0400 -04:00 EDT -0400"
-        );
-        assert_eq!(
-            labels(&settings, now, &second, &second).desktop.0,
-            "+0545 +05:45 +0545 +0545"
-        );
+        assert_eq!(labels(now, &first), "4 oct, 8:34 am");
+        assert_eq!(labels(now, &second), "4 oct, 6:19 pm");
     }
 
     #[test]
-    fn visible_format_precision_handles_seconds_escapes_and_sampled_fractions() {
-        for format in ["%-I:%M %p", "%a, %b %-d", "%%S %%f", "%:z %:::z", "fixed text"] {
-            assert_eq!(format_precision(format), MINUTE, "{format}");
+    fn realtime_jumps_recompute_boundaries_and_timezone_labels() {
+        let initial: Timestamp = "2026-10-04T12:34:56Z".parse().unwrap();
+        let first = labels(initial, &TimeZone::UTC);
+        for (stamp, expected) in [
+            ("2026-10-04T11:20:01Z", "2026-10-04T11:21:00Z"),
+            ("2026-10-04T15:40:01Z", "2026-10-04T15:41:00Z"),
+        ] {
+            let now: Timestamp = stamp.parse().unwrap();
+            assert_ne!(labels(now, &TimeZone::UTC), first);
+            assert_eq!(
+                zone_deadline(&now.to_zoned(TimeZone::UTC)),
+                expected.parse::<Timestamp>().unwrap().as_nanosecond()
+            );
         }
-        for format in ["%S", "%_3S", "%s", "%T", "%c", "%r", "%X"] {
-            assert_eq!(format_precision(format), SECOND, "{format}");
-        }
-        for format in ["%f", "%N", "%.f", "%.3f", "%9f", "%1f"] {
-            assert_eq!(format_precision(format), FRACTION_SAMPLE, "{format}");
-        }
-        let now: Timestamp = "2026-10-04T12:34:56.123Z".parse().unwrap();
-        let minute = "2026-10-04T12:35:00Z".parse::<Timestamp>().unwrap().as_nanosecond();
+        let zone = TimeZone::get("Asia/Kathmandu").unwrap();
+        assert_ne!(labels(initial, &zone), first);
+        assert_eq!(labels(initial, &zone), "4 oct, 6:19 pm");
         assert_eq!(
-            deadline(&settings(None, None), now, &TimeZone::UTC, &TimeZone::UTC),
-            minute
-        );
-        assert_eq!(
-            deadline(
-                &settings(Some("%H:%M"), Some("%S")),
-                now,
-                &TimeZone::UTC,
-                &TimeZone::UTC
-            ),
-            "2026-10-04T12:34:57Z".parse::<Timestamp>().unwrap().as_nanosecond()
-        );
-        assert_eq!(
-            deadline(
-                &settings(Some("%H:%M:%S%.3f"), None),
-                now,
-                &TimeZone::UTC,
-                &TimeZone::UTC
-            ),
-            "2026-10-04T12:34:56.5Z".parse::<Timestamp>().unwrap().as_nanosecond()
+            labels(initial, &TimeZone::UTC),
+            labels(initial + jiff::SignedDuration::from_secs(1), &TimeZone::UTC)
         );
     }
 
@@ -649,7 +349,7 @@ mod tests {
         ] {
             let now: Timestamp = stamp.parse().unwrap();
             assert_eq!(
-                zone_deadline(&now.to_zoned(TimeZone::UTC), MINUTE),
+                zone_deadline(&now.to_zoned(TimeZone::UTC)),
                 expected.parse::<Timestamp>().unwrap().as_nanosecond()
             );
         }
@@ -660,45 +360,14 @@ mod tests {
         ] {
             let now: Timestamp = stamp.parse().unwrap();
             let expected: Timestamp = expected.parse().unwrap();
-            assert_eq!(
-                zone_deadline(&now.to_zoned(zone.clone()), MINUTE),
-                expected.as_nanosecond()
-            );
-            assert_eq!(labels(&settings(None, None), expected, &zone, &zone).bar, label);
+            assert_eq!(zone_deadline(&now.to_zoned(zone.clone())), expected.as_nanosecond());
+            assert_eq!(labels(expected, &zone), label);
         }
         let zone = TimeZone::fixed(jiff::tz::Offset::from_seconds(30).unwrap());
         let now: Timestamp = "2026-10-04T12:34:20Z".parse().unwrap();
         assert_eq!(
-            zone_deadline(&now.to_zoned(zone), MINUTE),
+            zone_deadline(&now.to_zoned(zone)),
             "2026-10-04T12:34:30Z".parse::<Timestamp>().unwrap().as_nanosecond()
-        );
-    }
-
-    #[test]
-    fn realtime_jumps_recompute_boundaries_and_timezone_labels() {
-        let settings = settings(Some("%H:%M %Z"), None);
-        let initial: Timestamp = "2026-10-04T12:34:56Z".parse().unwrap();
-        let earlier: Timestamp = "2026-10-04T11:20:01Z".parse().unwrap();
-        let later: Timestamp = "2026-10-04T15:40:01Z".parse().unwrap();
-        let first = labels(&settings, initial, &TimeZone::UTC, &TimeZone::UTC);
-        for (now, expected) in [(earlier, "2026-10-04T11:21:00Z"), (later, "2026-10-04T15:41:00Z")] {
-            assert_ne!(labels(&settings, now, &TimeZone::UTC, &TimeZone::UTC), first);
-            assert_eq!(
-                deadline(&settings, now, &TimeZone::UTC, &TimeZone::UTC),
-                expected.parse::<Timestamp>().unwrap().as_nanosecond()
-            );
-        }
-        let zone = TimeZone::get("Asia/Kathmandu").unwrap();
-        assert_ne!(labels(&settings, initial, &zone, &zone), first);
-        assert_eq!(labels(&settings, initial, &zone, &zone).desktop.0, "18:19 +0545");
-        assert_eq!(
-            labels(&settings, initial, &TimeZone::UTC, &TimeZone::UTC),
-            labels(
-                &settings,
-                initial + jiff::SignedDuration::from_secs(1),
-                &TimeZone::UTC,
-                &TimeZone::UTC
-            )
         );
     }
 
@@ -739,7 +408,7 @@ mod tests {
         let (send, mut receive) = tokio::sync::mpsc::channel(1);
         let (done_send, done_receive) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
-            done_send.send(watch(&settings(None, None), send, cancel)).unwrap();
+            done_send.send(watch(send, cancel)).unwrap();
         });
         assert!(receive.blocking_recv().is_some());
         drop(stop);

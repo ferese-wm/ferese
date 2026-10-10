@@ -346,26 +346,10 @@ window-rule app-id="mine" floating=#true
     }
 
     #[test]
-    fn nested_note_lists_keep_existing_clock_settings() {
-        let mut snapshot =
-            Snapshot::parse("desktop-widgets {\n    clock {\n        enabled #true\n    }\n}\n".into()).unwrap();
-        snapshot
-            .edit(&Edit::Add(
-                "desktop_widgets.notes".into(),
-                vec![("id".into(), "first".into()), ("text".into(), "one\ntwo".into())],
-            ))
-            .unwrap();
-        assert_eq!(snapshot.records("desktop_widgets.notes"), 1);
-        assert!(snapshot.boolean("desktop_widgets.clock.enabled", false));
-        assert_eq!(snapshot.string("desktop_widgets.notes.0.text", ""), "one\ntwo");
-        snapshot.edit(&Edit::Remove("desktop_widgets.notes".into(), 0)).unwrap();
-        assert_eq!(snapshot.records("desktop_widgets.notes"), 0);
-    }
-
-    #[test]
     #[ignore = "requires a built compositor; run with FERESE_TEST_BINARY=target/debug/ferese"]
     fn all_gui_controls_and_presets_pass_compositor_validation() {
         let binary = std::env::var_os("FERESE_TEST_BINARY").expect("Set FERESE_TEST_BINARY");
+        let initial = Snapshot::parse(include_str!("../../../packaging/config.kdl").into()).unwrap();
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("config.kdl");
         let validate = |snapshot: &Snapshot| {
@@ -379,14 +363,10 @@ window-rule app-id="mine" floating=#true
             );
         };
         for page in crate::schema::Page::ALL {
-            let mut fields = crate::schema::fields(page);
-            if page == crate::schema::Page::Desktop {
-                fields.extend(crate::schema::note_fields(0));
-            }
+            let fields = crate::schema::fields(page);
             for field in fields {
                 use crate::schema::Kind;
                 let values: Vec<Value> = match field.kind {
-                    Kind::Font => vec!["".into(), "sans-serif".into()],
                     Kind::Toggle(_) => vec![true.into(), false.into()],
                     Kind::Range { min, max, integer, .. } => {
                         if integer {
@@ -399,22 +379,14 @@ window-rule app-id="mine" floating=#true
                     Kind::Choice { choices, .. } => choices.iter().map(|(v, _)| (*v).into()).collect(),
                 };
                 for value in values {
-                    let mut snapshot = Snapshot::parse(String::new()).unwrap();
-                    if field.path.starts_with("desktop_widgets.notes.") {
-                        snapshot
-                            .edit(&Edit::Add(
-                                "desktop_widgets.notes".into(),
-                                vec![("id".into(), "test".into())],
-                            ))
-                            .unwrap();
-                    }
+                    let mut snapshot = initial.clone();
                     snapshot.edit(&set(&field.path, value)).unwrap();
                     validate(&snapshot);
                 }
             }
         }
         for preset in 0..crate::visuals::PRESETS.len() {
-            let mut snapshot = Snapshot::parse(String::new()).unwrap();
+            let mut snapshot = initial.clone();
             for edit in crate::visuals::preset(preset) {
                 snapshot.edit(&edit).unwrap();
             }

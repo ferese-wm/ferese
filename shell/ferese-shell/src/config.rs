@@ -8,7 +8,6 @@ const DEFAULT_BACKGROUND: [u8; 3] = [11, 15, 20];
 #[derive(Clone, Debug)]
 pub(crate) struct ShellConfig {
     pub(crate) notifications: ferese_config::notifications::NotificationConfig,
-    pub(crate) desktop_widgets: ferese_config::desktop::DesktopWidgets,
     pub(crate) animations: crate::motion::Settings,
     pub(crate) font_family: Option<String>,
     pub(crate) wallpaper: WallpaperConfig,
@@ -23,7 +22,6 @@ impl Default for ShellConfig {
         let status = StatusConfig::default();
         Self {
             notifications: Default::default(),
-            desktop_widgets: Default::default(),
             animations: Default::default(),
             font_family: None,
             wallpaper: Default::default(),
@@ -185,8 +183,6 @@ struct FereseConfig {
     panels: Option<Vec<crate::panel::Panel>>,
     #[serde(default)]
     notifications: ferese_config::notifications::NotificationConfig,
-    #[serde(default)]
-    desktop_widgets: ferese_config::desktop::DesktopWidgets,
     #[serde(default)]
     animations: crate::motion::Settings,
     #[serde(default)]
@@ -380,7 +376,6 @@ fn parse_document(
 
             config.animations.validate().map_err(ferese_config::Error::from)?;
             config.notifications.validate().map_err(ferese_config::Error::from)?;
-            config.desktop_widgets.validate().map_err(ferese_config::Error::from)?;
             let mut theme = shell_theme(&config.theme);
             theme.appearance = appearance;
             theme.material_radius = nonnegative_or(config.theme.geometry.shell_radius.unwrap_or(14.0), 14.0);
@@ -388,7 +383,6 @@ fn parse_document(
 
             Ok(ShellConfig {
                 notifications: config.notifications,
-                desktop_widgets: config.desktop_widgets,
                 animations: config.animations,
                 font_family: config.theme.typography.font_family,
                 wallpaper: config.theme.background,
@@ -625,29 +619,14 @@ mod tests {
         }
     }
 
-    #[test]
-    fn desktop_clock_parses_and_rejects_invalid_reload_values() {
-        let clock = parse_test_source(
-            r#"desktop-widgets {
-    clock {
-        enabled #true
-        anchor "bottom_right"
-        font-family ""
-        color ""
-        time-zone ""
-    }
-}
-"#,
-        )
-        .unwrap()
-        .desktop_widgets
-        .clock;
-        assert!(clock.enabled);
-        assert_eq!(clock.anchor, ferese_config::desktop::Anchor::BottomRight);
-        assert!(parse_test_source("desktop-widgets {\n    clock {\n        opacity 1.1\n    }\n}\n").is_err());
-        assert!(parse_test_source("desktop-widgets {\n    clock {\n        time-format \"%\"\n    }\n}\n").is_err());
-    }
     use super::*;
+
+    #[test]
+    fn removed_desktop_widgets_are_rejected_at_startup_and_reload() {
+        let source = "desktop-widgets { clock { enabled #true; }; }";
+        assert!(parse_source(source).is_err());
+        assert!(parse_test_source(source).is_err());
+    }
 
     fn parse_test_source(source: &str) -> Result<ShellConfig, ferese_config::Error> {
         let document = ferese_config::Document::parse(source)?;

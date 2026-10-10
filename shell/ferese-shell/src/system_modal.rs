@@ -668,7 +668,7 @@ impl FereseShell {
     }
 }
 
-// Restrict Tab traversal to the modal actions, excluding the bar and desktop widgets.
+// Restrict Tab traversal to the modal actions, excluding the panel.
 fn modal_focus_operation<T: Send + 'static>(backwards: bool) -> Box<dyn cosmic::iced::advanced::widget::Operation<T>> {
     use cosmic::iced::advanced::widget::{Id, operation};
     let target = Id::new("ferese-system-modal-controls");

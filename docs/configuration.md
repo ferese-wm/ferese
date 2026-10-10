@@ -2,7 +2,7 @@
 
 Edit `~/.config/ferese/config.kdl` (or `$XDG_CONFIG_HOME/ferese/config.kdl`),
 or open **Control Center → Settings**. Start with the [example](../packaging/config.kdl),
-which includes app and media shortcuts, appearance, widgets, and optional startup
+which includes app and media shortcuts, appearance and optional startup
 and display settings. Its browser/editor shortcuts need Firefox/Zed; brightness
 keys need `brightnessctl` and audio keys need `wpctl`.
 This reference covers layouts, appearance, input, and desktop behavior.
@@ -63,7 +63,7 @@ can also enter a path directly.
 Settings keeps `config.kdl.settings-backup` before saving.
 
 File edits reload automatically, including atomic editor saves, so changes to
-appearance, wallpaper, motion, input, bindings, rules, layouts, displays, widgets,
+appearance, wallpaper, motion, input, bindings, rules, layouts, displays,
 and login items take effect live. If a reload is invalid, Ferese reports the error
 and keeps the last working configuration.
 
@@ -339,7 +339,7 @@ Filled controls choose a contrasting text color automatically.
 | `border-width` | number ≥ 0 | `1` | Window border thickness |
 | `focus-ring-width` | number ≥ 0 | `2` | Focused border thickness |
 | `window-radius` | number ≥ 0 | `14` | Managed-window corners, independent of the shell |
-| `shell-radius` | number ≥ 0 | `14` | All shell surfaces, cards, widgets and interaction backgrounds; fractional radii are preserved; 0 makes them square |
+| `shell-radius` | number ≥ 0 | `14` | All shell surfaces, cards and interaction backgrounds; fractional radii are preserved; 0 makes them square |
 | `control-gap` | number ≥ 0 | `12` | Right-side control spacing |
 
 | Section / key | Type | Default | Meaning |

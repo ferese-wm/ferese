@@ -40,8 +40,6 @@ pub struct Config {
     #[serde(default)]
     idle_inhibit: crate::idle_inhibition::Settings,
     #[serde(default)]
-    desktop_widgets: ferese_config::desktop::DesktopWidgets,
-    #[serde(default)]
     pub(crate) autostart: Vec<DaemonConfig>,
     #[serde(default)]
     animations: AnimationsConfig,
@@ -119,7 +117,6 @@ impl Config {
             ferese_config::panel::validate(panels).map_err(ConfigError::Binding)?;
         }
         self.notifications.validate().map_err(ConfigError::Binding)?;
-        self.desktop_widgets.validate().map_err(ConfigError::Binding)?;
         self.xwayland.validate().map_err(ConfigError::Binding)?;
         for daemon in &self.autostart {
             if daemon.command.first().is_none_or(|program| program.trim().is_empty()) {
@@ -637,36 +634,16 @@ mod tests {
             packaged.xwayland.enabled,
             "packaging/config.kdl must ship X11 support enabled, matching the default"
         );
-        let source = "input {\n    touchpad {\n        swipe-threshold 96\n    }\n}\nbinding keys=\"Swipe3Up\" action=\"toggle-overview\"\noutput-profile name=\"desk\" {\n    output match=\"DP-1\" scale=1.5 {\n        position 0 0\n    }\n}\ndesktop-widgets {\n    clock {\n        enabled #true\n        outputs \"DP-1\"\n    }\n}\nautostart {\n    command \"program\" \"argument with space\"\n}\n";
+        let source = "input {\n    touchpad {\n        swipe-threshold 96\n    }\n}\nbinding keys=\"Swipe3Up\" action=\"toggle-overview\"\noutput-profile name=\"desk\" {\n    output match=\"DP-1\" scale=1.5 {\n        position 0 0\n    }\n}\nautostart {\n    command \"program\" \"argument with space\"\n}\n";
         let config = Config::parse_source(source).unwrap();
         config.runtime_config().unwrap();
         assert_eq!(config.input_settings().unwrap().touchpad.swipe_threshold, 96);
-        assert_eq!(config.desktop_widgets.clock.outputs, ["DP-1"]);
         assert_eq!(config.output_profiles().unwrap()[0].outputs[0].position, Some([0, 0]));
     }
 
     #[test]
-    fn desktop_clock_settings_are_validated_before_live_publication() {
-        assert!(
-            parse(
-                "desktop-widgets {\n    clock {\n        enabled #true\n        anchor \"center\"\n        time-format \"%H:%M\"\n    }\n}\n"
-            )
-            .runtime_config()
-            .is_ok()
-        );
-        for source in [
-            "desktop-widgets {\n    clock {\n        width 8192\n    }\n}\n",
-            "desktop-widgets {\n    clock {\n        opacity #nan\n    }\n}\n",
-            "desktop-widgets {\n    clock {\n        time-format \"%\"\n    }\n}\n",
-            "desktop-widgets {\n    clock {\n        time-zone \"invalid/zone\"\n    }\n}\n",
-        ] {
-            assert!(
-                Config::parse_source(source)
-                    .and_then(|config| config.runtime_config())
-                    .is_err()
-            );
-        }
-        assert!(Config::parse_source("desktop-widgets { clock { anchor \"wrong\"; }; }").is_err());
+    fn removed_desktop_widgets_are_rejected_before_runtime_publication() {
+        assert!(Config::parse_source("desktop-widgets { clock { enabled #true; }; }").is_err());
     }
 
     fn parse(source: &str) -> Config {
@@ -688,11 +665,6 @@ mod tests {
     fn a_configuration_without_an_xwayland_section_keeps_the_defaults() {
         let source = r#"
             layout-mode "scrolling";
-            desktop-widgets {
-                clock {
-                    time-format "%H:%M";
-                };
-            }
             scroll-factor 1.0;
         "#;
         let config = parse(source);

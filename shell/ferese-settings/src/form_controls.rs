@@ -1,8 +1,8 @@
 use cosmic::widget::column;
 
 use super::{
-    Alignment, App, Element, Field, Kind, Length, Message, button, container, fonts, row, set, slider, text_input,
-    visuals, widget,
+    Alignment, App, Element, Field, Kind, Length, Message, button, container, row, set, slider, text_input, visuals,
+    widget,
 };
 
 impl App {
@@ -118,56 +118,6 @@ impl App {
         let labels = labels.width(Length::Fill);
         let path = field.path.clone();
         let control: Element<'static, Message> = match field.kind.clone() {
-            Kind::Font => {
-                let value = self
-                    .inputs
-                    .get(&path)
-                    .cloned()
-                    .unwrap_or_else(|| self.draft.string(&path, ""));
-                let families = fonts::families();
-                let selected = if value.is_empty() {
-                    Some(0)
-                } else {
-                    families.iter().position(|family| family == &value)
-                };
-                let selection_path = path.clone();
-                let commit = field.clone();
-                column([])
-                    .spacing(4)
-                    .push(
-                        ferese_theme::controls::select(
-                            cosmic::iced::widget::pick_list(
-                                families,
-                                selected.map(|index| families[index].clone()),
-                                move |family: String| {
-                                    let value = if family == "Default font" {
-                                        String::new()
-                                    } else {
-                                        family
-                                    };
-                                    Message::SelectFont(selection_path.clone(), value)
-                                },
-                            )
-                            .font(self.font)
-                            .text_size(12)
-                            .width(225),
-                            palette,
-                        )
-                        .width(225),
-                    )
-                    .push(
-                        text_input("Default font", value)
-                            .font(self.font)
-                            .padding([4, 8])
-                            .style(visuals::input_style(palette))
-                            .on_input(move |value| Message::Draft(path.clone(), value))
-                            .on_submit(move |_| Message::Commit(field.clone()))
-                            .on_unfocus(Message::Commit(commit))
-                            .width(225)
-                            .size(12),
-                    )
-                    .into()
-            }
             Kind::Toggle(default) => {
                 let enabled = self.draft.boolean(&path, default);
                 ferese_theme::controls::switch(enabled, palette)

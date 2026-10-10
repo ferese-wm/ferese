@@ -2,9 +2,9 @@ use super::{
     Anchor, Background, BarMetrics, Color, Connection, ContentFit, Dispatch, EFFECT_FRAME_PENDING, Element, Event,
     EventQueue, FereseEffectsManagerV1, FereseShell, FereseSurfaceEffectsV1, GlobalListContents, IcedMargin,
     IcedOutput, KeyboardInteractivity, Layer, Length, Limits, Message, Ordering, OutputSurfaces, PlatformSpecific,
-    Proxy, QueueHandle, SctkLayerSurfaceSettings, Task, WallpaperMode, avoid_widget_overlap, clamp_note_position,
-    config, container, delegate_noop, destroy_layer_surface, ferese_surface_effects_v1, image, output_bar_hidden,
-    registry_queue_init, set_margin, status_ui, text, theme, wayland, window, wl_output, wl_registry, wl_surface,
+    Proxy, QueueHandle, SctkLayerSurfaceSettings, Task, WallpaperMode, config, container, delegate_noop,
+    destroy_layer_surface, ferese_surface_effects_v1, image, output_bar_hidden, registry_queue_init, status_ui, text,
+    theme, wayland, window, wl_output, wl_registry, wl_surface,
 };
 
 pub(super) fn panel_placement(edge: ferese_config::panel::Edge, margin: i32, side: i32) -> (Anchor, IcedMargin) {
@@ -39,25 +39,9 @@ impl FereseShell {
                     menu.chain(destroy_layer_surface(entry.bar)),
                     self.rebuild_system_modal(),
                 ];
-                if self.note_drag.as_ref().is_some_and(|drag| {
-                    entry.clock == Some(drag.source) || entry.notes.iter().any(|(_, id)| *id == drag.source)
-                }) {
-                    tasks.push(self.finish_note_drag(false));
-                }
-
                 if let Some(wallpaper) = entry.wallpaper {
                     tasks.push(destroy_layer_surface(wallpaper));
                 }
-
-                if let Some(clock) = entry.clock {
-                    tasks.push(destroy_layer_surface(clock));
-                }
-
-                for (_, id) in entry.notes {
-                    self.note_pointer.remove(&id);
-                    tasks.push(destroy_layer_surface(id));
-                }
-
                 return Task::batch(tasks);
             }
 
@@ -81,7 +65,6 @@ impl FereseShell {
                 entry.size = size;
             }
 
-            let changed = name.is_some() && entry.name != name;
             if name.is_some() {
                 entry.name = name;
             }
@@ -98,17 +81,7 @@ impl FereseShell {
             } else {
                 Task::none()
             };
-            return if changed {
-                Task::batch([
-                    margin,
-                    popup,
-                    tooltip,
-                    self.rebuild_clocks(true),
-                    self.rebuild_notes(true),
-                ])
-            } else {
-                Task::batch([margin, popup, tooltip])
-            };
+            return Task::batch([margin, popup, tooltip]);
         }
 
         let bar_surface_id = window::Id::unique();
@@ -138,8 +111,6 @@ impl FereseShell {
             bar_regions: Vec::new(),
             panel_resolution: Default::default(),
             bar_margin_horizontal: 0,
-            clock: None,
-            notes: Vec::new(),
             size,
             hidden,
         });
@@ -196,27 +167,22 @@ impl FereseShell {
 
         Task::batch([
             Task::batch(tasks),
-            self.rebuild_clocks(false),
-            self.rebuild_notes(false),
             self.rebuild_system_modal(),
             cosmic::task::message(cosmic::Action::App(Message::ShowGuide)),
         ])
     }
 
     pub(super) fn owns_surface(&self, id: window::Id) -> bool {
-        self.outputs.iter().any(|entry| {
-            entry.bar == id
-                || entry.wallpaper == Some(id)
-                || entry.clock == Some(id)
-                || entry.notes.iter().any(|(_, surface)| *surface == id)
-        }) || self.menu.as_ref().is_some_and(|menu| menu.id == id)
+        self.outputs
+            .iter()
+            .any(|entry| entry.bar == id || entry.wallpaper == Some(id))
+            || self.menu.as_ref().is_some_and(|menu| menu.id == id)
             || self.system_modal.as_ref().is_some_and(|modal| modal.contains(id))
             || self
                 .notification_surface
                 .as_ref()
                 .is_some_and(|surface| surface.id == id)
             || self.workspace_ui.tooltip == Some(id)
-            || self.note_drag.as_ref().is_some_and(|drag| drag.overlay == id)
     }
 
     pub(super) fn handle_event(&mut self, event: Event, id: window::Id) -> Task<Message> {
@@ -230,59 +196,6 @@ impl FereseShell {
             modal.focus_visible = false;
         }
 
-        if let Event::Mouse(mouse) = &event {
-            if !self
-                .outputs
-                .iter()
-                .any(|entry| entry.clock == Some(id) || entry.notes.iter().any(|(_, surface)| *surface == id))
-            {
-                return Task::none();
-            }
-
-            match mouse {
-                cosmic::iced::mouse::Event::CursorMoved { position } => {
-                    self.note_pointer.insert(id, *position);
-
-                    if let Some(drag) = &mut self.note_drag
-                        && drag.source == id
-                    {
-                        let delta = *position - drag.start;
-                        let dimensions = if let Some(id) = &drag.id {
-                            self.config
-                                .desktop_widgets
-                                .notes
-                                .iter()
-                                .find(|note| &note.id == id)
-                                .map(|note| (note.width, note.height))
-                        } else {
-                            let clock = &self.config.desktop_widgets.clock;
-                            Some((clock.width, clock.height))
-                        };
-
-                        if let Some(dimensions) = dimensions {
-                            let requested = clamp_note_position(drag.origin + delta, drag.output_size, dimensions);
-                            drag.position = avoid_widget_overlap(drag.position, requested, dimensions, &drag.obstacles);
-                            // Move a compact, cached buffer in the compositor instead of
-                            // repainting an output-sized buffer for every pointer event.
-                            return set_margin(
-                                drag.overlay,
-                                drag.position.y.round() as i32,
-                                0,
-                                0,
-                                drag.position.x.round() as i32,
-                            );
-                        }
-                    }
-                }
-
-                cosmic::iced::mouse::Event::ButtonReleased(cosmic::iced::mouse::Button::Left)
-                    if self.note_drag.as_ref().is_some_and(|drag| drag.source == id) =>
-                {
-                    return self.finish_note_drag(true);
-                }
-                _ => {}
-            }
-        }
         if let Event::Keyboard(cosmic::iced::keyboard::Event::KeyPressed {
             key: cosmic::iced::keyboard::Key::Named(cosmic::iced::keyboard::key::Named::Enter),
             ..
@@ -337,14 +250,6 @@ impl FereseShell {
             if self.system_modal.is_some() {
                 return self.close_system_modal();
             }
-            if self.note_drag.is_some() {
-                return self.finish_note_drag(false);
-            }
-
-            if self.note_editor.is_some() {
-                return self.finish_note_edit();
-            }
-
             if self.notifications.history_open {
                 return self.close_notification_history();
             }

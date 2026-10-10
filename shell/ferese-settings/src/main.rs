@@ -119,7 +119,6 @@ enum Message {
     PanelPreviewResolved(ferese_config::panel::layout::Resolution),
     PanelPreviewOverflow,
     PanelEdit(panel_edit::Action),
-    SelectFont(String, String),
     Draft(String, String),
     Commit(Field),
     Range(Field, f64),
@@ -146,9 +145,6 @@ enum Message {
     DefaultWallpaperThumbnail(ferese_config::theme::Appearance, Result<widget::image::Handle, String>),
     PreviewLock,
     LockPreviewStarted(Result<(), String>),
-    AddNote,
-    NoteAction(String, widget::text_editor::Action),
-    SaveNote(String, u64),
     WallpaperPicked(wallpaper_controls::Target, Result<Option<String>, String>),
     NewCommand(String),
     AddCommand,
@@ -162,7 +158,6 @@ struct App {
     displays: Vec<displays::Display>,
     display_selection: Option<String>,
     display_error: Option<String>,
-    note_editors: HashMap<String, NoteEditor>,
     core: Core,
     path: PathBuf,
     current: Snapshot,
@@ -227,12 +222,6 @@ impl Drop for App {
     }
 }
 
-struct NoteEditor {
-    content: widget::text_editor::Content<cosmic::Renderer>,
-    revision: u64,
-    dirty: bool,
-}
-
 impl cosmic::Application for App {
     type Executor = cosmic::executor::Default;
     type Flags = (PathBuf, Result<Snapshot, String>, Option<InitialPage>);
@@ -273,7 +262,6 @@ impl cosmic::Application for App {
             displays: vec![],
             display_selection: None,
             display_error: None,
-            note_editors: HashMap::new(),
             core,
             path,
             draft: current.clone(),
@@ -322,7 +310,6 @@ impl cosmic::Application for App {
             .map(|id| app.set_window_title("Ferese Settings".into(), id))
             .unwrap_or_else(Task::none);
 
-        app.sync_notes();
         let connections = if app.page == Page::Connections {
             app.refresh_connections()
         } else {
@@ -393,77 +380,16 @@ impl cosmic::Application for App {
                     theme
                 };
             }
-            Message::NoteAction(id, action) => {
-                if let Some(editor) = self.note_editors.get_mut(&id) {
-                    let edited = action.is_edit();
-                    editor.content.perform(action);
-
-                    if edited {
-                        editor.dirty = true;
-                        editor.revision = editor.revision.wrapping_add(1);
-                        let revision = editor.revision;
-                        return cosmic::task::future(async move {
-                            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                            Message::SaveNote(id, revision)
-                        });
-                    }
-                }
-            }
-            Message::SaveNote(id, revision) => {
-                let Some(index) = self.note_index(&id) else {
-                    return Task::none();
-                };
-
-                if let Some(editor) = self.note_editors.get_mut(&id)
-                    && editor.dirty
-                    && editor.revision == revision
-                {
-                    let value = editor.content.text();
-                    editor.dirty = false;
-                    return self.change(set(&format!("desktop_widgets.notes.{index}.text"), value));
-                }
-            }
-            Message::AddNote if !self.saving && self.draft.records("desktop_widgets.notes") < 32 => {
-                let id = format!(
-                    "note-{}",
-                    std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_nanos()
-                );
-                let task = self.change(Edit::Add(
-                    "desktop_widgets.notes".into(),
-                    vec![
-                        ("id".into(), id.into()),
-                        ("title".into(), "Note".into()),
-                        ("text".into(), "".into()),
-                    ],
-                ));
-
-                self.sync_notes();
-                return task;
-            }
-            Message::SelectFont(path, family) => {
-                self.inputs.remove(&path);
-                return self.change(set(&path, family));
-            }
-            Message::DragWindow => return self.core.drag(None),
             Message::ExternalConfig(result) => match result {
                 Ok(snapshot) if snapshot.source == self.current.source || snapshot.source == self.draft.source => {}
                 Ok(snapshot) => {
-                    if self.saving
-                        || self.note_editors.values().any(|editor| editor.dirty)
-                        || !self.inputs.is_empty()
-                        || !self.ranges.is_empty()
-                        || !self.pending.is_empty()
-                    {
+                    if self.saving || !self.inputs.is_empty() || !self.ranges.is_empty() || !self.pending.is_empty() {
                         self.status = "Config changed externally · Reload when your edits are finished".into();
                     } else {
                         self.current = snapshot.clone();
                         self.draft = snapshot;
                         self.family_sections =
                             theme_controls::FamilySections::new(&self.resolved.families, &self.draft);
-                        self.sync_notes();
                         self.font = fonts::interface_font(&self.resolved.presented.tokens.typography.font_family);
                         self.undo = None;
                         self.error = None;
@@ -734,7 +660,6 @@ impl cosmic::Application for App {
 
                         self.family_sections =
                             theme_controls::FamilySections::new(&self.resolved.families, &self.draft);
-                        self.sync_notes();
                         self.status = if live {
                             "Saved · desktop updated"
                         } else if self.path != store::config_path() {
@@ -765,8 +690,6 @@ impl cosmic::Application for App {
                     self.current = snapshot.clone();
                     self.draft = snapshot;
                     self.family_sections = theme_controls::FamilySections::new(&self.resolved.families, &self.draft);
-                    self.note_editors.clear();
-                    self.sync_notes();
                     self.font = fonts::interface_font(&self.resolved.presented.tokens.typography.font_family);
                     self.pending.clear();
                     self.inputs.clear();
@@ -957,7 +880,6 @@ impl cosmic::Application for App {
             Message::Remove(table, index) if !self.saving => {
                 self.inputs.clear();
                 let task = self.change(Edit::Remove(table, index));
-                self.sync_notes();
                 return task;
             }
             _ => {}
@@ -1021,33 +943,6 @@ impl App {
         self.native_palette = palette;
         cosmic::command::set_theme(palette.native_theme())
     }
-
-    fn note_index(&self, id: &str) -> Option<usize> {
-        (0..self.draft.records("desktop_widgets.notes"))
-            .find(|index| self.draft.string(&format!("desktop_widgets.notes.{index}.id"), "note") == id)
-    }
-
-    fn sync_notes(&mut self) {
-        let mut ids = Vec::new();
-
-        for index in 0..self.draft.records("desktop_widgets.notes") {
-            let prefix = format!("desktop_widgets.notes.{index}");
-            let id = self.draft.string(&format!("{prefix}.id"), "note");
-            let text = self.draft.string(&format!("{prefix}.text"), "");
-            let editor = self.note_editors.entry(id.clone()).or_insert_with(|| NoteEditor {
-                content: widget::text_editor::Content::with_text(&text),
-                revision: 0,
-                dirty: false,
-            });
-            if !editor.dirty && editor.content.text() != text {
-                editor.content = widget::text_editor::Content::with_text(&text);
-            }
-            ids.push(id);
-        }
-
-        self.note_editors.retain(|id, _| ids.contains(id));
-    }
-
     fn edit_many(&mut self, edits: Vec<Edit>) -> Task<Message> {
         for edit in edits {
             if let Err(error) = self.draft.edit(&edit) {
@@ -1768,46 +1663,6 @@ mod tests {
         assert!(app.draft.item("theme.dark.file").is_none());
         let _ = app.update(Message::ThemeFilePicked("theme.light.file", Ok(None)));
         assert_eq!(app.draft.string("theme.light.file", ""), "/tmp/light.kdl");
-    }
-
-    #[test]
-    fn notes_save_only_the_latest_revision_and_preserve_multiline_text() {
-        let mut app = app();
-        app.draft
-            .edit(&Edit::Add(
-                "desktop_widgets.notes".into(),
-                vec![("id".into(), "test".into()), ("text".into(), "first\nsecond".into())],
-            ))
-            .unwrap();
-        app.sync_notes();
-        let editor = app.note_editors.get_mut("test").unwrap();
-        editor.dirty = true;
-        editor.revision = 2;
-        let _ = app.update(Message::SaveNote("test".into(), 1));
-        assert!(!app.saving);
-        assert!(app.note_editors["test"].dirty);
-        let _ = app.update(Message::SaveNote("test".into(), 2));
-        assert!(app.saving);
-        assert!(!app.note_editors["test"].dirty);
-        assert_eq!(app.draft.string("desktop_widgets.notes.0.text", ""), "first\nsecond");
-    }
-
-    #[test]
-    fn external_config_does_not_replace_an_unsaved_note() {
-        let mut app = app();
-        app.draft
-            .edit(&Edit::Add(
-                "desktop_widgets.notes".into(),
-                vec![("id".into(), "test".into())],
-            ))
-            .unwrap();
-        app.sync_notes();
-        app.note_editors.get_mut("test").unwrap().dirty = true;
-        let _ = app.update(Message::ExternalConfig(Snapshot::parse(
-            "animations {\n    speed 0.5\n}\n".into(),
-        )));
-        assert!(app.note_editors.contains_key("test"));
-        assert!(app.status.contains("externally"));
     }
 
     #[test]

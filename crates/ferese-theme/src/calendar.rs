@@ -20,33 +20,6 @@ pub fn format_bar_time(now: &Zoned) -> String {
         if hour < 12 { "am" } else { "pm" }
     )
 }
-
-pub fn stacked_digits(label: &str) -> Option<[String; 2]> {
-    let mut parts = label.split_whitespace();
-    let time = parts.next()?;
-
-    if let Some(period) = parts.next()
-        && !period.eq_ignore_ascii_case("am")
-        && !period.eq_ignore_ascii_case("pm")
-    {
-        return None;
-    }
-
-    if parts.next().is_some() {
-        return None;
-    }
-
-    let (hour, minute) = time.split_once(':')?;
-    if !(1..=2).contains(&hour.len())
-        || minute.len() != 2
-        || !hour.bytes().chain(minute.bytes()).all(|digit| digit.is_ascii_digit())
-    {
-        return None;
-    }
-
-    Some([format!("{hour:0>2}"), minute.to_owned()])
-}
-
 pub fn month(today: jiff::civil::Date, offset: i32) -> (jiff::civil::Date, usize, usize) {
     let month_index = i32::from(today.year()) * 12 + i32::from(today.month()) - 1 + offset;
     let year = month_index.div_euclid(12) as i16;
@@ -140,15 +113,6 @@ pub fn grid<'a, M: Clone + 'a>(
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn pixel_clock_stacks_only_hour_and_minute_formats() {
-        assert_eq!(super::stacked_digits("2:45 pm"), Some(["02".into(), "45".into()]));
-        assert_eq!(super::stacked_digits("14:45"), Some(["14".into(), "45".into()]));
-        assert!(super::stacked_digits("14:45:30").is_none());
-        assert!(super::stacked_digits("Today 14:45").is_none());
-        assert!(super::stacked_digits("14:45 pm extra").is_none());
-    }
-
     #[test]
     fn clock_uses_lowercase_date_and_twelve_hour_time() {
         for (stamp, expected) in [

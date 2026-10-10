@@ -207,33 +207,6 @@ window-rule app-id="org.pulseaudio.pavucontrol" floating=#true
 window-rule title="Picture-in-Picture" floating=#true
 window-rule title="Choose a wallpaper" floating=#true
 
-desktop-widgets {
-    clock enabled=#false {
-        style "pixel"
-        anchor "top_left"
-        margin-x 64
-        margin-y 80
-        width 440
-        height 320
-        time-size 128
-        date-size 18
-        time-format "%H:%M"
-        date-format "%a, %b %-d"
-        show-date #true
-        opacity 0.9
-    }
-    note "today" enabled=#false {
-        title "Today"
-        text "Review the project\nTake a break"
-        anchor "top_right"
-        margin-x 48
-        margin-y 80
-        width 320
-        height 240
-        text-size 16
-    }
-}
-
 notifications {
     show-popups #true
     do-not-disturb #false

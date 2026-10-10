@@ -284,49 +284,6 @@ impl App {
                     ));
                     body = body.push(self.note("The preview is an ordinary window and does not lock your session. Automatic locking is configured separately in Login items."));
                 }
-                Page::Desktop => {
-                    let can_change_list = !self.saving && !self.note_editors.values().any(|e| e.dirty);
-                    body = body.push(self.label("Sticky notes", 14.));
-                    body = body.push(self.note("Edit here; notes save after you pause typing. Desktop cards stay behind windows and are click-through."));
-                    for index in 0..self.draft.records("desktop_widgets.notes") {
-                        let id = self.draft.string(&format!("desktop_widgets.notes.{index}.id"), "note");
-                        let mut group = column([]).spacing(8);
-
-                        for field in schema::note_fields(index) {
-                            group = group.push(self.field(field));
-                        }
-
-                        if let Some(editor) = self.note_editors.get(&id) {
-                            let id = id.clone();
-                            group = group.push(
-                                widget::TextEditor::new(&editor.content)
-                                    .height(160)
-                                    .font(self.font)
-                                    .size(13.)
-                                    .on_action(move |action| Message::NoteAction(id.clone(), action)),
-                            );
-                        }
-                        group = group.push(self.settings_icon_button(
-                            "Remove note",
-                            "M4 6h16 M9 6V3h6v3 M6 6l1 15h10l1-15 M10 10v7 M14 10v7",
-                            can_change_list.then_some(Message::Remove("desktop_widgets.notes".into(), index)),
-                        ));
-                        body = body.push(
-                            container(group)
-                                .padding([7, 10])
-                                .class(visuals::surface(palette.card, 14.)),
-                        );
-                    }
-                    body = body.push(
-                        self.settings_button(
-                            "Add note",
-                            "M12 5v14 M5 12h14",
-                            (can_change_list && self.draft.records("desktop_widgets.notes") < 32)
-                                .then_some(Message::AddNote),
-                            false,
-                        ),
-                    );
-                }
                 Page::Startup => {
                     body = body.push(self.note("Login items update live. Disabling or removing an item stops the session-owned process; enabling one starts it."));
 

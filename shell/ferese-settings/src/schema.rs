@@ -3,7 +3,6 @@ pub enum Page {
     Appearance,
     Accessibility,
     Wallpaper,
-    Desktop,
     Bar,
     Notifications,
     LockScreen,
@@ -18,10 +17,7 @@ pub enum Page {
 
 impl Page {
     pub const NAVIGATION: [(&'static str, &'static [Self]); 3] = [
-        (
-            "Desktop",
-            &[Self::Appearance, Self::Wallpaper, Self::Desktop, Self::Bar],
-        ),
+        ("Desktop", &[Self::Appearance, Self::Wallpaper, Self::Bar]),
         ("Interaction", &[Self::Windows, Self::Keyboard, Self::Accessibility]),
         (
             "System",
@@ -64,11 +60,10 @@ impl Page {
     }
 
     #[cfg(test)]
-    pub const ALL: [Self; 14] = [
+    pub const ALL: [Self; 13] = [
         Self::Appearance,
         Self::Accessibility,
         Self::Wallpaper,
-        Self::Desktop,
         Self::Bar,
         Self::Notifications,
         Self::LockScreen,
@@ -86,7 +81,6 @@ impl Page {
             Self::Appearance => "Appearance",
             Self::Accessibility => "Accessibility",
             Self::Wallpaper => "Wallpaper",
-            Self::Desktop => "Desktop widgets",
             Self::Bar => "Panel & Shell",
             Self::Notifications => "Notifications",
             Self::LockScreen => "Lock screen",
@@ -105,7 +99,6 @@ impl Page {
             Self::Appearance => "A desktop that feels like yours.",
             Self::Accessibility => "Make the desktop easier to see and use.",
             Self::Wallpaper => "Set the scene for your workspace.",
-            Self::Desktop => "Clock and sticky notes on your desktop.",
             Self::Bar => "Arrange panel items and groups.",
             Self::Notifications => "Stay informed on your terms.",
             Self::LockScreen => "Your desktop, safely put away.",
@@ -126,7 +119,6 @@ impl Page {
                 "M12 3a9 9 0 1 0 0 18h1a2 2 0 0 0 0-4h-1a1 1 0 0 1 0-2h3a6 6 0 0 0 0-12z M7 9h.01 M10 6h.01 M15 6h.01 M18 10h.01"
             }
             Self::Wallpaper => "M4 4h16v16H4z M4 16l5-5 4 4 3-3 4 4 M15 8h.01",
-            Self::Desktop => "M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0 M12 7v5l3 2",
             Self::Bar => "M3 5h18v14H3z M3 9h18 M6 7h.01 M18 7h.01",
             Self::Notifications => "M6 8a6 6 0 0 1 12 0v6l2 3H4l2-3z M10 21h4",
             Self::LockScreen => "M7 10V7a5 5 0 0 1 10 0v3 M5 10h14v11H5z M12 14v3",
@@ -162,7 +154,6 @@ impl Page {
 
 #[derive(Clone, Debug)]
 pub enum Kind {
-    Font,
     Toggle(bool),
     Range {
         default: f64,
@@ -262,379 +253,6 @@ pub fn choice(
 ) -> Field {
     Field::new(path, label, description, Kind::Choice { default, choices })
 }
-
-fn clock_fields() -> Vec<Field> {
-    vec![
-        toggle(
-            "desktop_widgets.clock.enabled",
-            "Desktop clock",
-            "Behind windows and click-through.",
-            false,
-        ),
-        choice(
-            "desktop_widgets.clock.style",
-            "Clock style",
-            "Pixel stacks heavy, alternating-color digits; Minimal uses plain text.",
-            "pixel",
-            &[("pixel", "Pixel"), ("minimal", "Minimal")],
-        ),
-        toggle(
-            "desktop_widgets.clock.bold",
-            "Bold text",
-            "Use the font's bold weight.",
-            false,
-        ),
-        toggle(
-            "desktop_widgets.clock.show_date",
-            "Show date",
-            "A small date above the digits in Pixel; beneath the time in Minimal.",
-            true,
-        ),
-        toggle(
-            "desktop_widgets.clock.lowercase",
-            "Lowercase",
-            "Lowercase month, weekday and am/pm.",
-            true,
-        ),
-        text(
-            "desktop_widgets.clock.anchor",
-            "Position",
-            "top_left, top_center, top_right, center_left, center, center_right, bottom_left, bottom_center, bottom_right",
-            "top_left",
-        ),
-        Field::new(
-            "desktop_widgets.clock.font_family",
-            "Font",
-            "Choose an installed family or enter a name. Empty uses the style default.",
-            Kind::Font,
-        ),
-        text(
-            "desktop_widgets.clock.time_format",
-            "Time format",
-            "%H:%M for 24-hour; %-I:%M %p for 12-hour; add :%S for seconds.",
-            "%-I:%M %p",
-        ),
-        text(
-            "desktop_widgets.clock.date_format",
-            "Date format",
-            "%A, %-d %B for weekday and date; %-d %b for a short date.",
-            "%a, %b %-d",
-        ),
-        text(
-            "desktop_widgets.clock.time_zone",
-            "Time zone",
-            "Empty follows system time; otherwise an IANA name such as Africa/Lagos.",
-            "",
-        ),
-        text(
-            "desktop_widgets.clock.color",
-            "Time color",
-            "#RRGGBB or #RRGGBBAA; empty follows the theme.",
-            "",
-        ),
-        text(
-            "desktop_widgets.clock.date_color",
-            "Date color",
-            "Empty follows muted theme text.",
-            "",
-        ),
-        text(
-            "desktop_widgets.clock.background",
-            "Background",
-            "Empty is transparent; optionally #RRGGBB or #RRGGBBAA.",
-            "",
-        ),
-        range(
-            "desktop_widgets.clock.margin_x",
-            "Horizontal margin",
-            "Distance from left/right edge; ignored when horizontally centered.",
-            RangeSpec {
-                default: 64.0,
-                min: 0.0,
-                max: 1000.0,
-                step: 1.0,
-                suffix: " px",
-                integer: true,
-            },
-        ),
-        range(
-            "desktop_widgets.clock.margin_y",
-            "Vertical margin",
-            "Distance from top/bottom edge; ignored when vertically centered.",
-            RangeSpec {
-                default: 80.0,
-                min: 0.0,
-                max: 1000.0,
-                step: 1.0,
-                suffix: " px",
-                integer: true,
-            },
-        ),
-        range(
-            "desktop_widgets.clock.width",
-            "Widget width",
-            "Logical pixels; increase for longer formats.",
-            RangeSpec {
-                default: 440.0,
-                min: 64.0,
-                max: 1600.0,
-                step: 1.0,
-                suffix: " px",
-                integer: true,
-            },
-        ),
-        range(
-            "desktop_widgets.clock.height",
-            "Widget height",
-            "Leave room for both text lines.",
-            RangeSpec {
-                default: 320.0,
-                min: 32.0,
-                max: 800.0,
-                step: 1.0,
-                suffix: " px",
-                integer: true,
-            },
-        ),
-        range(
-            "desktop_widgets.clock.time_size",
-            "Time size",
-            "Logical pixels; scales with your output.",
-            RangeSpec {
-                default: 128.0,
-                min: 8.0,
-                max: 240.0,
-                step: 1.0,
-                suffix: " px",
-                integer: false,
-            },
-        ),
-        range(
-            "desktop_widgets.clock.date_size",
-            "Date size",
-            "Separate size for the date line.",
-            RangeSpec {
-                default: 18.0,
-                min: 8.0,
-                max: 96.0,
-                step: 1.0,
-                suffix: " px",
-                integer: false,
-            },
-        ),
-        range(
-            "desktop_widgets.clock.opacity",
-            "Opacity",
-            "Applies to text and the optional background.",
-            RangeSpec {
-                default: 0.9,
-                min: 0.0,
-                max: 1.0,
-                step: 0.05,
-                suffix: "",
-                integer: false,
-            },
-        ),
-        range(
-            "desktop_widgets.clock.gap",
-            "Line spacing",
-            "Space between time and date.",
-            RangeSpec {
-                default: 4.0,
-                min: 0.0,
-                max: 64.0,
-                step: 1.0,
-                suffix: " px",
-                integer: false,
-            },
-        ),
-        range(
-            "desktop_widgets.clock.padding",
-            "Inner padding",
-            "Space around the labels.",
-            RangeSpec {
-                default: 12.0,
-                min: 0.0,
-                max: 64.0,
-                step: 1.0,
-                suffix: " px",
-                integer: false,
-            },
-        ),
-        choice(
-            "desktop_widgets.clock.alignment",
-            "Text alignment",
-            "Alignment within the widget.",
-            "center",
-            &[("left", "Left"), ("center", "Center"), ("right", "Right")],
-        ),
-    ]
-}
-
-pub fn note_fields(index: usize) -> Vec<Field> {
-    let prefix = format!("desktop_widgets.notes.{index}");
-    vec![
-        Field::new(
-            format!("{prefix}.interactive"),
-            "Desktop editing",
-            "Drag the title and edit directly. Off makes the card click-through.",
-            Kind::Toggle(true),
-        ),
-        Field::new(format!("{prefix}.enabled"), "Show note", "", Kind::Toggle(true)),
-        text(format!("{prefix}.title"), "Title", "Empty hides the title.", "Note"),
-        text(
-            format!("{prefix}.anchor"),
-            "Position",
-            "Nine positions, e.g. top_right or center.",
-            "top_right",
-        ),
-        Field::new(
-            format!("{prefix}.font_family"),
-            "Font",
-            "Choose an installed family or enter a name. Empty follows the desktop font.",
-            Kind::Font,
-        ),
-        text(
-            format!("{prefix}.color"),
-            "Text color",
-            "Empty or theme follows the theme; otherwise #RRGGBB / #RRGGBBAA.",
-            "",
-        ),
-        text(
-            format!("{prefix}.background"),
-            "Background",
-            "theme follows the palette; empty is transparent; otherwise hex color.",
-            "theme",
-        ),
-        range(
-            format!("{prefix}.width"),
-            "Width",
-            "Logical pixels; centered axes ignore margins.",
-            RangeSpec {
-                default: 320.0,
-                min: 120.0,
-                max: 1200.0,
-                step: 1.0,
-                suffix: " px",
-                integer: true,
-            },
-        ),
-        range(
-            format!("{prefix}.height"),
-            "Height",
-            "Logical pixels; centered axes ignore margins.",
-            RangeSpec {
-                default: 240.0,
-                min: 80.0,
-                max: 1200.0,
-                step: 1.0,
-                suffix: " px",
-                integer: true,
-            },
-        ),
-        range(
-            format!("{prefix}.margin_x"),
-            "Horizontal margin",
-            "Logical pixels; centered axes ignore margins.",
-            RangeSpec {
-                default: 48.0,
-                min: 0.0,
-                max: 1000.0,
-                step: 1.0,
-                suffix: " px",
-                integer: true,
-            },
-        ),
-        range(
-            format!("{prefix}.margin_y"),
-            "Vertical margin",
-            "Logical pixels; centered axes ignore margins.",
-            RangeSpec {
-                default: 80.0,
-                min: 0.0,
-                max: 1000.0,
-                step: 1.0,
-                suffix: " px",
-                integer: true,
-            },
-        ),
-        range(
-            format!("{prefix}.text_size"),
-            "Text size",
-            "Logical pixels; centered axes ignore margins.",
-            RangeSpec {
-                default: 16.0,
-                min: 8.0,
-                max: 96.0,
-                step: 1.0,
-                suffix: " px",
-                integer: false,
-            },
-        ),
-        range(
-            format!("{prefix}.title_size"),
-            "Title size",
-            "Logical pixels; centered axes ignore margins.",
-            RangeSpec {
-                default: 18.0,
-                min: 8.0,
-                max: 96.0,
-                step: 1.0,
-                suffix: " px",
-                integer: false,
-            },
-        ),
-        range(
-            format!("{prefix}.opacity"),
-            "Opacity",
-            "Logical pixels; centered axes ignore margins.",
-            RangeSpec {
-                default: 0.9,
-                min: 0.0,
-                max: 1.0,
-                step: 0.05,
-                suffix: "",
-                integer: false,
-            },
-        ),
-        range(
-            format!("{prefix}.padding"),
-            "Padding",
-            "Logical pixels; centered axes ignore margins.",
-            RangeSpec {
-                default: 20.0,
-                min: 0.0,
-                max: 64.0,
-                step: 1.0,
-                suffix: " px",
-                integer: false,
-            },
-        ),
-        range(
-            format!("{prefix}.gap"),
-            "Title spacing",
-            "Logical pixels; centered axes ignore margins.",
-            RangeSpec {
-                default: 8.0,
-                min: 0.0,
-                max: 64.0,
-                step: 1.0,
-                suffix: " px",
-                integer: false,
-            },
-        ),
-        Field::new(
-            format!("{prefix}.alignment"),
-            "Text alignment",
-            "",
-            Kind::Choice {
-                default: "left",
-                choices: &[("left", "Left"), ("center", "Center"), ("right", "Right")],
-            },
-        ),
-    ]
-}
-
 pub fn fields(page: Page) -> Vec<Field> {
     match page {
         Page::LockScreen => vec![
@@ -777,7 +395,7 @@ pub fn fields(page: Page) -> Vec<Field> {
             range(
                 "theme.geometry.shell_radius",
                 "Shell corner radius",
-                "Rounds the bar, menus, notifications, desktop widgets and hover backgrounds. Window corners are separate.",
+                "Rounds the bar, menus, notifications and hover backgrounds. Window corners are separate.",
                 RangeSpec {
                     default: 14.0,
                     min: 0.0,
@@ -875,7 +493,6 @@ pub fn fields(page: Page) -> Vec<Field> {
                 &[("fill", "Fill"), ("fit", "Fit")],
             ),
         ],
-        Page::Desktop => clock_fields(),
         Page::Notifications => vec![
             toggle(
                 "notifications.show_popups",

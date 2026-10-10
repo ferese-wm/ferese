@@ -1,9 +1,7 @@
 mod bar;
-mod desktop_widgets;
 mod surfaces;
 
 use bar::*;
-use desktop_widgets::*;
 use surfaces::*;
 
 mod clock;
@@ -14,7 +12,6 @@ mod display_mode;
 mod keybinding_guide;
 mod media;
 mod motion;
-mod note_store;
 mod notification_ui;
 mod notifications;
 mod panel;
@@ -46,9 +43,7 @@ use cosmic::{Element, theme};
 use ferese_protocols::effects::v1::client::ferese_effects_manager_v1::FereseEffectsManagerV1;
 use ferese_protocols::effects::v1::client::ferese_surface_effects_v1;
 use ferese_protocols::effects::v1::client::ferese_surface_effects_v1::FereseSurfaceEffectsV1;
-use ferese_theme::calendar::{format_bar_time, stacked_digits as stacked_clock_digits};
 use ferese_theme::icons::{accented as accented_icon, tinted as bar_icon};
-use jiff::Zoned;
 use wayland_client::globals::{GlobalListContents, registry_queue_init};
 use wayland_client::protocol::{wl_output, wl_registry, wl_surface};
 use wayland_client::{Connection, Dispatch, EventQueue, Proxy, QueueHandle, delegate_noop};
@@ -121,19 +116,6 @@ fn main() -> cosmic::iced::Result {
     });
     renderer::configure_shell();
 
-    cosmic::iced::advanced::graphics::text::font_system()
-        .write()
-        .unwrap()
-        .load_font(std::borrow::Cow::Borrowed(include_bytes!(
-            "../../../assets/fonts/Comfortaa-Regular.otf"
-        )));
-    cosmic::iced::advanced::graphics::text::font_system()
-        .write()
-        .unwrap()
-        .load_font(std::borrow::Cow::Borrowed(include_bytes!(
-            "../../../assets/fonts/Cantarell-ExtraBold.otf"
-        )));
-
     motion::configure(config.animations, config.theme.material_radius);
     let compositor_wallpaper = std::env::var_os("FERESE_COMPOSITOR_WALLPAPER").is_some();
     if compositor_wallpaper {
@@ -177,8 +159,6 @@ struct FereseShell {
     workspace_ui: workspace_ui::WorkspaceUi,
     overview_active: bool,
     clock: String,
-    clock_service: clock::Service,
-    desktop_clock: (String, String),
     outputs: Vec<OutputSurfaces>,
     notifications: notifications::Center,
     notification_surface: Option<notification_ui::NotificationSurface>,
@@ -196,30 +176,6 @@ struct FereseShell {
     guide_load: keybinding_guide::LoadState,
     guide_attempts: u8,
     pending_power: Option<(window::Id, system_modal::PowerAction)>,
-    note_editor: Option<DesktopNoteEditor>,
-    note_drag: Option<NoteDrag>,
-    note_pointer: std::collections::HashMap<window::Id, cosmic::iced::Point>,
-    note_pending: Vec<note_store::Edit>,
-    note_inflight: Vec<note_store::Edit>,
-    note_saving: bool,
-    note_error: Option<String>,
-}
-
-struct DesktopNoteEditor {
-    id: String,
-    content: cosmic::widget::text_editor::Content<cosmic::Renderer>,
-    revision: u64,
-}
-
-struct NoteDrag {
-    id: Option<String>,
-    source: window::Id,
-    overlay: window::Id,
-    start: cosmic::iced::Point,
-    origin: cosmic::iced::Point,
-    position: cosmic::iced::Point,
-    output_size: (i32, i32),
-    obstacles: Vec<cosmic::iced::Rectangle>,
 }
 
 struct OutputSurfaces {
@@ -227,8 +183,6 @@ struct OutputSurfaces {
     name: Option<String>,
     bar: window::Id,
     wallpaper: Option<window::Id>,
-    clock: Option<window::Id>,
-    notes: Vec<(String, window::Id)>,
     size: Option<(i32, i32)>,
     effects: Option<EffectsBinding>,
     bar_regions: Vec<[f32; 5]>,
@@ -244,17 +198,10 @@ enum Message {
     ThemeChanged(Box<ferese_ipc::theme::Snapshot>),
     ThemeMode(ferese_config::theme::Mode),
     ThemeModeSet(Result<(), String>),
-    BeginNoteEdit(String),
-    NoteAction(String, cosmic::widget::text_editor::Action),
-    SaveNote(String, u64),
-    FinishNoteEdit,
-    BeginNoteDrag(String, window::Id),
-    BeginClockDrag(window::Id),
-    NotesStored(Result<(), String>),
     WallpaperLoaded(Result<image::Handle, String>),
     Event(Event, window::Id),
     NativeSurface(window::Id, Result<(Connection, wl_surface::WlSurface), String>),
-    ClockChanged(clock::Labels),
+    ClockChanged(String),
     RecorderEvent(recording::Event),
     RecorderElapsed,
     MediaUpdated(std::sync::Arc<ferese_ipc::media::Snapshot>),
@@ -330,7 +277,6 @@ impl cosmic::Application for FereseShell {
     }
 
     fn init(core: Core, (config, wallpaper): Self::Flags) -> (Self, Task<Self::Message>) {
-        let desktop_clock = config.desktop_widgets.clock.labels(&Zoned::now()).unwrap_or_default();
         let app = Self {
             core,
             notifications: notifications::Center::new(config.notifications.clone()),
@@ -349,14 +295,6 @@ impl cosmic::Application for FereseShell {
             guide_load: Default::default(),
             guide_attempts: 0,
             pending_power: None,
-            note_editor: None,
-            note_drag: None,
-            note_pointer: Default::default(),
-            note_pending: Vec::new(),
-            note_inflight: Vec::new(),
-            note_saving: false,
-            note_error: None,
-            clock_service: clock::Service::new(&config.desktop_widgets.clock),
             config,
             wallpaper: None,
             control: ShellControl::connect()
@@ -367,8 +305,7 @@ impl cosmic::Application for FereseShell {
             snapshot: ShellSnapshot::default(),
             workspace_ui: Default::default(),
             overview_active: false,
-            clock: current_time(),
-            desktop_clock,
+            clock: clock::current_time(),
             outputs: Vec::new(),
         };
         let wallpaper_task = match wallpaper {
@@ -409,34 +346,13 @@ impl cosmic::Application for FereseShell {
                 )) => Some(Message::Event(event, id)),
                 _ => None,
             }),
-            self.clock_service
-                .subscription(
-                    self.outputs.iter().any(|output| !output.hidden),
-                    self.outputs.iter().any(|output| {
-                        output.clock.is_some() && self.config.desktop_widgets.clock.on_output(output.name.as_deref())
-                    }),
-                )
-                .map(Message::ClockChanged),
+            clock::subscription(self.outputs.iter().any(|output| !output.hidden)).map(Message::ClockChanged),
             self.media.subscription().map(Message::MediaUpdated),
             self.media_tick_subscription().map(|_| Message::MediaTick),
             self.media.art.subscription().map(Message::MediaArt),
             self.recorder.subscription().map(Message::RecorderEvent),
             self.recorder.elapsed_subscription().map(|_| Message::RecorderElapsed),
             self.status_service.subscription().map(Message::StatusUpdated),
-            if self.config.desktop_widgets.clock.enabled
-                || self
-                    .config
-                    .desktop_widgets
-                    .notes
-                    .iter()
-                    .any(|note| note.enabled && note.interactive)
-            {
-                event::listen_with(|event, _, id| {
-                    matches!(&event, Event::Mouse(_)).then_some(Message::Event(event, id))
-                })
-            } else {
-                Subscription::none()
-            },
         ])
     }
 
@@ -554,67 +470,6 @@ impl cosmic::Application for FereseShell {
                         .service_error("Appearance could not be changed", &error);
                 }
                 Task::none()
-            }
-            Message::BeginNoteEdit(id) => {
-                let mut tasks = vec![self.finish_note_edit()];
-
-                if let Some(note) = self.config.desktop_widgets.notes.iter().find(|note| note.id == id) {
-                    self.note_editor = Some(DesktopNoteEditor {
-                        id,
-                        content: cosmic::widget::text_editor::Content::with_text(&note.text),
-                        revision: 0,
-                    });
-                }
-                tasks.push(Task::none());
-                Task::batch(tasks)
-            }
-            Message::FinishNoteEdit => self.finish_note_edit(),
-            Message::NoteAction(id, action) => {
-                if let Some(editor) = &mut self.note_editor
-                    && editor.id == id
-                {
-                    let edited = action.is_edit();
-                    editor.content.perform(action);
-
-                    if edited {
-                        editor.revision = editor.revision.wrapping_add(1);
-                        let revision = editor.revision;
-                        return cosmic::task::future(async move {
-                            // iced executor is Tokio; do not spawn blocking sleep threads.
-                            tokio::time::sleep(Duration::from_millis(500)).await;
-                            Message::SaveNote(id, revision)
-                        });
-                    }
-                }
-                Task::none()
-            }
-            Message::SaveNote(id, revision) => {
-                if let Some(editor) = &self.note_editor
-                    && editor.id == id
-                    && editor.revision == revision
-                {
-                    let value = editor.content.text();
-                    self.set_note_text(&id, value)
-                } else {
-                    Task::none()
-                }
-            }
-            Message::BeginNoteDrag(id, surface) => self.begin_note_drag(id, surface),
-            Message::BeginClockDrag(surface) => self.begin_widget_drag(None, surface),
-            Message::NotesStored(result) => {
-                self.note_saving = false;
-                match result {
-                    Ok(()) => {
-                        self.note_inflight.clear();
-                        self.note_error = None;
-                        self.flush_note_changes()
-                    }
-                    Err(error) => {
-                        self.note_pending.splice(0..0, self.note_inflight.drain(..));
-                        self.note_error = Some(error);
-                        Task::none()
-                    }
-                }
             }
             Message::WallpaperLoaded(result) => {
                 match result {
@@ -855,8 +710,7 @@ impl cosmic::Application for FereseShell {
             }
             Message::Event(event, id) => self.handle_event(event, id),
             Message::ClockChanged(labels) => {
-                self.clock = labels.bar;
-                self.desktop_clock = labels.desktop;
+                self.clock = labels;
                 Task::none()
             }
             Message::RecorderEvent(event) => {
@@ -1024,40 +878,13 @@ impl FereseShell {
         let edge_changed = self.config.panels[0].edge != config.panels[0].edge;
         let old = self.config.theme;
         let old_geometry = self.config.panels[0].geometry;
-        let old_clock = &self.config.desktop_widgets.clock;
-        let old_notes = &self.config.desktop_widgets.notes;
-        let new_notes = &config.desktop_widgets.notes;
-        let notes_changed = old_notes.len() != new_notes.len()
-            || old_notes.iter().zip(new_notes).any(|(old, new)| !old.same_surface(new));
-        let new_clock = &config.desktop_widgets.clock;
-        let clock_changed = old_clock.enabled != new_clock.enabled
-            || old_clock.outputs != new_clock.outputs
-            || old_clock.anchor != new_clock.anchor
-            || old_clock.width != new_clock.width
-            || old_clock.height != new_clock.height
-            || old_clock.margin_x != new_clock.margin_x
-            || old_clock.margin_y != new_clock.margin_y;
         let theme = config.theme;
         let geometry = config.panels[0].geometry;
         let geometry_changed = edge_changed || old_geometry != geometry;
         self.notifications.configure(config.notifications.clone());
-        self.clock_service.configure(&config.desktop_widgets.clock);
         self.config = config;
         let workspace_task = self.update_workspace_ui();
-        self.desktop_clock = self
-            .config
-            .desktop_widgets
-            .clock
-            .labels(&Zoned::now())
-            .unwrap_or_default();
-        let mut tasks = vec![
-            workspace_task,
-            if clock_changed {
-                self.rebuild_clocks(true)
-            } else {
-                Task::none()
-            },
-        ];
+        let mut tasks = vec![workspace_task];
 
         if composition_changed || geometry_changed {
             tasks.push(self.destroy_menu());
@@ -1080,25 +907,6 @@ impl FereseShell {
 
         if old.palette() != theme.palette() {
             tasks.push(cosmic::command::set_theme(theme.palette().native_theme()));
-        }
-
-        if clock_changed && self.note_drag.as_ref().is_some_and(|drag| drag.id.is_none()) {
-            tasks.push(self.finish_note_drag(false));
-        }
-
-        if notes_changed {
-            tasks.push(self.finish_note_drag(false));
-            if self.note_editor.as_ref().is_some_and(|editor| {
-                !self
-                    .config
-                    .desktop_widgets
-                    .notes
-                    .iter()
-                    .any(|note| note.id == editor.id && note.interactive)
-            }) {
-                self.note_editor = None;
-            }
-            tasks.push(self.rebuild_notes(true));
         }
 
         for entry in self.outputs.iter().filter(|_| geometry_changed) {
@@ -1190,14 +998,6 @@ mod tests {
             guide_load: Default::default(),
             guide_attempts: 0,
             pending_power: None,
-            note_editor: None,
-            note_drag: None,
-            note_pointer: Default::default(),
-            note_pending: Vec::new(),
-            note_inflight: Vec::new(),
-            note_saving: false,
-            note_error: None,
-            clock_service: clock::Service::new(&config.desktop_widgets.clock),
             config,
             wallpaper: None,
             control: None,
@@ -1205,14 +1005,11 @@ mod tests {
             workspace_ui: Default::default(),
             overview_active: false,
             clock: String::new(),
-            desktop_clock: Default::default(),
             outputs: vec![OutputSurfaces {
                 output,
                 name: Some("test".into()),
                 bar: window::Id::unique(),
                 wallpaper: None,
-                clock: None,
-                notes: Vec::new(),
                 size: Some((1200, 800)),
                 effects: None,
                 bar_regions: vec![[0., 0., 600., 36., 8.]],
@@ -1379,17 +1176,13 @@ mod tests {
     }
 
     #[test]
-    fn late_open_checks_preserve_owned_desktop_widgets_and_tooltips() {
+    fn late_open_checks_preserve_owned_wallpaper_and_tooltips() {
         let mut shell = shell_with_measured_panel();
         let wallpaper = window::Id::unique();
-        let clock = window::Id::unique();
-        let note = window::Id::unique();
         let tooltip = window::Id::unique();
         shell.outputs[0].wallpaper = Some(wallpaper);
-        shell.outputs[0].clock = Some(clock);
-        shell.outputs[0].notes.push(("note".into(), note));
         shell.workspace_ui.tooltip = Some(tooltip);
-        for id in [wallpaper, clock, note, tooltip] {
+        for id in [wallpaper, tooltip] {
             assert!(shell.owns_surface(id));
             assert_eq!(
                 shell
@@ -1419,74 +1212,6 @@ mod tests {
         shell.outputs[0].panel_resolution = Some(Default::default());
         drop(shell.update_panel_margin(bar, false));
         assert_eq!(shell.outputs[0].bar_margin_horizontal, 240);
-    }
-
-    #[test]
-    fn widget_drag_stops_at_edges_without_tunnelling_and_slides() {
-        use cosmic::iced::{Point, Rectangle};
-        let obstacles = [Rectangle {
-            x: 100.,
-            y: 0.,
-            width: 40.,
-            height: 100.,
-        }];
-        assert_eq!(
-            super::avoid_widget_overlap(Point::new(0., 0.), Point::new(300., 0.), (20, 20), &obstacles),
-            Point::new(80., 0.)
-        );
-        assert_eq!(
-            super::avoid_widget_overlap(Point::new(80., 0.), Point::new(120., 50.), (20, 20), &obstacles),
-            Point::new(80., 50.)
-        );
-        assert_eq!(
-            super::avoid_widget_overlap(Point::new(160., 0.), Point::new(0., 0.), (20, 20), &obstacles),
-            Point::new(140., 0.)
-        );
-        assert_eq!(
-            super::avoid_widget_overlap(Point::new(100., 120.), Point::new(100., 0.), (20, 20), &obstacles),
-            Point::new(100., 100.)
-        );
-        assert_eq!(
-            super::avoid_widget_overlap(Point::new(0., 100.), Point::new(200., 100.), (20, 20), &obstacles),
-            Point::new(200., 100.)
-        );
-    }
-
-    #[test]
-    fn note_drag_origin_and_bounds_use_logical_output_coordinates() {
-        use cosmic::iced::Point;
-        let mut note = ferese_config::desktop::StickyNote::default();
-        assert_eq!(super::note_origin(&note, (1920, 1080)), Point::new(1552., 80.));
-        note.anchor = ferese_config::desktop::Anchor::Center;
-        assert_eq!(super::note_origin(&note, (1920, 1080)), Point::new(800., 420.));
-        assert_eq!(
-            super::clamp_note_position(Point::new(-20., 1200.), (1920, 1080), (320, 240)),
-            Point::new(0., 840.)
-        );
-        assert_eq!(
-            super::clamp_note_position(Point::new(20., 30.), (200, 100), (320, 240)),
-            Point::ORIGIN
-        );
-    }
-
-    #[test]
-    fn desktop_clock_anchor_margins_match_only_anchored_edges() {
-        use ferese_config::desktop::{Anchor as Position, Clock};
-        let clock = Clock {
-            anchor: Position::BottomRight,
-            margin_x: 30,
-            margin_y: 40,
-            ..Clock::default()
-        };
-        let (anchor, margin) = super::clock_placement(&clock);
-        assert_eq!(anchor, super::Anchor::BOTTOM | super::Anchor::RIGHT);
-        assert_eq!((margin.top, margin.right, margin.bottom, margin.left), (0, 30, 40, 0));
-        let (anchor, margin) = super::clock_placement(&Clock {
-            anchor: Position::Center,
-            ..clock
-        });
-        assert!(anchor.is_empty());
-        assert_eq!((margin.top, margin.right, margin.bottom, margin.left), (0, 0, 0, 0));
     }
 
     #[test]

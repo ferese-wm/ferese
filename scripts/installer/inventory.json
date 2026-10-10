@@ -91,11 +91,6 @@
       "mode": "0644"
     },
     {
-      "source": "assets/fonts/Cantarell-LICENSE.txt",
-      "target": "licenses/Cantarell-LICENSE.txt",
-      "mode": "0644"
-    },
-    {
       "source": "assets/themes/licenses/*.txt",
       "target": "licenses/theme-{name}",
       "mode": "0644"
