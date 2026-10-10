@@ -131,16 +131,13 @@ impl FereseShell {
                 .unwrap_or_default(),
             move |resolution| {
                 let zone = |zone: &Zone| {
-                    let mut zone = zone.clone();
-                    for group in &mut zone.groups {
-                        group.items.retain(|item| matches!(resolution.items.get(&item.id), Some(Placement::Visible { width, .. }) if *width > 0.0));
-                    }
                     view_zone(
                         panel,
-                        &zone,
+                        zone,
                         availability,
                         shell_theme,
                         compositor_material,
+                        |item| matches!(resolution.items.get(&item.id), Some(Placement::Visible { width, .. }) if *width > 0.0),
                         |item, surface| {
                             let Some(Placement::Visible { representation, width }) = resolution.items.get(&item.id)
                             else {
@@ -171,6 +168,7 @@ impl FereseShell {
                         availability,
                         shell_theme,
                         compositor_material,
+                        |_| true,
                         |item, surface| {
                             self.view_panel_item(
                                 id,
@@ -566,6 +564,7 @@ fn view_zone<'a>(
     availability: Availability,
     shell_theme: ShellTheme,
     compositor_material: bool,
+    visible: impl Fn(&Item) -> bool,
     render: impl Fn(&Item, GroupSurface) -> (Element<'a, cosmic::Action<Message>>, bool),
 ) -> Element<'a, cosmic::Action<Message>> {
     let bar = BarMetrics::from(panel.geometry);
@@ -577,7 +576,11 @@ fn view_zone<'a>(
         let mut controls = row::with_capacity(group.items.len()).align_y(cosmic::iced::Alignment::Center);
         let mut count = 0;
         let mut has_content = false;
-        for item in group.items.iter().filter(|item| item.available(availability)) {
+        for item in group
+            .items
+            .iter()
+            .filter(|item| item.available(availability) && visible(item))
+        {
             if count > 0 {
                 controls =
                     controls.push(cosmic::iced::widget::Space::new().width(item.gap_before.unwrap_or(group.spacing)));
@@ -1006,24 +1009,32 @@ mod island_tests {
                 Some("tiny-skia"),
             ))
             .unwrap();
-        let view = view_zone(panel, zone, availability, theme, true, |item, _| {
-            let width = match item.kind {
-                ItemKind::Overview => 28.,
-                ItemKind::Workspaces { .. } => 72.,
-                ItemKind::FocusedWindow => 80.,
-                ItemKind::Clock => 60.,
-                _ => 20.,
-            };
-            let height = if matches!(item.kind, ItemKind::FocusedWindow) {
-                24.
-            } else {
-                20.
-            };
-            (
-                container(cosmic::iced::widget::Space::new().width(width).height(height)).into(),
-                !matches!(item.kind, ItemKind::FocusedWindow) || title_content,
-            )
-        });
+        let view = view_zone(
+            panel,
+            zone,
+            availability,
+            theme,
+            true,
+            |_| true,
+            |item, _| {
+                let width = match item.kind {
+                    ItemKind::Overview => 28.,
+                    ItemKind::Workspaces { .. } => 72.,
+                    ItemKind::FocusedWindow => 80.,
+                    ItemKind::Clock => 60.,
+                    _ => 20.,
+                };
+                let height = if matches!(item.kind, ItemKind::FocusedWindow) {
+                    24.
+                } else {
+                    20.
+                };
+                (
+                    container(cosmic::iced::widget::Space::new().width(width).height(height)).into(),
+                    !matches!(item.kind, ItemKind::FocusedWindow) || title_content,
+                )
+            },
+        );
         let mut view: Element<'_, cosmic::Action<Message>> = container(view)
             .height(panel.geometry.height)
             .align_y(alignment::Vertical::Center)

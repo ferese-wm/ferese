@@ -684,6 +684,33 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_cancelled_modal_that_opens_late_is_destroyed_without_closing_its_replacement() {
+        let mut app = crate::tests::shell_with_measured_panel();
+        drop(app.open_guide(Vec::new()));
+        let cancelled = app.system_modal.as_ref().unwrap().surfaces[0].id;
+        assert!(app.owns_surface(cancelled));
+        drop(app.destroy_system_modal(false));
+        drop(app.open_guide(Vec::new()));
+        let replacement = app.system_modal.as_ref().unwrap().surfaces[0].id;
+        assert!(!app.owns_surface(cancelled));
+        assert!(app.owns_surface(replacement));
+
+        let close = app.handle_event(
+            Event::Window(window::Event::Opened {
+                position: None,
+                size: cosmic::iced::Size::new(800., 600.),
+            }),
+            cancelled,
+        );
+        assert_eq!(
+            close.units(),
+            2,
+            "a late layer or popup must receive a destruction command"
+        );
+        assert!(app.owns_surface(replacement));
+    }
+
+    #[test]
     fn tab_stays_within_modal_actions_in_both_directions() {
         use cosmic::iced::Rectangle;
         use cosmic::iced::advanced::widget::{Id, Operation, operation};

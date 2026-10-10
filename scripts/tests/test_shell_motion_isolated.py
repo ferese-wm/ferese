@@ -89,10 +89,15 @@ class ShellMotionTest(unittest.TestCase):
                                       env=ipc_environment(env), text=True, capture_output=True, timeout=5, check=check)
 
             def layer_surface(namespace):
-                matches = list(re.finditer(r'get_layer_surface\([^\n]*?wl_surface[@#](\d+)[^\n]*"' + namespace + '"', log_path.read_text()))
+                matches = layer_surfaces(namespace)
                 # Wayland object IDs can be reused after destruction. Restrict
                 # assertions to this surface's lifetime in the trace.
-                return (matches[-1].group(1), matches[-1].start()) if matches else None
+                return matches[-1] if matches else None
+
+            def layer_surfaces(namespace):
+                return [(match.group(1), match.start()) for match in re.finditer(
+                    r'get_layer_surface\([^\n]*?wl_surface[@#](\d+)[^\n]*"' + namespace + '"',
+                    log_path.read_text())]
 
             def frames(surface):
                 identity, start = surface
@@ -199,6 +204,48 @@ class ShellMotionTest(unittest.TestCase):
                     self.assertIsNone(compositor.poll(), log_path.read_text()[-8000:])
                     self.assertNotIn("panicked at", log_path.read_text())
                     print(f"Modal: {frames(modal)} callbacks; interrupted opening closed and destroyed", flush=True)
+
+                    # A toast can resize or start closing before its previous
+                    # software buffer has caught up with the new viewport.
+                    for index in range(40):
+                        reply = dbus("Notify", "Ferese motion test", "0", "", "Rapid toast",
+                                     "Short body", "[]", "{}", "0").stdout
+                        notice = re.search(r'uint32 (\d+)', reply).group(1)
+                        if index % 2 == 0:
+                            dbus("Notify", "Ferese motion test", notice, "", "Updated toast",
+                                 "A longer notification body that wraps over several lines. " * 6,
+                                 "[]", "{}", "0")
+                        dbus("CloseNotification", notice)
+                        time.sleep(.015)
+                    time.sleep(.5)
+                    self.assertIsNone(compositor.poll(), log_path.read_text()[-8000:])
+                    self.assertEqual(dbus("GetServerInformation", check=False).returncode, 0)
+                    self.assertNotIn("panicked at", log_path.read_text())
+                    print("Toast: 40 rapid open/update/close cycles completed", flush=True)
+
+                    for _ in range(40):
+                        subprocess.run([str(ctl), "toggle-keybinding-guide"],
+                                       env=ipc_environment(env), check=True, capture_output=True)
+                        time.sleep(.03)
+                        subprocess.run([str(ctl), "toggle-keybinding-guide"],
+                                       env=ipc_environment(env), check=True, capture_output=True)
+                        time.sleep(.06)
+                    # A final toggle may leave the owned modal closing. Let
+                    # that motion finish before deciding whether a live modal
+                    # needs another toggle; toggling during closing reopens it.
+                    deadline = time.monotonic() + 5
+                    while True:
+                        remaining = [surface for surface in layer_surfaces("ferese-system-modal")
+                                     if not destroyed(surface)]
+                        if not remaining or time.monotonic() >= deadline:
+                            break
+                        time.sleep(.05)
+                    self.assertLessEqual(len(remaining), 1, "cancelled modals retained native surfaces")
+                    if remaining:
+                        subprocess.run([str(ctl), "toggle-keybinding-guide"],
+                                       env=ipc_environment(env), check=True, capture_output=True)
+                        wait_for(lambda: destroyed(remaining[0]))
+                    print("Modal: rapid toggles released all native surfaces", flush=True)
 
                     if bar_layout == "islands":
                         for layout_name, expected_count in [("continuous", 1), ("islands", None)]:

@@ -1379,6 +1379,36 @@ mod tests {
     }
 
     #[test]
+    fn late_open_checks_preserve_owned_desktop_widgets_and_tooltips() {
+        let mut shell = shell_with_measured_panel();
+        let wallpaper = window::Id::unique();
+        let clock = window::Id::unique();
+        let note = window::Id::unique();
+        let tooltip = window::Id::unique();
+        shell.outputs[0].wallpaper = Some(wallpaper);
+        shell.outputs[0].clock = Some(clock);
+        shell.outputs[0].notes.push(("note".into(), note));
+        shell.workspace_ui.tooltip = Some(tooltip);
+        for id in [wallpaper, clock, note, tooltip] {
+            assert!(shell.owns_surface(id));
+            assert_eq!(
+                shell
+                    .handle_event(
+                        Event::Window(window::Event::Opened {
+                            position: None,
+                            size: cosmic::iced::Size::new(100., 100.),
+                        }),
+                        id,
+                    )
+                    .units(),
+                0,
+                "an owned surface must not be destroyed on opening"
+            );
+        }
+        assert!(!shell.owns_surface(window::Id::unique()));
+    }
+
+    #[test]
     fn an_empty_measured_panel_is_not_an_unmeasured_panel() {
         let mut shell = shell_with_measured_panel();
         let bar = shell.outputs[0].bar;

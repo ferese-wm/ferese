@@ -139,16 +139,19 @@ impl<M> Widget<M, Theme, cosmic::Renderer> for Adaptive<'_, M> {
             .find(|measurement| measurement.id.0 == "_overflow")
             .map_or(0.0, |measurement| measurement.alternatives[0].1);
         let trigger = trigger.min((limits.max().width - self.overflow_width).max(0.0));
-        self.resolution = resolve_with_gap(
+        let mut resolution = resolve_with_gap(
             &self.panel,
             &measurements,
             limits.max().width,
             (self.overflow_width + trigger).min(limits.max().width),
             self.zone_gap,
         );
-        self.resolution.overflow_trigger_width = trigger;
-        self.content = (self.build)(&self.resolution);
-        tree.children[0].diff(self.content.as_widget_mut());
+        resolution.overflow_trigger_width = trigger;
+        if self.resolution != resolution {
+            self.resolution = resolution;
+            self.content = (self.build)(&self.resolution);
+            tree.children[0].diff(self.content.as_widget_mut());
+        }
         self.content
             .as_widget_mut()
             .layout(&mut tree.children[0], renderer, limits)
@@ -383,12 +386,15 @@ mod tests {
             }))
             .collect();
             let id = id.clone();
+            let builds = std::cell::Cell::new(0);
+            let build_count = &builds;
             let mut view = frame(
                 Cow::Borrowed(&panel),
                 samples,
                 0.,
                 Resolution::default(),
                 move |resolution| {
+                    build_count.set(build_count.get() + 1);
                     let width = match resolution.items.get(&id) {
                         Some(Placement::Visible { width, .. }) => *width,
                         _ => resolution.overflow_trigger_width,
@@ -406,6 +412,10 @@ mod tests {
             let viewport = Rectangle::new(Point::ORIGIN, Size::new(width, 28.));
             let limits = layout::Limits::new(Size::ZERO, viewport.size());
             let node = view.as_widget_mut().layout(tree, &renderer, &limits);
+            let built = builds.get();
+            assert_eq!(built, 2, "initial measurement must replace the unallocated content");
+            view.as_widget_mut().layout(tree, &renderer, &limits);
+            assert_eq!(builds.get(), built, "unchanged allocation must reuse its controls");
             let mut messages = Vec::new();
             for _ in 0..4 {
                 view.as_widget_mut().update(

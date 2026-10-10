@@ -76,6 +76,69 @@ pub fn symbolic(source: &'static [u8], size: u16) -> icon::Icon {
     icon::from_svg_bytes(source).symbolic(true).icon().size(size)
 }
 
+const TINT_CACHE_ENTRIES: usize = 64;
+const TINT_CACHE_BYTES: usize = 128 * 1024;
+
+struct TintedIcon {
+    source: &'static [u8],
+    colors: [u32; 8],
+    handle: icon::Handle,
+    bytes: usize,
+}
+
+#[derive(Default)]
+struct TintCache {
+    entries: std::collections::VecDeque<TintedIcon>,
+    bytes: usize,
+}
+
+impl TintCache {
+    fn get(&mut self, source: &'static [u8], foreground: Color, accent: Color) -> icon::Handle {
+        let colors = [
+            foreground.r,
+            foreground.g,
+            foreground.b,
+            foreground.a,
+            accent.r,
+            accent.g,
+            accent.b,
+            accent.a,
+        ]
+        .map(f32::to_bits);
+        if let Some(index) = self
+            .entries
+            .iter()
+            .position(|entry| std::ptr::eq(entry.source, source) && entry.colors == colors)
+        {
+            let entry = self.entries.remove(index).unwrap();
+            let handle = entry.handle.clone();
+            self.entries.push_back(entry);
+            return handle;
+        }
+        let svg = tint_svg(source, foreground, accent);
+        let bytes = svg.capacity();
+        let handle = icon::from_svg_bytes(svg).symbolic(false);
+        if bytes <= TINT_CACHE_BYTES {
+            while self.entries.len() >= TINT_CACHE_ENTRIES || self.bytes + bytes > TINT_CACHE_BYTES {
+                self.bytes -= self.entries.pop_front().unwrap().bytes;
+            }
+            self.bytes += bytes;
+            self.entries.push_back(TintedIcon {
+                source,
+                colors,
+                handle: handle.clone(),
+                bytes,
+            });
+        }
+        handle
+    }
+}
+
+thread_local! {
+    // Retain shared artwork across view rebuilds, with bounded storage as colors change.
+    static TINT_CACHE: std::cell::RefCell<TintCache> = std::cell::RefCell::new(TintCache::default());
+}
+
 pub fn accented(source: &'static [u8], size: u16, foreground: Color, accent: Color) -> icon::Icon {
     let svg = std::str::from_utf8(source).expect("embedded SVG must be UTF-8");
     // Battery canvases are wider; reserve that space instead of stretching
@@ -85,8 +148,8 @@ pub fn accented(source: &'static [u8], size: u16, foreground: Color, accent: Col
     } else {
         1.0
     };
-    icon::from_svg_bytes(tint_svg(source, foreground, accent))
-        .symbolic(false)
+    TINT_CACHE
+        .with(|cache| cache.borrow_mut().get(source, foreground, accent))
         .icon()
         .size(size)
         .width(Length::Fixed(f32::from(size) * aspect))
@@ -131,6 +194,45 @@ pub fn outline(path: &str, tint: Color, size: u16) -> icon::Icon {
 #[cfg(test)]
 mod tests {
     use cosmic::iced::Color;
+    #[test]
+    fn tinted_icons_share_artwork_and_distinguish_accent_and_alpha() {
+        let mut cache = super::TintCache::default();
+        let foreground = Color::from_rgb8(205, 214, 244);
+        let accent = Color::from_rgb8(203, 166, 247);
+        let bytes = |handle: &cosmic::widget::icon::Handle| {
+            let cosmic::widget::icon::Data::Svg(svg) = &handle.data else {
+                panic!("expected SVG");
+            };
+            let cosmic::iced::advanced::svg::Data::Bytes(bytes) = svg.data() else {
+                panic!("expected SVG bytes");
+            };
+            bytes.as_ptr()
+        };
+        let first = cache.get(super::BATTERY_50, foreground, accent);
+        let second = cache.get(super::BATTERY_50, foreground, accent);
+        assert_eq!(bytes(&first), bytes(&second), "rebuilds must reuse the same allocation");
+        let changed_accent = cache.get(super::BATTERY_50, foreground, Color::from_rgb8(42, 90, 180));
+        assert_ne!(bytes(&first), bytes(&changed_accent));
+        let translucent = cache.get(super::BATTERY_50, Color { a: 0.5, ..foreground }, accent);
+        assert_ne!(bytes(&first), bytes(&translucent));
+        assert_eq!(cache.entries.len(), 3);
+    }
+
+    #[test]
+    fn icon_tint_cache_evicts_old_colors_without_growing() {
+        let mut cache = super::TintCache::default();
+        for value in 0..512 {
+            let _ = cache.get(
+                super::FERESE,
+                Color::from_rgba(0.5, 0.5, 0.5, value as f32 / 512.),
+                Color::BLACK,
+            );
+            assert!(cache.entries.len() <= super::TINT_CACHE_ENTRIES);
+            assert!(cache.bytes <= super::TINT_CACHE_BYTES);
+        }
+        assert_eq!(cache.entries.back().unwrap().colors[3], (511_f32 / 512.).to_bits());
+    }
+
     #[test]
     fn icons_use_theme_accent_and_preserve_battery_status_colors() {
         for (source, accent) in [
