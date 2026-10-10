@@ -19,18 +19,19 @@ Ferese combines a window manager and desktop shell with one configuration.
 
 ## Features
 
-- Scrolling columns with window grouping, tree tiling and floating windows that remember their size and placement
+- Scrolling columns, window groups, tree tiling and floating windows with saved size and position
+- Integrated shell with notifications, media controls, Settings and Control Center
+- [Custom panels](docs/configuration.md#panel-composition) with editable items, groups, surfaces, and top or bottom placement
 - Workspace overview and recent-window switching
-- Remappable keyboard shortcuts and touchpad gestures
-- [Continuum motion](docs/configuration.md#animations): interruptible springs, gesture momentum and motion settings shared by the compositor and shell
-- Multiple monitors with fractional scaling and automatic refresh-rate switching on low battery
-- Themes, wallpapers and blur that update live, with Light/Dark/Auto modes and custom KDL themes
-- Continuous corners across windows and shell
-- Desktop widgets, including a clock and sticky notes
-- Screenshots with annotation, screen sharing and built-in recording
-- A built-in lock screen and authentication dialogs
-- [Idle inhibition](docs/configuration.md#idle-inhibition) during fullscreen media playback, with rules for selected apps
-- Settings and Control Center with Wi-Fi, Bluetooth and audio controls
+- [Continuum animations](docs/configuration.md#animations): interruptible springs, gesture momentum and shared motion controls
+- Live wallpapers and blur, custom KDL themes, and Light/Dark/Auto modes
+- Multiple monitors, fractional scaling and lower refresh rates on low battery
+- Wi-Fi, Bluetooth and audio controls
+- Custom keyboard shortcuts and touchpad gestures
+- Screenshot annotation, screen sharing and recording
+- Lock screen and authentication dialogs
+- [Keep awake](docs/configuration.md#idle-inhibition) during fullscreen media playback or for selected apps
+- Continuous corners for windows and shell
 
 ## How Ferese compares
 
