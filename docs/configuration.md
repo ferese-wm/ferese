@@ -64,6 +64,10 @@ Settings keeps `config.kdl.settings-backup` before saving.
 File edits reload automatically, including atomic editor saves. Invalid changes
 keep the last working configuration. Appearance, wallpaper, motion, input,
 bindings, rules, layouts, displays, widgets and login items update live.
+The shell reports invalid configuration at startup and exits without rewriting
+the file or replacing it with defaults. Defaults apply when no configuration file
+exists. Configuration uses the current schema; removed fields are rejected rather
+than migrated.
 
 ```sh
 feresectl reload-config          # reload with error feedback
@@ -277,7 +281,6 @@ one appearance.
 | `theme.schedule.light-at`, `theme.schedule.dark-at` | `HH:MM` | `"07:00"`, `"19:00"` | Auto boundaries; times must differ |
 | `theme.accessibility.increase-contrast` | boolean | `false` | Strengthen text and borders |
 | `theme.accessibility.reduce-transparency` | boolean | `false` | Solid surfaces; skip background blur |
-| `appearance.corner-radius` | number ≥ 0 | unset | Legacy fallback for shell radius |
 | `appearance.focus-effect.enabled` | boolean | `true` | Apply window opacity and dimming; disabling keeps the configured values |
 | `appearance.focus-effect.active-opacity` | number 0–1 | `1` | Active application opacity, including fullscreen |
 | `appearance.focus-effect.inactive-opacity` | number 0–1 | `1` | Other application window opacity |
@@ -335,7 +338,6 @@ Filled controls choose a contrasting text color automatically.
 | `focus-ring-width` | number ≥ 0 | `2` | Focused border thickness |
 | `window-radius` | number ≥ 0 | `14` | Managed-window corners, independent of the shell |
 | `shell-radius` | number ≥ 0 | `14` | All shell surfaces, cards, widgets and interaction backgrounds; fractional radii are preserved; 0 makes them square |
-| `top-bar-radius` | number ≥ 0 | unset | Legacy fallback for shell radius |
 | `control-gap` | number ≥ 0 | `12` | Right-side control spacing |
 
 | Section / key | Type | Default | Meaning |
@@ -947,6 +949,7 @@ currently share the same clock format and timezone.
 | Item `priority` | integer 0–100; default 50 | Lower priorities yield space first |
 | Item `representation` | omit, `wide`, `compact`, `icon` | Preferred supported form; smaller forms may be used |
 | Item `gap-before` | 0–64; unset | Override the preceding gap within a group |
+| Item `metadata` | optional section | Custom data preserved by the editor; no shell behavior |
 | Workspaces `style` | `numbers`, `dots` (default), `tabs`, `window-stacks`, `app-icons` | Workspace indicators; choose in the Workspaces item inspector |
 | Battery `percentage` | boolean; default `true` | Include percentage in its full form |
 | Focused window `visible` | boolean; default `true` | Include the title |
@@ -967,6 +970,8 @@ to retain numbered indicators.
 Item-specific settings belong to their kind: Workspaces uses `style`, Battery
 uses `percentage`, and Focused window uses the shared `visible` flag.
 Only these canonical fields are supported.
+Unknown item options are errors, including misspellings. Put custom data in a
+`metadata` section, for example `item "clock" kind="clock" { metadata { note "Desk clock"; }; }`.
 
 The center stays screen-centered. When controls cannot fit, lower-priority items
 adapt first, with definition order breaking ties. The overflow chevron appears
@@ -1131,10 +1136,9 @@ The shell and compositor use the same squircle profile for fills, borders, shado
 and blur masks. Small controls cap the radius to fit their size; circles and pills
 keep circular outlines. The measured profile has small tangent and curvature
 discontinuities at its internal segment joins. Window rounding remains under
-Settings → Windows. `theme.geometry.shell-radius` takes precedence over the old
-`appearance.corner-radius` and then `theme.geometry.top-bar-radius` keys; when
-none are set, the shell uses 14 px. Legacy clock/note radius fields no longer
-override shell rounding.
+Settings → Windows. `theme.geometry.shell-radius` controls shell rounding and
+defaults to 14 px. Each panel can override its own corners. Removed radius keys
+have no compatibility readers.
 
 ## X11 support (xwayland-satellite)
 

@@ -1,7 +1,5 @@
 # Panel composition
 
-Reviewed revision: `d4c8c10` (2026-10-07).
-
 The integration covers composition, popup ownership, measured sizing, group
 surfaces, overflow, KDL persistence, and a Settings editor with a composition
 preview and drag/drop editor. Ferese creates one panel per output, at the top or bottom edge.
@@ -21,8 +19,11 @@ fullscreen visibility, and measured presentation state. Two items can have the
 same kind and distinct IDs.
 
 Persistent types and validation live in `ferese-config::panel`, shared by the
-compositor, shell, and Settings. The shell translates existing status settings
-when no panel is authored. An explicit panel replaces that generated composition.
+compositor, shell, and Settings. When no panel is authored, the shell uses the
+default composition. An explicit panel replaces it. Removed configuration fields
+are rejected; there are no compatibility readers or automatic migrations. Invalid
+configuration stops shell startup with the file path and error, without changing
+the file. An invalid reload reports the error and keeps the running configuration.
 The current renderer accepts exactly one definition and instantiates it on each
 output. `edge` accepts `top` (default) or `bottom`; output overrides and multiple definitions are rejected.
 
@@ -42,7 +43,9 @@ The center stays physically centered, with space reserved against the larger
 side. Flexible title/workspace content yields space first, then controls use
 smaller supported representations. Measurements are indexed by ItemId. Lower-priority items yield before higher
 priorities; equal priorities follow Start/Center/End composition order. Restoration
-uses the reverse priority order; renderer sample order has no layout semantics. Eligible items move to
+uses the reverse priority order and stays within the selected representation's
+measured width. Each resolution records its zone gap so subsequent fit checks
+use the same spacing; renderer sample order has no layout semantics. Eligible items move to
 overflow when representations cannot fit. Each resolution starts from configured
 intent, so controls return to their preferred form as space returns.
 
@@ -100,7 +103,8 @@ It then exposes item visibility, overflow policy, supported representation
 preferences, title visibility, and battery percentage. Select an item to open its
 inspector. Items can be added, removed, reordered within a group, or moved to another
 existing group. Editing resolves IDs against the latest draft, validates the whole
-change, and saves once. Unknown item fields and comments are retained.
+change, and saves once. Unknown item options are rejected. Custom data belongs in an explicit `metadata`
+section; that data and comments are retained through edits.
 
 Each panel owns `PanelGeometry`: height, edge margin, side margins, window
 clearance, and inner padding. The theme contains appearance tokens, and

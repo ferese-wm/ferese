@@ -777,10 +777,10 @@ mod tests {
     }
 
     #[test]
-    fn shell_radius_is_independent_of_windows_and_overrides_legacy_keys() {
+    fn shell_radius_is_independent_of_windows() {
         for radius in [0.0, 18.0] {
             let config = parse(&format!(
-                "appearance {{\n corner-radius 9\n}}\ntheme {{\n geometry {{\n shell-radius {radius}\n top-bar-radius 5\n window-radius 23\n }}\n}}"
+                "theme {{\n geometry {{\n shell-radius {radius}\n window-radius 23\n }}\n}}"
             ));
             let theme = config.theme_settings().unwrap();
             assert_eq!(theme.material_radius, radius);

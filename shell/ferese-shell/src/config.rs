@@ -180,16 +180,9 @@ struct FereseConfig {
     #[serde(default)]
     animations: crate::motion::Settings,
     #[serde(default)]
-    appearance: AppearanceConfig,
-    #[serde(default)]
     theme: ThemeConfig,
     #[serde(default)]
     status: StatusConfig,
-}
-
-#[derive(Debug, Default, Deserialize)]
-struct AppearanceConfig {
-    corner_radius: Option<f32>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -282,8 +275,6 @@ impl Default for ThemeColorsConfig {
 struct ThemeGeometryConfig {
     #[serde(default)]
     shell_radius: Option<f32>,
-    #[serde(default)]
-    top_bar_radius: Option<f32>,
     #[serde(default = "default_control_gap")]
     control_gap: f32,
 }
@@ -292,7 +283,6 @@ impl Default for ThemeGeometryConfig {
     fn default() -> Self {
         Self {
             shell_radius: None,
-            top_bar_radius: None,
             control_gap: default_control_gap(),
         }
     }
@@ -324,21 +314,21 @@ impl Default for SoftShadowConfig {
     }
 }
 
-pub(crate) fn load() -> ShellConfig {
+pub(crate) fn load() -> Result<ShellConfig, String> {
     let Some(path) = config_path() else {
-        return ShellConfig::default();
+        return Ok(ShellConfig::default());
     };
-    let Ok(source) = fs::read_to_string(&path) else {
-        return ShellConfig::default();
-    };
+    load_path(&path)
+}
 
-    match parse_source(&source) {
-        Ok(config) => config,
-        Err(error) => {
-            eprintln!("ferese-shell: failed to read {}: {error}", path.display());
-            ShellConfig::default()
-        }
+fn load_path(path: &std::path::Path) -> Result<ShellConfig, String> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(ShellConfig::default()),
+        Err(error) => return Err(format!("cannot read {}: {error}", path.display())),
     }
+    let source = fs::read_to_string(path).map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+    parse_source(&source).map_err(|error| format!("invalid configuration in {}: {error}", path.display()))
 }
 
 pub(crate) fn parse_source(source: &str) -> Result<ShellConfig, ferese_config::Error> {
@@ -372,16 +362,7 @@ fn parse_document(
             config.desktop_widgets.validate().map_err(ferese_config::Error::from)?;
             let mut theme = shell_theme(&config.theme);
             theme.appearance = appearance;
-            theme.material_radius = nonnegative_or(
-                config
-                    .theme
-                    .geometry
-                    .shell_radius
-                    .or(config.appearance.corner_radius)
-                    .or(config.theme.geometry.top_bar_radius)
-                    .unwrap_or(14.0),
-                14.0,
-            );
+            theme.material_radius = nonnegative_or(config.theme.geometry.shell_radius.unwrap_or(14.0), 14.0);
             theme.bar_radius = theme.material_radius;
 
             Ok(ShellConfig {
@@ -461,14 +442,7 @@ fn shell_theme(theme: &ThemeConfig) -> ShellTheme {
         on_accent: parse_color(&theme.colors.on_accent).unwrap_or(defaults.on_accent),
         border: parse_color(&theme.colors.border).unwrap_or(defaults.border),
         shadow: parse_color(&theme.colors.shadow).unwrap_or(defaults.shadow),
-        bar_radius: nonnegative_or(
-            theme
-                .geometry
-                .shell_radius
-                .or(theme.geometry.top_bar_radius)
-                .unwrap_or(14.0),
-            defaults.bar_radius,
-        ),
+        bar_radius: nonnegative_or(theme.geometry.shell_radius.unwrap_or(14.0), defaults.bar_radius),
         control_gap: nonnegative_or(theme.geometry.control_gap, defaults.control_gap),
         shadow_offset_y: finite_or(theme.shadow.soft.offset_y, defaults.shadow_offset_y),
         shadow_blur: nonnegative_or(theme.shadow.soft.blur, defaults.shadow_blur),
@@ -699,18 +673,44 @@ theme {
     }
 
     #[test]
-    fn shell_radius_unifies_surfaces_and_preserves_legacy_fallbacks() {
+    fn shell_radius_unifies_surfaces() {
         for radius in [0.0, 18.0] {
-            let config = parse_test_source(&format!("appearance {{\n corner-radius 9\n}}\ntheme {{\n geometry {{\n shell-radius {radius}\n top-bar-radius 5\n window-radius 23\n }}\n}}")).unwrap();
+            let config = parse_test_source(&format!(
+                "theme {{\n geometry {{\n shell-radius {radius}\n window-radius 23\n }}\n}}"
+            ))
+            .unwrap();
             assert_eq!(config.theme.material_radius, radius);
             assert_eq!(config.theme.bar_radius, radius);
         }
-        let legacy = parse_test_source("theme {\n geometry {\n top-bar-radius 7\n }\n}").unwrap();
-        assert_eq!(legacy.theme.material_radius, 7.0);
-        assert_eq!(legacy.theme.bar_radius, 7.0);
-        let legacy = parse_test_source("appearance {\n corner-radius 6\n}").unwrap();
-        assert_eq!(legacy.theme.material_radius, 6.0);
-        assert_eq!(legacy.theme.bar_radius, 6.0);
+    }
+
+    #[test]
+    fn startup_rejects_invalid_configuration_without_replacing_it() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("config.kdl");
+        let source =
+            "notifications { do-not-disturb #true; }\nstatus { bar-layout islands; battery-percentage #false; }";
+        std::fs::write(&path, source).unwrap();
+        let error = super::load_path(&path).unwrap_err();
+        assert!(error.contains("bar_layout"), "{error}");
+        assert!(error.contains(path.to_str().unwrap()), "{error}");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), source);
+        std::fs::write(&path, "panel main {").unwrap();
+        assert!(super::load_path(&path).is_err());
+    }
+
+    #[test]
+    fn startup_distinguishes_absent_configuration_from_read_errors() {
+        let directory = tempfile::tempdir().unwrap();
+        assert!(super::load_path(&directory.path().join("missing.kdl")).is_ok());
+        let error = super::load_path(directory.path()).unwrap_err();
+        assert!(error.contains("cannot read"), "{error}");
+        let path = directory.path().join("config.kdl");
+        std::os::unix::fs::symlink(directory.path().join("missing-target"), &path).unwrap();
+        assert!(
+            super::load_path(&path).is_err(),
+            "a broken config symlink is a read error"
+        );
     }
 
     #[test]

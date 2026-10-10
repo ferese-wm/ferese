@@ -383,17 +383,6 @@ pub fn resolve_with_context(
             .map(|preset| preset.gradient_end)
             .filter(|end| *end != authored_accent);
         let mut explicit_surfaces = std::collections::HashSet::new();
-        if root
-            .get("geometry")
-            .and_then(|value| value.get("shell_radius"))
-            .is_none()
-            && let Some(radius) = document
-                .get("appearance.corner_radius")
-                .and_then(Value::as_f64)
-                .or_else(|| document.get("theme.geometry.top_bar_radius").and_then(Value::as_f64))
-        {
-            tokens.geometry.shell_radius = radius;
-        }
         let mut value = token_value(&tokens)?;
         for file in [&policy.file, &selection.file].into_iter().flatten() {
             let path = theme_path(directory, file);
@@ -542,9 +531,6 @@ fn merge(
             ]
             .contains(&key.as_str())
         {
-            continue;
-        }
-        if prefix == "geometry" && key == "top_bar_radius" {
             continue;
         }
         let path = if prefix.is_empty() {

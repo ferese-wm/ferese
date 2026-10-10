@@ -115,6 +115,10 @@ impl From<panel::PanelGeometry> for BarMetrics {
 }
 
 fn main() -> cosmic::iced::Result {
+    let mut config = config::load().unwrap_or_else(|error| {
+        eprintln!("ferese-shell: {error}; shell was not started");
+        std::process::exit(2);
+    });
     renderer::configure_shell();
 
     cosmic::iced::advanced::graphics::text::font_system()
@@ -130,7 +134,6 @@ fn main() -> cosmic::iced::Result {
             "../../../assets/fonts/Cantarell-ExtraBold.otf"
         )));
 
-    let mut config = config::load();
     motion::configure(config.animations, config.theme.material_radius);
     let compositor_wallpaper = std::env::var_os("FERESE_COMPOSITOR_WALLPAPER").is_some();
     if compositor_wallpaper {
@@ -965,6 +968,8 @@ impl FereseShell {
             Ok(config) => config,
             Err(error) => {
                 eprintln!("ferese-shell: reload rejected; keeping current config: {error}");
+                self.notifications
+                    .service_error("Configuration could not be loaded", &error.to_string());
                 return Task::none();
             }
         };

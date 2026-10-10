@@ -22,12 +22,7 @@ impl Config {
         let shadow_opacity = unit_theme_value(self.theme.shadow.soft.opacity, "shadow.soft.opacity")?;
 
         let material_radius = nonnegative_theme_value(
-            self.theme
-                .geometry
-                .shell_radius
-                .or(self.appearance.corner_radius)
-                .or(self.theme.geometry.top_bar_radius)
-                .unwrap_or(14.0),
+            self.theme.geometry.shell_radius.unwrap_or(14.0),
             "geometry.shell_radius",
         )?;
         Ok(ThemeSettings {
@@ -244,7 +239,6 @@ pub enum MaterialStyle {
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct AppearanceConfig {
-    pub(super) corner_radius: Option<f64>,
     #[serde(default)]
     pub(super) focus_effect: FocusEffectConfig,
 }
@@ -414,8 +408,6 @@ pub(super) struct ThemeGeometryConfig {
     #[serde(default = "default_window_radius")]
     pub(super) window_radius: f64,
     #[serde(default)]
-    pub(super) top_bar_radius: Option<f64>,
-    #[serde(default)]
     pub(super) shell_radius: Option<f64>,
 }
 
@@ -425,7 +417,6 @@ impl Default for ThemeGeometryConfig {
             border_width: default_border_width(),
             focus_ring_width: default_focus_ring_width(),
             window_radius: default_window_radius(),
-            top_bar_radius: None,
             shell_radius: None,
         }
     }

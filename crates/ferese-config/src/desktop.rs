@@ -47,7 +47,6 @@ pub struct StickyNote {
     pub opacity: f32,
     pub padding: f32,
     pub gap: f32,
-    pub radius: f32,
     pub alignment: Alignment,
 }
 
@@ -73,7 +72,6 @@ impl Default for StickyNote {
             opacity: 0.9,
             padding: 20.,
             gap: 8.,
-            radius: 16.,
             alignment: Alignment::Left,
         }
     }
@@ -122,7 +120,6 @@ impl StickyNote {
             ("opacity", self.opacity, 0., 1.),
             ("padding", self.padding, 0., 64.),
             ("gap", self.gap, 0., 64.),
-            ("radius", self.radius, 0., 128.),
         ] {
             if !value.is_finite() || !(min..=max).contains(&value) {
                 return invalid(name);
@@ -208,7 +205,6 @@ pub struct Clock {
     pub gap: f32,
     pub padding: f32,
     pub background: Option<String>,
-    pub radius: f32,
 }
 
 impl Default for Clock {
@@ -238,7 +234,6 @@ impl Default for Clock {
             gap: 4.,
             padding: 12.,
             background: None,
-            radius: 16.,
         }
     }
 }
@@ -279,7 +274,6 @@ impl Clock {
             ("opacity", self.opacity, 0., 1.),
             ("gap", self.gap, 0., 64.),
             ("padding", self.padding, 0., 64.),
-            ("radius", self.radius, 0., 128.),
         ] {
             if !value.is_finite() || !(min..=max).contains(&value) {
                 return invalid(name);
@@ -313,6 +307,11 @@ impl Clock {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn widgets_reject_removed_radius_options() {
+        assert!(crate::from_str::<DesktopWidgets>("clock { radius 12; }").is_err());
+        assert!(crate::from_str::<DesktopWidgets>("note id=\"note\" { radius 12; }").is_err());
+    }
     #[test]
     fn notes_reject_duplicate_ids_and_unbounded_content() {
         let note = StickyNote::default();
