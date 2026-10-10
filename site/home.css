@@ -13,18 +13,16 @@ h1 { font-size: clamp(45px, 6.1vw, 80px); font-weight: 590; letter-spacing: -.05
 h2 { font-size: 48px; line-height: 1.12; font-weight: 560; letter-spacing: -2px; margin: 0; text-wrap: balance; }
 .section-heading > p { max-width: 405px; margin: 0; font-size: 15px; line-height: 1.85; color: var(--muted); text-wrap: pretty; }
 .feature-capture { min-width: 0; max-width: 100%; margin: 0; }
-.feature-capture > a, .detail-capture { display: block; min-width: 0; max-width: 100%; border: 1px solid var(--line); border-radius: 22px; overflow: hidden; background: var(--page); line-height: 0; }
-.feature-capture img, .detail-capture img { display: block; width: 100%; height: auto; }
+.feature-capture > a { display: block; min-width: 0; max-width: 100%; border: 1px solid var(--line); border-radius: 22px; overflow: hidden; background: var(--page); line-height: 0; }
+.feature-capture img { display: block; width: 100%; height: auto; }
 .feature-capture figcaption { margin-top: 19px; color: var(--muted); font-size: 12px; text-align: center; }
 .details-section { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 32px; padding-top: 115px; }
-.layout-details { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 32px; margin-top: 48px; }
 .gallery-link { padding-top: 44px; text-align: center; }
-.detail-feature { min-width: 0; }
-.detail-capture { border-radius: 17px; }
-.detail-feature h3 { margin: 25px 0 12px; font-size: 25px; font-weight: 550; letter-spacing: -.8px; }
+.detail-feature { min-width: 0; padding: 32px; border: 1px solid var(--line); border-radius: 20px; background: var(--soft); }
+.detail-feature h3 { margin: 0 0 12px; font-size: 25px; font-weight: 550; letter-spacing: -.8px; }
 .detail-feature p { max-width: 445px; margin: 0; color: var(--muted); font-size: 14px; line-height: 1.8; text-wrap: pretty; }
 .appearance-section { padding-block: 93px 83px; background: var(--soft); }
-.centered-heading { text-align: center; max-width: 650px; margin: 0 auto 40px; }
+.centered-heading { text-align: center; max-width: 650px; margin: 0 auto; }
 .centered-heading p { font-size: 15px; line-height: 1.8; color: var(--muted); max-width: 465px; margin: 20px auto 0; text-wrap: balance; }
 .start-section { text-align: center; padding-block: 115px 104px; }
 .start-logo { width: 74px; height: 74px; margin: 0 auto 23px; }
@@ -51,15 +49,14 @@ h2 { font-size: 48px; line-height: 1.12; font-weight: 560; letter-spacing: -2px;
   .section-heading h2 { font-size: 36px; letter-spacing: -1.4px; }
   .section-heading > p { max-width: 480px; font-size: 14px; line-height: 1.8; }
   .appearance-section { padding-block: 68px 57px; }
-  .centered-heading { margin-bottom: 28px; }
   .centered-heading h2 { font-size: 36px; letter-spacing: -1.5px; }
   .centered-heading p { font-size: 14px; margin-top: 18px; max-width: 370px; }
   .feature-capture > a { border-radius: 17px; }
   .feature-capture figcaption { font-size: 10px; margin-top: 13px; }
-  .details-section { grid-template-columns: 1fr; gap: 42px; padding-top: 70px; }
-  .layout-details { grid-template-columns: 1fr; gap: 42px; margin-top: 36px; }
+  .details-section { grid-template-columns: 1fr; gap: 20px; padding-top: 70px; }
   .gallery-link { padding-top: 32px; }
-  .detail-feature h3 { font-size: 24px; margin-top: 21px; }
+  .detail-feature { padding: 26px; }
+  .detail-feature h3 { font-size: 24px; }
   .detail-feature p { font-size: 14px; max-width: 480px; }
   .start-section { padding-block: 78px 70px; }
   .start-logo { width: 62px; height: 62px; margin-bottom: 22px; }
