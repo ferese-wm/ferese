@@ -36,10 +36,9 @@ use store::{Edit, Snapshot, set};
 
 fn main() -> cosmic::iced::Result {
     if std::env::var_os("ICED_BACKEND").is_none() {
-        // The GPU text path can omit labels inside clipped scrolling content.
-        // Prefer the reliable software path while preserving explicit overrides.
+        // Settings repaints large scrolling surfaces; prefer GPU rendering.
         // SAFETY: process entry, before the toolkit or font workers start threads.
-        unsafe { std::env::set_var("ICED_BACKEND", "tiny-skia,wgpu") };
+        unsafe { std::env::set_var("ICED_BACKEND", "wgpu,tiny-skia") };
     }
     let mut args = std::env::args_os().skip(1);
     let mut path = store::config_path();
@@ -330,7 +329,12 @@ impl cosmic::Application for App {
             Task::none()
         };
         let thumbnails = app.load_thumbnail();
-        (app, Task::batch([task, connections, thumbnails]))
+        let displays = if app.page == Page::Bar {
+            app.load_displays()
+        } else {
+            Task::none()
+        };
+        (app, Task::batch([task, connections, thumbnails, displays]))
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
@@ -523,7 +527,7 @@ impl cosmic::Application for App {
                 if leaving {
                     let cleanup = self.leave_connections();
                     let load = match page {
-                        Page::Displays => self.load_displays(),
+                        Page::Displays | Page::Bar => self.load_displays(),
                         Page::Wallpaper => self.load_thumbnail(),
                         _ => Task::none(),
                     };
@@ -532,7 +536,7 @@ impl cosmic::Application for App {
                 if page == Page::Connections {
                     return Task::batch([reset, self.refresh_connections()]);
                 }
-                if page == Page::Displays {
+                if matches!(page, Page::Displays | Page::Bar) {
                     return Task::batch([reset, self.load_displays()]);
                 }
                 if page == Page::Wallpaper {
@@ -981,7 +985,7 @@ impl cosmic::Application for App {
             },
             cosmic::iced::Subscription::run_with(self.path.clone(), |path| watch::changes(path)),
             ferese_theme_client::service::subscription().map(|snapshot| Message::ThemeChanged(Box::new(snapshot))),
-            if self.page == Page::Displays {
+            if matches!(self.page, Page::Displays | Page::Bar) {
                 cosmic::iced::time::every(std::time::Duration::from_secs(2)).map(|_| Message::RefreshDisplays)
             } else {
                 cosmic::iced::Subscription::none()

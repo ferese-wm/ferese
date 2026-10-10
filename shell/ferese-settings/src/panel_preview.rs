@@ -112,6 +112,7 @@ impl App {
                         representation,
                         minimum: match item.kind {
                             ItemKind::Workspaces { .. } => Some(24.),
+                            ItemKind::Media => Some(112.),
                             _ => None,
                         },
                         view: self.preview_control(item, representation, None),

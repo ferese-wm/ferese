@@ -12,6 +12,7 @@ impl FereseShell {
         &self,
         representation: crate::panel::Representation,
         selected: bool,
+        width: Option<f32>,
     ) -> Element<'_, cosmic::Action<Message>> {
         let theme = self.config.theme.for_bar();
         if representation == crate::panel::Representation::Icon {
@@ -23,6 +24,7 @@ impl FereseShell {
                 BarMetrics::from(self.config.panels[0].geometry),
                 representation,
                 selected,
+                width,
             )
         }
     }

@@ -36,6 +36,8 @@ pub struct Display {
     pub connector: String,
     pub identity: String,
     pub profile: Option<String>,
+    pub logical_width: Option<i32>,
+    pub focused: bool,
     pub current: Option<Mode>,
     pub modes: Vec<Mode>,
 }
@@ -51,6 +53,11 @@ pub fn load() -> Result<Vec<Display>, String> {
                 connector: value["connector"].as_str()?.to_owned(),
                 identity: value["identity"].as_str().unwrap_or("").to_owned(),
                 profile: value["profile"].as_str().map(str::to_owned),
+                logical_width: value["width"]
+                    .as_i64()
+                    .and_then(|width| width.try_into().ok())
+                    .filter(|width| *width > 0),
+                focused: value["focused"].as_bool().unwrap_or(false),
                 current: Mode::from_value(&value["current_mode"]),
                 modes: value["available_modes"]
                     .as_array()
@@ -264,6 +271,8 @@ mod tests {
             connector: "eDP-1".into(),
             identity: "panel".into(),
             profile: None,
+            logical_width: Some(1440),
+            focused: true,
             current: Some(Mode {
                 width: 2880,
                 height: 1800,
@@ -344,6 +353,8 @@ mod tests {
             connector: "eDP-1".into(),
             identity: "panel".into(),
             profile: Some("laptop".into()),
+            logical_width: Some(1440),
+            focused: true,
             current: None,
             modes: vec![],
         }];
@@ -369,6 +380,8 @@ mod tests {
             connector: "eDP-1".into(),
             identity: "panel".into(),
             profile: None,
+            logical_width: Some(1440),
+            focused: true,
             current: None,
             modes: vec![],
         }];
@@ -384,6 +397,8 @@ mod tests {
             connector: "eDP-1".into(),
             identity: "panel".into(),
             profile: None,
+            logical_width: Some(1440),
+            focused: true,
             current: Some(mode(2880, 1800, 60000)),
             modes: vec![
                 mode(2880, 1800, 60000),

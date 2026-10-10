@@ -116,6 +116,38 @@ fn panel_preview_stays_visible_while_the_items_editor_scrolls() {
 #[test]
 #[ignore = "release scroll/render sample; requires headless renderer backends"]
 fn appearance_scroll_preserves_progress_and_settles_visibility() {
+    #[derive(Default)]
+    struct Labels {
+        labels: Vec<Rectangle>,
+        viewport: Option<Rectangle>,
+        translation: Vector,
+    }
+    impl Operation for Labels {
+        fn traverse(&mut self, children: &mut dyn FnMut(&mut dyn Operation)) {
+            children(self);
+        }
+        fn text(&mut self, _: Option<&widget::Id>, bounds: Rectangle, text: &str) {
+            if matches!(
+                text,
+                "Shell corner radius" | "Shell opacity" | "Background blur" | "Interface font" | "Focus border"
+            ) {
+                self.labels.push(bounds);
+            }
+        }
+        fn scrollable(
+            &mut self,
+            id: Option<&widget::Id>,
+            bounds: Rectangle,
+            _: Rectangle,
+            translation: Vector,
+            _: &mut dyn cosmic::iced::advanced::widget::operation::Scrollable,
+        ) {
+            if id == Some(&widget::Id::new("settings-content")) {
+                self.viewport = Some(bounds);
+                self.translation = translation;
+            }
+        }
+    }
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -146,6 +178,7 @@ fn appearance_scroll_preserves_progress_and_settles_visibility() {
             let mut previous = 0.;
             let mut render_times = Vec::new();
             let mut visibility_messages = 0;
+            let mut checked_labels = 0;
 
             for frame in 0..60 {
                 let mut messages = Vec::new();
@@ -164,7 +197,7 @@ fn appearance_scroll_preserves_progress_and_settles_visibility() {
                     Event::Mouse(mouse::Event::WheelScrolled {
                         delta: mouse::ScrollDelta::Pixels {
                             x: 0.,
-                            y: if frame < 28 { -12. } else { 12. },
+                            y: if frame < 28 { -48. } else { 48. },
                         },
                     })
                 };
@@ -227,17 +260,39 @@ fn appearance_scroll_preserves_progress_and_settles_visibility() {
                     cursor,
                     &bounds,
                 );
-                drop(view);
+                let mut labels = Labels::default();
+                view.as_widget_mut()
+                    .operate(tree, Layout::new(&node), &renderer, &mut labels);
                 let started = std::time::Instant::now();
-                std::hint::black_box(Headless::screenshot(
-                    &mut renderer,
-                    physical,
-                    scale,
-                    theme.cosmic().bg_color().into(),
-                ));
+                let pixels = Headless::screenshot(&mut renderer, physical, scale, theme.cosmic().bg_color().into());
                 if (4..52).contains(&frame) {
                     render_times.push(started.elapsed().as_micros());
                 }
+                if let Some(viewport) = labels.viewport {
+                    for bounds in labels.labels {
+                        let bounds = bounds - labels.translation;
+                        if bounds.y < viewport.y + 2. || bounds.y + bounds.height > viewport.y + viewport.height - 2. {
+                            continue;
+                        }
+                        let mut ink = 0;
+                        for y in (bounds.y * scale).ceil() as u32..((bounds.y + bounds.height) * scale).floor() as u32 {
+                            for x in
+                                (bounds.x * scale).ceil() as u32..((bounds.x + bounds.width) * scale).floor() as u32
+                            {
+                                let index = ((y * physical.width + x) * 4) as usize;
+                                if pixels[index..index + 3].iter().any(|channel| *channel > 140) {
+                                    ink += 1;
+                                }
+                            }
+                        }
+                        assert!(
+                            ink > 12,
+                            "missing field text: backend={backend} split={split} frame={frame} bounds={bounds:?}"
+                        );
+                        checked_labels += 1;
+                    }
+                }
+                drop(view);
 
                 for message in messages {
                     if matches!(message, Message::RowVisibility(..)) {
@@ -250,6 +305,7 @@ fn appearance_scroll_preserves_progress_and_settles_visibility() {
             }
 
             render_times.sort_unstable();
+            assert!(checked_labels > 20, "scroll check must include visible field labels");
             eprintln!(
                 "backend={backend} split={split} render_median_us={} p95_us={} visibility_messages={visibility_messages}",
                 render_times[render_times.len() / 2],

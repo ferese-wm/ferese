@@ -86,6 +86,7 @@ impl FereseShell {
                             minimum: match item.kind {
                                 ItemKind::FocusedWindow => Some(48.0),
                                 ItemKind::Workspaces { .. } => Some(24.0),
+                                ItemKind::Media => Some(112.0),
                                 _ => None,
                             },
                             view,
@@ -305,7 +306,7 @@ impl FereseShell {
                     .into();
                 return (container(element).max_width(360).into(), !title.is_empty());
             }
-            ItemKind::Media => self.view_media_item(representation, selected),
+            ItemKind::Media => self.view_media_item(representation, selected, width),
             ItemKind::QuickSettings => self.view_status_item(status_ui::Menu::System, false, selected),
             ItemKind::Network => self.view_status_item(status_ui::Menu::Network, false, selected),
             ItemKind::Audio => self.view_status_item(status_ui::Menu::Audio, false, selected),
@@ -326,12 +327,22 @@ impl FereseShell {
                     .spacing(8)
                     .align_y(cosmic::iced::Alignment::Center);
                 if representation == Representation::Wide && !date.is_empty() {
-                    content = content.push(text(date).size(12).class(theme::Text::Color(foreground)));
+                    content = content.push(
+                        text(date)
+                            .size(12)
+                            .wrapping(cosmic::iced::widget::text::Wrapping::None)
+                            .class(theme::Text::Color(foreground)),
+                    );
                 }
-                let content = content.push(text(time).size(bar.text_size).class(theme::Text::Color(foreground)));
+                let content = content.push(
+                    text(time)
+                        .size(bar.text_size)
+                        .wrapping(cosmic::iced::widget::text::Wrapping::None)
+                        .class(theme::Text::Color(foreground)),
+                );
                 motion::button(
                     button::custom(container(content).center_y(bar.group_item_height))
-                        .padding([0.0, ((bar.height - f32::from(bar.icon_size)) * 0.5).max(4.0)])
+                        .padding([0, 4])
                         .height(bar.group_item_height)
                         .name("Open calendar")
                         .on_press_with_rectangle(move |offset, bounds| {
@@ -833,6 +844,127 @@ mod island_tests {
             }
             if let Some((_, name)) = self.targets.iter().find(|(target, _)| Some(target) == id) {
                 self.items.push((name.clone(), bounds));
+            }
+        }
+    }
+
+    #[test]
+    fn media_label_grows_with_allocation_and_keeps_transport_inside_the_item() {
+        #[derive(Default)]
+        struct ContentBounds {
+            labels: Vec<Rectangle>,
+            buttons: Vec<Rectangle>,
+        }
+        impl widget::Operation for ContentBounds {
+            fn traverse(&mut self, children: &mut dyn FnMut(&mut dyn widget::Operation)) {
+                children(self);
+            }
+            fn text(&mut self, _: Option<&widget::Id>, bounds: Rectangle, _: &str) {
+                self.labels.push(bounds);
+            }
+            fn focusable(
+                &mut self,
+                _: Option<&widget::Id>,
+                bounds: Rectangle,
+                _: &mut dyn widget::operation::Focusable,
+            ) {
+                self.buttons.push(bounds);
+            }
+        }
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let renderer = runtime
+            .block_on(<cosmic::Renderer as Headless>::new(
+                Font::default(),
+                Pixels(14.),
+                Some("tiny-skia"),
+            ))
+            .unwrap();
+        let mut shell = crate::tests::shell_with_measured_panel();
+        std::sync::Arc::make_mut(&mut shell.media.snapshot).selected = Some(ferese_ipc::media::Player {
+            title: "A long song title that should use the room between navigation and the centered window title".into(),
+            status: ferese_ipc::media::Playback::Playing,
+            can_control: true,
+            can_pause: true,
+            ..Default::default()
+        });
+        let item = Item::new("media", ItemKind::Media);
+        let mut previous_label = 0.;
+        for width in [120., 200., 320.] {
+            let mut view = shell
+                .view_panel_item(shell.outputs[0].bar, &item, Some(width), true, Representation::Wide)
+                .0;
+            let mut tree = widget::Tree::new(&view);
+            let node = view.as_widget_mut().layout(
+                &mut tree,
+                &renderer,
+                &layout::Limits::new(Size::ZERO, Size::new(800., 28.)),
+            );
+            let mut content = ContentBounds::default();
+            view.as_widget_mut()
+                .operate(&mut tree, Layout::new(&node), &renderer, &mut content);
+            assert_eq!(content.labels.len(), 1);
+            assert_eq!(content.buttons.len(), 2);
+            let label = content.labels[0];
+            assert!(label.width > previous_label);
+            previous_label = label.width;
+            for bounds in content.labels.iter().chain(&content.buttons) {
+                assert!(
+                    bounds.x >= 0. && bounds.x + bounds.width <= width + 0.01,
+                    "media control exceeds its allocation: {bounds:?}, width={width}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn clock_content_has_balanced_horizontal_padding() {
+        #[derive(Default)]
+        struct Labels(Vec<Rectangle>);
+        impl widget::Operation for Labels {
+            fn traverse(&mut self, children: &mut dyn FnMut(&mut dyn widget::Operation)) {
+                children(self);
+            }
+            fn text(&mut self, _: Option<&widget::Id>, bounds: Rectangle, _: &str) {
+                self.0.push(bounds);
+            }
+        }
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let renderer = runtime
+            .block_on(<cosmic::Renderer as Headless>::new(
+                Font::default(),
+                Pixels(14.),
+                Some("tiny-skia"),
+            ))
+            .unwrap();
+        let mut shell = crate::tests::shell_with_measured_panel();
+        shell.clock = "10 oct, 4:35 pm".into();
+        let item = Item::new("clock", ItemKind::Clock);
+        for height in [28., 31., 48.] {
+            shell.config.panels[0].geometry.height = height;
+            for representation in [Representation::Wide, Representation::Compact] {
+                let mut view = shell
+                    .view_panel_item(shell.outputs[0].bar, &item, None, true, representation)
+                    .0;
+                let mut tree = widget::Tree::new(&view);
+                let node = view.as_widget_mut().layout(
+                    &mut tree,
+                    &renderer,
+                    &layout::Limits::new(Size::ZERO, Size::new(800., height)),
+                );
+                let mut labels = Labels::default();
+                view.as_widget_mut()
+                    .operate(&mut tree, Layout::new(&node), &renderer, &mut labels);
+                let left = labels.0.first().unwrap().x;
+                let last = labels.0.last().unwrap();
+                let right = node.size().width - last.x - last.width;
+                assert!((left - right).abs() < 0.01);
+                assert!(right <= 4.01, "panel height must not add horizontal space to the clock");
             }
         }
     }

@@ -178,34 +178,45 @@ impl App {
             Kind::Range {
                 default,
                 min,
-                max,
+                mut max,
                 step,
                 suffix,
                 integer,
             } => {
+                let margin_limit = (path == "panels.0.geometry.side_margins").then(|| self.panel_side_margin_limit());
+                if let Some(limit) = margin_limit {
+                    max = f64::from(limit.unwrap_or(0));
+                }
                 let value = self
                     .ranges
                     .get(&path)
                     .copied()
-                    .unwrap_or_else(|| self.draft.number(&path, default));
+                    .unwrap_or_else(|| self.draft.number(&path, default))
+                    .clamp(min, max);
                 let display = if integer || step >= 1. {
                     format!("{value:.0}{suffix}")
                 } else {
                     format!("{value:.2}{suffix}")
                 };
-                let release = field.clone();
-                row([])
-                    .align_y(Alignment::Center)
-                    .spacing(8)
-                    .push(
-                        slider(min..=max, value, move |value| Message::Range(field.clone(), value))
-                            .step(step)
-                            .class(ferese_theme::menus::slider(palette.accent, 1.))
-                            .on_release(Message::Release(release))
-                            .width(145),
-                    )
-                    .push(self.label(display, 12.).width(65))
-                    .into()
+                if margin_limit == Some(None) {
+                    self.label("—", 12.).into()
+                } else if max <= min {
+                    self.label(display, 12.).into()
+                } else {
+                    let release = field.clone();
+                    row([])
+                        .align_y(Alignment::Center)
+                        .spacing(8)
+                        .push(
+                            slider(min..=max, value, move |value| Message::Range(field.clone(), value))
+                                .step(step)
+                                .class(ferese_theme::menus::slider(palette.accent, 1.))
+                                .on_release(Message::Release(release))
+                                .width(145),
+                        )
+                        .push(self.label(display, 12.).width(65))
+                        .into()
+                }
             }
             Kind::Choice { default, choices } => {
                 let value = self.wallpaper_field_value(&path, default);

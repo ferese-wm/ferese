@@ -225,6 +225,28 @@ impl App {
         rows.into()
     }
 
+    pub(super) fn panel_side_margin_limit(&self) -> Option<i32> {
+        let display = self
+            .displays
+            .iter()
+            .filter(|display| display.logical_width.is_some())
+            .find(|display| display.focused)
+            .or_else(|| {
+                self.displays
+                    .iter()
+                    .filter(|display| display.logical_width.is_some())
+                    .min_by_key(|display| display.logical_width)
+            })?;
+        if self.panel_preview_resolution.items.is_empty() {
+            return None;
+        }
+        let panel = self.preview_panel().ok()?;
+        Some(
+            self.panel_preview_resolution
+                .side_margin(4096, display.logical_width?, panel.geometry.inner_padding),
+        )
+    }
+
     fn panel_appearance_row(
         &self,
         label: &str,
@@ -745,6 +767,38 @@ pub(super) fn item_icon(kind: ItemKind, tint: cosmic::iced::Color) -> widget::ic
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn side_margin_range_tracks_logical_display_width_and_measured_content() {
+        use cosmic::Application;
+        let mut app = App::init(
+            cosmic::app::Core::default(),
+            ("/unused/range.kdl".into(), store::Snapshot::parse(String::new()), None),
+        )
+        .0;
+        assert_eq!(app.panel_side_margin_limit(), None);
+        app.displays = vec![crate::displays::Display {
+            connector: "eDP-1".into(),
+            identity: "panel".into(),
+            profile: None,
+            logical_width: Some(1440),
+            focused: true,
+            current: None,
+            modes: Vec::new(),
+        }];
+        app.panel_preview_resolution.items.insert(
+            ferese_config::panel::ItemId("clock".into()),
+            ferese_config::panel::layout::Placement::Overflow,
+        );
+        app.panel_preview_resolution.minimum_width = 600.;
+        assert_eq!(app.panel_side_margin_limit(), Some(408));
+        app.displays[0].logical_width = Some(960);
+        assert_eq!(app.panel_side_margin_limit(), Some(168));
+        app.panel_preview_resolution.minimum_width = 1000.;
+        assert_eq!(app.panel_side_margin_limit(), Some(0));
+        app.displays[0].logical_width = None;
+        assert_eq!(app.panel_side_margin_limit(), None);
+    }
 
     #[test]
     fn customization_uses_canonical_defaults_and_retains_other_fields() {

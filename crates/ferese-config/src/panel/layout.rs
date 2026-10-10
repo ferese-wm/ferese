@@ -218,6 +218,35 @@ pub fn resolve_with_gap(
             }
         }
     }
+    // A reduction on the shorter side can leave unused room after the other
+    // side shrinks. Restore preferred representations before expanding titles.
+    for (_, item) in candidates.iter().rev() {
+        let Some(measured) = measurements.get(&item.id) else {
+            continue;
+        };
+        let Some(previous @ Placement::Visible { representation, .. }) = result.items.get(&item.id).cloned() else {
+            continue;
+        };
+        for &(candidate, width) in measured
+            .alternatives
+            .iter()
+            .take_while(|(candidate, _)| *candidate != representation)
+        {
+            result.items.insert(
+                item.id.clone(),
+                Placement::Visible {
+                    representation: candidate,
+                    width: measured.minimum.map_or(width, |minimum| minimum.min(width)),
+                },
+            );
+            result.update_widths(panel, overflow_width);
+            if fits(&result) {
+                break;
+            }
+            result.items.insert(item.id.clone(), previous.clone());
+        }
+    }
+    result.update_widths(panel, overflow_width);
     // Restore the most protected flexible items first, reversing the yield order.
     for (_, item) in candidates.iter().rev() {
         let Some(measured) = measurements.get(&item.id).filter(|measured| measured.minimum.is_some()) else {
@@ -267,6 +296,98 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_crowded_opposite_zone_does_not_leave_media_compacted_in_unused_space() {
+        use super::super::{Group, Item, ItemKind};
+        let mut panel = Panel::default();
+        panel.start.groups = vec![Group::new(
+            "navigation",
+            vec![
+                Item::new("overview", ItemKind::Overview),
+                Item::new("media", ItemKind::Media),
+            ],
+            [0, 0],
+            0.,
+        )];
+        panel.center.groups = vec![Group::new(
+            "title",
+            vec![Item::new("title", ItemKind::FocusedWindow)],
+            [0, 0],
+            0.,
+        )];
+        panel.end.groups = vec![Group::new(
+            "status",
+            vec![Item::new("clock", ItemKind::Clock)],
+            [0, 0],
+            0.,
+        )];
+        let measured = vec![
+            Measurement {
+                id: ItemId("overview".into()),
+                alternatives: vec![(Representation::Icon, 28.)],
+                minimum: None,
+            },
+            Measurement {
+                id: ItemId("media".into()),
+                alternatives: vec![
+                    (Representation::Wide, 180.),
+                    (Representation::Compact, 100.),
+                    (Representation::Icon, 28.),
+                ],
+                minimum: None,
+            },
+            Measurement {
+                id: ItemId("title".into()),
+                alternatives: vec![(Representation::Wide, 48.)],
+                minimum: Some(48.),
+            },
+            Measurement {
+                id: ItemId("clock".into()),
+                alternatives: vec![
+                    (Representation::Wide, 340.),
+                    (Representation::Compact, 240.),
+                    (Representation::Icon, 140.),
+                ],
+                minimum: None,
+            },
+        ];
+        for mirrored in [false, true] {
+            if mirrored {
+                std::mem::swap(&mut panel.start, &mut panel.end);
+            }
+            let resolution = resolve(&panel, &measured, 550., 32.);
+            assert!(resolution.fits(550.));
+            assert_eq!(
+                resolution.items[&ItemId("media".into())],
+                Placement::Visible {
+                    representation: Representation::Wide,
+                    width: 180.
+                }
+            );
+            assert_eq!(
+                resolution.items[&ItemId("clock".into())],
+                Placement::Visible {
+                    representation: Representation::Compact,
+                    width: 240.
+                }
+            );
+        }
+        let mut measured = measured;
+        measured[1].alternatives[0].1 = 400.;
+        measured[1].minimum = Some(112.);
+        for mirrored in [false, true] {
+            if mirrored {
+                std::mem::swap(&mut panel.start, &mut panel.end);
+            }
+            let resolution = resolve(&panel, &measured, 550., 32.);
+            assert!(resolution.fits(550.));
+            assert!(
+                matches!(resolution.items[&ItemId("media".into())], Placement::Visible { representation: Representation::Wide, width } if width > 200. && width < 400.),
+                "flexible media must expand into the unused room beside the center"
+            );
+        }
+    }
+
+    #[test]
     fn fits_uses_the_gap_that_was_resolved() {
         let panel = Panel::default();
         let measured = measurements(&panel);
@@ -304,7 +425,7 @@ mod tests {
                     minimum: None,
                 },
             ],
-            120.,
+            96.,
             32.,
         );
         assert_eq!(
@@ -315,7 +436,7 @@ mod tests {
             }
         );
         assert_eq!(result.overflow, [ItemId("audio".into())]);
-        assert!(result.fits(120.));
+        assert!(result.fits(96.));
     }
 
     #[test]

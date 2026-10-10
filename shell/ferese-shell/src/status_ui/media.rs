@@ -75,6 +75,7 @@ pub(super) fn bar<'a>(
     metrics: BarMetrics,
     representation: crate::panel::Representation,
     selected: bool,
+    width: Option<f32>,
 ) -> Element<'a, cosmic::Action<Message>> {
     let Some(player) = &shell.media.snapshot.selected else {
         return text("").into();
@@ -112,7 +113,15 @@ pub(super) fn bar<'a>(
         .height(height)
         .align_y(cosmic::iced::alignment::Vertical::Center)
         .class(theme::Text::Color(foreground));
-    let label = container(label).max_width(112);
+    let compact = representation == crate::panel::Representation::Compact;
+    let preferred_label_width: f32 = if compact { 112. } else { 320. };
+    // Outer padding, the transport button, details padding, and cover spacing
+    // share the allocation with the label.
+    let chrome = 4. + 2. + f32::from(metrics.icon_size) + 12. + 8. + if compact { 0. } else { side + 8. };
+    let label_width = width.map_or(preferred_label_width, |width| {
+        (width - chrome).max(0.).min(preferred_label_width)
+    });
+    let label = container(label).max_width(label_width);
     let details = button::custom(bar_content(
         if representation == crate::panel::Representation::Compact {
             row![label].align_y(Alignment::Center)
