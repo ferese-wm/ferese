@@ -101,6 +101,10 @@ inspector. Items can be added, removed, reordered within a group, or moved to an
 existing group. Editing resolves IDs against the latest draft, validates the whole
 change, and saves once. Unknown item fields and comments are retained.
 
+Each panel owns `PanelGeometry`: height, edge margin, side margins, window
+clearance, and inner padding. Older theme geometry is imported for configurations
+without a panel geometry block; appearance changes do not resize an authored panel.
+
 Panels contains background, size, margin, and corner-radius settings. Edit panel
 opens Arrange, which contains the Start/Center/End editor and a separate
 selected-control/group inspector. Both panes retain their positions and scroll

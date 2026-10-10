@@ -129,10 +129,6 @@ theme {
         shell-radius 12
         border-width 1
         focus-ring-width 1
-        top-bar-height 30
-        top-bar-margin-horizontal 18
-        top-bar-margin-top 6
-        top-bar-window-gap 4
         panel-padding 12
         control-gap 12
     }
@@ -154,6 +150,12 @@ status {
 // Panel composition is explicit; visibility and item options belong to each item.
 // Background opacity and corner radius inherit from the shell unless overridden here.
 panel "main" {
+    geometry {
+        height 30
+        side-margins 18
+        edge-margin 6
+        window-clearance 4
+    }
     edge "top"
     background "continuous"
     border #false

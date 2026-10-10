@@ -92,9 +92,9 @@ struct BarMetrics {
     group_item_height: f32,
 }
 
-impl From<ShellTheme> for BarMetrics {
-    fn from(theme: ShellTheme) -> Self {
-        let height = theme.bar_height;
+impl From<panel::PanelGeometry> for BarMetrics {
+    fn from(geometry: panel::PanelGeometry) -> Self {
+        let height = geometry.height;
         let control_height = (height - 4.0).max(21.0).min(height);
         // Leave two logical pixels inside the group border on each side,
         // including compact bars with 20 px icons.
@@ -1000,6 +1000,7 @@ impl FereseShell {
         let composition_changed = !self.config.panels[0].same_composition(&config.panels[0]);
         let edge_changed = self.config.panels[0].edge != config.panels[0].edge;
         let old = self.config.theme;
+        let old_geometry = self.config.panels[0].geometry;
         let old_clock = &self.config.desktop_widgets.clock;
         let old_notes = &self.config.desktop_widgets.notes;
         let new_notes = &config.desktop_widgets.notes;
@@ -1014,11 +1015,8 @@ impl FereseShell {
             || old_clock.margin_x != new_clock.margin_x
             || old_clock.margin_y != new_clock.margin_y;
         let theme = config.theme;
-        let geometry_changed = edge_changed
-            || old.bar_height != theme.bar_height
-            || old.bar_margin_top != theme.bar_margin_top
-            || old.bar_margin_horizontal != theme.bar_margin_horizontal
-            || old.bar_window_gap != theme.bar_window_gap;
+        let geometry = config.panels[0].geometry;
+        let geometry_changed = edge_changed || old_geometry != geometry;
         self.notifications.configure(config.notifications.clone());
         self.clock_service.configure(&config.desktop_widgets.clock);
         self.config = config;
@@ -1081,18 +1079,18 @@ impl FereseShell {
         }
 
         for entry in self.outputs.iter().filter(|_| geometry_changed) {
-            let (anchor, _) = surfaces::panel_placement(self.config.panels[0].edge, theme.bar_margin_top, 0);
+            let (anchor, _) = surfaces::panel_placement(self.config.panels[0].edge, geometry.edge_margin, 0);
             tasks.push(set_anchor(entry.bar, anchor | Anchor::LEFT | Anchor::RIGHT));
-            tasks.push(set_size(entry.bar, None, Some(theme.bar_height.round() as u32)));
+            tasks.push(set_size(entry.bar, None, Some(geometry.height.round() as u32)));
             tasks.push(set_exclusive_zone(
                 entry.bar,
-                (theme.bar_height.round() as i32).saturating_add(theme.bar_window_gap),
+                (geometry.height.round() as i32).saturating_add(geometry.window_clearance),
             ));
         }
 
         let bars: Vec<_> = self.outputs.iter().map(|entry| entry.bar).collect();
         for bar in bars {
-            tasks.push(self.update_panel_margin(bar, edge_changed || old.bar_margin_top != theme.bar_margin_top));
+            tasks.push(self.update_panel_margin(bar, edge_changed || old_geometry.edge_margin != geometry.edge_margin));
         }
         if geometry_changed {
             tasks.push(self.dismiss_workspace_tooltip());
@@ -1105,7 +1103,7 @@ impl FereseShell {
     }
 
     fn update_panel_margin(&mut self, bar: window::Id, force: bool) -> Task<Message> {
-        let theme = self.config.theme;
+        let geometry = self.config.panels[0].geometry;
         let Some(entry) = self.outputs.iter_mut().find(|entry| entry.bar == bar) else {
             return Task::none();
         };
@@ -1113,9 +1111,9 @@ impl FereseShell {
             entry.bar_margin_horizontal,
             |((width, _), resolution)| {
                 resolution.side_margin(
-                    theme.bar_margin_horizontal,
+                    geometry.side_margins,
                     width,
-                    f32::from(theme.panel_padding.round() as u16),
+                    f32::from(geometry.inner_padding.round() as u16),
                 )
             },
         );
@@ -1123,7 +1121,7 @@ impl FereseShell {
             return Task::none();
         }
         entry.bar_margin_horizontal = margin;
-        let (_, margin) = surfaces::panel_placement(self.config.panels[0].edge, theme.bar_margin_top, margin);
+        let (_, margin) = surfaces::panel_placement(self.config.panels[0].edge, geometry.edge_margin, margin);
         set_margin(bar, margin.top, margin.right, margin.bottom, margin.left)
     }
 }
@@ -1221,7 +1219,7 @@ mod tests {
     #[test]
     fn cosmetic_reloads_preserve_measured_margins_and_the_open_popover() {
         let mut shell = shell_with_measured_panel();
-        shell.config.theme.bar_margin_horizontal = 240;
+        shell.config.panels[0].geometry.side_margins = 240;
         drop(shell.update_panel_margin(shell.outputs[0].bar, false));
         assert_eq!(shell.outputs[0].bar_margin_horizontal, 240);
         let popup = window::Id::unique();
@@ -1285,7 +1283,7 @@ mod tests {
     fn an_empty_measured_panel_is_not_an_unmeasured_panel() {
         let mut shell = shell_with_measured_panel();
         let bar = shell.outputs[0].bar;
-        shell.config.theme.bar_margin_horizontal = 240;
+        shell.config.panels[0].geometry.side_margins = 240;
         shell.outputs[0].panel_resolution = None;
         drop(shell.update_panel_margin(bar, false));
         assert_eq!(shell.outputs[0].bar_margin_horizontal, 0);
@@ -1434,9 +1432,9 @@ mod tests {
     #[test]
     fn compact_bar_preserves_logical_text_and_icon_sizes() {
         for height in [24.0, 26.0, 32.0, 38.0, 44.0] {
-            let metrics = BarMetrics::from(ShellTheme {
-                bar_height: height,
-                ..ShellTheme::default()
+            let metrics = BarMetrics::from(panel::PanelGeometry {
+                height,
+                ..Default::default()
             });
             assert_eq!(metrics.text_size, 14);
             assert_eq!(metrics.icon_size, 20);

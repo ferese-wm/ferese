@@ -402,8 +402,6 @@ mod tests {
         let viewport = Rectangle::new((0., 0.).into(), (600., 28.).into());
         let mut tree = None;
         let theme = crate::ShellTheme {
-            bar_height: 28.,
-            panel_padding: 12.,
             bar_radius: 14.,
             ..Default::default()
         };
@@ -421,7 +419,15 @@ mod tests {
                         crate::bar::bar_group_style(theme)
                     }))
                     .into();
-                crate::bar::island(inner, theme, padding, mode == BarLayout::Islands, true, None)
+                crate::bar::island(
+                    inner,
+                    theme,
+                    crate::panel::PanelGeometry::default(),
+                    padding,
+                    mode == BarLayout::Islands,
+                    true,
+                    None,
+                )
             };
             let islands = row![section(100), section(200),].spacing(60);
             let content = container(islands)

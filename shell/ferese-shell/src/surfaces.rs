@@ -96,10 +96,10 @@ impl FereseShell {
 
         let bar_surface_id = window::Id::unique();
         let wallpaper_surface_id = window::Id::unique();
-        let shell_theme = self.config.theme;
+        let geometry = self.config.panels[0].geometry;
         let bar_layout = self.config.panels[0].background;
-        let (edge_anchor, margin) = panel_placement(self.config.panels[0].edge, shell_theme.bar_margin_top, 0);
-        let bar = BarMetrics::from(shell_theme);
+        let (edge_anchor, margin) = panel_placement(self.config.panels[0].edge, geometry.edge_margin, 0);
+        let bar = BarMetrics::from(geometry);
         let wallpaper_output = output.clone();
         let bar_output = output.clone();
         let hidden = output_bar_hidden(
@@ -161,7 +161,7 @@ impl FereseShell {
                 size: Some((None, Some(bar.height.round() as u32))),
                 size_limits: Limits::NONE,
                 // Reserve space toward the desktop; layer-shell accounts for the edge margin.
-                exclusive_zone: (bar.height.round() as i32).saturating_add(shell_theme.bar_window_gap),
+                exclusive_zone: (bar.height.round() as i32).saturating_add(geometry.window_clearance),
             },
             Some(Box::new(move |app| app.view_layer(bar_surface_id))),
         );

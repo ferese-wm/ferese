@@ -44,7 +44,7 @@ impl FereseShell {
         }
         let corners = panel
             .resolved_radius(shell_theme.bar_radius)
-            .at_edge(panel.edge, shell_theme.bar_margin_top == 0);
+            .at_edge(panel.edge, panel.geometry.edge_margin == 0);
         let mode = panel.background;
         let islands = mode == BarLayout::Islands;
         let output = self.outputs.iter().find(|output| output.bar == id);
@@ -177,7 +177,7 @@ impl FereseShell {
         let content = container(content)
             .width(Length::Fill)
             .height(Length::Fill)
-            .padding([0, shell_theme.panel_padding.round() as u16])
+            .padding([0, panel.geometry.inner_padding.round() as u16])
             .class(theme::Container::custom(move |_| {
                 let mut style = bar_style(shell_theme, compositor_material, islands);
                 style.border.radius = corners.0.into();
@@ -214,7 +214,7 @@ impl FereseShell {
         representation: Representation,
     ) -> (Element<'_, cosmic::Action<Message>>, bool) {
         let shell_theme = self.config.theme.for_bar();
-        let bar = BarMetrics::from(shell_theme);
+        let bar = BarMetrics::from(self.config.panels[0].geometry);
         let control_height = if islands {
             bar.group_item_height
         } else {
@@ -413,7 +413,7 @@ impl FereseShell {
     ) -> Element<'_, cosmic::Action<Message>> {
         let focused_output = self.output_for_bar(id);
         let shell_theme = self.config.theme.for_bar();
-        let bar = BarMetrics::from(shell_theme);
+        let bar = BarMetrics::from(self.config.panels[0].geometry);
         let mut workspace_buttons = row::with_capacity(self.snapshot.workspaces.len())
             .spacing(1)
             .align_y(cosmic::iced::Alignment::Center);
@@ -512,7 +512,7 @@ fn view_zone<'a>(
     compositor_material: bool,
     render: impl Fn(&Item) -> (Element<'a, cosmic::Action<Message>>, bool),
 ) -> Element<'a, cosmic::Action<Message>> {
-    let bar = BarMetrics::from(shell_theme);
+    let bar = BarMetrics::from(panel.geometry);
     let mut groups = row::with_capacity(zone.groups.len())
         .spacing(zone.spacing)
         .align_y(cosmic::iced::Alignment::Center);
@@ -541,7 +541,7 @@ fn view_zone<'a>(
         let opacity = panel.background_opacity.unwrap_or(color(shell_theme.bar_background).a);
         let corners = panel
             .resolved_radius(shell_theme.bar_radius)
-            .at_edge(panel.edge, shell_theme.bar_margin_top == 0)
+            .at_edge(panel.edge, panel.geometry.edge_margin == 0)
             .0;
         let border = panel.border;
         let content: Element<'_, cosmic::Action<Message>> = container(controls)
@@ -558,6 +558,7 @@ fn view_zone<'a>(
         groups = groups.push(island(
             content,
             shell_theme,
+            panel.geometry,
             group.island_padding,
             panel.background == BarLayout::Islands && has_content,
             compositor_material && panel.background == BarLayout::Islands,
@@ -656,6 +657,7 @@ pub(super) fn bar_style(theme: ShellTheme, compositor_material: bool, islands: b
 pub(super) fn island<'a>(
     content: Element<'a, cosmic::Action<Message>>,
     theme: ShellTheme,
+    geometry: crate::panel::PanelGeometry,
     horizontal_padding: f32,
     islands: bool,
     compositor_material: bool,
@@ -665,9 +667,9 @@ pub(super) fn island<'a>(
         return content;
     }
 
-    let bar = BarMetrics::from(theme);
+    let bar = BarMetrics::from(geometry);
     let fallback = ferese_config::panel::CornerRadii::uniform(theme.bar_radius)
-        .at_top_edge(theme.bar_margin_top == 0)
+        .at_top_edge(geometry.edge_margin == 0)
         .0;
     let (id, opacity, corners) =
         material.unwrap_or((presentation::island_id(), color(theme.bar_background).a, fallback));
@@ -799,14 +801,14 @@ mod island_tests {
             )
         });
         let mut view: Element<'_, cosmic::Action<Message>> = container(view)
-            .height(theme.bar_height)
+            .height(panel.geometry.height)
             .align_y(alignment::Vertical::Center)
             .into();
         let mut tree = widget::Tree::new(&view);
         let node = view.as_widget_mut().layout(
             &mut tree,
             &renderer,
-            &layout::Limits::new(Size::ZERO, Size::new(1200., theme.bar_height)),
+            &layout::Limits::new(Size::ZERO, Size::new(1200., panel.geometry.height)),
         );
         let mut bounds = Bounds {
             group_ids: zone
@@ -844,11 +846,9 @@ mod island_tests {
             ..Default::default()
         });
         for margin in [0, 6] {
-            let theme = ShellTheme {
-                bar_height: 36.,
-                bar_margin_top: margin,
-                ..Default::default()
-            };
+            let theme = ShellTheme::default();
+            panel.geometry.height = 36.;
+            panel.geometry.edge_margin = margin;
             for border in [false, true] {
                 panel.border = border;
                 let bounds = measure_zone_with_theme(&panel, &panel.start, Availability::default(), true, theme);

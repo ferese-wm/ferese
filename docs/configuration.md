@@ -335,10 +335,6 @@ Filled controls choose a contrasting text color automatically.
 | `focus-ring-width` | number ≥ 0 | `2` | Focused border thickness |
 | `window-radius` | number ≥ 0 | `14` | Managed-window corners, independent of the shell |
 | `shell-radius` | number ≥ 0 | `14` | All shell surfaces, cards, widgets and interaction backgrounds; fractional radii are preserved; 0 makes them square |
-| `top-bar-height` | number > 0 | `28` | Menu-bar height |
-| `top-bar-margin-top` | integer ≥ 0 | `0` | Space above bar |
-| `top-bar-window-gap` | integer ≥ 0 | `0` | Clearance below bar |
-| `top-bar-margin-horizontal` | integer ≥ 0 | `0` | Bar side margins |
 | `top-bar-radius` | number ≥ 0 | unset | Legacy fallback for shell radius |
 | `panel-padding` | number ≥ 0 | `12` | Bar inner padding |
 | `control-gap` | number ≥ 0 | `12` | Right-side control spacing |
@@ -820,8 +816,11 @@ inspector scroll independently.
 **Position** switches between Top and Bottom. Menus and notifications open toward
 the desktop, and window clearance follows the selected edge. In KDL, set
 `edge "top"` or `edge "bottom"` inside the panel. **Edge margin** sets the gap
-from that screen edge. The existing `theme.geometry.top-bar-margin-top` token
-stores this value for both positions.
+from that screen edge. Each panel owns a `geometry` block: `height` (24–128),
+`edge-margin`, `side-margins`, `window-clearance` (0–4096), and `inner-padding`
+(0–64). Defaults are 28, 0, 0, 0, and 12 logical pixels respectively. Older
+`theme.geometry.top-bar-*` values and `panel-padding` import only when a panel
+has no geometry block. Appearance changes do not resize an authored panel.
 
 Drag a control's handle to reorder it or move it into another group. Dropping
 into an empty zone creates a group. Select a control to open its inspector,

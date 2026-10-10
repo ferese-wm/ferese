@@ -598,6 +598,14 @@ impl cosmic::Application for App {
                         return self.update(Message::PanelEdit(panel_edit::Action::SetCorner(index, value as f32)));
                     }
                     let integer = matches!(field.kind, Kind::Range { integer: true, .. });
+                    if let Some(key) = field.path.strip_prefix("panels.0.geometry.") {
+                        let value = if integer {
+                            serde_json::Value::from(value.round() as i64)
+                        } else {
+                            value.into()
+                        };
+                        return self.update(Message::PanelEdit(panel_edit::Action::SetGeometry(key.into(), value)));
+                    }
                     return self.change(if integer {
                         set(&field.path, value.round() as i64)
                     } else {

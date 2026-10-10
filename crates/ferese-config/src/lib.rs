@@ -251,7 +251,8 @@ pub struct Document {
 impl Document {
     pub fn parse(source: &str) -> Result<Self, Error> {
         let doc = source.parse::<KdlDocument>().map_err(|e| Error(format!("{e:?}")))?;
-        let value = Value::Object(object(&doc, "")?);
+        let mut value = Value::Object(object(&doc, "")?);
+        panel::geometry::migrate(&mut value)?;
 
         Ok(Self { doc, value })
     }
@@ -283,6 +284,7 @@ impl Document {
 
     fn refresh(&mut self) -> Result<(), Error> {
         self.value = Value::Object(object(&self.doc, "")?);
+        panel::geometry::migrate(&mut self.value)?;
         Ok(())
     }
 

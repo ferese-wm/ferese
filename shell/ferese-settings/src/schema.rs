@@ -931,7 +931,7 @@ pub fn fields(page: Page) -> Vec<Field> {
                 true,
             ),
             range(
-                "theme.geometry.top_bar_height",
+                "panels.0.geometry.height",
                 "Height",
                 "Keeps icon and text sizes unchanged.",
                 RangeSpec {
@@ -944,7 +944,7 @@ pub fn fields(page: Page) -> Vec<Field> {
                 },
             ),
             range(
-                "theme.geometry.top_bar_margin_top",
+                "panels.0.geometry.edge_margin",
                 "Edge margin",
                 "Space from the selected screen edge. Set to zero for a flush panel.",
                 RangeSpec {
@@ -957,7 +957,7 @@ pub fn fields(page: Page) -> Vec<Field> {
                 },
             ),
             range(
-                "theme.geometry.top_bar_margin_horizontal",
+                "panels.0.geometry.side_margins",
                 "Side margins",
                 "Inset from both edges; stops before extra controls overflow.",
                 RangeSpec {
@@ -970,7 +970,7 @@ pub fn fields(page: Page) -> Vec<Field> {
                 },
             ),
             range(
-                "theme.geometry.top_bar_window_gap",
+                "panels.0.geometry.window_clearance",
                 "Window clearance",
                 "Space between the panel and application windows.",
                 RangeSpec {

@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::PathBuf;
 
+use ferese_config::panel::PanelGeometry;
 use serde::Deserialize;
 
 const DEFAULT_BACKGROUND: [u8; 3] = [11, 15, 20];
@@ -78,13 +79,8 @@ pub(crate) struct ShellTheme {
     pub(crate) on_accent: [u8; 4],
     pub(crate) border: [u8; 4],
     pub(crate) shadow: [u8; 4],
-    pub(crate) bar_height: f32,
-    pub(crate) bar_margin_top: i32,
-    pub(crate) bar_window_gap: i32,
-    pub(crate) bar_margin_horizontal: i32,
     pub(crate) bar_radius: f32,
     pub(crate) material_radius: f32,
-    pub(crate) panel_padding: f32,
     pub(crate) control_gap: f32,
     pub(crate) shadow_offset_y: f32,
     pub(crate) shadow_blur: f32,
@@ -108,13 +104,8 @@ impl Default for ShellTheme {
             on_accent: [244, 247, 251, 255],
             border: [255, 255, 255, 24],
             shadow: [0, 0, 0, 85],
-            bar_height: 28.0,
-            bar_margin_top: 0,
-            bar_window_gap: 0,
-            bar_margin_horizontal: 0,
             bar_radius: 14.0,
             material_radius: 14.0,
-            panel_padding: 12.0,
             control_gap: 12.0,
             shadow_offset_y: 4.0,
             shadow_blur: 18.0,
@@ -299,20 +290,10 @@ impl Default for ThemeColorsConfig {
 
 #[derive(Debug, Deserialize)]
 struct ThemeGeometryConfig {
-    #[serde(default = "default_bar_height")]
-    top_bar_height: f32,
-    #[serde(default = "default_bar_margin_top")]
-    top_bar_margin_top: i32,
-    #[serde(default = "default_bar_window_gap")]
-    top_bar_window_gap: i32,
-    #[serde(default = "default_bar_margin_horizontal")]
-    top_bar_margin_horizontal: i32,
     #[serde(default)]
     shell_radius: Option<f32>,
     #[serde(default)]
     top_bar_radius: Option<f32>,
-    #[serde(default = "default_panel_padding")]
-    panel_padding: f32,
     #[serde(default = "default_control_gap")]
     control_gap: f32,
 }
@@ -320,13 +301,8 @@ struct ThemeGeometryConfig {
 impl Default for ThemeGeometryConfig {
     fn default() -> Self {
         Self {
-            top_bar_height: default_bar_height(),
-            top_bar_margin_top: default_bar_margin_top(),
-            top_bar_window_gap: default_bar_window_gap(),
-            top_bar_margin_horizontal: default_bar_margin_horizontal(),
             shell_radius: None,
             top_bar_radius: None,
-            panel_padding: default_panel_padding(),
             control_gap: default_control_gap(),
         }
     }
@@ -426,9 +402,14 @@ fn parse_document(
                 wallpaper: config.theme.background,
                 theme,
                 theme_mode: mode,
-                panels: config
-                    .panels
-                    .unwrap_or_else(|| vec![crate::panel::from_status(&config.status)]),
+                panels: config.panels.map_or_else(
+                    || {
+                        let mut panel = crate::panel::from_status(&config.status);
+                        panel.geometry = PanelGeometry::from_legacy(document)?;
+                        Ok::<_, ferese_config::Error>(vec![panel])
+                    },
+                    Ok,
+                )?,
                 status: StatusConfig {
                     low_battery_threshold: config.status.low_battery_threshold.min(100),
                     ..config.status
@@ -497,10 +478,6 @@ fn shell_theme(theme: &ThemeConfig) -> ShellTheme {
         on_accent: parse_color(&theme.colors.on_accent).unwrap_or(defaults.on_accent),
         border: parse_color(&theme.colors.border).unwrap_or(defaults.border),
         shadow: parse_color(&theme.colors.shadow).unwrap_or(defaults.shadow),
-        bar_height: positive_or(theme.geometry.top_bar_height, defaults.bar_height),
-        bar_margin_top: theme.geometry.top_bar_margin_top.max(0),
-        bar_window_gap: theme.geometry.top_bar_window_gap.max(0),
-        bar_margin_horizontal: theme.geometry.top_bar_margin_horizontal.max(0),
         bar_radius: nonnegative_or(
             theme
                 .geometry
@@ -509,7 +486,6 @@ fn shell_theme(theme: &ThemeConfig) -> ShellTheme {
                 .unwrap_or(14.0),
             defaults.bar_radius,
         ),
-        panel_padding: nonnegative_or(theme.geometry.panel_padding, defaults.panel_padding),
         control_gap: nonnegative_or(theme.geometry.control_gap, defaults.control_gap),
         shadow_offset_y: finite_or(theme.shadow.soft.offset_y, defaults.shadow_offset_y),
         shadow_blur: nonnegative_or(theme.shadow.soft.blur, defaults.shadow_blur),
@@ -533,14 +509,6 @@ pub(crate) fn parse_color(value: &str) -> Option<[u8; 4]> {
     };
 
     Some([red, green, blue, alpha])
-}
-
-fn positive_or(value: f32, fallback: f32) -> f32 {
-    if value.is_finite() && value > 0.0 {
-        value
-    } else {
-        fallback
-    }
 }
 
 fn nonnegative_or(value: f32, fallback: f32) -> f32 {
@@ -577,26 +545,6 @@ fn default_border() -> String {
 
 fn default_shadow() -> String {
     "#00000055".to_owned()
-}
-
-const fn default_bar_height() -> f32 {
-    28.0
-}
-
-const fn default_bar_window_gap() -> i32 {
-    0
-}
-
-const fn default_bar_margin_top() -> i32 {
-    0
-}
-
-const fn default_bar_margin_horizontal() -> i32 {
-    0
-}
-
-const fn default_panel_padding() -> f32 {
-    12.0
 }
 
 const fn default_control_gap() -> f32 {
@@ -748,7 +696,10 @@ panel "custom" { background "islands"; end { group "clocks" { item "one" kind="c
             let source = format!("status {{ bar-island-padding {padding}; }}");
             let config = parse_test_source(&source).unwrap();
             assert_eq!(config.status.bar_island_padding, padding);
-            assert_eq!(config.theme.panel_padding, defaults.theme.panel_padding);
+            assert_eq!(
+                config.panels[0].geometry.inner_padding,
+                defaults.panels[0].geometry.inner_padding
+            );
         }
 
         for value in ["-1", "32.5", "\"small\""] {
@@ -809,9 +760,9 @@ theme {
         );
         assert_eq!(config.theme.background.mode, WallpaperMode::Fill);
         let theme = shell_theme(&config.theme);
-        assert_eq!(theme.bar_margin_top, 0);
-        assert_eq!(theme.bar_height, 28.0);
-        assert_eq!(theme.bar_margin_horizontal, 0);
+        assert_eq!(PanelGeometry::default().edge_margin, 0);
+        assert_eq!(PanelGeometry::default().height, 28.0);
+        assert_eq!(PanelGeometry::default().side_margins, 0);
         assert_eq!(theme.bar_radius, 14.0);
         assert_eq!(theme.bar_background[3], 255);
         assert_eq!(theme.for_bar().text_primary, theme.bar_text_primary);

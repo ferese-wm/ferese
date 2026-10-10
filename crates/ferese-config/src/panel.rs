@@ -1,5 +1,7 @@
 //! Panel composition, independent of widgets, services, and Wayland surfaces.
+pub(crate) mod geometry;
 pub mod layout;
+pub use geometry::PanelGeometry;
 mod radius;
 use crate::BarLayout;
 pub use radius::CornerRadii;
@@ -370,6 +372,8 @@ pub struct Panel {
     #[serde(default)]
     pub edge: Edge,
     #[serde(default)]
+    pub geometry: PanelGeometry,
+    #[serde(default)]
     pub background: BarLayout,
     #[serde(default, rename = "group_surface", skip_serializing)]
     legacy_group_surface: serde::de::IgnoredAny,
@@ -410,6 +414,7 @@ pub fn validate(panels: &[Panel]) -> Result<(), String> {
     };
     let mut panel_ids = HashSet::new();
     for panel in panels {
+        panel.geometry.validate()?;
         if panel.group_count() > MAX_GROUPS {
             return Err(format!(
                 "a panel supports at most {MAX_GROUPS} groups, reserving one region for overflow"
@@ -579,6 +584,7 @@ impl Panel {
         Self {
             id: PanelId("main".into()),
             edge: Edge::Top,
+            geometry: PanelGeometry::default(),
             background: status.bar_layout,
             legacy_group_surface: serde::de::IgnoredAny,
             border: false,

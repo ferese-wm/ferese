@@ -11,7 +11,7 @@ pub(super) enum PanelPage {
 }
 
 pub(super) fn initialize(snapshot: &store::Snapshot) -> Result<store::Edit, String> {
-    let panel = Panel::from_defaults(&Defaults {
+    let mut panel = Panel::from_defaults(&Defaults {
         bar_layout: serde_json::from_value(
             snapshot
                 .item("status.bar_layout")
@@ -26,6 +26,8 @@ pub(super) fn initialize(snapshot: &store::Snapshot) -> Result<store::Edit, Stri
         window_title: snapshot.boolean("status.window_title", true),
         battery_percentage: snapshot.boolean("status.battery_percentage", true),
     });
+    panel.geometry =
+        ferese_config::panel::PanelGeometry::from_legacy(&snapshot.doc).map_err(|error| error.to_string())?;
     ferese_config::panel::validate(std::slice::from_ref(&panel))?;
     Ok(store::set(
         "panels",
@@ -191,8 +193,15 @@ impl App {
                     .push(widget::container(self.panel_heading("Size & spacing", 15.)).padding([4, 10]));
                 for field in crate::schema::fields(Page::Bar)
                     .into_iter()
-                    .filter(|field| field.path.starts_with("theme.geometry."))
+                    .filter(|field| field.path.starts_with("panels.0.geometry."))
                 {
+                    let mut field = field;
+                    if let crate::schema::Kind::Range { default, .. } = &mut field.kind {
+                        let geometry =
+                            serde_json::to_value(self.preview_panel().map(|panel| panel.geometry).unwrap_or_default())
+                                .unwrap();
+                        *default = geometry[field.path.rsplit('.').next().unwrap()].as_f64().unwrap();
+                    }
                     settings = settings.push(self.field(field));
                 }
                 rows = rows.push(
@@ -385,11 +394,7 @@ impl App {
                             .width(Length::Fill),
                     ),
             );
-        if self.draft.number(
-            "theme.geometry.top_bar_margin_top",
-            f64::from(self.resolved.presented.tokens.geometry.top_bar_margin_top),
-        ) == 0.
-        {
+        if self.preview_panel().is_ok_and(|panel| panel.geometry.edge_margin == 0) {
             let bottom = self.preview_panel().is_ok_and(|panel| panel.edge == Edge::Bottom);
             content = content.push(self.note(if bottom {
                 "Bottom corners stay square while the panel touches the bottom edge."

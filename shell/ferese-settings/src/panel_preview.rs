@@ -135,10 +135,7 @@ impl App {
         let continuous = panel.background == ferese_config::BarLayout::Continuous;
         let corners = panel
             .resolved_radius(self.resolved.presented.tokens.geometry.shell_radius as f32)
-            .at_edge(
-                panel.edge,
-                self.resolved.presented.tokens.geometry.top_bar_margin_top == 0,
-            )
+            .at_edge(panel.edge, panel.geometry.edge_margin == 0)
             .0;
         let tokens = &self.resolved.presented.tokens;
         let inherited = if tokens.material.style == "translucent" {
@@ -257,10 +254,7 @@ impl App {
         let palette = visuals::Palette::from_resolved(&self.resolved.presented);
         let radius = panel
             .resolved_radius(self.resolved.presented.tokens.geometry.shell_radius as f32)
-            .at_edge(
-                panel.edge,
-                self.resolved.presented.tokens.geometry.top_bar_margin_top == 0,
-            )
+            .at_edge(panel.edge, panel.geometry.edge_margin == 0)
             .0;
         let tokens = &self.resolved.presented.tokens;
         let inherited = if tokens.material.style == "translucent" {

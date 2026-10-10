@@ -17,7 +17,13 @@ impl FereseShell {
         if representation == crate::panel::Representation::Icon {
             self.view_status_item(Menu::Media, false, selected)
         } else {
-            super::media::bar(self, theme, BarMetrics::from(theme), representation, selected)
+            super::media::bar(
+                self,
+                theme,
+                BarMetrics::from(self.config.panels[0].geometry),
+                representation,
+                selected,
+            )
         }
     }
 
@@ -28,7 +34,7 @@ impl FereseShell {
         selected: bool,
     ) -> Element<'_, cosmic::Action<Message>> {
         let theme = self.config.theme.for_bar();
-        let metrics = BarMetrics::from(theme);
+        let metrics = BarMetrics::from(self.config.panels[0].geometry);
         let (source, enabled) = if kind == Menu::Recording {
             let source: &'static [u8] = match self.recorder.state {
                 recording::State::Selecting => ferese_theme::icons::RECORD_CANCEL,

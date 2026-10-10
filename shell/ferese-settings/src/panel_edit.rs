@@ -27,6 +27,7 @@ impl std::fmt::Display for Destination {
 #[derive(Clone, Debug)]
 pub(super) enum Action {
     SetEdge(ferese_config::panel::Edge),
+    SetGeometry(String, Value),
     SetRadius(String),
     SetCorner(usize, f32),
     SetBorder(bool),
@@ -170,6 +171,15 @@ pub(super) fn plan(snapshot: &Snapshot, action: Action) -> Result<Vec<Edit>, Str
     let earlier_group = matches!(&action, Action::EarlierGroup(_));
     let edits = match action {
         Action::SetEdge(edge) => vec![set("panels.0.edge", edge.key())],
+        Action::SetGeometry(field, value) => {
+            if !matches!(
+                field.as_str(),
+                "height" | "edge_margin" | "side_margins" | "window_clearance" | "inner_padding"
+            ) {
+                return Err("Unknown panel geometry setting.".into());
+            }
+            vec![set(&format!("panels.0.geometry.{field}"), value)]
+        }
         Action::SetOpacity(value) => vec![set("panels.0.background_opacity", value)],
         Action::ClearOpacity => vec![Edit::Unset("panels.0.background_opacity".into())],
         Action::SetBorder(enabled) => vec![set("panels.0.border", enabled)],
@@ -405,6 +415,24 @@ pub(super) fn plan(snapshot: &Snapshot, action: Action) -> Result<Vec<Edit>, Str
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn first_geometry_edit_materializes_the_panel_and_preserves_imported_spacing() {
+        let mut snapshot =
+            Snapshot::parse("// keep\ntheme { geometry { top-bar-height 36; top-bar-margin-top 6; }; }".into())
+                .unwrap();
+        let edits = plan(&snapshot, Action::SetGeometry("side_margins".into(), 18.into())).unwrap();
+        assert_eq!(edits.len(), 2, "initialize and edit share one save/undo transaction");
+        for edit in edits {
+            snapshot.edit(&edit).unwrap();
+        }
+        let panels: Vec<Panel> = serde_json::from_value(snapshot.item("panels").unwrap().clone()).unwrap();
+        assert_eq!(panels[0].geometry.height, 36.);
+        assert_eq!(panels[0].geometry.edge_margin, 6);
+        assert_eq!(panels[0].geometry.side_margins, 18);
+        assert!(snapshot.source.contains("// keep"));
+        assert!(plan(&snapshot, Action::SetGeometry("height".into(), 12.into())).is_err());
+    }
 
     #[test]
     fn group_capacity_is_checked_before_saving_and_removal_reopens_a_slot() {
