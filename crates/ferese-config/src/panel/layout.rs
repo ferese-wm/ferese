@@ -118,8 +118,13 @@ pub fn resolve_with_gap(
         .flat_map(|zone| &zone.groups)
         .flat_map(|group| &group.items)
         .collect();
+    let measurements: BTreeMap<_, _> = measurements.iter().map(|measured| (&measured.id, measured)).collect();
+    // Allocation policy follows composition, never the renderer's sample order.
+    // Lower priorities yield first; definition order breaks equal-priority ties.
+    let mut candidates: Vec<_> = ordered.iter().enumerate().collect();
+    candidates.sort_by_key(|(index, item)| (item.priority, *index));
     for item in &ordered {
-        let Some(measured) = measurements.iter().find(|measured| measured.id == item.id) else {
+        let Some(measured) = measurements.get(&item.id) else {
             continue;
         };
         let Some(&(representation, width)) = measured.alternatives.first() else {
@@ -136,7 +141,7 @@ pub fn resolve_with_gap(
     }
     result.update_widths(panel, overflow_width);
     let mut minimum = result.clone();
-    for measured in measurements {
+    for measured in measurements.values() {
         if let Some(Placement::Visible { width, .. }) = minimum.items.get_mut(&measured.id) {
             for (_, alternative) in &measured.alternatives {
                 *width = width.min(*alternative);
@@ -149,7 +154,10 @@ pub fn resolve_with_gap(
     minimum.update_widths(panel, overflow_width);
     result.minimum_width = minimum.required_width_with_gap(zone_gap);
     // Flexible content yields space without changing the stored item preference.
-    for measured in measurements.iter().filter(|measured| measured.minimum.is_some()) {
+    for (_, item) in &candidates {
+        let Some(measured) = measurements.get(&item.id).filter(|measured| measured.minimum.is_some()) else {
+            continue;
+        };
         if fits(&result) {
             break;
         }
@@ -166,13 +174,11 @@ pub fn resolve_with_gap(
         );
         result.update_widths(panel, overflow_width);
     }
-    let mut candidates: Vec<_> = ordered.iter().enumerate().collect();
-    candidates.sort_by_key(|(index, item)| (item.priority, *index));
     for (_, item) in &candidates {
         if fits(&result) {
             break;
         }
-        let Some(measured) = measurements.iter().find(|measured| measured.id == item.id) else {
+        let Some(measured) = measurements.get(&item.id) else {
             continue;
         };
         for &(representation, width) in measured.alternatives.iter().skip(1) {
@@ -207,8 +213,11 @@ pub fn resolve_with_gap(
             }
         }
     }
-    // Restore flexible widths up to their measured preference with the remaining space.
-    for measured in measurements.iter().filter(|measured| measured.minimum.is_some()) {
+    // Restore the most protected flexible items first, reversing the yield order.
+    for (_, item) in candidates.iter().rev() {
+        let Some(measured) = measurements.get(&item.id).filter(|measured| measured.minimum.is_some()) else {
+            continue;
+        };
         let Some(Placement::Visible {
             representation,
             width: minimum,
@@ -246,6 +255,25 @@ pub fn resolve_with_gap(
 mod tests {
     use super::super::Defaults as StatusConfig;
     use super::*;
+
+    #[test]
+    fn allocation_is_independent_of_measurement_order_even_for_flexible_items() {
+        let panel = Panel::from_defaults(&StatusConfig::default());
+        let mut measured = measurements(&panel);
+        for measurement in &mut measured {
+            measurement.minimum = Some(24.);
+        }
+        for width in [2400., 1400., 1000., 800., 400., 80., 32.] {
+            let expected = resolve_with_gap(&panel, &measured, width, 32., 16.);
+            for _ in 0..measured.len() {
+                measured.rotate_left(1);
+                assert_eq!(resolve_with_gap(&panel, &measured, width, 32., 16.), expected);
+                measured.reverse();
+                assert_eq!(resolve_with_gap(&panel, &measured, width, 32., 16.), expected);
+                measured.reverse();
+            }
+        }
+    }
 
     fn measurements(panel: &Panel) -> Vec<Measurement> {
         [&panel.start, &panel.center, &panel.end]
