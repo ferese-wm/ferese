@@ -76,6 +76,7 @@ impl FereseShell {
         };
 
         if let Some(entry) = self.outputs.iter_mut().find(|entry| entry.output == output) {
+            let resized = size.is_some() && entry.size != size;
             if size.is_some() {
                 entry.size = size;
             }
@@ -87,10 +88,26 @@ impl FereseShell {
 
             let bar = entry.bar;
             let margin = self.update_panel_margin(bar, false);
-            return if changed {
-                Task::batch([margin, self.rebuild_clocks(true), self.rebuild_notes(true)])
+            let popup = if resized && self.menu.as_ref().is_some_and(|menu| menu.anchor.parent == bar) {
+                self.destroy_menu()
             } else {
-                margin
+                Task::none()
+            };
+            let tooltip = if resized {
+                self.dismiss_workspace_tooltip_for_bar(bar)
+            } else {
+                Task::none()
+            };
+            return if changed {
+                Task::batch([
+                    margin,
+                    popup,
+                    tooltip,
+                    self.rebuild_clocks(true),
+                    self.rebuild_notes(true),
+                ])
+            } else {
+                Task::batch([margin, popup, tooltip])
             };
         }
 
@@ -187,6 +204,9 @@ impl FereseShell {
     }
 
     pub(super) fn handle_event(&mut self, event: Event, id: window::Id) -> Task<Message> {
+        if matches!(event, Event::Mouse(cosmic::iced::mouse::Event::CursorLeft)) {
+            return self.dismiss_workspace_tooltip_for_bar(id);
+        }
         if let Event::Mouse(cosmic::iced::mouse::Event::ButtonPressed(_)) = &event
             && let Some(modal) = &mut self.system_modal
             && modal.contains(id)

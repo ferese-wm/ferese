@@ -121,6 +121,14 @@ struct Hover {
     serial: u64,
 }
 
+impl WorkspaceUi {
+    pub(super) fn hovering(&self, bar: window::Id, target: &Id) -> bool {
+        self.hovered
+            .as_ref()
+            .is_some_and(|hover| hover.bar == bar && &hover.target == target)
+    }
+}
+
 struct FindBounds {
     target: Id,
     bar: window::Id,
@@ -146,6 +154,14 @@ impl Operation<Option<Rectangle>> for FindBounds {
 }
 
 impl FereseShell {
+    pub(super) fn dismiss_workspace_tooltip_for_bar(&mut self, bar: window::Id) -> Task<Message> {
+        if self.workspace_ui.hovered.as_ref().is_some_and(|hover| hover.bar == bar) {
+            self.dismiss_workspace_tooltip()
+        } else {
+            Task::none()
+        }
+    }
+
     pub(super) fn dismiss_workspace_tooltip(&mut self) -> Task<Message> {
         self.workspace_ui.serial = self.workspace_ui.serial.wrapping_add(1);
         self.workspace_ui.hovered = None;
@@ -162,16 +178,14 @@ impl FereseShell {
         entered: bool,
     ) -> Task<Message> {
         if !entered {
-            return if self
-                .workspace_ui
-                .hovered
-                .as_ref()
-                .is_some_and(|hover| hover.target == target)
-            {
+            return if self.workspace_ui.hovering(bar, &target) {
                 self.dismiss_workspace_tooltip()
             } else {
                 Task::none()
             };
+        }
+        if self.workspace_ui.hovering(bar, &target) {
+            return Task::none();
         }
         let close = self.dismiss_workspace_tooltip();
         if self.menu.is_some() || self.system_modal.is_some() || self.overview_active {
@@ -647,6 +661,73 @@ mod tests {
         operation.set_window_id(bar);
         operation.container(Some(&target), bounds);
         assert_eq!(operation.found, Some(bounds));
+    }
+
+    #[test]
+    fn leaving_the_bar_cancels_pending_and_visible_tooltips_and_allows_reentry() {
+        let mut shell = crate::tests::shell_with_measured_panel();
+        shell.snapshot = snapshot(1);
+        let bar = shell.outputs[0].bar;
+        let target = Id::new("workspace:hover");
+        let bounds = Some(Rectangle::with_size(cosmic::iced::Size::new(24., 28.)));
+        for visible in [false, true] {
+            drop(shell.hover_workspace(bar, 1, target.clone(), true));
+            let serial = shell.workspace_ui.serial;
+            drop(shell.hover_workspace(bar, 1, target.clone(), true));
+            assert_eq!(
+                shell.workspace_ui.serial, serial,
+                "pointer movement inside a workspace must preserve its delay"
+            );
+            if visible {
+                drop(shell.show_workspace_tooltip(serial, bounds));
+                assert!(shell.workspace_ui.tooltip.is_some());
+            }
+            drop(shell.handle_event(
+                cosmic::iced::Event::Mouse(cosmic::iced::mouse::Event::CursorLeft),
+                window::Id::unique(),
+            ));
+            assert!(
+                shell.workspace_ui.hovered.is_some(),
+                "leaving another surface must not cancel this hover"
+            );
+            drop(shell.handle_event(cosmic::iced::Event::Mouse(cosmic::iced::mouse::Event::CursorLeft), bar));
+            assert!(shell.workspace_ui.hovered.is_none());
+            assert!(shell.workspace_ui.tooltip.is_none());
+            drop(shell.show_workspace_tooltip(serial, bounds));
+            assert!(
+                shell.workspace_ui.tooltip.is_none(),
+                "a delayed response after pointer exit must stay cancelled"
+            );
+            drop(shell.hover_workspace(bar, 1, target.clone(), true));
+            drop(shell.show_workspace_tooltip(shell.workspace_ui.serial, bounds));
+            assert!(
+                shell.workspace_ui.tooltip.is_some(),
+                "the same workspace must show its tooltip on reentry"
+            );
+            drop(shell.dismiss_workspace_tooltip());
+        }
+    }
+
+    #[test]
+    fn panel_reallocation_cancels_workspace_tooltips_without_a_pointer_exit() {
+        use cosmic::Application;
+        let mut shell = crate::tests::shell_with_measured_panel();
+        shell.snapshot = snapshot(1);
+        let bar = shell.outputs[0].bar;
+        drop(shell.hover_workspace(bar, 1, Id::new("workspace:hover"), true));
+        let serial = shell.workspace_ui.serial;
+        let bounds = Some(Rectangle::with_size(cosmic::iced::Size::new(24., 28.)));
+        drop(shell.show_workspace_tooltip(serial, bounds));
+        let previous = shell.outputs[0].panel_resolution.clone().unwrap();
+        drop(shell.update(Message::PanelResolved(bar, previous.clone())));
+        assert!(shell.workspace_ui.tooltip.is_some());
+        let mut moved = previous;
+        moved.zone_widths[0] = 200.;
+        drop(shell.update(Message::PanelResolved(bar, moved)));
+        assert!(shell.workspace_ui.tooltip.is_none());
+        assert!(shell.workspace_ui.hovered.is_none());
+        drop(shell.show_workspace_tooltip(serial, bounds));
+        assert!(shell.workspace_ui.tooltip.is_none());
     }
 
     #[test]

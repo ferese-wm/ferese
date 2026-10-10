@@ -173,6 +173,22 @@ pub(super) fn material_element(
     )
 }
 
+fn resolve_surface_material(
+    role: crate::effects::SemanticRole,
+    settings: crate::config::ThemeSettings,
+    panel_opacity: Option<f32>,
+) -> crate::effects::ResolvedMaterial {
+    let mut material = crate::effects::resolve_material(role, settings.material_style, settings.shell_opacity as f32);
+    if role == crate::effects::SemanticRole::Panel {
+        material.opacity = ferese_config::theme::effective_panel_opacity(
+            material.opacity,
+            panel_opacity,
+            settings.reduce_transparency,
+        );
+    }
+    material
+}
+
 pub(super) fn material_element_with_role(
     state: &mut Ferese,
     renderer: &mut GlesRenderer,
@@ -188,16 +204,7 @@ pub(super) fn material_element_with_role(
         capture_geometry,
         alpha,
     } = surface_geometry;
-    let mut material = crate::effects::resolve_material(
-        role,
-        state.theme_settings.material_style,
-        state.theme_settings.shell_opacity as f32,
-    );
-    if role == crate::effects::SemanticRole::Panel
-        && let Some(opacity) = state.panel_background_opacity
-    {
-        material.opacity = opacity;
-    }
+    let material = resolve_surface_material(role, state.theme_settings, state.panel_background_opacity);
     let presentation_alpha = opacity * alpha;
     let mode = output.current_mode()?;
     let scale = output.current_scale().fractional_scale();
@@ -551,6 +558,41 @@ pub(super) fn blur_damage(
 #[cfg(test)]
 mod region_geometry_tests {
     use super::*;
+
+    #[test]
+    fn reduce_transparency_wins_over_continuous_and_island_panel_materials() {
+        use crate::effects::SemanticRole;
+        for surface in ["solid", "none"] {
+            for opacity in [0., 0.4, 1.] {
+                for reduce in [false, true] {
+                    let source = format!(
+                        "theme {{ material {{ style translucent; opacity 0.7; }}; accessibility {{ reduce-transparency #{reduce}; }}; }}; panel main {{ surface {surface}; group-surface island; background-opacity {opacity}; }}"
+                    );
+                    let (_, runtime, candidate) = crate::theme::prepare(&source, std::path::Path::new("/tmp")).unwrap();
+                    let material = resolve_surface_material(
+                        SemanticRole::Panel,
+                        runtime.theme_settings,
+                        runtime.panel_background_opacity,
+                    );
+                    assert_eq!(material.opacity, if reduce { 1. } else { opacity });
+                    assert_eq!(material.opacity, candidate.theme.panel_opacity(Some(opacity)));
+                    assert_eq!(
+                        material.style,
+                        if reduce {
+                            crate::config::MaterialStyle::Solid
+                        } else {
+                            crate::config::MaterialStyle::Translucent
+                        }
+                    );
+                    if reduce {
+                        assert_eq!(runtime.theme_settings.backdrop_blur, 0.);
+                    }
+                    let popover = resolve_surface_material(SemanticRole::Popover, runtime.theme_settings, Some(0.));
+                    assert!((popover.opacity - if reduce { 1. } else { 0.7 }).abs() < 0.001);
+                }
+            }
+        }
+    }
 
     #[test]
     fn framebuffer_transforms_preserve_each_logical_corner() {

@@ -60,7 +60,8 @@ pub(crate) fn prepare_document(
     let candidate = resolve_with_context(document, directory, Timestamp::now(), &auto_context(), read_source)?;
     let config: Config =
         serde_json::from_value(document.with_theme(&candidate.theme).value().clone()).map_err(|e| e.to_string())?;
-    let runtime = config.runtime_config().map_err(|e| e.to_string())?;
+    let mut runtime = config.runtime_config().map_err(|e| e.to_string())?;
+    runtime.theme_settings = Config::resolved_theme_settings(&candidate.theme).map_err(|e| e.to_string())?;
     Ok((config, runtime, candidate))
 }
 

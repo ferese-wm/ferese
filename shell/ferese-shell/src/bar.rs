@@ -41,9 +41,7 @@ impl FereseShell {
         }
         let panel = &self.config.panels[0];
         let mut shell_theme = self.config.theme.for_bar();
-        if let Some(opacity) = panel.background_opacity {
-            shell_theme.bar_background[3] = (opacity * 255.).round() as u8;
-        }
+        shell_theme.bar_background[3] = (shell_theme.panel_opacity(panel.background_opacity) * 255.).round() as u8;
         let corners = panel
             .resolved_radius(shell_theme.bar_radius)
             .at_edge(panel.edge, panel.geometry.edge_margin == 0);
@@ -531,9 +529,18 @@ impl FereseShell {
                 .on_exit(cosmic::Action::App(Message::HoverWorkspace(
                     id,
                     workspace.id,
-                    target,
+                    target.clone(),
                     false,
                 )));
+            // A surface leave may not reset MouseArea's hover state. Recover
+            // on reentry without publishing a message for every pointer move.
+            let selector = if self.workspace_ui.hovering(id, &target) {
+                selector
+            } else {
+                selector.on_move(move |_| {
+                    cosmic::Action::App(Message::HoverWorkspace(id, workspace.id, target.clone(), true))
+                })
+            };
             workspace_buttons = workspace_buttons.push(selector);
         }
         workspace_buttons.into()
@@ -580,7 +587,7 @@ fn view_zone<'a>(
         if count == 0 {
             continue;
         }
-        let opacity = panel.background_opacity.unwrap_or(color(shell_theme.bar_background).a);
+        let opacity = shell_theme.panel_opacity(panel.background_opacity);
         let corners = panel
             .resolved_radius(shell_theme.bar_radius)
             .at_edge(

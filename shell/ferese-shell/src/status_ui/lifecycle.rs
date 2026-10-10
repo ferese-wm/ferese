@@ -55,11 +55,9 @@ impl FereseShell {
             let open = self.open_menu(kind, anchor);
             return close.chain(open);
         }
-        if self
-            .menu
-            .as_ref()
-            .is_some_and(|menu| menu.kind == kind && menu.anchor.same_item(&anchor))
-        {
+        if self.menu.as_ref().is_some_and(|menu| {
+            menu.kind == kind && menu.anchor.same_item(&anchor) && menu.anchor.rectangle == anchor.rectangle
+        }) {
             if let Some(menu) = &mut self.menu
                 && menu.motion.closing()
             {
@@ -240,6 +238,38 @@ mod tests {
             item: Some(crate::panel::ItemId("battery".into())),
             rectangle: Rectangle::default(),
         }
+    }
+
+    #[test]
+    fn clicking_the_same_control_at_new_bounds_repositions_instead_of_toggling() {
+        let mut shell = crate::tests::shell_with_measured_panel();
+        shell.status.network = Some(crate::status::Network {
+            enabled: true,
+            connection: Some("Test network".into()),
+            signal: 90,
+        });
+        let bar = shell.outputs[0].bar;
+        let mut anchor = PopoverAnchor {
+            parent: bar,
+            panel: shell.config.panels[0].id.clone(),
+            item: Some(crate::panel::ItemId("network".into())),
+            rectangle: Rectangle {
+                x: 1000,
+                y: 0,
+                width: 60,
+                height: 36,
+            },
+        };
+        drop(shell.open_menu(Menu::Network, anchor.clone()));
+        let popup = shell.menu.as_ref().unwrap().id;
+        anchor.rectangle.x = 800;
+        drop(shell.open_menu(Menu::Network, anchor.clone()));
+        let menu = shell.menu.as_ref().unwrap();
+        assert_eq!(menu.id, popup);
+        assert_eq!(menu.anchor, anchor);
+        assert!(!menu.motion.closing());
+        drop(shell.open_menu(Menu::Network, anchor));
+        assert!(shell.menu.is_none());
     }
 
     #[test]

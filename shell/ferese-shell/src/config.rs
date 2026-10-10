@@ -57,6 +57,7 @@ impl Default for StatusConfig {
 pub(crate) struct ShellTheme {
     pub(crate) appearance: ferese_config::theme::Appearance,
     pub(crate) high_contrast: bool,
+    pub(crate) reduce_transparency: bool,
     pub(crate) bar_background: [u8; 4],
     pub(crate) bar_text_primary: [u8; 4],
     pub(crate) bar_text_muted: [u8; 4],
@@ -82,6 +83,7 @@ impl Default for ShellTheme {
         Self {
             appearance: Default::default(),
             high_contrast: false,
+            reduce_transparency: false,
             bar_background: [28, 32, 46, 255],
             bar_text_primary: [240, 243, 250, 255],
             bar_text_muted: [170, 180, 199, 255],
@@ -105,6 +107,14 @@ impl Default for ShellTheme {
 }
 
 impl ShellTheme {
+    pub(crate) fn panel_opacity(self, custom: Option<f32>) -> f32 {
+        ferese_config::theme::effective_panel_opacity(
+            f32::from(self.bar_background[3]) / 255.,
+            custom,
+            self.reduce_transparency,
+        )
+    }
+
     pub(crate) fn material_opacity(self) -> f32 {
         if self.high_contrast {
             1.0
@@ -272,7 +282,14 @@ impl Default for ThemeColorsConfig {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ThemeGeometryConfig {
+    #[serde(default, rename = "border_width")]
+    _border_width: Option<f64>,
+    #[serde(default, rename = "focus_ring_width")]
+    _focus_ring_width: Option<f64>,
+    #[serde(default, rename = "window_radius")]
+    _window_radius: Option<f64>,
     #[serde(default)]
     shell_radius: Option<f32>,
     #[serde(default = "default_control_gap")]
@@ -282,6 +299,9 @@ struct ThemeGeometryConfig {
 impl Default for ThemeGeometryConfig {
     fn default() -> Self {
         Self {
+            _border_width: None,
+            _focus_ring_width: None,
+            _window_radius: None,
             shell_radius: None,
             control_gap: default_control_gap(),
         }
@@ -333,6 +353,7 @@ fn load_path(path: &std::path::Path) -> Result<ShellConfig, String> {
 
 pub(crate) fn parse_source(source: &str) -> Result<ShellConfig, ferese_config::Error> {
     let document = ferese_config::Document::parse(source)?;
+    ferese_config::theme::validate_overrides(&document).map_err(ferese_config::Error::from)?;
     let snapshot = ferese_theme_client::service::current();
     let mut config = parse_document(
         &document.with_theme(&snapshot.presented),
@@ -390,6 +411,7 @@ impl ShellConfig {
         self.theme = shell_theme(&config);
         self.theme.appearance = theme.appearance;
         self.theme.high_contrast = theme.accessibility.increase_contrast;
+        self.theme.reduce_transparency = theme.accessibility.reduce_transparency;
         self.theme.accent_gradient = ferese_theme::Palette::from_resolved(theme).accent_gradient;
         self.theme.material_radius = theme.tokens.geometry.shell_radius as f32;
         self.theme.bar_radius = self.theme.material_radius;
@@ -421,6 +443,7 @@ fn shell_theme(theme: &ThemeConfig) -> ShellTheme {
     ShellTheme {
         appearance: defaults.appearance,
         high_contrast: defaults.high_contrast,
+        reduce_transparency: defaults.reduce_transparency,
         material_radius: defaults.material_radius,
         bar_background: {
             let mut background = parse_color(&theme.surface.bar.background).unwrap_or(defaults.bar_background);
@@ -530,6 +553,67 @@ pub(crate) fn config_path() -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn removed_geometry_is_rejected_before_a_runtime_snapshot_can_hide_it() {
+        for key in [
+            "top-bar-radius",
+            "top-bar-height",
+            "top-bar-margin-top",
+            "top-bar-margin-horizontal",
+            "top-bar-window-clearance",
+            "shell-raduis",
+        ] {
+            let source = format!("theme {{ geometry {{ {key} 8; }}; }}");
+            assert!(
+                parse_test_source(&source)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("unknown field")
+            );
+            for section in ["", "light", "dark"] {
+                let layer = if section.is_empty() {
+                    format!("geometry {{ {key} 8; }}")
+                } else {
+                    format!("{section} {{ geometry {{ {key} 8; }}; }}")
+                };
+                assert!(
+                    parse_source(&format!("theme {{ {layer}; }}"))
+                        .unwrap_err()
+                        .to_string()
+                        .contains(&key.replace('-', "_"))
+                );
+            }
+        }
+        parse_test_source("theme { geometry { border-width 1; focus-ring-width 2; window-radius 12; shell-radius 14; control-gap 8; }; }").unwrap();
+    }
+
+    #[test]
+    fn reduce_transparency_overrides_panel_opacity_for_both_surfaces() {
+        for surface in ["solid", "none"] {
+            for opacity in [0., 0.4, 1.] {
+                for reduce in [false, true] {
+                    let source = format!(
+                        "theme {{ material {{ style translucent; opacity 0.7; }}; accessibility {{ reduce-transparency #{reduce}; }}; }}; panel main {{ surface {surface}; group-surface island; background-opacity {opacity}; }}"
+                    );
+                    let document = ferese_config::Document::parse(&source).unwrap();
+                    let resolved = ferese_config::theme::resolve(
+                        &document,
+                        std::path::Path::new("/tmp"),
+                        jiff::Timestamp::now(),
+                        |_| unreachable!(),
+                    )
+                    .unwrap()
+                    .theme;
+                    let mut config = parse_test_source(&source).unwrap();
+                    config.apply_theme(&resolved);
+                    let effective = config.theme.panel_opacity(config.panels[0].background_opacity);
+                    assert_eq!(effective, if reduce { 1. } else { opacity });
+                    assert_eq!(effective, resolved.panel_opacity(config.panels[0].background_opacity));
+                }
+            }
+        }
+    }
+
     #[test]
     fn rejects_removed_physics_keys_before_publication() {
         for property in ["spring", "viewport-spring"] {

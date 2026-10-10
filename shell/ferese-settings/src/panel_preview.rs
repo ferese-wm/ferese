@@ -138,13 +138,7 @@ impl App {
             .resolved_radius(self.resolved.presented.tokens.geometry.shell_radius as f32)
             .at_edge(panel.edge, panel.geometry.edge_margin == 0)
             .0;
-        let tokens = &self.resolved.presented.tokens;
-        let inherited = if tokens.material.style == "translucent" {
-            tokens.material.opacity as f32
-        } else {
-            1.
-        };
-        let opacity = panel.background_opacity.unwrap_or(inherited);
+        let opacity = self.resolved.presented.panel_opacity(panel.background_opacity);
         let measured_panel = panel.clone();
         let content = frame(
             std::borrow::Cow::Owned(measured_panel),
@@ -261,13 +255,7 @@ impl App {
                 surface == ferese_config::panel::GroupSurface::Island && panel.geometry.edge_margin == 0,
             )
             .0;
-        let tokens = &self.resolved.presented.tokens;
-        let inherited = if tokens.material.style == "translucent" {
-            tokens.material.opacity as f32
-        } else {
-            1.
-        };
-        let opacity = panel.background_opacity.unwrap_or(inherited);
+        let opacity = self.resolved.presented.panel_opacity(panel.background_opacity);
         let border = panel.border;
         let content: Element<'static, Message> = container(controls)
             .padding(group.padding)

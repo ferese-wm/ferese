@@ -54,6 +54,7 @@ impl Config {
             material_tint_strength: unit_theme_value(self.theme.material.tint_strength, "material.tint_strength")?,
             material_radius,
             panel_radius: material_radius,
+            reduce_transparency: false,
         })
     }
 }
@@ -226,6 +227,7 @@ pub struct ThemeSettings {
     pub material_tint_strength: f64,
     pub material_radius: f64,
     pub panel_radius: f64,
+    pub reduce_transparency: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
@@ -400,7 +402,10 @@ impl Default for SoftShadowConfig {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct ThemeGeometryConfig {
+    #[serde(default, rename = "control_gap")]
+    _control_gap: Option<f64>,
     #[serde(default = "default_border_width")]
     pub(super) border_width: f64,
     #[serde(default = "default_focus_ring_width")]
@@ -414,6 +419,7 @@ pub(super) struct ThemeGeometryConfig {
 impl Default for ThemeGeometryConfig {
     fn default() -> Self {
         Self {
+            _control_gap: None,
             border_width: default_border_width(),
             focus_ring_width: default_focus_ring_width(),
             window_radius: default_window_radius(),

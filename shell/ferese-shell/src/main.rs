@@ -402,7 +402,7 @@ impl cosmic::Application for FereseShell {
                     .load(Ordering::Relaxed)
                     .then_some(Message::Event(event, id)),
                 Event::Keyboard(_)
-                | Event::Mouse(cosmic::iced::mouse::Event::ButtonPressed(_))
+                | Event::Mouse(cosmic::iced::mouse::Event::ButtonPressed(_) | cosmic::iced::mouse::Event::CursorLeft)
                 | Event::Window(window::Event::Opened { .. } | window::Event::Closed)
                 | Event::PlatformSpecific(PlatformSpecific::Wayland(
                     wayland::Event::Popup(..) | wayland::Event::Layer(..) | wayland::Event::Output(..),
@@ -443,19 +443,35 @@ impl cosmic::Application for FereseShell {
     fn update(&mut self, message: Self::Message) -> Task<Self::Message> {
         match message {
             Message::PanelResolved(id, resolution) => {
-                let close_overflow = resolution.overflow.is_empty()
-                    && self
-                        .menu
-                        .as_ref()
-                        .is_some_and(|menu| menu.kind == status_ui::Menu::Overflow && menu.anchor.parent == id);
+                let allocation_changed = self
+                    .outputs
+                    .iter()
+                    .find(|output| output.bar == id)
+                    .is_some_and(|output| {
+                        output
+                            .panel_resolution
+                            .as_ref()
+                            .is_some_and(|previous| previous != &resolution)
+                    });
+                let close_menu = self.menu.as_ref().is_some_and(|menu| {
+                    menu.anchor.parent == id
+                        && menu.anchor.item.is_some()
+                        && ((menu.kind == status_ui::Menu::Overflow && resolution.overflow.is_empty())
+                            || allocation_changed)
+                });
                 if let Some(output) = self.outputs.iter_mut().find(|output| output.bar == id) {
                     output.panel_resolution = Some(resolution);
                 }
                 let margin = self.update_panel_margin(id, false);
-                if close_overflow {
-                    Task::batch([margin, self.destroy_menu()])
+                let tooltip = if allocation_changed {
+                    self.dismiss_workspace_tooltip_for_bar(id)
                 } else {
-                    margin
+                    Task::none()
+                };
+                if close_menu {
+                    Task::batch([margin, tooltip, self.destroy_menu()])
+                } else {
+                    Task::batch([margin, tooltip])
                 }
             }
             Message::BarRegionsChanged(id, regions) => {
@@ -1043,7 +1059,7 @@ impl FereseShell {
             },
         ];
 
-        if composition_changed {
+        if composition_changed || geometry_changed {
             tasks.push(self.destroy_menu());
             for output in &mut self.outputs {
                 // Keep the measured allocation and margins until the next layout
@@ -1284,6 +1300,82 @@ mod tests {
         drop(shell.reload_config("panel broken {".into()));
         assert_eq!(shell.outputs[0].panel_resolution.as_ref(), Some(&replacement));
         assert_eq!(shell.outputs[0].bar_margin_horizontal, before);
+    }
+
+    #[test]
+    fn panel_reallocation_dismisses_popovers_in_both_overflow_directions() {
+        use cosmic::Application;
+        use panel_layout::{Placement, Resolution};
+        let item = panel::ItemId("network".into());
+        let visible = Resolution {
+            items: [(
+                item.clone(),
+                Placement::Visible {
+                    representation: panel::Representation::Icon,
+                    width: 28.,
+                },
+            )]
+            .into(),
+            zone_widths: [0., 0., 40.],
+            ..Default::default()
+        };
+        let overflow = Resolution {
+            items: [(item.clone(), Placement::Overflow)].into(),
+            overflow: vec![item.clone()],
+            zone_widths: [0., 0., 32.],
+            overflow_trigger_width: 24.,
+            ..Default::default()
+        };
+        let mut moved = visible.clone();
+        moved.zone_widths[2] = 160.;
+        for (before, after, kind) in [
+            (&overflow, &visible, status_ui::Menu::Network),
+            (&visible, &overflow, status_ui::Menu::Network),
+            (&visible, &moved, status_ui::Menu::Network),
+            (&overflow, &visible, status_ui::Menu::Overflow),
+        ] {
+            let mut shell = shell_with_measured_panel();
+            let bar = shell.outputs[0].bar;
+            shell.outputs[0].panel_resolution = Some(before.clone());
+            shell.menu = Some(status_ui::OpenMenu {
+                id: window::Id::unique(),
+                anchor: status_ui::PopoverAnchor {
+                    parent: bar,
+                    panel: shell.config.panels[0].id.clone(),
+                    item: Some(if kind == status_ui::Menu::Overflow {
+                        panel::ItemId("_overflow".into())
+                    } else {
+                        item.clone()
+                    }),
+                    rectangle: cosmic::iced::Rectangle {
+                        x: 1100,
+                        y: 0,
+                        width: 28,
+                        height: 36,
+                    },
+                },
+                kind,
+                motion: motion::PopupMotion::new(Default::default()),
+                effects: None,
+                regions: Default::default(),
+            });
+            let popup = shell.menu.as_ref().unwrap().id;
+            drop(shell.update(Message::PanelResolved(window::Id::unique(), after.clone())));
+            assert_eq!(
+                shell.menu.as_ref().unwrap().id,
+                popup,
+                "another output must not dismiss this popup"
+            );
+            drop(shell.update(Message::PanelResolved(bar, before.clone())));
+            assert_eq!(
+                shell.menu.as_ref().unwrap().id,
+                popup,
+                "unchanged allocation must preserve the popup"
+            );
+            drop(shell.update(Message::PanelResolved(bar, after.clone())));
+            assert!(shell.menu.is_none(), "stale {kind:?} popup must be destroyed");
+            assert_eq!(shell.outputs[0].panel_resolution.as_ref(), Some(after));
+        }
     }
 
     #[test]

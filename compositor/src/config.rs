@@ -109,7 +109,9 @@ impl Config {
                 .expect("resolved theme matches runtime schema"),
             ..Self::default()
         };
-        config.theme_settings()
+        let mut settings = config.theme_settings()?;
+        settings.reduce_transparency = theme.accessibility.reduce_transparency;
+        Ok(settings)
     }
 
     pub(crate) fn runtime_config(&self) -> Result<crate::RuntimeConfig, ConfigError> {
@@ -381,6 +383,33 @@ pub(crate) fn config_path() -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn geometry_rejects_removed_and_misspelled_keys_in_both_consumption_paths() {
+        for key in [
+            "top-bar-radius",
+            "top-bar-height",
+            "top-bar-margin-top",
+            "top-bar-margin-horizontal",
+            "top-bar-window-clearance",
+            "shell-raduis",
+        ] {
+            let source = format!("theme {{ geometry {{ {key} 8; }}; }}");
+            assert!(
+                Config::parse_source(&source)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("unknown field")
+            );
+            assert!(
+                crate::theme::prepare(&source, std::path::Path::new("/tmp"))
+                    .err()
+                    .unwrap()
+                    .contains(&key.replace('-', "_"))
+            );
+        }
+        Config::parse_source("theme { geometry { border-width 1; focus-ring-width 2; window-radius 12; shell-radius 14; control-gap 8; }; }").unwrap();
+    }
+
     #[test]
     fn panel_background_opacity_override_leaves_the_shell_material_unchanged() {
         let config = Config::parse_source(
@@ -827,6 +856,7 @@ mod tests {
                 material_tint_strength: 0.5,
                 material_radius: 14.0,
                 panel_radius: 14.0,
+                reduce_transparency: false,
             }
         );
         assert!(invalid_color.theme_settings().is_err());
