@@ -42,9 +42,9 @@ impl Ferese {
                     layer.with_surfaces(|surface, _| surfaces.push(surface.clone()));
                 }
             }
-            if let smithay::input::pointer::CursorImageStatus::Surface(surface) = &self.cursor_status {
-                surfaces.push(surface.clone());
-            }
+        }
+        if let smithay::input::pointer::CursorImageStatus::Surface(surface) = &self.cursor_status {
+            surfaces.push(surface.clone());
         }
 
         surfaces

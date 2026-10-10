@@ -225,6 +225,131 @@ fn pixels(
 }
 
 #[test]
+#[ignore = "requires private Wayland sockets and an offscreen EGL device"]
+fn lock_scene_draws_the_pointer_and_delivers_client_cursor_frames() {
+    if !crate::startup_tests::private_runtime(
+        "state::capture_privacy::tests::lock_scene_draws_the_pointer_and_delivers_client_cursor_frames",
+    ) {
+        return;
+    }
+    use smithay::backend::renderer::damage::OutputDamageTracker;
+    use smithay::input::{SeatHandler, pointer::CursorImageStatus};
+    use smithay::reexports::wayland_protocols::ext::session_lock::v1::server::ext_session_lock_manager_v1::ExtSessionLockManagerV1;
+    use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
+
+    let mut events = EventLoop::try_new().unwrap();
+    let mut state = crate::startup_tests::state(&mut events);
+    let output = Output::new(
+        "lock-cursor".into(),
+        PhysicalProperties {
+            size: (0, 0).into(),
+            subpixel: Subpixel::Unknown,
+            make: "test".into(),
+            model: "test".into(),
+        },
+    );
+    state.begin_desktop_transition();
+    let changes = state
+        .publish_desktop(vec![DesktopOutput {
+            output: output.clone(),
+            identity: "lock-cursor".into(),
+            mode: Mode {
+                size: (320, 240).into(),
+                refresh: 60_000,
+            },
+            transform: Transform::Normal,
+            scale: Scale::Fractional(1.0),
+            position: (0, 0).into(),
+        }])
+        .unwrap();
+    state.finish_desktop_transition(changes);
+    let (desktop, mut wire) = window(&mut state, &mut events, 0xffff0000);
+    let client = desktop.toplevel().unwrap().wl_surface().client().unwrap();
+    let manager = client
+        .create_resource::<ExtSessionLockManagerV1, (), Ferese>(&state.display_handle, 1, ())
+        .unwrap();
+    request(&mut wire, manager.id().protocol_id(), 1, &[7], None);
+    let deadline = std::time::Instant::now() + Duration::from_secs(1);
+    while !state.session_lock.active() && std::time::Instant::now() < deadline {
+        dispatch(&mut events, &mut state);
+    }
+    assert!(state.session_lock.active());
+    state.session_lock.idle_opacity = 0.65;
+    state.named_cursors.insert(
+        smithay::input::pointer::CursorIcon::Default,
+        crate::cursor::fallback_cursor(),
+    );
+    state.seat.get_pointer().unwrap().set_location((20.0, 20.0).into());
+
+    let device = EGLDevice::enumerate().unwrap().last().expect("EGL device");
+    let display = unsafe { EGLDisplay::new(device).unwrap() };
+    let mut renderer = unsafe { GlesRenderer::new(EGLContext::new(&display).unwrap()).unwrap() };
+    let mut texture =
+        Offscreen::<GlesTexture>::create_buffer(&mut renderer, Fourcc::Abgr8888, (320, 240).into()).unwrap();
+
+    for scale in [1.0, 1.75] {
+        output.change_current_state(None, None, Some(Scale::Fractional(scale)), None);
+        for include_cursor in [false, true] {
+            let scene = state.sample_frame(&output, Duration::ZERO);
+            let elements =
+                crate::render::sampled_output_elements(&mut state, &mut renderer, &output, include_cursor, &scene);
+            let mut target = renderer.bind(&mut texture).unwrap();
+            crate::render::redraw_output(&mut renderer, &mut target, &output, &elements).unwrap();
+            let mapping = renderer
+                .copy_framebuffer(&target, Rectangle::from_size((320, 240).into()), Fourcc::Abgr8888)
+                .unwrap();
+            let bytes = renderer.map_texture(&mapping).unwrap();
+            let white = bytes.chunks_exact(4).any(|pixel| pixel == [255, 255, 255, 255]);
+            assert_eq!(white, include_cursor, "cursor above the dim overlay at scale {scale}");
+            assert!(
+                bytes
+                    .chunks_exact(4)
+                    .all(|pixel| pixel[0] == pixel[1] && pixel[1] == pixel[2]),
+                "desktop content must stay concealed"
+            );
+        }
+    }
+
+    let compositor = client
+        .create_resource::<WlCompositor, (), Ferese>(&state.display_handle, 6, ())
+        .unwrap();
+    request(&mut wire, compositor.id().protocol_id(), 0, &[8], None);
+    request(&mut wire, 8, 1, &[6, 0, 0], None);
+    request(&mut wire, 8, 3, &[9], None);
+    request(&mut wire, 8, 6, &[], None);
+    dispatch(&mut events, &mut state);
+    let cursor = client
+        .object_from_protocol_id::<WlSurface>(&state.display_handle, 8)
+        .unwrap();
+    let seat = state.seat.clone();
+    state.cursor_image(&seat, CursorImageStatus::Surface(cursor.clone()));
+    let scene = state.sample_frame(&output, Duration::ZERO);
+    let elements = crate::render::sampled_output_elements(&mut state, &mut renderer, &output, true, &scene);
+    let mut target = renderer.bind(&mut texture).unwrap();
+    let mut tracker = OutputDamageTracker::from_output(&output);
+    let rendered = tracker
+        .render_output(&mut renderer, &mut target, 0, &elements, [0.0, 0.0, 0.0, 1.0])
+        .unwrap();
+    state.display_presentation.queued(&output, &rendered.states);
+    state.display_presentation.presented(&output);
+    assert_eq!(state.callback_outputs().get(&(&cursor).into()), Some(&output));
+    state.lock_frame_callbacks(&output);
+    state.display_handle.flush_clients().unwrap();
+    wire.set_nonblocking(true).unwrap();
+    let mut replies = Vec::new();
+    let _ = wire.read_to_end(&mut replies);
+    let mut offset = 0;
+    let mut callback_done = false;
+    while offset < replies.len() {
+        let object = u32::from_ne_bytes(replies[offset..offset + 4].try_into().unwrap());
+        let header = u32::from_ne_bytes(replies[offset + 4..offset + 8].try_into().unwrap());
+        callback_done |= object == 9 && header & 0xffff == 0;
+        offset += (header >> 16) as usize;
+    }
+    assert!(callback_done, "the lock owner's cursor must receive its next frame");
+}
+
+#[test]
 #[ignore = "requires an EGL device; uses a disposable runtime and private protocol clients"]
 fn capture_privacy_pixels_and_policy_transitions() {
     if std::env::var_os("FERESE_PRIVACY_TEST_CHILD").is_none() {

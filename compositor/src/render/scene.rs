@@ -63,11 +63,15 @@ fn scene_elements(
             return Vec::new();
         };
         let scale = output.current_scale().fractional_scale();
+        let mut elements = if include_cursor {
+            cursor_elements(state, renderer, geometry, scale)
+        } else {
+            Vec::new()
+        };
         let background = state.session_lock.backgrounds.entry(output.clone()).or_insert_with(|| {
             smithay::backend::renderer::element::solid::SolidColorBuffer::new(geometry.size, [0.0, 0.0, 0.0, 1.0])
         });
         background.resize(geometry.size);
-        let mut elements = Vec::new();
         let opacity = state.session_lock.idle_opacity;
         if opacity > 0.0 {
             let overlay = state

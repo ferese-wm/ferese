@@ -417,6 +417,7 @@ impl Ferese {
                 |surface, _| eligible.get(&surface.into()).cloned(),
             );
         }
+        self.send_cursor_frame(output);
     }
 }
 
