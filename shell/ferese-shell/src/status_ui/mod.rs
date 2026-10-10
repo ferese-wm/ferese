@@ -290,11 +290,12 @@ impl FereseShell {
             }));
 
         cosmic::widget::autosize::autosize(
-            super::motion::animated(
+            super::motion::animated_from_edge(
                 panel.into(),
                 menu.motion.progress_at(now),
                 menu.regions.clone(),
                 theme.material_radius,
+                self.config.panels[0].edge,
             ),
             cosmic::iced::advanced::widget::Id::new("ferese-status-menu"),
         )

@@ -7,6 +7,22 @@ use super::{
     registry_queue_init, set_margin, status_ui, text, theme, wayland, window, wl_output, wl_registry, wl_surface,
 };
 
+pub(super) fn panel_placement(edge: ferese_config::panel::Edge, margin: i32, side: i32) -> (Anchor, IcedMargin) {
+    let (anchor, top, bottom) = match edge {
+        ferese_config::panel::Edge::Top => (Anchor::TOP, margin, 0),
+        ferese_config::panel::Edge::Bottom => (Anchor::BOTTOM, 0, margin),
+    };
+    (
+        anchor,
+        IcedMargin {
+            top,
+            right: side,
+            bottom,
+            left: side,
+        },
+    )
+}
+
 impl FereseShell {
     pub(super) fn output_event(&mut self, event: wayland::OutputEvent, output: wl_output::WlOutput) -> Task<Message> {
         if matches!(event, wayland::OutputEvent::Removed) {
@@ -81,6 +97,7 @@ impl FereseShell {
         let wallpaper_surface_id = window::Id::unique();
         let shell_theme = self.config.theme;
         let bar_layout = self.config.panels[0].background;
+        let (edge_anchor, margin) = panel_placement(self.config.panels[0].edge, shell_theme.bar_margin_top, 0);
         let bar = BarMetrics::from(shell_theme);
         let wallpaper_output = output.clone();
         let bar_output = output.clone();
@@ -135,21 +152,14 @@ impl FereseShell {
                 input_zone: super::bar::input_region(bar_layout, hidden, &[]),
                 layer: Layer::Top,
                 keyboard_interactivity: KeyboardInteractivity::None,
-                anchor: Anchor::TOP | Anchor::LEFT | Anchor::RIGHT,
+                anchor: edge_anchor | Anchor::LEFT | Anchor::RIGHT,
                 output: IcedOutput::Output(bar_output.clone()),
                 namespace: "ferese-shell-top-bar".to_owned(),
-                margin: IcedMargin {
-                    top: shell_theme.bar_margin_top,
-                    // Measure the controls at full width before applying the
-                    // requested inset, so startup cannot hide them in overflow.
-                    right: 0,
-                    bottom: 0,
-                    left: 0,
-                },
+                // Measure at full width before applying the requested side inset.
+                margin,
                 size: Some((None, Some(bar.height.round() as u32))),
                 size_limits: Limits::NONE,
-                // Reserve breathing room below the visible bar; layer-shell
-                // accounts for the top margin separately.
+                // Reserve space toward the desktop; layer-shell accounts for the edge margin.
                 exclusive_zone: (bar.height.round() as i32).saturating_add(shell_theme.bar_window_gap),
             },
             Some(Box::new(move |app| app.view_layer(bar_surface_id))),

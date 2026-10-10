@@ -154,6 +154,7 @@ status {
 // Panel composition is explicit; visibility and item options belong to each item.
 // Background opacity and corner radius inherit from the shell unless overridden here.
 panel "main" {
+    edge "top"
     background "continuous"
     border #false
     start {

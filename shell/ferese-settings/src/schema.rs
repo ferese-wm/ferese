@@ -945,8 +945,8 @@ pub fn fields(page: Page) -> Vec<Field> {
             ),
             range(
                 "theme.geometry.top_bar_margin_top",
-                "Top margin",
-                "Set to zero for an edge-to-edge bar.",
+                "Edge margin",
+                "Space from the selected screen edge. Set to zero for a flush panel.",
                 RangeSpec {
                     default: 0.0,
                     min: 0.0,
@@ -972,7 +972,7 @@ pub fn fields(page: Page) -> Vec<Field> {
             range(
                 "theme.geometry.top_bar_window_gap",
                 "Window clearance",
-                "Space below the menu bar.",
+                "Space between the panel and application windows.",
                 RangeSpec {
                     default: 0.0,
                     min: 0.0,

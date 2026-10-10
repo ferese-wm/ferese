@@ -124,6 +124,14 @@ impl Default for ShellTheme {
 }
 
 impl ShellTheme {
+    pub(crate) fn material_opacity(self) -> f32 {
+        if self.high_contrast {
+            1.0
+        } else {
+            f32::from(self.surface_popover[3]) / 255.0
+        }
+    }
+
     pub(crate) fn palette(self) -> ferese_theme::Palette {
         let color = |[r, g, b, a]: [u8; 4]| cosmic::iced::Color::from_rgba8(r, g, b, f32::from(a) / 255.);
         let surface = color(self.surface_base);
@@ -702,7 +710,7 @@ panel "custom" { background "islands"; end { group "clocks" { item "one" kind="c
         assert_eq!(config.panels[0].end.groups[0].items.len(), 2);
         assert!(parse_test_source(&source.replace("item \"two\"", "item \"one\"")).is_err());
         assert!(parse_test_source("panel \"one\"; panel \"two\";").is_err());
-        assert!(parse_test_source("panel \"one\" { edge \"bottom\"; }").is_err());
+        assert!(parse_test_source("panel \"one\" { edge \"left\"; }").is_err());
         assert_eq!(config.panels[0].end.groups[0].items[1].id.0, "two");
     }
 

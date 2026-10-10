@@ -809,13 +809,19 @@ intentionally turning off the last working one.
 
 ## Panel composition
 
-Ferese shows one top panel on each output. Without a `panel` block, the status
+Ferese shows one panel on each output, at the top by default. Without a `panel` block, the status
 settings below generate the usual arrangement. An explicit panel replaces that
 arrangement, including its background, title, and battery percentage settings.
-Settings → **Panel & Shell** opens **Panels**, with background, size, spacing,
+Settings → **Panel & Shell** opens **Panels**, with position, background, size, spacing,
 and corner-radius controls. **Edit panel** opens **Arrange**; **Back to Panels**
 returns to those controls. The preview stays visible while the editor and
 inspector scroll independently.
+
+**Position** switches between Top and Bottom. Menus and notifications open toward
+the desktop, and window clearance follows the selected edge. In KDL, set
+`edge "top"` or `edge "bottom"` inside the panel. **Edge margin** sets the gap
+from that screen edge. The existing `theme.geometry.top-bar-margin-top` token
+stores this value for both positions.
 
 Drag a control's handle to reorder it or move it into another group. Dropping
 into an empty zone creates a group. Select a control to open its inspector,
@@ -854,8 +860,8 @@ top-left. For example, `4px 8px 12px 16px` gives each corner a different radius.
 Values must be finite and nonnegative; percentages and elliptical `/` syntax are
 not supported. Radii are clamped to half the shorter surface dimension.
 
-At zero top margin, panel backgrounds reach the top edge and their top corners
-render square. Saved radii remain unchanged. Islands retain the gaps between
+At zero edge margin, panel backgrounds reach the selected edge and the corners
+touching it render square. Saved radii remain unchanged. Islands retain the gaps between
 groups; Continuous fills the whole panel. **Side margins** moves the left and
 right ends inward together, with a range of 0–4096 px. The requested inset is
 clamped per output using measured content widths: controls may compact, but the
@@ -908,7 +914,7 @@ panel "main" {
 Start, center, and end contain ordered groups. Each group contains ordered item
 instances. IDs must be unique within the panel, use ASCII letters/digits or
 `-_.:@`, contain 1–128 characters, and not start with `_`. Exactly one panel
-can be configured; edge selection and per-output overrides are not supported yet.
+can be configured; per-output overrides are not supported yet.
 
 Built-in kinds are `overview`, `workspaces`, `focused-window`, `media`,
 `quick-settings`, `network`, `audio`, `recording`, `notifications`, `battery`,

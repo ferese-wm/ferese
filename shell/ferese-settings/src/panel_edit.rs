@@ -26,6 +26,7 @@ impl std::fmt::Display for Destination {
 
 #[derive(Clone, Debug)]
 pub(super) enum Action {
+    SetEdge(ferese_config::panel::Edge),
     SetRadius(String),
     SetCorner(usize, f32),
     SetBorder(bool),
@@ -168,6 +169,7 @@ pub(super) fn plan(snapshot: &Snapshot, action: Action) -> Result<Vec<Edit>, Str
     let earlier = matches!(&action, Action::Earlier(_));
     let earlier_group = matches!(&action, Action::EarlierGroup(_));
     let edits = match action {
+        Action::SetEdge(edge) => vec![set("panels.0.edge", edge.key())],
         Action::SetOpacity(value) => vec![set("panels.0.background_opacity", value)],
         Action::ClearOpacity => vec![Edit::Unset("panels.0.background_opacity".into())],
         Action::SetBorder(enabled) => vec![set("panels.0.border", enabled)],
@@ -527,6 +529,19 @@ animations { speed 0.8; }
         let panels: Vec<Panel> = serde_json::from_value(panel).unwrap();
         assert_eq!(panels[0].resolved_radius(20.).0, [20.; 4]);
         assert_eq!(snapshot.number("theme.geometry.shell_radius", 0.), 20.);
+    }
+
+    #[test]
+    fn changing_edge_materializes_preferences_and_round_trips_without_moving_items() {
+        let mut snapshot = Snapshot::parse("status { battery-percentage #false; }".into()).unwrap();
+        apply(&mut snapshot, Action::SetEdge(ferese_config::panel::Edge::Bottom));
+        let before = snapshot.item("panels.0.start").unwrap().clone();
+        assert_eq!(snapshot.string("panels.0.edge", ""), "bottom");
+        assert!(!snapshot.boolean("panels.0.end.groups.0.items.6.percentage", true));
+        apply(&mut snapshot, Action::SetEdge(ferese_config::panel::Edge::Top));
+        assert_eq!(snapshot.string("panels.0.edge", ""), "top");
+        assert_eq!(snapshot.item("panels.0.start"), Some(&before));
+        Snapshot::parse(snapshot.source).unwrap();
     }
 
     #[test]

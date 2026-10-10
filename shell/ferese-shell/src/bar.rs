@@ -45,7 +45,7 @@ impl FereseShell {
         }
         let corners = panel
             .resolved_radius(shell_theme.bar_radius)
-            .at_top_edge(shell_theme.bar_margin_top == 0);
+            .at_edge(panel.edge, shell_theme.bar_margin_top == 0);
         let mode = panel.background;
         let islands = mode == BarLayout::Islands;
         let output = self.outputs.iter().find(|output| output.bar == id);
@@ -294,38 +294,29 @@ impl FereseShell {
             ItemKind::Overflow => self.view_status_item(status_ui::Menu::Overflow, false, selected),
             ItemKind::Clock => {
                 let (date, time) = self.clock.split_once(", ").unwrap_or(("", &self.clock));
+                let mut content = row::with_capacity(2)
+                    .spacing(8)
+                    .align_y(cosmic::iced::Alignment::Center);
+                if representation == Representation::Wide && !date.is_empty() {
+                    content = content.push(text(date).size(12).class(theme::Text::Color(foreground)));
+                }
+                let content = content.push(text(time).size(bar.text_size).class(theme::Text::Color(foreground)));
                 motion::button(
-                    button::custom(
-                        container(
-                            row![
-                                text(if representation == Representation::Wide {
-                                    date
-                                } else {
-                                    ""
-                                })
-                                .size(12)
-                                .class(theme::Text::Color(foreground)),
-                                text(time).size(bar.text_size).class(theme::Text::Color(foreground)),
-                            ]
-                            .spacing(8)
-                            .align_y(cosmic::iced::Alignment::Center),
-                        )
-                        .center_y(bar.group_item_height),
-                    )
-                    .padding([0, 8])
-                    .height(bar.group_item_height)
-                    .name("Open calendar")
-                    .on_press_with_rectangle(move |offset, bounds| {
-                        cosmic::Action::App(Message::OpenMenu(
-                            status_ui::Menu::Calendar,
-                            cosmic::iced::Rectangle {
-                                x: (bounds.x - offset.x).round() as i32,
-                                y: (bounds.y - offset.y).round() as i32,
-                                width: bounds.width.round() as i32,
-                                height: bounds.height.round() as i32,
-                            },
-                        ))
-                    }),
+                    button::custom(container(content).center_y(bar.group_item_height))
+                        .padding([0.0, ((bar.height - f32::from(bar.icon_size)) * 0.5).max(4.0)])
+                        .height(bar.group_item_height)
+                        .name("Open calendar")
+                        .on_press_with_rectangle(move |offset, bounds| {
+                            cosmic::Action::App(Message::OpenMenu(
+                                status_ui::Menu::Calendar,
+                                cosmic::iced::Rectangle {
+                                    x: (bounds.x - offset.x).round() as i32,
+                                    y: (bounds.y - offset.y).round() as i32,
+                                    width: bounds.width.round() as i32,
+                                    height: bounds.height.round() as i32,
+                                },
+                            ))
+                        }),
                     foreground,
                     selected,
                     1.0,
@@ -338,7 +329,7 @@ impl FereseShell {
                 ))
                 .name("Display mode")
                 .height(control_height)
-                .padding([0, 7])
+                .padding([0.0, ((bar.height - f32::from(bar.icon_size)) * 0.5).max(4.0)])
                 .on_press(cosmic::Action::App(Message::OpenDisplays(
                     self.outputs
                         .iter()
@@ -518,7 +509,7 @@ fn view_zone<'a>(
         let opacity = panel.background_opacity.unwrap_or(color(shell_theme.bar_background).a);
         let corners = panel
             .resolved_radius(shell_theme.bar_radius)
-            .at_top_edge(shell_theme.bar_margin_top == 0)
+            .at_edge(panel.edge, shell_theme.bar_margin_top == 0)
             .0;
         let border = panel.border;
         let content: Element<'_, cosmic::Action<Message>> = container(controls)
@@ -923,11 +914,11 @@ mod island_tests {
                     ["quick-settings", "recording", "clock"]
                 );
                 assert_eq!(end.items[1].1.x - end.items[0].1.x, 21.);
-                assert_eq!(end.items[2].1.x - end.items[1].1.x, if islands { 28. } else { 34. });
+                assert_eq!(end.items[2].1.x - end.items[1].1.x, if islands { 21. } else { 34. });
                 if islands {
                     assert_eq!(
                         end.islands[0],
-                        Rectangle::new((0., 0.).into(), (115. + 2. * padding, 28.).into())
+                        Rectangle::new((0., 0.).into(), (108. + 2. * padding, 28.).into())
                     );
                 }
                 let center = measure_zone(&panel, &panel.center, Availability::default(), true);

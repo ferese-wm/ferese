@@ -218,13 +218,23 @@ pub(super) fn material_element_with_role(
             .0
             .map(|value| clamp_radius(f64::from(value) * scale, corners.rect.size))
     });
+    let output_size = output
+        .current_transform()
+        .transform_size(mode.size)
+        .to_f64()
+        .to_logical(scale)
+        .to_i32_ceil();
+    let touches_top = role == crate::effects::SemanticRole::Panel && geometry.loc.y == 0;
+    let touches_bottom =
+        role == crate::effects::SemanticRole::Panel && geometry.loc.y + geometry.size.h >= output_size.h;
     let radii = ferese_config::panel::CornerRadii(radii)
-        .at_top_edge(role == crate::effects::SemanticRole::Panel && geometry.loc.y == 0)
+        .at_top_edge(touches_top)
+        .at_edge(ferese_config::panel::Edge::Bottom, touches_bottom)
         .0;
     let radius = radii.into_iter().fold(0., f32::max);
     let corner_radii = framebuffer_corner_radii(radii, transform);
     let [offset_y, shadow_blur, shadow_opacity] = material.shadow;
-    let edge_bar = role == crate::effects::SemanticRole::Panel && radius == 0.0 && geometry.loc.y == 0;
+    let edge_bar = radius == 0.0 && (touches_top || touches_bottom);
     let shadow_opacity = if edge_bar {
         0.0
     } else {
@@ -245,12 +255,6 @@ pub(super) fn material_element_with_role(
     );
     let background_opacity = material.opacity;
     let blur = material_blur_radius(material.style, material.opacity, state.theme_settings.backdrop_blur);
-    let output_size = output
-        .current_transform()
-        .transform_size(mode.size)
-        .to_f64()
-        .to_logical(scale)
-        .to_i32_ceil();
     let sample_geometry = expanded_blur_region(capture_geometry, blur.ceil() as i32, output_size);
     let sample_physical = sample_geometry.to_physical_precise_round(scale);
     let mut parameters = MaterialParameters {

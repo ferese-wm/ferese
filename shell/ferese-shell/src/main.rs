@@ -980,6 +980,7 @@ impl FereseShell {
             .update_settings(config.status.settings_command.clone());
 
         let composition_changed = !self.config.panels[0].same_composition(&config.panels[0]);
+        let edge_changed = self.config.panels[0].edge != config.panels[0].edge;
         let old = self.config.theme;
         let old_clock = &self.config.desktop_widgets.clock;
         let old_notes = &self.config.desktop_widgets.notes;
@@ -995,7 +996,8 @@ impl FereseShell {
             || old_clock.margin_x != new_clock.margin_x
             || old_clock.margin_y != new_clock.margin_y;
         let theme = config.theme;
-        let geometry_changed = old.bar_height != theme.bar_height
+        let geometry_changed = edge_changed
+            || old.bar_height != theme.bar_height
             || old.bar_margin_top != theme.bar_margin_top
             || old.bar_margin_horizontal != theme.bar_margin_horizontal
             || old.bar_window_gap != theme.bar_window_gap;
@@ -1057,6 +1059,8 @@ impl FereseShell {
         }
 
         for entry in self.outputs.iter().filter(|_| geometry_changed) {
+            let (anchor, _) = surfaces::panel_placement(self.config.panels[0].edge, theme.bar_margin_top, 0);
+            tasks.push(set_anchor(entry.bar, anchor | Anchor::LEFT | Anchor::RIGHT));
             tasks.push(set_size(entry.bar, None, Some(theme.bar_height.round() as u32)));
             tasks.push(set_exclusive_zone(
                 entry.bar,
@@ -1066,7 +1070,13 @@ impl FereseShell {
 
         let bars: Vec<_> = self.outputs.iter().map(|entry| entry.bar).collect();
         for bar in bars {
-            tasks.push(self.update_panel_margin(bar, old.bar_margin_top != theme.bar_margin_top));
+            tasks.push(self.update_panel_margin(bar, edge_changed || old.bar_margin_top != theme.bar_margin_top));
+        }
+        if geometry_changed {
+            if let Some(surface) = self.notification_surface.take() {
+                tasks.push(destroy_layer_surface(surface.id));
+            }
+            tasks.push(self.sync_notification_surface());
         }
         Task::batch(tasks)
     }
@@ -1090,7 +1100,8 @@ impl FereseShell {
             return Task::none();
         }
         entry.bar_margin_horizontal = margin;
-        set_margin(bar, theme.bar_margin_top, margin, 0, margin)
+        let (_, margin) = surfaces::panel_placement(self.config.panels[0].edge, theme.bar_margin_top, margin);
+        set_margin(bar, margin.top, margin.right, margin.bottom, margin.left)
     }
 }
 
@@ -1167,6 +1178,19 @@ mod tests {
                 bar_margin_horizontal: 0,
                 hidden: false,
             }],
+        }
+    }
+
+    #[test]
+    fn panel_placement_uses_only_the_selected_edge_for_anchor_and_margin() {
+        use ferese_config::panel::Edge;
+        for gap in [0, 12] {
+            let (anchor, margin) = surfaces::panel_placement(Edge::Top, gap, 32);
+            assert_eq!(anchor, Anchor::TOP);
+            assert_eq!((margin.top, margin.right, margin.bottom, margin.left), (gap, 32, 0, 32));
+            let (anchor, margin) = surfaces::panel_placement(Edge::Bottom, gap, 32);
+            assert_eq!(anchor, Anchor::BOTTOM);
+            assert_eq!((margin.top, margin.right, margin.bottom, margin.left), (0, 32, gap, 32));
         }
     }
 

@@ -43,6 +43,23 @@ impl Default for Defaults {
 #[serde(transparent)]
 pub struct PanelId(pub String);
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Edge {
+    #[default]
+    Top,
+    Bottom,
+}
+
+impl Edge {
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Top => "top",
+            Self::Bottom => "bottom",
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(transparent)]
 pub struct GroupId(pub String);
@@ -249,6 +266,8 @@ pub struct Zone {
 pub struct Panel {
     pub id: PanelId,
     #[serde(default)]
+    pub edge: Edge,
+    #[serde(default)]
     pub background: BarLayout,
     #[serde(default, rename = "group_surface", skip_serializing)]
     legacy_group_surface: serde::de::IgnoredAny,
@@ -355,6 +374,7 @@ impl Panel {
     /// Appearance changes do not replace item ownership or measured allocation.
     pub fn same_composition(&self, other: &Self) -> bool {
         self.id == other.id
+            && self.edge == other.edge
             && self.background == other.background
             && self.start == other.start
             && self.center == other.center
@@ -426,8 +446,8 @@ impl Panel {
                 },
             ),
         ];
-        let mut clock = item("clock", Clock);
-        let mut display = item("display-mode", DisplayMode);
+        let clock = item("clock", Clock);
+        let display = item("display-mode", DisplayMode);
 
         let (start, center, end) = match status.bar_layout {
             BarLayout::Continuous => (
@@ -443,8 +463,6 @@ impl Panel {
                 ],
             ),
             BarLayout::Islands => {
-                clock.gap_before = Some(8.0);
-                display.gap_before = Some(8.0);
                 let mut controls = controls;
                 controls.extend([clock, display]);
                 (
@@ -457,6 +475,7 @@ impl Panel {
 
         Self {
             id: PanelId("main".into()),
+            edge: Edge::Top,
             background: status.bar_layout,
             legacy_group_surface: serde::de::IgnoredAny,
             border: false,
@@ -624,10 +643,7 @@ mod tests {
                 assert_eq!(group.island_padding, 13.0);
             }
         }
-        assert_eq!(
-            all.iter().find(|item| item.id.0 == "clock").unwrap().gap_before,
-            Some(8.0)
-        );
+        assert_eq!(all.iter().find(|item| item.id.0 == "clock").unwrap().gap_before, None);
     }
 
     #[test]
@@ -733,6 +749,25 @@ animations { speed 0.8; }
     }
 
     #[test]
+    fn panel_edge_defaults_to_top_and_round_trips_both_positions() {
+        for (source, expected) in [
+            ("", Edge::Top),
+            ("edge top;", Edge::Top),
+            ("edge bottom;", Edge::Bottom),
+        ] {
+            let document = crate::Document::parse(&format!("panel main {{ {source} }}")).unwrap();
+            let panels: Vec<Panel> = serde_json::from_value(document.get("panels").unwrap().clone()).unwrap();
+            validate(&panels).unwrap();
+            assert_eq!(panels[0].edge, expected);
+            let restored: Vec<Panel> = serde_json::from_value(serde_json::to_value(&panels).unwrap()).unwrap();
+            assert_eq!(restored[0].edge, expected);
+            let mut moved = panels[0].clone();
+            moved.edge = if expected == Edge::Top { Edge::Bottom } else { Edge::Top };
+            assert!(!moved.same_composition(&panels[0]));
+        }
+    }
+
+    #[test]
     fn validation_rejects_duplicate_ids_and_unsupported_surface_configuration() {
         let mut panel = Panel::from_defaults(&Defaults::default());
         validate(std::slice::from_ref(&panel)).unwrap();
@@ -743,7 +778,7 @@ animations { speed 0.8; }
         assert!(validate(&[]).is_err());
         assert!(validate(&[panel.clone(), panel]).is_err());
         assert!(crate::from_str::<serde_json::Value>("panel \"main\" { edge \"bottom\"; }").is_ok());
-        let doc = crate::Document::parse("panel \"main\" { edge \"bottom\"; }").unwrap();
+        let doc = crate::Document::parse("panel \"main\" { edge \"left\"; }").unwrap();
         assert!(serde_json::from_value::<Vec<Panel>>(doc.get("panels").unwrap().clone()).is_err());
     }
 }

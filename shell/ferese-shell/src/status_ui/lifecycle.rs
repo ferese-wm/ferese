@@ -1,7 +1,6 @@
 use std::time::Instant;
 
 use cosmic::app::Task;
-#[cfg(test)]
 use cosmic::iced::Rectangle;
 use cosmic::iced::platform_specific::runtime::wayland::popup::{SctkPopupSettings, SctkPositioner};
 use cosmic::iced::{Limits, window};
@@ -10,6 +9,23 @@ use wayland_client::Proxy;
 use super::{Menu, OpenMenu, PopoverAnchor};
 use crate::status::Action;
 use crate::{FereseShell, Message};
+
+fn menu_positioner(rectangle: Rectangle<i32>, height_limit: f32, edge: ferese_config::panel::Edge) -> SctkPositioner {
+    // xdg-positioner: bottom/bottom-left for top bars, top/top-left for bottom bars.
+    let (anchor, gravity, gap) = match edge {
+        ferese_config::panel::Edge::Top => (2u32, 6u32, 8),
+        ferese_config::panel::Edge::Bottom => (1u32, 5u32, -8),
+    };
+    SctkPositioner {
+        anchor_rect: rectangle,
+        anchor: anchor.try_into().unwrap(),
+        gravity: gravity.try_into().unwrap(),
+        offset: (rectangle.width / 2, gap),
+        size_limits: Limits::NONE.max_width(368.0).max_height(720.0_f32.max(height_limit)),
+        constraint_adjustment: 3,
+        ..Default::default()
+    }
+}
 
 impl OpenMenu {
     fn switch_panel(&mut self, kind: Menu, settings: crate::motion::Settings, now: Instant) {
@@ -95,17 +111,7 @@ impl FereseShell {
         } else {
             kind.height_limit()
         };
-        let positioner = SctkPositioner {
-            anchor_rect: rectangle,
-            anchor: 2u32.try_into().unwrap(),
-            gravity: 6u32.try_into().unwrap(),
-            offset: (rectangle.width / 2, 8),
-            // The view's autosize widget supplies the active panel's bounds.
-            // Keep initial popup limits broad enough for later panel changes.
-            size_limits: Limits::NONE.max_width(368.0).max_height(720.0_f32.max(height_limit)),
-            constraint_adjustment: 3,
-            ..Default::default()
-        };
+        let positioner = menu_positioner(rectangle, height_limit, self.config.panels[0].edge);
         if let Some(menu) = &mut self.menu {
             menu.anchor = anchor;
             menu.switch_panel(kind, self.config.animations, Instant::now());
@@ -231,6 +237,24 @@ mod tests {
             panel: crate::panel::PanelId("main".into()),
             item: Some(crate::panel::ItemId("battery".into())),
             rectangle: Rectangle::default(),
+        }
+    }
+
+    #[test]
+    fn menus_open_toward_the_desktop_from_either_panel_edge() {
+        use ferese_config::panel::Edge;
+        let rectangle = Rectangle {
+            x: 400,
+            y: 0,
+            width: 32,
+            height: 30,
+        };
+        for (edge, anchor, gravity, gap) in [(Edge::Top, 2u32, 6u32, 8), (Edge::Bottom, 1u32, 5u32, -8)] {
+            let positioner = menu_positioner(rectangle, 620., edge);
+            assert_eq!(positioner.anchor_rect, rectangle);
+            assert_eq!(positioner.anchor, anchor.try_into().unwrap());
+            assert_eq!(positioner.gravity, gravity.try_into().unwrap());
+            assert_eq!(positioner.offset, (16, gap));
         }
     }
 

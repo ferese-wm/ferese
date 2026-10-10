@@ -26,6 +26,19 @@ impl CornerRadii {
         self
     }
 
+    pub fn at_edge(mut self, edge: super::Edge, touching: bool) -> Self {
+        if touching {
+            match edge {
+                super::Edge::Top => self = self.at_top_edge(true),
+                super::Edge::Bottom => {
+                    self.0[2] = 0.;
+                    self.0[3] = 0.;
+                }
+            }
+        }
+        self
+    }
+
     pub fn max(self) -> f32 {
         self.0.into_iter().fold(0., f32::max)
     }
@@ -120,6 +133,8 @@ mod tests {
         let radii = CornerRadii([4., 8., 12., 16.]);
         assert_eq!(radii.at_top_edge(true).0, [0., 0., 12., 16.]);
         assert_eq!(radii.at_top_edge(false), radii);
+        assert_eq!(radii.at_edge(super::super::Edge::Bottom, true).0, [4., 8., 0., 0.]);
+        assert_eq!(radii.at_edge(super::super::Edge::Bottom, false), radii);
         assert_eq!(radii.0, [4., 8., 12., 16.]);
     }
 

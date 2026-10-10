@@ -544,9 +544,10 @@ impl FereseShell {
                             row![
                                 Space::new().width(Length::Fill),
                                 ferese_theme::controls::text_button("Cancel", shell_font(), palette, false)
-                                    .class(ferese_theme::controls::button_style_with_focus(
+                                    .class(ferese_theme::controls::material_button_style_with_focus(
                                         palette,
                                         false,
+                                        theme.material_opacity(),
                                         modal.focus_visible,
                                     ))
                                     .id("ferese-modal-cancel".into())

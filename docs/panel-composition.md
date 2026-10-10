@@ -4,7 +4,7 @@ Reviewed revision: `d4c8c10` (2026-10-07).
 
 The integration covers composition, popup ownership, measured sizing, group
 surfaces, overflow, KDL persistence, and a Settings editor with a composition
-preview and drag/drop editor. Ferese still creates one top panel per output.
+preview and drag/drop editor. Ferese creates one panel per output, at the top or bottom edge.
 Multiple panels, output overrides, and external providers remain separate work.
 
 ## What changed
@@ -24,7 +24,7 @@ Persistent types and validation live in `ferese-config::panel`, shared by the
 compositor, shell, and Settings. The shell translates existing status settings
 when no panel is authored. An explicit panel replaces that generated composition.
 The current renderer accepts exactly one definition and instantiates it on each
-output. Unsupported edge/output fields and multiple definitions are rejected.
+output. `edge` accepts `top` (default) or `bottom`; output overrides and multiple definitions are rejected.
 
 Built-in items reuse the existing shared status/media snapshots and actions.
 Creating another instance does not start another service, timer, or D-Bus
@@ -113,8 +113,8 @@ The heading, sample composition preview and textual save/Undo/Reload footer
 remain outside the scrolling content. Below 960 px, Settings hides its sidebar
 and exposes navigation and search through a header button. The compact navigation
 opens over the page and closes on page selection, outside click, or Escape.
-Navigation does not save config. The current top panel is the only panel listed;
-unsupported creation, edge selection, display targeting, and visibility policies
+Navigation does not save config. The current panel is the only panel listed; Top / Bottom selects its edge.
+Unsupported creation, display targeting, and visibility policies
 are not exposed.
 
 Panels → Size & spacing owns the shared Group borders and Background opacity
@@ -140,8 +140,8 @@ blur, and shadow, transformed into framebuffer coordinates. Existing material
 requests still carry geometry and opacity; shared config supplies the panel
 radii, so this change does not require another protocol version.
 
-Panel backgrounds use the full panel height in either arrangement. At zero top
-margin they render square top corners in both the shell and compositor; saved radius values
+Panel backgrounds use the full panel height in either arrangement. At zero edge
+margin they render square corners along the selected edge in both the shell and compositor; saved radius values
 stay unchanged. Island gaps retain their configured sizes.
 
 Side margins support requested insets up to 4096 px. The shared sizing result

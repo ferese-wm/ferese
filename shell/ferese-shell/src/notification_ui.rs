@@ -26,6 +26,21 @@ fn blend(base: Color, foreground: Color, amount: f32) -> Color {
     }
 }
 
+fn icon_well<'a>(
+    content: impl Into<Element<'a, cosmic::Action<Message>>>,
+    foreground: Color,
+    extent: u16,
+) -> Element<'a, cosmic::Action<Message>> {
+    container(content)
+        .center_x(extent)
+        .center_y(extent)
+        .class(ferese_theme::controls::surface(
+            foreground.scale_alpha(0.07),
+            motion::radius(f32::from(extent) / 2.0),
+        ))
+        .into()
+}
+
 fn age_label(age: Duration) -> String {
     match age.as_secs() {
         0..60 => "now".into(),
@@ -39,7 +54,6 @@ fn card_button<'a>(
     content: impl Into<Element<'a, cosmic::Action<Message>>>,
     message: Message,
     foreground: Color,
-    hover: Color,
     round: bool,
     accessible_name: String,
 ) -> Element<'a, cosmic::Action<Message>> {
@@ -50,7 +64,7 @@ fn card_button<'a>(
         .on_press(cosmic::Action::App(message))
         .class(ferese_theme::controls::notification_button(
             foreground,
-            hover,
+            foreground.scale_alpha(0.08),
             if round { motion::radius(11.) } else { 0. },
             round,
         ))
@@ -88,7 +102,6 @@ fn icon_control<'a>(
             .center_y(extent),
         message,
         foreground,
-        background,
         true,
         label.into(),
     );
@@ -239,20 +252,18 @@ impl FereseShell {
                 effects: None,
                 regions: Default::default(),
             });
-            let top = self.config.theme.bar_height + self.config.theme.bar_margin_top as f32 + 12.0;
+            let (edge_anchor, mut margin) =
+                crate::surfaces::panel_placement(self.config.panels[0].edge, top as i32, 12);
+            margin.left = 0;
             let action = cosmic::surface::action::app_layer_shell::<Self>(
                 |_| Default::default(),
                 move |_| SctkLayerSurfaceSettings {
                     id,
                     layer: Layer::Overlay,
                     keyboard_interactivity: KeyboardInteractivity::None,
-                    anchor: Anchor::TOP | Anchor::RIGHT,
+                    anchor: edge_anchor | Anchor::RIGHT,
                     output: IcedOutput::Output(output.clone()),
-                    margin: IcedMargin {
-                        top: top as i32,
-                        right: 12,
-                        ..Default::default()
-                    },
+                    margin,
                     exclusive_zone: -1,
                     size: Some((Some(POPUP_WIDTH), Some(height))),
                     size_limits: Limits::NONE,
@@ -305,18 +316,7 @@ impl FereseShell {
             icon::from_name(notice.icon.as_str()).size(18).icon()
         }
         .opacity(opacity);
-        let icon_well = container(app_icon)
-            .center_x(30)
-            .center_y(30)
-            .class(theme::Container::custom(move |_| container::Style {
-                background: Some(Background::Color(well)),
-                border: Border {
-                    shape: BorderShape::Continuous,
-                    radius: motion::radius(15.0).into(),
-                    ..Default::default()
-                },
-                ..Default::default()
-            }));
+        let icon_well = icon_well(app_icon, foreground, 30);
         let icon: Element<'_, cosmic::Action<Message>> = if count > 1 {
             let badge_fill = ferese_theme::composite(
                 color(palette.accent),
@@ -355,7 +355,7 @@ impl FereseShell {
             ])
             .into()
         } else {
-            icon_well.into()
+            icon_well
         };
         let app = if notice.app.is_empty() {
             "NOTIFICATION".to_owned()
@@ -457,7 +457,6 @@ impl FereseShell {
                         .center_y(38),
                         Message::InvokeNotification(id, key.clone()),
                         accent,
-                        well,
                         false,
                         label.clone(),
                     ));
@@ -666,37 +665,17 @@ impl FereseShell {
                     self.notifications.dnd,
                     1.0,
                 ));
-            let controls = container(dnd)
-                .padding(10)
-                .width(Length::Fill)
-                .class(theme::Container::custom(move |_| container::Style {
-                    background: Some(Background::Color(base)),
-                    border: Border {
-                        shape: BorderShape::Continuous,
-                        radius: palette.material_radius.into(),
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                }));
+            let controls = ferese_theme::menus::section(dnd.into(), primary, opacity, palette.material_radius);
             let mut content = column([]).spacing(10).push(header).push(controls);
             if count == 0 {
                 let empty = column([])
                     .spacing(10)
                     .align_x(alignment::Horizontal::Center)
-                    .push(
-                        container(accented_icon(ferese_theme::icons::NOTIFICATIONS, 26, muted, accent))
-                            .center_x(56)
-                            .center_y(56)
-                            .class(theme::Container::custom(move |_| container::Style {
-                                background: Some(Background::Color(well)),
-                                border: Border {
-                                    shape: BorderShape::Continuous,
-                                    radius: motion::radius(28.0).into(),
-                                    ..Default::default()
-                                },
-                                ..Default::default()
-                            })),
-                    )
+                    .push(icon_well(
+                        accented_icon(ferese_theme::icons::NOTIFICATIONS, 26, muted, accent),
+                        primary,
+                        56,
+                    ))
                     .push(
                         text("You're all caught up")
                             .size(15)
@@ -802,11 +781,12 @@ impl FereseShell {
                     ..Default::default()
                 }))
                 .into();
-            motion::animated(
+            motion::animated_from_edge(
                 panel,
                 progress,
                 surface.map(|surface| surface.regions.clone()).unwrap_or_default(),
                 palette.material_radius,
+                self.config.panels[0].edge,
             )
         } else {
             let mut cards = column([]).spacing(8);
@@ -840,6 +820,58 @@ mod tests {
     use cosmic::iced::{Font, Pixels, Rectangle, Size};
 
     #[test]
+    fn notification_insets_reveal_the_modal_material() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let mut renderer = runtime
+            .block_on(<cosmic::Renderer as Headless>::new(
+                Font::default(),
+                Pixels(14.0),
+                Some("tiny-skia"),
+            ))
+            .unwrap();
+        for foreground in [Color::BLACK, Color::WHITE] {
+            for extent in [30, 56] {
+                let inset = icon_well(cosmic::widget::Space::new(), foreground, extent);
+                let controls = ferese_theme::menus::section(
+                    cosmic::widget::Space::new().width(100).height(40).into(),
+                    foreground,
+                    1.0,
+                    14.0,
+                );
+                for mut element in [inset, controls] {
+                    let bounds = Rectangle::with_size(Size::new(120.0, 60.0));
+                    let mut tree = Tree::new(element.as_widget());
+                    let node = element.as_widget_mut().layout(
+                        &mut tree,
+                        &renderer,
+                        &layout::Limits::new(Size::ZERO, bounds.size()),
+                    );
+                    renderer.reset(bounds);
+                    element.as_widget().draw(
+                        &tree,
+                        &mut renderer,
+                        &cosmic::Theme::dark(),
+                        &Default::default(),
+                        Layout::new(&node),
+                        mouse::Cursor::Unavailable,
+                        &bounds,
+                    );
+                    let pixels = Headless::screenshot(&mut renderer, Size::new(120, 60), 1.0, Color::TRANSPARENT);
+                    let center = node.bounds().center();
+                    let alpha = pixels[((center.y as usize * 120 + center.x as usize) * 4) + 3];
+                    assert!(
+                        alpha > 0 && alpha < 32,
+                        "an inset must be visible without hiding the material: {alpha}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn notification_action_hover_stays_inside_card_corners() {
         check_action_hover("tiny-skia");
     }
@@ -869,7 +901,6 @@ mod tests {
                 let action = card_button(
                     cosmic::widget::Space::new().height(38),
                     Message::InvokeNotification(1, "action".into()),
-                    Color::WHITE,
                     Color::WHITE,
                     false,
                     "Action".into(),
@@ -911,9 +942,10 @@ mod tests {
                     0,
                     "{backend}, scale={scale}, history={history}"
                 );
+                let hover_alpha = alpha(size.width / 2, size.height - 4);
                 assert!(
-                    alpha(size.width / 2, size.height - 4) > 200,
-                    "the action hover must still render"
+                    hover_alpha > 0 && hover_alpha < 32,
+                    "the action hover must render without hiding the material: {hover_alpha}"
                 );
             }
         }

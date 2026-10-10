@@ -35,7 +35,20 @@ impl App {
             )
             .push(
                 container(self.panel_preview_frame(panel.clone()))
-                    .padding([10, 12])
+                    .padding(cosmic::iced::Padding {
+                        top: if panel.edge == ferese_config::panel::Edge::Top {
+                            10.
+                        } else {
+                            26.
+                        },
+                        bottom: if panel.edge == ferese_config::panel::Edge::Top {
+                            26.
+                        } else {
+                            10.
+                        },
+                        left: 12.,
+                        right: 12.,
+                    })
                     .width(Length::Fill)
                     .class(visuals::surface(
                         visuals::Palette::from_resolved(&self.resolved.presented).sidebar,
@@ -122,7 +135,10 @@ impl App {
         let continuous = panel.background == ferese_config::BarLayout::Continuous;
         let corners = panel
             .resolved_radius(self.resolved.presented.tokens.geometry.shell_radius as f32)
-            .at_top_edge(self.resolved.presented.tokens.geometry.top_bar_margin_top == 0)
+            .at_edge(
+                panel.edge,
+                self.resolved.presented.tokens.geometry.top_bar_margin_top == 0,
+            )
             .0;
         let tokens = &self.resolved.presented.tokens;
         let inherited = if tokens.material.style == "translucent" {
@@ -241,7 +257,10 @@ impl App {
         let palette = visuals::Palette::from_resolved(&self.resolved.presented);
         let radius = panel
             .resolved_radius(self.resolved.presented.tokens.geometry.shell_radius as f32)
-            .at_top_edge(self.resolved.presented.tokens.geometry.top_bar_margin_top == 0)
+            .at_edge(
+                panel.edge,
+                self.resolved.presented.tokens.geometry.top_bar_margin_top == 0,
+            )
             .0;
         let tokens = &self.resolved.presented.tokens;
         let inherited = if tokens.material.style == "translucent" {
@@ -296,7 +315,7 @@ impl App {
             ItemKind::Notifications => icons::NOTIFICATIONS,
             ItemKind::Battery { .. } => icons::BATTERY_75,
             ItemKind::Clock => icons::CALENDAR,
-            ItemKind::DisplayMode => icons::DISPLAY_EXTEND,
+            ItemKind::DisplayMode => icons::DISPLAY,
             ItemKind::Overflow => icons::CHEVRON_DOWN,
         };
         let label = match (item.kind, representation) {

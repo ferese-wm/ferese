@@ -1,4 +1,4 @@
-use ferese_config::panel::{Defaults, ItemKind, Panel};
+use ferese_config::panel::{Defaults, Edge, ItemKind, Panel};
 
 use crate::panel_edit::{Action, Destination, Zone};
 use crate::{App, Element, Message, schema::Page, store, widget};
@@ -67,6 +67,7 @@ impl App {
 
     pub(super) fn panel_controls(&self) -> Element<'_, Message> {
         let palette = crate::visuals::Palette::from_resolved(&self.resolved.presented);
+        let edge = self.preview_panel().map_or(Edge::Top, |panel| panel.edge);
         let mut rows = widget::column([]).spacing(12);
         match self.panel_page {
             PanelPage::Panels => {
@@ -75,11 +76,21 @@ impl App {
                         widget::row([])
                             .spacing(12)
                             .align_y(cosmic::iced::Alignment::Center)
-                            .push(crate::visuals::action_icon("M3 5h18v14H3z M3 9h18", palette.accent))
+                            .push(crate::visuals::action_icon(
+                                if edge == Edge::Top {
+                                    "M3 5h18v14H3z M3 9h18"
+                                } else {
+                                    "M3 5h18v14H3z M3 15h18"
+                                },
+                                palette.accent,
+                            ))
                             .push(
                                 widget::column([])
                                     .spacing(3)
-                                    .push(self.panel_heading("Top panel", 14.))
+                                    .push(self.panel_heading(
+                                        if edge == Edge::Top { "Top panel" } else { "Bottom panel" },
+                                        14.,
+                                    ))
                                     .push(self.note("Shown on all displays"))
                                     .width(cosmic::iced::Length::Fill),
                             )
@@ -109,6 +120,31 @@ impl App {
                 } else {
                     "status.bar_layout"
                 };
+                let position = widget::row([Edge::Top, Edge::Bottom].into_iter().map(|position| {
+                    let label = if position == Edge::Top { "Top" } else { "Bottom" };
+                    widget::button::custom(self.label(label, 12.))
+                        .name(format!("Panel position: {label}"))
+                        .padding([8, 10])
+                        .width(cosmic::iced::Length::Fill)
+                        .class(crate::visuals::panel_button(palette, edge == position))
+                        .on_press_maybe((edge != position).then_some(Message::PanelEdit(Action::SetEdge(position))))
+                        .into()
+                }))
+                .spacing(2);
+                rows = rows.push(
+                    widget::container(
+                        self.panel_appearance_row(
+                            "Position",
+                            "Choose the screen edge for the panel.",
+                            widget::container(position)
+                                .padding(3)
+                                .class(crate::visuals::surface(palette.sidebar, 9.))
+                                .into(),
+                        ),
+                    )
+                    .padding(16)
+                    .class(crate::visuals::surface(palette.card, 14.)),
+                );
                 let appearance = widget::column([])
                     .spacing(16)
                     .push(self.panel_heading("Appearance", 15.))
@@ -352,7 +388,12 @@ impl App {
             f64::from(self.resolved.presented.tokens.geometry.top_bar_margin_top),
         ) == 0.
         {
-            content = content.push(self.note("Top corners stay square while the panel touches the top edge."));
+            let bottom = self.preview_panel().is_ok_and(|panel| panel.edge == Edge::Bottom);
+            content = content.push(self.note(if bottom {
+                "Bottom corners stay square while the panel touches the bottom edge."
+            } else {
+                "Top corners stay square while the panel touches the top edge."
+            }));
         }
         content.into()
     }

@@ -408,29 +408,40 @@ fn apple_shoulder_extent_never_claims_transparent_pixels_as_opaque() {
 
 #[test]
 #[ignore = "requires an EGL rendering device"]
-fn docked_panel_fill_covers_the_entire_top_row() {
+fn docked_panel_fill_covers_the_entire_attached_edge() {
     let mut renderer = renderer();
     let mut resources = RenderResources::default();
     let material = material_program_for_corners(&mut resources, &mut renderer, CornerShape::Circular).unwrap();
-    let radii = ferese_config::panel::CornerRadii([14., 8., 12., 20.])
-        .at_top_edge(true)
-        .0;
-    let pixels = rasterize(
-        &mut renderer,
-        &material.0,
-        &[
-            Uniform::new("visible_rect", [0.0f32, 0.0, 64.0, 36.0]),
-            Uniform::new("material_radii", radii),
-            Uniform::new("tint", [1.0f32; 4]),
-            Uniform::new("paint_mode", 0.0f32),
-            Uniform::new("shadow_rect", [0.0f32, 0.0, 64.0, 36.0]),
-            Uniform::new("shadow_values", [8.0f32, 1.0]),
-        ],
-    );
-    for x in 0..64 {
-        assert_eq!(pixels[x * 4 + 3], 255, "wallpaper exposed at top pixel {x}");
+    for edge in [ferese_config::panel::Edge::Top, ferese_config::panel::Edge::Bottom] {
+        let radii = ferese_config::panel::CornerRadii([14., 8., 12., 20.])
+            .at_edge(edge, true)
+            .0;
+        let pixels = rasterize(
+            &mut renderer,
+            &material.0,
+            &[
+                Uniform::new("visible_rect", [0.0f32, 0.0, 64.0, 36.0]),
+                Uniform::new("material_radii", radii),
+                Uniform::new("tint", [1.0f32; 4]),
+                Uniform::new("paint_mode", 0.0f32),
+                Uniform::new("shadow_rect", [0.0f32, 0.0, 64.0, 36.0]),
+                Uniform::new("shadow_values", [8.0f32, 1.0]),
+            ],
+        );
+        let (attached_row, free_row) = if edge == ferese_config::panel::Edge::Top {
+            (0, 35)
+        } else {
+            (35, 0)
+        };
+        for x in 0..64 {
+            assert_eq!(
+                pixels[(attached_row * 64 + x) * 4 + 3],
+                255,
+                "wallpaper exposed at {edge:?} pixel {x}"
+            );
+        }
+        assert_eq!(pixels[free_row * 64 * 4 + 3], 0, "opposite corners remain rounded");
     }
-    assert_eq!(pixels[(35 * 64) * 4 + 3], 0, "bottom corners remain rounded");
 }
 
 #[test]

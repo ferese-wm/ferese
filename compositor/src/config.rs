@@ -432,7 +432,7 @@ mod tests {
                 .runtime_config()
                 .is_err()
         );
-        assert!(Config::parse_source("panel \"one\" { edge \"bottom\"; }").is_err());
+        assert!(Config::parse_source("panel \"one\" { edge \"left\"; }").is_err());
     }
 
     #[test]
