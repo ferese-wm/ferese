@@ -142,6 +142,16 @@ impl Config {
             bindings,
             window_rules: self.window_rules()?,
             theme_settings: self.theme_settings()?,
+            panel_corner_radius: self
+                .panels
+                .as_ref()
+                .and_then(|panels| panels.first())
+                .and_then(|panel| panel.corner_radius),
+            panel_background_opacity: self
+                .panels
+                .as_ref()
+                .and_then(|panels| panels.first())
+                .and_then(|panel| panel.background_opacity),
             focus_effect: self.focus_effect_settings()?,
             default_column_width: self.default_column_width()?,
             scrolling_focus_strategy: self.scrolling_focus_strategy(),
@@ -376,6 +386,36 @@ pub(crate) fn config_path() -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn panel_background_opacity_override_leaves_the_shell_material_unchanged() {
+        let config = Config::parse_source(
+            "theme { material { style translucent; opacity 0.3; }; }; panel main { background-opacity 0.8; }",
+        )
+        .unwrap();
+        let runtime = config.runtime_config().unwrap();
+        assert_eq!(runtime.panel_background_opacity, Some(0.8));
+        assert!((runtime.theme_settings.shell_opacity - 0.3).abs() < 0.001);
+        let inherited = Config::parse_source("panel main;").unwrap().runtime_config().unwrap();
+        assert!(inherited.panel_background_opacity.is_none());
+    }
+
+    #[test]
+    fn panel_corner_override_does_not_replace_shell_radius() {
+        let config = Config::parse_source(
+            "theme { geometry { shell-radius 20; }; }; panel \"main\" { corner-radius \"4px 8px 12px 16px\"; }",
+        )
+        .unwrap();
+        let runtime = config.runtime_config().unwrap();
+        assert_eq!(runtime.panel_corner_radius.unwrap().0, [4., 8., 12., 16.]);
+        assert_eq!(runtime.theme_settings.material_radius, 20.);
+        let inherited = Config::parse_source("theme { geometry { shell-radius 20; }; }")
+            .unwrap()
+            .runtime_config()
+            .unwrap();
+        assert!(inherited.panel_corner_radius.is_none());
+        assert_eq!(inherited.theme_settings.panel_radius, 20.);
+    }
+
     #[test]
     fn validates_shell_composition_before_publishing_config() {
         let source = r#"panel "main" { end { group "status" { item "network" kind="network"; item "clock" kind="clock"; }; }; }"#;

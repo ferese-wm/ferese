@@ -21,15 +21,31 @@ pub fn families() -> &'static [String] {
             .map(str::to_owned)
             .collect();
 
-        families.extend([
-            "Comfortaa".into(),
-            "sans-serif".into(),
-            "serif".into(),
-            "monospace".into(),
-        ]);
+        families.extend(["sans-serif".into(), "serif".into(), "monospace".into()]);
         families.sort_unstable_by_key(|family| family.to_lowercase());
         families.dedup();
         families.insert(0, "Default font".into());
         families
     })
+}
+
+/// Missing theme fonts must fall back to a proportional interface font.
+/// Iced does not apply fontconfig's named-family substitutions.
+pub fn interface_font(family: &str) -> cosmic::iced::Font {
+    match family {
+        "sans-serif" => cosmic::iced::Font::DEFAULT,
+        "serif" => cosmic::iced::Font {
+            family: cosmic::iced::font::Family::Serif,
+            ..cosmic::iced::Font::DEFAULT
+        },
+        "monospace" => cosmic::iced::Font::MONOSPACE,
+        _ if families()
+            .iter()
+            .skip(1)
+            .any(|installed| installed.eq_ignore_ascii_case(family)) =>
+        {
+            ferese_theme::font(Some(family))
+        }
+        _ => cosmic::iced::Font::DEFAULT,
+    }
 }

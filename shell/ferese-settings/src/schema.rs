@@ -908,11 +908,11 @@ pub fn fields(page: Page) -> Vec<Field> {
             range(
                 "theme.geometry.top_bar_margin_horizontal",
                 "Side margins",
-                "Space between the bar and the display edges.",
+                "Inset from both edges; stops before extra controls overflow.",
                 RangeSpec {
                     default: 0.0,
                     min: 0.0,
-                    max: 32.0,
+                    max: 4096.0,
                     step: 1.0,
                     suffix: " px",
                     integer: true,

@@ -68,8 +68,11 @@ Repeated clicks toggle only the same instance on the same surface.
 Displaced items anchor their popup at the overflow chevron rather than at
 coordinates inside the overflow surface. Toast requests use the focused output's
 bar as an explicit notification fallback. Output removal and fullscreen hiding
-close the popup belonging to that surface. Composition reload closes the current
-popup and discards cached allocation; invalid config keeps the previous config.
+close the popup belonging to that surface. Changes to membership, placement or
+background arrangement close the current popup. Opacity, corner and border edits
+keep it open. Reload retains the last measured allocation and effective margins
+until the adaptive widget publishes its replacement. Invalid config keeps the
+previous config.
 
 Material bounds and input bounds are collected separately. Decorated islands
 contribute material/input bounds. Undecorated controls contribute input bounds
@@ -88,22 +91,67 @@ record order determine placement. Portable validation checks IDs, duplicate
 instances, spacing, padding, and priority before accepted config is published.
 Settings uses its existing backup, validation, reload, and undo path.
 
-Settings → Panel & Shell → Items → Edit panel starts from the current generated panel.
+Settings → Panel & Shell → Edit panel opens Arrange with the current arrangement.
+Browsing and selection do not save configuration. The first edit materializes the
+generated panel and applies the edit in one validated save, so Undo restores the
+previous configuration.
 It then exposes item visibility, overflow policy, supported representation
 preferences, title visibility, and battery percentage. Select an item to open its
 inspector. Items can be added, removed, reordered within a group, or moved to another
 existing group. Editing resolves IDs against the latest draft, validates the whole
 change, and saves once. Unknown item fields and comments are retained.
 
-Panels contains size and margin settings; Items contains the Start/Center/End
-editor and a separate selected-item/group inspector. The inspector sits beside
-the editor when space permits and below it in narrow windows. Appearance shows
-background choices and a list of groups with their current surface settings.
-The preview stays above the scrolling content. Tab changes do not save config. The current top panel is the
-only panel listed; unsupported creation, edge selection, display targeting, and
-visibility policies are not exposed.
+Panels contains background, size, margin, and corner-radius settings. Edit panel
+opens Arrange, which contains the Start/Center/End editor and a separate
+selected-control/group inspector. Both panes retain their positions and scroll
+independently, including in compact windows. Selecting a control or group resets
+only the inspector's scroll position. Smaller group cards share rows; larger
+groups wrap their draggable controls. Deselect returns to the empty inspector.
+Back to Panels returns to the panel settings; there is no tab menu.
 
-Each zone can gain new groups. Select a group to change its zone, surface,
+The heading, sample composition preview and textual save/Undo/Reload footer
+remain outside the scrolling content. Below 960 px, Settings hides its sidebar
+and exposes navigation and search through a header button. The compact navigation
+opens over the page and closes on page selection, outside click, or Escape.
+Navigation does not save config. The current top panel is the only panel listed;
+unsupported creation, edge selection, display targeting, and visibility policies
+are not exposed.
+
+Panels → Size & spacing owns the shared Group borders and Background opacity
+controls. Continuous and Islands use the same background styling; Islands splits
+it around the groups. Borders default to off. Groups paint no extra fill, so a
+50% background remains 50% under their content. The earlier Group surface
+selector has been removed.
+
+The opacity slider overrides shell opacity for panel backgrounds and compositor
+materials without fading controls or changing popups. Use shell opacity restores
+inheritance. Group inspectors contain placement and spacing controls. Earlier
+per-group surface and opacity fields, and the panel's former `group-surface`,
+are accepted for existing drafts but no longer affect appearance. They are
+omitted when serializing the model.
+The editor fades hidden controls and uses icon buttons for Up, Down, and Remove.
+
+One optional `panel.corner-radius` override applies to all surfaces on that
+panel. Settings uses four corner sliders and saves each edit on release. KDL
+accepts one to four px values in CSS corner order. There is no group radius
+override. Clearing it or removing the authored panel restores inheritance
+from the shell radius. The compositor applies the same four radii to panel fill,
+blur, and shadow, transformed into framebuffer coordinates. Existing material
+requests still carry geometry and opacity; shared config supplies the panel
+radii, so this change does not require another protocol version.
+
+Panel backgrounds use the full panel height in either arrangement. At zero top
+margin they render square top corners in both the shell and compositor; saved radius values
+stay unchanged. Island gaps retain their configured sizes.
+
+Side margins support requested insets up to 4096 px. The shared sizing result
+also reports the width needed before automatic overflow, including compact
+representations, flexible minima, group padding, and the authored overflow
+trigger. The shell clamps the inset for each output from that measured width and
+updates it after content, configuration, or output-size changes. Normal overflow
+still handles outputs that cannot fit the controls even at zero inset.
+
+Each zone can gain new groups. Select a group to change its zone,
 spacing, or padding; inspector buttons reorder groups within their zone. Removing a
 group requires moving or removing its items first. Group moves preserve item IDs
 and authored fields. Queued item placement follows the destination group's ID,
@@ -123,12 +171,13 @@ The widget now lives in `ferese-theme::panel`; it owns measurement and allocatio
 not services or popup lifecycle. Settings supplies sample labels and icons, with
 all services marked available. Preview clicks select items for editing; its
 overflow chevron reveals displaced instances. Redraws do not save configuration.
-Selecting a generated item starts customization from the current status settings.
+Selecting a generated item opens its inspector without writing configuration.
 
 This is a composition preview, not a pixel-for-pixel rendering of the running
 bar. Service state, control content, and vertical styling differ. The editor lives
-inside Settings; it does not create a separate desktop editing surface. This
-Settings/editor pass leaves the running panel renderer unchanged.
+inside Settings; it does not create a separate desktop editing surface. Group
+fill, outline, opacity, and corner-radius changes also apply to the running panel
+renderer.
 A live nested preview exposed date and spacing differences
 from the previous bar. Those remain for a separate visual compatibility pass.
 
@@ -173,3 +222,24 @@ cargo clippy --locked --workspace --all-targets -- -D warnings
 cargo fmt --all --check
 git diff --check
 ```
+
+### Panel & Shell visual review
+
+Render Panels, the unselected Arrange editor, a selected Battery control, and a
+selected Status group in light and dark themes at 1100×860 and 740×650:
+
+```sh
+cargo test --locked -p ferese-settings render_panel_review_states -- --ignored --nocapture
+```
+
+The actual widgets render to `/tmp/ferese-panel-review/`. These are sample-content
+screenshots, not images of a live desktop. Layout tests also verify that selecting
+items/groups preserves the arrangement's scroll offset and both pane boundaries.
+Settings honors installed theme fonts and falls back to a proportional interface
+font when a requested family is unavailable.
+
+A panel supports at most 31 authored groups, including empty groups. This reserves
+one of the effects protocol's 32 regions for overflow. Settings disables Add group
+at the limit; config validation rejects a larger composition before publication.
+The shell also checks request sizes locally rather than truncating opacity data
+or sending an array the compositor would ignore.

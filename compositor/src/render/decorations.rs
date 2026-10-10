@@ -234,7 +234,7 @@ pub(super) fn window_tint_element(
     let uniforms = |p: &BorderParameters| {
         vec![
             Uniform::new("visible_rect", p.clip_rect),
-            Uniform::new("material_radius", p.radius),
+            Uniform::new("material_radii", [p.radius; 4]),
             Uniform::new("tint", p.color),
             Uniform::new("paint_mode", 0.0_f32),
             Uniform::new("shadow_rect", p.clip_rect),

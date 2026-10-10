@@ -8,7 +8,7 @@ use crate::Message;
 use crate::schema::Page;
 use crate::store::{Edit, Snapshot, set};
 
-/// Panel controls use fill changes for selection, hover, and keyboard focus.
+/// Keep focus distinct from selection and hover for keyboard navigation.
 pub fn panel_button(p: Palette, selected: bool) -> cosmic::theme::Button {
     use cosmic::iced::border::Shape;
     let paint = move |hover: bool, focused: bool, enabled: bool| {
@@ -30,7 +30,14 @@ pub fn panel_button(p: Palette, selected: bool) -> cosmic::theme::Button {
             }),
             icon_color: Some(if enabled { p.text } else { p.muted }),
             border_radius: 8.into(),
-            border_width: 0.,
+            border_width: if focused {
+                2.
+            } else if selected {
+                1.
+            } else {
+                0.
+            },
+            border_color: p.accent.scale_alpha(if focused { 1. } else { 0.45 }),
             outline_width: 0.,
             outline: None,
             ..Default::default()
@@ -40,7 +47,8 @@ pub fn panel_button(p: Palette, selected: bool) -> cosmic::theme::Button {
         active: Box::new(move |focused, _| paint(false, focused, true)),
         hovered: Box::new(move |focused, _| paint(true, focused, true)),
         pressed: Box::new(move |focused, _| paint(true, focused, true)),
-        disabled: Box::new(move |_| paint(false, false, false)),
+        // A selected segment can be inert without losing its selection indicator.
+        disabled: Box::new(move |_| paint(false, false, selected)),
     }
 }
 

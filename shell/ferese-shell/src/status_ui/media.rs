@@ -154,9 +154,10 @@ pub(super) fn bar<'a>(
         )));
     }
 
-    let mut bar_style = crate::bar::bar_group_style(palette);
-    bar_style.border = bar_style.border.width(0.0);
-    bar_style.background = Some(super::Background::Color(color_with_opacity(palette.border, 0.30)));
+    let bar_style = ferese_theme::controls::surface_appearance(
+        color_with_opacity(palette.border, 0.30),
+        palette.material_radius.min(16.),
+    );
 
     let controls = container(
         row![

@@ -14,11 +14,29 @@ impl App {
         ferese_theme::text(text, self.font).size(size)
     }
 
+    pub(super) fn panel_heading(
+        &self,
+        text: impl Into<std::borrow::Cow<'static, str>> + 'static,
+        size: f32,
+    ) -> widget::Text<'static, cosmic::Theme, cosmic::Renderer> {
+        self.label(text, size).font(cosmic::iced::Font {
+            weight: cosmic::iced::font::Weight::Semibold,
+            ..self.font
+        })
+    }
+
     pub(super) fn note(&self, text: &str) -> Element<'static, Message> {
         let palette = visuals::Palette::from_resolved(&self.resolved.presented);
-        self.label(text.to_owned(), 11.)
-            .class(cosmic::theme::Text::Color(palette.muted))
-            .into()
+        self.label(
+            text.to_owned(),
+            if self.page == crate::schema::Page::Bar {
+                12.
+            } else {
+                11.
+            },
+        )
+        .class(cosmic::theme::Text::Color(palette.muted))
+        .into()
     }
 
     fn control_button_style(&self, palette: visuals::Palette, selected: bool) -> cosmic::theme::Button {
@@ -41,7 +59,10 @@ impl App {
             row([])
                 .spacing(5)
                 .align_y(Alignment::Center)
-                .push(visuals::action_icon(icon, palette.text))
+                .push(visuals::action_icon(
+                    icon,
+                    if message.is_some() { palette.text } else { palette.muted },
+                ))
                 .push(self.label(label.to_owned(), 12.)),
         )
         .name(label.to_owned())
@@ -59,11 +80,14 @@ impl App {
     ) -> Element<'static, Message> {
         let palette = visuals::Palette::from_resolved(&self.resolved.presented);
         widget::tooltip(
-            button::custom(visuals::action_icon(icon, palette.text))
-                .name(label.to_owned())
-                .padding(4)
-                .class(self.control_button_style(palette, false))
-                .on_press_maybe(message),
+            button::custom(visuals::action_icon(
+                icon,
+                if message.is_some() { palette.text } else { palette.muted },
+            ))
+            .name(label.to_owned())
+            .padding(4)
+            .class(self.control_button_style(palette, false))
+            .on_press_maybe(message),
             self.label(label.to_owned(), 11.),
             widget::tooltip::Position::Top,
         )

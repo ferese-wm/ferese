@@ -1,8 +1,13 @@
 //! Panel composition, independent of widgets, services, and Wayland surfaces.
 pub mod layout;
+mod radius;
 use crate::BarLayout;
+pub use radius::CornerRadii;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
+
+/// The effects protocol accepts 32 regions; reserve one for the overflow group.
+pub const MAX_GROUPS: usize = 31;
 
 fn yes() -> bool {
     true
@@ -15,9 +20,6 @@ fn spacing() -> f32 {
 }
 fn padding() -> [u16; 2] {
     [2, 3]
-}
-fn inset() -> GroupSurface {
-    GroupSurface::Inset
 }
 
 pub struct Defaults {
@@ -202,22 +204,17 @@ pub struct Availability {
     pub external_display: bool,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum GroupSurface {
-    None,
-    Inset,
-    Island,
-}
-
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Group {
     pub id: GroupId,
     #[serde(default)]
     pub items: Vec<Item>,
-    #[serde(default = "inset")]
-    pub surface: GroupSurface,
+    #[serde(default, rename = "surface", skip_serializing)]
+    legacy_surface: serde::de::IgnoredAny,
+    // Read earlier panel drafts without retaining an individual opacity setting.
+    #[serde(default, rename = "background_opacity", skip_serializing)]
+    legacy_background_opacity: serde::de::IgnoredAny,
     #[serde(default = "spacing")]
     pub spacing: f32,
     #[serde(default = "padding")]
@@ -227,11 +224,12 @@ pub struct Group {
 }
 
 impl Group {
-    fn new(id: &str, items: Vec<Item>, surface: GroupSurface, padding: [u16; 2], island_padding: f32) -> Self {
+    fn new(id: &str, items: Vec<Item>, padding: [u16; 2], island_padding: f32) -> Self {
         Self {
             id: GroupId(id.into()),
             items,
-            surface,
+            legacy_surface: serde::de::IgnoredAny,
+            legacy_background_opacity: serde::de::IgnoredAny,
             spacing: 1.0,
             padding,
             island_padding,
@@ -252,6 +250,14 @@ pub struct Panel {
     pub id: PanelId,
     #[serde(default)]
     pub background: BarLayout,
+    #[serde(default, rename = "group_surface", skip_serializing)]
+    legacy_group_surface: serde::de::IgnoredAny,
+    #[serde(default)]
+    pub border: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub background_opacity: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub corner_radius: Option<CornerRadii>,
     #[serde(default)]
     pub start: Zone,
     #[serde(default)]
@@ -283,6 +289,19 @@ pub fn validate(panels: &[Panel]) -> Result<(), String> {
     };
     let mut panel_ids = HashSet::new();
     for panel in panels {
+        if panel.group_count() > MAX_GROUPS {
+            return Err(format!(
+                "a panel supports at most {MAX_GROUPS} groups, reserving one region for overflow"
+            ));
+        }
+        if let Some(opacity) = panel.background_opacity
+            && (!opacity.is_finite() || !(0.0..=1.0).contains(&opacity))
+        {
+            return Err("panel group background opacity must be between 0 and 1".into());
+        }
+        if let Some(radius) = panel.corner_radius {
+            radius.validate()?;
+        }
         if !valid_id(&panel.id.0) || !panel_ids.insert(&panel.id.0) {
             return Err(format!("invalid or duplicate panel ID {:?}", panel.id.0));
         }
@@ -326,6 +345,26 @@ pub fn validate(panels: &[Panel]) -> Result<(), String> {
 }
 
 impl Panel {
+    pub fn group_count(&self) -> usize {
+        [&self.start, &self.center, &self.end]
+            .into_iter()
+            .map(|zone| zone.groups.len())
+            .sum()
+    }
+
+    /// Appearance changes do not replace item ownership or measured allocation.
+    pub fn same_composition(&self, other: &Self) -> bool {
+        self.id == other.id
+            && self.background == other.background
+            && self.start == other.start
+            && self.center == other.center
+            && self.end == other.end
+    }
+
+    pub fn resolved_radius(&self, shell_radius: f32) -> CornerRadii {
+        self.corner_radius.unwrap_or_else(|| CornerRadii::uniform(shell_radius))
+    }
+
     /// The overflow trigger is generated, never persisted as a configured item.
     pub fn overflow_group(&self) -> Group {
         Group {
@@ -339,11 +378,8 @@ impl Panel {
                 overflow: OverflowPolicy::Never,
                 priority: 100,
             }],
-            surface: if self.background == BarLayout::Islands {
-                GroupSurface::Island
-            } else {
-                GroupSurface::Inset
-            },
+            legacy_surface: serde::de::IgnoredAny,
+            legacy_background_opacity: serde::de::IgnoredAny,
             spacing: 0.0,
             padding: [2, 3],
             island_padding: self
@@ -364,7 +400,6 @@ impl Panel {
 
     /// Translate existing settings once when loading config, not on every frame.
     pub fn from_defaults(status: &Defaults) -> Self {
-        use GroupSurface::{Inset, Island, None};
         use ItemKind::*;
 
         let item = Item::new;
@@ -397,14 +432,14 @@ impl Panel {
         let (start, center, end) = match status.bar_layout {
             BarLayout::Continuous => (
                 vec![
-                    Group::new("overview", vec![overview], None, [0, 0], padding),
-                    Group::new("workspaces", vec![workspaces], Inset, [2, 3], padding),
+                    Group::new("overview", vec![overview], [0, 0], padding),
+                    Group::new("workspaces", vec![workspaces], [2, 3], padding),
                 ],
-                Group::new("title", vec![title], None, [0, 0], padding),
+                Group::new("title", vec![title], [0, 0], padding),
                 vec![
-                    Group::new("status", controls, Inset, [2, 3], padding),
-                    Group::new("time", vec![clock], Inset, [2, 3], padding),
-                    Group::new("display", vec![display], None, [0, 0], padding),
+                    Group::new("status", controls, [2, 3], padding),
+                    Group::new("time", vec![clock], [2, 3], padding),
+                    Group::new("display", vec![display], [0, 0], padding),
                 ],
             ),
             BarLayout::Islands => {
@@ -413,15 +448,9 @@ impl Panel {
                 let mut controls = controls;
                 controls.extend([clock, display]);
                 (
-                    vec![Group::new(
-                        "navigation",
-                        vec![overview, workspaces],
-                        Island,
-                        [2, 3],
-                        padding,
-                    )],
-                    Group::new("title", vec![title], Island, [0, 0], padding),
-                    vec![Group::new("status", controls, Island, [2, 3], padding)],
+                    vec![Group::new("navigation", vec![overview, workspaces], [2, 3], padding)],
+                    Group::new("title", vec![title], [0, 0], padding),
+                    vec![Group::new("status", controls, [2, 3], padding)],
                 )
             }
         };
@@ -429,6 +458,10 @@ impl Panel {
         Self {
             id: PanelId("main".into()),
             background: status.bar_layout,
+            legacy_group_surface: serde::de::IgnoredAny,
+            border: false,
+            background_opacity: Option::None,
+            corner_radius: Option::None,
             start: Zone {
                 groups: start,
                 spacing: if status.bar_layout == BarLayout::Islands {
@@ -452,6 +485,39 @@ impl Panel {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn group_capacity_reserves_overflow_even_for_empty_groups() {
+        for background in [BarLayout::Continuous, BarLayout::Islands] {
+            let mut panel = Panel::from_defaults(&Defaults {
+                bar_layout: background,
+                ..Default::default()
+            });
+            panel.start.groups.clear();
+            panel.center.groups.clear();
+            panel.end.groups = (0..MAX_GROUPS)
+                .map(|i| Group::new(&format!("group-{i}"), Vec::new(), [2, 3], 4.))
+                .collect();
+            assert_eq!(panel.group_count(), MAX_GROUPS);
+            validate(std::slice::from_ref(&panel)).unwrap();
+            panel
+                .start
+                .groups
+                .push(Group::new("one-too-many", Vec::new(), [2, 3], 4.));
+            assert!(validate(&[panel]).unwrap_err().contains("31 groups"));
+        }
+    }
+
+    #[test]
+    fn removed_group_surface_is_accepted_but_not_retained() {
+        for style in ["none", "inset", "island"] {
+            let document =
+                crate::Document::parse(&format!("panel main {{ group-surface {style}; border #true; }}")).unwrap();
+            let panel: Vec<Panel> = serde_json::from_value(document.get("panels").unwrap().clone()).unwrap();
+            assert!(panel[0].border);
+            assert!(serde_json::to_value(&panel).unwrap()[0].get("group_surface").is_none());
+        }
+    }
 
     fn items(panel: &Panel) -> Vec<&Item> {
         [&panel.start, &panel.center, &panel.end]
@@ -498,7 +564,7 @@ mod tests {
         assert_eq!(continuous.end.groups.len(), 3);
         assert_eq!(islands.start.groups.len(), 1);
         assert_eq!(islands.end.groups.len(), 1);
-        assert_eq!(islands.end.groups[0].surface, GroupSurface::Island);
+        assert!(!islands.border && !continuous.border);
     }
 
     #[test]
@@ -579,6 +645,7 @@ panel "main" {
     end {
         group "status" {
             surface "island"
+            background-opacity 0.45
             padding 2 3
             // network comment
             item "network" kind="network" overflow="always"
@@ -593,6 +660,7 @@ animations { speed 0.8; }
         let panels: Vec<Panel> = serde_json::from_value(doc.get("panels").unwrap().clone()).unwrap();
         validate(&panels).unwrap();
         assert_eq!(panels[0].end.groups[0].padding, [2, 3]);
+        assert!(panels[0].background_opacity.is_none());
         assert_eq!(panels[0].end.groups[0].items[0].overflow, OverflowPolicy::Always);
         doc.set("panels.0.end.groups.0.items.0.overflow", "never".into())
             .unwrap();
@@ -629,6 +697,39 @@ animations { speed 0.8; }
         let restored: Vec<Panel> = serde_json::from_value(doc.get("panels").unwrap().clone()).unwrap();
         assert!(restored[0].end.groups[0].items.is_empty());
         assert_eq!(restored[0].end.spacing, 8.0);
+    }
+
+    #[test]
+    fn panel_border_defaults_off_and_round_trips_an_explicit_enabled_value() {
+        let mut doc =
+            crate::Document::parse("panel main { end { group status { item clock kind=clock; }; }; }\n").unwrap();
+        let panels: Vec<Panel> = serde_json::from_value(doc.get("panels").unwrap().clone()).unwrap();
+        assert!(!panels[0].border);
+        doc.set("panels.0.border", true.into()).unwrap();
+        let doc = crate::Document::parse(&doc.to_string()).unwrap();
+        let panels: Vec<Panel> = serde_json::from_value(doc.get("panels").unwrap().clone()).unwrap();
+        assert!(panels[0].border);
+        assert_eq!(panels[0].end.groups[0].items[0].id.0, "clock");
+    }
+
+    #[test]
+    fn panel_background_opacity_inherits_until_overridden_and_validates_bounds() {
+        let doc = crate::Document::parse("panel main { end { group status { background-opacity 0.4; }; }; }").unwrap();
+        let mut panels: Vec<Panel> = serde_json::from_value(doc.get("panels").unwrap().clone()).unwrap();
+        assert_eq!(panels[0].background_opacity, None);
+        assert!(
+            serde_json::to_value(&panels[0]).unwrap()["end"]["groups"][0]
+                .get("background_opacity")
+                .is_none()
+        );
+        for value in [0., 0.5, 1.] {
+            panels[0].background_opacity = Some(value);
+            validate(&panels).unwrap();
+        }
+        for value in [-0.1, 1.1, f32::NAN, f32::INFINITY] {
+            panels[0].background_opacity = Some(value);
+            assert!(validate(&panels).is_err());
+        }
     }
 
     #[test]

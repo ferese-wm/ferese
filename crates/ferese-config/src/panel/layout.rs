@@ -1,5 +1,5 @@
 //! Measured panel allocation. This module has no frame timing or service ownership.
-use super::{GroupSurface, ItemId, OverflowPolicy, Panel, Representation, Zone};
+use super::{ItemId, OverflowPolicy, Panel, Representation, Zone};
 use std::collections::BTreeMap;
 
 #[derive(Clone, Debug)]
@@ -22,9 +22,11 @@ pub struct Resolution {
     pub zone_widths: [f32; 3],
     pub forced_overflow: bool,
     pub overflow_trigger_width: f32,
+    /// Width needed by the smallest visible representations before automatic overflow.
+    pub minimum_width: f32,
 }
 
-fn zone_width(zone: &Zone, items: &BTreeMap<ItemId, Placement>) -> f32 {
+fn zone_width(background: crate::BarLayout, zone: &Zone, items: &BTreeMap<ItemId, Placement>) -> f32 {
     let mut groups = Vec::new();
     for group in &zone.groups {
         let mut widths = Vec::new();
@@ -39,12 +41,8 @@ fn zone_width(zone: &Zone, items: &BTreeMap<ItemId, Placement>) -> f32 {
             }
         }
         if !widths.is_empty() {
-            let padding = if group.surface == GroupSurface::None {
-                0.0
-            } else {
-                2.0 * f32::from(group.padding[1])
-            };
-            let island = if group.surface == GroupSurface::Island {
+            let padding = 2.0 * f32::from(group.padding[1]);
+            let island = if background == crate::BarLayout::Islands {
                 2.0 * group.island_padding
             } else {
                 0.0
@@ -58,9 +56,9 @@ fn zone_width(zone: &Zone, items: &BTreeMap<ItemId, Placement>) -> f32 {
 impl Resolution {
     fn update_widths(&mut self, panel: &Panel, overflow_width: f32) {
         self.zone_widths = [
-            zone_width(&panel.start, &self.items),
-            zone_width(&panel.center, &self.items),
-            zone_width(&panel.end, &self.items),
+            zone_width(panel.background, &panel.start, &self.items),
+            zone_width(panel.background, &panel.center, &self.items),
+            zone_width(panel.background, &panel.end, &self.items),
         ];
         if !self.overflow.is_empty() {
             self.zone_widths[2] += overflow_width
@@ -72,18 +70,48 @@ impl Resolution {
         }
     }
 
-    pub fn fits(&self, available: f32) -> bool {
+    fn required_width(&self) -> f32 {
+        self.required_width_with_gap(8.)
+    }
+
+    fn required_width_with_gap(&self, gap: f32) -> f32 {
         let [start, center, end] = self.zone_widths;
         if center > 0.0 {
-            2.0 * start.max(end) + center + 16.0 <= available
+            2.0 * start.max(end) + center + 2.0 * gap
         } else {
-            start + end + if start > 0.0 && end > 0.0 { 8.0 } else { 0.0 } <= available
+            start + end + if start > 0.0 && end > 0.0 { gap } else { 0.0 }
         }
+    }
+
+    pub fn fits(&self, available: f32) -> bool {
+        self.required_width() <= available
+    }
+
+    /// Clamp a requested inset independently for each output. Content may still
+    /// overflow on an output too small to fit it even without an inset.
+    pub fn side_margin(&self, requested: i32, output_width: i32, padding: f32) -> i32 {
+        let maximum = ((output_width as f32 - 2. * padding - self.minimum_width) / 2.)
+            .floor()
+            .max(0.);
+        requested.max(0).min(maximum as i32)
     }
 }
 
 pub fn resolve(panel: &Panel, measurements: &[Measurement], available: f32, overflow_width: f32) -> Resolution {
+    resolve_with_gap(panel, measurements, available, overflow_width, 8.)
+}
+
+/// Reserve separation between zones while keeping the center on the panel midpoint.
+pub fn resolve_with_gap(
+    panel: &Panel,
+    measurements: &[Measurement],
+    available: f32,
+    overflow_width: f32,
+    zone_gap: f32,
+) -> Resolution {
     let available = available.max(0.0);
+    let zone_gap = zone_gap.max(0.);
+    let fits = |resolution: &Resolution| resolution.required_width_with_gap(zone_gap) <= available;
     let mut result = Resolution::default();
     let ordered: Vec<_> = [&panel.start, &panel.center, &panel.end]
         .into_iter()
@@ -107,9 +135,22 @@ pub fn resolve(panel: &Panel, measurements: &[Measurement], available: f32, over
         }
     }
     result.update_widths(panel, overflow_width);
+    let mut minimum = result.clone();
+    for measured in measurements {
+        if let Some(Placement::Visible { width, .. }) = minimum.items.get_mut(&measured.id) {
+            for (_, alternative) in &measured.alternatives {
+                *width = width.min(*alternative);
+            }
+            if let Some(flexible) = measured.minimum {
+                *width = width.min(flexible);
+            }
+        }
+    }
+    minimum.update_widths(panel, overflow_width);
+    result.minimum_width = minimum.required_width_with_gap(zone_gap);
     // Flexible content yields space without changing the stored item preference.
     for measured in measurements.iter().filter(|measured| measured.minimum.is_some()) {
-        if result.fits(available) {
+        if fits(&result) {
             break;
         }
         let Some(Placement::Visible { representation, width }) = result.items.get(&measured.id).cloned() else {
@@ -128,7 +169,7 @@ pub fn resolve(panel: &Panel, measurements: &[Measurement], available: f32, over
     let mut candidates: Vec<_> = ordered.iter().enumerate().collect();
     candidates.sort_by_key(|(index, item)| (item.priority, *index));
     for (_, item) in &candidates {
-        if result.fits(available) {
+        if fits(&result) {
             break;
         }
         let Some(measured) = measurements.iter().find(|measured| measured.id == item.id) else {
@@ -142,7 +183,7 @@ pub fn resolve(panel: &Panel, measurements: &[Measurement], available: f32, over
                     .items
                     .insert(item.id.clone(), Placement::Visible { representation, width });
                 result.update_widths(panel, overflow_width);
-                if result.fits(available) {
+                if fits(&result) {
                     break;
                 }
             }
@@ -152,7 +193,7 @@ pub fn resolve(panel: &Panel, measurements: &[Measurement], available: f32, over
     // surfaces, retain access through overflow instead of silently clipping actions.
     for force in [false, true] {
         for (_, item) in &candidates {
-            if result.fits(available) {
+            if fits(&result) {
                 break;
             }
             if item.overflow == OverflowPolicy::Never && !force {
@@ -184,11 +225,7 @@ pub fn resolve(panel: &Panel, measurements: &[Measurement], available: f32, over
                 .items
                 .insert(measured.id.clone(), Placement::Visible { representation, width });
             result.update_widths(panel, overflow_width);
-            if result.fits(available) {
-                low = width
-            } else {
-                high = width
-            }
+            if fits(&result) { low = width } else { high = width }
         }
         result.items.insert(
             measured.id.clone(),
@@ -248,6 +285,65 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn decoration_and_borders_do_not_change_background_arrangement_or_allocation() {
+        for background in [crate::BarLayout::Continuous, crate::BarLayout::Islands] {
+            let mut panel = Panel::from_defaults(&super::super::Defaults {
+                bar_layout: background,
+                ..Default::default()
+            });
+            let measurements = measurements(&panel);
+            let plain = resolve(&panel, &measurements, 1000., 32.);
+            assert!(!panel.border);
+            panel.border = true;
+            panel.background_opacity = Some(0.4);
+            assert_eq!(resolve(&panel, &measurements, 1000., 32.), plain);
+            assert_eq!(panel.background, background);
+        }
+    }
+
+    #[test]
+    fn side_margins_stop_before_overflow_and_use_each_outputs_logical_width() {
+        let panel = Panel::from_defaults(&super::super::Defaults::default());
+        let measurements = measurements(&panel);
+        let full = resolve(&panel, &measurements, 4000., 32.);
+        assert!(full.minimum_width < full.required_width());
+        for output_width in [1600, 2400, 3840] {
+            for requested in [0, 32, 400, 4096] {
+                let margin = full.side_margin(requested, output_width, 12.);
+                let available = output_width as f32 - 2. * (margin as f32 + 12.);
+                let result = resolve(&panel, &measurements, available, 32.);
+                assert!(result.overflow.is_empty(), "output {output_width}, margin {margin}");
+                assert!(result.fits(available));
+                assert!(margin <= requested);
+            }
+        }
+        assert!(full.side_margin(4096, 3840, 12.) > full.side_margin(4096, 1600, 12.));
+        assert_eq!(full.side_margin(4096, 100, 12.), 0);
+        assert!(
+            !resolve(&panel, &measurements, 76., 32.).overflow.is_empty(),
+            "physical output shortage still uses existing overflow"
+        );
+    }
+
+    #[test]
+    fn margin_limit_includes_group_padding_and_authored_overflow_without_dependence_on_current_surface_width() {
+        let mut panel = Panel::from_defaults(&super::super::Defaults::default());
+        panel.end.groups[0].items[0].overflow = OverflowPolicy::Always;
+        let measurements = measurements(&panel);
+        let full = resolve(&panel, &measurements, 4000., 32.);
+        let narrow = resolve(&panel, &measurements, 100., 32.);
+        assert_eq!(full.minimum_width, narrow.minimum_width);
+        let margin = full.side_margin(4096, 2400, 12.);
+        let result = resolve(&panel, &measurements, 2400. - 2. * (margin as f32 + 12.), 32.);
+        assert_eq!(result.overflow, full.overflow);
+        let original = full.minimum_width;
+        panel.end.groups[0].padding[1] += 10;
+        let padded = resolve(&panel, &measurements, 4000., 32.);
+        assert!(padded.minimum_width > original);
+        assert!(padded.side_margin(4096, 2400, 12.) < margin);
     }
 
     #[test]

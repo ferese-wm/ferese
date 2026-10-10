@@ -227,7 +227,8 @@ struct OutputSurfaces {
     size: Option<(i32, i32)>,
     effects: Option<EffectsBinding>,
     bar_regions: Vec<[f32; 5]>,
-    panel_resolution: panel_layout::Resolution,
+    panel_resolution: Option<panel_layout::Resolution>,
+    bar_margin_horizontal: i32,
     hidden: bool,
 }
 
@@ -438,12 +439,13 @@ impl cosmic::Application for FereseShell {
                         .as_ref()
                         .is_some_and(|menu| menu.kind == status_ui::Menu::Overflow && menu.anchor.parent == id);
                 if let Some(output) = self.outputs.iter_mut().find(|output| output.bar == id) {
-                    output.panel_resolution = resolution;
+                    output.panel_resolution = Some(resolution);
                 }
+                let margin = self.update_panel_margin(id, false);
                 if close_overflow {
-                    self.destroy_menu()
+                    Task::batch([margin, self.destroy_menu()])
                 } else {
-                    Task::none()
+                    margin
                 }
             }
             Message::BarRegionsChanged(id, regions) => {
@@ -977,7 +979,7 @@ impl FereseShell {
         self.status_service
             .update_settings(config.status.settings_command.clone());
 
-        let composition_changed = self.config.panels != config.panels;
+        let composition_changed = !self.config.panels[0].same_composition(&config.panels[0]);
         let old = self.config.theme;
         let old_clock = &self.config.desktop_widgets.clock;
         let old_notes = &self.config.desktop_widgets.notes;
@@ -1015,7 +1017,8 @@ impl FereseShell {
         if composition_changed {
             tasks.push(self.destroy_menu());
             for output in &mut self.outputs {
-                output.panel_resolution = Default::default();
+                // Keep the measured allocation and margins until the next layout
+                // publishes its replacement through PanelResolved.
                 tasks.push(set_input_zone(
                     output.bar,
                     bar::input_region(self.config.panels[0].background, output.hidden, &output.bar_regions),
@@ -1055,20 +1058,39 @@ impl FereseShell {
 
         for entry in self.outputs.iter().filter(|_| geometry_changed) {
             tasks.push(set_size(entry.bar, None, Some(theme.bar_height.round() as u32)));
-            tasks.push(set_margin(
-                entry.bar,
-                theme.bar_margin_top,
-                theme.bar_margin_horizontal,
-                0,
-                theme.bar_margin_horizontal,
-            ));
             tasks.push(set_exclusive_zone(
                 entry.bar,
                 (theme.bar_height.round() as i32).saturating_add(theme.bar_window_gap),
             ));
         }
 
+        let bars: Vec<_> = self.outputs.iter().map(|entry| entry.bar).collect();
+        for bar in bars {
+            tasks.push(self.update_panel_margin(bar, old.bar_margin_top != theme.bar_margin_top));
+        }
         Task::batch(tasks)
+    }
+
+    fn update_panel_margin(&mut self, bar: window::Id, force: bool) -> Task<Message> {
+        let theme = self.config.theme;
+        let Some(entry) = self.outputs.iter_mut().find(|entry| entry.bar == bar) else {
+            return Task::none();
+        };
+        let margin = entry.size.zip(entry.panel_resolution.as_ref()).map_or(
+            entry.bar_margin_horizontal,
+            |((width, _), resolution)| {
+                resolution.side_margin(
+                    theme.bar_margin_horizontal,
+                    width,
+                    f32::from(theme.panel_padding.round() as u16),
+                )
+            },
+        );
+        if entry.bar_margin_horizontal == margin && !force {
+            return Task::none();
+        }
+        entry.bar_margin_horizontal = margin;
+        set_margin(bar, theme.bar_margin_top, margin, 0, margin)
     }
 }
 
@@ -1089,6 +1111,141 @@ fn color_with_opacity(mut value: [u8; 4], opacity: f32) -> Color {
 mod tests {
     use super::*;
     use crate::control::{OutputSnapshot, WindowSnapshot};
+    fn shell_with_measured_panel() -> FereseShell {
+        let config = ShellConfig::default();
+        // This output is never dispatched; tests use only its stored geometry.
+        let (socket, _peer) = std::os::unix::net::UnixStream::pair().unwrap();
+        let connection = Connection::from_socket(socket).unwrap();
+        let output = wl_output::WlOutput::inert(connection.backend().downgrade());
+        FereseShell {
+            core: Core::default(),
+            notifications: notifications::Center::new(config.notifications.clone()),
+            notification_surface: None,
+            status_service: status::Service::start(None),
+            status: Default::default(),
+            recorder: Default::default(),
+            media: Default::default(),
+            calendar_offset: 0,
+            status_error: None,
+            theme_error: None,
+            menu: None,
+            system_modal: None,
+            display_mode: Default::default(),
+            guide_shown: false,
+            guide_load: Default::default(),
+            guide_attempts: 0,
+            pending_power: None,
+            note_editor: None,
+            note_drag: None,
+            note_pointer: Default::default(),
+            note_pending: Vec::new(),
+            note_inflight: Vec::new(),
+            note_saving: false,
+            note_error: None,
+            clock_service: clock::Service::new(&config.desktop_widgets.clock),
+            config,
+            wallpaper: None,
+            control: None,
+            snapshot: Default::default(),
+            overview_active: false,
+            clock: String::new(),
+            desktop_clock: Default::default(),
+            outputs: vec![OutputSurfaces {
+                output,
+                name: Some("test".into()),
+                bar: window::Id::unique(),
+                wallpaper: None,
+                clock: None,
+                notes: Vec::new(),
+                size: Some((1200, 800)),
+                effects: None,
+                bar_regions: vec![[0., 0., 600., 36., 8.]],
+                panel_resolution: Some(panel_layout::Resolution {
+                    minimum_width: 600.,
+                    ..Default::default()
+                }),
+                bar_margin_horizontal: 0,
+                hidden: false,
+            }],
+        }
+    }
+
+    #[test]
+    fn cosmetic_reloads_preserve_measured_margins_and_the_open_popover() {
+        let mut shell = shell_with_measured_panel();
+        shell.config.theme.bar_margin_horizontal = 240;
+        drop(shell.update_panel_margin(shell.outputs[0].bar, false));
+        assert_eq!(shell.outputs[0].bar_margin_horizontal, 240);
+        let popup = window::Id::unique();
+        shell.menu = Some(status_ui::OpenMenu {
+            id: popup,
+            anchor: status_ui::PopoverAnchor {
+                parent: shell.outputs[0].bar,
+                panel: shell.config.panels[0].id.clone(),
+                item: Some(panel::ItemId("clock".into())),
+                rectangle: Default::default(),
+            },
+            kind: status_ui::Menu::Calendar,
+            motion: motion::PopupMotion::new(Default::default()),
+            effects: None,
+            regions: Default::default(),
+        });
+        let resolution = shell.outputs[0].panel_resolution.clone();
+        for (field, value) in [
+            ("background_opacity", serde_json::json!(0.5)),
+            ("corner_radius", serde_json::json!("4px 8px")),
+            ("border", serde_json::json!(true)),
+            ("group_surface", serde_json::json!("inset")),
+        ] {
+            let edit = field;
+            let mut document = ferese_config::Document::parse("").unwrap();
+            document
+                .set("panels", serde_json::to_value(&shell.config.panels).unwrap())
+                .unwrap();
+            document.set(&format!("panels.0.{field}"), value).unwrap();
+            let source = document.to_string();
+            let mut config = config::parse_source(&source).unwrap();
+            config.theme = shell.config.theme;
+            drop(shell.apply_config(config));
+            assert_eq!(shell.outputs[0].panel_resolution, resolution, "{edit}");
+            assert_eq!(shell.outputs[0].bar_margin_horizontal, 240, "{edit}");
+            assert_eq!(shell.menu.as_ref().unwrap().id, popup, "{edit}");
+        }
+        // A real membership edit closes the popup, but retains the last allocation
+        // until the adaptive widget measures and publishes its replacement.
+        let mut config = shell.config.clone();
+        config.panels[0].end.groups.clear();
+        drop(shell.apply_config(config));
+        assert!(shell.menu.is_none());
+        assert_eq!(shell.outputs[0].panel_resolution, resolution);
+        assert_eq!(shell.outputs[0].bar_margin_horizontal, 240);
+        use cosmic::Application;
+        let replacement = panel_layout::Resolution {
+            minimum_width: 900.,
+            ..Default::default()
+        };
+        drop(shell.update(Message::PanelResolved(shell.outputs[0].bar, replacement.clone())));
+        assert_eq!(shell.outputs[0].panel_resolution.as_ref(), Some(&replacement));
+        assert!(shell.outputs[0].bar_margin_horizontal < 240);
+        let before = shell.outputs[0].bar_margin_horizontal;
+        drop(shell.reload_config("panel broken {".into()));
+        assert_eq!(shell.outputs[0].panel_resolution.as_ref(), Some(&replacement));
+        assert_eq!(shell.outputs[0].bar_margin_horizontal, before);
+    }
+
+    #[test]
+    fn an_empty_measured_panel_is_not_an_unmeasured_panel() {
+        let mut shell = shell_with_measured_panel();
+        let bar = shell.outputs[0].bar;
+        shell.config.theme.bar_margin_horizontal = 240;
+        shell.outputs[0].panel_resolution = None;
+        drop(shell.update_panel_margin(bar, false));
+        assert_eq!(shell.outputs[0].bar_margin_horizontal, 0);
+        shell.outputs[0].panel_resolution = Some(Default::default());
+        drop(shell.update_panel_margin(bar, false));
+        assert_eq!(shell.outputs[0].bar_margin_horizontal, 240);
+    }
+
     #[test]
     fn widget_drag_stops_at_edges_without_tunnelling_and_slides() {
         use cosmic::iced::{Point, Rectangle};

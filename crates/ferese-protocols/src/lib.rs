@@ -6,6 +6,9 @@
 pub mod effects {
     /// Version 1 of the semantic surface effects protocol.
     pub mod v1 {
+        /// Maximum regions and region opacities in one effects request.
+        pub const MAX_REGIONS: usize = 32;
+
         #[cfg(feature = "client")]
         pub use generated::client;
         #[cfg(feature = "server")]

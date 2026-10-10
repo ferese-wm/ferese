@@ -105,9 +105,10 @@ enum Message {
     PagePresented(Page),
     RowVisibility(&'static str, usize, bool),
     Search(String),
+    Sidebar(bool),
     Change(Edit),
-    CustomizePanel,
-    PanelTab(panel_controls::PanelTab),
+    PanelClearSelection,
+    PanelPage(panel_controls::PanelPage),
     PanelSelect(ferese_config::panel::ItemId),
     PanelGroupSelect(ferese_config::panel::GroupId),
     PanelPreviewResolved(ferese_config::panel::layout::Resolution),
@@ -173,6 +174,7 @@ struct App {
     visible_rows: std::collections::HashSet<(&'static str, usize)>,
     hidden_binding_rows: std::collections::HashSet<usize>,
     search: String,
+    sidebar_open: bool,
     inputs: HashMap<String, String>,
     ranges: HashMap<String, f64>,
     new_command: String,
@@ -186,7 +188,7 @@ struct App {
     auto_details: bool,
     advanced_theme: bool,
     panel_selection: Option<ferese_config::panel::ItemId>,
-    panel_tab: panel_controls::PanelTab,
+    panel_page: panel_controls::PanelPage,
     panel_group_selection: Option<ferese_config::panel::GroupId>,
     panel_preview_resolution: ferese_config::panel::layout::Resolution,
     panel_preview_overflow: bool,
@@ -252,7 +254,7 @@ impl cosmic::Application for App {
         let error = initial.as_ref().err().cloned();
         let current = initial.unwrap_or_else(|_| Snapshot::parse(String::new()).unwrap());
         let resolved = ferese_theme_client::service::current();
-        let font = ferese_theme::font(Some(&resolved.presented.tokens.typography.font_family));
+        let font = fonts::interface_font(&resolved.presented.tokens.typography.font_family);
         let native_palette = visuals::Palette::from_resolved(&resolved.presented);
         let family_sections = theme_controls::FamilySections::new(&resolved.families, &current);
         let mut app = Self {
@@ -286,6 +288,7 @@ impl cosmic::Application for App {
             profile_pages: std::env::var_os("FERESE_PROFILE_SETTINGS").is_some(),
             page_transition: None,
             search: String::new(),
+            sidebar_open: false,
             visible_rows: initial_visible_rows(),
             hidden_binding_rows: Default::default(),
             inputs: HashMap::new(),
@@ -301,7 +304,7 @@ impl cosmic::Application for App {
             auto_details: false,
             advanced_theme: false,
             panel_selection: None,
-            panel_tab: Default::default(),
+            panel_page: Default::default(),
             panel_group_selection: None,
             panel_preview_resolution: Default::default(),
             panel_preview_overflow: false,
@@ -370,7 +373,7 @@ impl cosmic::Application for App {
                 }
                 self.resolved = *snapshot;
                 if font_changed {
-                    self.font = ferese_theme::font(Some(&self.resolved.presented.tokens.typography.font_family));
+                    self.font = fonts::interface_font(&self.resolved.presented.tokens.typography.font_family);
                 }
 
                 let theme = self.update_theme();
@@ -451,7 +454,7 @@ impl cosmic::Application for App {
                         self.family_sections =
                             theme_controls::FamilySections::new(&self.resolved.families, &self.draft);
                         self.sync_notes();
-                        self.font = ferese_theme::font(Some(&self.resolved.presented.tokens.typography.font_family));
+                        self.font = fonts::interface_font(&self.resolved.presented.tokens.typography.font_family);
                         self.undo = None;
                         self.error = None;
                         self.status = "Updated from your config".into();
@@ -488,7 +491,14 @@ impl cosmic::Application for App {
             Message::LockPreviewStarted(Err(error)) => {
                 self.error = Some(error);
             }
+            Message::Sidebar(open) => {
+                self.sidebar_open = open;
+                if open {
+                    return cosmic::iced::widget::operation::focus(widget::Id::new("settings-search"));
+                }
+            }
             Message::Page(page) => {
+                self.sidebar_open = false;
                 if self.page == page && self.search.is_empty() {
                     return Task::none();
                 }
@@ -573,6 +583,14 @@ impl cosmic::Application for App {
             }
             Message::Release(field) => {
                 if let Some(value) = self.ranges.remove(&field.path) {
+                    if field.path == "panels.0.background_opacity" {
+                        return self.update(Message::PanelEdit(panel_edit::Action::SetOpacity(value as f32 / 100.)));
+                    }
+                    if let Some(index) = field.path.strip_prefix("panels.0.corner_radius.")
+                        && let Ok(index) = index.parse()
+                    {
+                        return self.update(Message::PanelEdit(panel_edit::Action::SetCorner(index, value as f32)));
+                    }
                     let integer = matches!(field.kind, Kind::Range { integer: true, .. });
                     return self.change(if integer {
                         set(&field.path, value.round() as i64)
@@ -615,50 +633,38 @@ impl cosmic::Application for App {
                 }
             }
             Message::PanelSelect(id) => {
-                self.panel_tab = panel_controls::PanelTab::Items;
+                let changed = self.panel_selection.as_ref() != Some(&id);
+                self.panel_page = panel_controls::PanelPage::Arrange;
                 self.panel_group_selection = None;
-                self.panel_selection = if self.panel_selection.as_ref() == Some(&id) {
-                    None
-                } else {
-                    Some(id)
-                };
-                if self.draft.item("panels").is_none() {
-                    match panel_controls::initialize(&self.draft) {
-                        Ok(edit) => {
-                            return Task::batch([
-                                self.change(edit),
-                                cosmic::iced::advanced::widget::operate(navigation::RevealRow::for_target(
-                                    widget::Id::new("panel-inspector"),
-                                )),
-                            ]);
-                        }
-                        Err(error) => self.error = Some(error),
-                    }
-                }
-                if self.panel_selection.is_some() {
-                    return cosmic::iced::advanced::widget::operate(navigation::RevealRow::for_target(
-                        widget::Id::new("panel-inspector"),
-                    ));
+                self.panel_selection = Some(id);
+                self.panel_preview_overflow = false;
+                if changed {
+                    return cosmic::iced::widget::scrollable::snap_to(
+                        widget::Id::new("panel-inspector-scroll"),
+                        cosmic::iced::widget::scrollable::RelativeOffset::START.into(),
+                    );
                 }
             }
             Message::PanelGroupSelect(id) => {
-                self.panel_tab = panel_controls::PanelTab::Items;
+                let changed = self.panel_group_selection.as_ref() != Some(&id);
+                self.panel_page = panel_controls::PanelPage::Arrange;
                 self.panel_selection = None;
-                self.panel_group_selection = if self.panel_group_selection.as_ref() == Some(&id) {
-                    None
-                } else {
-                    Some(id)
-                };
-                if self.panel_group_selection.is_some() {
-                    return cosmic::iced::advanced::widget::operate(navigation::RevealRow::for_target(
-                        widget::Id::new("panel-inspector"),
-                    ));
+                self.panel_group_selection = Some(id);
+                if changed {
+                    return cosmic::iced::widget::scrollable::snap_to(
+                        widget::Id::new("panel-inspector-scroll"),
+                        cosmic::iced::widget::scrollable::RelativeOffset::START.into(),
+                    );
                 }
+            }
+            Message::PanelClearSelection => {
+                self.panel_selection = None;
+                self.panel_group_selection = None;
             }
             Message::PanelPreviewResolved(resolution) => self.panel_preview_resolution = resolution,
             Message::PanelPreviewOverflow => self.panel_preview_overflow = !self.panel_preview_overflow,
-            Message::PanelTab(tab) => {
-                self.panel_tab = tab;
+            Message::PanelPage(tab) => {
+                self.panel_page = tab;
                 return cosmic::iced::widget::scrollable::snap_to(
                     widget::Id::new("settings-content"),
                     cosmic::iced::widget::scrollable::RelativeOffset::START.into(),
@@ -668,25 +674,38 @@ impl cosmic::Application for App {
                 Ok(edits) => {
                     self.inputs.retain(|path, _| !path.starts_with("panels."));
                     self.ranges.retain(|path, _| !path.starts_with("panels."));
-                    return self.edit_many(edits);
+                    let task = self.edit_many(edits);
+                    if let Ok(panel) = self.preview_panel() {
+                        if self.panel_selection.as_ref().is_some_and(|id| panel.item(id).is_none()) {
+                            self.panel_selection = None;
+                        }
+                        if self.panel_group_selection.as_ref().is_some_and(|id| {
+                            !panel_edit::Zone::ALL
+                                .into_iter()
+                                .any(|zone| zone.definition(&panel).groups.iter().any(|group| &group.id == id))
+                        }) {
+                            self.panel_group_selection = None;
+                        }
+                    }
+                    return task;
                 }
                 Err(error) => self.error = Some(error),
             },
-            Message::CustomizePanel if self.draft.item("panels").is_none() => {
-                self.panel_tab = panel_controls::PanelTab::Items;
-                match panel_controls::initialize(&self.draft) {
-                    Ok(edit) => return self.change(edit),
-                    Err(error) => self.error = Some(error),
+            Message::Change(edit) => {
+                if matches!(&edit, Edit::Unset(path) if path == "panels") {
+                    self.inputs.retain(|path, _| !path.starts_with("panels."));
+                    self.panel_selection = None;
+                    self.panel_group_selection = None;
                 }
+                return self.change(edit);
             }
-            Message::Change(edit) => return self.change(edit),
             Message::Saved(result) => {
                 self.saving = false;
                 match result {
                     Ok((snapshot, live)) => {
                         self.undo = Some(std::mem::take(&mut self.saving_previous));
                         self.current = snapshot;
-                        self.font = ferese_theme::font(Some(&self.resolved.presented.tokens.typography.font_family));
+                        self.font = fonts::interface_font(&self.resolved.presented.tokens.typography.font_family);
                         self.draft = self.current.clone();
 
                         for edit in &self.pending {
@@ -730,7 +749,7 @@ impl cosmic::Application for App {
                     self.family_sections = theme_controls::FamilySections::new(&self.resolved.families, &self.draft);
                     self.note_editors.clear();
                     self.sync_notes();
-                    self.font = ferese_theme::font(Some(&self.resolved.presented.tokens.typography.font_family));
+                    self.font = fonts::interface_font(&self.resolved.presented.tokens.typography.font_family);
                     self.pending.clear();
                     self.inputs.clear();
                     self.ranges.clear();
@@ -930,6 +949,22 @@ impl cosmic::Application for App {
 
     fn subscription(&self) -> cosmic::iced::Subscription<Message> {
         cosmic::iced::Subscription::batch([
+            if self.sidebar_open {
+                cosmic::iced::event::listen_with(|event, _, _| match event {
+                    cosmic::iced::Event::Keyboard(cosmic::iced::keyboard::Event::KeyPressed {
+                        key: cosmic::iced::keyboard::Key::Named(cosmic::iced::keyboard::key::Named::Escape),
+                        ..
+                    }) => Some(Message::Sidebar(false)),
+                    cosmic::iced::Event::Window(cosmic::iced::window::Event::Resized(size))
+                        if size.width >= pages::SIDEBAR_BREAKPOINT =>
+                    {
+                        Some(Message::Sidebar(false))
+                    }
+                    _ => None,
+                })
+            } else {
+                cosmic::iced::Subscription::none()
+            },
             cosmic::iced::Subscription::run_with(self.path.clone(), |path| watch::changes(path)),
             ferese_theme_client::service::subscription().map(|snapshot| Message::ThemeChanged(Box::new(snapshot))),
             if self.page == Page::Displays {
@@ -1129,6 +1164,39 @@ mod tests {
     }
 
     #[test]
+    fn corner_sliders_hold_changes_until_release_and_preserve_other_corners() {
+        let mut app = app();
+        for edit in panel_edit::plan(&app.draft, panel_edit::Action::SetRadius("4px 8px 12px 16px".into())).unwrap() {
+            app.draft.edit(&edit).unwrap();
+        }
+        app.draft = Snapshot::parse(app.draft.source.clone()).unwrap();
+        app.current = app.draft.clone();
+        app.saving = true; // Keep this test independent of disk and the live compositor.
+        let before = app.draft.source.clone();
+        let field = Field::new(
+            "panels.0.corner_radius.2",
+            "Bottom right",
+            "",
+            Kind::Range {
+                default: 12.,
+                min: 0.,
+                max: 64.,
+                step: 1.,
+                suffix: " px",
+                integer: false,
+            },
+        );
+        let _ = app.update(Message::Range(field.clone(), 23.));
+        assert_eq!(app.draft.source, before);
+        let _ = app.update(Message::Release(field));
+        let radii: ferese_config::panel::CornerRadii =
+            serde_json::from_value(app.draft.item("panels.0.corner_radius").unwrap().clone()).unwrap();
+        assert_eq!(radii.0, [4., 8., 23., 16.]);
+        assert!(app.ranges.is_empty());
+        assert_eq!(app.current.source, before);
+    }
+
+    #[test]
     fn pending_panel_moves_save_both_groups_together_and_keep_the_selected_instance() {
         use ferese_config::panel::{GroupId, ItemId};
         let mut app = app();
@@ -1198,7 +1266,7 @@ mod tests {
             );
             tree_nodes(&tree)
         };
-        app.panel_tab = panel_controls::PanelTab::Items;
+        app.panel_page = panel_controls::PanelPage::Arrange;
         let collapsed = nodes(&app);
         let id = ferese_config::panel::ItemId("clock".into());
         let _ = app.update(Message::PanelSelect(id.clone()));
@@ -1241,40 +1309,36 @@ mod tests {
     }
 
     #[test]
-    fn selecting_a_generated_preview_item_starts_editing_the_current_composition() {
+    fn selecting_a_generated_preview_item_does_not_save_the_composition() {
         let mut app = app();
         app.saving = true;
         let id = ferese_config::panel::ItemId("clock".into());
         let _ = app.update(Message::PanelSelect(id.clone()));
         assert_eq!(app.panel_selection, Some(id));
-        assert!(app.draft.item("panels").is_some());
-        assert_eq!(app.pending.len(), 1);
+        assert!(app.draft.item("panels").is_none());
+        assert!(app.pending.is_empty());
     }
 
     #[test]
-    fn panel_tabs_do_not_save_and_selection_opens_the_items_inspector() {
+    fn panel_pages_do_not_save_and_selection_opens_the_items_inspector() {
         let mut app = app();
         app.page = Page::Bar;
-        for tab in [
-            panel_controls::PanelTab::Items,
-            panel_controls::PanelTab::Appearance,
-            panel_controls::PanelTab::Panels,
-        ] {
-            let _ = app.update(Message::PanelTab(tab));
+        for tab in [panel_controls::PanelPage::Arrange, panel_controls::PanelPage::Panels] {
+            let _ = app.update(Message::PanelPage(tab));
             let _ = app.page_view();
-            assert_eq!(app.panel_tab, tab);
+            assert_eq!(app.panel_page, tab);
             assert!(app.pending.is_empty());
             assert!(app.draft.item("panels").is_none());
         }
         app.saving = true;
         let _ = app.update(Message::PanelSelect(ferese_config::panel::ItemId("clock".into())));
-        assert_eq!(app.panel_tab, panel_controls::PanelTab::Items);
+        assert_eq!(app.panel_page, panel_controls::PanelPage::Arrange);
         assert!(app.panel_group_selection.is_none());
         let _ = app.update(Message::PanelGroupSelect(ferese_config::panel::GroupId(
             "status".into(),
         )));
         assert!(app.panel_selection.is_none());
-        assert_eq!(app.panel_tab, panel_controls::PanelTab::Items);
+        assert_eq!(app.panel_page, panel_controls::PanelPage::Arrange);
     }
 
     #[test]
@@ -1371,9 +1435,32 @@ mod tests {
     fn shortcuts_build_controls_only_for_mounted_rows() {
         let mut app = shortcuts(100);
         app.visible_rows.extend((0..4).map(|index| ("bindings", index)));
-        let visible = tree_nodes(&cosmic::iced::advanced::widget::Tree::new(app.page_view().as_widget()));
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        use cosmic::iced::advanced::{layout, renderer::Headless, widget::Tree};
+        use cosmic::iced::{Font, Pixels, Size};
+        let renderer = runtime
+            .block_on(<cosmic::Renderer as Headless>::new(
+                Font::default(),
+                Pixels(14.),
+                Some("tiny-skia"),
+            ))
+            .unwrap();
+        let nodes = |app: &App| {
+            let mut view = app.page_view();
+            let mut tree = Tree::new(&view);
+            view.as_widget_mut().layout(
+                &mut tree,
+                &renderer,
+                &layout::Limits::new(Size::ZERO, Size::new(1100., 860.)),
+            );
+            tree_nodes(&tree)
+        };
+        let visible = nodes(&app);
         app.visible_rows.extend((0..100).map(|index| ("bindings", index)));
-        let eager = tree_nodes(&cosmic::iced::advanced::widget::Tree::new(app.page_view().as_widget()));
+        let eager = nodes(&app);
         assert!(eager > visible + 96 * 10, "visible={visible}, eager={eager}");
     }
 

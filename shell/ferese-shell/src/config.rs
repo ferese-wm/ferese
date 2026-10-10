@@ -667,7 +667,7 @@ mod tests {
 
     #[test]
     fn config_loading_translates_existing_settings_into_composition() {
-        use crate::panel::{GroupSurface, ItemKind};
+        use crate::panel::ItemKind;
 
         let fallback = ShellConfig::default();
         let defaults = parse_test_source("").unwrap();
@@ -678,7 +678,6 @@ mod tests {
         assert_eq!(current.panels.len(), 1);
         let panel = &current.panels[0];
         assert_eq!(panel.background, ferese_config::BarLayout::Islands);
-        assert_eq!(panel.end.groups[0].surface, GroupSurface::Island);
         assert_eq!(panel.end.groups[0].island_padding, 9.5);
         assert_eq!(
             panel.center.groups[0].items[0].kind,

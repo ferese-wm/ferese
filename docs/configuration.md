@@ -808,51 +808,90 @@ intentionally turning off the last working one.
 Ferese shows one top panel on each output. Without a `panel` block, the status
 settings below generate the usual arrangement. An explicit panel replaces that
 arrangement, including its background, title, and battery percentage settings.
-Settings → **Panel & Shell** separates panel size and margins under **Panels**,
-composition under **Items**, and backgrounds/group surfaces under **Appearance**.
-The preview stays visible while the settings below it scroll. The inspector sits
-beside the item editor in wide windows and below it in narrow windows.
-**Items → Edit panel** starts from the current arrangement. Drag an item's handle
-to reorder it or move it into another group. Dropping into an empty zone creates
-a group. Select an item to open its inspector, choose another group under
-**Placement**, or use **Move earlier / Move later** for keyboard reordering.
+Settings → **Panel & Shell** opens **Panels**, with background, size, spacing,
+and corner-radius controls. **Edit panel** opens **Arrange**; **Back to Panels**
+returns to those controls. The preview stays visible while the editor and
+inspector scroll independently.
+
+Drag a control's handle to reorder it or move it into another group. Dropping
+into an empty zone creates a group. Select a control to open its inspector,
+choose another group under **Placement**, or use the **Up / Down** arrow buttons.
+Hidden controls stay in the editor with faded icons and labels.
 Each group has an **Add item** menu. The inspector contains visibility, overflow,
 preferred-size, and removal controls. Changes use the existing save and Undo controls.
 `ferese-settings --page bar` opens this page directly.
 
 Use **Add group** in Start, Center, or End to create an empty group. Select its
-name to change placement, surface, spacing, and padding. **Move earlier / Move
-later** reorder groups within a zone. Move or remove a group's items before removing it.
+name to change placement, spacing, and padding.
+Arrow buttons reorder groups within a zone. Move or remove a group's controls
+before removing the group.
+
+**Panels → Size & spacing** owns the panel's shared styling. **Background**
+chooses one continuous background or the same background split around groups
+(Islands). Both arrangements share their color, opacity, corners, and shadow.
+
+**Group borders** controls all group outlines and defaults to off in both
+arrangements. Groups do not paint an extra fill over the panel background.
+Individual groups have no surface, border, opacity, or corner controls.
+Earlier `group-surface` values are accepted but no longer affect appearance.
+
+**Background opacity** overrides shell opacity for the panel background in either
+arrangement, without fading controls or changing popups. **Use shell opacity**
+restores inheritance.
+
+**Customize corners** sets one radius override for the whole panel, including
+all groups. Settings provides four sliders: top left, top right,
+bottom right, and bottom left. Each slider saves when released.
+
+In KDL, pixel values follow CSS shorthand: one value sets all corners; two set
+top-left/bottom-right and top-right/bottom-left; three set
+top-left, top-right/bottom-left, and bottom-right; four run clockwise from
+top-left. For example, `4px 8px 12px 16px` gives each corner a different radius.
+Values must be finite and nonnegative; percentages and elliptical `/` syntax are
+not supported. Radii are clamped to half the shorter surface dimension.
+
+At zero top margin, panel backgrounds reach the top edge and their top corners
+render square. Saved radii remain unchanged. Islands retain the gaps between
+groups; Continuous fills the whole panel. **Side margins** moves the left and
+right ends inward together, with a range of 0–4096 px. The requested inset is
+clamped per output using measured content widths: controls may compact, but the
+inset stops before causing additional overflow. Content growth or a smaller output
+reduces the applied inset as needed. An output too small at zero margin still uses
+the existing overflow behavior.
+
+Without an override, the panel follows the shell radius. Changing the shell
+radius leaves a custom panel radius alone. **Use shell radius** clears only the
+radius override. **Remove custom panel** restores the generated arrangement and
+its inherited radius.
 
 Dragging changes the drop hint until release, then saves the complete move once.
 Escape, focus loss, and release outside a drop target cancel without saving.
 
 The composition preview follows the draft and adapts to the Settings window's
 width. It uses sample content with every service available. Select a preview
-control to edit that instance; the chevron reveals overflow items. Selecting a
-control before customization saves the current arrangement first. The preview
+control to edit that instance; the chevron reveals overflow items. Browsing and selection do not save configuration; the first edit saves the
+composition and that edit together. The preview
 shares the shell's sizing resolver, but does not reproduce its live service state
 or exact vertical styling.
 
 ```kdl
 panel "main" {
     background "islands"
+    border #false
+    background-opacity 0.85
     start {
         group "navigation" {
-            surface "island"
             item "overview" kind="overview" overflow="never"
             item "workspaces" kind="workspaces" overflow="never"
         }
     }
     center {
         group "title" {
-            surface "none"
             item "title" kind="focused-window" overflow="never"
         }
     }
     end {
         group "status" {
-            surface "island"
             item "network" kind="network" overflow="always"
             item "audio" kind="audio"
             item "battery" kind="battery" percentage=#true
@@ -876,8 +915,11 @@ currently share the same clock format and timezone.
 | Scope / key | Values / default | Meaning |
 | --- | --- | --- |
 | Panel `background` | `continuous` (default), `islands` | Whole-panel background or transparent gaps |
+| Panel `border` | boolean; default `false` | Show group outlines |
+| Panel `corner-radius` | optional px string, e.g. `"4px 8px"` | Override shell radius for all panel surfaces |
 | Zone `spacing` | 0–64; default 8 | Gap between groups |
-| Group `surface` | `none`, `inset` (default), `island` | Decoration around the group |
+| Panel `background-opacity` | optional 0–1; inherits shell opacity | Override panel background opacity in either arrangement |
+| Groups per panel | at most 31 | Reserves one of the 32 material regions for overflow |
 | Group `spacing` | 0–64; default 1 | Gap between items |
 | Group `padding` | two integers 0–32; default `2 3` | Vertical and horizontal inner padding |
 | Group `island-padding` | 0–32; default 4 | Additional horizontal padding for islands |
@@ -888,6 +930,9 @@ currently share the same clock format and timezone.
 | Item `gap-before` | 0–64; unset | Override the preceding gap within a group |
 | Battery `percentage` | boolean; default `true` | Include percentage in its full form |
 | Focused window `enabled` | boolean; default `true` | Include the title |
+
+Earlier per-group `surface` and `background-opacity` fields remain readable but
+no longer control styling. New edits use the panel-level settings above.
 
 Media and clock support all three representations. Battery with a percentage
 supports `wide` and `icon`; other controls keep their existing form. Unsupported
@@ -923,7 +968,10 @@ status {
 }
 ```
 
-The gaps between islands are transparent and let clicks pass through. Each island uses the bar background around the existing section's border and fill, with the theme's bar radius and material opacity. Changing the bar layout leaves modal transparency unchanged; there is no need to set the shared opacity to zero. The bar reserves the same space above windows in either layout.
+The gaps between islands are transparent and let clicks pass through. Each island
+uses the bar background, the panel's resolved corner radius, and material opacity.
+Changing the bar layout leaves modal transparency unchanged. The bar reserves the
+same space above windows in either layout.
 
 Use **Island side padding** in Settings → Bar to tighten the space around each section. It applies only to islands; continuous bars keep their existing padding.
 

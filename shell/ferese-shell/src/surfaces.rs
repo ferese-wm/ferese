@@ -68,10 +68,12 @@ impl FereseShell {
                 entry.name = name;
             }
 
+            let bar = entry.bar;
+            let margin = self.update_panel_margin(bar, false);
             return if changed {
-                Task::batch([self.rebuild_clocks(true), self.rebuild_notes(true)])
+                Task::batch([margin, self.rebuild_clocks(true), self.rebuild_notes(true)])
             } else {
-                Task::none()
+                margin
             };
         }
 
@@ -100,6 +102,7 @@ impl FereseShell {
             effects: None,
             bar_regions: Vec::new(),
             panel_resolution: Default::default(),
+            bar_margin_horizontal: 0,
             clock: None,
             notes: Vec::new(),
             size,
@@ -137,9 +140,11 @@ impl FereseShell {
                 namespace: "ferese-shell-top-bar".to_owned(),
                 margin: IcedMargin {
                     top: shell_theme.bar_margin_top,
-                    right: shell_theme.bar_margin_horizontal,
+                    // Measure the controls at full width before applying the
+                    // requested inset, so startup cannot hide them in overflow.
+                    right: 0,
                     bottom: 0,
-                    left: shell_theme.bar_margin_horizontal,
+                    left: 0,
                 },
                 size: Some((None, Some(bar.height.round() as u32))),
                 size_limits: Limits::NONE,
@@ -493,6 +498,17 @@ fn encode_regions(regions: &[[f32; 5]]) -> Vec<u8> {
         .collect()
 }
 
+fn validate_region_counts(regions: usize, opacities: usize) -> Result<(), std::io::Error> {
+    let limit = ferese_protocols::effects::v1::MAX_REGIONS;
+    if regions > limit || opacities > limit {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("effects presentation exceeds the {limit}-region limit"),
+        ));
+    }
+    Ok(())
+}
+
 type EffectPresentation = (Vec<[f32; 5]>, u32, Vec<u32>, ferese_surface_effects_v1::Role);
 
 pub(super) struct EffectsBinding {
@@ -559,9 +575,9 @@ impl EffectsBinding {
         let opacity = (opacity.clamp(0.0, 1.0) * 1000.0).round() as u32;
         let values: Vec<u32> = region_opacities
             .into_iter()
-            .take(32)
             .map(|value| (value.clamp(0.0, 1.0) * 1000.0).round() as u32)
             .collect();
+        validate_region_counts(regions.len(), values.len())?;
         let next = (regions.to_vec(), opacity, values, role);
         if self.presentation.borrow().as_ref() != Some(&next) {
             self.surface.set_presentation(
@@ -585,6 +601,7 @@ impl EffectsBinding {
         regions: &[[f32; 5]],
         role: ferese_surface_effects_v1::Role,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        validate_region_counts(regions.len(), 0)?;
         if self.regions.borrow().as_deref() == Some(regions) {
             return Ok(());
         }
@@ -641,6 +658,15 @@ delegate_noop!(EffectsState: ignore FereseSurfaceEffectsV1);
 
 #[cfg(test)]
 mod region_encoding_tests {
+    #[test]
+    fn oversized_presentations_are_rejected_without_truncation() {
+        let limit = ferese_protocols::effects::v1::MAX_REGIONS;
+        assert!(super::validate_region_counts(0, 0).is_ok());
+        assert!(super::validate_region_counts(limit, limit).is_ok());
+        assert!(super::validate_region_counts(limit + 1, limit).is_err());
+        assert!(super::validate_region_counts(limit, limit + 1).is_err());
+    }
+
     #[test]
     fn fractional_region_encoding_preserves_values() {
         let regions = [[0.25, -0.75, 100.5, 40.25, 14.0]];

@@ -464,6 +464,8 @@ pub struct Ferese {
     workspace_auto_back_and_forth: bool,
     pub(crate) window_rules: Vec<WindowRule>,
     pub(crate) theme_settings: ThemeSettings,
+    pub(crate) panel_corner_radius: Option<ferese_config::panel::CornerRadii>,
+    pub(crate) panel_background_opacity: Option<f32>,
     pub(crate) focus_effect: crate::config::FocusEffectSettings,
     animations_enabled: bool,
     animation_speed: f64,
@@ -555,6 +557,8 @@ pub struct RuntimeConfig {
     pub workspace_auto_back_and_forth: bool,
     pub window_rules: Vec<WindowRule>,
     pub theme_settings: ThemeSettings,
+    pub(crate) panel_corner_radius: Option<ferese_config::panel::CornerRadii>,
+    pub(crate) panel_background_opacity: Option<f32>,
     pub focus_effect: crate::config::FocusEffectSettings,
     pub default_column_width: ColumnWidth,
     pub scrolling_focus_strategy: ViewportFocusStrategy,
@@ -740,6 +744,8 @@ impl Ferese {
             workspace_auto_back_and_forth: config.workspace_auto_back_and_forth,
             window_rules: config.window_rules,
             theme_settings: config.theme_settings,
+            panel_corner_radius: config.panel_corner_radius,
+            panel_background_opacity: config.panel_background_opacity,
             focus_effect: config.focus_effect,
             animations_enabled: config.animations_enabled,
             animation_speed: config.animation_speed,
@@ -928,6 +934,8 @@ impl Ferese {
         let idle_policy_changed = self.idle_inhibit != config.idle_inhibit || old_rules != self.window_rules;
         self.idle_inhibit = config.idle_inhibit;
         self.theme_settings = config.theme_settings;
+        self.panel_corner_radius = config.panel_corner_radius;
+        self.panel_background_opacity = config.panel_background_opacity;
         self.focus_effect = config.focus_effect;
         self.column_width_presets = config.column_width_presets;
         self.animations_enabled = config.animations_enabled;

@@ -1,8 +1,8 @@
 use cosmic::iced::{Alignment, Length};
 use cosmic::widget::{button, column, container, row};
 use ferese_config::panel::layout::{Placement, Resolution};
-use ferese_config::panel::{Availability, Group, GroupSurface, Item, ItemId, ItemKind, Panel, Representation, Zone};
-use ferese_theme::panel::{Sample, frame};
+use ferese_config::panel::{Availability, Group, Item, ItemId, ItemKind, Panel, Representation, Zone};
+use ferese_theme::panel::{Sample, Spacing, frame};
 
 use crate::{App, Element, Message, panel_controls, visuals};
 
@@ -26,15 +26,22 @@ impl App {
             Err(error) => return self.note(&format!("Panel preview unavailable: {error}")),
         };
         let mut rows = column([])
-            .spacing(6)
+            .spacing(12)
             .push(
                 row([])
                     .align_y(Alignment::Center)
                     .push(self.label("Composition preview", 14.).width(Length::Fill))
-                    .push(self.note("Top panel · All displays")),
+                    .push(self.note("Sample content")),
             )
-            .push(self.note("Sample content. Select a control to edit it; resize this window to see it adapt."))
-            .push(self.panel_preview_frame(panel.clone()));
+            .push(
+                container(self.panel_preview_frame(panel.clone()))
+                    .padding([10, 12])
+                    .width(Length::Fill)
+                    .class(visuals::surface(
+                        visuals::Palette::from_resolved(&self.resolved.presented).sidebar,
+                        10.,
+                    )),
+            );
         if self.panel_preview_overflow {
             let mut items = column([]).spacing(2);
             for id in &self.panel_preview_resolution.overflow {
@@ -54,13 +61,13 @@ impl App {
         let palette = visuals::Palette::from_resolved(&self.resolved.presented);
         container(rows)
             .id("panel-composition-preview")
-            .padding(12)
+            .padding(16)
             .width(Length::Fill)
             .class(visuals::surface(palette.card, 14.))
             .into()
     }
 
-    fn preview_panel(&self) -> Result<Panel, String> {
+    pub(super) fn preview_panel(&self) -> Result<Panel, String> {
         let panels = match self.draft.item("panels") {
             Some(panels) => panels.clone(),
             None => {
@@ -91,7 +98,6 @@ impl App {
                         id: item.id.clone(),
                         representation,
                         minimum: match item.kind {
-                            ItemKind::FocusedWindow { .. } => Some(48.),
                             ItemKind::Workspaces => Some(24.),
                             _ => None,
                         },
@@ -108,21 +114,36 @@ impl App {
             view: self.preview_control(&overflow.items[0], Representation::Icon, None),
         });
         let overflow_width = 2. * f32::from(overflow.padding[1])
-            + if overflow.surface == GroupSurface::Island {
+            + if panel.background == ferese_config::BarLayout::Islands {
                 2. * overflow.island_padding
             } else {
                 0.
             };
+        let continuous = panel.background == ferese_config::BarLayout::Continuous;
+        let corners = panel
+            .resolved_radius(self.resolved.presented.tokens.geometry.shell_radius as f32)
+            .at_top_edge(self.resolved.presented.tokens.geometry.top_bar_margin_top == 0)
+            .0;
+        let tokens = &self.resolved.presented.tokens;
+        let inherited = if tokens.material.style == "translucent" {
+            tokens.material.opacity as f32
+        } else {
+            1.
+        };
+        let opacity = panel.background_opacity.unwrap_or(inherited);
         let measured_panel = panel.clone();
         let content = frame(
             std::borrow::Cow::Owned(measured_panel),
             samples,
-            overflow_width,
+            Spacing {
+                overflow_decoration: overflow_width,
+                zone_gap: 32.,
+            },
             self.panel_preview_resolution.clone(),
             move |resolution| {
-                let start = self.preview_zone(&panel.start, resolution);
-                let center = self.preview_zone(&panel.center, resolution);
-                let mut end = self.preview_zone(&panel.end, resolution);
+                let start = self.preview_zone(&panel, &panel.start, resolution);
+                let center = self.preview_zone(&panel, &panel.center, resolution);
+                let mut end = self.preview_zone(&panel, &panel.end, resolution);
                 if !resolution.overflow.is_empty() {
                     let mut trigger = Resolution::default();
                     trigger.items.insert(
@@ -133,6 +154,7 @@ impl App {
                         },
                     );
                     let trigger = self.preview_zone(
+                        &panel,
                         &Zone {
                             groups: vec![overflow.clone()],
                             spacing: 0.,
@@ -165,13 +187,26 @@ impl App {
         let palette = visuals::Palette::from_resolved(&self.resolved.presented);
         container(content)
             .width(Length::Fill)
-            .height(80)
+            .height(48)
             .clip(true)
-            .class(visuals::surface(palette.sidebar, palette.radius))
+            .class(cosmic::theme::Container::custom(move |_| {
+                let mut style = ferese_theme::controls::surface_appearance(
+                    cosmic::iced::Color {
+                        a: opacity,
+                        ..palette.card
+                    },
+                    0.,
+                );
+                style.border.radius = corners.into();
+                if !continuous {
+                    style.background = None;
+                }
+                style
+            }))
             .into()
     }
 
-    fn preview_zone(&self, zone: &Zone, resolution: &Resolution) -> Element<'static, Message> {
+    fn preview_zone(&self, panel: &Panel, zone: &Zone, resolution: &Resolution) -> Element<'static, Message> {
         let mut groups = row([]).spacing(zone.spacing).align_y(Alignment::Center);
         for group in &zone.groups {
             let mut controls = row([]).align_y(Alignment::Center);
@@ -191,29 +226,54 @@ impl App {
                 count += 1;
             }
             if count > 0 {
-                groups = groups.push(self.preview_group(group, controls.into()));
+                groups = groups.push(self.preview_group(panel, group, controls.into()));
             }
         }
         groups.into()
     }
 
-    fn preview_group(&self, group: &Group, controls: Element<'static, Message>) -> Element<'static, Message> {
+    fn preview_group(
+        &self,
+        panel: &Panel,
+        group: &Group,
+        controls: Element<'static, Message>,
+    ) -> Element<'static, Message> {
         let palette = visuals::Palette::from_resolved(&self.resolved.presented);
-        if group.surface == GroupSurface::None {
-            return controls;
-        }
-        let controls = container(controls).padding(group.padding);
-        if group.surface == GroupSurface::Island {
-            container(
-                container(controls)
-                    .padding(group.island_padding)
-                    .class(visuals::surface(palette.card, palette.radius)),
-            )
-            .id(format!("preview-group:{}", group.id.0))
-            .into()
+        let radius = panel
+            .resolved_radius(self.resolved.presented.tokens.geometry.shell_radius as f32)
+            .at_top_edge(self.resolved.presented.tokens.geometry.top_bar_margin_top == 0)
+            .0;
+        let tokens = &self.resolved.presented.tokens;
+        let inherited = if tokens.material.style == "translucent" {
+            tokens.material.opacity as f32
         } else {
-            controls.class(visuals::surface(palette.card, palette.radius)).into()
+            1.
+        };
+        let opacity = panel.background_opacity.unwrap_or(inherited);
+        let border = panel.border;
+        let content: Element<'static, Message> = container(controls)
+            .padding(group.padding)
+            .class(cosmic::theme::Container::custom(move |_| {
+                ferese_theme::panel::group_border(palette.muted.scale_alpha(0.4), radius, border)
+            }))
+            .into();
+        if panel.background == ferese_config::BarLayout::Continuous {
+            return content;
         }
+        container(content)
+            .padding([2., group.island_padding])
+            .class(cosmic::theme::Container::custom(move |_| {
+                let mut style = ferese_theme::controls::surface_appearance(
+                    cosmic::iced::Color {
+                        a: opacity,
+                        ..palette.card
+                    },
+                    0.,
+                );
+                style.border.radius = radius.into();
+                style
+            }))
+            .into()
     }
 
     fn preview_control(
@@ -250,9 +310,11 @@ impl App {
             _ => "",
         };
         let mut content = row([])
+            .height(Length::Fill)
             .spacing(5)
             .align_y(Alignment::Center)
-            .push(icons::tinted(source, 16, palette.text));
+            .push(container(icons::tinted(source, 16, palette.text)).id(format!("preview-icon:{}", item.id.0)));
+
         if !label.is_empty() {
             content = content.push(
                 self.label(label, 12.)
@@ -269,9 +331,13 @@ impl App {
             .padding([4, 7])
             .height(28)
             .on_press(action)
-            .class(visuals::panel_button(
+            .class(preview_button(
                 palette,
-                self.panel_selection.as_ref() == Some(&item.id),
+                if item.kind == ItemKind::Overflow {
+                    self.panel_preview_overflow
+                } else {
+                    self.panel_selection.as_ref() == Some(&item.id)
+                },
             ))
             .into();
         container(control)
@@ -279,6 +345,51 @@ impl App {
             .width(width.map_or(Length::Shrink, Length::Fixed))
             .clip(true)
             .into()
+    }
+}
+
+/// Preview controls sit on a shared surface. Only interaction paints a background;
+/// keep their hit area and border geometry identical in every state.
+fn preview_button(palette: visuals::Palette, selected: bool) -> cosmic::theme::Button {
+    let paint = move |hovered: bool, pressed: bool, focused: bool| {
+        let background = if selected {
+            Some(
+                palette
+                    .accent
+                    .scale_alpha(if hovered || pressed { 0.26 } else { 0.16 })
+                    .into(),
+            )
+        } else if pressed {
+            Some(palette.text.scale_alpha(0.14).into())
+        } else if hovered || focused {
+            Some(palette.text.scale_alpha(0.08).into())
+        } else {
+            None
+        };
+        cosmic::widget::button::Style {
+            shape: Some(cosmic::iced::border::Shape::Continuous),
+            background,
+            text_color: Some(palette.text),
+            icon_color: Some(palette.text),
+            border_radius: 6.into(),
+            border_width: 1.,
+            border_color: if focused {
+                palette.accent
+            } else if selected {
+                palette.accent.scale_alpha(0.6)
+            } else {
+                cosmic::iced::Color::TRANSPARENT
+            },
+            outline: None,
+            outline_width: 0.,
+            ..Default::default()
+        }
+    };
+    cosmic::theme::Button::Custom {
+        active: Box::new(move |focused, _| paint(false, false, focused)),
+        hovered: Box::new(move |focused, _| paint(true, false, focused)),
+        pressed: Box::new(move |focused, _| paint(true, true, focused)),
+        disabled: Box::new(move |_| paint(false, false, false)),
     }
 }
 
@@ -427,6 +538,287 @@ mod tests {
         }
         assert_eq!(app.draft.source, source);
         assert!(app.pending.is_empty());
+    }
+
+    #[test]
+    fn preview_title_stays_centered_and_separate_from_asymmetric_side_groups() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let renderer = runtime
+            .block_on(<cosmic::Renderer as Headless>::new(
+                Font::default(),
+                Pixels(14.),
+                Some("tiny-skia"),
+            ))
+            .unwrap();
+        let app = App::init(
+            crate::Core::default(),
+            (
+                "/unused/preview-centering.kdl".into(),
+                crate::store::Snapshot::parse(String::new()),
+                None,
+            ),
+        )
+        .0;
+        for background in [ferese_config::BarLayout::Continuous, ferese_config::BarLayout::Islands] {
+            let mut panel = Panel::from_defaults(&ferese_config::panel::Defaults {
+                bar_layout: ferese_config::BarLayout::Islands,
+                ..Default::default()
+            });
+            panel.background = background;
+            // Match a three-group layout with media in navigation and a larger status group.
+            let media = panel.end.groups[0].items.remove(0);
+            panel.start.groups[0].items.push(media);
+            let title = &panel.center.groups[0].items[0];
+            let mut sample = app.preview_control(title, Representation::Wide, None);
+            let mut sample_tree = widget::Tree::new(&sample);
+            let natural = sample
+                .as_widget_mut()
+                .layout(
+                    &mut sample_tree,
+                    &renderer,
+                    &layout::Limits::new(Size::ZERO, Size::new(2400., 80.)),
+                )
+                .size()
+                .width;
+            for width in [560., 668., 800., 1200.] {
+                let mut view = app.panel_preview_frame(panel.clone());
+                let mut tree = widget::Tree::new(&view);
+                let node = view.as_widget_mut().layout(
+                    &mut tree,
+                    &renderer,
+                    &layout::Limits::new(Size::ZERO, Size::new(width, 80.)),
+                );
+                let mut bounds = Bounds {
+                    targets: [&panel.start, &panel.center, &panel.end]
+                        .into_iter()
+                        .flat_map(|zone| &zone.groups)
+                        .flat_map(|group| &group.items)
+                        .map(|item| (widget::Id::new(format!("preview-item:{}", item.id.0)), item.id.clone()))
+                        .chain(std::iter::once((
+                            widget::Id::new("preview-item:_overflow"),
+                            ItemId("_overflow".into()),
+                        )))
+                        .collect(),
+                    ..Default::default()
+                };
+                view.as_widget_mut()
+                    .operate(&mut tree, Layout::new(&node), &renderer, &mut bounds);
+                let center = bounds
+                    .items
+                    .iter()
+                    .find(|(id, _)| id == &title.id)
+                    .expect("sample title remains visible")
+                    .1;
+                assert!((center.center_x() - width / 2.).abs() < 0.1, "{center:?} at {width}");
+                assert!((center.width - natural).abs() < 0.1, "sample title must not be clipped");
+                for (id, side) in &bounds.items {
+                    if id == &title.id {
+                        continue;
+                    }
+                    let gap = if side.center_x() < center.center_x() {
+                        center.x - side.x - side.width
+                    } else {
+                        side.x - center.x - center.width
+                    };
+                    assert!(
+                        gap >= 31.9,
+                        "{background:?} at {width}: {} crowds title ({gap}px)",
+                        id.0
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn preview_icons_are_centered_in_their_hit_areas_and_across_groups() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let renderer = runtime
+            .block_on(<cosmic::Renderer as Headless>::new(
+                Font::default(),
+                Pixels(14.),
+                Some("tiny-skia"),
+            ))
+            .unwrap();
+        let mut app = App::init(
+            crate::Core::default(),
+            (
+                "/unused/alignment.kdl".into(),
+                crate::store::Snapshot::parse(String::new()),
+                None,
+            ),
+        )
+        .0;
+        for background in [ferese_config::BarLayout::Continuous, ferese_config::BarLayout::Islands] {
+            let panel = Panel::from_defaults(&ferese_config::panel::Defaults {
+                bar_layout: background,
+                ..Default::default()
+            });
+            let ids: Vec<_> = [&panel.start, &panel.center, &panel.end]
+                .into_iter()
+                .flat_map(|zone| &zone.groups)
+                .flat_map(|group| &group.items)
+                .map(|item| item.id.clone())
+                .chain(std::iter::once(ItemId("_overflow".into())))
+                .collect();
+            for width in [180., 400., 2400.] {
+                for selected in [None, Some(ItemId("battery".into()))] {
+                    app.panel_selection = selected;
+                    let mut view = app.panel_preview_frame(panel.clone());
+                    let mut tree = widget::Tree::new(&view);
+                    let node = view.as_widget_mut().layout(
+                        &mut tree,
+                        &renderer,
+                        &layout::Limits::new(Size::ZERO, Size::new(width, 80.)),
+                    );
+                    let mut controls = Bounds {
+                        targets: ids
+                            .iter()
+                            .map(|id| (widget::Id::new(format!("preview-item:{}", id.0)), id.clone()))
+                            .collect(),
+                        ..Default::default()
+                    };
+                    let mut icons = Bounds {
+                        targets: ids
+                            .iter()
+                            .map(|id| (widget::Id::new(format!("preview-icon:{}", id.0)), id.clone()))
+                            .collect(),
+                        ..Default::default()
+                    };
+                    view.as_widget_mut()
+                        .operate(&mut tree, Layout::new(&node), &renderer, &mut controls);
+                    view.as_widget_mut()
+                        .operate(&mut tree, Layout::new(&node), &renderer, &mut icons);
+                    assert!(!controls.items.is_empty());
+                    assert_eq!(controls.items.len(), icons.items.len());
+                    for (id, icon) in &icons.items {
+                        let control = controls.items.iter().find(|(item, _)| item == id).unwrap().1;
+                        assert!(
+                            (icon.center_y() - control.center_y()).abs() < 0.01,
+                            "{background:?} at {width}: {} icon {icon:?} is off-center in {control:?}",
+                            id.0
+                        );
+                        assert!(
+                            (icon.center_y() - node.size().height / 2.).abs() < 0.01,
+                            "{} is not on the panel centerline",
+                            id.0
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn preview_hover_and_selection_stay_inside_the_control_and_idle_is_transparent() {
+        use cosmic::iced::Color;
+        use cosmic::iced::advanced::renderer::{self, Renderer as _};
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let mut renderer = runtime
+            .block_on(<cosmic::Renderer as Headless>::new(
+                Font::default(),
+                Pixels(14.),
+                Some("tiny-skia"),
+            ))
+            .unwrap();
+        let mut app = App::init(
+            crate::Core::default(),
+            (
+                "/unused/hover.kdl".into(),
+                crate::store::Snapshot::parse(String::new()),
+                None,
+            ),
+        )
+        .0;
+        let item = Item::new("battery", ItemKind::Battery { percentage: false });
+        let viewport = Rectangle::with_size(Size::new(96., 48.));
+        let backdrop = Color::from_rgb8(35, 47, 61);
+        let theme = app.native_palette.native_theme();
+        let mut baseline: Option<Vec<u8>> = None;
+        let mut baseline_bounds = None;
+        for state in ["idle", "hovered", "pressed", "selected"] {
+            app.panel_selection = (state == "selected").then(|| item.id.clone());
+            let mut view: Element<'_, Message> = container(app.preview_control(&item, Representation::Icon, None))
+                .center_x(Length::Fill)
+                .center_y(Length::Fill)
+                .into();
+            let mut tree = widget::Tree::new(&view);
+            let node =
+                view.as_widget_mut()
+                    .layout(&mut tree, &renderer, &layout::Limits::new(Size::ZERO, viewport.size()));
+            let mut bounds = Bounds {
+                targets: vec![(widget::Id::new("preview-item:battery"), item.id.clone())],
+                ..Default::default()
+            };
+            view.as_widget_mut()
+                .operate(&mut tree, Layout::new(&node), &renderer, &mut bounds);
+            let target = bounds.items[0].1;
+            if let Some(baseline) = baseline_bounds {
+                assert_eq!(target, baseline);
+            } else {
+                baseline_bounds = Some(target);
+            }
+            let cursor = if state == "hovered" || state == "pressed" {
+                mouse::Cursor::Available(target.center())
+            } else {
+                mouse::Cursor::Unavailable
+            };
+            if state == "pressed" {
+                view.as_widget_mut().update(
+                    &mut tree,
+                    &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+                    Layout::new(&node),
+                    cursor,
+                    &renderer,
+                    &mut clipboard::Null,
+                    &mut Shell::new(&mut Vec::new()),
+                    &viewport,
+                );
+            }
+            renderer.reset(viewport);
+            view.as_widget().draw(
+                &tree,
+                &mut renderer,
+                &theme,
+                &renderer::Style {
+                    text_color: app.native_palette.text,
+                    icon_color: app.native_palette.text,
+                    scale_factor: 1.,
+                },
+                Layout::new(&node),
+                cursor,
+                &viewport,
+            );
+            let pixels = Headless::screenshot(&mut renderer, Size::new(96, 48), 1., backdrop);
+            if let Some(baseline) = &baseline {
+                let mut changed = 0;
+                for (index, (before, after)) in baseline.chunks_exact(4).zip(pixels.chunks_exact(4)).enumerate() {
+                    if before != after {
+                        changed += 1;
+                        assert!(
+                            target.contains(Point::new((index % 96) as f32 + 0.5, (index / 96) as f32 + 0.5)),
+                            "{state} paints outside the hit area"
+                        );
+                    }
+                }
+                assert!(changed > 40, "{state} has no visible feedback");
+            } else {
+                // Above the glyph but inside the button: untouched backdrop, not
+                // an opaque rectangle that hides the panel's chosen opacity.
+                let index = ((target.y as usize + 2) * 96 + target.center_x() as usize) * 4;
+                assert_eq!(&pixels[index..index + 4], &pixels[..4]);
+                baseline = Some(pixels);
+            }
+        }
     }
 
     #[test]

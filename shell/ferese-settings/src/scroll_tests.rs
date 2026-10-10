@@ -79,7 +79,7 @@ fn panel_preview_stays_visible_while_the_items_editor_scrolls() {
     )
     .0;
     app.page = Page::Bar;
-    app.panel_tab = panel_controls::PanelTab::Items;
+    app.panel_page = panel_controls::PanelPage::Arrange;
     app.draft
         .edit(&panel_controls::initialize(&app.draft).unwrap())
         .unwrap();
@@ -257,4 +257,376 @@ fn appearance_scroll_preserves_progress_and_settles_visibility() {
             );
         }
     }
+}
+
+/// Reproducible sketches rendered from the actual widgets, with no live services.
+#[test]
+#[ignore = "writes Panel & Shell review images to /tmp/ferese-panel-review"]
+fn render_panel_review_states() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let mut renderer = runtime
+        .block_on(<cosmic::Renderer as Headless>::new(
+            Font::default(),
+            Pixels(14.),
+            Some("tiny-skia"),
+        ))
+        .unwrap();
+    let directory = "/tmp/ferese-panel-review";
+    std::fs::create_dir_all(directory).unwrap();
+    let mut app = App::init(
+        Core::default(),
+        (
+            "/unused/review.kdl".into(),
+            Snapshot::parse(String::new()),
+            Some(InitialPage::Bar),
+        ),
+    )
+    .0;
+    app.status = "Changes save automatically".into();
+    for appearance in ["light", "dark"] {
+        let theme_config = Snapshot::parse(format!("theme {{ mode \"{appearance}\"; }}")).unwrap();
+        let theme = ferese_config::theme::resolve(
+            &theme_config.doc,
+            std::path::Path::new("/tmp"),
+            "2026-10-07T12:00:00Z".parse().unwrap(),
+            |_| unreachable!(),
+        )
+        .unwrap()
+        .theme;
+        app.resolved.presented = theme.clone();
+        app.resolved.theme = theme;
+        app.font = fonts::interface_font(&app.resolved.presented.tokens.typography.font_family);
+        app.native_palette = visuals::Palette::from_resolved(&app.resolved.presented);
+        for (name, tab, item, group) in [
+            ("panels", panel_controls::PanelPage::Panels, None, None),
+            ("corners", panel_controls::PanelPage::Panels, None, None),
+            ("preview-hover", panel_controls::PanelPage::Panels, None, None),
+            ("navigation", panel_controls::PanelPage::Arrange, None, None),
+            ("items", panel_controls::PanelPage::Arrange, None, None),
+            (
+                "selected-item",
+                panel_controls::PanelPage::Arrange,
+                Some("battery"),
+                None,
+            ),
+            (
+                "selected-group",
+                panel_controls::PanelPage::Arrange,
+                None,
+                Some("status"),
+            ),
+        ] {
+            app.draft = Snapshot::parse(String::new()).unwrap();
+            if name == "corners" {
+                for edit in crate::panel_edit::plan(
+                    &app.draft,
+                    crate::panel_edit::Action::SetRadius("4px 8px 12px 16px".into()),
+                )
+                .unwrap()
+                {
+                    app.draft.edit(&edit).unwrap();
+                }
+                app.draft = Snapshot::parse(app.draft.source.clone()).unwrap();
+            }
+            app.panel_page = tab;
+            app.sidebar_open = name == "navigation";
+            app.panel_selection = item.map(|id| ferese_config::panel::ItemId(id.into()));
+            app.panel_group_selection = group.map(|id| ferese_config::panel::GroupId(id.into()));
+            for (width, height) in [(1100, 860), (740, 650)] {
+                let bounds = Rectangle::with_size(Size::new(width as f32, height as f32));
+                let theme = app.native_palette.native_theme();
+                let mut view = app.page_view();
+                let mut tree = Tree::new(&view);
+                let node =
+                    view.as_widget_mut()
+                        .layout(&mut tree, &renderer, &layout::Limits::new(Size::ZERO, bounds.size()));
+                #[derive(Default)]
+                struct HoverTarget(Option<Rectangle>);
+                impl Operation for HoverTarget {
+                    fn traverse(&mut self, children: &mut dyn FnMut(&mut dyn Operation)) {
+                        children(self);
+                    }
+                    fn container(&mut self, id: Option<&widget::Id>, bounds: Rectangle) {
+                        if id == Some(&widget::Id::new("preview-item:battery")) {
+                            self.0 = Some(bounds);
+                        }
+                    }
+                }
+                let cursor = if name == "preview-hover" {
+                    let mut target = HoverTarget::default();
+                    view.as_widget_mut()
+                        .operate(&mut tree, Layout::new(&node), &renderer, &mut target);
+                    mouse::Cursor::Available(target.0.expect("battery is visible in the review preview").center())
+                } else {
+                    mouse::Cursor::Unavailable
+                };
+                // Responsive content is laid out before drawing, as it is in the app.
+                renderer.reset(bounds);
+                view.as_widget().draw(
+                    &tree,
+                    &mut renderer,
+                    &theme,
+                    &renderer::Style {
+                        text_color: Color::WHITE,
+                        icon_color: Color::WHITE,
+                        scale_factor: 1.,
+                    },
+                    Layout::new(&node),
+                    cursor,
+                    &bounds,
+                );
+                if let Some(mut overlay) =
+                    view.as_widget_mut()
+                        .overlay(&mut tree, Layout::new(&node), &renderer, &bounds, Vector::ZERO)
+                {
+                    let overlay = overlay.as_overlay_mut();
+                    let layout = overlay.layout(&renderer, bounds.size());
+                    renderer.with_layer(bounds, |renderer| {
+                        overlay.draw(
+                            renderer,
+                            &theme,
+                            &renderer::Style {
+                                text_color: app.native_palette.text,
+                                icon_color: app.native_palette.text,
+                                scale_factor: 1.,
+                            },
+                            Layout::new(&layout),
+                            mouse::Cursor::Unavailable,
+                        );
+                    });
+                }
+                let pixels = Headless::screenshot(
+                    &mut renderer,
+                    Size::new(width, height),
+                    1.,
+                    theme.cosmic().bg_color().into(),
+                );
+                let path = format!("{directory}/{appearance}-{name}-{width}.png");
+                image::save_buffer(&path, &pixels, width, height, image::ColorType::Rgba8).unwrap();
+                eprintln!("{path}");
+            }
+        }
+    }
+}
+
+#[test]
+fn selecting_panel_items_preserves_editor_scroll_and_pane_bounds() {
+    #[derive(Default, Debug, PartialEq)]
+    struct Panes {
+        preview: Option<Rectangle>,
+        editor: Option<Rectangle>,
+        inspector: Option<Rectangle>,
+    }
+    impl Operation for Panes {
+        fn traverse(&mut self, children: &mut dyn FnMut(&mut dyn Operation)) {
+            children(self);
+        }
+        fn container(&mut self, id: Option<&widget::Id>, bounds: Rectangle) {
+            if id == Some(&widget::Id::new("panel-composition-preview")) {
+                self.preview = Some(bounds);
+            }
+        }
+        fn scrollable(
+            &mut self,
+            id: Option<&widget::Id>,
+            bounds: Rectangle,
+            _: Rectangle,
+            _: Vector,
+            _: &mut dyn cosmic::iced::advanced::widget::operation::Scrollable,
+        ) {
+            if id == Some(&widget::Id::new("settings-content")) {
+                self.editor = Some(bounds);
+            }
+            if id == Some(&widget::Id::new("panel-inspector-scroll")) {
+                self.inspector = Some(bounds);
+            }
+        }
+    }
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let renderer = runtime
+        .block_on(<cosmic::Renderer as Headless>::new(
+            Font::default(),
+            Pixels(14.),
+            Some("tiny-skia"),
+        ))
+        .unwrap();
+    for width in [740., 1100.] {
+        let mut app = App::init(
+            Core::default(),
+            (
+                "/unused/layout.kdl".into(),
+                Snapshot::parse(String::new()),
+                Some(InitialPage::Bar),
+            ),
+        )
+        .0;
+        app.panel_page = panel_controls::PanelPage::Arrange;
+        let mut tree = None;
+        let mut initial = None;
+        for selection in [
+            None,
+            Some(Message::PanelSelect(ferese_config::panel::ItemId("battery".into()))),
+            Some(Message::PanelGroupSelect(ferese_config::panel::GroupId(
+                "status".into(),
+            ))),
+            Some(Message::PanelClearSelection),
+        ] {
+            if let Some(selection) = selection {
+                let _ = app.update(selection);
+            }
+            let mut view = app.page_view();
+            let tree = tree.get_or_insert_with(|| Tree::new(&view));
+            tree.diff(view.as_widget_mut());
+            let node = view.as_widget_mut().layout(
+                tree,
+                &renderer,
+                &layout::Limits::new(Size::ZERO, Size::new(width, 650.)),
+            );
+            if initial.is_none() {
+                let mut scroll = cosmic::iced::advanced::widget::operation::scrollable::scroll_to::<()>(
+                    widget::Id::new("settings-content"),
+                    cosmic::iced::widget::scrollable::AbsoluteOffset { x: None, y: Some(180.) },
+                );
+                view.as_widget_mut()
+                    .operate(tree, Layout::new(&node), &renderer, &mut scroll);
+            }
+            let mut panes = Panes::default();
+            view.as_widget_mut()
+                .operate(tree, Layout::new(&node), &renderer, &mut panes);
+            let mut position = ScrollPosition::default();
+            view.as_widget_mut()
+                .operate(tree, Layout::new(&node), &renderer, &mut position);
+            assert_eq!(position.offset, 180., "selection moved the arrangement");
+            let editor = panes.editor.unwrap();
+            let inspector = panes.inspector.unwrap();
+            assert!(editor.x + editor.width < inspector.x, "panes overlap");
+            assert!(inspector.x + inspector.width <= width, "inspector leaves window");
+            assert!(editor.height > 100. && inspector.height > 100.);
+            if let Some(initial) = &initial {
+                assert_eq!(&panes, initial);
+            } else {
+                initial = Some(panes);
+            }
+            assert!(app.pending.is_empty() && !app.saving && app.draft.item("panels").is_none());
+        }
+    }
+}
+
+#[test]
+fn sidebar_collapses_at_the_breakpoint_and_compact_navigation_dismisses() {
+    #[derive(Default)]
+    struct Bounds {
+        sidebar: Option<Rectangle>,
+        page: Option<Rectangle>,
+        toggle: Option<Rectangle>,
+    }
+    impl Operation for Bounds {
+        fn traverse(&mut self, children: &mut dyn FnMut(&mut dyn Operation)) {
+            children(self);
+        }
+        fn container(&mut self, id: Option<&widget::Id>, bounds: Rectangle) {
+            if id == Some(&widget::Id::new("settings-sidebar")) {
+                self.sidebar = Some(bounds);
+            }
+            if id == Some(&widget::Id::new("settings-page")) {
+                self.page = Some(bounds);
+            }
+            if id == Some(&widget::Id::new("settings-navigation-toggle")) {
+                self.toggle = Some(bounds);
+            }
+        }
+    }
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let renderer = runtime
+        .block_on(<cosmic::Renderer as Headless>::new(
+            Font::default(),
+            Pixels(14.),
+            Some("tiny-skia"),
+        ))
+        .unwrap();
+    let mut app = App::init(
+        Core::default(),
+        (
+            "/unused/sidebar.kdl".into(),
+            Snapshot::parse(String::new()),
+            Some(InitialPage::Bar),
+        ),
+    )
+    .0;
+    app.panel_page = panel_controls::PanelPage::Arrange;
+    let mut tree = None;
+    for width in [1100., 959., 740., 960., 1100.] {
+        let mut view = app.page_view();
+        let tree = tree.get_or_insert_with(|| Tree::new(&view));
+        tree.diff(view.as_widget_mut());
+        let node = view.as_widget_mut().layout(
+            tree,
+            &renderer,
+            &layout::Limits::new(Size::ZERO, Size::new(width, 650.)),
+        );
+        let mut bounds = Bounds::default();
+        view.as_widget_mut()
+            .operate(tree, Layout::new(&node), &renderer, &mut bounds);
+        let compact = width < 960.;
+        assert_eq!(bounds.sidebar.is_none(), compact);
+        assert_eq!(bounds.toggle.is_some(), compact);
+        assert_eq!(bounds.page.unwrap().x, if compact { 0. } else { 204. });
+        assert_eq!(bounds.page.unwrap().width, if compact { width } else { width - 204. });
+    }
+    let _ = app.update(Message::Sidebar(true));
+    assert!(app.sidebar_open);
+    let mut view = app.page_view();
+    let mut tree = Tree::new(&view);
+    let size = Size::new(740., 650.);
+    let node = view
+        .as_widget_mut()
+        .layout(&mut tree, &renderer, &layout::Limits::new(Size::ZERO, size));
+    let mut messages = Vec::new();
+    {
+        let viewport = Rectangle::with_size(size);
+        let mut overlay = view
+            .as_widget_mut()
+            .overlay(&mut tree, Layout::new(&node), &renderer, &viewport, Vector::ZERO)
+            .expect("compact navigation overlay");
+        let overlay = overlay.as_overlay_mut();
+        let layout = overlay.layout(&renderer, size);
+        let mut bounds = Bounds::default();
+        overlay.operate(Layout::new(&layout), &renderer, &mut bounds);
+        assert_eq!(bounds.sidebar.unwrap().width, 244.);
+        assert!(
+            bounds.page.is_none(),
+            "background must be excluded from modal focus navigation"
+        );
+        overlay.update(
+            &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            Layout::new(&layout),
+            mouse::Cursor::Available(Point::new(500., 300.)),
+            &renderer,
+            &mut clipboard::Null,
+            &mut Shell::new(&mut messages),
+        );
+        assert!(
+            messages
+                .iter()
+                .any(|message| matches!(message, Message::Sidebar(false)))
+        );
+    }
+    drop(view);
+    for message in messages {
+        let _ = app.update(message);
+    }
+    assert!(!app.sidebar_open);
+    let _ = app.update(Message::Sidebar(true));
+    let _ = app.update(Message::Page(Page::Bar));
+    assert!(!app.sidebar_open, "reselecting the current page closes navigation too");
+    assert!(app.pending.is_empty() && !app.saving);
 }
