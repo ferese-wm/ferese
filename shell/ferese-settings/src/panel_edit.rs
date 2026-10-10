@@ -467,7 +467,7 @@ panel "main" {
     center { group "title" { item "title" kind="focused-window"; }; }
     end { group "status" {
         // first clock
-        item "clock" kind="clock" custom-note="keep"
+        item "clock" kind="clock" { metadata { custom-note "keep"; }; }
         item "clock-2" kind="clock"
         item "network" kind="network" overflow="always"
     }; }
@@ -636,7 +636,7 @@ animations { speed 0.8; }
         );
         assert_eq!(ids(&snapshot, "panels.0.start.groups.0.items"), ["overview", "clock"]);
         assert_eq!(
-            snapshot.string("panels.0.start.groups.0.items.1.custom_note", ""),
+            snapshot.string("panels.0.start.groups.0.items.1.metadata.custom_note", ""),
             "keep"
         );
         assert_eq!(snapshot.string("panels.0.end.groups.0.items.0.overflow", ""), "always");
@@ -760,7 +760,7 @@ animations { speed 0.8; }
             ["clock", "clock-2", "network"]
         );
         assert_eq!(
-            snapshot.string("panels.0.start.groups.0.items.0.custom_note", ""),
+            snapshot.string("panels.0.start.groups.0.items.0.metadata.custom_note", ""),
             "keep"
         );
         assert_eq!(snapshot.number("panels.0.start.groups.0.spacing", 0.), 7.5);
@@ -862,7 +862,10 @@ animations { speed 0.8; }
             ids(&snapshot, "panels.0.end.groups.0.items"),
             ["clock-2", "network", "clock"]
         );
-        assert_eq!(snapshot.string("panels.0.end.groups.0.items.2.custom_note", ""), "keep");
+        assert_eq!(
+            snapshot.string("panels.0.end.groups.0.items.2.metadata.custom_note", ""),
+            "keep"
+        );
         assert!(
             plan(&snapshot, Action::Place(id.clone(), target("end", "status"), None))
                 .unwrap()
@@ -920,7 +923,7 @@ animations { speed 0.8; }
         assert_eq!(snapshot.records("panels.0.center.groups"), 1);
         assert_eq!(ids(&snapshot, "panels.0.center.groups.0.items"), ["clock"]);
         assert_eq!(
-            snapshot.string("panels.0.center.groups.0.items.0.custom_note", ""),
+            snapshot.string("panels.0.center.groups.0.items.0.metadata.custom_note", ""),
             "keep"
         );
     }
@@ -964,8 +967,8 @@ animations { speed 0.8; }
     }
 
     #[test]
-    fn editing_item_settings_preserves_comments_and_custom_fields() {
-        let mut snapshot = Snapshot::parse("// keep\npanel main { start { group nav { item spaces kind=\"workspaces\" style=\"numbers\" custom-note=\"keep\"; }; }; center { group title { item title kind=\"focused-window\" visible=#false; }; }; }".into()).unwrap();
+    fn editing_item_settings_preserves_comments_and_metadata() {
+        let mut snapshot = Snapshot::parse("// keep\npanel main { start { group nav { item spaces kind=\"workspaces\" style=\"numbers\" { metadata { custom-note \"keep\"; }; }; }; }; center { group title { item title kind=\"focused-window\" visible=#false; }; }; }".into()).unwrap();
         apply(
             &mut snapshot,
             Action::Set(ItemId("spaces".into()), "style".into(), "dots".into()),

@@ -6,7 +6,7 @@ mod radius;
 use crate::PanelPreset;
 pub use radius::CornerRadii;
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 
 /// The effects protocol accepts 32 regions; reserve one for the overflow group.
 pub const MAX_GROUPS: usize = 31;
@@ -180,6 +180,8 @@ pub struct Item {
     pub representation: Option<Representation>,
     #[serde(default = "yes")]
     pub visible: bool,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub metadata: BTreeMap<String, serde_json::Value>,
 }
 
 impl<'de> Deserialize<'de> for Item {
@@ -188,8 +190,22 @@ impl<'de> Deserialize<'de> for Item {
         let fields = value
             .as_object()
             .ok_or_else(|| serde::de::Error::custom("expected a panel item"))?;
-        if fields.contains_key("enabled") || fields.contains_key("workspace_style") {
-            return Err(serde::de::Error::custom("use item visible and Workspaces style"));
+        const OPTIONS: &[&str] = &[
+            "id",
+            "kind",
+            "gap_before",
+            "overflow",
+            "priority",
+            "representation",
+            "visible",
+            "metadata",
+            "style",
+            "percentage",
+        ];
+        for key in fields.keys() {
+            if !OPTIONS.contains(&key.as_str()) {
+                return Err(serde::de::Error::unknown_field(key, OPTIONS));
+            }
         }
         if fields.contains_key("style") && fields.get("kind").and_then(serde_json::Value::as_str) != Some("workspaces")
         {
@@ -217,6 +233,8 @@ impl<'de> Deserialize<'de> for Item {
             representation: Option<Representation>,
             #[serde(default = "yes")]
             visible: bool,
+            #[serde(default)]
+            metadata: BTreeMap<String, serde_json::Value>,
         }
         let item: Fields = serde_json::from_value(value).map_err(serde::de::Error::custom)?;
         Ok(Self {
@@ -227,6 +245,7 @@ impl<'de> Deserialize<'de> for Item {
             priority: item.priority,
             representation: item.representation,
             visible: item.visible,
+            metadata: item.metadata,
         })
     }
 }
@@ -254,6 +273,7 @@ impl Item {
             gap_before: None,
             representation: None,
             visible: true,
+            metadata: BTreeMap::new(),
             overflow: if matches!(
                 kind,
                 ItemKind::Overview | ItemKind::Workspaces { .. } | ItemKind::FocusedWindow
@@ -547,6 +567,7 @@ impl Panel {
                 gap_before: None,
                 representation: None,
                 visible: true,
+                metadata: BTreeMap::new(),
                 overflow: OverflowPolicy::Never,
                 priority: 100,
             }],
@@ -978,6 +999,30 @@ animations { speed 0.8; }
         ] {
             assert!(serde_json::from_value::<Item>(value).is_err());
         }
+    }
+
+    #[test]
+    fn item_options_are_strict_and_metadata_is_explicit() {
+        for key in ["ovreflow", "visibile", "custom_note"] {
+            let mut value = serde_json::json!({"id":"network", "kind":"network"});
+            value[key] = "always".into();
+            let error = serde_json::from_value::<Item>(value).unwrap_err().to_string();
+            assert!(error.contains(key) && error.contains("unknown field"), "{error}");
+        }
+        let source = "panel main { start { group nav { item network kind=\"network\" { metadata { custom-note \"keep\"; overflow \"authored note\"; }; }; }; }; }";
+        let panel: Vec<Panel> =
+            serde_json::from_value(crate::Document::parse(source).unwrap().get("panels").unwrap().clone()).unwrap();
+        let item = &panel[0].start.groups[0].items[0];
+        assert_eq!(item.metadata["custom_note"], "keep");
+        assert_eq!(item.overflow, OverflowPolicy::Auto);
+        assert_eq!(
+            serde_json::from_value::<Item>(serde_json::to_value(item).unwrap()).unwrap(),
+            *item
+        );
+        assert!(
+            serde_json::from_value::<Item>(serde_json::json!({"id":"network", "kind":"network", "metadata":"wrong"}))
+                .is_err()
+        );
     }
     #[test]
     fn surface_changes_only_replace_composition_when_item_geometry_changes() {
