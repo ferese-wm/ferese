@@ -20,6 +20,8 @@ pub struct Resolution {
     pub items: BTreeMap<ItemId, Placement>,
     pub overflow: Vec<ItemId>,
     pub zone_widths: [f32; 3],
+    /// Separation used when allocating these zones.
+    pub zone_gap: f32,
     pub forced_overflow: bool,
     pub overflow_trigger_width: f32,
     /// Width needed by the smallest visible representations before automatic overflow.
@@ -71,7 +73,7 @@ impl Resolution {
     }
 
     fn required_width(&self) -> f32 {
-        self.required_width_with_gap(8.)
+        self.required_width_with_gap(self.zone_gap)
     }
 
     fn required_width_with_gap(&self, gap: f32) -> f32 {
@@ -111,8 +113,11 @@ pub fn resolve_with_gap(
 ) -> Resolution {
     let available = available.max(0.0);
     let zone_gap = zone_gap.max(0.);
-    let fits = |resolution: &Resolution| resolution.required_width_with_gap(zone_gap) <= available;
-    let mut result = Resolution::default();
+    let fits = |resolution: &Resolution| resolution.fits(available);
+    let mut result = Resolution {
+        zone_gap,
+        ..Resolution::default()
+    };
     let ordered: Vec<_> = [&panel.start, &panel.center, &panel.end]
         .into_iter()
         .flat_map(|zone| &zone.groups)
@@ -152,7 +157,7 @@ pub fn resolve_with_gap(
         }
     }
     minimum.update_widths(panel, overflow_width);
-    result.minimum_width = minimum.required_width_with_gap(zone_gap);
+    result.minimum_width = minimum.required_width();
     // Flexible content yields space without changing the stored item preference.
     for (_, item) in &candidates {
         let Some(measured) = measurements.get(&item.id).filter(|measured| measured.minimum.is_some()) else {
@@ -225,7 +230,13 @@ pub fn resolve_with_gap(
         else {
             continue;
         };
-        let maximum = measured.alternatives[0].1;
+        let Some(maximum) = measured
+            .alternatives
+            .iter()
+            .find_map(|(candidate, width)| (*candidate == representation).then_some(*width))
+        else {
+            continue;
+        };
         let mut low = minimum;
         let mut high = maximum;
         for _ in 0..20 {
@@ -254,6 +265,58 @@ pub fn resolve_with_gap(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fits_uses_the_gap_that_was_resolved() {
+        let panel = Panel::default();
+        let measured = measurements(&panel);
+        for gap in [0., 2., 16., 48.] {
+            let result = resolve_with_gap(&panel, &measured, 2400., 32., gap);
+            assert_eq!(result.zone_gap, gap);
+            let required = result.required_width_with_gap(gap);
+            assert!(result.fits(required));
+            assert!(!result.fits(required - 1.));
+        }
+    }
+
+    #[test]
+    fn flexible_restoration_stays_within_the_selected_representation() {
+        let mut panel = Panel::default();
+        panel.start.groups.clear();
+        panel.center.groups.clear();
+        panel.end.groups.retain(|group| group.id.0 == "time");
+        let mut clock = super::super::Item::new("clock", super::super::ItemKind::Clock);
+        clock.overflow = OverflowPolicy::Never;
+        clock.priority = 0;
+        let audio = super::super::Item::new("audio", super::super::ItemKind::Audio);
+        panel.end.groups[0].items = vec![clock, audio];
+        let result = resolve(
+            &panel,
+            &[
+                Measurement {
+                    id: ItemId("clock".into()),
+                    alternatives: vec![(Representation::Wide, 80.), (Representation::Compact, 40.)],
+                    minimum: Some(60.),
+                },
+                Measurement {
+                    id: ItemId("audio".into()),
+                    alternatives: vec![(Representation::Icon, 100.)],
+                    minimum: None,
+                },
+            ],
+            120.,
+            32.,
+        );
+        assert_eq!(
+            result.items[&ItemId("clock".into())],
+            Placement::Visible {
+                representation: Representation::Compact,
+                width: 40.
+            }
+        );
+        assert_eq!(result.overflow, [ItemId("audio".into())]);
+        assert!(result.fits(120.));
+    }
 
     #[test]
     fn allocation_is_independent_of_measurement_order_even_for_flexible_items() {
