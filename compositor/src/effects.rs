@@ -111,6 +111,7 @@ impl SurfaceEffectsState {
     }
 
     fn set_role(&self, role: Option<SemanticRole>) -> bool {
+        self.pending.lock().unwrap().take();
         let mut current = self.role.lock().unwrap();
         if *current != role {
             *current = role;
@@ -678,6 +679,23 @@ mod tests {
         assert!(state.panel.lock().unwrap().is_none());
         assert_eq!(*state.role.lock().unwrap(), Some(SemanticRole::Popover));
         assert_eq!(*state.opacity.lock().unwrap(), 800);
+    }
+
+    #[test]
+    fn hiding_a_panel_cancels_its_queued_presentation() {
+        let state = SurfaceEffectsState::new();
+        state.set_role(Some(SemanticRole::Panel));
+        *state.pending.lock().unwrap() = Some(PendingPresentation {
+            panel: decode_panel_shapes(&shape_bytes(0.), 0.),
+            role: SemanticRole::Panel,
+            regions: vec![[0., 0., 100., 36., 0.]],
+            opacity: 1000,
+            region_opacities: vec![1000],
+        });
+        state.set_role(None);
+        state.commit_presentation();
+        assert_eq!(*state.role.lock().unwrap(), None);
+        assert!(state.panel.lock().unwrap().is_none());
     }
 
     #[test]
