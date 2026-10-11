@@ -2,7 +2,7 @@ use std::time::{Duration, Instant};
 
 use cosmic::app::Task;
 use cosmic::iced::{Alignment, mouse::ScrollDelta, window};
-use cosmic::widget::{button, container, mouse_area, row};
+use cosmic::widget::{button, container, row};
 use cosmic::{Element, theme};
 use ferese_panel::{ItemKind, morph::Mode};
 
@@ -12,6 +12,7 @@ use crate::{FereseShell, Message, color_with_opacity, motion, text};
 
 const SLOT: f32 = 12.;
 const ACTIVE_EXTRA: f32 = 12.;
+const DOT_INSET: f32 = 3.;
 const LIMIT: usize = 4;
 
 struct Selection<'a> {
@@ -25,8 +26,7 @@ impl Selection<'_> {
             return 0.;
         }
         // Six-pixel gaps, room for the active pill, and an optional overflow count.
-        self.workspaces.len() as f32 * SLOT
-            + ACTIVE_EXTRA
+        self.workspaces.len() as f32 * SLOT + ACTIVE_EXTRA - DOT_INSET
             + if self.hidden > 0 {
                 6. + (self.hidden.to_string().len() + 1) as f32 * 7.
             } else {
@@ -39,11 +39,13 @@ fn select(mut workspaces: Vec<&WorkspaceSnapshot>, active: u64, budget: f32) -> 
     workspaces.retain(|workspace| workspace.window_count > 0 || workspace.id == active);
     workspaces.sort_by_key(|workspace| (workspace.index, workspace.id));
     let count = workspaces.len();
-    if count == 0 || (count <= LIMIT && count as f32 * SLOT + ACTIVE_EXTRA <= budget) {
+    if count == 0 || (count <= LIMIT && count as f32 * SLOT + ACTIVE_EXTRA - DOT_INSET <= budget) {
         return Selection { workspaces, hidden: 0 };
     }
     let overflow_width = 6. + (count.to_string().len() + 1) as f32 * 7.;
-    let visible = (((budget - overflow_width - ACTIVE_EXTRA) / SLOT).floor().max(1.) as usize)
+    let visible = (((budget - overflow_width - ACTIVE_EXTRA + DOT_INSET) / SLOT)
+        .floor()
+        .max(1.) as usize)
         .min(LIMIT)
         .min(count);
     let position = workspaces
@@ -146,6 +148,9 @@ impl FereseShell {
                 let width = self.hub_workspace_width(entry.bar);
                 let width = if width > 0. { width + 10. } else { 0. };
                 let mut runtime = runtime.borrow_mut();
+                if runtime.observed_workspace.is_none() {
+                    runtime.observed_workspace = self.output_for_bar(entry.bar).map(|output| output.active_workspace);
+                }
                 if runtime.workspace_width == width {
                     return None;
                 }
@@ -330,7 +335,7 @@ impl FereseShell {
                     )
                 },
             );
-        for workspace in &selection.workspaces {
+        for (index, workspace) in selection.workspaces.iter().enumerate() {
             let urgent = self
                 .snapshot
                 .windows
@@ -362,7 +367,13 @@ impl FereseShell {
                                 ..Default::default()
                             })),
                     )
-                    .center_x(SLOT + ACTIVE_EXTRA * progress)
+                    // The first dot starts at the group's edge; only the gaps
+                    // between dots need the two half-slot insets.
+                    .padding(cosmic::iced::Padding {
+                        left: if index == 0 { 0. } else { DOT_INSET },
+                        right: DOT_INSET,
+                        ..Default::default()
+                    })
                     .center_y(28)
                     .into()
                 },
@@ -407,9 +418,7 @@ impl FereseShell {
                 disabled: Box::new(move |_| appearance),
             })
             .on_press(cosmic::Action::App(Message::HubOverview(id)));
-        mouse_area(control)
-            .on_scroll(move |delta| cosmic::Action::App(Message::HubWorkspaceScroll(id, delta)))
-            .into()
+        super::scroll::area(control.into(), id)
     }
 }
 
