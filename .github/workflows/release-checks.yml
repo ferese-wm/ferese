@@ -3,12 +3,12 @@ on:
   pull_request:
   push:
     branches: [main]
-    tags: ["v*"]
   workflow_dispatch:
+  workflow_call:
 permissions:
   contents: read
 concurrency:
-  group: release-checks-${{ github.ref }}
+  group: release-checks-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 jobs:
   workspace:
@@ -79,37 +79,3 @@ jobs:
           if-no-files-found: ignore
       - name: Test installer, session recovery and private portal contracts
         run: python3 -m unittest discover -s scripts/tests -v
-
-  publish:
-    name: Publish validated tag
-    needs: workspace
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/github-script@v8
-        with:
-          script: |
-            const tag = context.ref.slice('refs/tags/'.length);
-            const repo = context.repo;
-            const commit = await github.rest.repos.getCommit({...repo, ref: tag});
-            if (commit.data.sha !== context.sha) {
-              throw new Error('Release tag moved after validation');
-            }
-            let release;
-            try {
-              release = (await github.rest.repos.getReleaseByTag({...repo, tag})).data;
-            } catch (error) {
-              if (error.status !== 404) throw error;
-            }
-            if (release?.draft) {
-              await github.rest.repos.updateRelease({...repo, release_id: release.id, draft: false});
-            } else if (!release) {
-              await github.rest.repos.createRelease({
-                ...repo, tag_name: tag, name: tag,
-                generate_release_notes: true, prerelease: tag.includes('-')
-              });
-            } else {
-              core.notice(`Release ${tag} is already published`);
-            }

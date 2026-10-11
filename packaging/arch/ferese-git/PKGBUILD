@@ -1,0 +1,59 @@
+pkgname=ferese-git
+pkgver=0.1.0.r0.g0000000
+pkgrel=1
+pkgdesc='Scrolling Wayland desktop with its shell, Settings and desktop portal (Git)'
+arch=('x86_64')
+url='https://github.com/ferese-wm/ferese'
+license=('MIT' 'Apache-2.0' 'BSD-2-Clause' 'BSD-3-Clause' 'BSL-1.0' 'CC0-1.0' 'ISC' 'MPL-2.0' 'Unicode-3.0' 'Zlib' 'OFL-1.1' 'Apache-2.0 WITH LLVM-exception')
+depends=('wayland' 'libxkbcommon' 'libinput' 'systemd-libs' 'seatd' 'mesa' 'libdrm'
+         'fontconfig' 'freetype2' 'expat' 'dbus' 'python' 'bash' 'util-linux' 'systemd' 'pam' 'polkit' 'foot' 'pipewire'
+         'wireplumber' 'libpipewire' 'gstreamer' 'xdg-desktop-portal' 'xdg-desktop-portal-gtk')
+makedepends=('cargo>=1.95' 'cmake' 'clang' 'pkgconf' 'python' 'git' 'desktop-file-utils')
+optdepends=('brightnessctl: brightness controls' 'slurp: screenshot region selection'
+            'satty: screenshot editing' 'wl-clipboard: screenshot clipboard'
+            'gst-plugins-base: recording codecs' 'gst-plugins-good: recording codecs'
+            'gst-plugin-pipewire: PipeWire recording'
+            'xorg-xwayland: X11 applications' 'xwayland-satellite: X11 application integration (requires readiness support)')
+provides=('ferese')
+conflicts=('ferese')
+# GCC LTO objects from the SPA C wrappers cannot be linked by Rust's lld.
+options=('!lto')
+backup=('etc/pam.d/ferese-lock')
+source=('ferese::git+https://github.com/ferese-wm/ferese.git#branch=main')
+sha256sums=('SKIP')
+
+pkgver() {
+    cd "$srcdir/ferese"
+    local version
+    version=$(python -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])')
+    printf '%s.r%s.g%s' "${version//-/}" "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+}
+
+prepare() {
+    cd "$srcdir/ferese"
+    export CARGO_HOME="$srcdir/cargo-home"
+    cargo fetch --locked
+}
+
+build() {
+    cd "$srcdir/ferese"
+    export CARGO_HOME="$srcdir/cargo-home"
+    export CARGO_PROFILE_RELEASE_DEBUG=0
+    cargo build --release --frozen --offline --workspace
+}
+
+check() {
+    cd "$srcdir/ferese"
+    export CARGO_HOME="$srcdir/cargo-home"
+    export CARGO_PROFILE_RELEASE_DEBUG=0
+    python -m unittest discover -s scripts/tests -p test_package.py
+    dbus-run-session -- cargo test --release --frozen --offline --workspace
+}
+
+package() {
+    cd "$srcdir/ferese"
+    export CARGO_HOME="$srcdir/cargo-home"
+    python scripts/package.py stage --destdir "$pkgdir" --pam arch
+    desktop-file-validate "$pkgdir/usr/share/wayland-sessions/ferese.desktop"
+    desktop-file-validate "$pkgdir/usr/share/applications/dev.ferese.Settings.desktop"
+}

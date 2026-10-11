@@ -58,6 +58,8 @@ also include desktop controls; their features depend on the shell and tools you 
 
 ## Install
 
+Fedora and Arch package builds are covered in [Packages and releases](docs/packaging.md).
+
 Start with the [dependencies](docs/installation.md#requirements), then clone Ferese and
 build it as your normal user:
 

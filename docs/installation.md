@@ -3,6 +3,9 @@
 Ferese runs on Linux as its own Wayland session alongside your existing desktop.
 Launch it from a login manager, a command-based greeter or a local TTY.
 
+For Fedora and Arch packages, see [Packages and releases](packaging.md). The
+steps below build and install from source.
+
 ## Requirements
 
 For a full session, you’ll need a Wayland-capable graphics driver and a local user

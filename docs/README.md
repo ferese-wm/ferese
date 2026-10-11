@@ -17,6 +17,7 @@
 
 ## Develop Ferese
 
+- [Packages and releases](packaging.md): build Fedora and Arch packages and publish a tagged release.
 - [Development](development.md): build Ferese, run tests and check portal contracts.
 - [Nested resize checks](nested-resize-testing.md).
 - [Client soak testing](native-soak-testing.md).
