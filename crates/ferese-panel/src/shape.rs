@@ -3,13 +3,75 @@
 
 use crate::{CornerRadii, Edge};
 use ferese_layout::Rect;
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum Style {
     Floating,
     Capsules,
     Notch,
+    #[default]
     Flat,
+    Frame,
+    CornerWrap,
+    Fused,
+    Morph,
+    Adaptive,
+    WindowHug,
+}
+
+impl Style {
+    pub const ALL: [Self; 10] = [
+        Self::Floating,
+        Self::Capsules,
+        Self::Notch,
+        Self::Flat,
+        Self::Adaptive,
+        Self::Morph,
+        Self::Fused,
+        Self::Frame,
+        Self::CornerWrap,
+        Self::WindowHug,
+    ];
+
+    pub const fn key(self) -> &'static str {
+        match self {
+            Self::Floating => "floating",
+            Self::Capsules => "capsules",
+            Self::Notch => "notch",
+            Self::Flat => "flat",
+            Self::Frame => "frame",
+            Self::CornerWrap => "corner-wrap",
+            Self::Fused => "fused",
+            Self::Morph => "morph",
+            Self::Adaptive => "adaptive",
+            Self::WindowHug => "window-hug",
+        }
+    }
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Floating => "Floating",
+            Self::Capsules => "Capsules",
+            Self::Notch => "Notch",
+            Self::Flat => "Edge to edge",
+            Self::Frame => "Frame",
+            Self::CornerWrap => "Corner wrap",
+            Self::Fused => "Fused islands",
+            Self::Morph => "Morph",
+            Self::Adaptive => "Adaptive",
+            Self::WindowHug => "Window hug",
+        }
+    }
+    pub const fn connected(self) -> bool {
+        matches!(self, Self::Capsules | Self::Notch)
+    }
+    pub const fn detached(self) -> bool {
+        matches!(
+            self,
+            Self::Floating | Self::Capsules | Self::Fused | Self::Morph | Self::Adaptive | Self::WindowHug
+        )
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -67,13 +129,15 @@ pub fn effective_radii(
     }
     let [width, height] = size;
     let base = AnchoredRadii(match style {
-        Style::Floating | Style::Capsules => [height / 2.; 4],
+        Style::Floating | Style::Capsules | Style::Fused | Style::Morph | Style::Adaptive | Style::WindowHug => {
+            [height / 2.; 4]
+        }
         Style::Notch => match zone {
             ZonePosition::Start => [0., 0., 14., 0.],
             ZonePosition::Center => [0., 0., 20., 20.],
             ZonePosition::End => [0., 0., 0., 14.],
         },
-        Style::Flat => [0.; 4],
+        Style::Flat | Style::Frame | Style::CornerWrap => [0.; 4],
     });
     let radii = if matches!(style, Style::Capsules | Style::Notch) {
         base.joined(index, count)?
