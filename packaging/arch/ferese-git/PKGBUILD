@@ -10,10 +10,11 @@ depends=('wayland' 'libxkbcommon' 'libinput' 'systemd-libs' 'seatd' 'mesa' 'libd
          'wireplumber' 'libpipewire' 'gstreamer' 'xdg-desktop-portal' 'xdg-desktop-portal-gtk')
 makedepends=('cargo' 'cmake' 'clang' 'pkgconf' 'python' 'git' 'desktop-file-utils')
 checkdepends=('dbus' 'vulkan-swrast' 'xorg-xauth')
-optdepends=('brightnessctl: brightness controls' 'slurp: screenshot region selection'
+optdepends=('brightnessctl: brightness controls' 'slurp: screenshot and recording region selection'
             'satty: screenshot editing' 'wl-clipboard: screenshot clipboard'
             'gst-plugins-base: recording codecs' 'gst-plugins-good: recording codecs'
             'gst-plugin-pipewire: PipeWire recording'
+            'pipewire-pulse: system sound and microphone recording'
             'xorg-xwayland: X11 applications' 'xwayland-satellite: X11 application integration (requires readiness support)')
 provides=('ferese')
 conflicts=('ferese')

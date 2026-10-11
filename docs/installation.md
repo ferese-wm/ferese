@@ -25,7 +25,7 @@ sudo dnf install python3 git curl gcc gcc-c++ make cmake pkgconf-pkg-config \
   freetype-devel expat-devel dbus-daemon dbus-tools desktop-file-utils foot pam \
   clang clang-devel pipewire-devel pipewire wireplumber polkit polkit-libs \
   xdg-desktop-portal xdg-desktop-portal-gtk \
-  gstreamer1-devel gstreamer1-plugins-base gstreamer1-plugins-good pipewire-gstreamer
+  gstreamer1-devel gstreamer1-plugins-base gstreamer1-plugins-good pipewire-gstreamer pipewire-pulseaudio slurp
 ```
 
 ### Arch Linux
@@ -35,7 +35,7 @@ sudo pacman -S --needed python base-devel git curl cmake pkgconf wayland libxkbc
   libinput systemd seatd mesa libdrm fontconfig freetype2 expat dbus \
   desktop-file-utils foot pam clang pipewire libpipewire wireplumber polkit \
   xdg-desktop-portal xdg-desktop-portal-gtk \
-  gstreamer gst-plugins-base gst-plugins-good gst-plugin-pipewire
+  gstreamer gst-plugins-base gst-plugins-good gst-plugin-pipewire pipewire-pulse slurp
 ```
 
 ### Debian and Ubuntu
@@ -49,7 +49,7 @@ sudo apt install python3 build-essential git curl cmake pkg-config libwayland-de
   libpipewire-0.3-dev libspa-0.2-dev pipewire wireplumber polkitd libpolkit-agent-1-0 \
   xdg-desktop-portal xdg-desktop-portal-gtk \
   libgstreamer1.0-dev gstreamer1.0-pipewire gstreamer1.0-plugins-base \
-  gstreamer1.0-plugins-good
+  gstreamer1.0-plugins-good pipewire-pulse slurp
 ```
 
 Installation has been tested on Fedora. Package names or versions may differ on

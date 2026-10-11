@@ -8,6 +8,7 @@ use ferese_theme::icons::symbolic as glyph;
 use serde::{Deserialize, Serialize};
 
 use crate::capture::Source;
+use crate::recording::Audio;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Prompt {
@@ -22,6 +23,8 @@ pub struct Prompt {
     pub persist_mode: u32,
     #[serde(default)]
     pub rememberable: Vec<String>,
+    #[serde(default)]
+    pub recording: bool,
 }
 
 impl Prompt {
@@ -48,6 +51,10 @@ impl Prompt {
 pub(crate) struct Selection {
     pub names: Vec<String>,
     pub persist_mode: u32,
+    #[serde(default)]
+    pub audio: Audio,
+    #[serde(default)]
+    pub region: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -57,6 +64,8 @@ enum Message {
     Attached(crate::parent::Attachment),
     Select(usize),
     Remember,
+    Audio(Audio),
+    Region,
     Share,
     Cancel,
 }
@@ -68,6 +77,8 @@ struct Picker {
     prompt: Prompt,
     selected: Vec<usize>,
     remember: bool,
+    audio: Audio,
+    region: bool,
     background: cosmic::iced::Color,
     palette: ferese_theme::Palette,
     font: cosmic::font::Font,
@@ -86,7 +97,10 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let (theme, font, background, palette) = appearance();
-    let height = 180. + prompt.source_list_height() + if prompt.persist_mode > 0 { 48. } else { 0. };
+    let height = 180.
+        + prompt.source_list_height()
+        + if prompt.persist_mode > 0 { 48. } else { 0. }
+        + if prompt.recording { 190. } else { 0. };
     cosmic::app::run::<Picker>(
         Settings::default()
             .size(cosmic::iced::Size::new(400., height))
@@ -129,6 +143,8 @@ impl cosmic::Application for Picker {
             prompt,
             selected: Vec::new(),
             remember: false,
+            audio: Audio::Off,
+            region: false,
             background,
             palette,
             font,
@@ -138,7 +154,9 @@ impl cosmic::Application for Picker {
             .main_window_id()
             .map(|id| {
                 app.set_window_title(
-                    if app.prompt.window_capture {
+                    if app.prompt.recording {
+                        "Ferese — screen recording".into()
+                    } else if app.prompt.window_capture {
                         "Ferese — capture a window".into()
                     } else {
                         "Ferese — share your screen".into()
@@ -211,6 +229,8 @@ impl cosmic::Application for Picker {
                 self.remember &= self.can_remember();
             }
             Message::Remember if self.can_remember() => self.remember = !self.remember,
+            Message::Audio(audio) if self.prompt.recording => self.audio = audio,
+            Message::Region if self.prompt.recording => self.region = !self.region,
             Message::Share if !self.selected.is_empty() => {
                 let names: Vec<_> = self.selected.iter().map(|i| &self.prompt.sources[*i].name).collect();
                 if self.prompt.window_capture {
@@ -223,6 +243,8 @@ impl cosmic::Application for Picker {
                         } else {
                             0
                         },
+                        audio: self.audio,
+                        region: self.region,
                     };
                     println!("{}", serde_json::to_string(&selection).unwrap());
                 }
@@ -253,20 +275,26 @@ impl cosmic::Application for Picker {
             row![
                 glyph(ferese_theme::icons::DISPLAY, 24),
                 column![
-                    self.text(if self.prompt.window_capture {
+                    self.text(if self.prompt.recording {
+                        "Record your screen"
+                    } else if self.prompt.window_capture {
                         "Choose a window"
                     } else {
                         "Choose what to share"
                     })
                     .size(17),
-                    self.text(format!(
-                        "{} {app}",
-                        if self.prompt.window_capture {
-                            "Screenshot for"
-                        } else {
-                            "Share with"
-                        }
-                    ))
+                    self.text(if self.prompt.recording {
+                        "Saved to your Videos folder".to_owned()
+                    } else {
+                        format!(
+                            "{} {app}",
+                            if self.prompt.window_capture {
+                                "Screenshot for"
+                            } else {
+                                "Share with"
+                            }
+                        )
+                    })
                     .size(12),
                 ]
                 .spacing(2)
@@ -317,7 +345,9 @@ impl cosmic::Application for Picker {
         }
         content = content.push(scrollable(sources).height(Length::Fixed(self.prompt.source_list_height())));
         content = content.push(
-            self.text(if self.prompt.window_capture {
+            self.text(if self.prompt.recording {
+                "Choose a display, then record it in full or select a region."
+            } else if self.prompt.window_capture {
                 "Only the selected window will be captured."
             } else {
                 "Displays share everything visible. Windows share only their own content."
@@ -325,6 +355,36 @@ impl cosmic::Application for Picker {
             .size(12)
             .width(Length::Fill),
         );
+        if self.prompt.recording {
+            content = content.push(
+                row![
+                    self.text("Select a region").width(Length::Fill),
+                    ferese_theme::controls::switch(self.region, self.palette).on_press(Message::Region),
+                ]
+                .align_y(Alignment::Center),
+            );
+            let mut audio = column([]).spacing(4);
+            for choices in [[Audio::Off, Audio::System], [Audio::Microphone, Audio::Both]] {
+                let mut choices_row = row([]).spacing(4);
+                for choice in choices {
+                    choices_row = choices_row.push(
+                        ferese_theme::controls::text_button(
+                            choice.label(),
+                            self.font,
+                            self.palette,
+                            self.audio == choice,
+                        )
+                        .width(Length::Fill)
+                        .on_press(Message::Audio(choice)),
+                    );
+                }
+                audio = audio.push(choices_row);
+            }
+            content = content.push(self.text("Audio").size(12)).push(audio).push(
+                self.text("Uses the default output and microphone selected in audio settings.")
+                    .size(12),
+            );
+        }
         if self.prompt.persist_mode > 0 && !self.prompt.window_capture {
             let label = if !self.can_remember() {
                 "This selection needs approval each time"
@@ -345,7 +405,13 @@ impl cosmic::Application for Picker {
         }
 
         let share = ferese_theme::controls::text_button(
-            if self.prompt.window_capture { "Capture" } else { "Share" },
+            if self.prompt.recording {
+                if self.region { "Select region" } else { "Record" }
+            } else if self.prompt.window_capture {
+                "Capture"
+            } else {
+                "Share"
+            },
             self.font,
             self.palette,
             true,

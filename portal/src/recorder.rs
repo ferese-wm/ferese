@@ -8,6 +8,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
+use crate::recording::{Audio, Recording};
 use futures_util::StreamExt;
 use gstreamer as gst;
 use gstreamer::prelude::*;
@@ -25,9 +26,11 @@ pub fn event(state: &str, message: Option<&str>, path: Option<&Path>) {
     let _ = writeln!(stdout, "{value}");
     let _ = stdout.flush();
 }
+
 fn option_string(value: String) -> OwnedValue {
     OwnedValue::try_from(Value::from(value)).unwrap()
 }
+
 async fn request<B: serde::Serialize + zbus::zvariant::DynamicType>(
     connection: &Connection,
     method: &str,
@@ -48,18 +51,22 @@ async fn request<B: serde::Serialize + zbus::zvariant::DynamicType>(
         .call(method, body)
         .await
         .map_err(|e| format!("Screen recording portal unavailable: {e}"))?;
+
     if returned.as_str() != path {
         return Err("Unexpected portal request handle".into());
     }
+
     if *stop.borrow() {
         let _: Result<(), _> = request.call("Close", &()).await;
         return Ok(None);
     }
+
     tokio::select! {
         _ = stop.changed() => {
             let _: Result<(), _> = request.call("Close", &()).await;
             Ok(None)
         }
+
         signal = tokio::time::timeout(Duration::from_secs(125), responses.next()) => {
             let signal = signal.map_err(|_| "Display selection timed out")?.ok_or("Portal disconnected")?;
             let (code, options): (u32, Options) = signal.body().deserialize().map_err(|e| e.to_string())?;
@@ -70,6 +77,7 @@ async fn request<B: serde::Serialize + zbus::zvariant::DynamicType>(
 
 pub async fn run() -> Result<(), String> {
     gst::init().map_err(|e| e.to_string())?;
+
     for factory in ["pipewiresrc", "queue", "videoconvert", "vp8enc", "webmmux", "fdsink"] {
         if gst::ElementFactory::find(factory).is_none() {
             return Err(format!(
@@ -77,12 +85,15 @@ pub async fn run() -> Result<(), String> {
             ));
         }
     }
+
     let output = output_directory()?;
     let (stop_send, mut stop) = watch::channel(false);
+
     std::thread::spawn(move || {
         let _ = std::io::stdin().read(&mut [0u8]);
         let _ = stop_send.send(true);
     });
+
     let connection = Connection::session().await.map_err(|e| e.to_string())?;
     let token = |step| format!("ferese_record_{}_{step}", std::process::id());
     let Some(created) = request(
@@ -100,6 +111,7 @@ pub async fn run() -> Result<(), String> {
         event("cancelled", None, None);
         return Ok(());
     };
+
     let handle = created.get("session_handle").ok_or("Portal returned no session")?;
     // The public portal historically returns this path as a D-Bus string.
     let handle = OwnedObjectPath::try_from(
@@ -108,27 +120,33 @@ pub async fn run() -> Result<(), String> {
     .map_err(|e| e.to_string())?;
     // Older/foreign backends keep their normal sharing indicator. Only Ferese
     // can verify this helper's identity and that its parent owns a bar stop button.
-    let _ = tokio::time::timeout(Duration::from_secs(3), async {
-        let control = Proxy::new(
-            &connection,
-            "org.freedesktop.impl.portal.desktop.ferese",
-            "/org/ferese/ScreenRecorder",
-            "org.ferese.ScreenRecorder",
-        )
-        .await?;
-        control.call::<_, _, ()>("UseBarControls", &(handle.clone(),)).await
-    })
-    .await;
+    let native = matches!(
+        tokio::time::timeout(Duration::from_secs(3), async {
+            let control = Proxy::new(
+                &connection,
+                "org.freedesktop.impl.portal.desktop.ferese",
+                "/org/ferese/ScreenRecorder",
+                "org.ferese.ScreenRecorder",
+            )
+            .await?;
+            control.call::<_, _, ()>("UseBarControls", &(handle.clone(),)).await
+        })
+        .await,
+        Ok(Ok(()))
+    );
+
     let session = Proxy::new(&connection, DESKTOP, handle.as_str(), "org.freedesktop.portal.Session")
         .await
         .map_err(|e| e.to_string())?;
-    let result = record_session(&connection, &session, &handle, &token, &output, &mut stop).await;
+    let result = record_session(&connection, &session, &handle, &token, &output, &mut stop, native).await;
     let _: Result<(), _> = session.call("Close", &()).await;
+
     match result {
         Ok(Some(path)) => event("saved", None, Some(&path)),
         Ok(None) => event("cancelled", None, None),
         Err(e) => return Err(e),
     }
+
     Ok(())
 }
 async fn record_session(
@@ -138,8 +156,10 @@ async fn record_session(
     token: &impl Fn(u8) -> String,
     output: &Path,
     stop: &mut watch::Receiver<bool>,
+    native: bool,
 ) -> Result<Option<PathBuf>, String> {
     let mut closed = session.receive_signal("Closed").await.map_err(|e| e.to_string())?;
+
     if request(
         connection,
         "SelectSources",
@@ -160,7 +180,9 @@ async fn record_session(
     {
         return Ok(None);
     }
+
     event("selecting", None, None);
+
     let Some(started) = request(
         connection,
         "Start",
@@ -172,6 +194,7 @@ async fn record_session(
     else {
         return Ok(None);
     };
+
     let streams: Vec<(u32, Options)> = started
         .get("streams")
         .ok_or("Portal returned no video stream")?
@@ -179,9 +202,32 @@ async fn record_session(
         .map_err(|e| e.to_string())?
         .try_into()
         .map_err(|e: zbus::zvariant::Error| e.to_string())?;
+
     if streams.len() != 1 {
         return Err("Recording requires exactly one display".into());
     }
+
+    let recording = if native {
+        let control = Proxy::new(
+            connection,
+            "org.freedesktop.impl.portal.desktop.ferese",
+            "/org/ferese/ScreenRecorder",
+            "org.ferese.ScreenRecorder",
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+        let options: String =
+            tokio::time::timeout(Duration::from_secs(3), control.call("RecordingOptions", &(handle,)))
+                .await
+                .map_err(|_| "Recording options timed out")?
+                .map_err(|e| {
+                    format!("Cannot read recording options; update the Ferese portal and recorder together: {e}")
+                })?;
+        serde_json::from_str::<Recording>(&options).map_err(|e| e.to_string())?
+    } else {
+        Recording::default()
+    };
+
     let portal = Proxy::new(connection, DESKTOP, DESKTOP_PATH, "org.freedesktop.portal.ScreenCast")
         .await
         .map_err(|e| e.to_string())?;
@@ -189,9 +235,11 @@ async fn record_session(
         .call("OpenPipeWireRemote", &(handle, Options::new()))
         .await
         .map_err(|e| e.to_string())?;
+
     if *stop.borrow() {
         return Ok(None);
     }
+
     let stop_capture = Arc::new(AtomicBool::new(*stop.borrow()));
     let worker_stop = stop_capture.clone();
     let node = streams[0].0;
@@ -205,7 +253,8 @@ async fn record_session(
             .property("always-copy", true)
             .build()
             .map_err(|e| e.to_string())?;
-        let result = encode(source, &output, worker_stop);
+        let audio = audio_sources(recording.audio)?;
+        let result = encode(source, audio, recording.crop, &output, worker_stop);
         drop(remote);
         result
     });
@@ -214,11 +263,13 @@ async fn record_session(
         _ = stop.changed() => { stop_capture.store(true, Ordering::Relaxed); worker.await },
         _ = closed.next() => { stop_capture.store(true, Ordering::Relaxed); worker.await },
     };
+
     result.map_err(|e| e.to_string())?.map(Some)
 }
 
 fn output_directory() -> Result<PathBuf, String> {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
+
     match args.as_slice() {
         [] => dirs::video_dir()
             .or_else(|| dirs::home_dir().map(|p| p.join("Videos")))
@@ -228,19 +279,24 @@ fn output_directory() -> Result<PathBuf, String> {
         _ => Err("Usage: ferese-record [--output-dir DIRECTORY]".into()),
     }
 }
+
 fn recording_file(directory: &Path) -> Result<(File, PathBuf, PathBuf), String> {
     std::fs::create_dir_all(directory).map_err(|e| format!("Cannot create recording folder: {e}"))?;
+
     let name = format!(
         "Recording-{}-{}",
         jiff::Zoned::now().strftime("%Y-%m-%d_%H-%M-%S"),
         std::process::id()
     );
+
     for suffix in 0..100 {
         let final_path = directory.join(format!("{name}-{suffix}.webm"));
         let partial = final_path.with_extension("webm.part");
+
         if final_path.exists() {
             continue;
         }
+
         match OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -252,10 +308,44 @@ fn recording_file(directory: &Path) -> Result<(File, PathBuf, PathBuf), String> 
             Err(e) => return Err(format!("Cannot save recording: {e}")),
         }
     }
+
     Err("Cannot choose a unique recording filename".into())
 }
 
-fn encode(source: gst::Element, output: &Path, stop: Arc<AtomicBool>) -> Result<PathBuf, String> {
+fn audio_sources(audio: Audio) -> Result<Vec<gst::Element>, String> {
+    let devices: &[&str] = match audio {
+        Audio::Off => &[],
+        Audio::System => &["@DEFAULT_MONITOR@"],
+        Audio::Microphone => &["@DEFAULT_SOURCE@"],
+        Audio::Both => &["@DEFAULT_MONITOR@", "@DEFAULT_SOURCE@"],
+    };
+    devices.iter().map(|device| {
+        gst::ElementFactory::make("pulsesrc")
+            .property("device", *device)
+            .property("client-name", "Ferese Screen Recorder")
+            .property("do-timestamp", true)
+            .property("provide-clock", false)
+            .build().map_err(|e| format!("Cannot record {}. Install the GStreamer audio plugins and run PipeWire-Pulse or PulseAudio: {e}", audio.label()))
+    }).collect()
+}
+
+fn element(factory: &str) -> Result<gst::Element, String> {
+    gst::ElementFactory::make(factory)
+        .build()
+        .map_err(|e| format!("Recording needs the GStreamer {factory} plugin: {e}"))
+}
+
+fn encode(
+    source: gst::Element,
+    audio: Vec<gst::Element>,
+    crop: Option<crate::recording::Crop>,
+    output: &Path,
+    stop: Arc<AtomicBool>,
+) -> Result<PathBuf, String> {
+    if let Some(crop) = crop {
+        crop.validate()?;
+    }
+
     let (file, partial, destination) = recording_file(output)?;
     let pipeline = gst::Pipeline::new();
     let result = (|| {
@@ -285,10 +375,88 @@ fn encode(source: gst::Element, output: &Path, stop: Arc<AtomicBool>) -> Result<
             .property("sync", false)
             .build()
             .map_err(|e| e.to_string())?;
+
         pipeline
             .add_many([&source, &queue, &convert, &encoder, &mux, &sink])
             .map_err(|e| e.to_string())?;
-        gst::Element::link_many([&source, &queue, &convert, &encoder, &mux, &sink]).map_err(|e| e.to_string())?;
+
+        if let Some(crop) = crop {
+            let filter = gst::ElementFactory::make("videocrop")
+                .property("left", crop.left)
+                .property("top", crop.top)
+                .property("right", crop.right)
+                .property("bottom", crop.bottom)
+                .build()
+                .map_err(|e| e.to_string())?;
+            pipeline.add(&filter).map_err(|e| e.to_string())?;
+            gst::Element::link_many([&source, &queue, &filter, &convert, &encoder, &mux, &sink])
+                .map_err(|e| e.to_string())?;
+        } else {
+            gst::Element::link_many([&source, &queue, &convert, &encoder, &mux, &sink]).map_err(|e| e.to_string())?;
+        }
+
+        let mut audio_inputs = Vec::new();
+        let audio_seen = Arc::new(AtomicBool::new(audio.is_empty()));
+
+        if !audio.is_empty() {
+            let mixer = element("audiomixer")?;
+            let convert = element("audioconvert")?;
+            let resample = element("audioresample")?;
+            let encoder = element("opusenc")?;
+            let audio_queue = element("queue")?;
+            pipeline
+                .add_many([&mixer, &convert, &resample, &encoder, &audio_queue])
+                .map_err(|e| e.to_string())?;
+            gst::Element::link_many([&mixer, &convert, &resample, &encoder, &audio_queue, &mux])
+                .map_err(|e| e.to_string())?;
+            let seen = audio_seen.clone();
+            audio_queue
+                .static_pad("src")
+                .ok_or("Audio encoder has no output")?
+                .add_probe(gst::PadProbeType::BUFFER, move |_, info| {
+                    if info.buffer().is_some_and(|b| b.size() > 0) {
+                        seen.store(true, Ordering::Relaxed);
+                    }
+                    gst::PadProbeReturn::Ok
+                });
+
+            for source in audio {
+                let queue = element("queue")?;
+                let convert = element("audioconvert")?;
+                let resample = element("audioresample")?;
+                let caps = gst::ElementFactory::make("capsfilter")
+                    .property(
+                        "caps",
+                        gst::Caps::builder("audio/x-raw")
+                            .field("rate", 48_000i32)
+                            .field("channels", 2i32)
+                            .build(),
+                    )
+                    .build()
+                    .map_err(|e| e.to_string())?;
+                pipeline
+                    .add_many([&source, &queue, &convert, &resample, &caps])
+                    .map_err(|e| e.to_string())?;
+                gst::Element::link_many([&source, &queue, &convert, &resample, &caps, &mixer])
+                    .map_err(|e| e.to_string())?;
+                audio_inputs.push((source, queue));
+            }
+        }
+
+        let ended = stop.clone();
+        source
+            .static_pad("src")
+            .ok_or("Capture has no video output")?
+            .add_probe(gst::PadProbeType::EVENT_DOWNSTREAM, move |_, info| {
+                if info
+                    .event()
+                    .is_some_and(|event| matches!(event.view(), gst::EventView::Eos(_)))
+                {
+                    ended.store(true, Ordering::Relaxed);
+                }
+                gst::PadProbeReturn::Ok
+            });
+
         let announced = Arc::new(AtomicBool::new(false));
         let notice = announced.clone();
         source
@@ -300,41 +468,68 @@ fn encode(source: gst::Element, output: &Path, stop: Arc<AtomicBool>) -> Result<
                 }
                 gst::PadProbeReturn::Ok
             });
+
         pipeline.set_state(gst::State::Playing).map_err(|e| e.to_string())?;
+
         let bus = pipeline.bus().ok_or("Encoder has no message bus")?;
         let mut finishing = None;
         let started = Instant::now();
         let mut failure = None;
+
         loop {
             if stop.load(Ordering::Relaxed) && finishing.is_none() {
                 event("saving", None, None);
                 finishing = Some(Instant::now());
                 // Inject after the capture source: it may already have disappeared
                 // when the portal closes on lock or monitor removal.
-                if !queue
+                let _ = queue
                     .static_pad("sink")
                     .ok_or("Encoder queue has no input")?
-                    .send_event(gst::event::Eos::new())
-                {
-                    // The source may already have sent EOS. Let the bus confirm
-                    // finalization; a duplicate EOS can legitimately be rejected.
-                    failure.get_or_insert_with(|| "Encoder could not finish the recording".into());
+                    .send_event(gst::event::Eos::new());
+                for (source, queue) in &audio_inputs {
+                    // Audio devices are still alive when video is revoked.
+                    // Let each source order EOS after its own startup events and
+                    // buffers; injecting into its queue can race late caps.
+                    if !source.send_event(gst::event::Eos::new()) {
+                        let _ = queue
+                            .static_pad("sink")
+                            .ok_or("Audio queue has no input")?
+                            .send_event(gst::event::Eos::new());
+                    }
                 }
             }
+
             if finishing.is_some_and(|t: Instant| t.elapsed() > Duration::from_secs(10)) {
                 return Err(failure.unwrap_or("Finishing the recording timed out".into()));
             }
+
             if !announced.load(Ordering::Relaxed) && started.elapsed() > Duration::from_secs(15) {
                 return Err("No video frames arrived from the selected display".into());
             }
+
+            if !audio_seen.load(Ordering::Relaxed) && started.elapsed() > Duration::from_secs(15) {
+                failure = Some("No audio arrived from the selected audio source".into());
+                stop.store(true, Ordering::Relaxed);
+            }
+
             let Some(message) = bus.timed_pop(gst::ClockTime::from_mseconds(50)) else {
                 continue;
             };
+
             match message.view() {
                 gst::MessageView::Eos(_) => {
                     if !announced.load(Ordering::Relaxed) {
                         return Err("Recording ended before receiving video".into());
                     }
+
+                    if !audio_seen.load(Ordering::Relaxed) {
+                        return Err("Recording ended before receiving audio".into());
+                    }
+
+                    if let Some(failure) = failure {
+                        return Err(failure);
+                    }
+
                     return Ok(());
                 }
                 gst::MessageView::Error(error) => {
@@ -345,11 +540,13 @@ fn encode(source: gst::Element, output: &Path, stop: Arc<AtomicBool>) -> Result<
             }
         }
     })();
+
     let _ = pipeline.set_state(gst::State::Null);
     result.map_err(|e| format!("{e}. Incomplete file: {}", partial.display()))?;
     file.sync_all()
         .map_err(|e| format!("Cannot finish saving {}: {e}", partial.display()))?;
     std::fs::rename(&partial, &destination).map_err(|e| format!("Cannot finish saving {}: {e}", partial.display()))?;
+
     Ok(destination)
 }
 
@@ -384,7 +581,7 @@ mod tests {
             std::thread::sleep(Duration::from_secs(3));
             request_stop.store(true, Ordering::Relaxed);
         });
-        let result = encode(source, directory.path(), stop);
+        let result = encode(source, Vec::new(), None, directory.path(), stop);
         stopper.join().unwrap();
         assert_video_decodes(&result.unwrap());
     }
@@ -405,12 +602,151 @@ mod tests {
             std::thread::sleep(Duration::from_millis(350));
             request_stop.store(true, Ordering::Relaxed);
         });
-        let path = encode(source, directory.path(), stop).unwrap();
+        let path = encode(source, Vec::new(), None, directory.path(), stop).unwrap();
         stopper.join().unwrap();
         let data = std::fs::read(&path).unwrap();
         assert_eq!(&data[..4], &[0x1a, 0x45, 0xdf, 0xa3]);
         assert!(data.len() > 1000);
         assert_video_decodes(&path);
+    }
+
+    #[test]
+    #[ignore = "requires GStreamer video and audio plugins"]
+    fn encoder_saves_cropped_video_and_mixed_audio_when_stopped() {
+        assert_cropped_audio_recording(false, 2, None);
+    }
+
+    #[test]
+    #[ignore = "requires GStreamer video and audio plugins"]
+    fn video_eos_finishes_live_audio_without_waiting_for_the_user() {
+        // Models the portal ending video on lock or monitor removal while the
+        // audio devices remain available. Every track must finish together.
+        assert_cropped_audio_recording(true, 1, None);
+    }
+
+    #[test]
+    #[ignore = "requires an explicitly provided isolated PulseAudio test server"]
+    fn encoder_captures_isolated_system_and_microphone_audio() {
+        let server = std::env::var("FERESE_TEST_RECORD_PULSE_SERVER").expect("isolated audio server required");
+        assert_eq!(std::env::var("PULSE_SERVER").unwrap(), server);
+        let socket = Path::new(server.strip_prefix("unix:").expect("explicit Unix socket required"));
+        assert!(socket.starts_with(std::env::temp_dir()));
+        for audio in [Audio::System, Audio::Microphone, Audio::Both, Audio::Both, Audio::Both] {
+            assert_cropped_audio_recording(false, 0, Some(audio));
+        }
+    }
+
+    fn assert_cropped_audio_recording(video_eos: bool, audio_count: usize, selected_audio: Option<Audio>) {
+        use crate::recording::Crop;
+        use std::sync::Mutex;
+        gst::init().unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let video = gst::ElementFactory::make("videotestsrc")
+            .property("is-live", true)
+            .property("num-buffers", if video_eos { 18i32 } else { -1i32 })
+            .build()
+            .unwrap();
+        let audio = if let Some(selected_audio) = selected_audio {
+            audio_sources(selected_audio).unwrap()
+        } else {
+            (0..audio_count)
+                .map(|index| {
+                    gst::ElementFactory::make("audiotestsrc")
+                        .property("is-live", true)
+                        .property("freq", 440. + index as f64 * 220.)
+                        .build()
+                        .unwrap()
+                })
+                .collect()
+        };
+        let stop = Arc::new(AtomicBool::new(false));
+        let request_stop = stop.clone();
+        let stopper = (!video_eos).then(|| {
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(700));
+                request_stop.store(true, Ordering::Relaxed);
+            })
+        });
+        let started = Instant::now();
+        // videotestsrc negotiates 320x240. Crop before RGB conversion, including
+        // odd edge offsets, and verify the saved stream's negotiated dimensions.
+        let path = encode(
+            video,
+            audio,
+            Some(Crop {
+                left: 13,
+                top: 17,
+                right: 106,
+                bottom: 94,
+            }),
+            directory.path(),
+            stop,
+        )
+        .unwrap();
+        if let Some(stopper) = stopper {
+            stopper.join().unwrap();
+        }
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert!(!path.with_extension("webm.part").exists());
+        let decoder = gst::parse::launch(
+            "filesrc name=input ! matroskademux name=demux \
+             demux.video_0 ! queue ! vp8dec ! fakesink name=video \
+             demux.audio_0 ! queue ! opusdec ! audioconvert ! audio/x-raw,format=S16LE ! fakesink name=audio",
+        )
+        .unwrap()
+        .downcast::<gst::Pipeline>()
+        .unwrap();
+        decoder
+            .by_name("input")
+            .unwrap()
+            .set_property("location", path.to_str().unwrap());
+        let geometry = Arc::new(Mutex::new(None));
+        let observed = geometry.clone();
+        decoder.by_name("video").unwrap().static_pad("sink").unwrap().add_probe(
+            gst::PadProbeType::BUFFER,
+            move |pad, _| {
+                let caps = pad.current_caps().unwrap();
+                let structure = caps.structure(0).unwrap();
+                *observed.lock().unwrap() = Some((
+                    structure.get::<i32>("width").unwrap(),
+                    structure.get::<i32>("height").unwrap(),
+                ));
+                gst::PadProbeReturn::Ok
+            },
+        );
+        let samples = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let observed = samples.clone();
+        let audible = Arc::new(AtomicBool::new(false));
+        let heard = audible.clone();
+        decoder.by_name("audio").unwrap().static_pad("sink").unwrap().add_probe(
+            gst::PadProbeType::BUFFER,
+            move |_, info| {
+                let buffer = info.buffer().unwrap();
+                observed.fetch_add(buffer.size(), Ordering::Relaxed);
+                let data = buffer.map_readable().unwrap();
+                if data
+                    .as_slice()
+                    .chunks_exact(2)
+                    .any(|sample| i16::from_le_bytes([sample[0], sample[1]]).unsigned_abs() > 100)
+                {
+                    heard.store(true, Ordering::Relaxed);
+                }
+                gst::PadProbeReturn::Ok
+            },
+        );
+        decoder.set_state(gst::State::Playing).unwrap();
+        let result = decoder.bus().unwrap().timed_pop_filtered(
+            gst::ClockTime::from_seconds(5),
+            &[gst::MessageType::Eos, gst::MessageType::Error],
+        );
+        decoder.set_state(gst::State::Null).unwrap();
+        assert!(
+            matches!(result.as_ref().map(|m| m.view()), Some(gst::MessageView::Eos(_))),
+            "Saved recording did not decode: {result:?}"
+        );
+        assert_eq!(*geometry.lock().unwrap(), Some((201, 129)));
+        assert!(samples.load(Ordering::Relaxed) > 0, "No decoded audio samples");
+        assert!(audible.load(Ordering::Relaxed), "The saved audio is silent");
     }
 
     fn assert_video_decodes(path: &Path) {

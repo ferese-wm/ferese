@@ -7,12 +7,17 @@ portal and PipeWire dependencies.
 ## Record from the top bar
 
 1. Click the recording icon.
-2. Select a monitor and click **Share**.
-3. Click the stop square to finish.
+2. Choose a display and an audio source: **Off**, **System sound**, **Microphone**,
+   or **System + microphone**. Audio is off by default; the other choices use
+   your default output or input device from audio settings.
+3. Click **Record** to capture the whole display. For part of it, turn on
+   **Select a region**, click **Select region**, then drag a rectangle inside
+   the chosen display. Press Escape to cancel selection.
+4. Click the stop square to finish.
 
-The recorder saves VP8 WebM files under `Ferese` in your XDG Videos folder, then
-shows the path in a notification. The built-in recorder does not support audio or
-region recording; other recording apps can handle audio separately.
+The recorder saves WebM files with VP8 video and, when selected, Opus audio under
+`Ferese` in your XDG Videos folder, then shows the path in a notification. Region
+recordings cover a rectangle within one display; they cannot span displays.
 If recording fails, a notification reports the error and any unfinished
 `.webm.part` file.
 
@@ -50,7 +55,10 @@ permissions are not saved. Stopping a stream does not erase a saved permission.
 ## Requirements and limits
 
 Install PipeWire, WirePlumber, `xdg-desktop-portal`, and `xdg-desktop-portal-gtk`.
-The built-in recorder also needs GStreamer's PipeWire, base, and good plugins;
+The built-in recorder also needs GStreamer's PipeWire, base, and good plugins.
+Region selection needs `slurp`; audio recording needs PipeWire-Pulse or PulseAudio
+and the GStreamer PulseAudio and Opus plugins. With audio set to Off, the recorder
+does not open an audio device. For distribution package names,
 see the [package lists](installation.md#requirements).
 
 The installer supplies Ferese's portal backend and selects it for screen sharing.

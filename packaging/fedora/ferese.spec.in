@@ -28,6 +28,7 @@ Requires:       xdg-desktop-portal xdg-desktop-portal-gtk
 Requires:       libEGL.so.1()(64bit) fontconfig freetype
 Recommends:     brightnessctl slurp wl-clipboard satty
 Recommends:     gstreamer1-plugins-base gstreamer1-plugins-good pipewire-gstreamer
+Recommends:     pipewire-pulseaudio
 
 %description
 Ferese includes a scrolling Wayland compositor, desktop shell, Settings,
