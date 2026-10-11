@@ -1,4 +1,5 @@
 pub mod families;
+pub mod file;
 pub mod notifications;
 pub mod panel;
 pub mod presets;

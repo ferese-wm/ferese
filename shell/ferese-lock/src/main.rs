@@ -354,21 +354,19 @@ impl Locker {
             }
             Event::PlatformSpecific(PlatformSpecific::Wayland(wayland::Event::SessionLock(event))) if !self.preview => {
                 match event {
-                    wayland::SessionLockEvent::Locked => {
-                        if self.confirmation.observe() {
-                            use std::io::Write;
-                            if std::env::var_os("FERESE_LOCK_READY").is_some() {
-                                let _ = writeln!(std::io::stdout().lock(), "FERESE_LOCKED");
-                            }
+                    wayland::SessionLockEvent::Locked if self.confirmation.observe(&event) => {
+                        use std::io::Write;
+                        if std::env::var_os("FERESE_LOCK_READY").is_some() {
+                            let _ = writeln!(std::io::stdout().lock(), "FERESE_LOCKED");
                         }
-                        if !self.started {
-                            self.started = true;
-                            return Task::batch(
-                                self.outputs
-                                    .iter()
-                                    .map(|(output, id)| session_lock::get_lock_surface(*id, output.clone())),
-                            );
-                        }
+                    }
+                    wayland::SessionLockEvent::Requested if !self.started => {
+                        self.started = true;
+                        return Task::batch(
+                            self.outputs
+                                .iter()
+                                .map(|(output, id)| session_lock::get_lock_surface(*id, output.clone())),
+                        );
                     }
                     wayland::SessionLockEvent::Focused(..) => return focus(),
                     wayland::SessionLockEvent::Unlocked if self.state == AuthState::Unlocking => {
