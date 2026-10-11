@@ -371,7 +371,7 @@ fn parse_document(
     {
         Ok(config) => {
             if let Some(panels) = &config.panels {
-                ferese_config::panel::validate(panels).map_err(ferese_config::Error::from)?;
+                ferese_panel::validate(panels).map_err(ferese_config::Error::from)?;
             }
 
             config.animations.validate().map_err(ferese_config::Error::from)?;

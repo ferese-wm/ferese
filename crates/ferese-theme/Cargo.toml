@@ -6,6 +6,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+ferese-panel = { path = "../ferese-panel" }
 jiff.workspace = true
 ferese-theme-model = { path = "../ferese-theme-model" }
 ferese-config = { path = "../ferese-config" }

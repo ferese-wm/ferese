@@ -618,7 +618,7 @@ mod tests {
 
     #[test]
     fn maximum_panel_groups_and_overflow_fit_one_effects_publication() {
-        let count = ferese_config::panel::MAX_GROUPS + 1;
+        let count = ferese_panel::MAX_GROUPS + 1;
         assert_eq!(count, ferese_protocols::effects::v1::MAX_REGIONS);
         let region = [0.0f32, 0., 12., 36., 4.];
         let bytes: Vec<_> = region.into_iter().flat_map(f32::to_ne_bytes).collect();

@@ -426,9 +426,8 @@ fn gpu_panel_text_survives_preview_clipping_and_scrolling() {
                 } else {
                     panel_controls::PanelPage::Arrange
                 };
-                app.panel_selection = (selection == "battery").then(|| ferese_config::panel::ItemId("battery".into()));
-                app.panel_group_selection =
-                    (selection == "status").then(|| ferese_config::panel::GroupId("status".into()));
+                app.panel_selection = (selection == "battery").then(|| ferese_panel::ItemId("battery".into()));
+                app.panel_group_selection = (selection == "status").then(|| ferese_panel::GroupId("status".into()));
                 let bounds = Rectangle::with_size(Size::new(width, 650.));
                 let physical = Size::new((width * scale) as u32, (650. * scale) as u32);
                 let theme = app.native_palette.native_theme();
@@ -604,9 +603,9 @@ fn render_panel_review_states() {
             };
             app.draft = Snapshot::parse(String::new()).unwrap();
             if matches!(name, "mixed-surfaces" | "surface-inspector") {
-                let mut panel = ferese_config::panel::Panel::from_preset(ferese_config::PanelPreset::Islands);
-                panel.center.groups[0].surface = Some(ferese_config::panel::GroupSurface::None);
-                panel.end.groups[0].surface = Some(ferese_config::panel::GroupSurface::Inset);
+                let mut panel = ferese_panel::Panel::from_preset(ferese_panel::PanelPreset::Islands);
+                panel.center.groups[0].surface = Some(ferese_panel::GroupSurface::None);
+                panel.end.groups[0].surface = Some(ferese_panel::GroupSurface::Inset);
                 panel.geometry.edge_margin = 6;
                 app.draft
                     .edit(&crate::store::set("panels", serde_json::to_value(vec![panel]).unwrap()))
@@ -625,8 +624,8 @@ fn render_panel_review_states() {
             }
             app.panel_page = tab;
             app.sidebar_open = name == "navigation";
-            app.panel_selection = item.map(|id| ferese_config::panel::ItemId(id.into()));
-            app.panel_group_selection = group.map(|id| ferese_config::panel::GroupId(id.into()));
+            app.panel_selection = item.map(|id| ferese_panel::ItemId(id.into()));
+            app.panel_group_selection = group.map(|id| ferese_panel::GroupId(id.into()));
             for (width, height) in [(1100, 860), (740, 650)] {
                 let bounds = Rectangle::with_size(Size::new(width as f32, height as f32));
                 let theme = app.native_palette.native_theme();
@@ -763,10 +762,8 @@ fn selecting_panel_items_preserves_editor_scroll_and_pane_bounds() {
         let mut initial = None;
         for selection in [
             None,
-            Some(Message::PanelSelect(ferese_config::panel::ItemId("battery".into()))),
-            Some(Message::PanelGroupSelect(ferese_config::panel::GroupId(
-                "status".into(),
-            ))),
+            Some(Message::PanelSelect(ferese_panel::ItemId("battery".into()))),
+            Some(Message::PanelGroupSelect(ferese_panel::GroupId("status".into()))),
             Some(Message::PanelClearSelection),
         ] {
             if let Some(selection) = selection {

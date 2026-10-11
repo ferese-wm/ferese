@@ -358,7 +358,7 @@ impl<M> Widget<M, Theme, cosmic::Renderer> for Hover<'_, M> {
 }
 
 pub fn animated<'a, M: 'a>(content: Element<'a, M>, progress: f32, regions: Regions, radius: f32) -> Element<'a, M> {
-    animated_from_edge(content, progress, regions, radius, ferese_config::panel::Edge::Top)
+    animated_from_edge(content, progress, regions, radius, ferese_panel::Edge::Top)
 }
 
 pub fn animated_from_edge<'a, M: 'a>(
@@ -366,18 +366,14 @@ pub fn animated_from_edge<'a, M: 'a>(
     progress: f32,
     regions: Regions,
     radius: f32,
-    edge: ferese_config::panel::Edge,
+    edge: ferese_panel::Edge,
 ) -> Element<'a, M> {
     Element::new(Motion {
         content,
         progress,
         regions,
         radius,
-        direction: if edge == ferese_config::panel::Edge::Top {
-            -1.
-        } else {
-            1.
-        },
+        direction: if edge == ferese_panel::Edge::Top { -1. } else { 1. },
     })
 }
 

@@ -32,7 +32,7 @@ use crate::window_rules::{WindowRule, WindowRuleConfig};
 #[derive(Debug, Default, Deserialize)]
 pub struct Config {
     #[serde(default)]
-    panels: Option<Vec<ferese_config::panel::Panel>>,
+    panels: Option<Vec<ferese_panel::Panel>>,
     #[serde(default)]
     notifications: ferese_config::notifications::NotificationConfig,
     #[serde(default)]
@@ -114,7 +114,7 @@ impl Config {
 
     pub(crate) fn runtime_config(&self) -> Result<crate::RuntimeConfig, ConfigError> {
         if let Some(panels) = &self.panels {
-            ferese_config::panel::validate(panels).map_err(ConfigError::Binding)?;
+            ferese_panel::validate(panels).map_err(ConfigError::Binding)?;
         }
         self.notifications.validate().map_err(ConfigError::Binding)?;
         self.xwayland.validate().map_err(ConfigError::Binding)?;

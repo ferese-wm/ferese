@@ -1,4 +1,4 @@
-use ferese_config::panel::{Edge, ItemKind, Panel};
+use ferese_panel::{Edge, ItemKind, Panel};
 
 use crate::panel_edit::{Action, Destination, Zone};
 use crate::{App, Element, Message, schema::Page, store, widget};
@@ -12,7 +12,7 @@ pub(super) enum PanelPage {
 
 pub(super) fn initialize(_snapshot: &store::Snapshot) -> Result<store::Edit, String> {
     let panel = Panel::default();
-    ferese_config::panel::validate(std::slice::from_ref(&panel))?;
+    ferese_panel::validate(std::slice::from_ref(&panel))?;
     Ok(store::set(
         "panels",
         serde_json::to_value(vec![panel]).map_err(|error| error.to_string())?,
@@ -29,7 +29,7 @@ impl std::fmt::Display for CatalogItem {
 const CATALOG: [CatalogItem; 12] = [
     CatalogItem(ItemKind::Overview),
     CatalogItem(ItemKind::Workspaces {
-        style: ferese_config::panel::WorkspaceStyle::Dots,
+        style: ferese_panel::WorkspaceStyle::Dots,
     }),
     CatalogItem(ItemKind::FocusedWindow),
     CatalogItem(ItemKind::Media),
@@ -105,8 +105,8 @@ impl App {
                 );
                 let preset = self.preview_panel().ok().and_then(|panel| panel.preset());
                 let preset_key = match preset {
-                    Some(ferese_config::PanelPreset::Continuous) => "continuous",
-                    Some(ferese_config::PanelPreset::Islands) => "islands",
+                    Some(ferese_panel::PanelPreset::Continuous) => "continuous",
+                    Some(ferese_panel::PanelPreset::Islands) => "islands",
                     None => "custom",
                 };
                 let position = widget::row([Edge::Top, Edge::Bottom].into_iter().map(|position| {
@@ -145,9 +145,9 @@ impl App {
                             &[("continuous", "Continuous"), ("islands", "Islands")],
                             move |key| {
                                 Message::PanelEdit(Action::ApplyPreset(if key == "islands" {
-                                    ferese_config::PanelPreset::Islands
+                                    ferese_panel::PanelPreset::Islands
                                 } else {
-                                    ferese_config::PanelPreset::Continuous
+                                    ferese_panel::PanelPreset::Continuous
                                 }))
                             },
                         ),
@@ -158,14 +158,14 @@ impl App {
                             "Groups can override this in their inspector.",
                             self.panel_surface_choices(
                                 self.preview_panel()
-                                    .map_or(ferese_config::panel::GroupSurface::None, |panel| panel.group_surface)
+                                    .map_or(ferese_panel::GroupSurface::None, |panel| panel.group_surface)
                                     .key(),
                                 &[("none", "None"), ("inset", "Inset"), ("island", "Island")],
                                 |key| {
                                     Message::PanelEdit(Action::SetDefaultSurface(match key {
-                                        "inset" => ferese_config::panel::GroupSurface::Inset,
-                                        "island" => ferese_config::panel::GroupSurface::Island,
-                                        _ => ferese_config::panel::GroupSurface::None,
+                                        "inset" => ferese_panel::GroupSurface::Inset,
+                                        "island" => ferese_panel::GroupSurface::Island,
+                                        _ => ferese_panel::GroupSurface::None,
                                     }))
                                 },
                             ),
@@ -335,8 +335,8 @@ impl App {
         let custom = self
             .draft
             .item("panels.0.corner_radius")
-            .and_then(|value| serde_json::from_value::<ferese_config::panel::CornerRadii>(value.clone()).ok());
-        let radii = custom.unwrap_or_else(|| ferese_config::panel::CornerRadii::uniform(shell_radius));
+            .and_then(|value| serde_json::from_value::<ferese_panel::CornerRadii>(value.clone()).ok());
+        let radii = custom.unwrap_or_else(|| ferese_panel::CornerRadii::uniform(shell_radius));
         let modes = widget::row([("Shell default", false), ("Custom", true)].map(|(label, selected)| {
             widget::button::custom(self.label(label, 12.).align_x(Alignment::Center))
                 .name(format!("Corner radius: {label}"))
@@ -579,8 +579,8 @@ impl App {
         use cosmic::iced::{Alignment, Length};
         let palette = crate::visuals::Palette::from_resolved(&self.resolved.presented);
         let mut zones = widget::column([]).spacing(18);
-        if panel.group_count() == ferese_config::panel::MAX_GROUPS {
-            zones = zones.push(self.label(format!("{}-group limit reached", ferese_config::panel::MAX_GROUPS), 12.));
+        if panel.group_count() == ferese_panel::MAX_GROUPS {
+            zones = zones.push(self.label(format!("{}-group limit reached", ferese_panel::MAX_GROUPS), 12.));
         }
         for placement in Zone::ALL {
             let zone = placement.definition(panel);
@@ -592,7 +592,7 @@ impl App {
                         self.settings_button(
                             "Add group",
                             "M12 5v14 M5 12h14",
-                            (panel.group_count() < ferese_config::panel::MAX_GROUPS)
+                            (panel.group_count() < ferese_panel::MAX_GROUPS)
                                 .then_some(Message::PanelEdit(Action::AddGroup(placement))),
                             false,
                         ),
@@ -787,8 +787,8 @@ mod tests {
             modes: Vec::new(),
         }];
         app.panel_preview_resolution.items.insert(
-            ferese_config::panel::ItemId("clock".into()),
-            ferese_config::panel::layout::Placement::Overflow,
+            ferese_panel::ItemId("clock".into()),
+            ferese_panel::layout::Placement::Overflow,
         );
         app.panel_preview_resolution.minimum_width = 600.;
         assert_eq!(app.panel_side_margin_limit(), Some(408));
@@ -806,8 +806,8 @@ mod tests {
         snapshot.edit(&initialize(&snapshot).unwrap()).unwrap();
         let snapshot = store::Snapshot::parse(snapshot.source).unwrap();
         let panels: Vec<Panel> = serde_json::from_value(snapshot.item("panels").unwrap().clone()).unwrap();
-        assert_eq!(panels[0].preset(), Some(ferese_config::PanelPreset::Continuous));
-        assert_eq!(panels[0].geometry, ferese_config::panel::PanelGeometry::default());
+        assert_eq!(panels[0].preset(), Some(ferese_panel::PanelPreset::Continuous));
+        assert_eq!(panels[0].geometry, ferese_panel::PanelGeometry::default());
         assert!(panels[0].center.groups[0].items[0].visible);
         assert_eq!(snapshot.number("animations.speed", 1.), 0.8);
         assert!(snapshot.source.contains("// keep"));

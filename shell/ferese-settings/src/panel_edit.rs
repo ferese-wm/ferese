@@ -1,4 +1,4 @@
-use ferese_config::panel::{GroupId, Item, ItemId, ItemKind, Panel};
+use ferese_panel::{GroupId, Item, ItemId, ItemKind, Panel};
 use serde_json::Value;
 
 use crate::store::{Edit, Snapshot, set};
@@ -26,10 +26,10 @@ impl std::fmt::Display for Destination {
 
 #[derive(Clone, Debug)]
 pub(super) enum Action {
-    ApplyPreset(ferese_config::PanelPreset),
-    SetDefaultSurface(ferese_config::panel::GroupSurface),
+    ApplyPreset(ferese_panel::PanelPreset),
+    SetDefaultSurface(ferese_panel::GroupSurface),
     ClearGroupSurface(GroupId),
-    SetEdge(ferese_config::panel::Edge),
+    SetEdge(ferese_panel::Edge),
     SetGeometry(String, Value),
     SetRadius(String),
     SetCorner(usize, f32),
@@ -71,7 +71,7 @@ impl Zone {
         }
     }
 
-    pub fn definition(self, panel: &Panel) -> &ferese_config::panel::Zone {
+    pub fn definition(self, panel: &Panel) -> &ferese_panel::Zone {
         match self {
             Self::Start => &panel.start,
             Self::Center => &panel.center,
@@ -168,7 +168,7 @@ pub(super) fn plan(snapshot: &Snapshot, action: Action) -> Result<Vec<Edit>, Str
     }
     let panels: Vec<Panel> = serde_json::from_value(snapshot.item("panels").ok_or("Customize items first.")?.clone())
         .map_err(|error| error.to_string())?;
-    ferese_config::panel::validate(&panels)?;
+    ferese_panel::validate(&panels)?;
     let panel = &panels[0];
     let earlier = matches!(&action, Action::Earlier(_));
     let earlier_group = matches!(&action, Action::EarlierGroup(_));
@@ -212,7 +212,7 @@ pub(super) fn plan(snapshot: &Snapshot, action: Action) -> Result<Vec<Edit>, Str
             vec![set("panels.0.corner_radius", radii.to_string())]
         }
         Action::SetRadius(value) => {
-            let radii: ferese_config::panel::CornerRadii = value.parse()?;
+            let radii: ferese_panel::CornerRadii = value.parse()?;
             vec![set("panels.0.corner_radius", radii.to_string())]
         }
         Action::ClearRadius => vec![Edit::Unset("panels.0.corner_radius".into())],
@@ -444,7 +444,7 @@ mod tests {
     #[test]
     fn group_capacity_is_checked_before_saving_and_removal_reopens_a_slot() {
         let mut snapshot = Snapshot::parse("panel main {}".into()).unwrap();
-        for _ in 0..ferese_config::panel::MAX_GROUPS {
+        for _ in 0..ferese_panel::MAX_GROUPS {
             apply(&mut snapshot, Action::AddGroup(Zone::End));
         }
         let source = snapshot.source.clone();
@@ -541,7 +541,7 @@ animations { speed 0.8; }
         apply(&mut snapshot, Action::SetRadius("4px 8px 12px 16px".into()));
         apply(&mut snapshot, Action::SetCorner(0, 9.));
         apply(&mut snapshot, Action::SetCorner(3, 21.));
-        let radii: ferese_config::panel::CornerRadii =
+        let radii: ferese_panel::CornerRadii =
             serde_json::from_value(snapshot.item("panels.0.corner_radius").unwrap().clone()).unwrap();
         assert_eq!(radii.0, [9., 8., 12., 21.]);
         let previous = snapshot.source.clone();
@@ -585,11 +585,11 @@ animations { speed 0.8; }
     #[test]
     fn changing_edge_materializes_preferences_and_round_trips_without_moving_items() {
         let mut snapshot = Snapshot::parse("".into()).unwrap();
-        apply(&mut snapshot, Action::SetEdge(ferese_config::panel::Edge::Bottom));
+        apply(&mut snapshot, Action::SetEdge(ferese_panel::Edge::Bottom));
         let before = snapshot.item("panels.0.start").unwrap().clone();
         assert_eq!(snapshot.string("panels.0.edge", ""), "bottom");
         assert!(snapshot.boolean("panels.0.end.groups.0.items.6.percentage", false));
-        apply(&mut snapshot, Action::SetEdge(ferese_config::panel::Edge::Top));
+        apply(&mut snapshot, Action::SetEdge(ferese_panel::Edge::Top));
         assert_eq!(snapshot.string("panels.0.edge", ""), "top");
         assert_eq!(snapshot.item("panels.0.start"), Some(&before));
         Snapshot::parse(snapshot.source).unwrap();
@@ -934,7 +934,7 @@ animations { speed 0.8; }
             &mut snapshot,
             Action::Set(ItemId("battery".into()), "percentage".into(), false.into()),
         );
-        for style in ferese_config::panel::WorkspaceStyle::ALL {
+        for style in ferese_panel::WorkspaceStyle::ALL {
             apply(
                 &mut snapshot,
                 Action::Set(ItemId("workspaces".into()), "style".into(), style.key().into()),
@@ -961,7 +961,7 @@ animations { speed 0.8; }
         assert_eq!(
             panel.item(&ItemId("workspaces".into())).unwrap().kind,
             ItemKind::Workspaces {
-                style: ferese_config::panel::WorkspaceStyle::AppIcons
+                style: ferese_panel::WorkspaceStyle::AppIcons
             }
         );
     }
@@ -995,7 +995,7 @@ animations { speed 0.8; }
         assert!(snapshot.item("panels.0.end.groups.0.surface").is_none());
         apply(
             &mut snapshot,
-            Action::ApplyPreset(ferese_config::PanelPreset::Continuous),
+            Action::ApplyPreset(ferese_panel::PanelPreset::Continuous),
         );
         assert_eq!(snapshot.string("panels.0.surface", ""), "solid");
         assert!(snapshot.item("panels.0.center.groups.0.surface").is_none());
@@ -1005,9 +1005,9 @@ animations { speed 0.8; }
             &mut snapshot,
             Action::SetGroup(GroupId("title".into()), "surface".into(), "none".into()),
         );
-        apply(&mut snapshot, Action::ApplyPreset(ferese_config::PanelPreset::Islands));
+        apply(&mut snapshot, Action::ApplyPreset(ferese_panel::PanelPreset::Islands));
         let panels: Vec<Panel> = serde_json::from_value(snapshot.item("panels").unwrap().clone()).unwrap();
-        assert_eq!(panels[0].preset(), Some(ferese_config::PanelPreset::Islands));
+        assert_eq!(panels[0].preset(), Some(ferese_panel::PanelPreset::Islands));
         assert!(
             plan(
                 &snapshot,

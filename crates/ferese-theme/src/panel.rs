@@ -2,8 +2,8 @@
 use cosmic::iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, renderer, widget};
 use cosmic::iced::{Event, Length, Rectangle, Size, Vector};
 use cosmic::{Element, Theme};
-use ferese_config::panel::layout::{Measurement, Resolution, resolve_with_gap};
-use ferese_config::panel::{ItemId, Panel, Representation};
+use ferese_panel::layout::{Measurement, Resolution, resolve_with_gap};
+use ferese_panel::{ItemId, Panel, Representation};
 use std::borrow::Cow;
 
 /// Group outlines never paint a second fill over the panel background.
@@ -250,8 +250,8 @@ mod tests {
     use cosmic::iced::advanced::{clipboard, renderer::Headless};
     use cosmic::iced::{Font, Pixels, Point};
     use cosmic::widget::{button, text};
-    use ferese_config::panel::OverflowPolicy;
-    use ferese_config::panel::layout::Placement;
+    use ferese_panel::OverflowPolicy;
+    use ferese_panel::layout::Placement;
 
     #[derive(Clone, Debug)]
     enum Probe {

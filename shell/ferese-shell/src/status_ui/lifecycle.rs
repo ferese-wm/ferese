@@ -10,11 +10,11 @@ use super::{Menu, OpenMenu, PopoverAnchor};
 use crate::status::Action;
 use crate::{FereseShell, Message};
 
-fn menu_positioner(rectangle: Rectangle<i32>, height_limit: f32, edge: ferese_config::panel::Edge) -> SctkPositioner {
+fn menu_positioner(rectangle: Rectangle<i32>, height_limit: f32, edge: ferese_panel::Edge) -> SctkPositioner {
     // xdg-positioner: bottom/bottom-left for top bars, top/top-left for bottom bars.
     let (anchor, gravity, gap) = match edge {
-        ferese_config::panel::Edge::Top => (2u32, 6u32, 8),
-        ferese_config::panel::Edge::Bottom => (1u32, 5u32, -8),
+        ferese_panel::Edge::Top => (2u32, 6u32, 8),
+        ferese_panel::Edge::Bottom => (1u32, 5u32, -8),
     };
     SctkPositioner {
         anchor_rect: rectangle,
@@ -274,7 +274,7 @@ mod tests {
 
     #[test]
     fn menus_open_toward_the_desktop_from_either_panel_edge() {
-        use ferese_config::panel::Edge;
+        use ferese_panel::Edge;
         let rectangle = Rectangle {
             x: 400,
             y: 0,

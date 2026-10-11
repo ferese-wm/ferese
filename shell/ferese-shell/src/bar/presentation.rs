@@ -1,7 +1,7 @@
 use cosmic::iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, renderer, widget};
 use cosmic::iced::{Event, Length, Rectangle, Size, Vector};
 use cosmic::{Element, Theme};
-use ferese_config::panel::PanelSurface;
+use ferese_panel::PanelSurface;
 
 pub(crate) fn island_id() -> widget::Id {
     static ID: std::sync::OnceLock<widget::Id> = std::sync::OnceLock::new();

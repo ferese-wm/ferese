@@ -1,7 +1,7 @@
 use crate::panel_edit::{Action, Destination, Zone};
 use crate::{App, Element, Field, Kind, Message, widget};
 use cosmic::iced::{Alignment, Length};
-use ferese_config::panel::{Group, Item, ItemKind, Panel, Representation};
+use ferese_panel::{Group, Item, ItemKind, Panel, Representation};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Choice(&'static str, &'static str);
@@ -146,7 +146,7 @@ impl App {
             .spacing(6)
             .push(self.label("Workspace style", 13.))
             .push(self.note("A sample of active, occupied and empty workspaces."));
-        for style in ferese_config::panel::WorkspaceStyle::ALL {
+        for style in ferese_panel::WorkspaceStyle::ALL {
             let sample = ferese_theme::workspaces::sample(style, palette, self.font, 22.);
             choices = choices.push(
                 widget::button::custom(
@@ -229,7 +229,7 @@ impl App {
             ),
             ("island_padding", "Island padding", group.island_padding, 32.),
         ] {
-            if panel.resolved_surface(group) != ferese_config::panel::GroupSurface::Island && name == "island_padding" {
+            if panel.resolved_surface(group) != ferese_panel::GroupSurface::Island && name == "island_padding" {
                 continue;
             }
             let change = |value: f32| {

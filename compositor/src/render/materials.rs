@@ -234,9 +234,9 @@ pub(super) fn material_element_with_role(
     let touches_top = role == crate::effects::SemanticRole::Panel && geometry.loc.y == 0;
     let touches_bottom =
         role == crate::effects::SemanticRole::Panel && geometry.loc.y + geometry.size.h >= output_size.h;
-    let radii = ferese_config::panel::CornerRadii(radii)
+    let radii = ferese_panel::CornerRadii(radii)
         .at_top_edge(touches_top)
-        .at_edge(ferese_config::panel::Edge::Bottom, touches_bottom)
+        .at_edge(ferese_panel::Edge::Bottom, touches_bottom)
         .0;
     let radius = radii.into_iter().fold(0., f32::max);
     let corner_radii = framebuffer_corner_radii(radii, transform);

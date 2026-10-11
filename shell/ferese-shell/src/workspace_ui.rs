@@ -26,7 +26,7 @@ impl FereseShell {
                 && matches!(
                     item.kind,
                     crate::panel::ItemKind::Workspaces {
-                        style: ferese_config::panel::WorkspaceStyle::AppIcons
+                        style: ferese_panel::WorkspaceStyle::AppIcons
                     }
                 )
         });
@@ -259,8 +259,8 @@ impl FereseShell {
         let id = window::Id::unique();
         let parent = hover.bar;
         let (anchor, gravity, gap) = match self.config.panels[0].edge {
-            ferese_config::panel::Edge::Top => (2u32, 2u32, 6),
-            ferese_config::panel::Edge::Bottom => (1u32, 1u32, -6),
+            ferese_panel::Edge::Top => (2u32, 2u32, 6),
+            ferese_panel::Edge::Bottom => (1u32, 1u32, -6),
         };
         self.workspace_ui.tooltip = Some(id);
         let action = cosmic::surface::action::app_popup::<Self>(
@@ -553,7 +553,7 @@ mod tests {
             for item in &mut group.items {
                 if matches!(item.kind, crate::panel::ItemKind::Workspaces { .. }) {
                     item.kind = crate::panel::ItemKind::Workspaces {
-                        style: ferese_config::panel::WorkspaceStyle::AppIcons,
+                        style: ferese_panel::WorkspaceStyle::AppIcons,
                     };
                 }
             }
@@ -705,7 +705,7 @@ mod tests {
         use cosmic::iced::advanced::renderer::Headless;
         use cosmic::iced::advanced::{Layout, Shell, clipboard, layout, mouse, widget};
         use cosmic::iced::{Event, Font, Pixels, Point, Size};
-        use ferese_config::panel::WorkspaceStyle;
+        use ferese_panel::WorkspaceStyle;
 
         #[derive(Clone, Copy, Debug)]
         enum Pointer {

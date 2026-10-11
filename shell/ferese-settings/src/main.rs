@@ -114,9 +114,9 @@ enum Message {
     Change(Edit),
     PanelClearSelection,
     PanelPage(panel_controls::PanelPage),
-    PanelSelect(ferese_config::panel::ItemId),
-    PanelGroupSelect(ferese_config::panel::GroupId),
-    PanelPreviewResolved(ferese_config::panel::layout::Resolution),
+    PanelSelect(ferese_panel::ItemId),
+    PanelGroupSelect(ferese_panel::GroupId),
+    PanelPreviewResolved(ferese_panel::layout::Resolution),
     PanelPreviewOverflow,
     PanelEdit(panel_edit::Action),
     Draft(String, String),
@@ -187,10 +187,10 @@ struct App {
     undo_revision: u64,
     auto_details: bool,
     advanced_theme: bool,
-    panel_selection: Option<ferese_config::panel::ItemId>,
+    panel_selection: Option<ferese_panel::ItemId>,
     panel_page: panel_controls::PanelPage,
-    panel_group_selection: Option<ferese_config::panel::GroupId>,
-    panel_preview_resolution: ferese_config::panel::layout::Resolution,
+    panel_group_selection: Option<ferese_panel::GroupId>,
+    panel_preview_resolution: ferese_panel::layout::Resolution,
     panel_preview_overflow: bool,
     theme_file_target: usize,
     wallpaper: wallpaper_controls::State,
@@ -1102,7 +1102,7 @@ mod tests {
         let _ = app.update(Message::Range(field.clone(), 23.));
         assert_eq!(app.draft.source, before);
         let _ = app.update(Message::Release(field));
-        let radii: ferese_config::panel::CornerRadii =
+        let radii: ferese_panel::CornerRadii =
             serde_json::from_value(app.draft.item("panels.0.corner_radius").unwrap().clone()).unwrap();
         assert_eq!(radii.0, [4., 8., 23., 16.]);
         assert!(app.ranges.is_empty());
@@ -1111,7 +1111,7 @@ mod tests {
 
     #[test]
     fn pending_panel_moves_save_both_groups_together_and_keep_the_selected_instance() {
-        use ferese_config::panel::{GroupId, ItemId};
+        use ferese_panel::{GroupId, ItemId};
         let mut app = app();
         let mut initial = Snapshot::parse(String::new()).unwrap();
         initial.edit(&panel_controls::initialize(&initial).unwrap()).unwrap();
@@ -1139,13 +1139,13 @@ mod tests {
         assert!(app.saving, "the complete queued draft is saved once");
         assert!(app.pending.is_empty());
         assert_eq!(app.draft.doc.value(), &expected);
-        let panels: Vec<ferese_config::panel::Panel> =
+        let panels: Vec<ferese_panel::Panel> =
             serde_json::from_value(app.draft.item("panels").unwrap().clone()).unwrap();
-        ferese_config::panel::validate(&panels).unwrap();
+        ferese_panel::validate(&panels).unwrap();
         assert_eq!(panels[0].start.groups[1].items[1].id, id);
         assert_eq!(
             panels[0].start.groups[1].items[1].overflow,
-            ferese_config::panel::OverflowPolicy::Always
+            ferese_panel::OverflowPolicy::Always
         );
         assert!(!panels[0].end.groups[0].items.iter().any(|item| item.id == id));
     }
@@ -1181,7 +1181,7 @@ mod tests {
         };
         app.panel_page = panel_controls::PanelPage::Arrange;
         let collapsed = nodes(&app);
-        let id = ferese_config::panel::ItemId("clock".into());
+        let id = ferese_panel::ItemId("clock".into());
         let _ = app.update(Message::PanelSelect(id.clone()));
         let expanded = nodes(&app);
         assert!(expanded > collapsed);
@@ -1193,7 +1193,7 @@ mod tests {
 
     #[test]
     fn pending_group_moves_and_style_changes_save_one_coherent_draft() {
-        use ferese_config::panel::GroupId;
+        use ferese_panel::GroupId;
         let mut app = app();
         let mut initial = Snapshot::parse(String::new()).unwrap();
         initial.edit(&panel_controls::initialize(&initial).unwrap()).unwrap();
@@ -1225,7 +1225,7 @@ mod tests {
     fn selecting_a_generated_preview_item_does_not_save_the_composition() {
         let mut app = app();
         app.saving = true;
-        let id = ferese_config::panel::ItemId("clock".into());
+        let id = ferese_panel::ItemId("clock".into());
         let _ = app.update(Message::PanelSelect(id.clone()));
         assert_eq!(app.panel_selection, Some(id));
         assert!(app.draft.item("panels").is_none());
@@ -1244,19 +1244,17 @@ mod tests {
             assert!(app.draft.item("panels").is_none());
         }
         app.saving = true;
-        let _ = app.update(Message::PanelSelect(ferese_config::panel::ItemId("clock".into())));
+        let _ = app.update(Message::PanelSelect(ferese_panel::ItemId("clock".into())));
         assert_eq!(app.panel_page, panel_controls::PanelPage::Arrange);
         assert!(app.panel_group_selection.is_none());
-        let _ = app.update(Message::PanelGroupSelect(ferese_config::panel::GroupId(
-            "status".into(),
-        )));
+        let _ = app.update(Message::PanelGroupSelect(ferese_panel::GroupId("status".into())));
         assert!(app.panel_selection.is_none());
         assert_eq!(app.panel_page, panel_controls::PanelPage::Arrange);
     }
 
     #[test]
     fn dropped_items_follow_queued_group_moves_and_are_saved_once() {
-        use ferese_config::panel::{GroupId, ItemId};
+        use ferese_panel::{GroupId, ItemId};
         let mut app = app();
         let mut initial = Snapshot::parse(String::new()).unwrap();
         initial.edit(&panel_controls::initialize(&initial).unwrap()).unwrap();

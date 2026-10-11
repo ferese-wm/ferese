@@ -2,7 +2,7 @@
 use cosmic::iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, renderer, widget};
 use cosmic::iced::{Border, Color, Event, Length, Point, Rectangle, Size, Vector, keyboard};
 use cosmic::{Element, Renderer, Theme};
-use ferese_config::panel::{GroupId, ItemId, Panel};
+use ferese_panel::{GroupId, ItemId, Panel};
 
 use crate::Message;
 use crate::panel_edit::{Action, Destination, Zone};

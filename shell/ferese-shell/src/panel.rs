@@ -1,1 +1,1 @@
-pub(crate) use ferese_config::panel::*;
+pub(crate) use ferese_panel::*;

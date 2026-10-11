@@ -412,10 +412,8 @@ fn docked_panel_fill_covers_the_entire_attached_edge() {
     let mut renderer = renderer();
     let mut resources = RenderResources::default();
     let material = material_program_for_corners(&mut resources, &mut renderer, CornerShape::Circular).unwrap();
-    for edge in [ferese_config::panel::Edge::Top, ferese_config::panel::Edge::Bottom] {
-        let radii = ferese_config::panel::CornerRadii([14., 8., 12., 20.])
-            .at_edge(edge, true)
-            .0;
+    for edge in [ferese_panel::Edge::Top, ferese_panel::Edge::Bottom] {
+        let radii = ferese_panel::CornerRadii([14., 8., 12., 20.]).at_edge(edge, true).0;
         let pixels = rasterize(
             &mut renderer,
             &material.0,
@@ -428,7 +426,7 @@ fn docked_panel_fill_covers_the_entire_attached_edge() {
                 Uniform::new("shadow_values", [8.0f32, 1.0]),
             ],
         );
-        let (attached_row, free_row) = if edge == ferese_config::panel::Edge::Top {
+        let (attached_row, free_row) = if edge == ferese_panel::Edge::Top {
             (0, 35)
         } else {
             (35, 0)

@@ -1025,7 +1025,7 @@ mod tests {
 
     #[test]
     fn panel_placement_uses_only_the_selected_edge_for_anchor_and_margin() {
-        use ferese_config::panel::Edge;
+        use ferese_panel::Edge;
         for gap in [0, 12] {
             let (anchor, margin) = surfaces::panel_placement(Edge::Top, gap, 32);
             assert_eq!(anchor, Anchor::TOP);

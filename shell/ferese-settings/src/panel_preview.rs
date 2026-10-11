@@ -1,7 +1,7 @@
 use cosmic::iced::{Alignment, Length};
 use cosmic::widget::{button, column, container, row};
-use ferese_config::panel::layout::{Placement, Resolution};
-use ferese_config::panel::{Availability, Group, Item, ItemId, ItemKind, Panel, Representation, Zone};
+use ferese_panel::layout::{Placement, Resolution};
+use ferese_panel::{Availability, Group, Item, ItemId, ItemKind, Panel, Representation, Zone};
 use ferese_theme::panel::{Sample, Spacing, frame};
 
 use crate::{App, Element, Message, panel_controls, visuals};
@@ -36,12 +36,12 @@ impl App {
             .push(
                 container(self.panel_preview_frame(panel.clone()))
                     .padding(cosmic::iced::Padding {
-                        top: if panel.edge == ferese_config::panel::Edge::Top {
+                        top: if panel.edge == ferese_panel::Edge::Top {
                             10.
                         } else {
                             26.
                         },
-                        bottom: if panel.edge == ferese_config::panel::Edge::Top {
+                        bottom: if panel.edge == ferese_panel::Edge::Top {
                             26.
                         } else {
                             10.
@@ -128,12 +128,12 @@ impl App {
             view: self.preview_control(&overflow.items[0], Representation::Icon, None),
         });
         let overflow_width = 2. * f32::from(overflow.padding[1])
-            + if panel.resolved_surface(&overflow) == ferese_config::panel::GroupSurface::Island {
+            + if panel.resolved_surface(&overflow) == ferese_panel::GroupSurface::Island {
                 2. * overflow.island_padding
             } else {
                 0.
             };
-        let continuous = panel.surface == ferese_config::panel::PanelSurface::Solid;
+        let continuous = panel.surface == ferese_panel::PanelSurface::Solid;
         let corners = panel
             .resolved_radius(self.resolved.presented.tokens.geometry.shell_radius as f32)
             .at_edge(panel.edge, panel.geometry.edge_margin == 0)
@@ -252,7 +252,7 @@ impl App {
             .resolved_radius(self.resolved.presented.tokens.geometry.shell_radius as f32)
             .at_edge(
                 panel.edge,
-                surface == ferese_config::panel::GroupSurface::Island && panel.geometry.edge_margin == 0,
+                surface == ferese_panel::GroupSurface::Island && panel.geometry.edge_margin == 0,
             )
             .0;
         let opacity = self.resolved.presented.panel_opacity(panel.background_opacity);
@@ -263,12 +263,12 @@ impl App {
                 ferese_theme::panel::group_border(palette.muted.scale_alpha(0.4), radius, border)
             }))
             .into();
-        if surface == ferese_config::panel::GroupSurface::None {
+        if surface == ferese_panel::GroupSurface::None {
             return content;
         }
-        let parent_solid = panel.surface == ferese_config::panel::PanelSurface::Solid;
+        let parent_solid = panel.surface == ferese_panel::PanelSurface::Solid;
         container(content)
-            .padding(if surface == ferese_config::panel::GroupSurface::Island {
+            .padding(if surface == ferese_panel::GroupSurface::Island {
                 [2., group.island_padding]
             } else {
                 [0., 0.]
@@ -588,10 +588,10 @@ mod tests {
         )
         .0;
         for background in [
-            ferese_config::PanelPreset::Continuous,
-            ferese_config::PanelPreset::Islands,
+            ferese_panel::PanelPreset::Continuous,
+            ferese_panel::PanelPreset::Islands,
         ] {
-            let mut panel = Panel::from_preset(ferese_config::PanelPreset::Islands);
+            let mut panel = Panel::from_preset(ferese_panel::PanelPreset::Islands);
             panel.apply_preset(background);
             // Match a three-group layout with media in navigation and a larger status group.
             let media = panel.end.groups[0].items.remove(0);
@@ -681,8 +681,8 @@ mod tests {
         )
         .0;
         for background in [
-            ferese_config::PanelPreset::Continuous,
-            ferese_config::PanelPreset::Islands,
+            ferese_panel::PanelPreset::Continuous,
+            ferese_panel::PanelPreset::Islands,
         ] {
             let panel = Panel::from_preset(background);
             let ids: Vec<_> = [&panel.start, &panel.center, &panel.end]

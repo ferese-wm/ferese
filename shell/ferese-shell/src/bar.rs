@@ -4,8 +4,8 @@ use super::{
 };
 use crate::panel::{Availability, Item, ItemKind, Panel, Zone};
 #[cfg(test)]
-use ferese_config::PanelPreset;
-use ferese_config::panel::{GroupSurface, PanelSurface};
+use ferese_panel::PanelPreset;
+use ferese_panel::{GroupSurface, PanelSurface};
 
 use ferese_theme::panel as adaptive;
 pub(super) mod presentation;
@@ -453,7 +453,7 @@ impl FereseShell {
     fn view_workspace_item(
         &self,
         id: window::Id,
-        style: ferese_config::panel::WorkspaceStyle,
+        style: ferese_panel::WorkspaceStyle,
         instance: &str,
     ) -> Element<'_, cosmic::Action<Message>> {
         let focused_output = self.output_for_bar(id);
@@ -471,7 +471,7 @@ impl FereseShell {
                 .output
                 .and_then(|id| self.snapshot.outputs.iter().find(|output| output.id == id));
             let transition = self.workspace_ui.transition(workspace.id, active);
-            let apps = if style == ferese_config::panel::WorkspaceStyle::AppIcons {
+            let apps = if style == ferese_panel::WorkspaceStyle::AppIcons {
                 self.workspace_ui.apps(workspace.id, &self.snapshot)
             } else {
                 Vec::new()
@@ -754,7 +754,7 @@ pub(super) fn island<'a>(
     }
 
     let bar = BarMetrics::from(geometry);
-    let fallback = ferese_config::panel::CornerRadii::uniform(theme.bar_radius)
+    let fallback = ferese_panel::CornerRadii::uniform(theme.bar_radius)
         .at_top_edge(geometry.edge_margin == 0)
         .0;
     let (id, opacity, corners) =

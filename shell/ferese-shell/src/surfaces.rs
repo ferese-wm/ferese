@@ -7,10 +7,10 @@ use super::{
     theme, wayland, window, wl_output, wl_registry, wl_surface,
 };
 
-pub(super) fn panel_placement(edge: ferese_config::panel::Edge, margin: i32, side: i32) -> (Anchor, IcedMargin) {
+pub(super) fn panel_placement(edge: ferese_panel::Edge, margin: i32, side: i32) -> (Anchor, IcedMargin) {
     let (anchor, top, bottom) = match edge {
-        ferese_config::panel::Edge::Top => (Anchor::TOP, margin, 0),
-        ferese_config::panel::Edge::Bottom => (Anchor::BOTTOM, 0, margin),
+        ferese_panel::Edge::Top => (Anchor::TOP, margin, 0),
+        ferese_panel::Edge::Bottom => (Anchor::BOTTOM, 0, margin),
     };
     (
         anchor,
@@ -375,7 +375,7 @@ impl FereseShell {
 
     pub(super) fn attach_effects(&mut self, id: window::Id, surface: &wl_surface::WlSurface) {
         let hidden = self.bar_hidden(id);
-        let islands = self.config.panels[0].surface == ferese_config::panel::PanelSurface::None;
+        let islands = self.config.panels[0].surface == ferese_panel::PanelSurface::None;
         let Some(entry) = self.outputs.iter_mut().find(|entry| entry.bar == id) else {
             return;
         };
