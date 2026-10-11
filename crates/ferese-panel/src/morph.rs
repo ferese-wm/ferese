@@ -18,6 +18,7 @@ pub struct Profile {
     pub toast_width: f64,
     pub toast_height: f64,
     pub expanded_width: f64,
+    pub workspaces_height: f64,
     pub media_height: f64,
     pub calendar_height: f64,
     pub notifications_height: f64,
@@ -35,6 +36,7 @@ impl Default for Profile {
             toast_width: 320.,
             toast_height: 48.,
             expanded_width: 340.,
+            workspaces_height: 176.,
             media_height: 170.,
             calendar_height: 230.,
             notifications_height: 176.,
@@ -53,6 +55,7 @@ impl Profile {
             self.toast_width,
             self.toast_height,
             self.expanded_width,
+            self.workspaces_height,
             self.media_height,
             self.calendar_height,
             self.notifications_height,
@@ -78,6 +81,7 @@ impl Profile {
             Mode::Expanded(content) => [
                 self.expanded_width,
                 match content {
+                    Content::Workspaces => self.workspaces_height,
                     Content::Media => self.media_height,
                     Content::Calendar => self.calendar_height,
                     Content::Notifications => self.notifications_height,
@@ -90,6 +94,7 @@ impl Profile {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Content {
+    Workspaces,
     Media,
     Calendar,
     Notifications,

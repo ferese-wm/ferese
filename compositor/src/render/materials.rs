@@ -179,6 +179,7 @@ fn resolve_surface_material(
     role: crate::effects::SemanticRole,
     settings: crate::config::ThemeSettings,
     panel_opacity: Option<f32>,
+    panel_style: ferese_panel::PanelStyle,
 ) -> crate::effects::ResolvedMaterial {
     let mut material = crate::effects::resolve_material(role, settings.material_style, settings.shell_opacity as f32);
     if role == crate::effects::SemanticRole::Panel {
@@ -187,6 +188,9 @@ fn resolve_surface_material(
             panel_opacity,
             settings.reduce_transparency,
         );
+        if panel_style == ferese_panel::PanelStyle::Morph {
+            material.shadow = [0.; 3];
+        }
     }
     material
 }
@@ -207,7 +211,12 @@ pub(super) fn material_element_with_role(
         capture_geometry,
         alpha,
     } = surface_geometry;
-    let mut material = resolve_surface_material(role, state.theme_settings, state.panel_background_opacity);
+    let material = resolve_surface_material(
+        role,
+        state.theme_settings,
+        state.panel_background_opacity,
+        state.panel_style,
+    );
     let presentation_alpha = opacity * alpha;
     let mode = output.current_mode()?;
     let scale = output.current_scale().fractional_scale();
@@ -219,13 +228,6 @@ pub(super) fn material_element_with_role(
     };
     let morph = role == crate::effects::SemanticRole::Panel && state.panel_style == ferese_panel::PanelStyle::Morph;
     let background = if morph {
-        material.style = crate::config::MaterialStyle::Solid;
-        material.shadow = [0.; 3];
-        material.opacity = ferese_config::theme::effective_panel_opacity(
-            1.,
-            state.panel_background_opacity,
-            state.theme_settings.reduce_transparency,
-        );
         state.theme_settings.surface_raised_color
     } else {
         background
@@ -684,7 +686,7 @@ mod region_geometry_tests {
     #[test]
     fn reduce_transparency_wins_over_continuous_and_island_panel_materials() {
         use crate::effects::SemanticRole;
-        for surface in ["flat", "floating"] {
+        for surface in ["flat", "floating", "morph"] {
             for opacity in [0., 0.4, 1.] {
                 for reduce in [false, true] {
                     let source = format!(
@@ -695,6 +697,7 @@ mod region_geometry_tests {
                         SemanticRole::Panel,
                         runtime.theme_settings,
                         runtime.panel_background_opacity,
+                        runtime.panel_style,
                     );
                     assert_eq!(material.opacity, if reduce { 1. } else { opacity });
                     assert_eq!(material.opacity, candidate.theme.panel_opacity(Some(opacity)));
@@ -709,10 +712,40 @@ mod region_geometry_tests {
                     if reduce {
                         assert_eq!(runtime.theme_settings.backdrop_blur, 0.);
                     }
-                    let popover = resolve_surface_material(SemanticRole::Popover, runtime.theme_settings, Some(0.));
+                    let popover = resolve_surface_material(
+                        SemanticRole::Popover,
+                        runtime.theme_settings,
+                        Some(0.),
+                        runtime.panel_style,
+                    );
                     assert!((popover.opacity - if reduce { 1. } else { 0.7 }).abs() < 0.001);
                 }
             }
+        }
+    }
+
+    #[test]
+    fn morph_inherits_translucency_and_blur_without_adding_a_shadow() {
+        use crate::effects::SemanticRole;
+        for reduce in [false, true] {
+            let source = format!(
+                "theme {{ material {{ style translucent; opacity 0.6; blur-radius 20; }}; accessibility {{ reduce-transparency #{reduce}; }}; }}; panel main {{ style morph; }}"
+            );
+            let (_, runtime, candidate) = crate::theme::prepare(&source, std::path::Path::new("/tmp")).unwrap();
+            let material =
+                resolve_surface_material(SemanticRole::Panel, runtime.theme_settings, None, runtime.panel_style);
+            assert_eq!(material.shadow, [0.; 3]);
+            assert_eq!(material.opacity, candidate.theme.panel_opacity(None));
+            assert_eq!(
+                material.style,
+                if reduce {
+                    crate::config::MaterialStyle::Solid
+                } else {
+                    crate::config::MaterialStyle::Translucent
+                }
+            );
+            let blur = material_blur_radius(material.style, material.opacity, runtime.theme_settings.backdrop_blur);
+            assert_eq!(blur > 0., !reduce);
         }
     }
 

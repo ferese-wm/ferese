@@ -130,7 +130,7 @@ impl FereseShell {
         select(
             self.snapshot.workspaces_for_output(Some(output.id)).collect(),
             output.active_workspace,
-            // Reserve the four panel tabs and Close before allocating workspace dots.
+            // Keep the compact strip within its existing width budget.
             (panel.morph.expanded_width.min(available) - 28. - 5. * 32. - 4.).max(0.) as f32,
         )
     }
@@ -166,17 +166,7 @@ impl FereseShell {
     }
 
     pub(crate) fn open_hub_overview(&mut self, id: window::Id) -> Task<Message> {
-        if self.bar_hidden(id) || self.hub_mode(id).is_none() {
-            return Task::none();
-        }
-        if let Some(control) = &self.control {
-            if let Some(output) = self.output_for_bar(id) {
-                control.activate_workspace(output.active_workspace);
-            }
-            control.set_overview_active(true);
-        }
-        self.overview_active = true;
-        self.close_hub(id)
+        self.open_hub(id, crate::status_ui::Menu::Workspaces)
     }
 
     pub(crate) fn sync_hub_workspace_feedback(&mut self, suppressed: bool) -> Task<Message> {
@@ -187,7 +177,12 @@ impl FereseShell {
                 let active = self.output_for_bar(entry.bar)?.active_workspace;
                 let mut runtime = entry.runtime.hub.as_ref()?.borrow_mut();
                 let previous = runtime.observed_workspace.replace(active);
+                let selected = runtime.workspace_selection_pending == Some(active);
+                if selected {
+                    runtime.workspace_selection_pending = None;
+                }
                 (!suppressed
+                    && !selected
                     && previous.is_some_and(|previous| previous != active)
                     && matches!(runtime.hub.mode(), Mode::Idle | Mode::Peek))
                 .then_some(entry.bar)
@@ -197,7 +192,7 @@ impl FereseShell {
     }
 
     fn show_hub_workspace_feedback(&mut self, id: window::Id) -> Task<Message> {
-        if self.bar_hidden(id) || self.hub_workspace_width(id) == 0. {
+        if self.bar_hidden(id) || self.hub_workspace_width(id) == 0. || self.hub_priority().is_some() {
             return Task::none();
         }
         let Some(runtime) = self

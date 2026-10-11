@@ -259,6 +259,27 @@ impl FereseShell {
             return self.display_mode_key(key);
         }
         if let Event::Keyboard(cosmic::iced::keyboard::Event::KeyPressed {
+            key: cosmic::iced::keyboard::Key::Named(key),
+            modifiers,
+            ..
+        }) = &event
+            && !modifiers.control()
+            && !modifiers.alt()
+            && self.hub_mode(id)
+                == Some(ferese_panel::morph::Mode::Expanded(
+                    ferese_panel::morph::Content::Workspaces,
+                ))
+            && matches!(
+                key,
+                cosmic::iced::keyboard::key::Named::ArrowLeft
+                    | cosmic::iced::keyboard::key::Named::ArrowRight
+                    | cosmic::iced::keyboard::key::Named::ArrowUp
+                    | cosmic::iced::keyboard::key::Named::ArrowDown
+            )
+        {
+            return self.hub_workspace_key(id, *key);
+        }
+        if let Event::Keyboard(cosmic::iced::keyboard::Event::KeyPressed {
             key: cosmic::iced::keyboard::Key::Named(cosmic::iced::keyboard::key::Named::Tab),
             modifiers,
             ..
@@ -274,7 +295,15 @@ impl FereseShell {
                 } else {
                     Box::new(operation::scoped(target, operation::focusable::focus_next()))
                 };
-            return cosmic::iced::advanced::widget::operate(focus);
+            let task = cosmic::iced::advanced::widget::operate(focus);
+            return if self.hub_mode(id)
+                == Some(ferese_panel::morph::Mode::Expanded(
+                    ferese_panel::morph::Content::Workspaces,
+                )) {
+                task.chain(self.query_hub_workspace_focus(id, None))
+            } else {
+                task
+            };
         }
         if let Event::Keyboard(cosmic::iced::keyboard::Event::KeyPressed {
             key: cosmic::iced::keyboard::Key::Named(cosmic::iced::keyboard::key::Named::Tab),

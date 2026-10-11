@@ -605,6 +605,57 @@ impl Ferese {
         )
     }
 
+    pub(crate) fn workspace_preview_rects(&self) -> HashMap<WindowId, Rect> {
+        // Resolve hidden workspaces on a copy: their cached presented rectangles
+        // may predate a move or output resize. Never mutate their viewport here.
+        let constraints = self.window_constraints();
+        let mut previews = std::collections::HashMap::new();
+        for view in self.output_workspaces.workspace_views_iter(&self.workspaces) {
+            let Some(workspace) = self.workspaces.workspace(view.id) else {
+                continue;
+            };
+            let Some(bounds) = self
+                .output_ids
+                .iter()
+                .find(|(_, id)| **id == view.output)
+                .and_then(|(output, _)| self.output_bounds_for(output))
+            else {
+                continue;
+            };
+            let mut layout = workspace.layout.clone();
+            if let Ok(resolved) =
+                layout.resolve_geometry_with_constraints(bounds, self.gap_config, &constraints, workspace.last_focused)
+            {
+                previews.extend(resolved.geometry);
+            }
+            for window in &workspace.floating {
+                if let Some(ferese_core::WindowPlacement::Floating { rect }) = self.workspaces.placement(*window) {
+                    previews.insert(
+                        *window,
+                        constrained_floating_rect(rect, constraints.get(window).copied().unwrap_or_default()),
+                    );
+                }
+            }
+            for window in workspace.layout.window_ids().chain(workspace.floating.iter().copied()) {
+                let floating = workspace.floating.contains(&window);
+                if workspace.fullscreen == Some(window) {
+                    let full = self
+                        .output_ids
+                        .iter()
+                        .find(|(_, id)| **id == view.output)
+                        .and_then(|(output, _)| self.full_output_bounds_for(output))
+                        .unwrap_or(bounds);
+                    previews.insert(window, full);
+                } else if self.windows.record(window).is_some_and(|w| w.maximized)
+                    && (floating || !matches!(workspace.layout, WorkspaceLayout::Scrolling(_)))
+                {
+                    previews.insert(window, maximized_rect(bounds, self.gap_config.outer));
+                }
+            }
+        }
+        previews
+    }
+
     pub(super) fn window_constraints(&self) -> HashMap<WindowId, SizeConstraints> {
         self.windows
             .ids()

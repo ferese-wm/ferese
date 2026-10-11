@@ -161,6 +161,7 @@ fn status_label(kind: Menu, s: &Snapshot) -> String {
             Some(n) => format!("Notifications: {} unread", n.count),
             _ => "Notifications: unavailable".into(),
         },
+        Menu::Workspaces => "Workspaces".into(),
         Menu::Calendar => "Calendar".into(),
         Menu::Overflow => "More panel items".into(),
         Menu::Recording => "Screen recording".into(),
@@ -239,6 +240,7 @@ pub(super) fn status_icon(kind: Menu, s: &Snapshot) -> (&'static [u8], bool) {
                 (ferese_theme::icons::NOTIFICATIONS, true)
             }
         }
+        Menu::Workspaces => (ferese_theme::icons::OVERVIEW, true),
         Menu::System => (ferese_theme::icons::CONTROL_CENTER, true),
     }
 }

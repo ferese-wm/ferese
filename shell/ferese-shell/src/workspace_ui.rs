@@ -504,6 +504,7 @@ mod tests {
             fullscreen: false,
             maximized: false,
             floating: false,
+            geometry: None,
         });
     }
 
@@ -660,6 +661,7 @@ mod tests {
                 fullscreen: false,
                 maximized: false,
                 floating: false,
+                geometry: None,
             })
             .collect();
         let fingerprint = |handles: Vec<icon::Handle>| {

@@ -203,6 +203,10 @@ enum Message {
     HubClose(window::Id),
     HubWorkspaceScroll(window::Id, cosmic::iced::mouse::ScrollDelta),
     HubOverview(window::Id),
+    HubWorkspaceHover(window::Id, Option<u64>),
+    HubWorkspaceSelect(window::Id, u64),
+    HubWorkspaceMove(window::Id, u64, u64),
+    HubWorkspaceFocus(window::Id, Option<u64>, Option<cosmic::iced::keyboard::key::Named>),
     HubToastExpired(window::Id, Instant),
     HubWorkspaceFeedbackExpired(window::Id, Instant),
     HubIgnore,
@@ -381,6 +385,10 @@ impl cosmic::Application for FereseShell {
             Message::HubClose(id) => self.close_hub(id),
             Message::HubWorkspaceScroll(id, delta) => self.scroll_hub_workspaces(id, delta),
             Message::HubOverview(id) => self.open_hub_overview(id),
+            Message::HubWorkspaceHover(id, workspace) => self.hub_workspace_hover(id, workspace),
+            Message::HubWorkspaceSelect(id, workspace) => self.hub_workspace_select(id, workspace),
+            Message::HubWorkspaceMove(id, window, workspace) => self.hub_workspace_move(id, window, workspace),
+            Message::HubWorkspaceFocus(id, focused, key) => self.hub_workspace_focus(id, focused, key),
             Message::HubToastExpired(id, revision) => self.hub_toast_expired(id, revision),
             Message::HubWorkspaceFeedbackExpired(id, revision) => self.hub_workspace_feedback_expired(id, revision),
             Message::HubIgnore => Task::none(),
@@ -546,7 +554,7 @@ impl cosmic::Application for FereseShell {
             }
             Message::StopRecording => {
                 self.recorder.stop();
-                Task::none()
+                self.sync_hub_activity()
             }
             Message::StatusUpdated(update) => {
                 if update.generation >= self.status_service.generation {
@@ -561,7 +569,7 @@ impl cosmic::Application for FereseShell {
                         dnd: self.notifications.dnd,
                     });
                 }
-                self.sync_notification_surface()
+                Task::batch([self.sync_hub_activity(), self.sync_notification_surface()])
             }
             Message::NotificationEvent(event) => {
                 let notice = if let notifications::Event::Notice(notice) = &event {
@@ -752,7 +760,7 @@ impl cosmic::Application for FereseShell {
             }
             Message::RecorderEvent(event) => {
                 self.recorder.handle(event);
-                Task::none()
+                self.sync_hub_activity()
             }
             Message::RecorderElapsed => Task::none(),
             Message::PanelScale(id, scale) => {
@@ -1471,6 +1479,7 @@ mod tests {
                 fullscreen: true,
                 maximized: false,
                 floating: false,
+                geometry: None,
             }],
         }
     }

@@ -48,9 +48,9 @@ pub(crate) struct WorkspaceSnapshot {
 
 #[derive(Clone, Debug)]
 pub(crate) struct WindowSnapshot {
-    #[cfg_attr(not(test), expect(dead_code, reason = "Retained for window-targeted shell views."))]
     pub(crate) id: u64,
     pub(crate) workspace: u64,
+    pub(crate) geometry: Option<[f64; 4]>,
     pub(crate) app_id: String,
     pub(crate) title: String,
     pub(crate) focused: bool,
@@ -136,7 +136,7 @@ impl ShellControl {
         let connection = control_connection()?;
         let (globals, mut queue) = registry_queue_init::<ControlState>(&connection)?;
         let qh = queue.handle();
-        let manager = globals.bind::<FereseShellManagerV1, _, _>(&qh, 7..=7, ())?;
+        let manager = globals.bind::<FereseShellManagerV1, _, _>(&qh, 7..=8, ())?;
         let shell = manager.get_shell(&qh, ());
         let (sender, updates) = mpsc::channel();
         let wake = Wake(Arc::new(tokio::sync::Notify::new()));
@@ -192,6 +192,16 @@ impl ShellControl {
                 Err(TryRecvError::Empty) => return poll,
             }
         }
+    }
+
+    pub(crate) fn move_window_to_workspace(&self, window: u64, workspace: u64) {
+        if self.shell.version() < 8 {
+            return;
+        }
+        let (hi, lo) = split_id(window);
+        let (workspace_hi, workspace_lo) = split_id(workspace);
+        self.shell.move_window_to_workspace(hi, lo, workspace_hi, workspace_lo);
+        let _ = self.connection.flush();
     }
 
     pub(crate) fn activate_workspace(&self, id: u64) {
@@ -375,6 +385,7 @@ impl Dispatch<FereseShellV1, ()> for ControlState {
                 state.pending.windows.push(WindowSnapshot {
                     id: join_id(window_hi, window_lo),
                     workspace: join_id(workspace_hi, workspace_lo),
+                    geometry: None,
                     app_id,
                     title,
                     focused: flags.contains(ferese_shell_v1::WindowState::Focused),
@@ -383,6 +394,26 @@ impl Dispatch<FereseShellV1, ()> for ControlState {
                     maximized: flags.contains(ferese_shell_v1::WindowState::Maximized),
                     floating: flags.contains(ferese_shell_v1::WindowState::Floating),
                 });
+            }
+            ferese_shell_v1::Event::WindowGeometry {
+                window_hi,
+                window_lo,
+                x,
+                y,
+                width,
+                height,
+            } => {
+                if [x, y, width, height].iter().all(|n| n.is_finite())
+                    && width > 0.
+                    && height > 0.
+                    && let Some(window) = state
+                        .pending
+                        .windows
+                        .iter_mut()
+                        .find(|window| window.id == join_id(window_hi, window_lo))
+                {
+                    window.geometry = Some([x, y, width, height]);
+                }
             }
             ferese_shell_v1::Event::Capabilities { .. } => {
                 let _ = state.sender.send(ControlUpdate::MonitorsChanged);
@@ -563,6 +594,58 @@ mod tests {
         assert!(!tiled.floating);
         assert!(floating.floating);
         assert_ne!(tiled.id, floating.id);
+    }
+
+    #[test]
+    fn geometry_is_attached_to_its_window_and_published_only_with_the_complete_snapshot() {
+        let (control, mut state, queue, _peer) = control_fixture();
+        dispatch_event(
+            &control,
+            &mut state,
+            &queue,
+            ferese_shell_v1::Event::SnapshotBegin { serial: 8 },
+        );
+        let id = 0x1234_5678_9abc_def0;
+        dispatch_event(&control, &mut state, &queue, window_event(id, 0));
+        let (window_hi, window_lo) = split_id(id);
+        dispatch_event(
+            &control,
+            &mut state,
+            &queue,
+            ferese_shell_v1::Event::WindowGeometry {
+                window_hi,
+                window_lo,
+                x: -640.,
+                y: 20.,
+                width: 620.,
+                height: 480.,
+            },
+        );
+        // Invalid geometry must not replace a valid rectangle.
+        dispatch_event(
+            &control,
+            &mut state,
+            &queue,
+            ferese_shell_v1::Event::WindowGeometry {
+                window_hi,
+                window_lo,
+                x: 0.,
+                y: 0.,
+                width: -1.,
+                height: 480.,
+            },
+        );
+        assert!(control.poll().snapshot.is_none());
+        dispatch_event(
+            &control,
+            &mut state,
+            &queue,
+            ferese_shell_v1::Event::SnapshotEnd { serial: 8 },
+        );
+        assert_eq!(
+            control.poll().snapshot.unwrap().windows[0].geometry,
+            Some([-640., 20., 620., 480.])
+        );
     }
 
     #[test]

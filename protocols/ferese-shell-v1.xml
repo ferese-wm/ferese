@@ -22,7 +22,7 @@
     DEALINGS IN THE SOFTWARE.
   </copyright>
 
-  <interface name="ferese_shell_manager_v1" version="7">
+  <interface name="ferese_shell_manager_v1" version="8">
     <description summary="create a capability-scoped Ferese shell controller">
       This private global is visible only to clients granted the shell-control
       capability. It does not assign a Wayland surface role.
@@ -35,7 +35,7 @@
     <request name="destroy" type="destructor"/>
   </interface>
 
-  <interface name="ferese_shell_v1" version="7">
+  <interface name="ferese_shell_v1" version="8">
     <description summary="managed-window metadata and shell control">
       Window, workspace, and output identifiers are unsigned 64-bit values
       encoded as high and low 32-bit words. Each snapshot atomically replaces
@@ -80,6 +80,7 @@
       <entry name="close_window" value="1"/>
       <entry name="select_overview_window" value="2"/>
       <entry name="activate_workspace" value="3"/>
+      <entry name="move_window_to_workspace" value="4" since="8"/>
     </enum>
 
     <event name="snapshot_begin">
@@ -182,5 +183,27 @@
         disabled monitors and mirror targets without a logical wl_output.
       </description>
     </event>
+    <event name="window_geometry" since="8">
+      <description summary="window layout rectangle for workspace previews">
+        Follows its window event inside a snapshot. Coordinates are compositor
+        logical coordinates at the layout target, independent of animations.
+        Width and height are positive. An omitted event means unavailable geometry.
+      </description>
+      <arg name="window_hi" type="uint"/>
+      <arg name="window_lo" type="uint"/>
+      <arg name="x" type="fixed"/>
+      <arg name="y" type="fixed"/>
+      <arg name="width" type="fixed"/>
+      <arg name="height" type="fixed"/>
+    </event>
+    <request name="move_window_to_workspace" since="8">
+      <description summary="move an identified window without switching workspaces">
+        Both IDs must exist and belong to the same output. A stale ID is rejected.
+      </description>
+      <arg name="window_hi" type="uint"/>
+      <arg name="window_lo" type="uint"/>
+      <arg name="workspace_hi" type="uint"/>
+      <arg name="workspace_lo" type="uint"/>
+    </request>
   </interface>
 </protocol>
