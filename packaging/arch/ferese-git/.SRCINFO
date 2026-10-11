@@ -10,12 +10,16 @@ pkgbase = ferese-git
 	license = BSD-3-Clause
 	license = BSL-1.0
 	license = CC0-1.0
+	license = CDLA-Permissive-2.0
 	license = ISC
 	license = MPL-2.0
 	license = Unicode-3.0
+	license = Unlicense
 	license = Zlib
 	license = OFL-1.1
 	license = Apache-2.0 WITH LLVM-exception
+	checkdepends = dbus
+	checkdepends = vulkan-swrast
 	makedepends = cargo>=1.95
 	makedepends = cmake
 	makedepends = clang

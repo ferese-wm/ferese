@@ -10,7 +10,7 @@ Release:        1%{?dist}
 Summary:        Scrolling Wayland desktop
 # Includes vendored Rust libraries, theme palettes and fonts. Full notices ship
 # under /usr/share/licenses/ferese, including per-dependency SPDX metadata.
-License:        MIT AND Apache-2.0 AND BSD-2-Clause AND BSD-3-Clause AND BSL-1.0 AND CC0-1.0 AND ISC AND MPL-2.0 AND Unicode-3.0 AND Zlib AND OFL-1.1 AND (Apache-2.0 WITH LLVM-exception)
+License:        MIT AND Apache-2.0 AND BSD-2-Clause AND BSD-3-Clause AND BSL-1.0 AND CC0-1.0 AND CDLA-Permissive-2.0 AND ISC AND MPL-2.0 AND Unicode-3.0 AND Unlicense AND Zlib AND OFL-1.1 AND (Apache-2.0 WITH LLVM-exception)
 URL:            https://github.com/ferese-wm/ferese
 Source0:        %{url}/releases/download/v%{upstream_version}/ferese-%{upstream_version}.tar.gz
 
@@ -19,6 +19,7 @@ BuildRequires:  rust >= 1.95
 BuildRequires:  gcc-c++ cmake make clang clang-devel python3 pkgconf-pkg-config
 BuildRequires:  wayland-devel libxkbcommon-devel libinput-devel systemd-devel libseat-devel
 BuildRequires:  mesa-libgbm-devel mesa-libEGL-devel libdrm-devel fontconfig-devel freetype-devel expat-devel
+BuildRequires:  mesa-dri-drivers mesa-vulkan-drivers
 BuildRequires:  pipewire-devel gstreamer1-devel dbus-daemon desktop-file-utils polkit-libs pam
 Requires:       pam polkit polkit-libs foot pipewire wireplumber python3 bash util-linux dbus-daemon dbus-tools systemd
 Requires:       xdg-desktop-portal xdg-desktop-portal-gtk
