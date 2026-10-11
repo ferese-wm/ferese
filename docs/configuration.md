@@ -885,8 +885,7 @@ service state and exact vertical styling can differ.
 
 ```kdl
 panel "main" {
-    surface "none"
-    group-surface "island"
+    style "floating"
     geometry { height 30; edge-margin 6; side-margins 18; window-clearance 4; }
     border #false
     background-opacity 0.85
@@ -924,13 +923,12 @@ currently share the same clock format and timezone.
 
 | Scope / key | Values / default | Meaning |
 | --- | --- | --- |
-| Panel `surface` | `solid` (default), `none` | Full panel fill or transparent space between decorated groups |
-| Panel `group-surface` | `none` (default), `inset`, `island` | Surface policy for every group |
-| Panel `geometry` | height 28, edge/side margins 0, window clearance 0, inner padding 12 | Dimensions independent of the theme |
-| Panel `border` | boolean; default `false` | Show group outlines |
-| Panel `corner-radius` | optional px string, e.g. `"4px 8px"` | Override shell radius for all panel surfaces |
+| Panel `style` | `flat` (default), `floating`, `capsules`, `notch`, `fused` | Shape inherited by every group |
+| Panel `geometry` | height 36, window clearance 0, inner padding 12; detached styles use 8 px margins | Optional pins; otherwise follow the selected style |
+| Panel `border` | boolean; default `false` | Outline the panel shape |
+| Panel `corner-radius` | optional px string, e.g. `"4px 8px"` | Pin the panel’s anchored and free corners |
 | Zone `spacing` | 0–64; default 8 | Gap between groups |
-| Panel `background-opacity` | optional 0–1; inherits shell opacity | Override panel background opacity in either arrangement |
+| Panel `background-opacity` | optional 0–1; inherits shell opacity | Override panel background opacity for every panel style |
 | Groups per panel | at most 31 | Reserves one of the 32 material regions for overflow |
 | Group `spacing` | 0–64; default 1 | Gap between items |
 | Group `padding` | two integers 0–32; default `2 3` | Vertical and horizontal inner padding |

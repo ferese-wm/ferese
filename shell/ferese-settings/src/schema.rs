@@ -526,7 +526,7 @@ pub fn fields(page: Page) -> Vec<Field> {
                 "Height",
                 "Keeps icon and text sizes unchanged.",
                 RangeSpec {
-                    default: 28.0,
+                    default: 36.0,
                     min: 24.0,
                     max: 48.0,
                     step: 1.0,

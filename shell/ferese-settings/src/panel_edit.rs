@@ -26,7 +26,9 @@ impl std::fmt::Display for Destination {
 
 #[derive(Clone, Debug)]
 pub(super) enum Action {
-    ApplyPreset(ferese_panel::PanelPreset),
+    ApplyPreset(ferese_panel::PanelStyle),
+    ResetShape,
+    ClearGeometry(String),
     SetEdge(ferese_panel::Edge),
     SetGeometry(String, Value),
     SetRadius(String),
@@ -171,16 +173,23 @@ pub(super) fn plan(snapshot: &Snapshot, action: Action) -> Result<Vec<Edit>, Str
     let earlier = matches!(&action, Action::Earlier(_));
     let earlier_group = matches!(&action, Action::EarlierGroup(_));
     let edits = match action {
-        Action::ApplyPreset(preset) => {
-            let mut edited = panel.clone();
-            edited.apply_preset(preset);
-            vec![
-                set("panels.0.surface", serde_json::to_value(edited.surface).unwrap()),
-                set(
-                    "panels.0.group_surface",
-                    serde_json::to_value(edited.group_surface).unwrap(),
-                ),
-            ]
+        Action::ApplyPreset(style) => vec![set("panels.0.style", style.key())],
+        Action::ResetShape => vec![
+            Edit::Unset("panels.0.geometry".into()),
+            Edit::Unset("panels.0.corner_radius".into()),
+        ],
+        Action::ClearGeometry(path) => {
+            if !matches!(
+                path.as_str(),
+                "panels.0.geometry.height"
+                    | "panels.0.geometry.edge_margin"
+                    | "panels.0.geometry.side_margins"
+                    | "panels.0.geometry.window_clearance"
+                    | "panels.0.geometry.inner_padding"
+            ) {
+                return Err("Unknown panel geometry setting.".into());
+            }
+            vec![Edit::Unset(path)]
         }
         Action::SetEdge(edge) => vec![set("panels.0.edge", edge.key())],
         Action::SetGeometry(field, value) => {
@@ -424,9 +433,13 @@ mod tests {
             snapshot.edit(&edit).unwrap();
         }
         let panels: Vec<Panel> = serde_json::from_value(snapshot.item("panels").unwrap().clone()).unwrap();
-        assert_eq!(panels[0].geometry.height, 28.);
-        assert_eq!(panels[0].geometry.edge_margin, 0);
-        assert_eq!(panels[0].geometry.side_margins, 18);
+        assert_eq!(panels[0].resolved_geometry().height, 36.);
+        assert_eq!(panels[0].resolved_geometry().edge_margin, 0);
+        assert_eq!(panels[0].geometry.side_margins, Some(18));
+        assert_eq!(panels[0].resolved_geometry().side_margins, 0);
+        let mut floating = panels[0].clone();
+        floating.apply_preset(ferese_panel::PanelStyle::Floating);
+        assert_eq!(floating.resolved_geometry().side_margins, 18);
         assert!(snapshot.source.contains("// keep"));
         assert!(plan(&snapshot, Action::SetGeometry("height".into(), 12.into())).is_err());
     }
@@ -799,7 +812,7 @@ animations { speed 0.8; }
 
     #[test]
     fn empty_zones_can_gain_unique_groups_and_nonempty_groups_cannot_be_removed() {
-        let mut snapshot = Snapshot::parse("panel \"main\" { surface none; group-surface island; }".into()).unwrap();
+        let mut snapshot = Snapshot::parse("panel \"main\" { style floating; }".into()).unwrap();
         for _ in 0..3 {
             apply(&mut snapshot, Action::AddGroup(Zone::End));
         }
@@ -972,20 +985,35 @@ animations { speed 0.8; }
         assert!(panels[0].item(&ItemId("title".into())).unwrap().visible);
     }
     #[test]
-    fn panel_presets_preserve_group_layout_items_and_comments() {
-        let mut snapshot = Snapshot::parse("// keep\npanel main { surface none; group-surface island; center { group title { padding 2 7; item title kind=focused-window; }; }; end { group media { item media kind=media; }; }; }".into()).unwrap();
-        let groups = snapshot.item("panels.0.center.groups").unwrap().clone();
+    fn resetting_one_geometry_pin_preserves_composition_and_other_pins() {
+        let mut snapshot = Snapshot::parse("// keep\npanel main { style floating; geometry { height 32; side-margins 18; }; corner-radius \"8px 9px 10px 11px\"; end { group status { item clock kind=clock; }; }; }".into()).unwrap();
+        let groups = snapshot.item("panels.0.end.groups").unwrap().clone();
         apply(
             &mut snapshot,
-            Action::ApplyPreset(ferese_panel::PanelPreset::Continuous),
+            Action::ClearGeometry("panels.0.geometry.side_margins".into()),
         );
-        assert_eq!(snapshot.string("panels.0.surface", ""), "solid");
+        assert_eq!(snapshot.item("panels.0.geometry.side_margins"), None);
+        assert_eq!(snapshot.item("panels.0.geometry.height"), Some(&serde_json::json!(32)));
+        assert!(snapshot.item("panels.0.corner_radius").is_some());
+        apply(&mut snapshot, Action::ResetShape);
+        assert_eq!(snapshot.item("panels.0.geometry"), None);
+        assert_eq!(snapshot.item("panels.0.corner_radius"), None);
+        assert_eq!(snapshot.item("panels.0.end.groups"), Some(&groups));
+        assert!(snapshot.source.contains("// keep"));
+    }
+
+    #[test]
+    fn panel_presets_preserve_group_layout_items_and_comments() {
+        let mut snapshot = Snapshot::parse("// keep\npanel main { style floating; center { group title { padding 2 7; item title kind=focused-window; }; }; end { group media { item media kind=media; }; }; }".into()).unwrap();
+        let groups = snapshot.item("panels.0.center.groups").unwrap().clone();
+        apply(&mut snapshot, Action::ApplyPreset(ferese_panel::PanelStyle::Flat));
+        assert_eq!(snapshot.string("panels.0.style", ""), "flat");
         assert_eq!(snapshot.item("panels.0.center.groups"), Some(&groups));
         assert!(snapshot.source.contains("// keep"));
-        apply(&mut snapshot, Action::ApplyPreset(ferese_panel::PanelPreset::Islands));
+        apply(&mut snapshot, Action::ApplyPreset(ferese_panel::PanelStyle::Floating));
         assert_eq!(snapshot.item("panels.0.center.groups"), Some(&groups));
         let panels: Vec<Panel> = serde_json::from_value(snapshot.item("panels").unwrap().clone()).unwrap();
-        assert_eq!(panels[0].preset(), Some(ferese_panel::PanelPreset::Islands));
+        assert_eq!(panels[0].preset(), Some(ferese_panel::PanelStyle::Floating));
         for surface in ["none", "inset", "island"] {
             assert!(
                 plan(

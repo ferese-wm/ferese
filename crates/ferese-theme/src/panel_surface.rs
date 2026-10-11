@@ -12,6 +12,7 @@ pub struct Options {
     pub scale: f64,
     pub background: Color,
     pub border: Color,
+    pub divider: Color,
     pub native: bool,
 }
 
@@ -43,7 +44,7 @@ struct Surface<'a, M> {
 struct State {
     scene: Scene,
     cache: Cache<cosmic::Renderer>,
-    colors: Option<(Color, Color)>,
+    colors: Option<(Color, Color, Color, bool, u64)>,
     published: Option<Scene>,
 }
 
@@ -94,7 +95,13 @@ impl<M> Surface<'_, M> {
             })
             .unwrap_or_default();
         let state = tree.state.downcast_mut::<State>();
-        let colors = (self.options.background, self.options.border);
+        let colors = (
+            self.options.background,
+            self.options.border,
+            self.options.divider,
+            self.options.native,
+            self.options.scale.to_bits(),
+        );
         if state.scene != scene || state.colors != Some(colors) {
             state.scene = scene;
             state.colors = Some(colors);
@@ -185,7 +192,10 @@ impl<M> Widget<M, Theme, cosmic::Renderer> for Surface<'_, M> {
     ) {
         let state = tree.state.downcast_ref::<State>();
         let bounds = layout.bounds();
-        if !self.options.native || self.options.border.a > 0. {
+        if !self.options.native
+            || self.options.border.a > 0.
+            || (!state.scene.dividers.is_empty() && self.options.divider.a > 0.)
+        {
             let geometry = state.cache.draw(renderer, bounds.size(), |frame| {
                 if let Ok(contours) = ferese_panel::outline::contours(&state.scene, 0.2 / self.options.scale.max(1.)) {
                     let path = Path::new(|builder| {
@@ -203,13 +213,30 @@ impl<M> Widget<M, Theme, cosmic::Renderer> for Surface<'_, M> {
                         frame.fill(&path, self.options.background);
                     }
                     if self.options.border.a > 0. {
-                        frame.stroke(&path, Stroke::default().with_color(self.options.border).with_width(1.));
+                        let width = 1. / self.options.scale.max(1.) as f32;
+                        if self.options.parameters.style == ferese_panel::PanelStyle::Flat {
+                            let y = match self.options.parameters.edge {
+                                ferese_panel::Edge::Top => bounds.height - width / 2.,
+                                ferese_panel::Edge::Bottom => width / 2.,
+                            };
+                            frame.stroke(
+                                &Path::line(Point::new(0., y), Point::new(bounds.width, y)),
+                                Stroke::default().with_color(self.options.border).with_width(width),
+                            );
+                        } else {
+                            frame.stroke(
+                                &path,
+                                Stroke::default().with_color(self.options.border).with_width(width),
+                            );
+                        }
                     }
                 }
                 for [x1, y1, x2, y2] in &state.scene.dividers {
                     frame.stroke(
                         &Path::line(Point::new(*x1 as f32, *y1 as f32), Point::new(*x2 as f32, *y2 as f32)),
-                        Stroke::default().with_color(self.options.border).with_width(1.),
+                        Stroke::default()
+                            .with_color(self.options.divider)
+                            .with_width(1. / self.options.scale.max(1.) as f32),
                     );
                 }
             });
@@ -320,6 +347,7 @@ mod tests {
                         scale,
                         background: Color::WHITE,
                         border: Color::TRANSPARENT,
+                        divider: Color::TRANSPARENT,
                         native: false,
                     },
                     |_| {},

@@ -1,9 +1,9 @@
 //! Panel composition, independent of widgets, services, and Wayland surfaces.
 pub(crate) mod geometry;
 pub mod layout;
-pub use geometry::PanelGeometry;
+pub use geometry::{GeometryIntent, PanelGeometry};
 mod radius;
-use crate::PanelPreset;
+use crate::PanelStyle;
 pub use radius::CornerRadii;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
@@ -383,11 +383,9 @@ pub struct Panel {
     #[serde(default)]
     pub edge: Edge,
     #[serde(default)]
-    pub geometry: PanelGeometry,
+    pub geometry: GeometryIntent,
     #[serde(default)]
-    pub surface: PanelSurface,
-    #[serde(default)]
-    pub group_surface: GroupSurface,
+    pub style: PanelStyle,
     #[serde(default)]
     pub border: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -425,6 +423,9 @@ pub fn validate(panels: &[Panel]) -> Result<(), String> {
     };
     let mut panel_ids = HashSet::new();
     for panel in panels {
+        if !PanelStyle::AVAILABLE.contains(&panel.style) {
+            return Err(format!("panel style {} is not available yet", panel.style.key()));
+        }
         panel.geometry.validate()?;
         if panel.group_count() > MAX_GROUPS {
             return Err(format!(
@@ -434,7 +435,7 @@ pub fn validate(panels: &[Panel]) -> Result<(), String> {
         if let Some(opacity) = panel.background_opacity
             && (!opacity.is_finite() || !(0.0..=1.0).contains(&opacity))
         {
-            return Err("panel group background opacity must be between 0 and 1".into());
+            return Err("panel background opacity must be between 0 and 1".into());
         }
         if let Some(radius) = panel.corner_radius {
             radius.validate()?;
@@ -483,24 +484,60 @@ pub fn validate(panels: &[Panel]) -> Result<(), String> {
 
 impl Default for Panel {
     fn default() -> Self {
-        Self::from_preset(PanelPreset::Continuous)
+        Self::from_preset(PanelStyle::Flat)
     }
 }
 
 impl Panel {
-    pub fn preset(&self) -> Option<PanelPreset> {
-        match (self.surface, self.group_surface) {
-            (PanelSurface::Solid, GroupSurface::None) => Some(PanelPreset::Continuous),
-            (PanelSurface::None, GroupSurface::Island) => Some(PanelPreset::Islands),
-            _ => None,
+    pub fn preset(&self) -> Option<PanelStyle> {
+        Some(self.style)
+    }
+
+    pub fn apply_preset(&mut self, style: PanelStyle) {
+        self.style = style;
+    }
+
+    pub fn surface(&self) -> PanelSurface {
+        if matches!(self.style, PanelStyle::Flat | PanelStyle::Frame) {
+            PanelSurface::Solid
+        } else {
+            PanelSurface::None
         }
     }
 
-    pub fn apply_preset(&mut self, preset: PanelPreset) {
-        (self.surface, self.group_surface) = match preset {
-            PanelPreset::Continuous => (PanelSurface::Solid, GroupSurface::None),
-            PanelPreset::Islands => (PanelSurface::None, GroupSurface::Island),
-        };
+    pub fn group_surface(&self) -> GroupSurface {
+        if self.surface() == PanelSurface::Solid {
+            GroupSurface::None
+        } else {
+            GroupSurface::Island
+        }
+    }
+
+    pub fn zone_spacing(&self, zone: &Zone) -> f32 {
+        if self.style.connected() { 0. } else { zone.spacing }
+    }
+
+    pub fn shape_parameters(&self) -> crate::scene::Parameters {
+        crate::scene::Parameters {
+            style: self.style,
+            edge: self.edge,
+            height: self.resolved_geometry().height.into(),
+            radius: self.corner_radius.map(|r| crate::shape::AnchoredRadii(r.0)),
+            ..Default::default()
+        }
+    }
+
+    pub fn resolved_geometry(&self) -> PanelGeometry {
+        self.geometry.resolve(self.style)
+    }
+
+    pub fn exclusive_zone(&self, hidden: bool) -> i32 {
+        if hidden {
+            0
+        } else {
+            let geometry = self.resolved_geometry();
+            (geometry.height.round() as i32).saturating_add(geometry.window_clearance)
+        }
     }
 
     pub fn group_count(&self) -> usize {
@@ -521,12 +558,13 @@ impl Panel {
                         && left.spacing == right.spacing
                         && left.padding == right.padding
                         && left.island_padding == right.island_padding
-                        && (self.group_surface == GroupSurface::Island) == (other.group_surface == GroupSurface::Island)
+                        && (self.group_surface() == GroupSurface::Island)
+                            == (other.group_surface() == GroupSurface::Island)
                 })
         };
         self.id == other.id
             && self.edge == other.edge
-            && self.surface == other.surface
+            && self.style == other.style
             && same_zone(&self.start, &other.start)
             && same_zone(&self.center, &other.center)
             && same_zone(&self.end, &other.end)
@@ -569,7 +607,7 @@ impl Panel {
     }
 
     /// Build a stable initial composition; presets are an editor convenience.
-    pub fn from_preset(preset: PanelPreset) -> Self {
+    pub fn from_preset(preset: PanelStyle) -> Self {
         use ItemKind::*;
 
         let item = Item::new;
@@ -595,7 +633,7 @@ impl Panel {
         let display = item("display-mode", DisplayMode);
 
         let (start, center, end) = match preset {
-            PanelPreset::Continuous => (
+            PanelStyle::Flat => (
                 vec![
                     Group::new("overview", vec![overview], [0, 0], padding),
                     Group::new("workspaces", vec![workspaces], [2, 3], padding),
@@ -607,7 +645,7 @@ impl Panel {
                     Group::new("display", vec![display], [0, 0], padding),
                 ],
             ),
-            PanelPreset::Islands => {
+            _ => {
                 let mut controls = controls;
                 controls.extend([clock, display]);
                 (
@@ -621,23 +659,14 @@ impl Panel {
         Self {
             id: PanelId("main".into()),
             edge: Edge::Top,
-            geometry: PanelGeometry::default(),
-            surface: if preset == PanelPreset::Continuous {
-                PanelSurface::Solid
-            } else {
-                PanelSurface::None
-            },
-            group_surface: if preset == PanelPreset::Continuous {
-                GroupSurface::None
-            } else {
-                GroupSurface::Island
-            },
+            geometry: GeometryIntent::default(),
+            style: preset,
             border: false,
             background_opacity: Option::None,
             corner_radius: Option::None,
             start: Zone {
                 groups: start,
-                spacing: if preset == PanelPreset::Islands { 8.0 } else { 3.0 },
+                spacing: if preset == PanelStyle::Floating { 8.0 } else { 3.0 },
             },
             center: Zone {
                 groups: vec![center],
@@ -655,6 +684,16 @@ impl Panel {
 mod tests {
     use super::*;
 
+    #[test]
+    fn fullscreen_releases_the_entire_reservation_without_discarding_pins() {
+        let mut panel = Panel::from_preset(PanelStyle::Floating);
+        panel.geometry.height = Some(36.);
+        panel.geometry.window_clearance = Some(4);
+        assert_eq!(panel.exclusive_zone(false), 40);
+        assert_eq!(panel.exclusive_zone(true), 0);
+        assert_eq!(panel.geometry.window_clearance, Some(4));
+    }
+
     fn items(panel: &Panel) -> Vec<&Item> {
         [&panel.start, &panel.center, &panel.end]
             .into_iter()
@@ -665,7 +704,7 @@ mod tests {
 
     #[test]
     fn group_capacity_reserves_overflow_even_for_empty_groups() {
-        for background in [PanelPreset::Continuous, PanelPreset::Islands] {
+        for background in [PanelStyle::Flat, PanelStyle::Floating] {
             let mut panel = Panel::from_preset(background);
             panel.start.groups.clear();
             panel.center.groups.clear();
@@ -685,7 +724,7 @@ mod tests {
     #[test]
     fn defaults_preserve_order_and_ids_across_background_changes() {
         let continuous = Panel::default();
-        let islands = Panel::from_preset(PanelPreset::Islands);
+        let islands = Panel::from_preset(PanelStyle::Floating);
         let expected = [
             "overview",
             "workspaces",
@@ -749,7 +788,7 @@ mod tests {
 
     #[test]
     fn settings_map_to_instances_and_group_presentation() {
-        let mut panel = Panel::from_preset(PanelPreset::Islands);
+        let mut panel = Panel::from_preset(PanelStyle::Floating);
         panel.center.groups[0].items[0].visible = false;
         let battery = panel.end.groups[0]
             .items
@@ -799,11 +838,11 @@ mod tests {
     fn surface_changes_only_replace_composition_when_item_geometry_changes() {
         let panel = Panel::default();
         let mut changed = panel.clone();
-        changed.group_surface = GroupSurface::Inset;
+        changed.style = PanelStyle::Flat;
         assert!(panel.same_composition(&changed));
-        changed.group_surface = GroupSurface::Island;
+        changed.style = PanelStyle::Floating;
         assert!(!panel.same_composition(&changed));
-        changed.group_surface = GroupSurface::None;
+        changed.style = PanelStyle::Flat;
         assert!(panel.same_composition(&changed));
         changed.end.groups[0].padding[1] += 1;
         assert!(!panel.same_composition(&changed));

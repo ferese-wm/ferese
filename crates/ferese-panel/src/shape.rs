@@ -1,6 +1,5 @@
 //! Geometry shared by panel renderers. These rules do not expose styles in
 //! configuration until the corresponding rendering backend supports them.
-
 use crate::{CornerRadii, Edge};
 use ferese_layout::Rect;
 use serde::{Deserialize, Serialize};
@@ -22,6 +21,9 @@ pub enum Style {
 }
 
 impl Style {
+    /// Styles with a complete shell surface contract.
+    pub const AVAILABLE: [Self; 5] = [Self::Floating, Self::Capsules, Self::Notch, Self::Flat, Self::Fused];
+
     pub const ALL: [Self; 10] = [
         Self::Floating,
         Self::Capsules,

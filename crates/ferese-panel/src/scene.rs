@@ -337,14 +337,21 @@ pub fn derive(
                 true,
                 0,
             )?;
-            add(&mut scene, grid, vertical, CornerRadii([0., 0., 14., 0.]), false, 0)?;
+            add(&mut scene, grid, vertical, CornerRadii([0., 0., 14., 0.]), true, 0)?;
+            // Capture the union once: overlapping translucent captures darken the elbow.
+            scene.damage = vec![
+                horizontal,
+                Rect::new(vertical.x, vertical.y + h, w, (vertical.height - h).max(0.)),
+            ];
             let r = parameters
                 .fillet
                 .min((horizontal.width - w).max(0.))
                 .min((vertical.height - h).max(0.));
             if r > 0. {
+                let patch = grid.rect(Rect::new(bounds.x + w, bounds.y + h, r, r))?;
+                scene.damage.push(patch);
                 scene.paint.push(Primitive {
-                    bounds: grid.rect(Rect::new(bounds.x + w, bounds.y + h, r, r))?,
+                    bounds: patch,
                     radii: CornerRadii::uniform(0.),
                     operation: 4,
                     blend_zone: 0,
@@ -466,6 +473,19 @@ pub fn derive(
             // of 0.8*gap cannot form a neck with this kernel.
             if style == Style::Fused {
                 scene.fusion = parameters.gap * 2.4;
+                scene.damage.clear();
+                for zone in 1..=3 {
+                    let mut shapes = scene.paint.iter().filter(|p| p.blend_zone == zone);
+                    if let Some(first) = shapes.next() {
+                        let mut region = first.bounds;
+                        for shape in shapes {
+                            let right = (region.x + region.width).max(shape.bounds.x + shape.bounds.width);
+                            region.x = region.x.min(shape.bounds.x);
+                            region.width = right - region.x;
+                        }
+                        scene.damage.push(region);
+                    }
+                }
             }
         }
     }
@@ -561,6 +581,49 @@ mod tests {
         assert!(!scene.contains([112., 18.]));
         assert!(scene.distance([250., 18.]) > 0.);
     }
+    #[test]
+    fn fused_capture_includes_the_neck() {
+        let scene = scene(Style::Fused);
+        assert!(
+            scene
+                .damage
+                .iter()
+                .any(|r| r.x <= 112. && r.x + r.width > 112. && r.y <= 18. && r.y + r.height > 18.)
+        );
+    }
+
+    #[test]
+    fn corner_wrap_capture_is_disjoint_and_the_workspace_arm_is_interactive() {
+        let scene = derive(
+            Parameters {
+                style: Style::CornerWrap,
+                ..Default::default()
+            },
+            Rect::new(0., 0., 800., 600.),
+            &[],
+            PixelGrid::new(1.25).unwrap(),
+        )
+        .unwrap();
+        assert!(scene.contains([18., 200.]));
+        assert!(!scene.contains([38., 38.])); // the decorative elbow is not input
+        for (i, a) in scene.damage.iter().enumerate() {
+            for b in &scene.damage[i + 1..] {
+                assert!(a.x + a.width <= b.x || b.x + b.width <= a.x || a.y + a.height <= b.y || b.y + b.height <= a.y);
+            }
+        }
+        for x in (0..800).step_by(3) {
+            for y in (0..600).step_by(3) {
+                let point = [x as f64 + 0.5, y as f64 + 0.5];
+                if scene.distance(point) < 0. {
+                    assert!(scene.damage.iter().any(|r| point[0] >= r.x
+                        && point[0] < r.x + r.width
+                        && point[1] >= r.y
+                        && point[1] < r.y + r.height));
+                }
+            }
+        }
+    }
+
     #[test]
     fn frame_has_a_cutout_and_bounded_damage() {
         let scene = derive(

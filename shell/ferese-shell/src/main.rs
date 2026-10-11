@@ -83,6 +83,7 @@ struct BarMetrics {
     icon_size: u16,
     overview_icon_size: u16,
     control_height: f32,
+    #[cfg(test)]
     group_height: f32,
     group_item_height: f32,
 }
@@ -103,6 +104,7 @@ impl From<panel::PanelGeometry> for BarMetrics {
             icon_size: 20,
             overview_icon_size: 20,
             control_height,
+            #[cfg(test)]
             group_height,
             group_item_height: (group_height - 4.0).max(0.0),
         }
@@ -193,7 +195,7 @@ struct OutputSurfaces {
 
 #[derive(Clone, Debug)]
 enum Message {
-    BarRegionsChanged(window::Id, Vec<[f32; 5]>),
+    PanelSurfaceChanged(window::Id, Box<ferese_panel::scene::Scene>),
     PanelResolved(window::Id, panel_layout::Resolution),
     ThemeChanged(Box<ferese_ipc::theme::Snapshot>),
     ThemeMode(ferese_config::theme::Mode),
@@ -390,7 +392,12 @@ impl cosmic::Application for FereseShell {
                     Task::batch([margin, tooltip])
                 }
             }
-            Message::BarRegionsChanged(id, regions) => {
+            Message::PanelSurfaceChanged(id, scene) => {
+                let regions = scene
+                    .input_rectangles(1.)
+                    .into_iter()
+                    .map(|r| [r[0] as f32, r[1] as f32, r[2] as f32, r[3] as f32, 0.])
+                    .collect();
                 let Some(output) = self.outputs.iter_mut().find(|output| output.bar == id) else {
                     return Task::none();
                 };
@@ -398,7 +405,7 @@ impl cosmic::Application for FereseShell {
                 output.bar_regions = regions;
                 set_input_zone(
                     id,
-                    bar::input_region(self.config.panels[0].surface, output.hidden, &output.bar_regions),
+                    bar::input_region(ferese_panel::PanelSurface::None, output.hidden, &output.bar_regions),
                 )
             }
 
@@ -756,6 +763,10 @@ impl cosmic::Application for FereseShell {
                                 continue;
                             }
 
+                            tasks.push(set_exclusive_zone(
+                                entry.bar,
+                                self.config.panels[0].exclusive_zone(hidden),
+                            ));
                             entry.hidden = hidden;
                             visibility_changed = true;
                             if let Some(effects) = &entry.effects
@@ -765,7 +776,7 @@ impl cosmic::Application for FereseShell {
                             }
                             tasks.push(set_input_zone(
                                 entry.bar,
-                                bar::input_region(self.config.panels[0].surface, hidden, &entry.bar_regions),
+                                bar::input_region(ferese_panel::PanelSurface::None, hidden, &entry.bar_regions),
                             ));
                         }
                         if self
@@ -877,9 +888,9 @@ impl FereseShell {
         let composition_changed = !self.config.panels[0].same_composition(&config.panels[0]);
         let edge_changed = self.config.panels[0].edge != config.panels[0].edge;
         let old = self.config.theme;
-        let old_geometry = self.config.panels[0].geometry;
+        let old_geometry = self.config.panels[0].resolved_geometry();
         let theme = config.theme;
-        let geometry = config.panels[0].geometry;
+        let geometry = config.panels[0].resolved_geometry();
         let geometry_changed = edge_changed || old_geometry != geometry;
         self.notifications.configure(config.notifications.clone());
         self.config = config;
@@ -893,7 +904,7 @@ impl FereseShell {
                 // publishes its replacement through PanelResolved.
                 tasks.push(set_input_zone(
                     output.bar,
-                    bar::input_region(self.config.panels[0].surface, output.hidden, &output.bar_regions),
+                    bar::input_region(ferese_panel::PanelSurface::None, output.hidden, &output.bar_regions),
                 ));
             }
         }
@@ -915,7 +926,7 @@ impl FereseShell {
             tasks.push(set_size(entry.bar, None, Some(geometry.height.round() as u32)));
             tasks.push(set_exclusive_zone(
                 entry.bar,
-                (geometry.height.round() as i32).saturating_add(geometry.window_clearance),
+                self.config.panels[0].exclusive_zone(entry.hidden),
             ));
         }
 
@@ -934,7 +945,7 @@ impl FereseShell {
     }
 
     fn update_panel_margin(&mut self, bar: window::Id, force: bool) -> Task<Message> {
-        let geometry = self.config.panels[0].geometry;
+        let geometry = self.config.panels[0].resolved_geometry();
         let Some(entry) = self.outputs.iter_mut().find(|entry| entry.bar == bar) else {
             return Task::none();
         };
@@ -1039,7 +1050,8 @@ mod tests {
     #[test]
     fn cosmetic_reloads_preserve_measured_margins_and_the_open_popover() {
         let mut shell = shell_with_measured_panel();
-        shell.config.panels[0].geometry.side_margins = 240;
+        shell.config.panels[0].style = ferese_panel::PanelStyle::Floating;
+        shell.config.panels[0].geometry.side_margins = Some(240);
         drop(shell.update_panel_margin(shell.outputs[0].bar, false));
         assert_eq!(shell.outputs[0].bar_margin_horizontal, 240);
         let popup = window::Id::unique();
@@ -1061,7 +1073,6 @@ mod tests {
             ("background_opacity", serde_json::json!(0.5)),
             ("corner_radius", serde_json::json!("4px 8px")),
             ("border", serde_json::json!(true)),
-            ("group_surface", serde_json::json!("inset")),
         ] {
             let edit = field;
             let mut document = ferese_config::Document::parse("").unwrap();
@@ -1205,7 +1216,8 @@ mod tests {
     fn an_empty_measured_panel_is_not_an_unmeasured_panel() {
         let mut shell = shell_with_measured_panel();
         let bar = shell.outputs[0].bar;
-        shell.config.panels[0].geometry.side_margins = 240;
+        shell.config.panels[0].style = ferese_panel::PanelStyle::Floating;
+        shell.config.panels[0].geometry.side_margins = Some(240);
         shell.outputs[0].panel_resolution = None;
         drop(shell.update_panel_margin(bar, false));
         assert_eq!(shell.outputs[0].bar_margin_horizontal, 0);

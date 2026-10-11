@@ -583,11 +583,11 @@ mod tests {
 
     #[test]
     fn reduce_transparency_overrides_panel_opacity_for_both_surfaces() {
-        for surface in ["solid", "none"] {
+        for surface in ["flat", "floating"] {
             for opacity in [0., 0.4, 1.] {
                 for reduce in [false, true] {
                     let source = format!(
-                        "theme {{ material {{ style translucent; opacity 0.7; }}; accessibility {{ reduce-transparency #{reduce}; }}; }}; panel main {{ surface {surface}; group-surface island; background-opacity {opacity}; }}"
+                        "theme {{ material {{ style translucent; opacity 0.7; }}; accessibility {{ reduce-transparency #{reduce}; }}; }}; panel main {{ style {surface}; background-opacity {opacity}; }}"
                     );
                     let document = ferese_config::Document::parse(&source).unwrap();
                     let resolved = ferese_config::theme::resolve(
@@ -649,13 +649,13 @@ mod tests {
         use crate::panel::{GroupSurface, ItemKind, PanelSurface};
         let defaults = parse_test_source("").unwrap();
         assert_eq!(ShellConfig::default().panels, defaults.panels);
-        let source = "panel main { surface none; group-surface island; geometry { height 36; edge-margin 6; }; center { group title { item title kind=focused-window visible=#false; }; }; end { group status { island-padding 9.5; item battery kind=battery percentage=#false; }; }; }";
+        let source = "panel main { style floating; geometry { height 36; edge-margin 6; }; center { group title { item title kind=focused-window visible=#false; }; }; end { group status { island-padding 9.5; item battery kind=battery percentage=#false; }; }; }";
         let current = parse_test_source(source).unwrap();
         let panel = &current.panels[0];
-        assert_eq!(panel.surface, PanelSurface::None);
-        assert_eq!(panel.group_surface, GroupSurface::Island);
-        assert_eq!(panel.geometry.height, 36.);
-        assert_eq!(panel.geometry.edge_margin, 6);
+        assert_eq!(panel.surface(), PanelSurface::None);
+        assert_eq!(panel.group_surface(), GroupSurface::Island);
+        assert_eq!(panel.resolved_geometry().height, 36.);
+        assert_eq!(panel.resolved_geometry().edge_margin, 6);
         assert_eq!(panel.end.groups[0].island_padding, 9.5);
         assert!(!panel.center.groups[0].items[0].visible);
         assert_eq!(
@@ -667,10 +667,10 @@ mod tests {
 
     #[test]
     fn authored_composition_rejects_invalid_reload_data() {
-        let source = r#"panel "custom" { surface "none"; group-surface "island"; end { group "clocks" { item "one" kind="clock"; item "two" kind="clock"; }; }; }"#;
+        let source = r#"panel "custom" { style "floating"; end { group "clocks" { item "one" kind="clock"; item "two" kind="clock"; }; }; }"#;
         let config = parse_test_source(source).unwrap();
         assert_eq!(config.panels[0].id.0, "custom");
-        assert_eq!(config.panels[0].surface, crate::panel::PanelSurface::None);
+        assert_eq!(config.panels[0].surface(), crate::panel::PanelSurface::None);
         assert_eq!(config.panels[0].end.groups[0].items.len(), 2);
         assert!(parse_test_source(&source.replace("item \"two\"", "item \"one\"")).is_err());
         assert!(parse_test_source("panel one; panel two;").is_err());
@@ -680,7 +680,10 @@ mod tests {
     #[test]
     fn group_surfaces_do_not_change_modal_opacity() {
         let normal = parse_test_source("theme { material { style translucent; opacity 0.7; }; }").unwrap();
-        let islands = parse_test_source("panel main { surface none; group-surface island; }\ntheme { material { style translucent; opacity 0.7; }; }").unwrap();
+        let islands = parse_test_source(
+            "panel main { style floating; }\ntheme { material { style translucent; opacity 0.7; }; }",
+        )
+        .unwrap();
         assert_eq!(islands.theme.surface_popover, normal.theme.surface_popover);
         assert_eq!(islands.theme.surface_base, normal.theme.surface_base);
         assert_eq!(islands.theme.bar_background, normal.theme.bar_background);
@@ -696,7 +699,7 @@ mod tests {
             );
             let config = parse_test_source(&source).unwrap();
             assert_eq!(config.panels[0].end.groups[0].island_padding, padding);
-            assert_eq!(config.panels[0].geometry.inner_padding, 12.);
+            assert_eq!(config.panels[0].resolved_geometry().inner_padding, 12.);
         }
         for value in ["-1", "32.5", "\"small\""] {
             assert!(
@@ -788,7 +791,7 @@ theme {
         assert_eq!(config.theme.background.mode, WallpaperMode::Fill);
         let theme = shell_theme(&config.theme);
         assert_eq!(crate::panel::PanelGeometry::default().edge_margin, 0);
-        assert_eq!(crate::panel::PanelGeometry::default().height, 28.0);
+        assert_eq!(crate::panel::PanelGeometry::default().height, 36.0);
         assert_eq!(crate::panel::PanelGeometry::default().side_margins, 0);
         assert_eq!(theme.bar_radius, 14.0);
         assert_eq!(theme.bar_background[3], 255);

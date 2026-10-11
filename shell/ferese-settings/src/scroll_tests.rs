@@ -602,8 +602,8 @@ fn render_panel_review_states() {
             };
             app.draft = Snapshot::parse(String::new()).unwrap();
             if matches!(name, "floating-groups" | "group-spacing-inspector") {
-                let mut panel = ferese_panel::Panel::from_preset(ferese_panel::PanelPreset::Islands);
-                panel.geometry.edge_margin = 6;
+                let mut panel = ferese_panel::Panel::from_preset(ferese_panel::PanelStyle::Floating);
+                panel.geometry.edge_margin = Some(6);
                 app.draft
                     .edit(&crate::store::set("panels", serde_json::to_value(vec![panel]).unwrap()))
                     .unwrap();

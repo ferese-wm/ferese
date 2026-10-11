@@ -21,7 +21,7 @@ impl FereseShell {
             super::media::bar(
                 self,
                 theme,
-                BarMetrics::from(self.config.panels[0].geometry),
+                BarMetrics::from(self.config.panels[0].resolved_geometry()),
                 representation,
                 selected,
                 width,
@@ -36,7 +36,7 @@ impl FereseShell {
         selected: bool,
     ) -> Element<'_, cosmic::Action<Message>> {
         let theme = self.config.theme.for_bar();
-        let metrics = BarMetrics::from(self.config.panels[0].geometry);
+        let metrics = BarMetrics::from(self.config.panels[0].resolved_geometry());
         let (source, enabled) = if kind == Menu::Recording {
             let source: &'static [u8] = match self.recorder.state {
                 recording::State::Selecting => ferese_theme::icons::RECORD_CANCEL,

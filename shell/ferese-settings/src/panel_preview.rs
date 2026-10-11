@@ -128,24 +128,42 @@ impl App {
             view: self.preview_control(&overflow.items[0], Representation::Icon, None),
         });
         let overflow_width = 2. * f32::from(overflow.padding[1])
-            + if panel.group_surface == ferese_panel::GroupSurface::Island {
+            + if panel.group_surface() == ferese_panel::GroupSurface::Island {
                 2. * overflow.island_padding
             } else {
                 0.
             };
-        let continuous = panel.surface == ferese_panel::PanelSurface::Solid;
-        let corners = panel
-            .resolved_radius(self.resolved.presented.tokens.geometry.shell_radius as f32)
-            .at_edge(panel.edge, panel.geometry.edge_margin == 0)
-            .0;
+        let parameters = panel.shape_parameters();
+        let groups = [
+            (ferese_panel::shape::ZonePosition::Start, &panel.start),
+            (ferese_panel::shape::ZonePosition::Center, &panel.center),
+            (ferese_panel::shape::ZonePosition::End, &panel.end),
+        ]
+        .into_iter()
+        .flat_map(|(position, zone)| {
+            zone.groups.iter().map(move |group| {
+                (
+                    cosmic::iced::advanced::widget::Id::new(format!("preview-group:{}", group.id.0)),
+                    position,
+                )
+            })
+        })
+        .chain(std::iter::once((
+            cosmic::iced::advanced::widget::Id::new("preview-group:_overflow"),
+            ferese_panel::shape::ZonePosition::End,
+        )))
+        .collect();
         let opacity = self.resolved.presented.panel_opacity(panel.background_opacity);
+        let height = panel.resolved_geometry().height;
+        let padding = panel.resolved_geometry().inner_padding;
+        let border = panel.border;
         let measured_panel = panel.clone();
         let content = frame(
             std::borrow::Cow::Owned(measured_panel),
             samples,
             Spacing {
                 overflow_decoration: overflow_width,
-                zone_gap: 32.,
+                zone_gap: 8.,
             },
             self.panel_preview_resolution.clone(),
             move |resolution| {
@@ -172,7 +190,7 @@ impl App {
                     let has_end = panel.end.groups.iter().flat_map(|group| &group.items)
                         .any(|item| matches!(resolution.items.get(&item.id), Some(Placement::Visible { width, .. }) if *width > 0.));
                     end = row([])
-                        .spacing(if has_end { panel.end.spacing } else { 0. })
+                        .spacing(if has_end { panel.zone_spacing(&panel.end) } else { 0. })
                         .align_y(Alignment::Center)
                         .push(trigger)
                         .push(end)
@@ -193,29 +211,36 @@ impl App {
             Message::PanelPreviewResolved,
         );
         let palette = visuals::Palette::from_resolved(&self.resolved.presented);
-        container(content)
-            .width(Length::Fill)
-            .height(48)
-            .clip(true)
-            .class(cosmic::theme::Container::custom(move |_| {
-                let mut style = ferese_theme::controls::surface_appearance(
-                    cosmic::iced::Color {
-                        a: opacity,
-                        ..palette.card
-                    },
-                    0.,
-                );
-                style.border.radius = corners.into();
-                if !continuous {
-                    style.background = None;
-                }
-                style
-            }))
-            .into()
+        ferese_theme::panel_surface::frame(
+            container(content)
+                .width(Length::Fill)
+                .height(height)
+                .padding([0., padding])
+                .clip(true)
+                .into(),
+            ferese_theme::panel_surface::Options {
+                parameters,
+                groups,
+                scale: 1.,
+                background: cosmic::iced::Color {
+                    a: opacity,
+                    ..palette.card
+                },
+                border: if border {
+                    palette.muted.scale_alpha(0.4)
+                } else {
+                    cosmic::iced::Color::TRANSPARENT
+                },
+                divider: palette.muted.scale_alpha(0.4),
+                native: false,
+            },
+            |_| {},
+            None,
+        )
     }
 
     fn preview_zone(&self, panel: &Panel, zone: &Zone, resolution: &Resolution) -> Element<'static, Message> {
-        let mut groups = row([]).spacing(zone.spacing).align_y(Alignment::Center);
+        let mut groups = row([]).spacing(panel.zone_spacing(zone)).align_y(Alignment::Center);
         for group in &zone.groups {
             let mut controls = row([]).align_y(Alignment::Center);
             let mut count = 0;
@@ -246,44 +271,22 @@ impl App {
         group: &Group,
         controls: Element<'static, Message>,
     ) -> Element<'static, Message> {
-        let palette = visuals::Palette::from_resolved(&self.resolved.presented);
-        let surface = panel.group_surface;
-        let radius = panel
-            .resolved_radius(self.resolved.presented.tokens.geometry.shell_radius as f32)
-            .at_edge(
-                panel.edge,
-                surface == ferese_panel::GroupSurface::Island && panel.geometry.edge_margin == 0,
-            )
-            .0;
-        let opacity = self.resolved.presented.panel_opacity(panel.background_opacity);
-        let border = panel.border;
-        let content: Element<'static, Message> = container(controls)
-            .padding(group.padding)
-            .class(cosmic::theme::Container::custom(move |_| {
-                ferese_theme::panel::group_border(palette.muted.scale_alpha(0.4), radius, border)
-            }))
-            .into();
-        if surface == ferese_panel::GroupSurface::None {
-            return content;
-        }
-        let parent_solid = panel.surface == ferese_panel::PanelSurface::Solid;
-        container(content)
-            .padding(if surface == ferese_panel::GroupSurface::Island {
-                [2., group.island_padding]
+        let horizontal = f32::from(group.padding[1])
+            + if panel.group_surface() == ferese_panel::GroupSurface::Island {
+                group.island_padding
             } else {
-                [0., 0.]
+                0.
+            };
+        container(controls)
+            .id(format!("preview-group:{}", group.id.0))
+            .padding(cosmic::iced::Padding {
+                top: group.padding[0].into(),
+                bottom: group.padding[0].into(),
+                left: horizontal,
+                right: horizontal,
             })
-            .class(cosmic::theme::Container::custom(move |_| {
-                let mut style = ferese_theme::controls::surface_appearance(
-                    cosmic::iced::Color {
-                        a: if parent_solid { opacity * 0.08 } else { opacity },
-                        ..if parent_solid { palette.text } else { palette.card }
-                    },
-                    0.,
-                );
-                style.border.radius = radius.into();
-                style
-            }))
+            .height(panel.resolved_geometry().height)
+            .align_y(Alignment::Center)
             .into()
     }
 
@@ -294,13 +297,14 @@ impl App {
         width: Option<f32>,
     ) -> Element<'static, Message> {
         use ferese_theme::icons;
+        let control_height = (self.draft.number("panels.0.geometry.height", 36.) as f32 - 4.).max(20.);
         let palette = visuals::Palette::from_resolved(&self.resolved.presented);
         if let ItemKind::Workspaces { style } = item.kind {
             let sample = ferese_theme::workspaces::sample(style, palette, self.font, 20.);
             let control = button::custom(container(sample).id(format!("preview-icon:{}", item.id.0)))
                 .name("Edit Workspaces")
-                .padding([4, 2])
-                .height(28)
+                .padding([0, 2])
+                .height(control_height)
                 .on_press(Message::PanelSelect(item.id.clone()))
                 .class(preview_button(palette, self.panel_selection.as_ref() == Some(&item.id)));
             return container(control)
@@ -353,8 +357,8 @@ impl App {
         };
         let control: Element<'static, Message> = button::custom(content)
             .name(format!("Edit {}", item.id.0))
-            .padding([4, 7])
-            .height(28)
+            .padding([0, 7])
+            .height(control_height)
             .on_press(action)
             .class(preview_button(
                 palette,
@@ -587,11 +591,8 @@ mod tests {
             ),
         )
         .0;
-        for background in [
-            ferese_panel::PanelPreset::Continuous,
-            ferese_panel::PanelPreset::Islands,
-        ] {
-            let mut panel = Panel::from_preset(ferese_panel::PanelPreset::Islands);
+        for background in [ferese_panel::PanelStyle::Flat, ferese_panel::PanelStyle::Floating] {
+            let mut panel = Panel::from_preset(ferese_panel::PanelStyle::Floating);
             panel.apply_preset(background);
             // Match a three-group layout with media in navigation and a larger status group.
             let media = panel.end.groups[0].items.remove(0);
@@ -648,11 +649,7 @@ mod tests {
                     } else {
                         side.x - center.x - center.width
                     };
-                    assert!(
-                        gap >= 31.9,
-                        "{background:?} at {width}: {} crowds title ({gap}px)",
-                        id.0
-                    );
+                    assert!(gap >= 7.9, "{background:?} at {width}: {} crowds title ({gap}px)", id.0);
                 }
             }
         }
@@ -680,10 +677,7 @@ mod tests {
             ),
         )
         .0;
-        for background in [
-            ferese_panel::PanelPreset::Continuous,
-            ferese_panel::PanelPreset::Islands,
-        ] {
+        for background in [ferese_panel::PanelStyle::Flat, ferese_panel::PanelStyle::Floating] {
             let panel = Panel::from_preset(background);
             let ids: Vec<_> = [&panel.start, &panel.center, &panel.end]
                 .into_iter()

@@ -205,7 +205,7 @@ impl App {
             ),
             ("island_padding", "Island padding", group.island_padding, 32.),
         ] {
-            if panel.group_surface != ferese_panel::GroupSurface::Island && name == "island_padding" {
+            if panel.group_surface() != ferese_panel::GroupSurface::Island && name == "island_padding" {
                 continue;
             }
             let change = |value: f32| {

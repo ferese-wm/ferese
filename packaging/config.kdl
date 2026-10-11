@@ -156,8 +156,7 @@ panel "main" {
         window-clearance 4
     }
     edge "top"
-    surface "solid"
-    group-surface "none"
+    style "flat"
     border #false
     start {
         spacing 3

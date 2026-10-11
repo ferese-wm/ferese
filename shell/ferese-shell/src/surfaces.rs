@@ -86,8 +86,8 @@ impl FereseShell {
 
         let bar_surface_id = window::Id::unique();
         let wallpaper_surface_id = window::Id::unique();
-        let geometry = self.config.panels[0].geometry;
-        let panel_surface = self.config.panels[0].surface;
+        let geometry = self.config.panels[0].resolved_geometry();
+        let panel_surface = self.config.panels[0].surface();
         let (edge_anchor, margin) = panel_placement(self.config.panels[0].edge, geometry.edge_margin, 0);
         let bar = BarMetrics::from(geometry);
         let wallpaper_output = output.clone();
@@ -134,6 +134,7 @@ impl FereseShell {
             },
             Some(Box::new(Self::view_wallpaper)),
         );
+        let exclusive_zone = self.config.panels[0].exclusive_zone(hidden);
         let bar_action = cosmic::surface::action::app_layer_shell::<Self>(
             |_| Default::default(),
             move |_| SctkLayerSurfaceSettings {
@@ -149,7 +150,7 @@ impl FereseShell {
                 size: Some((None, Some(bar.height.round() as u32))),
                 size_limits: Limits::NONE,
                 // Reserve space toward the desktop; layer-shell accounts for the edge margin.
-                exclusive_zone: (bar.height.round() as i32).saturating_add(geometry.window_clearance),
+                exclusive_zone,
             },
             Some(Box::new(move |app| app.view_layer(bar_surface_id))),
         );
@@ -375,7 +376,7 @@ impl FereseShell {
 
     pub(super) fn attach_effects(&mut self, id: window::Id, surface: &wl_surface::WlSurface) {
         let hidden = self.bar_hidden(id);
-        let islands = self.config.panels[0].surface == ferese_panel::PanelSurface::None;
+        let islands = self.config.panels[0].surface() == ferese_panel::PanelSurface::None;
         let Some(entry) = self.outputs.iter_mut().find(|entry| entry.bar == id) else {
             return;
         };

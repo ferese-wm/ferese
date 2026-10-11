@@ -671,11 +671,11 @@ mod region_geometry_tests {
     #[test]
     fn reduce_transparency_wins_over_continuous_and_island_panel_materials() {
         use crate::effects::SemanticRole;
-        for surface in ["solid", "none"] {
+        for surface in ["flat", "floating"] {
             for opacity in [0., 0.4, 1.] {
                 for reduce in [false, true] {
                     let source = format!(
-                        "theme {{ material {{ style translucent; opacity 0.7; }}; accessibility {{ reduce-transparency #{reduce}; }}; }}; panel main {{ surface {surface}; group-surface island; background-opacity {opacity}; }}"
+                        "theme {{ material {{ style translucent; opacity 0.7; }}; accessibility {{ reduce-transparency #{reduce}; }}; }}; panel main {{ style {surface}; background-opacity {opacity}; }}"
                     );
                     let (_, runtime, candidate) = crate::theme::prepare(&source, std::path::Path::new("/tmp")).unwrap();
                     let material = resolve_surface_material(

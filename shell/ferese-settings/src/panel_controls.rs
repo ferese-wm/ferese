@@ -104,11 +104,6 @@ impl App {
                     .class(crate::visuals::surface(palette.card, 14.)),
                 );
                 let preset = self.preview_panel().ok().and_then(|panel| panel.preset());
-                let preset_key = match preset {
-                    Some(ferese_panel::PanelPreset::Continuous) => "continuous",
-                    Some(ferese_panel::PanelPreset::Islands) => "islands",
-                    None => "custom",
-                };
                 let position = widget::row([Edge::Top, Edge::Bottom].into_iter().map(|position| {
                     let label = if position == Edge::Top { "Top" } else { "Bottom" };
                     widget::button::custom(self.label(label, 12.))
@@ -137,31 +132,22 @@ impl App {
                 let appearance = widget::column([])
                     .spacing(16)
                     .push(self.panel_heading("Appearance", 15.))
-                    .push(self.panel_appearance_row(
-                        "Background",
-                        "Apply the same appearance to every group.",
-                        self.panel_surface_choices(
-                            preset_key,
-                            &[("continuous", "Continuous"), ("islands", "Islands")],
-                            move |key| {
-                                Message::PanelEdit(Action::ApplyPreset(if key == "islands" {
-                                    ferese_panel::PanelPreset::Islands
-                                } else {
-                                    ferese_panel::PanelPreset::Continuous
-                                }))
-                            },
-                        ),
-                    ))
+                    .push(
+                        widget::column([])
+                            .spacing(10)
+                            .push(self.label("Style", 13.))
+                            .push(self.panel_style_choices(preset.unwrap_or_default())),
+                    )
                     .push(self.panel_divider())
                     .push(self.panel_opacity_controls())
                     .push(self.panel_divider())
                     .push(
                         self.panel_appearance_row(
-                            "Group borders",
-                            "Outline each group of items.",
+                            "Outline",
+                            "Add a fine line around the panel shape.",
                             widget::container(
                                 ferese_theme::controls::switch(self.draft.boolean("panels.0.border", false), palette)
-                                    .name("Group borders")
+                                    .name("Outline")
                                     .on_press(Message::PanelEdit(Action::SetBorder(
                                         !self.draft.boolean("panels.0.border", false),
                                     ))),
@@ -171,7 +157,11 @@ impl App {
                         ),
                     )
                     .push(self.panel_divider())
-                    .push(self.panel_radius_controls());
+                    .push(if preset == Some(ferese_panel::PanelStyle::Flat) {
+                        widget::Space::new().height(0).into()
+                    } else {
+                        self.panel_radius_controls()
+                    });
                 rows = rows.push(
                     widget::container(appearance)
                         .id("panel-appearance-settings")
@@ -179,21 +169,56 @@ impl App {
                         .width(cosmic::iced::Length::Fill)
                         .class(crate::visuals::surface(palette.card, 14.)),
                 );
-                let mut settings = widget::column([])
-                    .spacing(4)
-                    .push(widget::container(self.panel_heading("Size & spacing", 15.)).padding([4, 10]));
+                let pins = self.preview_panel().is_ok_and(|panel| {
+                    panel.geometry != ferese_panel::GeometryIntent::default() || panel.corner_radius.is_some()
+                });
+                let mut settings = widget::column([]).spacing(4).push(
+                    widget::container(
+                        widget::row![
+                            self.panel_heading("Size & spacing", 15.)
+                                .width(cosmic::iced::Length::Fill),
+                            self.settings_button(
+                                "Reset to style",
+                                "M3 12a9 9 0 1 0 3-6 M3 3v6h6",
+                                pins.then_some(Message::PanelEdit(Action::ResetShape)),
+                                false
+                            )
+                        ]
+                        .align_y(cosmic::iced::Alignment::Center),
+                    )
+                    .padding([4, 10]),
+                );
                 for field in crate::schema::fields(Page::Bar)
                     .into_iter()
                     .filter(|field| field.path.starts_with("panels.0.geometry."))
+                    .filter(|field| {
+                        !matches!(
+                            preset.unwrap_or_default(),
+                            ferese_panel::PanelStyle::Flat | ferese_panel::PanelStyle::Notch
+                        ) || !matches!(field.path.rsplit('.').next(), Some("edge_margin" | "side_margins"))
+                    })
                 {
                     let mut field = field;
                     if let crate::schema::Kind::Range { default, .. } = &mut field.kind {
-                        let geometry =
-                            serde_json::to_value(self.preview_panel().map(|panel| panel.geometry).unwrap_or_default())
-                                .unwrap();
+                        let geometry = serde_json::to_value(
+                            self.preview_panel()
+                                .map(|panel| panel.resolved_geometry())
+                                .unwrap_or_default(),
+                        )
+                        .unwrap();
                         *default = geometry[field.path.rsplit('.').next().unwrap()].as_f64().unwrap();
                     }
-                    settings = settings.push(self.field(field));
+                    let pinned = self.draft.item(&field.path).is_some();
+                    let reset = pinned.then_some(Message::PanelEdit(Action::ClearGeometry(field.path.clone())));
+                    let reset_label = format!("Reset {}", field.label);
+                    settings = settings.push(
+                        widget::row![
+                            self.field(field),
+                            self.settings_icon_button(&reset_label, "M3 12a9 9 0 1 0 3-6 M3 3v6h6", reset)
+                        ]
+                        .spacing(8)
+                        .align_y(cosmic::iced::Alignment::Center),
+                    );
                 }
                 rows = rows.push(
                     widget::container(settings)
@@ -222,10 +247,11 @@ impl App {
             return None;
         }
         let panel = self.preview_panel().ok()?;
-        Some(
-            self.panel_preview_resolution
-                .side_margin(4096, display.logical_width?, panel.geometry.inner_padding),
-        )
+        Some(self.panel_preview_resolution.side_margin(
+            4096,
+            display.logical_width?,
+            panel.resolved_geometry().inner_padding,
+        ))
     }
 
     fn panel_appearance_row(
@@ -312,13 +338,16 @@ impl App {
     fn panel_radius_controls(&self) -> Element<'static, Message> {
         use cosmic::iced::{Alignment, Length};
         let palette = crate::visuals::Palette::from_resolved(&self.resolved.presented);
-        let shell_radius = self.resolved.presented.tokens.geometry.shell_radius as f32;
+        let shell_radius = self
+            .preview_panel()
+            .map(|panel| panel.resolved_geometry().height * 0.5)
+            .unwrap_or(18.);
         let custom = self
             .draft
             .item("panels.0.corner_radius")
             .and_then(|value| serde_json::from_value::<ferese_panel::CornerRadii>(value.clone()).ok());
         let radii = custom.unwrap_or_else(|| ferese_panel::CornerRadii::uniform(shell_radius));
-        let modes = widget::row([("Shell default", false), ("Custom", true)].map(|(label, selected)| {
+        let modes = widget::row([("Automatic", false), ("Custom", true)].map(|(label, selected)| {
             widget::button::custom(self.label(label, 12.).align_x(Alignment::Center))
                 .name(format!("Corner radius: {label}"))
                 .padding([8, 12])
@@ -340,10 +369,10 @@ impl App {
         let mut corners = Vec::new();
         // Match the physical corners: top row first, then bottom-left / bottom-right.
         for (index, label, icon) in [
-            (0, "Top left", "M5 19V9a4 4 0 0 1 4-4h10"),
-            (1, "Top right", "M5 5h10a4 4 0 0 1 4 4v10"),
-            (3, "Bottom left", "M5 5v10a4 4 0 0 0 4 4h10"),
-            (2, "Bottom right", "M5 19h10a4 4 0 0 0 4-4V5"),
+            (0, "Edge left", "M5 19V9a4 4 0 0 1 4-4h10"),
+            (1, "Edge right", "M5 5h10a4 4 0 0 1 4 4v10"),
+            (3, "Outer left", "M5 5v10a4 4 0 0 0 4 4h10"),
+            (2, "Outer right", "M5 19h10a4 4 0 0 0 4-4V5"),
         ] {
             let value = radii.0[index];
             let tint = if custom.is_some() { palette.text } else { palette.muted };
@@ -387,10 +416,21 @@ impl App {
                 .into(),
             );
         }
+        if custom.is_none() {
+            return self.panel_appearance_row(
+                "Corner radius",
+                "Corners follow the style and panel height.",
+                modes.into(),
+            );
+        }
         let bottom_corners = corners.split_off(2);
-        let mut content = widget::column([])
+        let content = widget::column([])
             .spacing(12)
-            .push(self.panel_appearance_row("Corner radius", "Set the rounding of each corner.", modes.into()))
+            .push(self.panel_appearance_row(
+                "Corner radius",
+                "Pins stay in place when you change styles. Top and bottom panels mirror them.",
+                modes.into(),
+            ))
             .push(
                 widget::column([])
                     .spacing(8)
@@ -407,14 +447,7 @@ impl App {
                             .width(Length::Fill),
                     ),
             );
-        if self.preview_panel().is_ok_and(|panel| panel.geometry.edge_margin == 0) {
-            let bottom = self.preview_panel().is_ok_and(|panel| panel.edge == Edge::Bottom);
-            content = content.push(self.note(if bottom {
-                "Bottom corners stay square while the panel touches the bottom edge."
-            } else {
-                "Top corners stay square while the panel touches the top edge."
-            }));
-        }
+
         content.into()
     }
 
@@ -517,43 +550,94 @@ impl App {
         .into()
     }
 
-    fn panel_surface_choices(
-        &self,
-        selected: &str,
-        options: &'static [(&'static str, &'static str)],
-        message: impl Fn(&'static str) -> Message,
-    ) -> Element<'static, Message> {
+    fn panel_style_choices(&self, selected: ferese_panel::PanelStyle) -> Element<'static, Message> {
         use cosmic::iced::{Alignment, Length};
+        use ferese_panel::{PanelStyle, scene::Parameters, shape::ZonePosition};
         let palette = crate::visuals::Palette::from_resolved(&self.resolved.presented);
-        let options = widget::row(options.iter().map(|&(key, label)| {
-            widget::button::custom(
-                widget::row([])
-                    .spacing(8)
-                    .align_y(Alignment::Center)
-                    .push(crate::visuals::action_icon(
-                        match key {
-                            "continuous" => "M3 7h18v10H3z",
-                            "none" => "M4 4l16 16 M4 20L20 4",
-                            "inset" => "M3 5h18v14H3z M7 9h10v6H7z",
-                            _ => "M2 7h5v10H2z M10 7h4v10h-4z M17 7h5v10h-5z",
+        let choices = [
+            PanelStyle::Floating,
+            PanelStyle::Capsules,
+            PanelStyle::Notch,
+            PanelStyle::Flat,
+            PanelStyle::Fused,
+        ];
+        let mut grid = widget::column([]).spacing(8);
+        for pair in choices.chunks(2) {
+            let mut cards = widget::row([]).spacing(8);
+            for &style in pair {
+                let ids = [
+                    cosmic::iced::advanced::widget::Id::unique(),
+                    cosmic::iced::advanced::widget::Id::unique(),
+                    cosmic::iced::advanced::widget::Id::unique(),
+                    cosmic::iced::advanced::widget::Id::unique(),
+                ];
+                let island = |index: usize, width| {
+                    widget::container(widget::Space::new().width(width).height(16)).id(ids[index].clone())
+                };
+                let preview = cosmic::iced::widget::stack![
+                    widget::row![
+                        widget::row![island(0, 16), island(1, 18)].spacing(if style.connected() { 0. } else { 4. }),
+                        widget::Space::new().width(Length::Fill),
+                        island(3, 24)
+                    ]
+                    .height(16)
+                    .align_y(Alignment::Center),
+                    widget::container(island(2, 18)).center_x(Length::Fill).height(16),
+                ];
+                let preview = ferese_theme::panel_surface::frame(
+                    preview.into(),
+                    ferese_theme::panel_surface::Options {
+                        parameters: Parameters {
+                            style,
+                            height: 16.,
+                            gap: 4.,
+                            fillet: 5.,
+                            ..Default::default()
                         },
-                        palette.muted,
-                    ))
-                    .push(self.label(label, 12.)),
-            )
-            .name(format!("Background: {label}"))
-            .padding([8, 10])
-            .width(Length::Fill)
-            .class(crate::visuals::panel_button(palette, selected == key))
-            .on_press(message(key))
-            .into()
-        }))
-        .spacing(2);
-        widget::container(options)
-            .padding(3)
-            .width(Length::Fill)
-            .class(crate::visuals::surface(palette.sidebar, 9.))
-            .into()
+                        groups: vec![
+                            (ids[0].clone(), ZonePosition::Start),
+                            (ids[1].clone(), ZonePosition::Start),
+                            (ids[2].clone(), ZonePosition::Center),
+                            (ids[3].clone(), ZonePosition::End),
+                        ],
+                        scale: 1.,
+                        background: palette.muted.scale_alpha(0.65),
+                        border: cosmic::iced::Color::TRANSPARENT,
+                        divider: palette.muted.scale_alpha(0.4),
+                        native: false,
+                    },
+                    |_| {},
+                    None,
+                );
+                let label = widget::row![
+                    self.label(style.label(), 12.).width(Length::Fill),
+                    crate::visuals::action_icon(
+                        if selected == style { "M5 12l4 4 10-10" } else { "" },
+                        if selected == style {
+                            palette.text
+                        } else {
+                            cosmic::iced::Color::TRANSPARENT
+                        }
+                    )
+                ]
+                .align_y(Alignment::Center);
+                cards = cards.push(
+                    widget::button::custom(
+                        widget::column![label, widget::container(preview).height(20).width(Length::Fill)].spacing(10),
+                    )
+                    .name(format!("Panel style: {}", style.label()))
+                    .padding(12)
+                    .width(Length::Fill)
+                    .class(crate::visuals::panel_button(palette, selected == style))
+                    .on_press(Message::PanelEdit(Action::ApplyPreset(style))),
+                );
+            }
+            if pair.len() == 1 {
+                cards = cards.push(widget::Space::new().width(Length::Fill));
+            }
+            grid = grid.push(cards);
+        }
+        grid.into()
     }
 
     fn panel_editor(&self, panel: &Panel) -> Element<'static, Message> {
@@ -787,8 +871,8 @@ mod tests {
         snapshot.edit(&initialize(&snapshot).unwrap()).unwrap();
         let snapshot = store::Snapshot::parse(snapshot.source).unwrap();
         let panels: Vec<Panel> = serde_json::from_value(snapshot.item("panels").unwrap().clone()).unwrap();
-        assert_eq!(panels[0].preset(), Some(ferese_panel::PanelPreset::Continuous));
-        assert_eq!(panels[0].geometry, ferese_panel::PanelGeometry::default());
+        assert_eq!(panels[0].preset(), Some(ferese_panel::PanelStyle::Flat));
+        assert_eq!(panels[0].resolved_geometry(), ferese_panel::PanelGeometry::default());
         assert!(panels[0].center.groups[0].items[0].visible);
         assert_eq!(snapshot.number("animations.speed", 1.), 0.8);
         assert!(snapshot.source.contains("// keep"));

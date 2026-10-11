@@ -14,7 +14,7 @@ use serde_json::{Map, Value};
 
 pub const DEFAULT_MATERIAL_OPACITY: f64 = 0.78;
 
-pub use ferese_panel::{PanelPreset, default_island_padding};
+pub use ferese_panel::{PanelStyle, default_island_padding};
 
 #[derive(Debug)]
 pub struct Error(String);

@@ -1,14 +1,31 @@
-use ferese_config::PanelPreset;
+use ferese_config::PanelStyle;
 use ferese_config::panel::*;
 
 #[test]
+fn removed_panel_surface_fields_are_rejected() {
+    for source in [
+        "surface solid;",
+        "group-surface island;",
+        "background islands;",
+        "style continuous;",
+        "style islands;",
+    ] {
+        let document = ferese_config::Document::parse(&format!("panel main {{ {source} }}")).unwrap();
+        assert!(
+            serde_json::from_value::<Vec<Panel>>(document.get("panels").unwrap().clone()).is_err(),
+            "{source}"
+        );
+    }
+}
+
+#[test]
 fn panel_surfaces_round_trip_without_group_overrides() {
-    let source = "// keep\npanel main { surface none; group-surface island; start { group nav { item overview kind=overview; }; }; center { group title { item title kind=focused-window; }; }; end { group media { item media kind=media; }; }; }";
+    let source = "// keep\npanel main { style floating; start { group nav { item overview kind=overview; }; }; center { group title { item title kind=focused-window; }; }; end { group media { item media kind=media; }; }; }";
     let mut doc = ferese_config::Document::parse(source).unwrap();
     let panels: Vec<Panel> = serde_json::from_value(doc.get("panels").unwrap().clone()).unwrap();
     let panel = &panels[0];
-    assert_eq!(panel.group_surface, GroupSurface::Island);
-    assert_eq!(panel.preset(), Some(PanelPreset::Islands));
+    assert_eq!(panel.group_surface(), GroupSurface::Island);
+    assert_eq!(panel.preset(), Some(PanelStyle::Floating));
     doc.set("panels", serde_json::to_value(&panels).unwrap()).unwrap();
     let restored = ferese_config::Document::parse(&doc.to_string()).unwrap();
     let restored: Vec<Panel> = serde_json::from_value(restored.get("panels").unwrap().clone()).unwrap();
@@ -16,8 +33,8 @@ fn panel_surfaces_round_trip_without_group_overrides() {
     assert!(doc.to_string().contains("// keep"));
     let mut preset = panel.clone();
     let groups = [&panel.start, &panel.center, &panel.end].map(|zone| zone.groups.clone());
-    preset.apply_preset(PanelPreset::Continuous);
-    assert_eq!(preset.preset(), Some(PanelPreset::Continuous));
+    preset.apply_preset(PanelStyle::Flat);
+    assert_eq!(preset.preset(), Some(PanelStyle::Flat));
     assert_eq!(
         [&preset.start, &preset.center, &preset.end].map(|zone| zone.groups.clone()),
         groups
@@ -42,8 +59,7 @@ fn group_surface_options_are_rejected_instead_of_inherited_or_ignored() {
 fn composition_round_trips_kdl_and_edits_keep_ids_order_and_comments() {
     let source = r#"// panel comment
 panel "main" {
-    surface "none"
-    group-surface "island"
+    style "floating"
     end {
         group "status" {
             padding 2 3
