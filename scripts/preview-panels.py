@@ -41,12 +41,17 @@ def request(endpoint, command, args=None):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--no-build", action="store_true", help="Use existing debug binaries")
+    parser.add_argument("--no-build", action="store_true", help="Use existing binaries")
+    parser.add_argument("--debug", action="store_true", help="Use debug builds instead of optimized release builds")
     parser.add_argument("--style", default="floating", help="Initial panel style")
     args = parser.parse_args()
+    profile = "debug" if args.debug else "release"
     if not args.no_build:
-        subprocess.run(["cargo", "build", "-p", "ferese", "-p", "ferese-shell", "-p", "ferese-settings"], cwd=REPO, check=True)
-    binaries = {name: REPO / "target/debug" / name for name in ("ferese", "ferese-shell", "ferese-settings")}
+        command = ["cargo", "build", "-p", "ferese", "-p", "ferese-shell", "-p", "ferese-settings"]
+        if not args.debug:
+            command.append("--release")
+        subprocess.run(command, cwd=REPO, check=True)
+    binaries = {name: REPO / "target" / profile / name for name in ("ferese", "ferese-shell", "ferese-settings")}
     if any(not binary.is_file() for binary in binaries.values()):
         parser.error("Build the compositor, shell and Settings first")
     display = Path(os.environ.get("WAYLAND_DISPLAY", ""))
@@ -121,7 +126,7 @@ def main():
                         except (OSError, ConnectionError):
                             pass
                     time.sleep(.05)
-                print(f"Panel preview ready. Changes apply only inside this window.\nConfig: {config_path}\nLog: {log_path}", flush=True)
+                print(f"Panel preview ready ({profile} build). Changes apply only inside this window.\nConfig: {config_path}\nLog: {log_path}", flush=True)
                 compositor.wait()
         except KeyboardInterrupt:
             pass
