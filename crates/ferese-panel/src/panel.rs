@@ -386,6 +386,8 @@ pub struct Panel {
     pub geometry: GeometryIntent,
     #[serde(default)]
     pub style: PanelStyle,
+    #[serde(default, skip_serializing_if = "default_morph")]
+    pub morph: crate::morph::Profile,
     #[serde(default)]
     pub border: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -409,6 +411,10 @@ impl Default for Zone {
     }
 }
 
+fn default_morph(profile: &crate::morph::Profile) -> bool {
+    *profile == crate::morph::Profile::default()
+}
+
 pub fn validate(panels: &[Panel]) -> Result<(), String> {
     if panels.len() != 1 {
         return Err("configure exactly one panel; multiple panels are not supported yet".into());
@@ -427,6 +433,7 @@ pub fn validate(panels: &[Panel]) -> Result<(), String> {
             return Err(format!("panel style {} is not available yet", panel.style.key()));
         }
         panel.geometry.validate()?;
+        panel.morph.validate()?;
         if panel.group_count() > MAX_GROUPS {
             return Err(format!(
                 "a panel supports at most {MAX_GROUPS} groups, reserving one region for overflow"
@@ -565,6 +572,7 @@ impl Panel {
         self.id == other.id
             && self.edge == other.edge
             && self.style == other.style
+            && self.morph == other.morph
             && same_zone(&self.start, &other.start)
             && same_zone(&self.center, &other.center)
             && same_zone(&self.end, &other.end)
@@ -661,6 +669,7 @@ impl Panel {
             edge: Edge::Top,
             geometry: GeometryIntent::default(),
             style: preset,
+            morph: Default::default(),
             border: false,
             background_opacity: Option::None,
             corner_radius: Option::None,
