@@ -420,6 +420,7 @@ fn gpu_panel_text_survives_preview_clipping_and_scrolling() {
                 )
                 .0;
                 app.font = font;
+                app.render_scale = f64::from(scale);
                 app.panel_page = if selection == "panels" {
                     panel_controls::PanelPage::Panels
                 } else {

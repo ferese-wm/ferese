@@ -221,7 +221,7 @@ impl App {
             ferese_theme::panel_surface::Options {
                 parameters,
                 groups,
-                scale: 1.,
+                scale: self.render_scale,
                 background: cosmic::iced::Color {
                     a: opacity,
                     ..palette.card

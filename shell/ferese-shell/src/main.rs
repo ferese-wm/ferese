@@ -183,6 +183,7 @@ struct FereseShell {
 
 struct OutputSurfaces {
     runtime: panel_runtime::Runtime,
+    scale: f64,
     output: wl_output::WlOutput,
     name: Option<String>,
     bar: window::Id,
@@ -197,6 +198,7 @@ struct OutputSurfaces {
 
 #[derive(Clone, Debug)]
 enum Message {
+    PanelScale(window::Id, f32),
     AdaptiveDeadline(window::Id, u64),
     PanelSurfaceChanged(window::Id, Box<ferese_panel::scene::Scene>),
     PanelResolved(window::Id, panel_layout::Resolution),
@@ -345,7 +347,7 @@ impl cosmic::Application for FereseShell {
                     .then_some(Message::Event(event, id)),
                 Event::Keyboard(_)
                 | Event::Mouse(cosmic::iced::mouse::Event::ButtonPressed(_) | cosmic::iced::mouse::Event::CursorLeft)
-                | Event::Window(window::Event::Opened { .. } | window::Event::Closed)
+                | Event::Window(window::Event::Opened { .. } | window::Event::Closed | window::Event::Rescaled(_))
                 | Event::PlatformSpecific(PlatformSpecific::Wayland(
                     wayland::Event::Popup(..) | wayland::Event::Layer(..) | wayland::Event::Output(..),
                 )) => Some(Message::Event(event, id)),
@@ -728,6 +730,16 @@ impl cosmic::Application for FereseShell {
                 Task::none()
             }
             Message::RecorderElapsed => Task::none(),
+            Message::PanelScale(id, scale) => {
+                if let Some(entry) = self.outputs.iter_mut().find(|entry| entry.bar == id)
+                    && scale.is_finite()
+                    && scale > 0.
+                    && scale <= 16.
+                {
+                    entry.scale = f64::from(scale);
+                }
+                Task::none()
+            }
             Message::AdaptiveDeadline(id, ticket) => self.adaptive_deadline(id, ticket),
             Message::ControlReady => {
                 let mut reload_task = Task::none();
@@ -1031,6 +1043,7 @@ mod tests {
             clock: String::new(),
             outputs: vec![OutputSurfaces {
                 runtime: panel_runtime::Runtime::new(&panel::Panel::default(), &ShellSnapshot::default(), None),
+                scale: 1.,
                 output,
                 name: Some("test".into()),
                 bar: window::Id::unique(),

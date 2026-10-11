@@ -81,7 +81,12 @@ impl FereseShell {
             } else {
                 Task::none()
             };
-            return Task::batch([margin, popup, tooltip]);
+            return Task::batch([
+                margin,
+                popup,
+                tooltip,
+                window::scale_factor(bar).map(move |scale| cosmic::Action::App(Message::PanelScale(bar, scale))),
+            ]);
         }
 
         let bar_surface_id = window::Id::unique();
@@ -112,6 +117,7 @@ impl FereseShell {
         );
         self.outputs.push(OutputSurfaces {
             runtime,
+            scale: 1.,
             output,
             name,
             bar: bar_surface_id,
@@ -270,6 +276,9 @@ impl FereseShell {
             Event::PlatformSpecific(PlatformSpecific::Wayland(wayland::Event::Output(event, output))) => {
                 self.output_event(event, output)
             }
+            Event::Window(window::Event::Rescaled(scale)) => {
+                cosmic::task::message(cosmic::Action::App(Message::PanelScale(id, scale)))
+            }
             Event::Window(window::Event::Opened { .. }) if !self.owns_surface(id) => {
                 // Creation is asynchronous. A close can arrive before the
                 // surface exists, so dispose of any late opening once its
@@ -289,6 +298,7 @@ impl FereseShell {
                         .is_some_and(|surface| surface.id == id) =>
             {
                 Task::batch([
+                    window::scale_factor(id).map(move |scale| cosmic::Action::App(Message::PanelScale(id, scale))),
                     self.focus_system_modal(id),
                     window::run(id, native_wayland_surface)
                         .map(move |surface| cosmic::Action::App(Message::NativeSurface(id, surface))),
@@ -378,7 +388,8 @@ impl FereseShell {
             {
                 self.attach_effects(layer_id, &surface);
                 self.attach_power_material(layer_id, &surface);
-                Task::none()
+                window::scale_factor(layer_id)
+                    .map(move |scale| cosmic::Action::App(Message::PanelScale(layer_id, scale)))
             }
             _ => Task::none(),
         }

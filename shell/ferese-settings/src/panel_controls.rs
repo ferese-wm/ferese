@@ -601,7 +601,7 @@ impl App {
                             (ids[2].clone(), ZonePosition::Center),
                             (ids[3].clone(), ZonePosition::End),
                         ],
-                        scale: 1.,
+                        scale: self.render_scale,
                         background: palette.muted.scale_alpha(0.65),
                         border: cosmic::iced::Color::TRANSPARENT,
                         divider: palette.muted.scale_alpha(0.4),

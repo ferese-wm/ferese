@@ -217,7 +217,7 @@ impl FereseShell {
             ferese_theme::panel_surface::Options {
                 parameters: panel.shape_parameters(),
                 groups,
-                scale: 1.,
+                scale: output.map_or(1., |entry| entry.scale),
                 background: color(shell_theme.bar_background),
                 border: if panel.border {
                     color(shell_theme.border)

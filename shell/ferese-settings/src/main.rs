@@ -94,6 +94,8 @@ enum InitialPage {
 
 #[derive(Clone, Debug)]
 enum Message {
+    ReadRenderScale(cosmic::iced::window::Id),
+    RenderScale(f32),
     Connections(connections::Input),
     ConnectionsReady(Result<std::sync::Arc<connections::Client>, String>),
     ConnectionsRefreshed(Box<connections::Snapshot>),
@@ -159,6 +161,7 @@ struct App {
     display_selection: Option<String>,
     display_error: Option<String>,
     core: Core,
+    render_scale: f64,
     path: PathBuf,
     current: Snapshot,
     draft: Snapshot,
@@ -263,6 +266,7 @@ impl cosmic::Application for App {
             display_selection: None,
             display_error: None,
             core,
+            render_scale: 1.,
             path,
             draft: current.clone(),
             current,
@@ -326,6 +330,13 @@ impl cosmic::Application for App {
 
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
+            Message::ReadRenderScale(id) => {
+                return cosmic::iced::window::scale_factor(id)
+                    .map(|scale| cosmic::Action::App(Message::RenderScale(scale)));
+            }
+            Message::RenderScale(scale) if scale.is_finite() && scale > 0. && scale <= 16. => {
+                self.render_scale = f64::from(scale);
+            }
             Message::Connections(input) => return self.connections_input(input),
             Message::ConnectionsReady(result) => return self.connections_ready(result),
             Message::ConnectionsRefreshed(snapshot) => self.connections_refreshed(*snapshot),
@@ -889,6 +900,21 @@ impl cosmic::Application for App {
 
     fn subscription(&self) -> cosmic::iced::Subscription<Message> {
         cosmic::iced::Subscription::batch([
+            cosmic::iced::event::listen_with(|event, _, id| match event {
+                cosmic::iced::Event::Window(cosmic::iced::window::Event::Opened { .. }) => {
+                    Some(Message::ReadRenderScale(id))
+                }
+                cosmic::iced::Event::Window(cosmic::iced::window::Event::Rescaled(scale)) => {
+                    Some(Message::RenderScale(scale))
+                }
+                cosmic::iced::Event::PlatformSpecific(cosmic::iced::event::PlatformSpecific::Wayland(
+                    cosmic::iced::event::wayland::Event::Output(
+                        cosmic::iced::event::wayland::OutputEvent::InfoUpdate(_),
+                        _,
+                    ),
+                )) => Some(Message::ReadRenderScale(id)),
+                _ => None,
+            }),
             if self.sidebar_open {
                 cosmic::iced::event::listen_with(|event, _, _| match event {
                     cosmic::iced::Event::Keyboard(cosmic::iced::keyboard::Event::KeyPressed {
