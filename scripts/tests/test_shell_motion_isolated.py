@@ -10,6 +10,7 @@ from pathlib import Path
 from session_socket import ipc_environment, ipc_socket
 import re
 import signal
+import shutil
 import subprocess
 import tempfile
 import time
@@ -194,11 +195,11 @@ class ShellMotionTest(unittest.TestCase):
                                        "notification materials did not follow their fade")
                     print(f"Toast: {opening_frames} opening callback requests, {idle_frames / 2:g} settled commits/s; destroyed", flush=True)
 
-                    subprocess.run([str(ctl), "toggle-keybinding-guide"], env=ipc_environment(env), check=True, capture_output=True)
+                    subprocess.run([str(ctl), "toggle-keybinding-guide"], env=ipc_environment(env), check=True, capture_output=True, timeout=5)
                     modal = wait_for(lambda: layer_surface("ferese-system-modal"))
                     wait_for(lambda: frames(modal) >= 4)
                     time.sleep(.3)
-                    subprocess.run([str(ctl), "toggle-keybinding-guide"], env=ipc_environment(env), check=True, capture_output=True)
+                    subprocess.run([str(ctl), "toggle-keybinding-guide"], env=ipc_environment(env), check=True, capture_output=True, timeout=5)
                     wait_for(lambda: destroyed(modal), timeout=5)
                     self.assertGreater(frames(modal), 10, "modal close did not follow frames")
                     self.assertIsNone(compositor.poll(), log_path.read_text()[-8000:])
@@ -225,10 +226,10 @@ class ShellMotionTest(unittest.TestCase):
 
                     for _ in range(40):
                         subprocess.run([str(ctl), "toggle-keybinding-guide"],
-                                       env=ipc_environment(env), check=True, capture_output=True)
+                                       env=ipc_environment(env), check=True, capture_output=True, timeout=5)
                         time.sleep(.03)
                         subprocess.run([str(ctl), "toggle-keybinding-guide"],
-                                       env=ipc_environment(env), check=True, capture_output=True)
+                                       env=ipc_environment(env), check=True, capture_output=True, timeout=5)
                         time.sleep(.06)
                     # A final toggle may leave the owned modal closing. Let
                     # that motion finish before deciding whether a live modal
@@ -243,14 +244,14 @@ class ShellMotionTest(unittest.TestCase):
                     self.assertLessEqual(len(remaining), 1, "cancelled modals retained native surfaces")
                     if remaining:
                         subprocess.run([str(ctl), "toggle-keybinding-guide"],
-                                       env=ipc_environment(env), check=True, capture_output=True)
+                                       env=ipc_environment(env), check=True, capture_output=True, timeout=5)
                         wait_for(lambda: destroyed(remaining[0]))
                     print("Modal: rapid toggles released all native surfaces", flush=True)
 
                     if bar_layout == "islands":
                         for layout_name, expected_count in [("continuous", 1), ("islands", None)]:
                             config_file.write_text('animations { speed 0.5; }\nstatus { keybinding-guide #false; }\n' + panel_config(layout_name))
-                            subprocess.run([str(ctl), "reload-config"], env=ipc_environment(env), check=True, capture_output=True)
+                            subprocess.run([str(ctl), "reload-config"], env=ipc_environment(env), check=True, capture_output=True, timeout=5)
                             wait_for(lambda: bar_region_count(bar) == (expected_count or 2))
 
                         self.assertIsNone(compositor.poll(), log_path.read_text()[-8000:])
@@ -261,12 +262,33 @@ class ShellMotionTest(unittest.TestCase):
                             source = config_file.read_text()
                             config_file.write_text(re.sub(
                                 r'island-padding \d+', f'island-padding {padding}', source))
-                            subprocess.run([str(ctl), "reload-config"], env=ipc_environment(env), check=True, capture_output=True)
+                            subprocess.run([str(ctl), "reload-config"], env=ipc_environment(env), check=True, capture_output=True, timeout=5)
                             expected_width = original_input[0][2] - 2 * (12 - padding)
                             wait_for(lambda: len(bar_input_rectangles(bar)) == 2
                                      and bar_input_rectangles(bar)[0][2] == expected_width)
 
                         print("Bar: live padding reductions updated the input regions", flush=True)
+                    saved = config_file.read_text()
+                    config_file.write_text('panel main { surface "invalid-surface"; }\n')
+                    rejected = subprocess.run([str(ctl), "reload-config"], env=ipc_environment(env),
+                                              capture_output=True, text=True, timeout=5)
+                    self.assertNotEqual(rejected.returncode, 0, "invalid reload was accepted")
+                    self.assertIn("invalid_config", rejected.stderr)
+                    self.assertFalse(destroyed(bar), "invalid reload destroyed the current panel")
+                    self.assertEqual(dbus("GetServerInformation", check=False).returncode, 0)
+                    config_file.write_text(saved)
+                    subprocess.run([str(ctl), "reload-config"], env=ipc_environment(env),
+                                   check=True, capture_output=True, timeout=5)
+                    subprocess.run([str(ctl), "toggle-keybinding-guide"], env=ipc_environment(env),
+                                   check=True, capture_output=True, timeout=5)
+                    recovered = wait_for(lambda: (surface := layer_surface("ferese-system-modal"))
+                                         and not destroyed(surface) and surface)
+                    subprocess.run([str(ctl), "toggle-keybinding-guide"], env=ipc_environment(env),
+                                   check=True, capture_output=True, timeout=5)
+                    wait_for(lambda: destroyed(recovered))
+                    self.assertIsNone(compositor.poll(), log_path.read_text()[-8000:])
+                    self.assertNotIn("panicked at", log_path.read_text())
+                    print("Reload: invalid config preserved the panel; repaired config reopened and released a modal", flush=True)
                 finally:
                     for child in reversed(children):
                         if child.poll() is None:
@@ -278,6 +300,10 @@ class ShellMotionTest(unittest.TestCase):
                                 child.wait(timeout=5)
                         if child.stdout is not None:
                             child.stdout.close()
+                    if directory := os.environ.get("FERESE_TEST_LOG_DIR"):
+                        logs = Path(directory)
+                        logs.mkdir(parents=True, exist_ok=True)
+                        shutil.copyfile(log_path, logs / f"shell-{bar_layout}.log")
 
 
 if __name__ == "__main__":

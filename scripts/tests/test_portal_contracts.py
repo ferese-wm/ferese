@@ -14,6 +14,7 @@ from fixtures.theme_owner import ThemeOwner
 
 REPO = Path(__file__).resolve().parents[2]
 BINARY = REPO / os.environ.get("FERESE_TEST_PORTAL_BINARY", "target/debug/xdg-desktop-portal-ferese")
+INTERFACES = Path(os.environ.get("FERESE_TEST_PORTAL_INTERFACES", "/usr/share/dbus-1/interfaces"))
 NAME = "org.freedesktop.impl.portal.desktop.ferese"
 PATH = "/org/freedesktop/portal/desktop"
 
@@ -59,6 +60,7 @@ def private_bus_checks(standalone=False):
         env = dict(os.environ, XDG_CONFIG_HOME=directory, XDG_RUNTIME_DIR=str(runtime),
                    WAYLAND_DISPLAY="wayland-unavailable")
         env.pop("WAYLAND_SOCKET", None)
+        env.pop("FERESE_SOCKET", None)
         process = subprocess.Popen([str(BINARY)], env=env, stdout=log, stderr=log, start_new_session=True)
         try:
             deadline = time.monotonic() + 15
@@ -74,7 +76,7 @@ def private_bus_checks(standalone=False):
             for name in ("ScreenCast", "Settings", "Screenshot", "Wallpaper", "Background", "Usb", "Lockdown", "GlobalShortcuts", "Inhibit", "InputCapture"):
                 interface = node.find(f"interface[@name='org.freedesktop.impl.portal.{name}']")
                 assert interface is not None, name
-                expected = ET.parse(f"/usr/share/dbus-1/interfaces/org.freedesktop.impl.portal.{name}.xml").getroot().find("interface")
+                expected = ET.parse(INTERFACES / f"org.freedesktop.impl.portal.{name}.xml").getroot().find("interface")
                 for member in expected:
                     if member.tag not in ("method", "signal", "property"):
                         continue
