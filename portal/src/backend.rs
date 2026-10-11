@@ -80,6 +80,7 @@ struct Session {
     cursor: bool,
     source_types: u32,
     bar_controlled: bool,
+    recording: Option<crate::recording::Recording>,
     persist_mode: u32,
     restore: Option<crate::restore::Restore>,
     cancel: Arc<Cancel>,
@@ -107,23 +108,31 @@ struct RecorderControl(Backend);
 
 #[zbus::interface(name = "org.ferese.ScreenRecorder")]
 impl RecorderControl {
+    async fn recording_options(
+        &self,
+        session_handle: OwnedObjectPath,
+        #[zbus(connection)] connection: &Connection,
+        #[zbus(header)] header: Header<'_>,
+    ) -> zbus::fdo::Result<String> {
+        authorize_recorder(&session_handle, connection, &header).await?;
+        let sessions = self.0.sessions.lock().await;
+        let session = sessions
+            .get(session_handle.as_str())
+            .ok_or_else(|| error("Unknown session"))?;
+        if !session.bar_controlled || session.phase != Phase::Running {
+            return Err(error("Recording has not started"));
+        }
+        serde_json::to_string(&session.recording.ok_or_else(|| error("No recording options"))?)
+            .map_err(|e| error(&e.to_string()))
+    }
+
     async fn use_bar_controls(
         &self,
         session_handle: OwnedObjectPath,
         #[zbus(connection)] connection: &Connection,
         #[zbus(header)] header: Header<'_>,
     ) -> zbus::fdo::Result<()> {
-        let sender = header.sender().ok_or_else(|| error("Missing recorder caller"))?;
-        if !owns_session(sender.as_str(), session_handle.as_str()) {
-            return Err(zbus::fdo::Error::AccessDenied("Not your recording session".into()));
-        }
-        let dbus = zbus::fdo::DBusProxy::new(connection).await?;
-        let pid = dbus.get_connection_unix_process_id(sender.clone().into()).await?;
-        if !shell_recorder(pid) {
-            return Err(zbus::fdo::Error::AccessDenied(
-                "The shell must own the recording controls".into(),
-            ));
-        }
+        authorize_recorder(&session_handle, connection, &header).await?;
         let mut sessions = self.0.sessions.lock().await;
         let session = sessions
             .get_mut(session_handle.as_str())
@@ -134,6 +143,25 @@ impl RecorderControl {
         session.bar_controlled = true;
         Ok(())
     }
+}
+
+async fn authorize_recorder(
+    handle: &OwnedObjectPath,
+    connection: &Connection,
+    header: &Header<'_>,
+) -> zbus::fdo::Result<()> {
+    let sender = header.sender().ok_or_else(|| error("Missing recorder caller"))?;
+    if !owns_session(sender.as_str(), handle.as_str()) {
+        return Err(zbus::fdo::Error::AccessDenied("Not your recording session".into()));
+    }
+    let dbus = zbus::fdo::DBusProxy::new(connection).await?;
+    let pid = dbus.get_connection_unix_process_id(sender.clone().into()).await?;
+    if !shell_recorder(pid) {
+        return Err(zbus::fdo::Error::AccessDenied(
+            "The shell must own the recording controls".into(),
+        ));
+    }
+    Ok(())
 }
 
 fn owns_session(sender: &str, path: &str) -> bool {
@@ -299,6 +327,7 @@ impl Backend {
                 cursor: false,
                 source_types: 1,
                 bar_controlled: false,
+                recording: None,
                 persist_mode: 0,
                 restore: None,
                 cancel: Arc::default(),
@@ -433,9 +462,10 @@ impl Backend {
         let _ = connection.object_server().remove::<Request, _>(handle).await;
 
         match result {
-            Ok((children, streams, mut reply)) if !cancel.stopped.load(Ordering::SeqCst) => {
+            Ok((children, streams, mut reply, recording)) if !cancel.stopped.load(Ordering::SeqCst) => {
                 if let Some(session) = self.sessions.lock().await.get_mut(session_handle.as_str()) {
                     session.phase = Phase::Running;
+                    session.recording = recording;
                 }
                 let backend = self.clone();
                 let connection = connection.clone();
@@ -604,7 +634,15 @@ async fn start_streams(
     app: &str,
     parent: &str,
     options: StreamOptions,
-) -> Result<(Vec<Child>, Vec<(u32, Options)>, Options), StartError> {
+) -> Result<
+    (
+        Vec<Child>,
+        Vec<(u32, Options)>,
+        Options,
+        Option<crate::recording::Recording>,
+    ),
+    StartError,
+> {
     let StreamOptions {
         multiple,
         cursor,
@@ -643,8 +681,8 @@ async fn start_streams(
         .ok()?;
         Some((selected, restore.effective_mode(requested_persistence)))
     });
-    let (selected, persist_mode) = if let Some(restored) = restored {
-        restored
+    let (selected, persist_mode, audio, region) = if let Some((selected, persist_mode)) = restored {
+        (selected, persist_mode, crate::recording::Audio::Off, None)
     } else {
         let prompt = Prompt {
             app: if bar_controlled { "Ferese" } else { app }.to_owned(),
@@ -653,6 +691,7 @@ async fn start_streams(
             rememberable: rememberable.clone(),
             parent: parent.into(),
             window_capture: false,
+            recording: bar_controlled,
             persist_mode: if rememberable.is_empty() {
                 0
             } else {
@@ -671,6 +710,9 @@ async fn start_streams(
             return Err("Invalid persistence selection".into());
         }
         let selected = validate_selection(&prompt.sources, &selection.names, multiple)?;
+        if !bar_controlled && (selection.audio != crate::recording::Audio::Off || selection.region) {
+            return Err("Recording options are only available to the native recorder".into());
+        }
         crate::desktop::wait_for_surface_removal_using(|| {
             capture_ipc(
                 &cancel,
@@ -681,7 +723,34 @@ async fn start_streams(
         })
         .await?;
 
-        (selected, selection.persist_mode)
+        let region = if selection.region {
+            if selected.len() != 1 || selected[0].window_id().is_some() {
+                return Err("Region recording requires one display".into());
+            }
+            let mut command = child_command_for("slurp")?;
+            let child = command
+                .args(["-f", "%x,%y %wx%h"])
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::inherit())
+                .spawn()
+                .map_err(|e| format!("Cannot select a recording region; install slurp: {e}"))?;
+            let pid = child.id().ok_or("Missing region selector process ID")?;
+            let selection = child.wait_with_output().await.map_err(|e| e.to_string())?;
+            if !selection.status.success() {
+                return Err(StartError::Cancelled);
+            }
+            crate::desktop::wait_for_surface_removal_using(|| {
+                capture_ipc(&cancel, &work, "has-client-surfaces", serde_json::json!({"pid": pid}))
+            })
+            .await?;
+            Some(crate::recording_region::Region::parse(
+                std::str::from_utf8(&selection.stdout).map_err(|_| "Invalid region selection")?,
+            )?)
+        } else {
+            None
+        };
+        (selected, selection.persist_mode, selection.audio, region)
     };
 
     let mut reply = Options::new();
@@ -776,6 +845,28 @@ async fn start_streams(
     }
 
     let final_windows = capture_ipc(&cancel, &work, "get-windows", serde_json::json!({})).await?;
+    let recording = if bar_controlled {
+        let crop = region
+            .map(|region| {
+                let (name, ready) = streams.first().ok_or("Missing recording display")?;
+                let metadata = monitor_metadata(&final_outputs, name, ready)?;
+                let (x, y) = <(i32, i32)>::try_from(metadata["position"].try_clone().map_err(|e| e.to_string())?)
+                    .map_err(|e| e.to_string())?;
+                let (width, height) = <(i32, i32)>::try_from(metadata["size"].try_clone().map_err(|e| e.to_string())?)
+                    .map_err(|e| e.to_string())?;
+                region.crop(
+                    crate::recording_region::Region { x, y, width, height },
+                    (ready.width, ready.height),
+                )
+            })
+            .transpose()?;
+        if let Some(crop) = crop {
+            crop.validate()?;
+        }
+        Some(crate::recording::Recording { audio, crop })
+    } else {
+        None
+    };
     let streams = streams
         .into_iter()
         .map(|(name, ready)| {
@@ -799,7 +890,7 @@ async fn start_streams(
         })
         .collect::<Result<Vec<_>, _>>()?;
 
-    Ok((children, streams, reply))
+    Ok((children, streams, reply, recording))
 }
 
 fn window_metadata(source: &Source, ready: &Ready) -> Result<Options, String> {

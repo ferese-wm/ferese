@@ -10,6 +10,8 @@ mod lockdown;
 mod parent;
 mod permissions;
 mod picker;
+mod recording;
+mod recording_region;
 mod restore;
 mod settings;
 mod shortcuts;

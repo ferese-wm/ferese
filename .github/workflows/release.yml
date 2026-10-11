@@ -166,6 +166,17 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
           cd artifacts
+          # GitHub replaces '~' in uploaded filenames. Use those same download
+          # names in SHA256SUMS so verification works after downloading RPMs.
+          python3 - <<'PY'
+          from pathlib import Path
+          for source in Path('.').glob('*.rpm'):
+              destination = source.with_name(source.name.replace('~', '.'))
+              if source != destination:
+                  if destination.exists():
+                      raise SystemExit(f'Duplicate release asset: {destination}')
+                  source.rename(destination)
+          PY
           rm SHA256SUMS
           sha256sum * > SHA256SUMS
           gh release upload "$RELEASE_TAG" ./* --clobber

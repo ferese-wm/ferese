@@ -56,10 +56,10 @@ pub struct Recorder {
 impl Recorder {
     pub fn label(&self) -> &'static str {
         match self.state {
-            State::Selecting => "Cancel display selection",
+            State::Selecting => "Cancel recording setup",
             State::Recording(_) => "Stop recording",
             State::Saving => "Saving recording",
-            _ => "Record a display",
+            _ => "Record screen",
         }
     }
 

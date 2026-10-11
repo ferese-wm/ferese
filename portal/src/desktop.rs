@@ -19,8 +19,8 @@ use crate::consent::Prompt;
 
 const PATH: &str = "/org/freedesktop/portal/desktop";
 const MAX_IMAGE_BYTES: u64 = 128 * 1024 * 1024;
-type Reply = (u32, Options);
 
+type Reply = (u32, Options);
 type RequestMap = HashMap<String, (String, Arc<Cancel>)>;
 
 #[derive(Clone)]
@@ -52,14 +52,17 @@ impl Requests {
         handle: &OwnedObjectPath,
     ) -> zbus::fdo::Result<Arc<Cancel>> {
         let owner = authorize(connection, header).await?;
+
         if !handle.as_str().starts_with(&format!("{PATH}/request/")) {
             return Err(zbus::fdo::Error::InvalidArgs("Invalid request path".into()));
         }
         let mut pending = self.0.lock().await;
+
         if pending.len() >= self.1 || pending.contains_key(handle.as_str()) {
             return Err(zbus::fdo::Error::LimitsExceeded("Request limit reached".into()));
         }
         let cancel = Arc::new(Cancel::default());
+
         if !connection
             .object_server()
             .at(
@@ -74,6 +77,7 @@ impl Requests {
             return Err(zbus::fdo::Error::InvalidArgs("Request already exists".into()));
         }
         pending.insert(handle.to_string(), (owner, cancel.clone()));
+
         Ok(cancel)
     }
 
@@ -113,7 +117,9 @@ impl Screenshot {
             _ = cancel.wait() => (1, Options::new()),
             result = screenshot(&app_id, &parent_window, &options) => reply(result),
         };
+
         self.0.end(connection, &handle).await;
+
         Ok(result)
     }
 
@@ -132,7 +138,9 @@ impl Screenshot {
             _ = cancel.wait() => (1, Options::new()),
             result = pick_color(&app_id, &parent_window) => reply(result),
         };
+
         self.0.end(connection, &handle).await;
+
         Ok(result)
     }
 }
@@ -163,7 +171,9 @@ impl Wallpaper {
             _ = cancel.wait() => 1,
             result = wallpaper(&app_id, &parent_window, &uri, &options, cancel.clone()) => reply(result).0,
         };
+
         self.0.end(connection, &handle).await;
+
         Ok(result)
     }
 }
@@ -190,6 +200,7 @@ pub(crate) async fn consent(
     if app.len() > 512 {
         return Err("Application ID is too long".into());
     }
+
     let prompt = Prompt {
         parent: parent.into(),
         title: title.into(),
@@ -212,15 +223,18 @@ pub(crate) async fn consent(
         .map_err(|error| error.to_string())?;
     let pid = child.id().ok_or("Missing consent process ID")?;
     let mut input = child.stdin.take().unwrap();
+
     input
         .write_all(&serde_json::to_vec(&prompt).map_err(|error| error.to_string())?)
         .await
         .map_err(|error| error.to_string())?;
     drop(input);
+
     let output = tokio::time::timeout(Duration::from_secs(300), child.wait_with_output())
         .await
         .map_err(|_| "Consent timed out")?
         .map_err(|error| error.to_string())?;
+
     if output.status.success() && output.stdout == b"true\n" {
         wait_for_surface_removal(pid).await?;
         Ok(true)
@@ -238,12 +252,14 @@ pub(crate) async fn ipc(command: &'static str, args: serde_json::Value) -> Resul
 pub(crate) fn ipc_sync(command: &'static str, args: serde_json::Value) -> Result<serde_json::Value, String> {
     let path = ferese_ipc::socket::resolve(None).map_err(|error| error.to_string())?;
     let mut stream = UnixStream::connect(path).map_err(|error| error.to_string())?;
+
     stream
         .set_read_timeout(Some(Duration::from_secs(15)))
         .map_err(|error| error.to_string())?;
     stream
         .set_write_timeout(Some(Duration::from_secs(2)))
         .map_err(|error| error.to_string())?;
+
     let request = ferese_ipc::Request {
         version: ferese_ipc::VERSION,
         id: 1,
@@ -251,18 +267,22 @@ pub(crate) fn ipc_sync(command: &'static str, args: serde_json::Value) -> Result
         command: command.into(),
         args,
     };
+
     exchange(&mut stream, &request)
 }
 
 fn exchange(stream: &mut UnixStream, request: &ferese_ipc::Request) -> Result<serde_json::Value, String> {
     ferese_ipc::write_frame(stream, request).map_err(|error| error.to_string())?;
+
     let response: ferese_ipc::Response = ferese_ipc::read_frame(stream).map_err(|error| error.to_string())?;
     if response.id != request.id || response.version != ferese_ipc::VERSION {
         return Err("Unexpected compositor response ID or protocol version".into());
     }
+
     if let Some(error) = response.error {
         return Err(error.message);
     }
+
     response.result.ok_or("Missing IPC result".into())
 }
 
@@ -272,6 +292,7 @@ async fn select_geometry(point: bool) -> Result<Option<String>, String> {
         command.arg("-p");
     }
     command.stdin(Stdio::null());
+
     let child = command
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
@@ -286,6 +307,7 @@ async fn select_geometry(point: bool) -> Result<Option<String>, String> {
     if !output.status.success() {
         return Ok(None);
     }
+
     let geometry = String::from_utf8(output.stdout)
         .map_err(|error| error.to_string())?
         .trim()
@@ -293,7 +315,9 @@ async fn select_geometry(point: bool) -> Result<Option<String>, String> {
     if geometry.len() > 128 || geometry.is_empty() {
         return Err("Invalid selection".into());
     }
+
     wait_for_surface_removal(pid).await?;
+
     Ok(Some(geometry))
 }
 
@@ -310,6 +334,7 @@ pub(crate) async fn wait_for_surface_removal_using<
         if check().await? == false {
             return Ok(());
         }
+
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
     Err("Screenshot helper is still visible".into())
@@ -336,15 +361,18 @@ fn read_screenshot(path: &str) -> Result<Vec<u8>, String> {
             let _ = std::fs::remove_file(self.0);
         }
     }
+
     let _cleanup = Cleanup(path);
     let file = std::fs::File::open(path).map_err(|error| error.to_string())?;
     let mut bytes = Vec::new();
     file.take(MAX_IMAGE_BYTES + 1)
         .read_to_end(&mut bytes)
         .map_err(|error| error.to_string())?;
+
     if bytes.len() as u64 > MAX_IMAGE_BYTES {
         return Err("Screenshot is too large".into());
     }
+
     Ok(bytes)
 }
 
@@ -370,6 +398,7 @@ async fn screenshot(app: &str, parent: &str, options: &Options) -> Result<Option
     if !matches!(target, 1 | 2 | 4 | 8) {
         return Err("Unsupported screenshot target".into());
     }
+
     let active_window = if target == 8 {
         Some(
             ipc("get-focused-window", serde_json::json!({})).await?["id"]
@@ -379,6 +408,7 @@ async fn screenshot(app: &str, parent: &str, options: &Options) -> Result<Option
     } else {
         None
     };
+
     if !consent(
         app,
         parent,
@@ -391,6 +421,7 @@ async fn screenshot(app: &str, parent: &str, options: &Options) -> Result<Option
     {
         return Ok(None);
     }
+
     let bytes = match target {
         1 => capture(None).await?,
         4 => {
@@ -420,7 +451,9 @@ async fn screenshot(app: &str, parent: &str, options: &Options) -> Result<Option
         .tempfile_in(directory)
         .map_err(|error| error.to_string())?;
     std::io::Write::write_all(&mut file, &bytes).map_err(|error| error.to_string())?;
+
     let (_, path) = file.keep().map_err(|error| error.to_string())?;
+
     Ok(Some(HashMap::from([(
         "uri".into(),
         Value::from(file_uri(&path)?)
@@ -434,11 +467,13 @@ fn window_sources(windows: &serde_json::Value) -> Result<Vec<crate::capture::Sou
     if windows.len() > 128 {
         return Err("Too many windows to choose from".into());
     }
+
     let mut sources = Vec::new();
     for window in windows.iter().filter(|window| window["mapped"] == true) {
         let Some(id) = window["id"].as_u64() else {
             continue;
         };
+
         let title = window["title"].as_str().unwrap_or("Untitled window");
         let app = window["app_id"].as_str().unwrap_or("");
         let label = format!("{title} — {app}")
@@ -462,6 +497,7 @@ fn window_sources(windows: &serde_json::Value) -> Result<Vec<crate::capture::Sou
             scale: 1,
         });
     }
+
     Ok(sources)
 }
 
@@ -503,6 +539,7 @@ async fn select_window(app: &str, parent: &str) -> Result<Option<u64>, String> {
         multiple: false,
         parent: parent.into(),
         window_capture: true,
+        recording: false,
         persist_mode: 0,
         rememberable: Vec::new(),
     };
