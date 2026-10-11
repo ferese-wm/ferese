@@ -106,7 +106,8 @@ PKGBUILD, `.SRCINFO`, Fedora spec and SHA-256 checksums. A failed upload leaves 
 draft; rerunning the workflow can finish that draft. Published releases are not
 overwritten.
 
-Use **Run workflow** on the release workflow to test a branch without publishing
+Label a release preparation PR `release` to run the package builds before
+merging. You can also use **Run workflow** to test a branch without publishing
 or creating a tag. Fedora and Arch jobs run the workspace tests under a private
 D-Bus session and validate the installed desktop files. They do not test real
 DRM hardware; check login, locking, authentication, screen sharing and recording

@@ -20,7 +20,7 @@ pkgbase = ferese-git
 	license = Apache-2.0 WITH LLVM-exception
 	checkdepends = dbus
 	checkdepends = vulkan-swrast
-	makedepends = cargo>=1.95
+	makedepends = cargo
 	makedepends = cmake
 	makedepends = clang
 	makedepends = pkgconf

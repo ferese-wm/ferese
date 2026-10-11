@@ -2,12 +2,7 @@ name: Release packages
 
 on:
   pull_request:
-    paths:
-      - 'packaging/**'
-      - 'scripts/package.py'
-      - 'scripts/tests/test_package.py'
-      - '.github/workflows/release.yml'
-      - '.github/workflows/release-checks.yml'
+    types: [opened, synchronize, reopened, labeled]
   push:
     tags: ['v*']
   workflow_dispatch:
@@ -26,9 +21,11 @@ concurrency:
 
 jobs:
   checks:
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'release')
     uses: ./.github/workflows/release-checks.yml
 
   source:
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'release')
     runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.version.outputs.version }}

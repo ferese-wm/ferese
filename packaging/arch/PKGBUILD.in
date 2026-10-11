@@ -8,7 +8,7 @@ license=('MIT' 'Apache-2.0' 'BSD-2-Clause' 'BSD-3-Clause' 'BSL-1.0' 'CC0-1.0' 'C
 depends=('wayland' 'libxkbcommon' 'libinput' 'systemd-libs' 'seatd' 'mesa' 'libdrm'
          'fontconfig' 'freetype2' 'expat' 'dbus' 'python' 'bash' 'util-linux' 'systemd' 'pam' 'polkit' 'foot' 'pipewire'
          'wireplumber' 'libpipewire' 'gstreamer' 'xdg-desktop-portal' 'xdg-desktop-portal-gtk')
-makedepends=('cargo>=1.95' 'cmake' 'clang' 'pkgconf' 'python' 'desktop-file-utils')
+makedepends=('cargo' 'cmake' 'clang' 'pkgconf' 'python' 'desktop-file-utils')
 checkdepends=('dbus' 'vulkan-swrast')
 optdepends=('brightnessctl: brightness controls' 'slurp: screenshot region selection'
             'satty: screenshot editing' 'wl-clipboard: screenshot clipboard'
