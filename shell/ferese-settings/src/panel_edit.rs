@@ -27,8 +27,6 @@ impl std::fmt::Display for Destination {
 #[derive(Clone, Debug)]
 pub(super) enum Action {
     ApplyPreset(ferese_panel::PanelPreset),
-    SetDefaultSurface(ferese_panel::GroupSurface),
-    ClearGroupSurface(GroupId),
     SetEdge(ferese_panel::Edge),
     SetGeometry(String, Value),
     SetRadius(String),
@@ -176,22 +174,14 @@ pub(super) fn plan(snapshot: &Snapshot, action: Action) -> Result<Vec<Edit>, Str
         Action::ApplyPreset(preset) => {
             let mut edited = panel.clone();
             edited.apply_preset(preset);
-            let mut edits = vec![
+            vec![
                 set("panels.0.surface", serde_json::to_value(edited.surface).unwrap()),
                 set(
                     "panels.0.group_surface",
                     serde_json::to_value(edited.group_surface).unwrap(),
                 ),
-            ];
-            for group in Zone::ALL.into_iter().flat_map(|zone| &zone.definition(panel).groups) {
-                if group.surface.is_some() {
-                    edits.push(Edit::Unset(format!("{}.surface", group_record_path(panel, &group.id)?)));
-                }
-            }
-            edits
+            ]
         }
-        Action::SetDefaultSurface(surface) => vec![set("panels.0.group_surface", surface.key())],
-        Action::ClearGroupSurface(id) => vec![Edit::Unset(format!("{}.surface", group_record_path(panel, &id)?))],
         Action::SetEdge(edge) => vec![set("panels.0.edge", edge.key())],
         Action::SetGeometry(field, value) => {
             if !matches!(
@@ -407,7 +397,7 @@ pub(super) fn plan(snapshot: &Snapshot, action: Action) -> Result<Vec<Edit>, Str
                 }
                 _ => (field, value),
             };
-            if !matches!(field.as_str(), "spacing" | "padding" | "island_padding" | "surface") {
+            if !matches!(field.as_str(), "spacing" | "padding" | "island_padding") {
                 return Err("Unknown panel group setting.".into());
             }
             vec![set(&format!("{}.{field}", group_record_path(panel, &id)?), value)]
@@ -982,38 +972,28 @@ animations { speed 0.8; }
         assert!(panels[0].item(&ItemId("title".into())).unwrap().visible);
     }
     #[test]
-    fn group_surface_edits_and_presets_preserve_composition_and_comments() {
-        let mut snapshot = Snapshot::parse("// keep\npanel main { surface none; group-surface island; center { group title surface=none { item title kind=focused-window; }; }; end { group media { item media kind=media; }; }; }".into()).unwrap();
-        let items = snapshot.item("panels.0.center.groups.0.items").unwrap().clone();
-        let media = GroupId("media".into());
-        apply(
-            &mut snapshot,
-            Action::SetGroup(media.clone(), "surface".into(), "inset".into()),
-        );
-        assert_eq!(snapshot.string("panels.0.end.groups.0.surface", ""), "inset");
-        apply(&mut snapshot, Action::ClearGroupSurface(media));
-        assert!(snapshot.item("panels.0.end.groups.0.surface").is_none());
+    fn panel_presets_preserve_group_layout_items_and_comments() {
+        let mut snapshot = Snapshot::parse("// keep\npanel main { surface none; group-surface island; center { group title { padding 2 7; item title kind=focused-window; }; }; end { group media { item media kind=media; }; }; }".into()).unwrap();
+        let groups = snapshot.item("panels.0.center.groups").unwrap().clone();
         apply(
             &mut snapshot,
             Action::ApplyPreset(ferese_panel::PanelPreset::Continuous),
         );
         assert_eq!(snapshot.string("panels.0.surface", ""), "solid");
-        assert!(snapshot.item("panels.0.center.groups.0.surface").is_none());
-        assert_eq!(snapshot.item("panels.0.center.groups.0.items"), Some(&items));
+        assert_eq!(snapshot.item("panels.0.center.groups"), Some(&groups));
         assert!(snapshot.source.contains("// keep"));
-        apply(
-            &mut snapshot,
-            Action::SetGroup(GroupId("title".into()), "surface".into(), "none".into()),
-        );
         apply(&mut snapshot, Action::ApplyPreset(ferese_panel::PanelPreset::Islands));
+        assert_eq!(snapshot.item("panels.0.center.groups"), Some(&groups));
         let panels: Vec<Panel> = serde_json::from_value(snapshot.item("panels").unwrap().clone()).unwrap();
         assert_eq!(panels[0].preset(), Some(ferese_panel::PanelPreset::Islands));
-        assert!(
-            plan(
-                &snapshot,
-                Action::SetGroup(GroupId("title".into()), "surface".into(), "unsupported".into())
-            )
-            .is_err()
-        );
+        for surface in ["none", "inset", "island"] {
+            assert!(
+                plan(
+                    &snapshot,
+                    Action::SetGroup(GroupId("title".into()), "surface".into(), surface.into())
+                )
+                .is_err()
+            );
+        }
     }
 }

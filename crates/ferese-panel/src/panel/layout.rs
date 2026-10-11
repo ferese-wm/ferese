@@ -47,7 +47,7 @@ fn zone_width(panel: &Panel, zone: &Zone, items: &BTreeMap<ItemId, Placement>) -
         }
         if occupied {
             let padding = 2.0 * f32::from(group.padding[1]);
-            let island = if panel.resolved_surface(group) == super::GroupSurface::Island {
+            let island = if panel.group_surface == super::GroupSurface::Island {
                 2.0 * group.island_padding
             } else {
                 0.0
@@ -305,7 +305,7 @@ mod tests {
         let mut last = Item::new("last", ItemKind::Clock);
         last.gap_before = Some(7.);
         let mut group = Group::new("content", vec![first, hidden, last], [0, 3], 5.);
-        group.surface = Some(GroupSurface::Island);
+        panel.group_surface = GroupSurface::Island;
         group.island_padding = 4.;
         let empty = Group::new("empty", vec![Item::new("missing", ItemKind::Media)], [0, 99], 99.);
         let trailing = Group::new(
@@ -341,7 +341,7 @@ mod tests {
             ),
         ]
         .into();
-        assert_eq!(zone_width(&panel, &panel.start, &items), 96.);
+        assert_eq!(zone_width(&panel, &panel.start, &items), 106.);
     }
 
     #[test]
@@ -717,19 +717,18 @@ mod tests {
         }
     }
     #[test]
-    fn only_island_groups_reserve_island_padding() {
+    fn panel_surface_policy_controls_padding_for_every_group() {
         let mut panel = Panel::from_preset(crate::PanelPreset::Islands);
         let measured = measurements(&panel);
         let initial = resolve(&panel, &measured, 2400., 32.);
-        let title_padding = 2. * panel.center.groups[0].island_padding;
-        panel.center.groups[0].surface = Some(super::super::GroupSurface::None);
+        panel.group_surface = super::super::GroupSurface::None;
         let plain = resolve(&panel, &measured, 2400., 32.);
-        assert_eq!(plain.zone_widths[1], initial.zone_widths[1] - title_padding);
-        assert_eq!(plain.zone_widths[0], initial.zone_widths[0]);
-        assert_eq!(plain.zone_widths[2], initial.zone_widths[2]);
-        panel.center.groups[0].surface = Some(super::super::GroupSurface::Inset);
+        for (i, zone) in [&panel.start, &panel.center, &panel.end].into_iter().enumerate() {
+            let padding: f32 = zone.groups.iter().map(|group| 2. * group.island_padding).sum();
+            assert_eq!(plain.zone_widths[i], initial.zone_widths[i] - padding);
+        }
+        panel.group_surface = super::super::GroupSurface::Inset;
         assert_eq!(resolve(&panel, &measured, 2400., 32.), plain);
-        // A parent panel fill cannot change a group's allocation policy.
         panel.surface = super::super::PanelSurface::Solid;
         assert_eq!(resolve(&panel, &measured, 2400., 32.), plain);
     }

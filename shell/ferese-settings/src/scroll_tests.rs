@@ -348,7 +348,6 @@ fn gpu_panel_text_survives_preview_clipping_and_scrolling() {
                     | "Shown on all displays"
                     | "Position"
                     | "Background"
-                    | "Default group surface"
                     | "Background opacity"
                     | "Group borders"
                     | "Corner radius"
@@ -564,9 +563,9 @@ fn render_panel_review_states() {
         app.native_palette = visuals::Palette::from_resolved(&app.resolved.presented);
         for (name, tab, item, group) in [
             ("panels", panel_controls::PanelPage::Panels, None, None),
-            ("mixed-surfaces", panel_controls::PanelPage::Panels, None, None),
+            ("floating-groups", panel_controls::PanelPage::Panels, None, None),
             (
-                "surface-inspector",
+                "group-spacing-inspector",
                 panel_controls::PanelPage::Arrange,
                 None,
                 Some("title"),
@@ -602,10 +601,8 @@ fn render_panel_review_states() {
                 _ => Page::Bar,
             };
             app.draft = Snapshot::parse(String::new()).unwrap();
-            if matches!(name, "mixed-surfaces" | "surface-inspector") {
+            if matches!(name, "floating-groups" | "group-spacing-inspector") {
                 let mut panel = ferese_panel::Panel::from_preset(ferese_panel::PanelPreset::Islands);
-                panel.center.groups[0].surface = Some(ferese_panel::GroupSurface::None);
-                panel.end.groups[0].surface = Some(ferese_panel::GroupSurface::Inset);
                 panel.geometry.edge_margin = 6;
                 app.draft
                     .edit(&crate::store::set("panels", serde_json::to_value(vec![panel]).unwrap()))

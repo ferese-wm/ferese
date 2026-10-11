@@ -349,8 +349,6 @@ pub struct Group {
     pub id: GroupId,
     #[serde(default)]
     pub items: Vec<Item>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub surface: Option<GroupSurface>,
     #[serde(default = "spacing")]
     pub spacing: f32,
     #[serde(default = "padding")]
@@ -364,7 +362,6 @@ impl Group {
         Self {
             id: GroupId(id.into()),
             items,
-            surface: None,
             spacing: 1.0,
             padding,
             island_padding,
@@ -491,18 +488,7 @@ impl Default for Panel {
 }
 
 impl Panel {
-    pub fn resolved_surface(&self, group: &Group) -> GroupSurface {
-        group.surface.unwrap_or(self.group_surface)
-    }
-
     pub fn preset(&self) -> Option<PanelPreset> {
-        if [&self.start, &self.center, &self.end]
-            .into_iter()
-            .flat_map(|zone| &zone.groups)
-            .any(|group| group.surface.is_some_and(|surface| surface != self.group_surface))
-        {
-            return None;
-        }
         match (self.surface, self.group_surface) {
             (PanelSurface::Solid, GroupSurface::None) => Some(PanelPreset::Continuous),
             (PanelSurface::None, GroupSurface::Island) => Some(PanelPreset::Islands),
@@ -515,12 +501,6 @@ impl Panel {
             PanelPreset::Continuous => (PanelSurface::Solid, GroupSurface::None),
             PanelPreset::Islands => (PanelSurface::None, GroupSurface::Island),
         };
-        for group in [&mut self.start, &mut self.center, &mut self.end]
-            .into_iter()
-            .flat_map(|zone| &mut zone.groups)
-        {
-            group.surface = None;
-        }
     }
 
     pub fn group_count(&self) -> usize {
@@ -541,8 +521,7 @@ impl Panel {
                         && left.spacing == right.spacing
                         && left.padding == right.padding
                         && left.island_padding == right.island_padding
-                        && (self.resolved_surface(left) == GroupSurface::Island)
-                            == (other.resolved_surface(right) == GroupSurface::Island)
+                        && (self.group_surface == GroupSurface::Island) == (other.group_surface == GroupSurface::Island)
                 })
         };
         self.id == other.id
@@ -571,7 +550,6 @@ impl Panel {
                 overflow: OverflowPolicy::Never,
                 priority: 100,
             }],
-            surface: None,
             spacing: 0.0,
             padding: [2, 3],
             island_padding: self
@@ -823,9 +801,9 @@ mod tests {
         let mut changed = panel.clone();
         changed.group_surface = GroupSurface::Inset;
         assert!(panel.same_composition(&changed));
-        changed.end.groups[0].surface = Some(GroupSurface::Island);
+        changed.group_surface = GroupSurface::Island;
         assert!(!panel.same_composition(&changed));
-        changed.end.groups[0].surface = Some(GroupSurface::None);
+        changed.group_surface = GroupSurface::None;
         assert!(panel.same_composition(&changed));
         changed.end.groups[0].padding[1] += 1;
         assert!(!panel.same_composition(&changed));

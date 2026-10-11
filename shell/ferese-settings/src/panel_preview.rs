@@ -128,7 +128,7 @@ impl App {
             view: self.preview_control(&overflow.items[0], Representation::Icon, None),
         });
         let overflow_width = 2. * f32::from(overflow.padding[1])
-            + if panel.resolved_surface(&overflow) == ferese_panel::GroupSurface::Island {
+            + if panel.group_surface == ferese_panel::GroupSurface::Island {
                 2. * overflow.island_padding
             } else {
                 0.
@@ -247,7 +247,7 @@ impl App {
         controls: Element<'static, Message>,
     ) -> Element<'static, Message> {
         let palette = visuals::Palette::from_resolved(&self.resolved.presented);
-        let surface = panel.resolved_surface(group);
+        let surface = panel.group_surface;
         let radius = panel
             .resolved_radius(self.resolved.presented.tokens.geometry.shell_radius as f32)
             .at_edge(

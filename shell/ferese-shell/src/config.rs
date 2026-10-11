@@ -649,7 +649,7 @@ mod tests {
         use crate::panel::{GroupSurface, ItemKind, PanelSurface};
         let defaults = parse_test_source("").unwrap();
         assert_eq!(ShellConfig::default().panels, defaults.panels);
-        let source = "panel main { surface none; group-surface island; geometry { height 36; edge-margin 6; }; center { group title { surface none; item title kind=focused-window visible=#false; }; }; end { group status { island-padding 9.5; item battery kind=battery percentage=#false; }; }; }";
+        let source = "panel main { surface none; group-surface island; geometry { height 36; edge-margin 6; }; center { group title { item title kind=focused-window visible=#false; }; }; end { group status { island-padding 9.5; item battery kind=battery percentage=#false; }; }; }";
         let current = parse_test_source(source).unwrap();
         let panel = &current.panels[0];
         assert_eq!(panel.surface, PanelSurface::None);

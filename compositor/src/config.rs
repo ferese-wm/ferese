@@ -460,9 +460,11 @@ mod tests {
     fn panel_surfaces_are_validated_before_live_publication() {
         for surface in ["none", "inset", "island"] {
             let source = format!(
-                "panel main {{ surface solid; group-surface {surface}; end {{ group status {{ surface {surface}; }}; }}; }}"
+                "panel main {{ surface solid; group-surface {surface}; end {{ group status {{ item clock kind=clock; }}; }}; }}"
             );
             Config::parse_source(&source).unwrap().runtime_config().unwrap();
+            let invalid = format!("panel main {{ end {{ group status {{ surface {surface}; }}; }}; }}");
+            assert!(Config::parse_source(&invalid).is_err());
         }
         assert!(Config::parse_source("panel main { group-surface invalid; }").is_err());
         assert!(Config::parse_source("panel main { background islands; }").is_err());

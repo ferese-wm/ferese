@@ -139,7 +139,7 @@ impl App {
                     .push(self.panel_heading("Appearance", 15.))
                     .push(self.panel_appearance_row(
                         "Background",
-                        "Apply a preset, then customize each group.",
+                        "Apply the same appearance to every group.",
                         self.panel_surface_choices(
                             preset_key,
                             &[("continuous", "Continuous"), ("islands", "Islands")],
@@ -152,25 +152,6 @@ impl App {
                             },
                         ),
                     ))
-                    .push(
-                        self.panel_appearance_row(
-                            "Default group surface",
-                            "Groups can override this in their inspector.",
-                            self.panel_surface_choices(
-                                self.preview_panel()
-                                    .map_or(ferese_panel::GroupSurface::None, |panel| panel.group_surface)
-                                    .key(),
-                                &[("none", "None"), ("inset", "Inset"), ("island", "Island")],
-                                |key| {
-                                    Message::PanelEdit(Action::SetDefaultSurface(match key {
-                                        "inset" => ferese_panel::GroupSurface::Inset,
-                                        "island" => ferese_panel::GroupSurface::Island,
-                                        _ => ferese_panel::GroupSurface::None,
-                                    }))
-                                },
-                            ),
-                        ),
-                    )
                     .push(self.panel_divider())
                     .push(self.panel_opacity_controls())
                     .push(self.panel_divider())

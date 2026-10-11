@@ -835,24 +835,12 @@ changes use the existing save and Undo controls, and `ferese-settings --page bar
 opens the page directly.
 
 Use **Add group** in Start, Center, or End to create an empty group, then select
-its name to change placement, surface, spacing, and padding. Arrow buttons reorder
+its name to change placement, spacing, and padding. Arrow buttons reorder
 groups within a zone; before removing a group, move or remove its controls.
 
-The **Background** presets set the panel fill and default group surface together:
-Continuous uses `solid` for the panel and `none` for groups, while Islands uses
-`none` for the panel and `island` for groups. Applying either preset clears group
-surface overrides while keeping your arrangement intact.
-
-Use **Default group surface** to choose what groups inherit, or select Default,
-None, Inset, or Island in an individual group's inspector. None adds no fill,
-Inset wraps the padded content in a rounded surface, and Island adds a full-height
-surface with island padding. Groups on a filled panel use a subtle local tint,
-allowing arrangements such as a continuous panel with one media island or
-navigation and status islands around an undecorated title. With mixed settings,
-neither preset button is selected.
-
-**Group borders** controls the outlines of all groups and is off by default,
-while opacity and corner radii apply across the panel.
+The **Background** choice applies to the whole panel. Continuous fills the bar;
+Islands gives each occupied group its own background. Switching between them
+preserves your groups, items and spacing. Groups have no appearance overrides.
 
 **Background opacity** overrides shell opacity for the panel background in either
 arrangement, without fading controls or changing popups. **Use shell opacity**
@@ -910,7 +898,6 @@ panel "main" {
     }
     center {
         group "title" {
-            surface "none"
             item "title" kind="focused-window" overflow="never"
         }
     }
@@ -938,8 +925,7 @@ currently share the same clock format and timezone.
 | Scope / key | Values / default | Meaning |
 | --- | --- | --- |
 | Panel `surface` | `solid` (default), `none` | Full panel fill or transparent space between decorated groups |
-| Panel `group-surface` | `none` (default), `inset`, `island` | Inherited group surface |
-| Group `surface` | omit to inherit, `none`, `inset`, `island` | Override surface independently of other groups |
+| Panel `group-surface` | `none` (default), `inset`, `island` | Surface policy for every group |
 | Panel `geometry` | height 28, edge/side margins 0, window clearance 0, inner padding 12 | Dimensions independent of the theme |
 | Panel `border` | boolean; default `false` | Show group outlines |
 | Panel `corner-radius` | optional px string, e.g. `"4px 8px"` | Override shell radius for all panel surfaces |

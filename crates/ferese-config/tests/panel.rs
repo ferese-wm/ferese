@@ -1,40 +1,41 @@
 use ferese_config::PanelPreset;
 use ferese_config::panel::*;
 
-fn items(panel: &Panel) -> Vec<&Item> {
-    [&panel.start, &panel.center, &panel.end]
-        .into_iter()
-        .flat_map(|zone| &zone.groups)
-        .flat_map(|group| &group.items)
-        .collect()
-}
-
 #[test]
-fn group_surfaces_round_trip_and_overrides_are_preserved() {
-    let source = "// keep\npanel main { surface none; group-surface island; start { group nav { item overview kind=overview; }; }; center { group title { surface none; item title kind=focused-window; }; }; end { group media { surface inset; item media kind=media; }; }; }";
+fn panel_surfaces_round_trip_without_group_overrides() {
+    let source = "// keep\npanel main { surface none; group-surface island; start { group nav { item overview kind=overview; }; }; center { group title { item title kind=focused-window; }; }; end { group media { item media kind=media; }; }; }";
     let mut doc = ferese_config::Document::parse(source).unwrap();
-    let panel: Vec<Panel> = serde_json::from_value(doc.get("panels").unwrap().clone()).unwrap();
-    let panel = &panel[0];
-    assert_eq!(panel.resolved_surface(&panel.start.groups[0]), GroupSurface::Island);
-    assert_eq!(panel.resolved_surface(&panel.center.groups[0]), GroupSurface::None);
-    assert_eq!(panel.resolved_surface(&panel.end.groups[0]), GroupSurface::Inset);
-    assert_eq!(panel.preset(), None);
-    doc.set("panels", serde_json::to_value(vec![panel]).unwrap()).unwrap();
+    let panels: Vec<Panel> = serde_json::from_value(doc.get("panels").unwrap().clone()).unwrap();
+    let panel = &panels[0];
+    assert_eq!(panel.group_surface, GroupSurface::Island);
+    assert_eq!(panel.preset(), Some(PanelPreset::Islands));
+    doc.set("panels", serde_json::to_value(&panels).unwrap()).unwrap();
     let restored = ferese_config::Document::parse(&doc.to_string()).unwrap();
-    let panels: Vec<Panel> = serde_json::from_value(restored.get("panels").unwrap().clone()).unwrap();
-    assert_eq!(&panels[0], panel);
+    let restored: Vec<Panel> = serde_json::from_value(restored.get("panels").unwrap().clone()).unwrap();
+    assert_eq!(restored, panels);
     assert!(doc.to_string().contains("// keep"));
     let mut preset = panel.clone();
-    let ids: Vec<_> = items(panel).iter().map(|item| item.id.clone()).collect();
+    let groups = [&panel.start, &panel.center, &panel.end].map(|zone| zone.groups.clone());
     preset.apply_preset(PanelPreset::Continuous);
     assert_eq!(preset.preset(), Some(PanelPreset::Continuous));
     assert_eq!(
-        items(&preset).iter().map(|item| item.id.clone()).collect::<Vec<_>>(),
-        ids
+        [&preset.start, &preset.center, &preset.end].map(|zone| zone.groups.clone()),
+        groups
     );
-    assert!(preset.center.groups[0].surface.is_none());
-    preset.apply_preset(PanelPreset::Islands);
-    assert_eq!(preset.preset(), Some(PanelPreset::Islands));
+}
+
+#[test]
+fn group_surface_options_are_rejected_instead_of_inherited_or_ignored() {
+    for surface in ["none", "inset", "island", "default", "unset"] {
+        let doc = ferese_config::Document::parse(&format!(
+            "panel main {{ start {{ group nav {{ surface {surface}; item clock kind=clock; }} }} }}"
+        ))
+        .unwrap();
+        let error = serde_json::from_value::<Vec<Panel>>(doc.get("panels").unwrap().clone())
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("unknown field `surface`"), "{error}");
+    }
 }
 
 #[test]
@@ -45,7 +46,6 @@ panel "main" {
     group-surface "island"
     end {
         group "status" {
-            surface "island"
             padding 2 3
             // network comment
             item "network" kind="network" overflow="always"
@@ -114,7 +114,7 @@ fn panel_border_defaults_off_and_round_trips_an_explicit_enabled_value() {
 
 #[test]
 fn panel_background_opacity_inherits_until_overridden_and_validates_bounds() {
-    let doc = ferese_config::Document::parse("panel main { end { group status { surface inset; }; }; }").unwrap();
+    let doc = ferese_config::Document::parse("panel main { end { group status { }; }; }").unwrap();
     let mut panels: Vec<Panel> = serde_json::from_value(doc.get("panels").unwrap().clone()).unwrap();
     assert_eq!(panels[0].background_opacity, None);
     assert!(

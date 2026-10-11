@@ -74,7 +74,7 @@ impl FereseShell {
                                 id,
                                 item,
                                 None,
-                                panel.resolved_surface(group) == GroupSurface::Island,
+                                panel.group_surface == GroupSurface::Island,
                                 representation,
                             )
                             .0;
@@ -103,14 +103,14 @@ impl FereseShell {
                     id,
                     &overflow_group.items[0],
                     None,
-                    panel.resolved_surface(&overflow_group) == GroupSurface::Island,
+                    panel.group_surface == GroupSurface::Island,
                     Representation::Icon,
                 )
                 .0,
         });
         // Measure the control itself; reserve group decoration separately.
         let overflow_width = 2.0 * f32::from(overflow_group.padding[1])
-            + if panel.resolved_surface(&overflow_group) == GroupSurface::Island {
+            + if panel.group_surface == GroupSurface::Island {
                 2.0 * overflow_group.island_padding
             } else {
                 0.0
@@ -119,7 +119,7 @@ impl FereseShell {
             .into_iter()
             .flat_map(|zone| &zone.groups)
             .chain(std::iter::once(&overflow_group))
-            .filter(|group| islands && panel.resolved_surface(group) != GroupSurface::None)
+            .filter(|_| islands && panel.group_surface != GroupSurface::None)
             .map(|group| (group_material_id(panel, group), 1.))
             .collect();
         let content = adaptive::frame(
@@ -572,7 +572,7 @@ fn view_zone<'a>(
         .spacing(zone.spacing)
         .align_y(cosmic::iced::Alignment::Center);
     for group in &zone.groups {
-        let surface = panel.resolved_surface(group);
+        let surface = panel.group_surface;
         let mut controls = row::with_capacity(group.items.len()).align_y(cosmic::iced::Alignment::Center);
         let mut count = 0;
         let mut has_content = false;
@@ -1239,27 +1239,24 @@ mod island_tests {
         assert_eq!(inner.border.width, 1.);
     }
     #[test]
-    fn mixed_group_surfaces_use_independent_heights_and_padding() {
+    fn panel_surface_policy_applies_to_every_occupied_group() {
         let mut panel = Panel::from_preset(PanelPreset::Islands);
         panel.geometry.height = 36.;
-        panel.center.groups[0].surface = Some(GroupSurface::None);
-        panel.end.groups[0].surface = Some(GroupSurface::Inset);
-        let navigation = measure_zone(&panel, &panel.start, Availability::default(), true);
-        let title = measure_zone(&panel, &panel.center, Availability::default(), true);
-        let status = measure_zone(&panel, &panel.end, Availability::default(), true);
-        assert_eq!(navigation.islands.len(), 1);
-        assert_eq!(navigation.islands[0].height, 36.);
-        assert!(title.islands.is_empty());
-        assert_eq!(title.items.len(), 1);
-        assert_eq!(status.islands.len(), 1);
-        assert_eq!(status.islands[0].height, BarMetrics::from(panel.geometry).group_height);
-        assert_eq!(status.islands[0].width, status.groups[0].width);
-        assert!(navigation.islands[0].width > navigation.groups[0].width);
-        // The same media island can sit on a continuous panel.
-        panel.surface = PanelSurface::Solid;
-        panel.group_surface = GroupSurface::None;
-        panel.end.groups[0].surface = Some(GroupSurface::Island);
-        let status = measure_zone(&panel, &panel.end, Availability::default(), true);
-        assert_eq!(status.islands[0].height, 36.);
+        for zone in [&panel.start, &panel.center, &panel.end] {
+            let measured = measure_zone(&panel, zone, Availability::default(), true);
+            assert_eq!(measured.islands.len(), measured.groups.len());
+            for (island, group) in measured.islands.iter().zip(&measured.groups) {
+                assert_eq!(island.height, 36.);
+                assert!(island.width > group.width);
+            }
+        }
+        panel.apply_preset(PanelPreset::Continuous);
+        for zone in [&panel.start, &panel.center, &panel.end] {
+            assert!(
+                measure_zone(&panel, zone, Availability::default(), true)
+                    .islands
+                    .is_empty()
+            );
+        }
     }
 }
