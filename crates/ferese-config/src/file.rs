@@ -44,13 +44,13 @@ impl ConfigFile {
             fs::TryLockError::Error(error) => error.to_string(),
         })?;
 
-        let source = read(&path)?;
-
-        Ok(Self {
+        let mut file = Self {
             path,
-            source,
+            source: String::new(),
             _lock: lock,
-        })
+        };
+        file.source = read(&file.path)?;
+        Ok(file)
     }
 
     pub fn source(&self) -> &str {
@@ -99,6 +99,14 @@ impl ConfigFile {
             .map_err(|e| e.to_string())?;
 
         Ok(())
+    }
+}
+
+impl Drop for ConfigFile {
+    fn drop(&mut self) {
+        // A spawned child can briefly retain the open-file description after our
+        // descriptor closes. Release the lock before closing the owner's handle.
+        let _ = self._lock.unlock();
     }
 }
 
@@ -161,6 +169,8 @@ mod tests {
         std::os::unix::fs::symlink(&path, &alias).unwrap();
         let file = ConfigFile::open(&path).unwrap();
         assert!(ConfigFile::open(&alias).is_err());
+        // A concurrent process spawn can briefly inherit this open-file description.
+        let inherited = file._lock.try_clone().unwrap();
         drop(file);
         ConfigFile::open(&alias)
             .unwrap()
@@ -168,6 +178,7 @@ mod tests {
             .unwrap();
         assert!(alias.is_symlink());
         assert_eq!(fs::read_to_string(path).unwrap(), "// updated");
+        drop(inherited);
     }
 
     #[test]
