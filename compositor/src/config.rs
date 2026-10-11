@@ -827,6 +827,7 @@ mod tests {
                 focus_ring_gradient: None,
                 shadow_color: RgbaColor([1.0 / 255.0, 2.0 / 255.0, 3.0 / 255.0, 128.0 / 255.0]),
                 surface_base_color: RgbaColor([17.0 / 255.0, 24.0 / 255.0, 33.0 / 255.0, 1.0,]),
+                surface_raised_color: RgbaColor([30.0 / 255.0, 37.0 / 255.0, 48.0 / 255.0, 1.0]),
                 bar_background_color: RgbaColor([17.0 / 255.0, 24.0 / 255.0, 33.0 / 255.0, 1.0,]),
                 text_primary_color: RgbaColor([244.0 / 255.0, 247.0 / 255.0, 251.0 / 255.0, 1.0]),
                 shell_opacity: 0.78,
@@ -916,11 +917,15 @@ mod tests {
 
     #[test]
     fn material_color_comes_from_surface_base() {
-        let theme = parse("theme {\n    colors {\n        surface-base \"#000000\"\n    }\n    surface {\n        bar {\n            background \"#FFFFFF\"\n        }\n    }\n}\n")
+        let theme = parse("theme {\n    colors {\n        surface-base \"#000000\"\n        surface-raised \"#314159\"\n    }\n    surface {\n        bar {\n            background \"#FFFFFF\"\n        }\n    }\n}\n")
             .theme_settings()
             .unwrap();
         assert_eq!(theme.surface_base_color, RgbaColor([0.0, 0.0, 0.0, 1.0]));
         assert_eq!(theme.bar_background_color, RgbaColor([1.0, 1.0, 1.0, 1.0]));
+        assert_eq!(
+            theme.surface_raised_color,
+            RgbaColor([49. / 255., 65. / 255., 89. / 255., 1.])
+        );
     }
 
     #[test]

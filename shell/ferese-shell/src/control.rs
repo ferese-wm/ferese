@@ -54,7 +54,6 @@ pub(crate) struct WindowSnapshot {
     pub(crate) app_id: String,
     pub(crate) title: String,
     pub(crate) focused: bool,
-    #[cfg_attr(not(test), expect(dead_code, reason = "The current bar does not display urgency."))]
     pub(crate) urgent: bool,
     pub(crate) fullscreen: bool,
     pub(crate) maximized: bool,

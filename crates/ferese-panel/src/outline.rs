@@ -133,6 +133,65 @@ pub fn contours(scene: &Scene, tolerance: f64) -> Result<Vec<Contour>, &'static 
     Ok(result)
 }
 
+/// Open border paths for screen-attached notches. Split shared straight edges
+/// before cancelling them, so the body and its fillets have one continuous rim.
+pub fn notch_border(scene: &Scene, tolerance: f64, edge: crate::Edge) -> Result<Vec<Contour>, &'static str> {
+    let contours = contours(scene, tolerance)?;
+    let vertices: Vec<_> = contours.iter().flatten().copied().collect();
+    let screen_edge = vertices.iter().map(|p| p[1]).fold(
+        if edge == crate::Edge::Top {
+            f64::INFINITY
+        } else {
+            f64::NEG_INFINITY
+        },
+        if edge == crate::Edge::Top { f64::min } else { f64::max },
+    );
+    let close = |a: [f64; 2], b: [f64; 2]| (a[0] - b[0]).abs() < 1e-6 && (a[1] - b[1]).abs() < 1e-6;
+    let mut segments: Vec<([f64; 2], [f64; 2])> = Vec::new();
+    for contour in &contours {
+        for (&a, &b) in contour.iter().zip(contour.iter().cycle().skip(1)).take(contour.len()) {
+            if close(a, b) || ((a[1] - screen_edge).abs() < 1e-6 && (b[1] - screen_edge).abs() < 1e-6) {
+                continue;
+            }
+            let delta = [b[0] - a[0], b[1] - a[1]];
+            let length_squared = delta[0] * delta[0] + delta[1] * delta[1];
+            let mut cuts = vec![(0., a), (1., b)];
+            for &point in &vertices {
+                let offset = [point[0] - a[0], point[1] - a[1]];
+                let t = (offset[0] * delta[0] + offset[1] * delta[1]) / length_squared;
+                if t > 0. && t < 1. && (offset[0] * delta[1] - offset[1] * delta[0]).abs() < 1e-6 {
+                    cuts.push((t, point));
+                }
+            }
+            cuts.sort_by(|a, b| a.0.total_cmp(&b.0));
+            cuts.dedup_by(|a, b| close(a.1, b.1));
+            for pair in cuts.windows(2) {
+                let segment = (pair[0].1, pair[1].1);
+                if let Some(index) = segments
+                    .iter()
+                    .position(|&(a, b)| close(a, segment.1) && close(b, segment.0))
+                {
+                    segments.swap_remove(index);
+                } else {
+                    segments.push(segment);
+                }
+            }
+        }
+    }
+    let mut paths = Vec::new();
+    while let Some((a, b)) = segments.pop() {
+        let mut path = vec![a, b];
+        while let Some(index) = segments.iter().position(|&(a, _)| close(a, *path.last().unwrap())) {
+            path.push(segments.swap_remove(index).1);
+        }
+        while let Some(index) = segments.iter().position(|&(_, b)| close(b, path[0])) {
+            path.insert(0, segments.swap_remove(index).0);
+        }
+        paths.push(path);
+    }
+    Ok(paths)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -154,6 +213,53 @@ mod tests {
             }
         }
         winding
+    }
+
+    #[test]
+    fn notch_rim_connects_both_fillets_without_shared_or_screen_edges() {
+        for scale in [1., 1.25, 1.5, 2.] {
+            for edge in [crate::Edge::Top, crate::Edge::Bottom] {
+                let scene = derive(
+                    Parameters {
+                        style: Style::Notch,
+                        edge,
+                        height: 44.,
+                        fillet: 12.,
+                        ..Default::default()
+                    },
+                    Rect::new(0., 0., 340., 44.),
+                    &[GroupBounds {
+                        zone: ZonePosition::Center,
+                        bounds: Rect::new(70.3, 0., 160.4, 44.),
+                    }],
+                    PixelGrid::new(scale).unwrap(),
+                )
+                .unwrap();
+                let paths = notch_border(&scene, 0.1 / scale, edge).unwrap();
+                assert_eq!(paths.len(), 1, "{edge:?} at {scale}");
+                let path = &paths[0];
+                let screen_y = if edge == crate::Edge::Top { 0. } else { 44. };
+                assert!((path.first().unwrap()[1] - screen_y).abs() < 1e-6);
+                assert!((path.last().unwrap()[1] - screen_y).abs() < 1e-6);
+                let body = scene.paint.iter().find(|p| p.operation == 0).unwrap().bounds;
+                assert!(path.iter().any(|p| p[0] < body.x));
+                assert!(path.iter().any(|p| p[0] > body.x + body.width));
+                for segment in path.windows(2) {
+                    let [a, b] = [segment[0], segment[1]];
+                    assert!((a[1] - screen_y).abs() > 1e-6 || (b[1] - screen_y).abs() > 1e-6);
+                    let mid = [(a[0] + b[0]) / 2., (a[1] + b[1]) / 2.];
+                    assert!(scene.distance(mid).abs() < 0.12 / scale, "off outline: {mid:?}");
+                    // A shared body/fillet seam has fill on both sides, unlike a visible rim.
+                    let delta = [b[0] - a[0], b[1] - a[1]];
+                    let length = delta[0].hypot(delta[1]);
+                    let normal = [-delta[1] / length * 0.25, delta[0] / length * 0.25];
+                    assert!(
+                        scene.distance([mid[0] + normal[0], mid[1] + normal[1]]) > 0.
+                            || scene.distance([mid[0] - normal[0], mid[1] - normal[1]]) > 0.
+                    );
+                }
+            }
+        }
     }
 
     #[test]

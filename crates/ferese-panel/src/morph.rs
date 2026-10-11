@@ -8,20 +8,6 @@ use crate::motion::{Geometry, Motion};
 const FADE: Duration = Duration::from_millis(120);
 const CONTENT_DELAY: Duration = Duration::from_millis(130);
 
-/// A denser surface that retains the theme's hue and foreground contrast.
-pub fn surface_color(mut background: [f32; 4]) -> [f32; 4] {
-    let dark = background[0] * 0.2126 + background[1] * 0.7152 + background[2] * 0.0722 < 0.5;
-    for channel in &mut background[..3] {
-        *channel = if dark {
-            *channel * 0.72
-        } else {
-            *channel + (1. - *channel) * 0.04
-        };
-    }
-    background[3] = background[3].max(0.96);
-    background
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Profile {
@@ -215,6 +201,17 @@ impl Hub {
         result
     }
 
+    pub fn retarget_idle(&mut self, width: f64, available: [f64; 2]) -> Result<(), &'static str> {
+        if !width.is_finite() || !(24. ..=1024.).contains(&width) {
+            return Err("idle width must be 24..1024");
+        }
+        let configured = self.profile.idle_width;
+        self.profile.idle_width = width;
+        let result = self.retarget(Mode::Idle, available);
+        self.profile.idle_width = configured;
+        result
+    }
+
     pub fn retarget(&mut self, mode: Mode, available: [f64; 2]) -> Result<(), &'static str> {
         if available.iter().any(|value| !value.is_finite() || *value <= 0.) {
             return Err("hub requires a finite positive available area");
@@ -229,9 +226,9 @@ impl Hub {
         };
         let mut geometry = Geometry::rounded(Rect::new(0., 0., width, height), radius);
         geometry.radii = self.pins.unwrap_or(geometry.radii);
-        if mode == self.mode && geometry == self.motion.target() {
+        if mode == self.mode {
             self.available = available;
-            return Ok(());
+            return self.motion.retarget(geometry);
         }
         let sample = self.sample();
         self.available = available;
@@ -255,6 +252,22 @@ impl Hub {
         self.mode = mode;
         self.elapsed = Duration::ZERO;
         self.motion.retarget(geometry)
+    }
+
+    /// Fit the expanded shell to measured content without restarting its content fade.
+    pub fn fit_content_height(&mut self, height: f64) -> Result<(), &'static str> {
+        if !height.is_finite() || height <= 0. {
+            return Err("content height must be finite and positive");
+        }
+        if self.mode.expanded() {
+            let mut target = self.motion.target();
+            target.bounds.height = height
+                .max(24.)
+                .min(self.profile.size(self.mode, self.height)[1])
+                .min(self.available[1]);
+            self.motion.retarget(target)?;
+        }
+        Ok(())
     }
 
     /// Replace content inside an already settled shape without restarting its springs.
@@ -310,6 +323,43 @@ impl Hub {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn workspace_width_changes_preserve_content_and_motion() {
+        let mut hub = Hub::new(Profile::default(), 34.).unwrap();
+        hub.retarget_idle(270., [800., 600.]).unwrap();
+        hub.advance(Duration::from_millis(60), false);
+        let before = hub.sample();
+        assert_eq!(before.opacity, 1.);
+        hub.retarget_idle(300., [800., 600.]).unwrap();
+        assert_eq!(hub.sample(), before);
+        assert_eq!(hub.target_size(), [300., 34.]);
+        hub.advance(Duration::from_secs(2), false);
+        assert_eq!(hub.sample().geometry.bounds.width, 300.);
+        assert_eq!(hub.sample().opacity, 1.);
+        hub.retarget_peek(360., [320., 600.]).unwrap();
+        assert_eq!(hub.target_size(), [320., 44.]);
+    }
+
+    #[test]
+    fn measured_height_preserves_fade_and_motion_and_caps_long_content() {
+        let mut hub = Hub::new(Profile::default(), 34.).unwrap();
+        hub.retarget(Mode::Expanded(Content::Controls), [800., 600.]).unwrap();
+        hub.advance(Duration::from_millis(180), false);
+        let before = hub.sample();
+        hub.fit_content_height(148.).unwrap();
+        assert_eq!(hub.target_size(), [340., 148.]);
+        assert_eq!(hub.sample().geometry, before.geometry);
+        assert_eq!(hub.sample().opacity, before.opacity);
+        hub.advance(Duration::from_secs(2), false);
+        assert_eq!(hub.sample().geometry.bounds.height, 148.);
+        assert_eq!(hub.sample().opacity, 1.);
+        hub.fit_content_height(900.).unwrap();
+        assert_eq!(hub.target_size(), [340., Profile::default().controls_height]);
+        hub.retarget(Mode::Idle, [800., 600.]).unwrap();
+        hub.fit_content_height(100.).unwrap();
+        assert_eq!(hub.target_size(), [150., 34.]);
+    }
 
     #[test]
     fn a_content_swap_fades_without_restarting_the_geometry() {

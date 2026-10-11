@@ -60,6 +60,7 @@ pub(crate) struct ShellTheme {
     pub(crate) bar_text_primary: [u8; 4],
     pub(crate) bar_text_muted: [u8; 4],
     pub(crate) surface_base: [u8; 4],
+    pub(crate) surface_raised: [u8; 4],
     pub(crate) surface_popover: [u8; 4],
     pub(crate) text_primary: [u8; 4],
     pub(crate) text_muted: [u8; 4],
@@ -86,13 +87,15 @@ impl Default for ShellTheme {
             bar_text_primary: [240, 243, 250, 255],
             bar_text_muted: [170, 180, 199, 255],
             surface_base: [17, 24, 33, 255],
+            surface_raised: parse_color(&ferese_config::theme::default_tokens().colors.surface_raised)
+                .expect("valid theme surface color"),
             surface_popover: [17, 24, 33, 255],
             text_primary: [244, 247, 251, 255],
             text_muted: [135, 147, 162, 255],
             accent: [61, 123, 230, 255],
             accent_gradient: None,
             on_accent: [244, 247, 251, 255],
-            border: [255, 255, 255, 24],
+            border: parse_color(&default_border()).expect("valid theme border color"),
             shadow: [0, 0, 0, 85],
             bar_radius: 14.0,
             material_radius: 14.0,
@@ -249,6 +252,8 @@ struct TypographyConfig {
 struct ThemeColorsConfig {
     #[serde(default = "default_surface_base")]
     surface_base: String,
+    #[serde(default = "default_surface_raised")]
+    surface_raised: String,
     #[serde(default = "default_text_primary")]
     text_primary: String,
     #[serde(default = "default_text_muted")]
@@ -267,6 +272,7 @@ impl Default for ThemeColorsConfig {
     fn default() -> Self {
         Self {
             surface_base: default_surface_base(),
+            surface_raised: default_surface_raised(),
             text_primary: default_text_primary(),
             text_muted: default_text_muted(),
             accent: default_accent(),
@@ -447,6 +453,7 @@ fn shell_theme(theme: &ThemeConfig) -> ShellTheme {
         bar_text_primary: parse_color(&theme.surface.bar.text_primary).unwrap_or(defaults.bar_text_primary),
         bar_text_muted: parse_color(&theme.surface.bar.text_muted).unwrap_or(defaults.bar_text_muted),
         surface_base: parse_color(&theme.colors.surface_base).unwrap_or(defaults.surface_base),
+        surface_raised: parse_color(&theme.colors.surface_raised).unwrap_or(defaults.surface_raised),
         surface_popover: {
             let mut color = parse_color(&theme.colors.surface_base).unwrap_or(defaults.surface_base);
             color[3] = alpha;
@@ -501,6 +508,10 @@ fn default_surface_base() -> String {
     "#111821".to_owned()
 }
 
+fn default_surface_raised() -> String {
+    ferese_config::theme::default_tokens().colors.surface_raised
+}
+
 fn default_text_primary() -> String {
     "#F4F7FB".to_owned()
 }
@@ -514,7 +525,7 @@ fn default_accent() -> String {
 }
 
 fn default_border() -> String {
-    "#FFFFFF18".to_owned()
+    ferese_config::theme::default_tokens().colors.border
 }
 
 fn default_shadow() -> String {
@@ -822,6 +833,7 @@ theme {
     fn bar_palette_can_be_changed_without_changing_popovers() {
         let config: FereseConfig = ferese_config::from_str(
             r##"theme {
+    colors { surface-raised "#314159"; }
     surface {
         bar {
             background "#EAECEEDD"
@@ -835,6 +847,7 @@ theme {
         .unwrap();
         let theme = shell_theme(&config.theme);
         assert_eq!(theme.bar_background, [234, 236, 238, 255]);
+        assert_eq!(theme.surface_raised, [49, 65, 89, 255]);
         assert_eq!(theme.for_bar().text_primary, [34, 34, 34, 255]);
         assert_eq!(theme.for_bar().text_muted, [102, 102, 102, 255]);
         assert_eq!(theme.text_primary, ShellTheme::default().text_primary);

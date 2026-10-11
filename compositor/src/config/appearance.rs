@@ -35,6 +35,7 @@ impl Config {
             focus_ring_gradient: self.theme.focus_ring.settings("focus_ring")?,
             shadow_color: parse_color(&self.theme.colors.shadow, "colors.shadow")?,
             surface_base_color: parse_color(&self.theme.colors.surface_base, "colors.surface_base")?,
+            surface_raised_color: parse_color(&self.theme.colors.surface_raised, "colors.surface_raised")?,
             bar_background_color: parse_color(
                 self.theme
                     .surface
@@ -141,6 +142,10 @@ pub(super) fn default_surface_base_color() -> String {
     "#111821".to_owned()
 }
 
+pub(super) fn default_surface_raised_color() -> String {
+    ferese_config::theme::default_tokens().colors.surface_raised
+}
+
 pub(super) fn default_accent_color() -> String {
     "#3D7BE6".to_owned()
 }
@@ -215,6 +220,7 @@ pub struct ThemeSettings {
     pub focus_ring_gradient: Option<BorderGradient>,
     pub shadow_color: RgbaColor,
     pub surface_base_color: RgbaColor,
+    pub surface_raised_color: RgbaColor,
     pub bar_background_color: RgbaColor,
     pub text_primary_color: RgbaColor,
     pub shell_opacity: f64,
@@ -355,6 +361,8 @@ pub(super) struct ThemeColorsConfig {
     pub(super) text_primary: String,
     #[serde(default = "default_surface_base_color")]
     pub(super) surface_base: String,
+    #[serde(default = "default_surface_raised_color")]
+    pub(super) surface_raised: String,
     #[serde(default = "default_border_color")]
     pub(super) border: String,
     #[serde(default = "default_accent_color")]
@@ -367,6 +375,7 @@ impl Default for ThemeColorsConfig {
     fn default() -> Self {
         Self {
             surface_base: default_surface_base_color(),
+            surface_raised: default_surface_raised_color(),
             text_primary: default_text_primary_color(),
             border: default_border_color(),
             accent: default_accent_color(),

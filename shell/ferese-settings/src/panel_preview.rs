@@ -111,6 +111,7 @@ impl App {
                     bounds: None,
                     groups: Vec::new(),
                     scale: self.render_scale,
+                    high_contrast: palette.high_contrast,
                     background: cosmic::iced::Color {
                         a: if self.resolved.presented.accessibility.reduce_transparency {
                             1.
@@ -120,7 +121,10 @@ impl App {
                         ..palette.card
                     },
                     border: if panel.border {
-                        palette.muted.scale_alpha(0.4)
+                        visuals::color(
+                            &self.resolved.presented.tokens.colors.border,
+                            cosmic::iced::Color::TRANSPARENT,
+                        )
                     } else {
                         cosmic::iced::Color::TRANSPARENT
                     },
@@ -257,16 +261,23 @@ impl App {
                 bounds: None,
                 groups,
                 scale: self.render_scale,
+                high_contrast: palette.high_contrast,
                 background: cosmic::iced::Color {
                     a: opacity,
                     ..palette.card
                 },
                 border: if border {
-                    palette.muted.scale_alpha(0.4)
+                    visuals::color(
+                        &self.resolved.presented.tokens.colors.border,
+                        cosmic::iced::Color::TRANSPARENT,
+                    )
                 } else {
                     cosmic::iced::Color::TRANSPARENT
                 },
-                divider: palette.muted.scale_alpha(0.4),
+                divider: visuals::color(
+                    &self.resolved.presented.tokens.colors.border,
+                    cosmic::iced::Color::TRANSPARENT,
+                ),
                 native: false,
             },
             |_| {},

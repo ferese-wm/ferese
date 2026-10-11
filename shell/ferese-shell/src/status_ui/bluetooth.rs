@@ -14,7 +14,7 @@ fn device_list_height(count: usize) -> Option<f32> {
     (count > 4).then_some(DEVICE_LIST_HEIGHT)
 }
 
-pub(super) fn view<'a>(shell: &'a FereseShell, mut rows: MenuRows<'a>, style: MenuStyle) -> MenuRows<'a> {
+pub(super) fn view<'a>(shell: &'a FereseShell, mut rows: MenuRows<'a>, style: MenuStyle, in_hub: bool) -> MenuRows<'a> {
     let MenuStyle { muted, .. } = style;
     if let Some(b) = &shell.status.bluetooth {
         rows = rows.push(status_summary(
@@ -48,14 +48,16 @@ pub(super) fn view<'a>(shell: &'a FereseShell, mut rows: MenuRows<'a>, style: Me
                 );
             }
 
-            let list: Element<'_, cosmic::Action<Message>> = if let Some(height) = device_list_height(b.devices.len()) {
-                cosmic::iced::widget::scrollable(devices)
-                    .height(height)
-                    .width(Length::Fill)
-                    .into()
-            } else {
-                devices.into()
-            };
+            // Morph scrolls the whole view, so its device list needs no nested viewport.
+            let list: Element<'_, cosmic::Action<Message>> =
+                if let Some(height) = device_list_height(b.devices.len()).filter(|_| !in_hub) {
+                    cosmic::iced::widget::scrollable(devices)
+                        .height(height)
+                        .width(Length::Fill)
+                        .into()
+                } else {
+                    devices.into()
+                };
             rows = rows.push(list);
         }
     }

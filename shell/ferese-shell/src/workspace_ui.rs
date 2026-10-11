@@ -43,7 +43,7 @@ impl FereseShell {
         } else {
             Task::none()
         };
-        Task::batch([icons, tooltip])
+        Task::batch([icons, tooltip, self.sync_hub_workspaces()])
     }
 
     pub(super) fn workspace_icons_loaded(&mut self, result: Result<IconIndex, String>) -> Task<Message> {

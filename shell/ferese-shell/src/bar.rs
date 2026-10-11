@@ -222,6 +222,7 @@ impl FereseShell {
                 bounds: None,
                 groups,
                 scale: output.map_or(1., |entry| entry.scale),
+                high_contrast: shell_theme.high_contrast,
                 background: color(shell_theme.bar_background),
                 border: if panel.border {
                     color(shell_theme.border)

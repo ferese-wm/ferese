@@ -11,6 +11,7 @@ pub struct Options {
     pub bounds: Option<widget::Id>,
     pub groups: Vec<(widget::Id, ZonePosition)>,
     pub scale: f64,
+    pub high_contrast: bool,
     pub background: Color,
     pub border: Color,
     pub divider: Color,
@@ -45,7 +46,7 @@ struct Surface<'a, M> {
 struct State {
     scene: Scene,
     cache: Cache<cosmic::Renderer>,
-    colors: Option<(Color, Color, Color, bool, u64)>,
+    colors: Option<(Color, Color, Color, bool, u64, bool)>,
     published: Option<Scene>,
 }
 
@@ -116,6 +117,7 @@ impl<M> Surface<'_, M> {
             self.options.divider,
             self.options.native,
             self.options.scale.to_bits(),
+            self.options.high_contrast,
         );
         if state.scene != scene || state.colors != Some(colors) {
             state.scene = scene;
@@ -213,7 +215,14 @@ impl<M> Widget<M, Theme, cosmic::Renderer> for Surface<'_, M> {
             || (!state.scene.dividers.is_empty() && self.options.divider.a > 0.)
         {
             let geometry = state.cache.draw(renderer, bounds.size(), |frame| {
-                if let Ok(contours) = ferese_panel::outline::contours(&state.scene, 0.2 / self.options.scale.max(1.)) {
+                let scale = if self.options.scale.is_finite() && self.options.scale > 0. {
+                    self.options.scale
+                } else {
+                    1.
+                };
+                let hairline = 1. / scale as f32;
+                let tolerance = (0.2 / scale).clamp(0.01, 1.);
+                if let Ok(contours) = ferese_panel::outline::contours(&state.scene, tolerance) {
                     let path = Path::new(|builder| {
                         for contour in contours {
                             if let Some((first, rest)) = contour.split_first() {
@@ -229,7 +238,11 @@ impl<M> Widget<M, Theme, cosmic::Renderer> for Surface<'_, M> {
                         frame.fill(&path, self.options.background);
                     }
                     if self.options.border.a > 0. {
-                        let width = 1. / self.options.scale.max(1.) as f32;
+                        let width = if self.options.high_contrast {
+                            hairline.max(1.)
+                        } else {
+                            hairline
+                        };
                         if self.options.parameters.style == ferese_panel::PanelStyle::Flat {
                             let y = match self.options.parameters.edge {
                                 ferese_panel::Edge::Top => bounds.height - width / 2.,
@@ -239,6 +252,27 @@ impl<M> Widget<M, Theme, cosmic::Renderer> for Surface<'_, M> {
                                 &Path::line(Point::new(0., y), Point::new(bounds.width, y)),
                                 Stroke::default().with_color(self.options.border).with_width(width),
                             );
+                        } else if self.options.parameters.style == ferese_panel::PanelStyle::Notch {
+                            if let Ok(contours) = ferese_panel::outline::notch_border(
+                                &state.scene,
+                                tolerance,
+                                self.options.parameters.edge,
+                            ) {
+                                let border = Path::new(|builder| {
+                                    for contour in contours {
+                                        if let Some((first, rest)) = contour.split_first() {
+                                            builder.move_to(Point::new(first[0] as f32, first[1] as f32));
+                                            for point in rest {
+                                                builder.line_to(Point::new(point[0] as f32, point[1] as f32));
+                                            }
+                                        }
+                                    }
+                                });
+                                frame.stroke(
+                                    &border,
+                                    Stroke::default().with_color(self.options.border).with_width(width),
+                                );
+                            }
                         } else {
                             frame.stroke(
                                 &path,
@@ -250,9 +284,7 @@ impl<M> Widget<M, Theme, cosmic::Renderer> for Surface<'_, M> {
                 for [x1, y1, x2, y2] in &state.scene.dividers {
                     frame.stroke(
                         &Path::line(Point::new(*x1 as f32, *y1 as f32), Point::new(*x2 as f32, *y2 as f32)),
-                        Stroke::default()
-                            .with_color(self.options.divider)
-                            .with_width(1. / self.options.scale.max(1.) as f32),
+                        Stroke::default().with_color(self.options.divider).with_width(hairline),
                     );
                 }
             });
@@ -315,6 +347,69 @@ mod tests {
     use ferese_panel::shape::Style;
 
     #[test]
+    fn border_coverage_tracks_physical_scale_and_high_contrast() {
+        let mut renderer = cosmic::iced::futures::executor::block_on(<cosmic::Renderer as Headless>::new(
+            Font::default(),
+            Pixels(14.),
+            Some("tiny-skia"),
+        ))
+        .unwrap();
+        for scale in [0.75, 1., 1.25, 1.5, 2.] {
+            for high_contrast in [false, true] {
+                let mut view: Element<'_, ()> = frame(
+                    cosmic::widget::Space::new().width(64).height(32).into(),
+                    Options {
+                        parameters: Parameters {
+                            style: Style::Flat,
+                            edge: ferese_panel::Edge::Bottom,
+                            ..Default::default()
+                        },
+                        bounds: None,
+                        groups: Vec::new(),
+                        scale,
+                        high_contrast,
+                        background: Color::TRANSPARENT,
+                        border: Color::WHITE,
+                        divider: Color::TRANSPARENT,
+                        native: true,
+                    },
+                    |_| {},
+                    None,
+                );
+                let mut tree = widget::Tree::new(&view);
+                let bounds = Rectangle::with_size(Size::new(64., 32.));
+                let node =
+                    view.as_widget_mut()
+                        .layout(&mut tree, &renderer, &layout::Limits::new(Size::ZERO, bounds.size()));
+                renderer.reset(bounds);
+                view.as_widget().draw(
+                    &tree,
+                    &mut renderer,
+                    &Theme::default(),
+                    &renderer::Style {
+                        text_color: Color::WHITE,
+                        icon_color: Color::WHITE,
+                        scale_factor: scale,
+                    },
+                    Layout::new(&node),
+                    mouse::Cursor::Unavailable,
+                    &bounds,
+                );
+                let size = Size::new((64. * scale) as u32, (32. * scale) as u32);
+                let pixels = renderer.screenshot(size, scale as f32, Color::TRANSPARENT);
+                let coverage: f64 = (0..size.height)
+                    .map(|y| f64::from(pixels[((y * size.width + size.width / 2) * 4 + 3) as usize]) / 255.)
+                    .sum();
+                let expected = if high_contrast { scale.max(1.) } else { 1. };
+                assert!(
+                    (coverage - expected).abs() < 0.03,
+                    "scale {scale}, high contrast {high_contrast}: {coverage} physical pixels, expected {expected}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn the_surface_background_keeps_parent_layer_text_visible() {
         let mut renderer = cosmic::iced::futures::executor::block_on(<cosmic::Renderer as Headless>::new(
             Font::default(),
@@ -339,6 +434,7 @@ mod tests {
                     bounds: None,
                     groups: Vec::new(),
                     scale,
+                    high_contrast: false,
                     background: Color::BLACK,
                     border: Color::TRANSPARENT,
                     divider: Color::TRANSPARENT,
@@ -431,6 +527,7 @@ mod tests {
                         bounds: None,
                         groups: vec![(a, ZonePosition::Start), (b, ZonePosition::Start)],
                         scale,
+                        high_contrast: false,
                         background: Color::WHITE,
                         border: Color::TRANSPARENT,
                         divider: Color::TRANSPARENT,

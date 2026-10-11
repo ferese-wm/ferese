@@ -193,9 +193,9 @@ impl FereseShell {
             ));
         }
         let mut rows = match kind {
-            Menu::System => system::view(self, rows, style),
+            Menu::System => system::view(self, rows, style, true),
             Menu::Network => network::view(self, rows, style),
-            Menu::Bluetooth => bluetooth::view(self, rows, style),
+            Menu::Bluetooth => bluetooth::view(self, rows, style, true),
             Menu::Audio => audio::view(self, rows, style, false),
             Menu::Battery => battery::view(self, rows, style),
             Menu::Calendar => rows.push(calendar::hub(self.calendar_offset, theme, opacity)),
@@ -357,9 +357,9 @@ impl FereseShell {
             rows = rows.push(heading);
         }
         rows = match kind {
-            Menu::System => system::view(self, rows, style),
+            Menu::System => system::view(self, rows, style, false),
             Menu::Network => network::view(self, rows, style),
-            Menu::Bluetooth => bluetooth::view(self, rows, style),
+            Menu::Bluetooth => bluetooth::view(self, rows, style, false),
             Menu::Audio => audio::view(self, rows, style, false),
             Menu::Battery => battery::view(self, rows, style),
             Menu::Calendar => rows.push(calendar::view(self.calendar_offset, theme, p)),

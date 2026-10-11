@@ -201,7 +201,10 @@ struct OutputSurfaces {
 enum Message {
     HubOpen(window::Id, status_ui::Menu),
     HubClose(window::Id),
+    HubWorkspaceScroll(window::Id, cosmic::iced::mouse::ScrollDelta),
+    HubOverview(window::Id),
     HubToastExpired(window::Id, Instant),
+    HubWorkspaceFeedbackExpired(window::Id, Instant),
     HubIgnore,
     PanelScale(window::Id, f32),
     AdaptiveDeadline(window::Id, u64),
@@ -376,7 +379,10 @@ impl cosmic::Application for FereseShell {
         match message {
             Message::HubOpen(id, kind) => self.open_hub(id, kind),
             Message::HubClose(id) => self.close_hub(id),
+            Message::HubWorkspaceScroll(id, delta) => self.scroll_hub_workspaces(id, delta),
+            Message::HubOverview(id) => self.open_hub_overview(id),
             Message::HubToastExpired(id, revision) => self.hub_toast_expired(id, revision),
+            Message::HubWorkspaceFeedbackExpired(id, revision) => self.hub_workspace_feedback_expired(id, revision),
             Message::HubIgnore => Task::none(),
             Message::PanelResolved(id, resolution) => {
                 let allocation_changed = self
@@ -757,10 +763,11 @@ impl cosmic::Application for FereseShell {
                 {
                     entry.scale = f64::from(scale);
                 }
-                Task::none()
+                self.sync_hub_workspaces()
             }
             Message::AdaptiveDeadline(id, ticket) => self.adaptive_deadline(id, ticket),
             Message::ControlReady => {
+                let overview_was_active = self.overview_active;
                 let mut reload_task = Task::none();
                 if let Some(control) = &self.control {
                     let poll = control.poll();
@@ -782,7 +789,13 @@ impl cosmic::Application for FereseShell {
 
                     if let Some(snapshot) = poll.snapshot {
                         self.snapshot = snapshot;
-                        let mut tasks = vec![reload_task, self.update_workspace_ui(), self.refresh_adaptive_panels()];
+                        let feedback = self.sync_hub_workspace_feedback(overview_was_active || self.overview_active);
+                        let mut tasks = vec![
+                            reload_task,
+                            self.update_workspace_ui(),
+                            feedback,
+                            self.refresh_adaptive_panels(),
+                        ];
                         let mut visibility_changed = false;
                         let mut suspended_hubs = Vec::new();
                         for entry in &mut self.outputs {

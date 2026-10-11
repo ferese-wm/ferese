@@ -3,14 +3,21 @@
 use super::*;
 use std::time::Instant;
 
+pub(crate) struct ContentMeasurement<'a, M> {
+    pub content: Element<'a, M>,
+    pub width: f32,
+    pub measured: Box<dyn Fn(Size) + 'a>,
+}
+
 pub(crate) fn geometry_driven<'a, M: 'a>(
     revision: Option<Instant>,
     build: impl Fn(Instant) -> Element<'a, M> + 'a,
     active: impl Fn(Instant) -> bool + 'a,
     after_frame: impl Fn(Instant) + 'a,
     completion: impl Fn(Instant) -> Option<M> + 'a,
+    measurement: Option<ContentMeasurement<'a, M>>,
 ) -> Element<'a, M> {
-    driven(revision, build, active, after_frame, completion, true)
+    driven(revision, build, active, after_frame, completion, true, measurement)
 }
 
 pub(crate) fn frame_driven<'a, M: 'a>(
@@ -20,7 +27,7 @@ pub(crate) fn frame_driven<'a, M: 'a>(
     after_frame: impl Fn(Instant) + 'a,
     completion: impl Fn(Instant) -> Option<M> + 'a,
 ) -> Element<'a, M> {
-    driven(revision, build, active, after_frame, completion, false)
+    driven(revision, build, active, after_frame, completion, false, None)
 }
 
 fn driven<'a, M: 'a>(
@@ -30,12 +37,15 @@ fn driven<'a, M: 'a>(
     after_frame: impl Fn(Instant) + 'a,
     completion: impl Fn(Instant) -> Option<M> + 'a,
     geometry_changes: bool,
+    measurement: Option<ContentMeasurement<'a, M>>,
 ) -> Element<'a, M> {
     let now = Instant::now();
     let content = build(now);
     let content_active = active(now);
     Element::new(FrameDriven {
         content,
+        measurement,
+        measured: false,
         geometry_changes,
         content_active,
         revision,
@@ -81,6 +91,8 @@ impl FrameState {
 
 struct FrameDriven<'a, M> {
     content: Element<'a, M>,
+    measurement: Option<ContentMeasurement<'a, M>>,
+    measured: bool,
     content_active: bool,
     geometry_changes: bool,
     revision: Option<Instant>,
@@ -98,10 +110,20 @@ impl<'a, M: 'a> Widget<M, Theme, cosmic::Renderer> for FrameDriven<'a, M> {
         widget::tree::State::new(FrameState::default())
     }
     fn children(&self) -> Vec<widget::Tree> {
-        vec![widget::Tree::new(&self.content)]
+        std::iter::once(widget::Tree::new(&self.content))
+            .chain(self.measurement.iter().map(|m| widget::Tree::new(&m.content)))
+            .collect()
     }
     fn diff(&mut self, tree: &mut widget::Tree) {
-        tree.diff_children(std::slice::from_mut(&mut self.content));
+        tree.children.truncate(1 + usize::from(self.measurement.is_some()));
+        tree.children[0].diff(&mut self.content);
+        if let Some(measurement) = &mut self.measurement {
+            if tree.children.len() == 1 {
+                tree.children.push(widget::Tree::new(&measurement.content));
+            } else {
+                tree.children[1].diff(&mut measurement.content);
+            }
+        }
     }
     fn size(&self) -> Size<Length> {
         self.content.as_widget().size()
@@ -113,6 +135,22 @@ impl<'a, M: 'a> Widget<M, Theme, cosmic::Renderer> for FrameDriven<'a, M> {
         limits: &layout::Limits,
     ) -> layout::Node {
         tree.state.downcast_mut::<FrameState>().limits = Some(*limits);
+        if !self.measured {
+            if let Some(measurement) = &mut self.measurement {
+                // Measure at the final width once, so spring overshoot never changes wrapping or its target.
+                let probe_limits = layout::Limits::new(Size::ZERO, Size::new(measurement.width, f32::INFINITY));
+                let node = measurement
+                    .content
+                    .as_widget_mut()
+                    .layout(&mut tree.children[1], renderer, &probe_limits);
+                (measurement.measured)(node.size());
+                let now = Instant::now();
+                self.content = (self.build)(now);
+                self.content_active = (self.active)(now);
+                tree.children[0].diff(&mut self.content);
+            }
+            self.measured = true;
+        }
         self.content
             .as_widget_mut()
             .layout(&mut tree.children[0], renderer, limits)

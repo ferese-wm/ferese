@@ -784,7 +784,13 @@ fn transform(t: &mut Tokens, accessibility: &Accessibility, warnings: &mut Vec<S
         }
     }
     if accessibility.increase_contrast {
-        t.colors.border = hex(readable(rgba(&t.colors.border).unwrap(), surface, 3.));
+        t.colors.border = hex(readable_across(rgba(&t.colors.border).unwrap(), &backgrounds, 3.));
+        if backgrounds
+            .iter()
+            .any(|background| contrast(rgba(&t.colors.border).unwrap(), *background) < 3.)
+        {
+            warnings.push("Border cannot reach 3:1 contrast on all configured surfaces".into());
+        }
         resolve_material_contrast(t, minimum);
     }
     if accessibility.reduce_transparency {
@@ -900,7 +906,14 @@ pub fn import_family(id: &str, source: &str) -> Result<ImportedFamily, String> {
             )?;
             let mut value = token_value(&base)?;
             merge(&mut value, layer, "", false)?;
-            let tokens: Tokens = serde_json::from_value(value).map_err(|e| e.to_string())?;
+            let mut tokens: Tokens = serde_json::from_value(value).map_err(|e| e.to_string())?;
+            if layer.get("colors").and_then(|colors| colors.get("border")).is_none() {
+                // A new family without an authored border follows its own foreground,
+                // rather than inheriting the unrelated Ferese Blue border.
+                let mut border = rgba(&tokens.colors.text_primary)?;
+                border[3] = 0.10;
+                tokens.colors.border = hex(border);
+            }
             validate(&tokens)?;
             warnings.extend(authored_warnings(&tokens));
             variants[index] = Some(tokens);
@@ -1159,6 +1172,7 @@ mod tests {
                 Appearance::Dark => format!("theme {{ mode \"dark\"; dark {{ preset \"{}\"; }}; }}", entry.id),
             };
             let resolved = candidate(&source).unwrap().theme;
+            assert_eq!(resolved.tokens.colors.border, tokens.colors.border);
             assert_eq!(resolved.tokens.colors.surface_raised, tokens.colors.surface_raised);
             assert_eq!(
                 resolved.tokens.colors.application_background,
@@ -1303,6 +1317,61 @@ mod tests {
             .is_err()
         );
         assert!(import_family("custom-test", "colors { accent \"#FFFFFF\"; }").is_err());
+    }
+
+    #[test]
+    fn imported_borders_follow_the_foreground_only_when_not_authored() {
+        let (_, (light, dark), _) = import_family(
+            "custom-border",
+            r##"theme {
+                light { colors { text-primary "#213040"; }; }
+                dark { colors { text-primary "#F3E2D1"; }; }
+            }"##,
+        )
+        .unwrap();
+        assert_eq!(light.unwrap().colors.border, "#2130401A");
+        assert_eq!(dark.unwrap().colors.border, "#F3E2D11A");
+
+        for border in ["#12345600", "#12345680", "#123456FF"] {
+            let (_, (_, dark), _) = import_family(
+                "custom-border",
+                &format!(r##"theme {{ dark {{ colors {{ border "{border}"; }}; }}; }}"##),
+            )
+            .unwrap();
+            assert_eq!(dark.unwrap().colors.border, border);
+        }
+    }
+
+    #[test]
+    fn high_contrast_borders_cover_each_bundled_surface() {
+        for preset in &crate::presets::PRESETS {
+            let mode = if preset.appearance == Appearance::Light {
+                "light"
+            } else {
+                "dark"
+            };
+            let theme = candidate(&format!(
+                r#"theme {{ mode "{mode}"; {mode} {{ preset "{}"; }}; accessibility {{ increase-contrast #true; }}; }}"#,
+                preset.id,
+            ))
+            .unwrap()
+            .theme;
+            let colors = &theme.tokens.colors;
+            let border = rgba(&colors.border).unwrap();
+            assert_eq!(border[3], 1.);
+            for surface in [
+                &colors.surface_base,
+                &colors.surface_raised,
+                &colors.application_background,
+                &theme.tokens.surface.bar.background,
+            ] {
+                assert!(
+                    contrast(border, rgba(surface).unwrap()) >= 3.,
+                    "{} on {surface}",
+                    preset.id
+                );
+            }
+        }
     }
 
     #[test]

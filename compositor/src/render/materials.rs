@@ -217,15 +217,20 @@ pub(super) fn material_element_with_role(
     } else {
         state.theme_settings.surface_base_color
     };
-    let mut background = background.0;
-    if role == crate::effects::SemanticRole::Panel && state.panel_style == ferese_panel::PanelStyle::Morph {
-        background[3] = material.opacity;
-        background = ferese_panel::morph::surface_color(background);
-        if state.panel_background_opacity.is_none() {
-            material.opacity = background[3];
-        }
-    }
-    let [red, green, blue, _] = background;
+    let morph = role == crate::effects::SemanticRole::Panel && state.panel_style == ferese_panel::PanelStyle::Morph;
+    let background = if morph {
+        material.style = crate::config::MaterialStyle::Solid;
+        material.shadow = [0.; 3];
+        material.opacity = ferese_config::theme::effective_panel_opacity(
+            1.,
+            state.panel_background_opacity,
+            state.theme_settings.reduce_transparency,
+        );
+        state.theme_settings.surface_raised_color
+    } else {
+        background
+    };
+    let [red, green, blue, _] = background.0;
     let logical_radii = if role == crate::effects::SemanticRole::Panel {
         state.panel_corner_radius
     } else {

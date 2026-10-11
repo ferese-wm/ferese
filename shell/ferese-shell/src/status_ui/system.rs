@@ -8,7 +8,12 @@ use super::{Menu, MenuRows, MenuStyle, audio, battery, notification_controls};
 use crate::status::{self, Action};
 use crate::{FereseShell, Message, ShellTheme, accented_icon, color, color_with_opacity, motion, shell_font, text};
 
-pub(super) fn view<'a>(shell: &'a FereseShell, mut rows: MenuRows<'a>, style: MenuStyle) -> MenuRows<'a> {
+pub(super) fn view<'a>(
+    shell: &'a FereseShell,
+    mut rows: MenuRows<'a>,
+    style: MenuStyle,
+    show_settings_link: bool,
+) -> MenuRows<'a> {
     let MenuStyle {
         theme,
         primary,
@@ -28,7 +33,34 @@ pub(super) fn view<'a>(shell: &'a FereseShell, mut rows: MenuRows<'a>, style: Me
             p,
         ));
     }
-    rows = rows.push(modes);
+    if show_settings_link
+        && shell
+            .config
+            .status
+            .settings_command
+            .as_ref()
+            .is_some_and(|command| !command.is_empty())
+    {
+        let settings = motion::button(
+            button::custom(
+                ferese_theme::icons::tinted(ferese_theme::icons::SETTINGS, 18, color(theme.text_primary)).opacity(p),
+            )
+            .name("Open Ferese Settings")
+            .width(30)
+            .height(28)
+            .padding([5, 3])
+            .on_press(cosmic::Action::App(Message::Control(Action::Settings))),
+            primary,
+            false,
+            p,
+        );
+        modes = modes.push(cosmic::widget::tooltip(
+            settings,
+            text("Open Ferese Settings").size(12),
+            cosmic::widget::tooltip::Position::Left,
+        ));
+    }
+    rows = rows.push(modes.align_y(Alignment::Center));
     if shell.config.theme_mode == Mode::Auto {
         rows = rows.push(
             text(if theme.appearance == Appearance::Light {
