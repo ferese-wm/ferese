@@ -1,6 +1,7 @@
 //! Panel composition and allocation without rendering or platform dependencies.
 pub mod panel;
 pub use panel::*;
+pub mod outline;
 pub mod scene;
 pub mod shape;
 
