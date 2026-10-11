@@ -19,7 +19,7 @@ import unittest
 
 
 def panel_config(preset):
-    style = "flat" if preset == "flat" else "floating"
+    style = preset
     return f'''panel main {{
     style "{style}"
     start {{ group navigation {{ island-padding 12; item overview kind=overview; item spaces kind=workspaces; }}; }}
@@ -124,6 +124,15 @@ class ShellMotionTest(unittest.TestCase):
                 updates = re.findall(
                     r'ferese_surface_effects_v1[@#]' + effects[-1] + r'\.set_panel_presentation\(array\[(\d+)\],', trace)
                 return int(updates[-1]) // 20 if updates else None
+
+            def bar_size(surface):
+                identity, start = surface
+                trace = log_path.read_text()[start:]
+                match = re.search(r'get_layer_surface\(new id zwlr_layer_surface_v1[@#](\d+), wl_surface[@#]' + identity + r',', trace)
+                if not match:
+                    return None
+                updates = re.findall(r'zwlr_layer_surface_v1[@#]' + match.group(1) + r'\.set_size\((\d+), (\d+)\)', trace)
+                return tuple(map(int, updates[-1])) if updates else None
 
             def bar_input_rectangles(surface):
                 identity, start = surface
@@ -302,6 +311,34 @@ class ShellMotionTest(unittest.TestCase):
                         wait_for(lambda: not windows())
                         print("Adaptive: maximization changed the real panel; fullscreen released input and restored it", flush=True)
 
+                    if bar_layout == "floating":
+                        for style, regions in [("floating", 2), ("capsules", 2), ("notch", 2), ("flat", 1), ("fused", 2), ("adaptive", 2)]:
+                            config_file.write_text('animations { speed 0.5; }\nstatus { keybinding-guide #false; }\n' + panel_config(style))
+                            subprocess.run([str(ctl), "reload-config"], env=ipc_environment(env), check=True, capture_output=True, timeout=5)
+                            wait_for(lambda: bar_region_count(bar) == regions)
+                            self.assertTrue(bar_input_rectangles(bar), style + " lost its native input")
+                        config_file.write_text('animations { speed 0.5; }\nstatus { keybinding-guide #false; }\nnotifications { timeout-ms 1200; }\n' + panel_config("morph"))
+                        subprocess.run([str(ctl), "reload-config"], env=ipc_environment(env), check=True, capture_output=True, timeout=5)
+                        wait_for(lambda: bar_size(bar) == (150, 34) and bar_region_count(bar) == 1)
+                        reply = dbus("Notify", "Morph test", "0", "", "Hub notification", "Bounded native surface", "[]", "{}", "0").stdout
+                        notice = re.search(r'uint32 (\d+)', reply).group(1)
+                        wait_for(lambda: bar_size(bar) == (320, 48))
+                        # Removing a notice must collapse its hub immediately; an old timeout cannot reopen it.
+                        dbus("CloseNotification", notice)
+                        wait_for(lambda: bar_size(bar) == (150, 34))
+                        time.sleep(.25)
+                        before = commits(bar)
+                        trace_start = len(log_path.read_text())
+                        time.sleep(.5)
+                        # Clock/service updates can cause a short render burst; settled geometry must not animate.
+                        self.assertNotIn(".set_panel_presentation(", log_path.read_text()[trace_start:])
+                        self.assertLessEqual(commits(bar) - before, 4, "settled Morph keeps scheduling frames")
+                        self.assertEqual(bar_region_count(bar), 1)
+                        config_file.write_text('status { keybinding-guide #false; }\n' + panel_config("floating"))
+                        subprocess.run([str(ctl), "reload-config"], env=ipc_environment(env), check=True, capture_output=True, timeout=5)
+                        wait_for(lambda: bar_region_count(bar) == 2)
+                        print("Styles: native masks survived every live switch; Morph grew, closed and stopped frames", flush=True)
+
                     saved = config_file.read_text()
                     config_file.write_text('panel main { surface "invalid-surface"; }\n')
                     rejected = subprocess.run([str(ctl), "reload-config"], env=ipc_environment(env),
@@ -324,6 +361,8 @@ class ShellMotionTest(unittest.TestCase):
                     self.assertNotIn("panicked at", log_path.read_text())
                     print("Reload: invalid config preserved the panel; repaired config reopened and released a modal", flush=True)
                 finally:
+                    if destination := os.environ.get("FERESE_TEST_LOG"):
+                        shutil.copyfile(log_path, destination)
                     for child in reversed(children):
                         if child.poll() is None:
                             os.killpg(child.pid, signal.SIGTERM)

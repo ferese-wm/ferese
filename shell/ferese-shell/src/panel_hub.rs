@@ -691,6 +691,32 @@ mod tests {
     }
 
     #[test]
+    fn cursor_leave_closes_peek_and_escape_closes_expanded_content() {
+        use cosmic::iced::keyboard::{Event as KeyEvent, Key, Location, Modifiers, key};
+        let mut shell = shell();
+        let id = shell.outputs[0].bar;
+        drop(shell.hub_hover(id, true));
+        drop(shell.handle_event(Event::Mouse(cosmic::iced::mouse::Event::CursorLeft), id));
+        assert_eq!(shell.hub_mode(id), Some(Mode::Idle));
+        drop(shell.open_hub(id, status_ui::Menu::Calendar));
+        drop(shell.handle_event(Event::Mouse(cosmic::iced::mouse::Event::CursorLeft), id));
+        assert_eq!(shell.hub_mode(id), Some(Mode::Expanded(Content::Calendar)));
+        drop(shell.handle_event(
+            Event::Keyboard(KeyEvent::KeyPressed {
+                key: Key::Named(key::Named::Escape),
+                modified_key: Key::Named(key::Named::Escape),
+                physical_key: key::Physical::Code(key::Code::Escape),
+                location: Location::Standard,
+                modifiers: Modifiers::empty(),
+                text: None,
+                repeat: false,
+            }),
+            id,
+        ));
+        assert_eq!(shell.hub_mode(id), Some(Mode::Idle));
+    }
+
+    #[test]
     #[ignore = "writes Morph review captures to /tmp/ferese-hub-review"]
     fn render_hub_review_states() {
         use cosmic::iced::advanced::renderer::{Headless, Renderer as _};

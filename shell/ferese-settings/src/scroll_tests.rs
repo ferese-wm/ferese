@@ -362,6 +362,8 @@ fn gpu_panel_text_survives_preview_clipping_and_scrolling() {
                     | "Add item"
                     | "Overview"
                     | "Workspaces"
+                    | "Morph"
+                    | "Collapsed height"
                     | "Battery"
                     | "Placement"
                     | "Show item"
@@ -408,8 +410,8 @@ fn gpu_panel_text_survives_preview_clipping_and_scrolling() {
         ))
         .expect("GPU panel rendering requires a hardware or software WGPU adapter");
     for width in [740., 1100.] {
-        for scale in [1., 1.75] {
-            for selection in ["panels", "items", "battery", "status"] {
+        for scale in [1., 1.25, 1.5, 1.75] {
+            for selection in ["panels", "morph", "items", "battery", "status"] {
                 let mut app = App::init(
                     Core::default(),
                     (
@@ -421,7 +423,17 @@ fn gpu_panel_text_survives_preview_clipping_and_scrolling() {
                 .0;
                 app.font = font;
                 app.render_scale = f64::from(scale);
-                app.panel_page = if selection == "panels" {
+                if selection == "morph" {
+                    for edit in crate::panel_edit::plan(
+                        &app.draft,
+                        crate::panel_edit::Action::ApplyPreset(ferese_panel::PanelStyle::Morph),
+                    )
+                    .unwrap()
+                    {
+                        app.draft.edit(&edit).unwrap();
+                    }
+                }
+                app.panel_page = if matches!(selection, "panels" | "morph") {
                     panel_controls::PanelPage::Panels
                 } else {
                     panel_controls::PanelPage::Arrange
@@ -572,6 +584,7 @@ fn render_panel_review_states() {
                 Some("title"),
             ),
             ("corners", panel_controls::PanelPage::Panels, None, None),
+            ("morph", panel_controls::PanelPage::Panels, None, None),
             ("preview-hover", panel_controls::PanelPage::Panels, None, None),
             ("navigation", panel_controls::PanelPage::Arrange, None, None),
             ("shortcuts", panel_controls::PanelPage::Panels, None, None),
@@ -608,6 +621,16 @@ fn render_panel_review_states() {
                 app.draft
                     .edit(&crate::store::set("panels", serde_json::to_value(vec![panel]).unwrap()))
                     .unwrap();
+            }
+            if name == "morph" {
+                for edit in crate::panel_edit::plan(
+                    &app.draft,
+                    crate::panel_edit::Action::ApplyPreset(ferese_panel::PanelStyle::Morph),
+                )
+                .unwrap()
+                {
+                    app.draft.edit(&edit).unwrap();
+                }
             }
             if name == "corners" {
                 for edit in crate::panel_edit::plan(

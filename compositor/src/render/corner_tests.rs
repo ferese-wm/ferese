@@ -312,6 +312,8 @@ fn panel_shader_matches_core_outlines_and_resets_for_popovers() {
         Style::Capsules,
         Style::Notch,
         Style::Fused,
+        Style::Morph,
+        Style::Flat,
         Style::Frame,
         Style::CornerWrap,
     ] {
