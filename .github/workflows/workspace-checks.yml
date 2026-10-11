@@ -109,7 +109,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y weston xwayland x11-utils xauth dbus-daemon \
-            build-essential pkg-config libxcb1-dev libxcb-cursor-dev libxkbcommon-dev \
+            build-essential pkg-config clang libclang-dev libxcb1-dev libxcb-cursor-dev libxkbcommon-dev \
             libwayland-dev libgbm1 libseat1 libinput10 libpipewire-0.3-0t64 \
             libegl1 libegl-mesa0 libgl1-mesa-dri fonts-dejavu-core
       - name: Create the shared X11 socket directory
