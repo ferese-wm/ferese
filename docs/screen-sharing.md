@@ -8,7 +8,7 @@ portal and PipeWire dependencies.
 
 1. Click the recording icon.
 2. Choose a display and an audio source: **Off**, **System sound**, **Microphone**,
-   or **System + microphone**. Audio is off by default; the other choices use
+   or **Both**. Audio is off by default; the other choices use
    your default output or input device from audio settings.
 3. Click **Record** to capture the whole display. For part of it, turn on
    **Select a region**, click **Select region**, then drag a rectangle inside
