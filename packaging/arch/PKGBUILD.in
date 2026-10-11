@@ -1,0 +1,49 @@
+pkgname=ferese
+pkgver=@VERSION@
+pkgrel=1
+pkgdesc='Scrolling Wayland desktop with its shell, Settings and desktop portal'
+arch=('x86_64')
+url='https://github.com/ferese-wm/ferese'
+license=('MIT' 'Apache-2.0' 'BSD-2-Clause' 'BSD-3-Clause' 'BSL-1.0' 'CC0-1.0' 'CDLA-Permissive-2.0' 'ISC' 'MPL-2.0' 'Unicode-3.0' 'Unlicense' 'Zlib' 'OFL-1.1' 'Apache-2.0 WITH LLVM-exception')
+depends=('wayland' 'libxkbcommon' 'libinput' 'systemd-libs' 'seatd' 'mesa' 'libdrm'
+         'fontconfig' 'freetype2' 'expat' 'dbus' 'python' 'bash' 'util-linux' 'systemd' 'pam' 'polkit' 'foot' 'pipewire'
+         'wireplumber' 'libpipewire' 'gstreamer' 'xdg-desktop-portal' 'xdg-desktop-portal-gtk')
+makedepends=('cargo' 'cmake' 'clang' 'pkgconf' 'python' 'desktop-file-utils')
+checkdepends=('dbus' 'vulkan-swrast' 'xorg-xauth')
+optdepends=('brightnessctl: brightness controls' 'slurp: screenshot region selection'
+            'satty: screenshot editing' 'wl-clipboard: screenshot clipboard'
+            'gst-plugins-base: recording codecs' 'gst-plugins-good: recording codecs'
+            'gst-plugin-pipewire: PipeWire recording'
+            'xorg-xwayland: X11 applications' 'xwayland-satellite: X11 application integration (requires readiness support)')
+# GCC LTO objects from the SPA C wrappers cannot be linked by Rust's lld.
+options=('!lto')
+backup=('etc/pam.d/ferese-lock')
+conflicts=('ferese-git')
+_source_version=@UPSTREAM_VERSION@
+source=("$url/releases/download/v$_source_version/ferese-$_source_version.tar.gz")
+sha256sums=('@SHA256@')
+
+build() {
+    cd "$srcdir/ferese-$_source_version"
+    export CARGO_HOME="$PWD/cargo-home"
+    export CARGO_PROFILE_RELEASE_DEBUG=0
+    cargo build --release --frozen --offline --workspace
+}
+
+check() {
+    cd "$srcdir/ferese-$_source_version"
+    export CARGO_HOME="$PWD/cargo-home"
+    export CARGO_PROFILE_RELEASE_DEBUG=0
+    export TZ=UTC
+    export XDG_RUNTIME_DIR="$(mktemp -d)"
+    trap 'rm -r -- "$XDG_RUNTIME_DIR"' EXIT
+    python -m unittest discover -s scripts/tests -p test_package.py
+    dbus-run-session -- cargo test --release --frozen --offline --workspace
+}
+
+package() {
+    cd "$srcdir/ferese-$_source_version"
+    python scripts/package.py stage --destdir "$pkgdir" --pam arch
+    desktop-file-validate "$pkgdir/usr/share/wayland-sessions/ferese.desktop"
+    desktop-file-validate "$pkgdir/usr/share/applications/dev.ferese.Settings.desktop"
+}

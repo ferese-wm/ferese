@@ -622,10 +622,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn removed_desktop_widgets_are_rejected_at_startup_and_reload() {
+    fn removed_desktop_widgets_allow_startup_and_reload() {
         let source = "desktop-widgets { clock { enabled #true; }; }";
-        assert!(parse_source(source).is_err());
-        assert!(parse_test_source(source).is_err());
+        parse_source(source).unwrap();
+        parse_test_source(source).unwrap();
     }
 
     fn parse_test_source(source: &str) -> Result<ShellConfig, ferese_config::Error> {

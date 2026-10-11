@@ -317,14 +317,18 @@ fn appearance_scroll_preserves_progress_and_settles_visibility() {
 
 #[test]
 fn gpu_panel_text_survives_preview_clipping_and_scrolling() {
-    // Native startup preloads text fonts; headless renderers skip that step.
-    // Supply a bundled proportional font even on minimal CI images.
+    let matched = std::process::Command::new("fc-match")
+        .args(["--format=%{family}\n%{file}", "sans-serif"])
+        .output()
+        .expect("rendering tests require fontconfig");
+    assert!(matched.status.success());
+    let matched = String::from_utf8(matched.stdout).unwrap();
+    let (family, path) = matched.split_once('\n').expect("rendering tests require a system font");
+    let font = ferese_theme::font(Some(family.split(',').next().unwrap()));
     cosmic::iced::advanced::graphics::text::font_system()
         .write()
         .unwrap()
-        .load_font(std::borrow::Cow::Borrowed(include_bytes!(
-            "../../../assets/fonts/Comfortaa-Regular.otf"
-        )));
+        .load_font(std::borrow::Cow::Owned(std::fs::read(path).unwrap()));
 
     #[derive(Default)]
     struct Labels {
@@ -416,7 +420,7 @@ fn gpu_panel_text_survives_preview_clipping_and_scrolling() {
                     ),
                 )
                 .0;
-                app.font = Font::with_name("Comfortaa");
+                app.font = font;
                 app.panel_page = if selection == "panels" {
                     panel_controls::PanelPage::Panels
                 } else {

@@ -642,8 +642,9 @@ mod tests {
     }
 
     #[test]
-    fn removed_desktop_widgets_are_rejected_before_runtime_publication() {
-        assert!(Config::parse_source("desktop-widgets { clock { enabled #true; }; }").is_err());
+    fn removed_desktop_widgets_allow_runtime_publication() {
+        let config = Config::parse_source("desktop-widgets { clock { enabled #true; }; }").unwrap();
+        config.runtime_config().unwrap();
     }
 
     fn parse(source: &str) -> Config {

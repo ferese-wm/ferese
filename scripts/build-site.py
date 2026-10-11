@@ -16,6 +16,7 @@ PAGES = [
     ('screenshots', 'Screenshots', ROOT / 'docs/screenshots.md'),
     ('why-ferese', 'Why Ferese', ROOT / 'docs/why-ferese.md'),
     ('installation', 'Installation', ROOT / 'docs/installation.md'),
+    ('packaging', 'Packages and releases', ROOT / 'docs/packaging.md'),
     ('configuration', 'Configuration', ROOT / 'docs/configuration.md'),
     ('animation-model', 'Animation model', ROOT / 'docs/animation-model.md'),
     ('shortcuts', 'Shortcuts and gestures', ROOT / 'docs/shortcuts.md'),

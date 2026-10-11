@@ -1,0 +1,4 @@
+#%PAM-1.0
+# Authenticate the session owner without opening another PAM session.
+auth include system-auth
+account include system-auth

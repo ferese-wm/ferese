@@ -86,11 +86,6 @@
       "mode": "0644"
     },
     {
-      "source": "assets/fonts/Comfortaa-LICENSE.txt",
-      "target": "licenses/Comfortaa-LICENSE.txt",
-      "mode": "0644"
-    },
-    {
       "source": "assets/themes/licenses/*.txt",
       "target": "licenses/theme-{name}",
       "mode": "0644"

@@ -1,0 +1,78 @@
+# dwz cannot compress the DWARF 5 sections emitted by Rust. Keep debug files
+# without the optional DWARF compression pass.
+%global _find_debuginfo_dwz_opts %{nil}
+%global upstream_version @UPSTREAM_VERSION@
+%bcond resize_metrics 0
+
+Name:           ferese
+Version:        @VERSION@
+Release:        1%{?dist}
+Summary:        Scrolling Wayland desktop
+# Includes vendored Rust libraries and theme palettes. Full notices ship
+# under /usr/share/licenses/ferese, including per-dependency SPDX metadata.
+License:        MIT AND Apache-2.0 AND BSD-2-Clause AND BSD-3-Clause AND BSL-1.0 AND CC0-1.0 AND CDLA-Permissive-2.0 AND ISC AND MPL-2.0 AND Unicode-3.0 AND Unlicense AND Zlib AND OFL-1.1 AND (Apache-2.0 WITH LLVM-exception)
+URL:            https://github.com/ferese-wm/ferese
+Source0:        %{url}/releases/download/v%{upstream_version}/ferese-%{upstream_version}.tar.gz
+
+BuildRequires:  cargo >= 1.95
+BuildRequires:  rust >= 1.95
+BuildRequires:  gcc-c++ cmake make clang clang-devel python3 pkgconf-pkg-config
+BuildRequires:  wayland-devel libxkbcommon-devel libinput-devel systemd-devel libseat-devel
+BuildRequires:  mesa-libgbm-devel mesa-libEGL-devel libdrm-devel fontconfig-devel freetype-devel expat-devel
+BuildRequires:  mesa-dri-drivers mesa-vulkan-drivers
+BuildRequires:  pipewire-devel gstreamer1-devel dbus-daemon desktop-file-utils polkit-libs pam
+BuildRequires:  xorg-x11-xauth
+Requires:       pam polkit polkit-libs foot pipewire wireplumber python3 bash util-linux dbus-daemon dbus-tools systemd
+Requires:       xdg-desktop-portal xdg-desktop-portal-gtk
+# Loaded at runtime, so ELF dependency detection does not find these libraries.
+Requires:       libEGL.so.1()(64bit) fontconfig freetype
+Recommends:     brightnessctl slurp wl-clipboard satty
+Recommends:     gstreamer1-plugins-base gstreamer1-plugins-good pipewire-gstreamer
+
+%description
+Ferese includes a scrolling Wayland compositor, desktop shell, Settings,
+lock screen, authentication agent and desktop portal in one package.
+
+%prep
+%autosetup -n ferese-%{upstream_version}
+
+%build
+export CARGO_HOME="$PWD/cargo-home"
+export CARGO_PROFILE_RELEASE_DEBUG=0
+%if %{with resize_metrics}
+cargo build --release --frozen --offline --workspace --features ferese/resize-metrics
+%else
+cargo build --release --frozen --offline --workspace
+%endif
+
+%install
+python3 scripts/package.py stage --destdir "%{buildroot}" --pam fedora
+desktop-file-validate "%{buildroot}%{_datadir}/wayland-sessions/ferese.desktop"
+desktop-file-validate "%{buildroot}%{_datadir}/applications/dev.ferese.Settings.desktop"
+
+%check
+export CARGO_HOME="$PWD/cargo-home"
+export CARGO_PROFILE_RELEASE_DEBUG=0
+export TZ=UTC
+export XDG_RUNTIME_DIR="$(mktemp -d)"
+trap 'rm -r -- "$XDG_RUNTIME_DIR"' EXIT
+python3 -m unittest discover -s scripts/tests -p test_package.py
+dbus-run-session -- cargo test --release --frozen --offline --workspace
+
+%files
+%{_bindir}/ferese*
+%{_bindir}/xdg-desktop-portal-ferese
+%{_libexecdir}/ferese/
+%{_datadir}/ferese/
+%{_datadir}/wayland-sessions/ferese.desktop
+%{_datadir}/applications/dev.ferese.Settings.desktop
+%{_datadir}/icons/hicolor/scalable/apps/ferese.svg
+%{_datadir}/icons/hicolor/scalable/apps/dev.ferese.Settings.svg
+%{_datadir}/xdg-desktop-portal/portals/ferese.portal
+%{_datadir}/xdg-desktop-portal/ferese-portals.conf
+%{_datadir}/dbus-1/services/org.freedesktop.impl.portal.desktop.ferese.service
+/usr/lib/systemd/user/ferese-session.target
+/usr/lib/systemd/user/xdg-desktop-portal-ferese.service
+%config(noreplace) %{_sysconfdir}/pam.d/ferese-lock
+%license %{_datadir}/licenses/ferese/
+%doc %{_datadir}/doc/ferese/

@@ -1,0 +1,173 @@
+name: Release packages
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_BUILD_JOBS: '2'
+  CARGO_INCREMENTAL: '0'
+  CARGO_PROFILE_RELEASE_DEBUG: '0'
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  checks:
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'release')
+    uses: ./.github/workflows/release-checks.yml
+
+  source:
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'release')
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Read release version
+        id: version
+        env:
+          RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+        run: |
+          python3 - <<'PY'
+          import importlib.util, os
+          spec = importlib.util.spec_from_file_location('package', 'scripts/package.py')
+          package = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(package)
+          version = package.version()
+          package.check_tag(os.environ['RELEASE_TAG'], version)
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              print(f'version={version}', file=output)
+          PY
+      - name: Install pinned Rust toolchain
+        run: rustup show
+      - name: Package offline sources and recipes
+        env:
+          RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+        run: |
+          python3 -m unittest discover -s scripts/tests -p test_package.py
+          python3 scripts/package.py source --tag "$RELEASE_TAG"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-source
+          path: target/dist/*
+          if-no-files-found: error
+          compression-level: 0
+
+  fedora:
+    needs: source
+    runs-on: ubuntu-24.04
+    container:
+      image: fedora:44
+      options: --init
+    steps:
+      - name: Install RPM tooling
+        run: dnf install -y rpm-build dnf5-plugins git findutils tar gzip
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-source
+          path: dist
+      - name: Build and test Fedora package
+        run: |
+          dnf builddep -y dist/ferese.spec
+          mkdir -p /tmp/rpmbuild/SOURCES
+          cp dist/ferese-*.tar.gz /tmp/rpmbuild/SOURCES/
+          rpmbuild -ba --define '_topdir /tmp/rpmbuild' dist/ferese.spec
+          mkdir -p artifacts
+          find /tmp/rpmbuild/RPMS /tmp/rpmbuild/SRPMS -name '*.rpm' -exec cp '{}' artifacts/ \;
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-fedora
+          path: artifacts/*.rpm
+          if-no-files-found: error
+          compression-level: 0
+
+  arch:
+    needs: source
+    runs-on: ubuntu-24.04
+    container:
+      image: archlinux:base-devel
+      options: --init
+    steps:
+      - name: Prepare Arch build user and dependencies
+        run: |
+          pacman -Syu --noconfirm --needed rust cargo cmake clang pkgconf python git desktop-file-utils \
+            wayland libxkbcommon libinput systemd seatd mesa vulkan-swrast libdrm fontconfig freetype2 expat dbus \
+            pam polkit foot pipewire wireplumber libpipewire gstreamer xdg-desktop-portal xdg-desktop-portal-gtk xorg-xauth
+          useradd --create-home builder
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-source
+          path: dist
+      - name: Build and test Arch package
+        run: |
+          mkdir -p /home/builder/package
+          cp dist/PKGBUILD dist/ferese-*.tar.gz /home/builder/package/
+          chown -R builder:builder /home/builder/package
+          runuser -u builder -- bash -c 'cd /home/builder/package && makepkg --cleanbuild --noconfirm'
+          mkdir -p artifacts
+          cp /home/builder/package/*.pkg.tar.zst artifacts/
+          runuser -u builder -- bash -c 'cd /home/builder/package && makepkg --printsrcinfo' > artifacts/ferese.SRCINFO
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-arch
+          path: artifacts/*
+          if-no-files-found: error
+          compression-level: 0
+
+  publish:
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    needs: [source, checks, fedora, arch]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: artifacts
+      - name: Prepare draft release
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const tag = context.ref.slice('refs/tags/'.length);
+            const repo = context.repo;
+            const commit = await github.rest.repos.getCommit({...repo, ref: tag});
+            if (commit.data.sha !== context.sha) {
+              throw new Error('Release tag moved after validation');
+            }
+            let release;
+            try {
+              release = (await github.rest.repos.getReleaseByTag({...repo, tag})).data;
+            } catch (error) {
+              if (error.status !== 404) throw error;
+            }
+            if (release && !release.draft) {
+              throw new Error(`Release ${tag} is already published`);
+            }
+            if (!release) {
+              await github.rest.repos.createRelease({
+                ...repo, tag_name: tag, name: tag, draft: true,
+                generate_release_notes: true, prerelease: tag.includes('-')
+              });
+            }
+      - name: Upload packages and publish completed release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          cd artifacts
+          rm SHA256SUMS
+          sha256sum * > SHA256SUMS
+          gh release upload "$RELEASE_TAG" ./* --clobber
+          test "$(gh api "repos/$GH_REPO/commits/$RELEASE_TAG" --jq .sha)" = "$GITHUB_SHA"
+          gh release edit "$RELEASE_TAG" --draft=false
