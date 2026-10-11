@@ -93,8 +93,8 @@ release package. Submit that recipe to AUR separately if you want AUR distributi
 3. Tag that commit with the same version, prefixed by `v`, then push the tag:
 
    ```sh
-   git tag v0.1.0
-   git push origin v0.1.0
+   git tag v0.1.0-beta
+   git push origin v0.1.0-beta
    ```
 
 A tag/version mismatch fails before packaging. Tags with a prerelease suffix,

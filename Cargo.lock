@@ -1735,7 +1735,7 @@ dependencies = [
 
 [[package]]
 name = "ferese"
-version = "0.1.0"
+version = "0.1.0-beta"
 dependencies = [
  "ab_glyph",
  "async-channel",
@@ -1766,7 +1766,7 @@ dependencies = [
 
 [[package]]
 name = "ferese-animation"
-version = "0.1.0"
+version = "0.1.0-beta"
 dependencies = [
  "ferese-layout",
  "serde",
@@ -1774,7 +1774,7 @@ dependencies = [
 
 [[package]]
 name = "ferese-config"
-version = "0.1.0"
+version = "0.1.0-beta"
 dependencies = [
  "ferese-theme-model",
  "jiff",
@@ -1786,7 +1786,7 @@ dependencies = [
 
 [[package]]
 name = "ferese-core"
-version = "0.1.0"
+version = "0.1.0-beta"
 dependencies = [
  "ferese-layout",
  "serde",
@@ -1794,7 +1794,7 @@ dependencies = [
 
 [[package]]
 name = "ferese-ipc"
-version = "0.1.0"
+version = "0.1.0-beta"
 dependencies = [
  "ferese-theme-model",
  "libc",
@@ -1804,11 +1804,11 @@ dependencies = [
 
 [[package]]
 name = "ferese-layout"
-version = "0.1.0"
+version = "0.1.0-beta"
 
 [[package]]
 name = "ferese-lock"
-version = "0.1.0"
+version = "0.1.0-beta"
 dependencies = [
  "ferese-config",
  "ferese-ipc",
@@ -1828,7 +1828,7 @@ dependencies = [
 
 [[package]]
 name = "ferese-polkit-agent"
-version = "0.1.0"
+version = "0.1.0-beta"
 dependencies = [
  "ferese-config",
  "ferese-ipc",
@@ -1847,7 +1847,7 @@ dependencies = [
 
 [[package]]
 name = "ferese-protocols"
-version = "0.1.0"
+version = "0.1.0-beta"
 dependencies = [
  "bitflags 2.13.2",
  "wayland-backend",
@@ -1859,7 +1859,7 @@ dependencies = [
 
 [[package]]
 name = "ferese-settings"
-version = "0.1.0"
+version = "0.1.0-beta"
 dependencies = [
  "ferese-config",
  "ferese-ipc",
@@ -1884,7 +1884,7 @@ source = "git+https://github.com/ferese-wm/ferese-shape?tag=v0.1.0#63d7b6dfd520d
 
 [[package]]
 name = "ferese-shell"
-version = "0.1.0"
+version = "0.1.0-beta"
 dependencies = [
  "base64",
  "ferese-animation",
@@ -1912,7 +1912,7 @@ dependencies = [
 
 [[package]]
 name = "ferese-theme"
-version = "0.1.0"
+version = "0.1.0-beta"
 dependencies = [
  "ferese-config",
  "ferese-theme-model",
@@ -1924,7 +1924,7 @@ dependencies = [
 
 [[package]]
 name = "ferese-theme-client"
-version = "0.1.0"
+version = "0.1.0-beta"
 dependencies = [
  "ferese-config",
  "ferese-ipc",
@@ -1938,14 +1938,14 @@ dependencies = [
 
 [[package]]
 name = "ferese-theme-model"
-version = "0.1.0"
+version = "0.1.0-beta"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "feresectl"
-version = "0.1.0"
+version = "0.1.0-beta"
 dependencies = [
  "clap",
  "ferese-config",
@@ -7702,7 +7702,7 @@ checksum = "2fb433233f2df9344722454bc7e96465c9d03bff9d77c248f9e7523fe79585b5"
 
 [[package]]
 name = "xdg-desktop-portal-ferese"
-version = "0.1.0"
+version = "0.1.0-beta"
 dependencies = [
  "calloop 0.14.4",
  "dirs",
