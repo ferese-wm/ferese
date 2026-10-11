@@ -52,8 +52,9 @@ impl Ferese {
             {
                 return;
             }
+            let layout_bounds = self.workspace_layout_bounds(bounds, &candidate);
             if candidate
-                .resolve_geometry_with_constraints(bounds, self.gap_config, &self.window_constraints(), Some(to))
+                .resolve_geometry_with_constraints(layout_bounds, self.gap_config, &self.window_constraints(), Some(to))
                 .is_err()
             {
                 return;
@@ -338,6 +339,7 @@ impl Ferese {
         let Some(bounds) = self.output_bounds() else {
             return;
         };
+        let bounds = self.workspace_layout_bounds(bounds, &self.workspaces.active().layout);
         let constraints = self.window_constraints();
 
         match self

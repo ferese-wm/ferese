@@ -35,6 +35,7 @@ pub(super) enum Action {
     SetCorner(usize, f32),
     SetBorder(bool),
     SetPeekOnHover(bool),
+    SetMorphAttached(bool),
     SetOpacity(f32),
     ClearOpacity,
     ClearRadius,
@@ -204,6 +205,7 @@ pub(super) fn plan(snapshot: &Snapshot, action: Action) -> Result<Vec<Edit>, Str
         }
         Action::SetOpacity(value) => vec![set("panels.0.background_opacity", value)],
         Action::ClearOpacity => vec![Edit::Unset("panels.0.background_opacity".into())],
+        Action::SetMorphAttached(enabled) => vec![set("panels.0.morph.attached", enabled)],
         Action::SetPeekOnHover(enabled) => vec![set("panels.0.morph.peek_on_hover", enabled)],
         Action::SetBorder(enabled) => vec![set("panels.0.border", enabled)],
         Action::SetCorner(index, value) => {
@@ -500,6 +502,25 @@ animations { speed 0.8; }
             zone,
             group: GroupId(group.into()),
         }
+    }
+
+    #[test]
+    fn morph_attachment_restores_floating_margin_and_preserves_clearance() {
+        let mut snapshot =
+            Snapshot::parse("panel main { style morph; geometry { edge-margin 9; window-clearance 3; }; }".into())
+                .unwrap();
+        let before = serde_json::from_value::<Vec<Panel>>(snapshot.item("panels").unwrap().clone()).unwrap();
+        apply(&mut snapshot, Action::SetMorphAttached(true));
+        let attached = serde_json::from_value::<Vec<Panel>>(snapshot.item("panels").unwrap().clone()).unwrap();
+        assert_eq!(attached[0].resolved_geometry().edge_margin, 0);
+        assert_eq!(attached[0].resolved_geometry().window_clearance, 3);
+        assert_eq!(attached[0].exclusive_zone(false), before[0].exclusive_zone(false));
+        assert!(attached[0].shape_parameters().attached);
+        apply(&mut snapshot, Action::SetMorphAttached(false));
+        assert_eq!(
+            serde_json::from_value::<Vec<Panel>>(snapshot.item("panels").unwrap().clone()).unwrap(),
+            before
+        );
     }
 
     #[test]

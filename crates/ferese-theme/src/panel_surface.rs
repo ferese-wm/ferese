@@ -252,7 +252,10 @@ impl<M> Widget<M, Theme, cosmic::Renderer> for Surface<'_, M> {
                                 &Path::line(Point::new(0., y), Point::new(bounds.width, y)),
                                 Stroke::default().with_color(self.options.border).with_width(width),
                             );
-                        } else if self.options.parameters.style == ferese_panel::PanelStyle::Notch {
+                        } else if self.options.parameters.style == ferese_panel::PanelStyle::Notch
+                            || (self.options.parameters.style == ferese_panel::PanelStyle::Morph
+                                && self.options.parameters.attached)
+                        {
                             if let Ok(contours) = ferese_panel::outline::notch_border(
                                 &state.scene,
                                 tolerance,

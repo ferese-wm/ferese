@@ -73,20 +73,24 @@ impl FereseShell {
             .filter_map(|entry| {
                 let (peek, width) = self.hub_peek_content(entry.bar);
                 let mut runtime = entry.runtime.hub.as_ref()?.borrow_mut();
-                if runtime.priority == priority {
+                let changed = runtime.priority != priority;
+                let mode = runtime.hub.mode();
+                let resized = priority.is_some() && mode == Mode::Peek && runtime.peek_width != width;
+                if !changed && !resized {
                     return None;
                 }
                 runtime.priority = priority;
-                let mode = runtime.hub.mode();
                 if mode.expanded() {
                     return None;
                 }
                 if mode == Mode::Peek || (mode == Mode::Toast && priority.is_some()) {
                     runtime.workspace_feedback = None;
-                    runtime.previous_peek = runtime.peek;
+                    if changed {
+                        runtime.previous_peek = runtime.peek;
+                    }
                     runtime.peek = peek;
                     runtime.peek_width = width;
-                    if mode == Mode::Peek {
+                    if changed && mode == Mode::Peek {
                         runtime.hub.replace_content();
                     }
                     let target = if runtime.hovered { Mode::Peek } else { Mode::Idle };
@@ -131,7 +135,11 @@ impl FereseShell {
             );
             return row![
                 icons::tinted(icons::BATTERY_25, 18, warning),
-                text(label).size(13).class(theme::Text::Color(foreground)).width(width)
+                text(label)
+                    .size(13)
+                    .class(theme::Text::Color(foreground))
+                    .width(width)
+                    .align_x(if expanded { Alignment::End } else { Alignment::Start })
             ]
             .spacing(8)
             .align_y(Alignment::Center)
@@ -164,7 +172,9 @@ impl FereseShell {
                 .push(container(text(elapsed).size(13).class(theme::Text::Color(foreground))).center_x(timer_width));
         } else {
             strip = strip.push(
-                text(if saving {
+                text(if saving && !expanded {
+                    "Saving…"
+                } else if saving {
                     "Saving recording…"
                 } else {
                     "Recording ended"

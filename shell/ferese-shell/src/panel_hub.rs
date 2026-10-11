@@ -44,6 +44,7 @@ pub(super) struct Runtime {
     toast: Option<u32>,
     pub(super) allocation: [u32; 2],
     minimum_allocation: [u32; 2],
+    fillet_space: u32,
     pub(super) revision: Instant,
     sampled: Instant,
     last_menu: status_ui::Menu,
@@ -73,13 +74,15 @@ impl Runtime {
         hub.advance(std::time::Duration::ZERO, true);
         let now = Instant::now();
         // Keep the native surface stable through hover, including spring overshoot.
+        let fillet_space = if panel.morph.attached { 24 } else { 0 };
         let minimum_allocation = [
-            (panel.morph.peek_width.max(panel.morph.idle_width).max(200.) * 1.1).ceil() as u32,
+            (panel.morph.peek_width.max(panel.morph.idle_width).max(200.) * 1.1).ceil() as u32 + fillet_space,
             (panel.morph.peek_height.max(f64::from(panel.resolved_geometry().height)) * 1.1).ceil() as u32,
         ];
         Self {
             allocation: minimum_allocation,
             minimum_allocation,
+            fillet_space,
             hub,
             menu: None,
             previous_menu: None,
@@ -119,7 +122,8 @@ impl Runtime {
 
     fn retarget(&mut self, mode: Mode, available: [f64; 2], menu: Option<status_ui::Menu>) {
         let now = Instant::now();
-        self.available = available;
+        let shape_available = [(available[0] - f64::from(self.fillet_space)).max(24.), available[1]];
+        self.available = shape_available;
         if mode != Mode::Peek && self.workspace_feedback.take().is_some() {
             std::mem::swap(&mut self.previous_peek, &mut self.peek);
             self.peek_width = self.previous_peek_width;
@@ -136,18 +140,21 @@ impl Runtime {
                 self.idle_content_width
                     .unwrap_or(self.idle_width + self.workspace_width)
                     .clamp(24., 1024.),
-                available,
+                shape_available,
             )
         } else if mode == Mode::Peek {
-            self.hub.retarget_peek(self.peek_width.min(1024.), available)
+            self.hub.retarget_peek(self.peek_width.min(1024.), shape_available)
         } else {
-            self.hub.retarget(mode, available)
+            self.hub.retarget(mode, shape_available)
         }
         .expect("bounded hub area");
         if replace_content {
             self.hub.replace_content();
         }
-        let target = self.hub.allocation_size().map(|n| n.ceil() as u32);
+        let mut target = self.hub.allocation_size().map(|n| n.ceil() as u32);
+        target[0] = target[0]
+            .saturating_add(self.fillet_space)
+            .min(available[0].ceil() as u32);
         // Retain the backing surface between opens; resizing after settlement moves its origin.
         self.minimum_allocation = std::array::from_fn(|i| self.minimum_allocation[i].min(available[i].ceil() as u32));
         self.allocation = std::array::from_fn(|i| self.allocation[i].max(target[i]).max(self.minimum_allocation[i]));
@@ -204,6 +211,7 @@ impl FereseShell {
                     let mut runtime = runtime.borrow_mut();
                     runtime.previous_peek = runtime.peek;
                     runtime.peek = peek;
+                    runtime.priority = self.hub_priority();
                     runtime.peek_width = width;
                 }
                 self.set_hub_mode(id, Mode::Peek, None)
@@ -408,7 +416,7 @@ impl FereseShell {
         };
         (runtime.idle_width + runtime.workspace_width + artwork_width)
             .min(runtime.available[0])
-            .min(f64::from(runtime.allocation[0]) / 1.1) as f32
+            .min(f64::from(runtime.allocation[0].saturating_sub(runtime.fillet_space)) / 1.1) as f32
     }
 
     pub(super) fn view_hub(&self, id: window::Id) -> Element<'_, cosmic::Action<Message>> {
@@ -422,7 +430,8 @@ impl FereseShell {
                 let runtime = runtime.borrow();
                 260_f64
                     .min(runtime.available[0])
-                    .min(f64::from(runtime.allocation[0]) / 1.1) as f32
+                    .min(f64::from(runtime.allocation[0].saturating_sub(runtime.fillet_space)) / 1.1)
+                    as f32
             } else {
                 self.hub_idle_width_limit(id)
             };
@@ -619,7 +628,6 @@ impl FereseShell {
                         }
                     });
                 let priority = self.hub_priority();
-                let peek = priority.unwrap_or(peek);
                 let activity = if mode == Mode::Idle {
                     priority
                 } else if mode == Mode::Peek && matches!(peek, Peek::Recording | Peek::Battery) {
@@ -1140,6 +1148,154 @@ mod tests {
     }
 
     #[test]
+    fn recording_and_low_battery_take_priority_without_interrupting_open_panels() {
+        let mut shell = shell();
+        let id = shell.outputs[0].bar;
+        std::sync::Arc::make_mut(&mut shell.media.snapshot).selected = Some(ferese_ipc::media::Player {
+            title: "Music".into(),
+            status: ferese_ipc::media::Playback::Playing,
+            ..Default::default()
+        });
+        drop(shell.hub_hover(id, true));
+        assert_eq!(shell.hub_peek_content(id).0, Peek::Media);
+        shell.status.battery = Some(crate::status::Battery {
+            percent: 12,
+            status: "Discharging".into(),
+        });
+        drop(shell.sync_hub_activity());
+        assert_eq!(shell.hub_priority(), Some(Peek::Battery));
+        assert_eq!(
+            shell.outputs[0].runtime.hub.as_ref().unwrap().borrow().peek,
+            Peek::Battery
+        );
+        shell.recorder.state = crate::recording::State::Recording(std::time::Instant::now());
+        drop(shell.sync_hub_activity());
+        assert_eq!(shell.hub_priority(), Some(Peek::Recording));
+        assert_eq!(
+            shell.hub_low_battery(),
+            Some(12),
+            "battery warning must remain available beside the timer"
+        );
+        assert_eq!(shell.outputs[0].runtime.hub.as_ref().unwrap().borrow().peek_width, 280.);
+        drop(shell.hub_notice(99));
+        assert_eq!(
+            shell.hub_mode(id),
+            Some(Mode::Peek),
+            "notifications cannot hide recording"
+        );
+        shell.status.battery.as_mut().unwrap().status = "Charging".into();
+        drop(shell.sync_hub_activity());
+        assert_eq!(shell.hub_low_battery(), None);
+        assert_eq!(shell.outputs[0].runtime.hub.as_ref().unwrap().borrow().peek_width, 240.);
+        shell.recorder.state = crate::recording::State::Saving;
+        drop(shell.sync_hub_activity());
+        assert_eq!(shell.hub_priority(), Some(Peek::Recording));
+        shell.recorder.state = crate::recording::State::Idle;
+        drop(shell.sync_hub_activity());
+        assert_eq!(
+            shell.outputs[0].runtime.hub.as_ref().unwrap().borrow().peek,
+            Peek::Media
+        );
+        drop(shell.open_hub(id, status_ui::Menu::Calendar));
+        shell.recorder.state = crate::recording::State::Recording(std::time::Instant::now());
+        drop(shell.sync_hub_activity());
+        assert_eq!(shell.hub_mode(id), Some(Mode::Expanded(Content::Calendar)));
+        drop(shell.close_hub(id));
+        assert_eq!(shell.hub_priority(), Some(Peek::Recording));
+        assert_eq!(shell.hub_mode(id), Some(Mode::Idle));
+    }
+
+    #[test]
+    fn low_battery_respects_threshold_charging_and_config_reload() {
+        let mut shell = shell();
+        let id = shell.outputs[0].bar;
+        shell.config.status.low_battery_threshold = 20;
+        for (percent, status, expected) in [
+            (20, "Discharging", false),
+            (19, "Discharging", true),
+            (0, "Empty", true),
+            (10, "Pending discharge", true),
+            (10, "Charging", false),
+            (10, "Pending charge", false),
+            (10, "Full", false),
+            (10, "Unknown", false),
+        ] {
+            shell.status.battery = Some(crate::status::Battery {
+                percent,
+                status: status.into(),
+            });
+            assert_eq!(shell.hub_low_battery().is_some(), expected, "{percent}%, {status}");
+        }
+        shell.status.battery = Some(crate::status::Battery {
+            percent: 15,
+            status: "Discharging".into(),
+        });
+        drop(shell.hub_hover(id, true));
+        assert_eq!(
+            shell.outputs[0].runtime.hub.as_ref().unwrap().borrow().peek,
+            Peek::Battery
+        );
+        let mut config = shell.config.clone();
+        config.status.low_battery_threshold = 10;
+        drop(shell.apply_config(config));
+        assert_eq!(shell.outputs[0].runtime.hub.as_ref().unwrap().borrow().peek, Peek::Date);
+        shell.recorder.state = crate::recording::State::Selecting;
+        assert_eq!(shell.hub_priority(), None, "selection is not an active recording");
+    }
+
+    #[test]
+    fn priority_status_supersedes_workspace_feedback_and_toasts() {
+        let mut shell = shell();
+        let id = shell.outputs[0].bar;
+        shell.snapshot.outputs = vec![crate::control::OutputSnapshot {
+            id: 4,
+            name: "test".into(),
+            active_workspace: 1,
+            focused: true,
+        }];
+        shell.snapshot.workspaces = (1..=3)
+            .map(|id| crate::control::WorkspaceSnapshot {
+                id,
+                name: id.to_string(),
+                output: Some(4),
+                index: id as u32,
+                window_count: 1,
+                visible: id == 1,
+                focused: id == 1,
+            })
+            .collect();
+        drop(shell.sync_hub_workspace_feedback(false));
+        shell.snapshot.outputs[0].active_workspace = 2;
+        drop(shell.sync_hub_workspace_feedback(false));
+        assert_eq!(shell.hub_mode(id), Some(Mode::Peek));
+        shell.recorder.state = crate::recording::State::Recording(std::time::Instant::now());
+        drop(shell.sync_hub_activity());
+        assert_eq!(shell.hub_mode(id), Some(Mode::Idle));
+        assert!(
+            shell.outputs[0]
+                .runtime
+                .hub
+                .as_ref()
+                .unwrap()
+                .borrow()
+                .workspace_feedback
+                .is_none()
+        );
+        shell.snapshot.outputs[0].active_workspace = 3;
+        drop(shell.sync_hub_workspace_feedback(false));
+        assert_eq!(shell.hub_mode(id), Some(Mode::Idle));
+        shell.recorder.state = crate::recording::State::Idle;
+        drop(shell.sync_hub_activity());
+        drop(shell.set_hub_mode(id, Mode::Toast, None));
+        shell.status.battery = Some(crate::status::Battery {
+            percent: 1,
+            status: "Discharging".into(),
+        });
+        drop(shell.sync_hub_activity());
+        assert_eq!(shell.hub_mode(id), Some(Mode::Idle));
+    }
+
+    #[test]
     fn workspace_strip_is_output_local_and_does_not_interrupt_open_content() {
         let mut shell = shell();
         let id = shell.outputs[0].bar;
@@ -1555,6 +1711,54 @@ mod tests {
     }
 
     #[test]
+    fn attached_shoulders_fit_the_surface_through_morphs_and_reversals() {
+        let mut panel = Panel::from_preset(PanelStyle::Morph);
+        panel.morph.attached = true;
+        for edge in [Edge::Top, Edge::Bottom] {
+            panel.edge = edge;
+            let mut runtime = Runtime::new(&panel);
+            for mode in [
+                Mode::Peek,
+                Mode::Expanded(Content::Calendar),
+                Mode::Idle,
+                Mode::Peek,
+                Mode::Idle,
+            ] {
+                runtime.retarget(mode, [800., 600.], None);
+                let allocation = runtime.allocation;
+                for _ in 0..18 {
+                    runtime.hub.advance(Duration::from_millis(8), false);
+                    let sample = runtime.hub.sample();
+                    let bounds = sample.geometry.bounds;
+                    let scene = ferese_panel::scene::derive(
+                        ferese_panel::scene::Parameters {
+                            radius: Some(ferese_panel::shape::AnchoredRadii(
+                                sample.geometry.radii.map(|r| r as f32),
+                            )),
+                            ..panel.shape_parameters()
+                        },
+                        ferese_layout::Rect::new(
+                            (f64::from(allocation[0]) - bounds.width) / 2.,
+                            0.,
+                            bounds.width,
+                            bounds.height,
+                        ),
+                        &[],
+                        ferese_panel::shape::PixelGrid::new(1.5).unwrap(),
+                    )
+                    .unwrap();
+                    assert_eq!(scene.paint.len(), 3);
+                    for primitive in scene.paint {
+                        assert!(primitive.bounds.x >= -0.01);
+                        assert!(primitive.bounds.x + primitive.bounds.width <= f64::from(allocation[0]) + 0.01);
+                    }
+                    assert_eq!(runtime.allocation, allocation, "no resize during settlement");
+                }
+            }
+        }
+    }
+
+    #[test]
     fn opening_closing_and_reopening_retain_the_native_surface() {
         let panel = Panel::from_preset(PanelStyle::Morph);
         let mut runtime = Runtime::new(&panel);
@@ -1721,8 +1925,30 @@ mod tests {
             let mut date_pixels = None;
             for (name, mode, menu) in [
                 ("idle", Mode::Idle, None),
+                ("idle-attached", Mode::Idle, None),
+                ("idle-attached-bottom", Mode::Idle, None),
+                ("peek-attached", Mode::Peek, None),
+                ("peek-attached-bottom", Mode::Peek, None),
+                (
+                    "calendar-attached",
+                    Mode::Expanded(Content::Calendar),
+                    Some(status_ui::Menu::Calendar),
+                ),
+                (
+                    "calendar-attached-bottom",
+                    Mode::Expanded(Content::Calendar),
+                    Some(status_ui::Menu::Calendar),
+                ),
                 ("idle-translucent", Mode::Idle, None),
                 ("idle-long-title", Mode::Idle, None),
+                ("idle-recording", Mode::Idle, None),
+                ("idle-low-battery", Mode::Idle, None),
+                ("idle-recording-low-battery", Mode::Idle, None),
+                ("idle-saving-low-battery", Mode::Idle, None),
+                ("peek-recording", Mode::Peek, None),
+                ("peek-low-battery", Mode::Peek, None),
+                ("peek-recording-low-battery", Mode::Peek, None),
+                ("peek-saving-low-battery", Mode::Peek, None),
                 ("peek-date", Mode::Peek, None),
                 ("peek-date-hover", Mode::Peek, None),
                 ("peek-date-pressed", Mode::Peek, None),
@@ -1819,8 +2045,25 @@ mod tests {
                 } else {
                     "Losing My Mind".into()
                 };
+                shell.recorder.state = if name.contains("recording") {
+                    crate::recording::State::Recording(std::time::Instant::now() - Duration::from_secs(65))
+                } else if name.contains("saving") {
+                    crate::recording::State::Saving
+                } else {
+                    crate::recording::State::Idle
+                };
+                shell.status.battery = name.contains("low-battery").then(|| crate::status::Battery {
+                    percent: 12,
+                    status: "Discharging".into(),
+                });
                 shell.config.theme.bar_background[3] = if name.ends_with("translucent") { 128 } else { 255 };
                 let panel = &mut shell.config.panels[0];
+                panel.morph.attached = name.contains("attached");
+                panel.edge = if name.ends_with("bottom") {
+                    Edge::Bottom
+                } else {
+                    Edge::Top
+                };
                 panel.morph.expanded_width = match name {
                     "controls-narrow" => 240.,
                     "controls-wide" => 400.,
@@ -1845,11 +2088,18 @@ mod tests {
                         0.
                     };
                     hub.peek = match name {
+                        _ if shell.hub_priority().is_some() => shell.hub_priority().unwrap(),
                         "peek-media" => Peek::Media,
                         "peek-workspaces" => Peek::Workspaces,
                         _ => Peek::Date,
                     };
-                    hub.peek_width = if name == "peek-media" { 260. } else { 200. };
+                    hub.peek_width = if shell.hub_priority().is_some() {
+                        shell.hub_peek_content(id).1
+                    } else if name == "peek-media" {
+                        260.
+                    } else {
+                        200.
+                    };
                     hub.retarget(mode, [1200., 800.], menu);
                     hub.hub.advance(
                         Duration::from_millis(animation_time.unwrap_or(0)),
@@ -1865,6 +2115,7 @@ mod tests {
                         &renderer,
                         &layout::Limits::new(Size::ZERO, Size::new(allocation[0] as f32, allocation[1] as f32)),
                     );
+                    let idle_width_limit = f64::from(shell.hub_idle_width_limit(id));
                     let mut runtime = hub.borrow_mut();
                     runtime.hub.advance(Duration::ZERO, true);
                     sample = runtime.hub.sample();
@@ -1876,8 +2127,7 @@ mod tests {
                     }
                     if mode == Mode::Idle {
                         assert!(
-                            sample.geometry.bounds.width
-                                <= shell.config.panels[0].morph.idle_width + workspace_width + 10. + 32.,
+                            sample.geometry.bounds.width <= idle_width_limit,
                             "idle should fit its content instead of retaining a fixed text allowance"
                         );
                     }
@@ -1896,6 +2146,68 @@ mod tests {
                     &renderer,
                     &layout::Limits::new(Size::ZERO, viewport.size()),
                 );
+                if shell.hub_priority().is_some() {
+                    #[derive(Default)]
+                    struct TextBounds(Vec<(String, Rectangle)>);
+                    impl widget::Operation for TextBounds {
+                        fn traverse(&mut self, visit: &mut dyn FnMut(&mut dyn widget::Operation)) {
+                            visit(self);
+                        }
+                        fn text(&mut self, _: Option<&widget::Id>, bounds: Rectangle, text: &str) {
+                            self.0.push((text.to_owned(), bounds));
+                        }
+                    }
+                    let mut bounds = TextBounds::default();
+                    view.as_widget_mut()
+                        .operate(&mut tree, Layout::new(&node), &renderer, &mut bounds);
+                    let left = (viewport.width - sample.geometry.bounds.width as f32) / 2.;
+                    let right = left + sample.geometry.bounds.width as f32;
+                    for (label, rect) in &bounds.0 {
+                        assert!(
+                            rect.x >= left && rect.x + rect.width <= right + 0.1,
+                            "{name}: {label} must fit inside shell: {rect:?}, {left}..{right}"
+                        );
+                        assert!(rect.height <= 28., "{name}: {label} must stay on one line: {rect:?}");
+                    }
+                    assert!(
+                        !bounds.0.iter().any(|(text, _)| text == "Losing My Mind"),
+                        "media cannot displace priority status"
+                    );
+                    // Exercise the nested battery button as well as its recording parent.
+                    if name == "peek-recording-low-battery" {
+                        for (label, expected) in [
+                            ("12%", status_ui::Menu::Battery),
+                            ("Recording", status_ui::Menu::Overflow),
+                        ] {
+                            let rect = bounds.0.iter().find(|(text, _)| text == label).unwrap().1;
+                            let cursor = mouse::Cursor::Available(rect.center());
+                            let mut messages = Vec::new();
+                            for event in [
+                                mouse::Event::ButtonPressed(mouse::Button::Left),
+                                mouse::Event::ButtonReleased(mouse::Button::Left),
+                            ] {
+                                view.as_widget_mut().update(
+                                    &mut tree,
+                                    &Event::Mouse(event),
+                                    Layout::new(&node),
+                                    cursor,
+                                    &renderer,
+                                    &mut clipboard::Null,
+                                    &mut Shell::new(&mut messages),
+                                    &viewport,
+                                );
+                            }
+                            let opened: Vec<_> = messages
+                                .iter()
+                                .filter_map(|message| match message {
+                                    cosmic::Action::App(Message::HubOpen(_, menu)) => Some(*menu),
+                                    _ => None,
+                                })
+                                .collect();
+                            assert_eq!(opened, vec![expected], "{label} must open exactly its own controls");
+                        }
+                    }
+                }
                 if name == "peek-date" || name == "peek-workspaces" {
                     let mut messages = Vec::new();
                     view.as_widget_mut().update(

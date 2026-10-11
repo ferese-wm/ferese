@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import re
 import shlex
+import shutil
 import signal
 import socket
 import struct
@@ -62,6 +63,17 @@ def main():
     children = []
     with tempfile.TemporaryDirectory(prefix="ferese-panel-preview-") as temporary:
         root = Path(temporary)
+        # Keep sibling validation and apps opened from the shell on this build,
+        # even if Cargo replaces target/release while the preview is running.
+        preview_bin = root / "bin"
+        preview_bin.mkdir()
+        for name, binary in binaries.items():
+            shutil.copy2(binary, preview_bin / name)
+        for name in ("ferese-record", "ferese-lock", "ferese-launcher", "feresectl"):
+            binary = REPO / "target" / profile / name
+            if binary.is_file():
+                shutil.copy2(binary, preview_bin / name)
+        binaries = {name: preview_bin / name for name in binaries}
         runtime = root / "runtime"
         runtime.mkdir(mode=0o700)
         config = root / "config/ferese"
@@ -75,6 +87,7 @@ def main():
         config_path.write_text(source)
         subprocess.run([str(binaries["ferese"]), "--check-config", str(config_path)], check=True)
         env = {key: value for key, value in os.environ.items() if not key.startswith("FERESE_")}
+        env["PATH"] = str(preview_bin) + os.pathsep + env.get("PATH", os.defpath)
         env.update(XDG_RUNTIME_DIR=str(runtime), WAYLAND_DISPLAY=str(display), XDG_CONFIG_HOME=str(root / "config"),
                    XDG_STATE_HOME=str(root / "state"), XDG_CACHE_HOME=str(root / "cache"),
                    XDG_DATA_HOME=str(root / "data"), FERESE_ENABLE_SCREENCOPY="1",

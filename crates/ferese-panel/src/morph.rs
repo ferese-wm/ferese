@@ -12,6 +12,7 @@ const CONTENT_DELAY: Duration = Duration::from_millis(130);
 #[serde(default, deny_unknown_fields)]
 pub struct Profile {
     pub peek_on_hover: bool,
+    pub attached: bool,
     pub idle_width: f64,
     pub peek_width: f64,
     pub peek_height: f64,
@@ -30,6 +31,7 @@ impl Default for Profile {
     fn default() -> Self {
         Self {
             peek_on_hover: true,
+            attached: false,
             idle_width: 150.,
             peek_width: 260.,
             peek_height: 44.,

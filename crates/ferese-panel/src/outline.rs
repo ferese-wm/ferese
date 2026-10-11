@@ -263,6 +263,71 @@ mod tests {
     }
 
     #[test]
+    fn attached_morph_rim_follows_animated_body_at_fractional_scales() {
+        for scale in [1., 1.25, 1.5, 2.] {
+            for edge in [crate::Edge::Top, crate::Edge::Bottom] {
+                for (width, height, radius) in [(150., 34., 17.), (218.3, 41.7, 20.85), (340., 230., 26.)] {
+                    let scene = derive(
+                        Parameters {
+                            style: Style::Morph,
+                            attached: true,
+                            edge,
+                            fillet: 12.,
+                            radius: Some(crate::shape::AnchoredRadii([radius; 4])),
+                            ..Default::default()
+                        },
+                        Rect::new(30.3, 0., width, height),
+                        &[],
+                        PixelGrid::new(scale).unwrap(),
+                    )
+                    .unwrap();
+                    let body = scene.paint[0];
+                    assert_eq!(scene.paint.len(), 3);
+                    assert_eq!(scene.input.len(), 1, "decorative shoulders must not take pointer input");
+                    let screen_y = if edge == crate::Edge::Top {
+                        body.bounds.y
+                    } else {
+                        body.bounds.y + body.bounds.height
+                    };
+                    let paths = notch_border(&scene, 0.1 / scale, edge).unwrap();
+                    assert_eq!(
+                        paths.len(),
+                        1,
+                        "one continuous rim: {scale}, {edge:?}, {width}, {height}"
+                    );
+                    let path = &paths[0];
+                    assert!((path.first().unwrap()[1] - screen_y).abs() < 1e-6);
+                    assert!((path.last().unwrap()[1] - screen_y).abs() < 1e-6);
+                    assert!(path.iter().any(|p| p[0] < body.bounds.x));
+                    assert!(path.iter().any(|p| p[0] > body.bounds.x + body.bounds.width));
+                    for segment in path.windows(2) {
+                        let [a, b] = [segment[0], segment[1]];
+                        assert!(
+                            (a[1] - screen_y).abs() > 1e-6 || (b[1] - screen_y).abs() > 1e-6,
+                            "no stroke on the screen edge"
+                        );
+                        let mid = [(a[0] + b[0]) / 2., (a[1] + b[1]) / 2.];
+                        assert!(scene.distance(mid).abs() < 0.12 / scale);
+                    }
+                    let contours = contours(&scene, 0.1 / scale).unwrap();
+                    for x in 0..((width + 60.) as usize) {
+                        for y in 0..(height as usize) {
+                            let p = [x as f64 + 0.37, y as f64 + 0.37];
+                            if scene.distance(p).abs() > 0.15 / scale {
+                                assert_eq!(
+                                    winding(&contours, p) != 0,
+                                    scene.distance(p) < 0.,
+                                    "native and fallback must agree"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn vector_union_and_cutout_match_implicit_shapes() {
         let groups = [
             GroupBounds {

@@ -968,7 +968,7 @@ impl FereseShell {
             }
         }
         let workspace_task = self.update_workspace_ui();
-        let mut tasks = vec![workspace_task];
+        let mut tasks = vec![workspace_task, self.sync_hub_activity()];
 
         if composition_changed || geometry_changed {
             tasks.push(self.destroy_menu());

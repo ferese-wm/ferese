@@ -185,6 +185,7 @@ pub struct GroupBounds {
 #[derive(Clone, Copy, Debug)]
 pub struct Parameters {
     pub style: Style,
+    pub attached: bool,
     pub edge: Edge,
     pub height: f64,
     pub gap: f64,
@@ -200,6 +201,7 @@ impl Default for Parameters {
     fn default() -> Self {
         Self {
             style: Style::Flat,
+            attached: false,
             edge: Edge::Top,
             height: 36.,
             gap: 8.,
@@ -358,18 +360,34 @@ pub fn derive(
             }
         }
         Style::Morph | Style::WindowHug => {
-            add(
-                &mut scene,
-                grid,
-                bounds,
-                parameters
-                    .radius
-                    .map_or(CornerRadii::uniform((bounds.height / 2.) as f32), |r| {
-                        r.screen_space(parameters.edge)
-                    }),
-                true,
-                0,
-            )?;
+            let attached = parameters.style == Style::Morph && parameters.attached;
+            let radii = parameters
+                .radius
+                .map_or(CornerRadii::uniform((bounds.height / 2.) as f32), |r| {
+                    r.screen_space(parameters.edge)
+                })
+                .at_edge(parameters.edge, attached);
+            add(&mut scene, grid, bounds, radii, true, 0)?;
+            if attached {
+                let r = grid.snap(parameters.fillet.min(bounds.height));
+                if r > 0. {
+                    let (y, left, right) = if parameters.edge == Edge::Top {
+                        (bounds.y, 2, 3)
+                    } else {
+                        (bounds.y + bounds.height - r, 5, 4)
+                    };
+                    for (x, operation) in [(bounds.x - r, left), (bounds.x + bounds.width, right)] {
+                        let patch = grid.rect(Rect::new(x, y, r, r))?;
+                        scene.paint.push(Primitive {
+                            bounds: patch,
+                            radii: CornerRadii::uniform(0.),
+                            operation,
+                            blend_zone: 0,
+                        });
+                        scene.damage.push(patch);
+                    }
+                }
+            }
         }
         style => {
             for (zone_index, zone) in [ZonePosition::Start, ZonePosition::Center, ZonePosition::End]

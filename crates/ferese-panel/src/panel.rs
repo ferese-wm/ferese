@@ -526,6 +526,12 @@ impl Panel {
     pub fn shape_parameters(&self) -> crate::scene::Parameters {
         crate::scene::Parameters {
             style: self.style,
+            attached: self.style == PanelStyle::Morph && self.morph.attached,
+            fillet: if self.style == PanelStyle::Morph {
+                12.
+            } else {
+                crate::scene::Parameters::default().fillet
+            },
             edge: self.edge,
             height: self.resolved_geometry().height.into(),
             radius: self.corner_radius.map(|r| crate::shape::AnchoredRadii(r.0)),
@@ -534,7 +540,11 @@ impl Panel {
     }
 
     pub fn resolved_geometry(&self) -> PanelGeometry {
-        self.geometry.resolve(self.style)
+        let mut geometry = self.geometry.resolve(self.style);
+        if self.style == PanelStyle::Morph && self.morph.attached {
+            geometry.edge_margin = 0;
+        }
+        geometry
     }
 
     pub fn exclusive_zone(&self, hidden: bool) -> i32 {

@@ -102,13 +102,16 @@ impl App {
             let palette = visuals::Palette::from_resolved(&self.resolved.presented);
             let height = panel.resolved_geometry().height;
             let hub = container(self.label("●   10:09", 13.))
+                .id("morph-preview-body")
                 .center_x(panel.morph.idle_width as f32)
                 .center_y(height);
             let hub = ferese_theme::panel_surface::frame(
-                hub.into(),
+                container(hub)
+                    .padding([0, if panel.morph.attached { 12 } else { 0 }])
+                    .into(),
                 ferese_theme::panel_surface::Options {
                     parameters: panel.shape_parameters(),
-                    bounds: None,
+                    bounds: Some(cosmic::iced::advanced::widget::Id::new("morph-preview-body")),
                     groups: Vec::new(),
                     scale: self.render_scale,
                     high_contrast: palette.high_contrast,

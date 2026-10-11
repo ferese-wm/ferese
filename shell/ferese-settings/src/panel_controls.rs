@@ -137,7 +137,7 @@ impl App {
                     .padding(16)
                     .class(crate::visuals::surface(palette.card, 14.)),
                 );
-                let appearance = widget::column([])
+                let mut appearance = widget::column([])
                     .spacing(16)
                     .push(self.panel_heading("Appearance", 15.))
                     .push(self.panel_style_choices(preset.unwrap_or_default()))
@@ -165,20 +165,29 @@ impl App {
                     } else {
                         self.panel_radius_controls()
                     });
-                rows = rows.push(
-                    widget::container(appearance)
-                        .id("panel-appearance-settings")
-                        .padding(16)
-                        .width(cosmic::iced::Length::Fill)
-                        .class(crate::visuals::surface(palette.card, 14.)),
-                );
                 if preset == Some(ferese_panel::PanelStyle::Morph) {
                     let enabled = self.draft.boolean("panels.0.morph.peek_on_hover", true);
-                    rows = rows.push(
-                        widget::container(
+                    let attached = self.draft.boolean("panels.0.morph.attached", false);
+                    appearance = appearance
+                        .push(self.panel_divider())
+                        .push(
+                            self.panel_appearance_row(
+                                "Attach to screen edge",
+                                "Join the island to the screen edge with curved shoulders.",
+                                widget::container(
+                                    ferese_theme::controls::switch(attached, palette)
+                                        .name("Attach to screen edge")
+                                        .on_press(Message::PanelEdit(Action::SetMorphAttached(!attached))),
+                                )
+                                .align_right(cosmic::iced::Length::Fill)
+                                .into(),
+                            ),
+                        )
+                        .push(self.panel_divider())
+                        .push(
                             self.panel_appearance_row(
                                 "Preview on hover",
-                                "Hover to see the current track or date. Click to open its panel.",
+                                "Expand the island when you hover over it.",
                                 widget::container(
                                     ferese_theme::controls::switch(enabled, palette)
                                         .name("Preview on hover")
@@ -187,11 +196,15 @@ impl App {
                                 .align_right(cosmic::iced::Length::Fill)
                                 .into(),
                             ),
-                        )
-                        .padding(16)
-                        .class(crate::visuals::surface(palette.card, 14.)),
-                    );
+                        );
                 }
+                rows = rows.push(
+                    widget::container(appearance)
+                        .id("panel-appearance-settings")
+                        .padding(16)
+                        .width(cosmic::iced::Length::Fill)
+                        .class(crate::visuals::surface(palette.card, 14.)),
+                );
                 let pins = self.preview_panel().is_ok_and(|panel| {
                     panel.geometry != ferese_panel::GeometryIntent::default() || panel.corner_radius.is_some()
                 });
@@ -215,6 +228,12 @@ impl App {
                     .into_iter()
                     .filter(|field| field.path.starts_with("panels.0.geometry."))
                     .filter(|field| {
+                        if preset == Some(ferese_panel::PanelStyle::Morph)
+                            && self.draft.boolean("panels.0.morph.attached", false)
+                            && field.path.ends_with(".edge_margin")
+                        {
+                            return false;
+                        }
                         !matches!(
                             preset.unwrap_or_default(),
                             ferese_panel::PanelStyle::Flat | ferese_panel::PanelStyle::Notch
