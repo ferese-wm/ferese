@@ -136,6 +136,7 @@ fn corner_shader_for(source: &str, shape: CornerShape) -> String {
             .replace("precision mediump float;", "precision highp float;"),
     }
     .replace("//_MATERIAL_CORNERS_", include_str!("shaders/material_corners.glsl"))
+    .replace("//_PANEL_MASK_", include_str!("shaders/panel_mask.glsl"))
 }
 
 pub(crate) fn window_corner_shape(_window: &smithay::desktop::Window) -> CornerShape {
@@ -339,7 +340,14 @@ pub(crate) struct OverviewScrim {
 pub(crate) struct MaterialProgram(GlesPixelProgram);
 
 #[derive(Clone, Debug, PartialEq)]
+struct PanelMatrices {
+    shapes: Vec<[f32; 9]>,
+    fusion: f32,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 struct MaterialParameters {
+    panel: Option<PanelMatrices>,
     corner_radii: [f32; 4],
     presentation_alpha: f32,
     background_opacity: f32,

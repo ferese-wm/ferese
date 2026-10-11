@@ -22,7 +22,7 @@
     DEALINGS IN THE SOFTWARE.
   </copyright>
 
-  <interface name="ferese_effects_manager_v1" version="5">
+  <interface name="ferese_effects_manager_v1" version="6">
     <description summary="assign semantic material roles to surfaces">
       This private global is visible only to clients granted the Ferese effects
       capability. Roles describe compositor-owned appearance policy and do not
@@ -48,7 +48,7 @@
     </enum>
   </interface>
 
-  <interface name="ferese_surface_effects_v1" version="5">
+  <interface name="ferese_surface_effects_v1" version="6">
     <description summary="semantic material role for one surface">
       The role affects only compositor rendering. It does not change surface
       geometry, input, focus, stacking, or the surface's Wayland role.
@@ -120,6 +120,25 @@
       <arg name="regions" type="array"/>
       <arg name="opacity" type="uint"/>
       <arg name="region_opacities" type="array"/>
+    </request>
+    <request name="set_panel_presentation" since="6">
+      <description summary="commit a bounded panel shape with its content">
+        Panel-only material presentation. Regions are bounded capture/damage
+        rectangles in the set_regions format. Shapes are native-endian binary32
+        tuples (x,y,width,height,top-left,top-right,bottom-right,bottom-left,
+        operation,blend-zone). Operations: 0 rounded union, 1 rounded cutout,
+        2..5 rectangular concave patches whose circle centers are bottom-left,
+        bottom-right, top-right, top-left. Blend zones 1..3 fuse independently;
+        zone 0 never fuses. At most 32 primitives and one cutout are accepted.
+        All coordinates must be finite and bounded by 32768 logical pixels.
+        Invalid requests leave pending state unchanged. Empty shapes require
+        empty regions. Input remains controlled by wl_surface.set_input_region.
+        This presentation becomes visible atomically with the next surface commit.
+      </description>
+      <arg name="regions" type="array"/>
+      <arg name="shapes" type="array"/>
+      <arg name="fusion" type="fixed" summary="polynomial smooth-min strength, 0..256 logical pixels"/>
+      <arg name="opacity" type="uint"/>
     </request>
   </interface>
 </protocol>

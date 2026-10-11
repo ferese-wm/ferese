@@ -21,9 +21,10 @@ uniform vec4 tint;
 varying vec2 v_coords;
 //_CORNERS_
 //_MATERIAL_CORNERS_
+//_PANEL_MASK_
 
 void main() {
-    float sdf = rounded_rect_corners_distance(gl_FragCoord.xy, visible_rect, material_radii);
+    float sdf = material_distance(gl_FragCoord.xy, visible_rect, material_radii);
     float coverage = alpha * presentation_alpha * edge_coverage(sdf);
     if (coverage <= 0.0) { gl_FragColor = vec4(0.0); return; }
     vec2 coords = (gl_FragCoord.xy - capture_origin) / texture_size;

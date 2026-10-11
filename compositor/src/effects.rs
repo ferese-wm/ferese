@@ -51,8 +51,15 @@ pub(crate) fn resolve_material(role: SemanticRole, style: MaterialStyle, opacity
     ResolvedMaterial { style, opacity, shadow }
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct PanelPresentation {
+    pub shapes: std::sync::Arc<[ferese_panel::scene::Primitive]>,
+    pub fusion: f64,
+}
+
 #[derive(Debug)]
 struct PendingPresentation {
+    panel: Option<PanelPresentation>,
     role: SemanticRole,
     regions: Vec<[f64; 5]>,
     opacity: u32,
@@ -67,6 +74,7 @@ struct SurfaceEffectsState {
     regions: Mutex<Option<Vec<[f64; 5]>>>,
     opacity: Mutex<u32>,
     pending: Mutex<Option<PendingPresentation>>,
+    panel: Mutex<Option<PanelPresentation>>,
     region_opacities: Mutex<Vec<u32>>,
     presentation_supported: AtomicBool,
     dismissing: AtomicBool,
@@ -81,6 +89,7 @@ impl SurfaceEffectsState {
             regions: Mutex::new(None),
             opacity: Mutex::new(1000),
             pending: Mutex::new(None),
+            panel: Mutex::new(None),
             region_opacities: Mutex::new(Vec::new()),
             presentation_supported: AtomicBool::new(false),
             dismissing: AtomicBool::new(false),
@@ -92,6 +101,7 @@ impl SurfaceEffectsState {
             return;
         };
         *self.role.lock().unwrap() = Some(pending.role);
+        *self.panel.lock().unwrap() = pending.panel;
         *self.regions.lock().unwrap() = Some(pending.regions);
         *self.region_opacities.lock().unwrap() = pending.region_opacities;
         if !self.dismissing.load(Ordering::Acquire) {
@@ -126,7 +136,7 @@ impl SurfaceEffectsUserData {
 }
 
 pub(crate) fn init_global(display: &DisplayHandle) {
-    display.create_global::<Ferese, FereseEffectsManagerV1, _>(5, ());
+    display.create_global::<Ferese, FereseEffectsManagerV1, _>(6, ());
     display.create_global::<Ferese, FereseMaterialManagerV1, _>(1, ());
 }
 
@@ -225,6 +235,44 @@ pub(crate) fn surface_regions(surface: &WlSurface) -> Option<Vec<[f64; 5]>> {
             .lock()
             .unwrap()
             .clone()
+    })
+}
+
+pub(crate) fn surface_panel_presentation(surface: &WlSurface) -> Option<PanelPresentation> {
+    with_states(surface, |states| {
+        states
+            .data_map
+            .get::<SurfaceEffectsState>()?
+            .panel
+            .lock()
+            .unwrap()
+            .clone()
+    })
+}
+
+fn decode_panel_shapes(bytes: &[u8], fusion: f64) -> Option<PanelPresentation> {
+    if !bytes.len().is_multiple_of(40)
+        || bytes.len() > ferese_panel::scene::MAX_PRIMITIVES * 40
+        || !fusion.is_finite()
+        || !(0. ..=256.).contains(&fusion)
+    {
+        return None;
+    }
+    let shapes: Vec<_> = bytes
+        .as_chunks::<40>()
+        .0
+        .iter()
+        .map(|tuple| {
+            let values = std::array::from_fn(|i| f32::from_ne_bytes(tuple.as_chunks::<4>().0[i]));
+            ferese_panel::scene::Primitive::from_packet(values).ok()
+        })
+        .collect::<Option<_>>()?;
+    if shapes.iter().filter(|p| p.operation == 1).count() > 1 {
+        return None;
+    }
+    Some(PanelPresentation {
+        shapes: shapes.into(),
+        fusion,
     })
 }
 
@@ -361,6 +409,31 @@ impl Dispatch<FereseSurfaceEffectsV1, SurfaceEffectsUserData> for Ferese {
         };
 
         match request {
+            ferese_surface_effects_v1::Request::SetPanelPresentation {
+                regions,
+                shapes,
+                fusion,
+                opacity,
+            } => {
+                let (Some(regions), Some(panel)) = (decode_regions(&regions), decode_panel_shapes(&shapes, fusion))
+                else {
+                    return;
+                };
+                if panel.shapes.is_empty() != regions.is_empty() {
+                    return;
+                }
+                with_states(&surface, |states| {
+                    if let Some(effects) = states.data_map.get::<SurfaceEffectsState>() {
+                        *effects.pending.lock().unwrap() = Some(PendingPresentation {
+                            panel: Some(panel),
+                            role: SemanticRole::Panel,
+                            region_opacities: vec![1000; regions.len()],
+                            regions,
+                            opacity: opacity.min(1000),
+                        });
+                    }
+                });
+            }
             ferese_surface_effects_v1::Request::SetPresentation {
                 role,
                 regions,
@@ -377,6 +450,7 @@ impl Dispatch<FereseSurfaceEffectsV1, SurfaceEffectsUserData> for Ferese {
                 with_states(&surface, |states| {
                     if let Some(effects) = states.data_map.get::<SurfaceEffectsState>() {
                         *effects.pending.lock().unwrap() = Some(PendingPresentation {
+                            panel: None,
                             role,
                             regions,
                             opacity: opacity.min(1000),
@@ -510,6 +584,7 @@ fn detach(surface: &WlSurface) -> bool {
         let role_changed = effects.set_role(None);
         effects.region_opacities.lock().unwrap().clear();
         effects.pending.lock().unwrap().take();
+        effects.panel.lock().unwrap().take();
         effects.dismissing.store(false, Ordering::Release);
         let mut opacity = effects.opacity.lock().unwrap();
         let opacity_changed = *opacity != 1000;
@@ -551,10 +626,65 @@ pub(crate) fn fade_dismissed_surface(surface: &WlSurface, opacity: f64) {
 mod tests {
     use super::*;
 
+    fn shape_bytes(operation: f32) -> Vec<u8> {
+        [1.25f32, 2.5, 100., 36., 0., 0., 18., 18., operation, 0.]
+            .into_iter()
+            .flat_map(f32::to_ne_bytes)
+            .collect()
+    }
+
+    #[test]
+    fn panel_shapes_reject_malformed_packets_and_duplicate_cutouts() {
+        let bytes = shape_bytes(0.);
+        let decoded = decode_panel_shapes(&bytes, 12.).unwrap();
+        assert_eq!(decoded.shapes.len(), 1);
+        assert_eq!(decoded.shapes[0].bounds.x, 1.25);
+        assert_eq!(decoded.fusion, 12.);
+        assert!(decode_panel_shapes(&[], 0.).unwrap().shapes.is_empty());
+        assert!(decode_panel_shapes(&bytes[..39], 0.).is_none());
+        assert!(decode_panel_shapes(&bytes.repeat(33), 0.).is_none());
+        assert!(decode_panel_shapes(&shape_bytes(1.).repeat(2), 0.).is_none());
+        for invalid in [f64::NAN, f64::INFINITY, -1., 257.] {
+            assert!(decode_panel_shapes(&bytes, invalid).is_none());
+        }
+        for invalid in [f32::NAN, 0.5, 6.] {
+            assert!(decode_panel_shapes(&shape_bytes(invalid), 0.).is_none());
+        }
+    }
+
+    #[test]
+    fn panel_shape_and_capture_regions_commit_together_and_clear_for_popovers() {
+        let state = SurfaceEffectsState::new();
+        *state.pending.lock().unwrap() = Some(PendingPresentation {
+            panel: decode_panel_shapes(&shape_bytes(0.), 12.),
+            role: SemanticRole::Panel,
+            regions: vec![[1.25, 2.5, 100., 36., 0.]],
+            opacity: 1000,
+            region_opacities: vec![1000],
+        });
+        assert!(state.panel.lock().unwrap().is_none());
+        assert!(state.regions.lock().unwrap().is_none());
+        state.commit_presentation();
+        assert_eq!(state.panel.lock().unwrap().as_ref().unwrap().fusion, 12.);
+        assert_eq!(state.regions.lock().unwrap().as_ref().unwrap().len(), 1);
+        *state.pending.lock().unwrap() = Some(PendingPresentation {
+            panel: None,
+            role: SemanticRole::Popover,
+            regions: vec![[0., 0., 200., 100., 14.]],
+            opacity: 800,
+            region_opacities: vec![1000],
+        });
+        state.commit_presentation();
+        assert!(state.panel.lock().unwrap().is_none());
+        assert_eq!(*state.role.lock().unwrap(), Some(SemanticRole::Popover));
+        assert_eq!(*state.opacity.lock().unwrap(), 800);
+    }
+
     #[test]
     fn presentation_waits_for_buffer_commit_and_keeps_dismissal_ownership() {
         let state = SurfaceEffectsState::new();
         let queue = |opacity| PendingPresentation {
+            panel: None,
             role: SemanticRole::Popover,
             regions: vec![[1.25, 2.5, 100.0, 80.0, 12.0]],
             opacity,

@@ -488,6 +488,7 @@ pub(super) struct EffectsBinding {
     regions: std::cell::RefCell<Option<Vec<[f32; 5]>>>,
     opacity: std::cell::Cell<Option<u32>>,
     presentation: std::cell::RefCell<Option<EffectPresentation>>,
+    panel_presentation: std::cell::RefCell<Option<ferese_panel::scene::Scene>>,
 }
 
 impl EffectsBinding {
@@ -511,7 +512,7 @@ impl EffectsBinding {
         let connection = Connection::from_backend(backend);
         let (globals, queue) = registry_queue_init::<EffectsState>(&connection)?;
         let qh = queue.handle();
-        let manager = globals.bind::<FereseEffectsManagerV1, _, _>(&qh, 5..=5, ())?;
+        let manager = globals.bind::<FereseEffectsManagerV1, _, _>(&qh, 6..=6, ())?;
         let effects = manager.get_surface_effects(surface, &qh, ());
 
         let opacity = (opacity.clamp(0.0, 1.0) * 1000.0).round() as u32;
@@ -531,7 +532,37 @@ impl EffectsBinding {
             regions: Default::default(),
             opacity: std::cell::Cell::new(Some(opacity)),
             presentation: Default::default(),
+            panel_presentation: Default::default(),
         })
+    }
+
+    pub(super) fn set_panel_presentation(
+        &self,
+        scene: &ferese_panel::scene::Scene,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        if self.panel_presentation.borrow().as_ref() == Some(scene) {
+            return Ok(());
+        }
+        let regions: Vec<_> = scene
+            .damage
+            .iter()
+            .map(|r| [r.x as f32, r.y as f32, r.width as f32, r.height as f32, 0.])
+            .collect();
+        validate_region_counts(regions.len(), 0)?;
+        if scene.paint.len() > ferese_panel::scene::MAX_PRIMITIVES {
+            return Err("too many panel primitives".into());
+        }
+        let shapes: Vec<_> = scene
+            .packets()
+            .into_iter()
+            .flatten()
+            .flat_map(f32::to_ne_bytes)
+            .collect();
+        self.surface
+            .set_panel_presentation(encode_regions(&regions), shapes, scene.fusion, 1000);
+        self.connection.flush()?;
+        *self.panel_presentation.borrow_mut() = Some(scene.clone());
+        Ok(())
     }
 
     pub(super) fn set_presentation(

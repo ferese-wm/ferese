@@ -224,14 +224,25 @@ impl FereseShell {
                         cosmic::Action::App(Message::HoverWorkspace(id, workspace, target.clone(), false))
                     }),
                 }),
-            move |regions, opacities| {
+            move |regions, _opacities| {
+                let scene = ferese_panel::scene::Scene {
+                    paint: regions
+                        .iter()
+                        .filter_map(|r| {
+                            ferese_panel::scene::Primitive::from_packet([
+                                r[0], r[1], r[2], r[3], r[4], r[4], r[4], r[4], 0., 0.,
+                            ])
+                            .ok()
+                        })
+                        .collect(),
+                    damage: regions
+                        .iter()
+                        .map(|r| ferese_layout::Rect::new(r[0].into(), r[1].into(), r[2].into(), r[3].into()))
+                        .collect(),
+                    ..Default::default()
+                };
                 if let Some(effects) = effects
-                    && let Err(error) = effects.set_presentation(
-                        regions,
-                        1.,
-                        opacities.iter().copied(),
-                        super::ferese_surface_effects_v1::Role::Panel,
-                    )
+                    && let Err(error) = effects.set_panel_presentation(&scene)
                 {
                     eprintln!("ferese-shell: could not update bar material: {error}");
                 }

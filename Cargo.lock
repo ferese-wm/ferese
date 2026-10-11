@@ -1902,6 +1902,7 @@ dependencies = [
  "ferese-animation",
  "ferese-config",
  "ferese-ipc",
+ "ferese-layout",
  "ferese-panel",
  "ferese-protocols",
  "ferese-theme",
