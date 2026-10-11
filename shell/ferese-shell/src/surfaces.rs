@@ -86,8 +86,18 @@ impl FereseShell {
 
         let bar_surface_id = window::Id::unique();
         let wallpaper_surface_id = window::Id::unique();
-        let geometry = self.config.panels[0].resolved_geometry();
-        let panel_surface = self.config.panels[0].surface();
+        let runtime = super::panel_runtime::Runtime::new(&self.config.panels[0], &self.snapshot, name.as_deref());
+        let panel = runtime.panel(&self.config.panels[0]);
+        let geometry = panel.resolved_geometry();
+        let panel_surface = panel.surface();
+        let exclusive_zone = panel.exclusive_zone(output_bar_hidden(
+            &self.snapshot,
+            self.snapshot
+                .outputs
+                .iter()
+                .find(|output| Some(output.name.as_str()) == name.as_deref())
+                .map(|output| output.id),
+        ));
         let (edge_anchor, margin) = panel_placement(self.config.panels[0].edge, geometry.edge_margin, 0);
         let bar = BarMetrics::from(geometry);
         let wallpaper_output = output.clone();
@@ -101,6 +111,7 @@ impl FereseShell {
                 .map(|output| output.id),
         );
         self.outputs.push(OutputSurfaces {
+            runtime,
             output,
             name,
             bar: bar_surface_id,
@@ -134,7 +145,6 @@ impl FereseShell {
             },
             Some(Box::new(Self::view_wallpaper)),
         );
-        let exclusive_zone = self.config.panels[0].exclusive_zone(hidden);
         let bar_action = cosmic::surface::action::app_layer_shell::<Self>(
             |_| Default::default(),
             move |_| SctkLayerSurfaceSettings {
@@ -376,7 +386,7 @@ impl FereseShell {
 
     pub(super) fn attach_effects(&mut self, id: window::Id, surface: &wl_surface::WlSurface) {
         let hidden = self.bar_hidden(id);
-        let islands = self.config.panels[0].surface() == ferese_panel::PanelSurface::None;
+        let islands = self.panel_for_bar(id).surface() == ferese_panel::PanelSurface::None;
         let Some(entry) = self.outputs.iter_mut().find(|entry| entry.bar == id) else {
             return;
         };

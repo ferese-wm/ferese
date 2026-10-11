@@ -5,6 +5,7 @@ Set FERESE_TEST_BAR_LAYOUT=floating to also test island masks and live switching
 Uses release binaries by default. Requires a Wayland host, dbus-daemon and gdbus.
 Protocol traces contain only this test's shell traffic, never the host desktop.
 """
+import json
 import os
 from pathlib import Path
 from session_socket import ipc_environment, ipc_socket
@@ -273,6 +274,34 @@ class ShellMotionTest(unittest.TestCase):
                             wait_for(lambda: start_width() == expected_width)
 
                         print("Bar: live padding reductions updated the input regions", flush=True)
+                    if settings_binary := os.environ.get("FERESE_TEST_SETTINGS"):
+                        child_display = next(path for path in runtime.glob("wayland-*") if path.is_socket())
+                        settings_env = dict(ipc_environment(env), WAYLAND_DISPLAY=str(child_display), WINIT_UNIX_BACKEND="wayland", ICED_BACKEND="wgpu")
+                        settings_env.pop("WAYLAND_SOCKET", None)
+                        settings_env.pop("FERESE_SHELL_CONTROL_SOCKET", None)
+                        settings = subprocess.Popen([str(repo / settings_binary), "--page", "bar"], env=settings_env,
+                                                    start_new_session=True, stdout=log, stderr=log)
+                        children.append(settings)
+                        def windows():
+                            response = subprocess.run([str(ctl), "--json", "windows"], env=ipc_environment(env),
+                                                      text=True, capture_output=True, check=True, timeout=5)
+                            return json.loads(response.stdout)
+                        wait_for(lambda: any(window["mapped"] and window["app_id"] == "dev.ferese.Settings" for window in windows()))
+                        config_file.write_text('status { keybinding-guide #false; }\n' + panel_config("floating").replace('style "floating"', 'style "adaptive"'))
+                        subprocess.run([str(ctl), "reload-config"], env=ipc_environment(env), check=True, capture_output=True, timeout=5)
+                        wait_for(lambda: bar_region_count(bar) == 3)
+                        for command, count in [("toggle-maximized", 1), ("toggle-maximized", 3)]:
+                            subprocess.run([str(ctl), command], env=ipc_environment(env), check=True, capture_output=True, timeout=5)
+                            wait_for(lambda: bar_region_count(bar) == count)
+                        subprocess.run([str(ctl), "toggle-fullscreen"], env=ipc_environment(env), check=True, capture_output=True, timeout=5)
+                        wait_for(lambda: not bar_input_rectangles(bar))
+                        subprocess.run([str(ctl), "toggle-fullscreen"], env=ipc_environment(env), check=True, capture_output=True, timeout=5)
+                        wait_for(lambda: bar_input_rectangles(bar))
+                        settings.terminate()
+                        settings.wait(timeout=5)
+                        wait_for(lambda: not windows())
+                        print("Adaptive: maximization changed the real panel; fullscreen released input and restored it", flush=True)
+
                     saved = config_file.read_text()
                     config_file.write_text('panel main { surface "invalid-surface"; }\n')
                     rejected = subprocess.run([str(ctl), "reload-config"], env=ipc_environment(env),

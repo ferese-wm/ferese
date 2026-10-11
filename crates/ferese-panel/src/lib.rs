@@ -1,4 +1,5 @@
 //! Panel composition and allocation without rendering or platform dependencies.
+pub mod adaptive;
 pub mod panel;
 pub use panel::*;
 pub mod outline;

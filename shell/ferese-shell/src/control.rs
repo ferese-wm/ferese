@@ -57,6 +57,7 @@ pub(crate) struct WindowSnapshot {
     #[cfg_attr(not(test), expect(dead_code, reason = "The current bar does not display urgency."))]
     pub(crate) urgent: bool,
     pub(crate) fullscreen: bool,
+    pub(crate) maximized: bool,
     #[cfg_attr(
         not(test),
         expect(dead_code, reason = "The current bar does not display window placement.")
@@ -136,7 +137,7 @@ impl ShellControl {
         let connection = control_connection()?;
         let (globals, mut queue) = registry_queue_init::<ControlState>(&connection)?;
         let qh = queue.handle();
-        let manager = globals.bind::<FereseShellManagerV1, _, _>(&qh, 4..=6, ())?;
+        let manager = globals.bind::<FereseShellManagerV1, _, _>(&qh, 7..=7, ())?;
         let shell = manager.get_shell(&qh, ());
         let (sender, updates) = mpsc::channel();
         let wake = Wake(Arc::new(tokio::sync::Notify::new()));
@@ -380,6 +381,7 @@ impl Dispatch<FereseShellV1, ()> for ControlState {
                     focused: flags.contains(ferese_shell_v1::WindowState::Focused),
                     urgent: flags.contains(ferese_shell_v1::WindowState::Urgent),
                     fullscreen: flags.contains(ferese_shell_v1::WindowState::Fullscreen),
+                    maximized: flags.contains(ferese_shell_v1::WindowState::Maximized),
                     floating: flags.contains(ferese_shell_v1::WindowState::Floating),
                 });
             }
@@ -575,14 +577,15 @@ mod tests {
             wayland_client::WEnum::Unknown(_)
         ));
         let cases = [
-            (known.bits(), [true, true, true, true]),
-            (known.bits() | future, [true, true, true, true]),
-            (Flags::Focused.bits() | future, [true, false, false, false]),
-            (Flags::Urgent.bits() | future, [false, true, false, false]),
-            (Flags::Fullscreen.bits() | future, [false, false, true, false]),
-            (Flags::Floating.bits() | future, [false, false, false, true]),
-            (future, [false; 4]),
-            (0, [false; 4]),
+            (known.bits(), [true, true, true, true, false]),
+            (known.bits() | future, [true, true, true, true, false]),
+            (Flags::Focused.bits() | future, [true, false, false, false, false]),
+            (Flags::Urgent.bits() | future, [false, true, false, false, false]),
+            (Flags::Fullscreen.bits() | future, [false, false, true, false, false]),
+            (Flags::Floating.bits() | future, [false, false, false, true, false]),
+            (Flags::Maximized.bits() | future, [false, false, false, false, true]),
+            (future, [false; 5]),
+            (0, [false; 5]),
         ];
         dispatch_event(
             &control,
@@ -602,7 +605,13 @@ mod tests {
         let snapshot = control.poll().snapshot.unwrap();
         for (window, (_, expected)) in snapshot.windows.iter().zip(cases) {
             assert_eq!(
-                [window.focused, window.urgent, window.fullscreen, window.floating],
+                [
+                    window.focused,
+                    window.urgent,
+                    window.fullscreen,
+                    window.floating,
+                    window.maximized
+                ],
                 expected
             );
         }

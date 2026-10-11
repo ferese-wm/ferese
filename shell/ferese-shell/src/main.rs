@@ -16,6 +16,7 @@ mod notification_ui;
 mod notifications;
 mod panel;
 mod panel_layout;
+mod panel_runtime;
 mod recording;
 mod renderer;
 mod status;
@@ -181,6 +182,7 @@ struct FereseShell {
 }
 
 struct OutputSurfaces {
+    runtime: panel_runtime::Runtime,
     output: wl_output::WlOutput,
     name: Option<String>,
     bar: window::Id,
@@ -195,6 +197,7 @@ struct OutputSurfaces {
 
 #[derive(Clone, Debug)]
 enum Message {
+    AdaptiveDeadline(window::Id, u64),
     PanelSurfaceChanged(window::Id, Box<ferese_panel::scene::Scene>),
     PanelResolved(window::Id, panel_layout::Resolution),
     ThemeChanged(Box<ferese_ipc::theme::Snapshot>),
@@ -725,6 +728,7 @@ impl cosmic::Application for FereseShell {
                 Task::none()
             }
             Message::RecorderElapsed => Task::none(),
+            Message::AdaptiveDeadline(id, ticket) => self.adaptive_deadline(id, ticket),
             Message::ControlReady => {
                 let mut reload_task = Task::none();
                 if let Some(control) = &self.control {
@@ -747,7 +751,7 @@ impl cosmic::Application for FereseShell {
 
                     if let Some(snapshot) = poll.snapshot {
                         self.snapshot = snapshot;
-                        let mut tasks = vec![reload_task, self.update_workspace_ui()];
+                        let mut tasks = vec![reload_task, self.update_workspace_ui(), self.refresh_adaptive_panels()];
                         let mut visibility_changed = false;
 
                         for entry in &mut self.outputs {
@@ -765,7 +769,7 @@ impl cosmic::Application for FereseShell {
 
                             tasks.push(set_exclusive_zone(
                                 entry.bar,
-                                self.config.panels[0].exclusive_zone(hidden),
+                                entry.runtime.panel(&self.config.panels[0]).exclusive_zone(hidden),
                             ));
                             entry.hidden = hidden;
                             visibility_changed = true;
@@ -894,6 +898,13 @@ impl FereseShell {
         let geometry_changed = edge_changed || old_geometry != geometry;
         self.notifications.configure(config.notifications.clone());
         self.config = config;
+        if composition_changed || geometry_changed {
+            for entry in &mut self.outputs {
+                entry
+                    .runtime
+                    .reset(&self.config.panels[0], &self.snapshot, entry.name.as_deref());
+            }
+        }
         let workspace_task = self.update_workspace_ui();
         let mut tasks = vec![workspace_task];
 
@@ -920,19 +931,21 @@ impl FereseShell {
             tasks.push(cosmic::command::set_theme(theme.palette().native_theme()));
         }
 
-        for entry in self.outputs.iter().filter(|_| geometry_changed) {
+        for entry in self.outputs.iter().filter(|_| geometry_changed || composition_changed) {
+            let panel = entry.runtime.panel(&self.config.panels[0]);
+            let geometry = panel.resolved_geometry();
             let (anchor, _) = surfaces::panel_placement(self.config.panels[0].edge, geometry.edge_margin, 0);
             tasks.push(set_anchor(entry.bar, anchor | Anchor::LEFT | Anchor::RIGHT));
             tasks.push(set_size(entry.bar, None, Some(geometry.height.round() as u32)));
-            tasks.push(set_exclusive_zone(
-                entry.bar,
-                self.config.panels[0].exclusive_zone(entry.hidden),
-            ));
+            tasks.push(set_exclusive_zone(entry.bar, panel.exclusive_zone(entry.hidden)));
         }
 
         let bars: Vec<_> = self.outputs.iter().map(|entry| entry.bar).collect();
         for bar in bars {
-            tasks.push(self.update_panel_margin(bar, edge_changed || old_geometry.edge_margin != geometry.edge_margin));
+            tasks.push(self.update_panel_margin(
+                bar,
+                composition_changed || edge_changed || old_geometry.edge_margin != geometry.edge_margin,
+            ));
         }
         if geometry_changed {
             tasks.push(self.dismiss_workspace_tooltip());
@@ -945,7 +958,7 @@ impl FereseShell {
     }
 
     fn update_panel_margin(&mut self, bar: window::Id, force: bool) -> Task<Message> {
-        let geometry = self.config.panels[0].resolved_geometry();
+        let geometry = self.panel_for_bar(bar).resolved_geometry();
         let Some(entry) = self.outputs.iter_mut().find(|entry| entry.bar == bar) else {
             return Task::none();
         };
@@ -1017,6 +1030,7 @@ mod tests {
             overview_active: false,
             clock: String::new(),
             outputs: vec![OutputSurfaces {
+                runtime: panel_runtime::Runtime::new(&panel::Panel::default(), &ShellSnapshot::default(), None),
                 output,
                 name: Some("test".into()),
                 bar: window::Id::unique(),
@@ -1377,6 +1391,7 @@ mod tests {
                 focused: true,
                 urgent: false,
                 fullscreen: true,
+                maximized: false,
                 floating: false,
             }],
         }

@@ -41,7 +41,7 @@ impl FereseShell {
         if self.bar_hidden(id) {
             return container(text("")).width(Length::Fill).height(Length::Fill).into();
         }
-        let panel = &self.config.panels[0];
+        let panel = self.panel_for_bar(id);
         let mut shell_theme = self.config.theme.for_bar();
         shell_theme.bar_background[3] = (shell_theme.panel_opacity(panel.background_opacity) * 255.).round() as u8;
         let output = self.outputs.iter().find(|output| output.bar == id);
@@ -260,7 +260,7 @@ impl FereseShell {
         representation: Representation,
     ) -> (Element<'_, cosmic::Action<Message>>, bool) {
         let shell_theme = self.config.theme.for_bar();
-        let bar = BarMetrics::from(self.config.panels[0].resolved_geometry());
+        let bar = BarMetrics::from(self.panel_for_bar(id).resolved_geometry());
         let control_height = if islands {
             bar.group_item_height
         } else {
@@ -425,7 +425,7 @@ impl FereseShell {
         let Some(output) = self.outputs.iter().find(|output| output.bar == menu.anchor.parent) else {
             return rows;
         };
-        let panel = &self.config.panels[0];
+        let panel = self.panel_for_bar(output.bar);
         let Some(resolution) = &output.panel_resolution else {
             return rows;
         };
@@ -469,7 +469,7 @@ impl FereseShell {
     ) -> Element<'_, cosmic::Action<Message>> {
         let focused_output = self.output_for_bar(id);
         let shell_theme = self.config.theme.for_bar();
-        let bar = BarMetrics::from(self.config.panels[0].resolved_geometry());
+        let bar = BarMetrics::from(self.panel_for_bar(id).resolved_geometry());
         let mut workspace_buttons = row::with_capacity(self.snapshot.workspaces.len())
             .spacing(1)
             .align_y(cosmic::iced::Alignment::Center);

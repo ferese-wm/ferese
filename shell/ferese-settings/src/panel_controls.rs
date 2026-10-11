@@ -560,6 +560,7 @@ impl App {
             PanelStyle::Notch,
             PanelStyle::Flat,
             PanelStyle::Fused,
+            PanelStyle::Adaptive,
         ];
         let mut grid = widget::column([]).spacing(8);
         for pair in choices.chunks(2) {
@@ -636,6 +637,11 @@ impl App {
                 cards = cards.push(widget::Space::new().width(Length::Fill));
             }
             grid = grid.push(cards);
+        }
+        if selected == PanelStyle::Adaptive {
+            grid = grid.push(
+                self.note("Floats with ordinary windows, fills the edge when maximized, and hides in fullscreen."),
+            );
         }
         grid.into()
     }

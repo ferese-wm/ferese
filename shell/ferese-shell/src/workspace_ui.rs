@@ -502,6 +502,7 @@ mod tests {
             focused: false,
             urgent: false,
             fullscreen: false,
+            maximized: false,
             floating: false,
         });
     }
@@ -657,6 +658,7 @@ mod tests {
                 focused: false,
                 urgent: false,
                 fullscreen: false,
+                maximized: false,
                 floating: false,
             })
             .collect();

@@ -22,7 +22,14 @@ pub enum Style {
 
 impl Style {
     /// Styles with a complete shell surface contract.
-    pub const AVAILABLE: [Self; 5] = [Self::Floating, Self::Capsules, Self::Notch, Self::Flat, Self::Fused];
+    pub const AVAILABLE: [Self; 6] = [
+        Self::Floating,
+        Self::Capsules,
+        Self::Notch,
+        Self::Flat,
+        Self::Fused,
+        Self::Adaptive,
+    ];
 
     pub const ALL: [Self; 10] = [
         Self::Floating,

@@ -145,7 +145,12 @@ impl FereseShell {
             })
             .and_then(|output| output.size)
             .map_or(HISTORY_MAX_HEIGHT, |(_, height)| {
-                let geometry = self.config.panels[0].resolved_geometry();
+                let geometry = self
+                    .menu
+                    .as_ref()
+                    .map(|menu| self.panel_for_bar(menu.anchor.parent))
+                    .unwrap_or(&self.config.panels[0])
+                    .resolved_geometry();
                 (height as f32 - geometry.edge_margin as f32 - geometry.height - 8.0 - 12.0).max(1.0)
             })
             .min(HISTORY_MAX_HEIGHT)
@@ -236,9 +241,13 @@ impl FereseShell {
             .find(|entry| entry.output == output)
             .and_then(|entry| entry.size)
             .map_or(1080, |size| size.1);
-        let top = self.config.panels[0].resolved_geometry().height
-            + self.config.panels[0].resolved_geometry().edge_margin as f32
-            + 12.0;
+        let geometry = self
+            .outputs
+            .iter()
+            .find(|entry| entry.output == output)
+            .map(|entry| entry.runtime.panel(&self.config.panels[0]).resolved_geometry())
+            .unwrap_or_else(|| self.config.panels[0].resolved_geometry());
+        let top = geometry.height + geometry.edge_margin as f32 + 12.0;
         let height = desired_height.min((output_height as f32 - top - 12.0).max(100.0) as u32);
         if let Some(surface) = &mut self.notification_surface {
             if surface.height != height {

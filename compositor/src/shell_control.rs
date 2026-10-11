@@ -10,7 +10,7 @@ use crate::private_client::ClientCapabilities;
 use crate::state::ClientState;
 
 pub(crate) fn init_global(display: &DisplayHandle) {
-    display.create_global::<Ferese, FereseShellManagerV1, _>(6, ());
+    display.create_global::<Ferese, FereseShellManagerV1, _>(7, ());
 }
 
 pub(crate) fn config_chunks(source: &str) -> Vec<&str> {
@@ -445,6 +445,9 @@ impl Ferese {
         self.windows.window(id)?.toplevel()?;
         let mut state = ferese_shell_v1::WindowState::empty();
 
+        if record.maximized {
+            state |= ferese_shell_v1::WindowState::Maximized;
+        }
         if self.focused_window == Some(id) {
             state |= ferese_shell_v1::WindowState::Focused;
         }
