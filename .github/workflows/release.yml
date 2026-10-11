@@ -65,7 +65,7 @@ jobs:
           compression-level: 0
 
   fedora:
-    needs: [source, checks]
+    needs: source
     runs-on: ubuntu-24.04
     container: fedora:44
     steps:
@@ -91,7 +91,7 @@ jobs:
           compression-level: 0
 
   arch:
-    needs: [source, checks]
+    needs: source
     runs-on: ubuntu-24.04
     container: archlinux:base-devel
     steps:
