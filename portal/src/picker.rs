@@ -271,38 +271,36 @@ impl cosmic::Application for Picker {
         } else {
             &self.prompt.app
         };
-        let mut content = column([]).width(Length::Fill).height(Length::Fill).spacing(10).push(
-            row![
-                glyph(ferese_theme::icons::DISPLAY, 24),
-                column![
-                    self.text(if self.prompt.recording {
-                        "Record your screen"
-                    } else if self.prompt.window_capture {
-                        "Choose a window"
-                    } else {
-                        "Choose what to share"
-                    })
-                    .size(17),
-                    self.text(if self.prompt.recording {
-                        "Saved to your Videos folder".to_owned()
-                    } else {
-                        format!(
-                            "{} {app}",
-                            if self.prompt.window_capture {
-                                "Screenshot for"
-                            } else {
-                                "Share with"
-                            }
-                        )
-                    })
-                    .size(12),
-                ]
-                .spacing(2)
-                .width(Length::Fill),
+        let header = row![
+            glyph(ferese_theme::icons::DISPLAY, 24),
+            column![
+                self.text(if self.prompt.recording {
+                    "Record your screen"
+                } else if self.prompt.window_capture {
+                    "Choose a window"
+                } else {
+                    "Choose what to share"
+                })
+                .size(17),
+                self.text(if self.prompt.recording {
+                    "Saved to your Videos folder".to_owned()
+                } else {
+                    format!(
+                        "{} {app}",
+                        if self.prompt.window_capture {
+                            "Screenshot for"
+                        } else {
+                            "Share with"
+                        }
+                    )
+                })
+                .size(12),
             ]
-            .spacing(12)
-            .align_y(Alignment::Center),
-        );
+            .spacing(2)
+            .width(Length::Fill),
+        ]
+        .spacing(12)
+        .align_y(Alignment::Center);
         let mut sources = column([]).spacing(6);
         let mut previous_kind = None;
         for (index, source) in self.prompt.sources.iter().enumerate() {
@@ -343,7 +341,7 @@ impl cosmic::Application for Picker {
                     .on_press(Message::Select(index)),
             );
         }
-        content = content.push(scrollable(sources).height(Length::Fixed(self.prompt.source_list_height())));
+        let mut content = column![sources].width(Length::Fill).spacing(10);
         content = content.push(
             self.text(if self.prompt.recording {
                 "Choose a display, then record it in full or select a region."
@@ -424,14 +422,24 @@ impl cosmic::Application for Picker {
                 self.background.a,
             ))
             .on_press(Message::Cancel);
-        content = content
-            .push(cosmic::iced::widget::Space::new().height(Length::Fill))
-            .push(
-                row![cosmic::iced::widget::Space::new().width(Length::Fill), cancel, share]
-                    .spacing(10)
-                    .align_y(Alignment::Center),
-            );
-        container(content).padding(14).width(Length::Fill).into()
+        let footer = row![cosmic::iced::widget::Space::new().width(Length::Fill), cancel, share]
+            .spacing(10)
+            .align_y(Alignment::Center);
+        // Reserve space for the actions even when the compositor shrinks the
+        // dialog. The source list and options share the remaining scroll area.
+        container(
+            column![
+                header,
+                scrollable(content).height(Length::Fill).width(Length::Fill),
+                footer
+            ]
+            .spacing(10)
+            .height(Length::Fill),
+        )
+        .padding(14)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
     }
 }
 

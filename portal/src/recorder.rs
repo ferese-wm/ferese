@@ -627,6 +627,8 @@ mod tests {
     #[test]
     #[ignore = "requires an explicitly provided isolated PulseAudio test server"]
     fn encoder_captures_isolated_system_and_microphone_audio() {
+        // The isolated fixture plays 440 Hz on the default output and 660 Hz
+        // on the default microphone. Both tones must survive combined capture.
         let server = std::env::var("FERESE_TEST_RECORD_PULSE_SERVER").expect("isolated audio server required");
         assert_eq!(std::env::var("PULSE_SERVER").unwrap(), server);
         let socket = Path::new(server.strip_prefix("unix:").expect("explicit Unix socket required"));
@@ -654,6 +656,7 @@ mod tests {
                     gst::ElementFactory::make("audiotestsrc")
                         .property("is-live", true)
                         .property("freq", 440. + index as f64 * 220.)
+                        .property("volume", 0.2f64)
                         .build()
                         .unwrap()
                 })
@@ -691,7 +694,8 @@ mod tests {
         let decoder = gst::parse::launch(
             "filesrc name=input ! matroskademux name=demux \
              demux.video_0 ! queue ! vp8dec ! fakesink name=video \
-             demux.audio_0 ! queue ! opusdec ! audioconvert ! audio/x-raw,format=S16LE ! fakesink name=audio",
+             demux.audio_0 ! queue ! opusdec ! audioconvert ! \
+             audio/x-raw,format=S16LE,rate=48000,channels=1 ! fakesink name=audio",
         )
         .unwrap()
         .downcast::<gst::Pipeline>()
@@ -714,23 +718,18 @@ mod tests {
                 gst::PadProbeReturn::Ok
             },
         );
-        let samples = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let samples = Arc::new(Mutex::new(Vec::new()));
         let observed = samples.clone();
-        let audible = Arc::new(AtomicBool::new(false));
-        let heard = audible.clone();
         decoder.by_name("audio").unwrap().static_pad("sink").unwrap().add_probe(
             gst::PadProbeType::BUFFER,
             move |_, info| {
                 let buffer = info.buffer().unwrap();
-                observed.fetch_add(buffer.size(), Ordering::Relaxed);
                 let data = buffer.map_readable().unwrap();
-                if data
-                    .as_slice()
-                    .chunks_exact(2)
-                    .any(|sample| i16::from_le_bytes([sample[0], sample[1]]).unsigned_abs() > 100)
-                {
-                    heard.store(true, Ordering::Relaxed);
-                }
+                observed.lock().unwrap().extend(
+                    data.as_slice()
+                        .chunks_exact(2)
+                        .map(|sample| i16::from_le_bytes([sample[0], sample[1]])),
+                );
                 gst::PadProbeReturn::Ok
             },
         );
@@ -745,8 +744,58 @@ mod tests {
             "Saved recording did not decode: {result:?}"
         );
         assert_eq!(*geometry.lock().unwrap(), Some((201, 129)));
-        assert!(samples.load(Ordering::Relaxed) > 0, "No decoded audio samples");
-        assert!(audible.load(Ordering::Relaxed), "The saved audio is silent");
+        let samples = samples.lock().unwrap();
+        assert!(samples.len() >= 4800, "Less than 100 ms of decoded audio");
+        let frequencies = match selected_audio {
+            Some(Audio::System) => vec![440.],
+            Some(Audio::Microphone) => vec![660.],
+            Some(Audio::Both) => vec![440., 660.],
+            Some(Audio::Off) => unreachable!("These tests require audio"),
+            None => (0..audio_count).map(|index| 440. + index as f64 * 220.).collect(),
+        };
+        for frequency in frequencies {
+            let amplitude = tone_amplitude(&samples, frequency);
+            assert!(
+                amplitude > 0.05,
+                "Missing {frequency} Hz source in {selected_audio:?} recording: amplitude {amplitude:.4}"
+            );
+        }
+    }
+
+    fn tone_amplitude(samples: &[i16], frequency: f64) -> f64 {
+        // Analyze the middle half to avoid device startup and encoder padding.
+        // A Hann window limits leakage from the other tone and codec noise.
+        let samples = &samples[samples.len() / 4..samples.len() * 3 / 4];
+        let mut real = 0.;
+        let mut imaginary = 0.;
+        let mut weight = 0.;
+        for (index, sample) in samples.iter().enumerate() {
+            let window = 0.5 - 0.5 * (std::f64::consts::TAU * index as f64 / (samples.len() - 1) as f64).cos();
+            let angle = std::f64::consts::TAU * frequency * index as f64 / 48_000.;
+            let sample = *sample as f64 / i16::MAX as f64 * window;
+            real += sample * angle.cos();
+            imaginary += sample * angle.sin();
+            weight += window;
+        }
+        2. * real.hypot(imaginary) / weight
+    }
+
+    #[test]
+    fn frequency_check_rejects_a_mix_with_either_source_missing() {
+        let tone = |frequency: f64| {
+            (0..24_000)
+                .map(|index| {
+                    (0.2 * i16::MAX as f64 * (std::f64::consts::TAU * frequency * index as f64 / 48_000.).sin()) as i16
+                })
+                .collect::<Vec<_>>()
+        };
+        let system = tone(440.);
+        let microphone = tone(660.);
+        let both = system.iter().zip(&microphone).map(|(a, b)| a + b).collect::<Vec<_>>();
+        assert!(tone_amplitude(&both, 440.) > 0.05);
+        assert!(tone_amplitude(&both, 660.) > 0.05);
+        assert!(tone_amplitude(&microphone, 440.) < 0.01);
+        assert!(tone_amplitude(&system, 660.) < 0.01);
     }
 
     fn assert_video_decodes(path: &Path) {
