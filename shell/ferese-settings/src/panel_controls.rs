@@ -26,6 +26,14 @@ impl std::fmt::Display for CatalogItem {
         formatter.write_str(self.0.label())
     }
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct StyleChoice(ferese_panel::PanelStyle);
+impl std::fmt::Display for StyleChoice {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.0.label())
+    }
+}
+
 const CATALOG: [CatalogItem; 12] = [
     CatalogItem(ItemKind::Overview),
     CatalogItem(ItemKind::Workspaces {
@@ -132,12 +140,7 @@ impl App {
                 let appearance = widget::column([])
                     .spacing(16)
                     .push(self.panel_heading("Appearance", 15.))
-                    .push(
-                        widget::column([])
-                            .spacing(10)
-                            .push(self.label("Style", 13.))
-                            .push(self.panel_style_choices(preset.unwrap_or_default())),
-                    )
+                    .push(self.panel_style_choices(preset.unwrap_or_default()))
                     .push(self.panel_divider())
                     .push(self.panel_opacity_controls())
                     .push(self.panel_divider())
@@ -579,113 +582,36 @@ impl App {
     }
 
     fn panel_style_choices(&self, selected: ferese_panel::PanelStyle) -> Element<'static, Message> {
-        use cosmic::iced::{Alignment, Length};
-        use ferese_panel::{PanelStyle, scene::Parameters, shape::ZonePosition};
+        use cosmic::iced::Length;
+        use ferese_panel::PanelStyle;
         let palette = crate::visuals::Palette::from_resolved(&self.resolved.presented);
-        let choices = [
-            PanelStyle::Floating,
-            PanelStyle::Capsules,
-            PanelStyle::Notch,
-            PanelStyle::Flat,
-            PanelStyle::Fused,
-            PanelStyle::Adaptive,
-            PanelStyle::Morph,
-        ];
-        let mut grid = widget::column([]).spacing(8);
-        for pair in choices.chunks(2) {
-            let mut cards = widget::row([]).spacing(8);
-            for &style in pair {
-                let ids = [
-                    cosmic::iced::advanced::widget::Id::unique(),
-                    cosmic::iced::advanced::widget::Id::unique(),
-                    cosmic::iced::advanced::widget::Id::unique(),
-                    cosmic::iced::advanced::widget::Id::unique(),
-                ];
-                let island = |index: usize, width| {
-                    widget::container(widget::Space::new().width(width).height(16)).id(ids[index].clone())
-                };
-                let preview = cosmic::iced::widget::stack![
-                    widget::row![
-                        widget::row![island(0, 16), island(1, 18)].spacing(if style.connected() { 0. } else { 4. }),
-                        widget::Space::new().width(Length::Fill),
-                        island(3, 24)
-                    ]
-                    .height(16)
-                    .align_y(Alignment::Center),
-                    widget::container(island(2, 18)).center_x(Length::Fill).height(16),
-                ];
-                let preview: Element<'static, Message> = if style == PanelStyle::Morph {
-                    widget::container(preview).width(56).into()
-                } else {
-                    preview.into()
-                };
-                let preview = ferese_theme::panel_surface::frame(
-                    preview,
-                    ferese_theme::panel_surface::Options {
-                        parameters: Parameters {
-                            style,
-                            height: 16.,
-                            gap: 4.,
-                            fillet: 5.,
-                            ..Default::default()
-                        },
-                        bounds: None,
-                        groups: vec![
-                            (ids[0].clone(), ZonePosition::Start),
-                            (ids[1].clone(), ZonePosition::Start),
-                            (ids[2].clone(), ZonePosition::Center),
-                            (ids[3].clone(), ZonePosition::End),
-                        ],
-                        scale: self.render_scale,
-                        background: palette.muted.scale_alpha(0.65),
-                        border: cosmic::iced::Color::TRANSPARENT,
-                        divider: palette.muted.scale_alpha(0.4),
-                        native: false,
-                    },
-                    |_| {},
-                    None,
-                );
-                let label = widget::row![
-                    self.label(style.label(), 12.).width(Length::Fill),
-                    crate::visuals::action_icon(
-                        if selected == style { "M5 12l4 4 10-10" } else { "" },
-                        if selected == style {
-                            palette.text
-                        } else {
-                            cosmic::iced::Color::TRANSPARENT
-                        }
-                    )
-                ]
-                .align_y(Alignment::Center);
-                cards = cards.push(
-                    widget::button::custom(
-                        widget::column![label, widget::container(preview).height(20).center_x(Length::Fill)]
-                            .spacing(10),
-                    )
-                    .name(format!("Panel style: {}", style.label()))
-                    .padding(12)
-                    .width(Length::Fill)
-                    .class(crate::visuals::panel_button(palette, selected == style))
-                    .on_press(Message::PanelEdit(Action::ApplyPreset(style))),
-                );
-            }
-            if pair.len() == 1 {
-                cards = cards.push(widget::Space::new().width(Length::Fill));
-            }
-            grid = grid.push(cards);
-        }
-        if selected == PanelStyle::Adaptive {
-            grid = grid.push(
-                self.note("Floats with ordinary windows, fills the edge when maximized, and hides in fullscreen."),
-            );
-        }
-        if selected == PanelStyle::Morph {
-            grid =
-                grid.push(self.note(
-                    "A centered clock and activity hub. Click to expand music, calendar, alerts or panel controls.",
-                ));
-        }
-        grid.into()
+        let description = match selected {
+            PanelStyle::Floating => "Separate floating groups",
+            PanelStyle::Capsules => "Connected groups with rounded ends",
+            PanelStyle::Notch => "Attached to the screen edge",
+            PanelStyle::Flat => "A continuous edge-to-edge panel",
+            PanelStyle::Fused => "Groups blend where they meet",
+            PanelStyle::Adaptive => "Follows the active window state",
+            PanelStyle::Morph => "A clock hub with expandable controls",
+            _ => "",
+        };
+        self.panel_appearance_row(
+            "Style",
+            description,
+            crate::visuals::panel_select(
+                cosmic::iced::widget::pick_list(
+                    PanelStyle::AVAILABLE.map(StyleChoice).to_vec(),
+                    Some(StyleChoice(selected)),
+                    |style| Message::PanelEdit(Action::ApplyPreset(style.0)),
+                )
+                .font(self.font)
+                .text_size(12)
+                .padding([6, 10])
+                .width(Length::Fill),
+                palette,
+            )
+            .into(),
+        )
     }
 
     fn panel_editor(&self, panel: &Panel) -> Element<'static, Message> {
