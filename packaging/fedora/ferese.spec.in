@@ -8,7 +8,7 @@ Name:           ferese
 Version:        @VERSION@
 Release:        1%{?dist}
 Summary:        Scrolling Wayland desktop
-# Includes vendored Rust libraries, theme palettes and fonts. Full notices ship
+# Includes vendored Rust libraries and theme palettes. Full notices ship
 # under /usr/share/licenses/ferese, including per-dependency SPDX metadata.
 License:        MIT AND Apache-2.0 AND BSD-2-Clause AND BSD-3-Clause AND BSL-1.0 AND CC0-1.0 AND CDLA-Permissive-2.0 AND ISC AND MPL-2.0 AND Unicode-3.0 AND Unlicense AND Zlib AND OFL-1.1 AND (Apache-2.0 WITH LLVM-exception)
 URL:            https://github.com/ferese-wm/ferese
