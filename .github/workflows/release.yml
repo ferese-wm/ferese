@@ -64,7 +64,9 @@ jobs:
   fedora:
     needs: source
     runs-on: ubuntu-24.04
-    container: fedora:44
+    container:
+      image: fedora:44
+      options: --init
     steps:
       - name: Install RPM tooling
         run: dnf install -y rpm-build dnf5-plugins git findutils tar gzip
@@ -90,7 +92,9 @@ jobs:
   arch:
     needs: source
     runs-on: ubuntu-24.04
-    container: archlinux:base-devel
+    container:
+      image: archlinux:base-devel
+      options: --init
     steps:
       - name: Prepare Arch build user and dependencies
         run: |

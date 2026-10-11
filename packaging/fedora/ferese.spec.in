@@ -54,6 +54,8 @@ desktop-file-validate "%{buildroot}%{_datadir}/applications/dev.ferese.Settings.
 export CARGO_HOME="$PWD/cargo-home"
 export CARGO_PROFILE_RELEASE_DEBUG=0
 export TZ=UTC
+export XDG_RUNTIME_DIR="$(mktemp -d)"
+trap 'rm -r -- "$XDG_RUNTIME_DIR"' EXIT
 python3 -m unittest discover -s scripts/tests -p test_package.py
 dbus-run-session -- cargo test --release --frozen --offline --workspace
 
