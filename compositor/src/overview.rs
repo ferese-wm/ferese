@@ -1167,15 +1167,13 @@ mod tests {
     fn test_font() -> FontArc {
         let mut database = fontdb::Database::new();
         database.load_system_fonts();
-        let font = database
-            .faces()
-            .find_map(|face| {
-                database.with_face_data(face.id, |bytes, index| {
-                    FontVec::try_from_vec_and_index(bytes.to_vec(), index)
-                        .ok()
-                        .map(FontArc::new)
-                })?
-            });
+        let font = database.faces().find_map(|face| {
+            database.with_face_data(face.id, |bytes, index| {
+                FontVec::try_from_vec_and_index(bytes.to_vec(), index)
+                    .ok()
+                    .map(FontArc::new)
+            })?
+        });
         font.expect("overview rendering tests require a system font")
     }
 
