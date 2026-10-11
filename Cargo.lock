@@ -1832,6 +1832,7 @@ dependencies = [
 name = "ferese-panel"
 version = "0.1.0-beta"
 dependencies = [
+ "ferese-layout",
  "serde",
  "serde_json",
 ]
