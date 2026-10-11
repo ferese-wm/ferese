@@ -16,7 +16,7 @@ impl Audio {
             Self::Off => "Off",
             Self::System => "System sound",
             Self::Microphone => "Microphone",
-            Self::Both => "System + microphone",
+            Self::Both => "Both",
         }
     }
 }
