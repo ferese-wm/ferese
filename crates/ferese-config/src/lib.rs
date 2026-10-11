@@ -57,10 +57,12 @@ pub fn default_wallpaper() -> &'static str {
 pub fn default_wallpaper_for(appearance: theme::Appearance) -> &'static str {
     static LIGHT: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     static DARK: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
     let (slot, name) = match appearance {
         theme::Appearance::Light => (&LIGHT, "ferese-wallpaper-light.png"),
         theme::Appearance::Dark => (&DARK, "ferese-wallpaper-dark.png"),
     };
+
     slot.get_or_init(|| {
         let path = std::env::current_exe()
             .ok()
@@ -151,6 +153,7 @@ fn object(doc: &KdlDocument, parent: &str) -> Result<Map<String, Value>, Error> 
             // Retired widgets stay in the source for edits but have no runtime effect.
             continue;
         }
+
         let value = node_value(node, &key, parent)?;
         if is_records(&key, parent) {
             let records = result.entry(key).or_insert_with(|| Value::Array(Vec::new()));
@@ -216,6 +219,7 @@ fn node_value(node: &KdlNode, key: &str, parent: &str) -> Result<Value, Error> {
                 node.name()
             )));
         }
+
         let mut map = node.children().map(|d| object(d, key)).transpose()?.unwrap_or_default();
         for (name, entry) in props {
             insert(&mut map, name, scalar(entry.value())?)?;
@@ -226,6 +230,7 @@ fn node_value(node: &KdlNode, key: &str, parent: &str) -> Result<Value, Error> {
     if is_array(key, parent) {
         return Ok(Value::Array(args));
     }
+
     if args.len() != 1 {
         return Err(Error(format!("{} requires one value", node.name())));
     }
@@ -286,6 +291,7 @@ impl Document {
         {
             return self.unset(path);
         }
+
         let mut candidate = self.clone();
         if matches!(
             path,
@@ -298,11 +304,14 @@ impl Document {
         ) {
             candidate.migrate_theme_selection()?;
         }
+
         let parts = path.split('.').collect::<Vec<_>>();
         set_in(&mut candidate.doc, &parts, "", value)?;
         format_document(&mut candidate.doc);
+
         candidate.refresh()?;
         *self = candidate;
+
         Ok(())
     }
 
@@ -334,25 +343,31 @@ impl Document {
         if self.get("theme.mode").is_some() {
             return Ok(());
         }
+
         if self.get("theme.light").is_some() || self.get("theme.dark").is_some() {
             set_in(&mut self.doc, &["theme", "mode"], "", Value::String("dark".into()))?;
             return self.refresh();
         }
+
         let Some(index) = self.doc.nodes().iter().position(|node| node.name().value() == "theme") else {
             return Ok(());
         };
+
         if let Some(children) = self.doc.nodes_mut()[index].children_mut().as_mut() {
             let mut moved = Vec::new();
+
             for name in ["colors", "surface", "border", "focus-ring"] {
                 if let Some(index) = children.nodes().iter().position(|node| node.name().value() == name) {
                     moved.push(children.nodes_mut().remove(index));
                 }
             }
+
             if !moved.is_empty() {
                 let dark = section_mut(children, &["dark"], "theme")?;
                 dark.nodes_mut().extend(moved);
             }
         }
+
         set_in(&mut self.doc, &["theme", "mode"], "", Value::String("dark".into()))?;
         self.refresh()
     }
@@ -361,14 +376,17 @@ impl Document {
         if self.get(path).is_none() {
             return Ok(());
         }
+
         let mut candidate = self.clone();
         let (name, parents) = path.rsplit_once('.').map_or((path, ""), |(p, n)| (n, p));
+
         if unset_property(&mut candidate.doc, &path.split('.').collect::<Vec<_>>(), "")? {
             format_document(&mut candidate.doc);
             candidate.refresh()?;
             *self = candidate;
             return Ok(());
         }
+
         let doc = section_mut(
             &mut candidate.doc,
             &parents.split('.').filter(|s| !s.is_empty()).collect::<Vec<_>>(),
@@ -381,7 +399,9 @@ impl Document {
         {
             let node = doc.nodes_mut().remove(index);
             let mut comments = String::new();
+
             collect_comments(&node, &mut comments);
+
             if let Some(format) = doc.format_mut() {
                 format.trailing.push_str(&comments);
             } else {
@@ -391,9 +411,11 @@ impl Document {
                 });
             }
         }
+
         format_document(&mut candidate.doc);
         candidate.refresh()?;
         *self = candidate;
+
         Ok(())
     }
 
@@ -430,6 +452,7 @@ fn collect_comments(node: &KdlNode, output: &mut String) {
             output.push('\n');
         }
     };
+
     if let Some(format) = node.format() {
         keep(&format.leading);
         keep(&format.before_children);
@@ -437,17 +460,20 @@ fn collect_comments(node: &KdlNode, output: &mut String) {
         keep(&format.terminator);
         keep(&format.trailing);
     }
+
     for entry in node.entries() {
         if let Some(format) = entry.format() {
             keep(&format.leading);
             keep(&format.trailing);
         }
     }
+
     if let Some(children) = node.children() {
         if let Some(format) = children.format() {
             keep(&format.leading);
             keep(&format.trailing);
         }
+
         for child in children.nodes() {
             collect_comments(child, output);
         }
@@ -463,6 +489,7 @@ impl fmt::Display for Document {
 fn set_entry_value(entry: &mut KdlEntry, value: KdlValue) {
     let representation = value.to_string();
     entry.set_value(value);
+
     if let Some(format) = entry.format_mut() {
         format.value_repr = representation;
     }
@@ -477,7 +504,9 @@ fn collect_node_formats(doc: &KdlDocument, formats: &mut Vec<NodeFormat>) {
             .format()
             .map(|format| format.terminator.clone())
             .filter(|text| text.contains("//") || text.contains("/*"));
+
         formats.push((entries, terminator));
+
         if let Some(children) = node.children() {
             collect_node_formats(children, formats);
         }
@@ -492,6 +521,7 @@ fn restore_node_formats(doc: &mut KdlDocument, formats: &mut impl Iterator<Item 
                     entry.set_format(format);
                 }
             }
+
             if let Some(terminator) = terminator
                 && let Some(format) = node.format_mut()
             {
@@ -499,6 +529,7 @@ fn restore_node_formats(doc: &mut KdlDocument, formats: &mut impl Iterator<Item 
                 format.terminator = terminator;
             }
         }
+
         if let Some(children) = node.children_mut() {
             restore_node_formats(children, formats);
         }
