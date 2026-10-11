@@ -56,7 +56,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential pkg-config dbus-daemon libwayland-dev \
             libxkbcommon-dev xkb-data libinput-dev libudev-dev libseat-dev libgbm-dev \
-            python3-gi python3-pil xdg-desktop-portal libegl-dev libegl-mesa0 libgl1-mesa-dri mesa-vulkan-drivers libdrm-dev libfontconfig1-dev libfreetype-dev libexpat1-dev xauth \
+            python3-gi python3-pil libegl-dev libegl-mesa0 libgl1-mesa-dri mesa-vulkan-drivers libdrm-dev libfontconfig1-dev libfreetype-dev libexpat1-dev xauth \
             clang libclang-dev libpipewire-0.3-dev libspa-0.2-dev libglib2.0-dev libgstreamer1.0-dev libpam-modules
       - name: Create private test runtime directory
         run: install -d -m 0700 "$XDG_RUNTIME_DIR"
@@ -74,7 +74,15 @@ jobs:
         env:
           FERESE_TEST_BINARY: ${{ github.workspace }}/target/debug/ferese
         run: cargo +1.95.0 test --locked -p ferese-settings all_gui_controls_and_presets_pass_compositor_validation -- --ignored --nocapture
+      - name: Fetch pinned upstream portal contracts
+        uses: actions/checkout@v6
+        with:
+          repository: flatpak/xdg-desktop-portal
+          ref: 23a76c392170dbbd26230f85ef56c3a57e52b857 # 1.20.3
+          path: build/portal-contracts
       - name: Test installer, session recovery and private portal contracts
+        env:
+          FERESE_TEST_PORTAL_INTERFACES: ${{ github.workspace }}/build/portal-contracts/data
         run: python3 -m unittest discover -s scripts/tests -v
       - name: Test capture privacy, resize dependencies and cursor composition
         env:
