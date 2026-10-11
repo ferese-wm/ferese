@@ -595,6 +595,7 @@ impl App {
                             fillet: 5.,
                             ..Default::default()
                         },
+                        bounds: None,
                         groups: vec![
                             (ids[0].clone(), ZonePosition::Start),
                             (ids[1].clone(), ZonePosition::Start),

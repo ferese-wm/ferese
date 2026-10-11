@@ -8,6 +8,7 @@ use ferese_panel::shape::{PixelGrid, ZonePosition};
 
 pub struct Options {
     pub parameters: Parameters,
+    pub bounds: Option<ferese_layout::Rect>,
     pub groups: Vec<(widget::Id, ZonePosition)>,
     pub scale: f64,
     pub background: Color,
@@ -88,7 +89,9 @@ impl<M> Surface<'_, M> {
             .and_then(|grid| {
                 ferese_panel::scene::derive(
                     self.options.parameters,
-                    ferese_layout::Rect::new(0., 0., size.width.into(), size.height.into()),
+                    self.options
+                        .bounds
+                        .unwrap_or_else(|| ferese_layout::Rect::new(0., 0., size.width.into(), size.height.into())),
                     &collector.groups,
                     grid,
                 )
@@ -246,9 +249,13 @@ impl<M> Widget<M, Theme, cosmic::Renderer> for Surface<'_, M> {
                 })
             });
         }
-        self.content
-            .as_widget()
-            .draw(&tree.children[0], renderer, theme, style, layout, cursor, viewport);
+        // Keep content after cached vector geometry in the renderer's layer order.
+        // Parent-layer text can otherwise be batched underneath the background.
+        renderer.with_layer(*viewport, |renderer| {
+            self.content
+                .as_widget()
+                .draw(&tree.children[0], renderer, theme, style, layout, cursor, viewport);
+        });
     }
     fn mouse_interaction(
         &self,
@@ -293,6 +300,71 @@ mod tests {
     use cosmic::iced::advanced::renderer::Headless;
     use cosmic::iced::{Font, Pixels};
     use ferese_panel::shape::Style;
+
+    #[test]
+    fn the_surface_background_keeps_parent_layer_text_visible() {
+        let mut renderer = cosmic::iced::futures::executor::block_on(<cosmic::Renderer as Headless>::new(
+            Font::default(),
+            Pixels(14.),
+            Some("tiny-skia"),
+        ))
+        .unwrap();
+        for scale in [1., 1.25, 1.5] {
+            let content = cosmic::widget::container(
+                cosmic::widget::text("10:09").class(cosmic::theme::Text::Color(Color::WHITE)),
+            )
+            .center_x(150)
+            .center_y(34);
+            let mut view: Element<'_, ()> = frame(
+                content.into(),
+                Options {
+                    parameters: Parameters {
+                        style: Style::Morph,
+                        height: 34.,
+                        ..Default::default()
+                    },
+                    bounds: None,
+                    groups: Vec::new(),
+                    scale,
+                    background: Color::BLACK,
+                    border: Color::TRANSPARENT,
+                    divider: Color::TRANSPARENT,
+                    native: false,
+                },
+                |_| {},
+                None,
+            );
+            let mut tree = widget::Tree::new(&view);
+            let viewport = Rectangle::with_size(Size::new(150., 34.));
+            let node =
+                view.as_widget_mut()
+                    .layout(&mut tree, &renderer, &layout::Limits::new(Size::ZERO, viewport.size()));
+            renderer.reset(viewport);
+            view.as_widget().draw(
+                &tree,
+                &mut renderer,
+                &Theme::default(),
+                &renderer::Style {
+                    text_color: Color::WHITE,
+                    icon_color: Color::WHITE,
+                    scale_factor: scale,
+                },
+                Layout::new(&node),
+                mouse::Cursor::Unavailable,
+                &viewport,
+            );
+            let pixels = renderer.screenshot(
+                Size::new((150. * scale) as u32, (34. * scale).ceil() as u32),
+                scale as f32,
+                Color::BLACK,
+            );
+            let ink = pixels.chunks_exact(4).filter(|pixel| pixel[0] > 128).count();
+            assert!(
+                ink > 25,
+                "clock text was covered by the surface background at scale {scale}"
+            );
+        }
+    }
 
     #[test]
     fn shared_surface_draws_core_outlines_at_fractional_scales() {
@@ -343,6 +415,7 @@ mod tests {
                             fillet: 6.,
                             ..Default::default()
                         },
+                        bounds: None,
                         groups: vec![(a, ZonePosition::Start), (b, ZonePosition::Start)],
                         scale,
                         background: Color::WHITE,

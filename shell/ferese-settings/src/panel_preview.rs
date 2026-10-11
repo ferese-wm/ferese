@@ -220,6 +220,7 @@ impl App {
                 .into(),
             ferese_theme::panel_surface::Options {
                 parameters,
+                bounds: None,
                 groups,
                 scale: self.render_scale,
                 background: cosmic::iced::Color {
