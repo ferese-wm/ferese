@@ -148,7 +148,8 @@ fn object(doc: &KdlDocument, parent: &str) -> Result<Map<String, Value>, Error> 
     for node in doc.nodes() {
         let key = field(node.name().value(), parent);
         if parent.is_empty() && key == "desktop_widgets" {
-            return Err(Error("Unknown configuration section: desktop-widgets".into()));
+            // Retired widgets stay in the source for edits but have no runtime effect.
+            continue;
         }
         let value = node_value(node, &key, parent)?;
         if is_records(&key, parent) {
@@ -963,12 +964,16 @@ autostart "program" "two words" enabled=#false
     }
 
     #[test]
-    fn removed_desktop_widgets_are_rejected_without_affecting_authored_metadata() {
+    fn removed_desktop_widgets_are_ignored_without_affecting_authored_metadata() {
         for section in ["desktop-widgets", "desktop_widgets"] {
             let source = format!("{section} {{ clock {{ enabled #true; }}; }}");
-            let error = Document::parse(&source).unwrap_err().to_string();
-            assert!(error.contains("Unknown configuration section"), "{error}");
-            assert!(crate::from_str::<serde_json::Value>(&source).is_err());
+            let doc = Document::parse(&source).unwrap();
+            assert!(doc.get("desktop_widgets").is_none());
+            assert_eq!(doc.to_string(), source);
+            assert_eq!(
+                crate::from_str::<serde_json::Value>(&source).unwrap(),
+                serde_json::json!({})
+            );
         }
         assert!(Document::parse("panel main { metadata { desktop-widgets \"custom\"; }; }").is_ok());
     }
