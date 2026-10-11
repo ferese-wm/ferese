@@ -96,7 +96,7 @@ jobs:
         run: |
           pacman -Syu --noconfirm --needed rust cargo cmake clang pkgconf python git desktop-file-utils \
             wayland libxkbcommon libinput systemd seatd mesa vulkan-swrast libdrm fontconfig freetype2 expat dbus \
-            pam polkit foot pipewire wireplumber libpipewire gstreamer xdg-desktop-portal xdg-desktop-portal-gtk
+            pam polkit foot pipewire wireplumber libpipewire gstreamer xdg-desktop-portal xdg-desktop-portal-gtk xorg-xauth
           useradd --create-home builder
       - uses: actions/download-artifact@v8
         with:

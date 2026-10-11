@@ -9,7 +9,7 @@ depends=('wayland' 'libxkbcommon' 'libinput' 'systemd-libs' 'seatd' 'mesa' 'libd
          'fontconfig' 'freetype2' 'expat' 'dbus' 'python' 'bash' 'util-linux' 'systemd' 'pam' 'polkit' 'foot' 'pipewire'
          'wireplumber' 'libpipewire' 'gstreamer' 'xdg-desktop-portal' 'xdg-desktop-portal-gtk')
 makedepends=('cargo' 'cmake' 'clang' 'pkgconf' 'python' 'git' 'desktop-file-utils')
-checkdepends=('dbus' 'vulkan-swrast')
+checkdepends=('dbus' 'vulkan-swrast' 'xorg-xauth')
 optdepends=('brightnessctl: brightness controls' 'slurp: screenshot region selection'
             'satty: screenshot editing' 'wl-clipboard: screenshot clipboard'
             'gst-plugins-base: recording codecs' 'gst-plugins-good: recording codecs'
