@@ -15,6 +15,10 @@ Use release builds for performance and animation checks. Preview changes in a
 [nested session](installation.md#preview-and-logs) before testing hardware behavior.
 Keep another desktop available for direct-session recovery.
 
+Run CI manually when a change needs it. Ordinary pushes and pull requests do not
+start build runners, and website deployment is manual. Release tags and pull
+requests labeled `release` run the release checks and package builds.
+
 CI checks formatting, lints and tests across the whole workspace, including the
 shell, settings, portal and CLI. The Fedora workspace job also builds desktop
 binaries and runs installer, session-recovery and private portal-contract checks. The
@@ -73,6 +77,8 @@ Check real encoding and the private InputCapture transport:
 
 ```sh
 cargo test --locked -p xdg-desktop-portal-ferese --bin ferese-record encoder_finishes_a_real_webm -- --ignored
+cargo test --locked -p xdg-desktop-portal-ferese --bin ferese-record encoder_saves_cropped_video_and_mixed_audio_when_stopped -- --ignored
+cargo test --locked -p xdg-desktop-portal-ferese --bin ferese-record video_eos_finishes_live_audio_without_waiting_for_the_user -- --ignored
 cargo test --locked -p ferese input_capture::tests
 cargo test --locked -p xdg-desktop-portal-ferese eis::tests -- --ignored
 ```

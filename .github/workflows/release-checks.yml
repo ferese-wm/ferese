@@ -1,8 +1,5 @@
 name: Workspace release checks
 on:
-  pull_request:
-  push:
-    branches: [main]
   workflow_dispatch:
   workflow_call:
 permissions:
@@ -68,6 +65,11 @@ jobs:
           cargo test --locked -p ferese state::capture_privacy::tests -- --ignored
           cargo test --locked -p ferese backends::direct::capture::tests::capture_recomposes_cursor_without_touching_the_display_target -- --ignored
           cargo test --locked -p ferese winit::tests::capture_failure_restores_display_target_and_subsequent_frames_render -- --ignored
+      - name: Test recorder audio, cropping and stream revocation
+        run: |
+          cargo test --locked -p xdg-desktop-portal-ferese --bin ferese-record encoder_finishes_a_real_webm -- --ignored
+          cargo test --locked -p xdg-desktop-portal-ferese --bin ferese-record encoder_saves_cropped_video_and_mixed_audio_when_stopped -- --ignored
+          cargo test --locked -p xdg-desktop-portal-ferese --bin ferese-record video_eos_finishes_live_audio_without_waiting_for_the_user -- --ignored
       - name: Test native shell, visibility and resize behavior
         run: |
           install -m 0644 packaging/pam.d/ferese-lock.fedora /etc/pam.d/ferese-lock

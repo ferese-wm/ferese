@@ -1,38 +1,5 @@
 name: Workspace and native stability checks
 on:
-  pull_request:
-    paths:
-      - "compositor/**"
-      - "crates/**"
-      - "shell/**"
-      - "portal/**"
-      - "feresectl/**"
-      - "scripts/**"
-      - "packaging/**"
-      - "assets/**"
-      - "LICENSE"
-      - "rust-toolchain.toml"
-      - "rustfmt.toml"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - ".github/workflows/workspace-checks.yml"
-  push:
-    branches: [main]
-    paths:
-      - "compositor/**"
-      - "crates/**"
-      - "shell/**"
-      - "portal/**"
-      - "feresectl/**"
-      - "scripts/**"
-      - "packaging/**"
-      - "assets/**"
-      - "LICENSE"
-      - "rust-toolchain.toml"
-      - "rustfmt.toml"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - ".github/workflows/workspace-checks.yml"
   workflow_dispatch:
 permissions:
   contents: read
