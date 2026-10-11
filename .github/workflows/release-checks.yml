@@ -1,7 +1,10 @@
 name: Workspace release checks
 on:
-  release:
-    types: [published]
+  pull_request:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
 permissions:
   contents: read
 concurrency:
@@ -28,7 +31,7 @@ jobs:
             mesa-libgbm-devel mesa-libEGL-devel mesa-dri-drivers mesa-vulkan-drivers libdrm-devel fontconfig-devel \
             freetype-devel expat-devel dbus-daemon dbus-tools desktop-file-utils foot pam xorg-x11-xauth \
             clang clang-devel pipewire-devel pipewire wireplumber polkit polkit-libs libei \
-            xdg-desktop-portal xdg-desktop-portal-gtk \
+            xdg-desktop-portal xdg-desktop-portal-gtk weston \
             gstreamer1-devel gstreamer1-plugins-base gstreamer1-plugins-good pipewire-gstreamer
       - name: Create private test runtime directory
         run: install -d -m 0700 "$XDG_RUNTIME_DIR"
@@ -46,5 +49,67 @@ jobs:
         run: |
           cargo build --locked --workspace
           cargo test --locked --workspace --no-fail-fast
+      - name: Check release tag matches the workspace version
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          python3 - <<'PYTHON'
+          import os, tomllib
+          with open("Cargo.toml", "rb") as source:
+              version = tomllib.load(source)["workspace"]["package"]["version"]
+          assert os.environ["RELEASE_TAG"] == "v" + version, "Tag must match workspace.package.version"
+          PYTHON
+      - name: Test capture privacy and failure recovery
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          EGL_PLATFORM: surfaceless
+        run: |
+          cargo test --locked -p ferese state::capture_privacy::tests -- --ignored
+          cargo test --locked -p ferese backends::direct::capture::tests::capture_recomposes_cursor_without_touching_the_display_target -- --ignored
+          cargo test --locked -p ferese winit::tests::capture_failure_restores_display_target_and_subsequent_frames_render -- --ignored
+      - name: Test native shell, visibility and resize behavior
+        run: python3 scripts/ci/run-native-checks.py --suite desktop --log-dir native-logs
+      - name: Upload native test logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-test-logs
+          path: native-logs
+          if-no-files-found: ignore
       - name: Test installer, session recovery and private portal contracts
         run: python3 -m unittest discover -s scripts/tests -v
+
+  publish:
+    name: Publish validated tag
+    needs: workspace
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/github-script@v8
+        with:
+          script: |
+            const tag = context.ref.slice('refs/tags/'.length);
+            const repo = context.repo;
+            const commit = await github.rest.repos.getCommit({...repo, ref: tag});
+            if (commit.data.sha !== context.sha) {
+              throw new Error('Release tag moved after validation');
+            }
+            let release;
+            try {
+              release = (await github.rest.repos.getReleaseByTag({...repo, tag})).data;
+            } catch (error) {
+              if (error.status !== 404) throw error;
+            }
+            if (release?.draft) {
+              await github.rest.repos.updateRelease({...repo, release_id: release.id, draft: false});
+            } else if (!release) {
+              await github.rest.repos.createRelease({
+                ...repo, tag_name: tag, name: tag,
+                generate_release_notes: true, prerelease: tag.includes('-')
+              });
+            } else {
+              core.notice(`Release ${tag} is already published`);
+            }

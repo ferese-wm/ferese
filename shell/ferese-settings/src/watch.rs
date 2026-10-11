@@ -12,6 +12,13 @@ pub fn changes(path: &Path) -> impl Stream<Item = Message> + use<> {
     let path = path.to_path_buf();
 
     cosmic::iced::stream::channel(1, async move |mut output| {
+        let path = match std::path::absolute(path) {
+            Ok(path) => path,
+            Err(error) => {
+                let _ = output.send(Message::ExternalConfig(Err(error.to_string()))).await;
+                return;
+            }
+        };
         let (send, mut events) = tokio::sync::mpsc::channel(1);
         let target = path.clone();
         let watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
@@ -30,10 +37,16 @@ pub fn changes(path: &Path) -> impl Stream<Item = Message> + use<> {
             }
         };
 
-        if let Err(error) = watcher.watch(
-            path.parent().unwrap_or(std::path::Path::new(".")),
-            RecursiveMode::NonRecursive,
-        ) {
+        let directory = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
+        // On a fresh install the directory may not exist until the first save.
+        // Install its watch now so later saves do not leave this subscription dead.
+        let watch = std::fs::create_dir_all(directory)
+            .map_err(notify::Error::io)
+            .and_then(|()| watcher.watch(directory, RecursiveMode::NonRecursive));
+        if let Err(error) = watch {
             let _ = output.send(Message::ExternalConfig(Err(error.to_string()))).await;
             return;
         }
@@ -50,10 +63,13 @@ pub fn changes(path: &Path) -> impl Stream<Item = Message> + use<> {
             if events.recv().await.is_none() {
                 return;
             }
-            while tokio::time::timeout(Duration::from_millis(150), events.recv())
-                .await
-                .is_ok()
-            {}
+            loop {
+                match tokio::time::timeout(Duration::from_millis(150), events.recv()).await {
+                    Ok(Some(())) => (),
+                    Ok(None) => return,
+                    Err(_) => break,
+                }
+            }
         }
     })
 }
@@ -63,6 +79,32 @@ mod tests {
     use cosmic::iced::futures::{StreamExt, pin_mut};
 
     use super::*;
+
+    #[test]
+    fn watches_first_save_when_the_config_directory_does_not_exist() {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let directory = tempfile::tempdir_in(".").unwrap();
+                let path = directory.path().join("ferese/config.kdl");
+                let stream = changes(&path);
+                pin_mut!(stream);
+                assert!(matches!(stream.next().await, Some(Message::ExternalConfig(Ok(_)))));
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                let source = "animations { speed 0.75; }";
+                std::fs::write(&path, source).unwrap();
+                match tokio::time::timeout(Duration::from_secs(3), stream.next())
+                    .await
+                    .unwrap()
+                    .unwrap()
+                {
+                    Message::ExternalConfig(Ok(snapshot)) => assert_eq!(snapshot.source, source),
+                    _ => panic!("first save was not observed"),
+                }
+            });
+    }
 
     #[test]
     fn watches_atomic_replacement_and_retains_subscription_after_bad_kdl() {

@@ -1,5 +1,5 @@
 use std::fs;
-use std::io::{Read, Write};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use ferese_config::Document;
 use serde_json::Value;
 
-pub const LIMIT: usize = 60 * 1024;
+pub const LIMIT: usize = ferese_config::file::LIMIT;
 
 #[derive(Clone, Debug)]
 pub struct Snapshot {
@@ -200,34 +200,11 @@ fn save_with(
     validate: impl FnOnce(&Path) -> Result<(), String>,
 ) -> Result<Snapshot, String> {
     let snapshot = Snapshot::parse(desired.to_owned())?;
-    let unchanged = || -> Result<(), String> {
-        if Snapshot::read(path)?.source != expected {
-            return Err("Your config changed in another app. Reload settings before saving.".into());
-        }
-        Ok(())
-    };
-    unchanged()?;
-    let parent = path.parent().ok_or("Invalid configuration path.")?;
-    fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    let mut staged = tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
-    if let Ok(metadata) = fs::metadata(path) {
-        staged
-            .as_file()
-            .set_permissions(metadata.permissions())
-            .map_err(|e| e.to_string())?;
+    let file = ferese_config::file::ConfigFile::open(path)?;
+    if file.source() != expected {
+        return Err("Your config changed in another app. Reload settings before saving.".into());
     }
-    staged.write_all(desired.as_bytes()).map_err(|e| e.to_string())?;
-    staged.as_file().sync_all().map_err(|e| e.to_string())?;
-    validate(staged.path())?;
-    unchanged()?;
-    // Keep the last working source, including comments and unknown keys.
-    let mut backup = tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
-    backup.write_all(expected.as_bytes()).map_err(|e| e.to_string())?;
-    backup.as_file().sync_all().map_err(|e| e.to_string())?;
-    backup
-        .persist(path.with_extension("kdl.settings-backup"))
-        .map_err(|e| e.to_string())?;
-    staged.persist(path).map_err(|e| e.to_string())?;
+    file.replace(desired, Some(&path.with_extension("kdl.settings-backup")), validate)?;
     Ok(snapshot)
 }
 
@@ -291,6 +268,19 @@ window-rule app-id="mine" floating=#true
             .is_err()
         );
         assert_eq!(fs::read_to_string(&path).unwrap(), "// external edit\n");
+    }
+
+    #[test]
+    fn validation_holds_the_shared_writer_lock() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("config.kdl");
+        save_with(&path, "", "// settings change", |_| {
+            let error = ferese_config::file::ConfigFile::open(&path).err().unwrap();
+            assert!(error.contains("another app"));
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(fs::read_to_string(path).unwrap(), "// settings change");
     }
 
     #[test]

@@ -251,8 +251,15 @@ pub(crate) fn ipc_sync(command: &'static str, args: serde_json::Value) -> Result
         command: command.into(),
         args,
     };
-    ferese_ipc::write_frame(&mut stream, &request).map_err(|error| error.to_string())?;
-    let response: ferese_ipc::Response = ferese_ipc::read_frame(&mut stream).map_err(|error| error.to_string())?;
+    exchange(&mut stream, &request)
+}
+
+fn exchange(stream: &mut UnixStream, request: &ferese_ipc::Request) -> Result<serde_json::Value, String> {
+    ferese_ipc::write_frame(stream, request).map_err(|error| error.to_string())?;
+    let response: ferese_ipc::Response = ferese_ipc::read_frame(stream).map_err(|error| error.to_string())?;
+    if response.id != request.id || response.version != ferese_ipc::VERSION {
+        return Err("Unexpected compositor response ID or protocol version".into());
+    }
     if let Some(error) = response.error {
         return Err(error.message);
     }
@@ -751,12 +758,9 @@ fn edit_wallpaper(
 ) -> Result<(), String> {
     use ferese_config::theme::Appearance;
 
-    let source = match std::fs::read_to_string(path) {
-        Ok(source) => source,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(error) => return Err(error.to_string()),
-    };
-    let mut document = ferese_config::Document::parse(&source).map_err(|error| error.to_string())?;
+    let file = ferese_config::file::ConfigFile::open(path)?;
+    let source = file.source();
+    let mut document = ferese_config::Document::parse(source).map_err(|error| error.to_string())?;
     let directory = path.parent().ok_or("Invalid config path")?;
     let before = wallpaper_theme(&document, directory, appearance)?.tokens.background;
     let (variant, other) = match appearance {
@@ -797,16 +801,7 @@ fn edit_wallpaper(
         return Err("Wallpaper change did not resolve to the requested image".into());
     }
 
-    let parent = path.parent().ok_or("Invalid config path")?;
-    std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    let mut temp = tempfile::NamedTempFile::new_in(parent).map_err(|error| error.to_string())?;
-    std::io::Write::write_all(&mut temp, document.to_string().as_bytes()).map_err(|error| error.to_string())?;
-    temp.as_file().sync_all().map_err(|error| error.to_string())?;
-    if std::fs::read_to_string(path).unwrap_or_default() != source {
-        return Err("Configuration changed; please try again".into());
-    }
-    temp.persist(path).map_err(|error| error.to_string())?;
-    Ok(())
+    file.replace(&document.to_string(), None, |_| Ok(()))
 }
 
 #[cfg(test)]
@@ -826,6 +821,37 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn desktop_ipc_rejects_responses_for_another_request_or_protocol() {
+        for (version, id, accepted) in [
+            (ferese_ipc::VERSION, 7, true),
+            (999, 7, false),
+            (ferese_ipc::VERSION, 8, false),
+        ] {
+            let (mut client, mut server) = UnixStream::pair().unwrap();
+            client.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+            server.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+            let peer = std::thread::spawn(move || {
+                let _: ferese_ipc::Request = ferese_ipc::read_frame(&mut server).unwrap();
+                let mut response = ferese_ipc::Response::success(id, serde_json::json!({"path": "/tmp/capture.png"}));
+                response.version = version;
+                ferese_ipc::write_frame(&mut server, &response).unwrap();
+            });
+            let result = exchange(
+                &mut client,
+                &ferese_ipc::Request {
+                    version: ferese_ipc::VERSION,
+                    id: 7,
+                    kind: "command".into(),
+                    command: "screenshot".into(),
+                    args: serde_json::json!({}),
+                },
+            );
+            assert_eq!(result.is_ok(), accepted);
+            peer.join().unwrap();
+        }
+    }
 
     #[test]
     fn local_uris_preserve_special_characters_and_reject_network_paths() {
@@ -1001,6 +1027,23 @@ mod tests {
             wallpaper_theme(&after, dir.path(), Light).unwrap().tokens.background,
             wallpaper_theme(&before, dir.path(), Light).unwrap().tokens.background
         );
+    }
+
+    #[test]
+    fn wallpaper_save_respects_the_shared_writer_lock() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("config.kdl");
+        std::fs::write(&path, "// initial").unwrap();
+        let _settings_save = ferese_config::file::ConfigFile::open(&path).unwrap();
+        let error = edit_wallpaper(
+            &path,
+            Path::new("/wallpaper.png"),
+            "background",
+            ferese_config::theme::Appearance::Dark,
+        )
+        .unwrap_err();
+        assert!(error.contains("another app"));
+        assert_eq!(std::fs::read_to_string(path).unwrap(), "// initial");
     }
 
     #[test]

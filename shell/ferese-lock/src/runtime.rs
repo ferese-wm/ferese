@@ -1,7 +1,7 @@
 //! Startup handshake: the invoking command exits successfully only after the
 //! compositor's confirmation. The UI child remains alive for authentication.
 use std::io::{BufRead, BufReader};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
 use wayland_client::globals::{GlobalListContents, registry_queue_init};
@@ -43,6 +43,10 @@ pub fn daemonize() -> Result<(), String> {
         .stderr(Stdio::inherit())
         .spawn()
         .map_err(|e| format!("Starting locker {}: {e}", executable.display()))?;
+    confirm(&mut child)
+}
+
+fn confirm(child: &mut Child) -> Result<(), String> {
     let stdout = child.stdout.take().unwrap();
     let (tx, rx) = std::sync::mpsc::sync_channel(1);
     std::thread::spawn(move || {
@@ -53,44 +57,65 @@ pub fn daemonize() -> Result<(), String> {
     });
     match rx.recv_timeout(Duration::from_secs(15)) {
         Ok(true) => Ok(()),
-        Ok(false) => {
-            let _ = child.wait();
-            Err("locker exited without confirming protection".into())
-        }
+        Ok(false) => match child.try_wait() {
+            Ok(Some(_)) => Err("locker exited without confirming protection".into()),
+            _ => Err("locker did not confirm protection; the locker was left running".into()),
+        },
         Err(_) => Err("lock confirmation timed out; the locker was left running".into()),
     }
 }
 
-/// libcosmic revision 03d7dcb emits one synthetic Locked on the request and
-/// another from SCTK's actual protocol callback. Requiring both is essential:
-/// never release swayidle's delay inhibitor on the synthetic notification.
-/// Re-audit iced/winit's session_lock Action::Lock and SessionLockHandler when
-/// updating libcosmic. A missing callback times out closed, never signals ready.
+/// Readiness follows the compositor's protocol confirmation, never the request.
 #[derive(Default)]
 pub struct Confirmation {
-    events: u8,
+    confirmed: bool,
 }
 impl Confirmation {
-    pub fn observe(&mut self) -> bool {
-        self.events = self.events.saturating_add(1);
-        self.events == 2
+    pub fn observe(&mut self, event: &cosmic::iced::event::wayland::SessionLockEvent) -> bool {
+        if !matches!(event, cosmic::iced::event::wayland::SessionLockEvent::Locked) || self.confirmed {
+            return false;
+        }
+        self.confirmed = true;
+        true
     }
     pub fn confirmed(&self) -> bool {
-        self.events >= 2
+        self.confirmed
     }
 }
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
-    fn synthetic_event_does_not_confirm_a_lock() {
+    fn invalid_confirmation_returns_without_waiting_for_or_killing_the_locker() {
+        for message in ["unexpected", "FERESE_LOCKED"] {
+            let mut child = Command::new("sh")
+                .args(["-c", "printf '%s\\n' \"$1\"; exec sleep 3", "lock-fixture", message])
+                .stdout(Stdio::piped())
+                .spawn()
+                .unwrap();
+            let result = confirm(&mut child);
+            let running = child.try_wait().unwrap().is_none();
+            if running {
+                child.kill().unwrap();
+            }
+            child.wait().unwrap();
+            assert_eq!(result.is_ok(), message == "FERESE_LOCKED");
+            assert!(running, "confirmation must leave the locker running");
+        }
+    }
+
+    #[test]
+    fn only_compositor_confirmation_marks_the_lock_ready_once() {
+        use cosmic::iced::event::wayland::SessionLockEvent::{Finished, Locked, NotSupported, Requested};
         let mut c = Confirmation::default();
-        assert!(!c.confirmed());
-        assert!(!c.observe());
-        assert!(!c.confirmed());
-        assert!(c.observe());
+        for event in [Requested, Requested, Finished, NotSupported] {
+            assert!(!c.observe(&event));
+            assert!(!c.confirmed());
+        }
+        assert!(c.observe(&Locked));
         assert!(c.confirmed());
-        assert!(!c.observe());
+        assert!(!c.observe(&Locked));
     }
 }
 

@@ -90,6 +90,7 @@ mod tests {
                 ])
                 .env(CHILD, "1")
                 .env("XDG_RUNTIME_DIR", root.path())
+                .env_remove("FERESE_SOCKET")
                 .output()
                 .unwrap();
             assert!(
