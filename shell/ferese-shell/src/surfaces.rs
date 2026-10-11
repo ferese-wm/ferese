@@ -211,6 +211,9 @@ impl FereseShell {
     }
 
     pub(super) fn handle_event(&mut self, event: Event, id: window::Id) -> Task<Message> {
+        if matches!(event, Event::Mouse(cosmic::iced::mouse::Event::CursorEntered)) {
+            return self.hub_hover(id, true);
+        }
         if matches!(event, Event::Mouse(cosmic::iced::mouse::Event::CursorLeft)) {
             return Task::batch([self.dismiss_workspace_tooltip_for_bar(id), self.hub_hover(id, false)]);
         }

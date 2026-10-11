@@ -1,5 +1,3 @@
-//! ScreenCast portal backend. Only the portal frontend may create sessions;
-//! saved monitor consent is restored only through the frontend permission store.
 use std::collections::HashMap;
 use std::process::Stdio;
 use std::sync::Arc;

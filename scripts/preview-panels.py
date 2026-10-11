@@ -68,6 +68,8 @@ def main():
         config.mkdir(parents=True)
         # Keep the complete composition; an authored panel with no groups is empty.
         source = (REPO / "packaging/config.kdl").read_text().replace('style "flat"', 'style ' + json.dumps(args.style), 1)
+        if args.style == "morph":
+            source = source.replace('border #false', 'border #true', 1)
         source = re.sub(r'keybinding-guide\s+#true', 'keybinding-guide #false', source)
         config_path = config / "config.kdl"
         config_path.write_text(source)

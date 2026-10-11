@@ -52,6 +52,7 @@ struct FrameState {
     last_frame: Option<Instant>,
     completed: bool,
     pending: bool,
+    limits: Option<layout::Limits>,
 }
 
 impl FrameState {
@@ -111,6 +112,7 @@ impl<'a, M: 'a> Widget<M, Theme, cosmic::Renderer> for FrameDriven<'a, M> {
         renderer: &cosmic::Renderer,
         limits: &layout::Limits,
     ) -> layout::Node {
+        tree.state.downcast_mut::<FrameState>().limits = Some(*limits);
         self.content
             .as_widget_mut()
             .layout(&mut tree.children[0], renderer, limits)
@@ -142,6 +144,8 @@ impl<'a, M: 'a> Widget<M, Theme, cosmic::Renderer> for FrameDriven<'a, M> {
         } else {
             None
         };
+        let mut updated_geometry = false;
+        let mut fresh_layout = None;
         if let Some(at) = redraw {
             // Preserve focus and scroll state while sampling the current frame.
             let active = (self.active)(at);
@@ -152,26 +156,37 @@ impl<'a, M: 'a> Widget<M, Theme, cosmic::Renderer> for FrameDriven<'a, M> {
                 tree.children[0].diff(&mut self.content);
                 if self.geometry_changes {
                     self.content_active = (self.active)(at);
-                    shell.invalidate_layout();
-                    if (self.active)(at) {
-                        shell.request_redraw();
-                    }
-                    // The rebuilt child must receive its new layout before update.
-                    return;
+                    let limits = tree
+                        .state
+                        .downcast_ref::<FrameState>()
+                        .limits
+                        .expect("laid-out animation");
+                    fresh_layout = Some(
+                        self.content
+                            .as_widget_mut()
+                            .layout(&mut tree.children[0], renderer, &limits)
+                            .move_to(layout.position()),
+                    );
+                    updated_geometry = true;
                 }
             }
-            self.content_active = active;
+            self.content_active = (self.active)(at);
         }
+        // Iced revalidates the base layout without replaying the event. Publish
+        // the measured shape and run the child against this frame's layout now.
         self.content.as_widget_mut().update(
             &mut tree.children[0],
             event,
-            layout,
+            fresh_layout.as_ref().map_or(layout, Layout::new),
             cursor,
             renderer,
             clipboard,
             shell,
             viewport,
         );
+        if updated_geometry {
+            shell.invalidate_layout();
+        }
         if let Event::Window(cosmic::iced::window::Event::RedrawRequested(at)) = event {
             let active = (self.active)(*at);
             if active {

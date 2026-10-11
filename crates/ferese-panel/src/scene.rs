@@ -1,4 +1,3 @@
-//! Bounded shape composition shared by native materials, previews and input.
 use crate::shape::{AnchoredRadii, PixelGrid, RoundedSurface, Style, ZonePosition};
 use crate::{CornerRadii, Edge};
 use ferese_layout::Rect;

@@ -466,6 +466,7 @@ pub struct Ferese {
     pub(crate) theme_settings: ThemeSettings,
     pub(crate) panel_corner_radius: Option<ferese_panel::CornerRadii>,
     pub(crate) panel_background_opacity: Option<f32>,
+    pub(crate) panel_style: ferese_panel::PanelStyle,
     pub(crate) focus_effect: crate::config::FocusEffectSettings,
     animations_enabled: bool,
     animation_speed: f64,
@@ -559,6 +560,7 @@ pub struct RuntimeConfig {
     pub theme_settings: ThemeSettings,
     pub(crate) panel_corner_radius: Option<ferese_panel::CornerRadii>,
     pub(crate) panel_background_opacity: Option<f32>,
+    pub(crate) panel_style: ferese_panel::PanelStyle,
     pub focus_effect: crate::config::FocusEffectSettings,
     pub default_column_width: ColumnWidth,
     pub scrolling_focus_strategy: ViewportFocusStrategy,
@@ -746,6 +748,7 @@ impl Ferese {
             theme_settings: config.theme_settings,
             panel_corner_radius: config.panel_corner_radius,
             panel_background_opacity: config.panel_background_opacity,
+            panel_style: config.panel_style,
             focus_effect: config.focus_effect,
             animations_enabled: config.animations_enabled,
             animation_speed: config.animation_speed,
@@ -936,6 +939,7 @@ impl Ferese {
         self.theme_settings = config.theme_settings;
         self.panel_corner_radius = config.panel_corner_radius;
         self.panel_background_opacity = config.panel_background_opacity;
+        self.panel_style = config.panel_style;
         self.focus_effect = config.focus_effect;
         self.column_width_presets = config.column_width_presets;
         self.animations_enabled = config.animations_enabled;

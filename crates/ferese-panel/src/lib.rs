@@ -1,4 +1,3 @@
-//! Panel composition and allocation without rendering or platform dependencies.
 pub mod adaptive;
 pub mod morph;
 pub mod motion;

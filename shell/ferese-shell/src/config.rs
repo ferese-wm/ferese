@@ -549,10 +549,19 @@ pub(crate) fn config_path() -> Option<PathBuf> {
 mod tests {
     #[test]
     fn morph_profile_uses_the_current_strict_schema() {
-        let config =
-            parse_test_source("panel main { style morph; morph { idle-width 180; media-height 184; }; }\n").unwrap();
+        let config = parse_test_source(
+            "panel main { style morph; morph { idle-width 180; media-height 184; peek-on-hover #false; }; }\n",
+        )
+        .unwrap();
         assert_eq!(config.panels[0].morph.idle_width, 180.);
         assert_eq!(config.panels[0].morph.media_height, 184.);
+        assert!(!config.panels[0].morph.peek_on_hover);
+        assert!(
+            parse_test_source("panel main { style morph; }\n").unwrap().panels[0]
+                .morph
+                .peek_on_hover
+        );
+        assert!(parse_test_source("panel main { style morph; morph { peek-on-hover 1; }; }\n").is_err());
         assert!(parse_test_source("panel main { style morph; morph { idle-wdth 180; }; }\n").is_err());
         assert!(parse_test_source("panel main { style morph; morph { idle-width -1; }; }\n").is_err());
     }

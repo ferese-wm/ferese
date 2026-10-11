@@ -1,4 +1,3 @@
-//! Bounded, cancellable Wayland capture. No screenshots or external capture tools.
 use std::fs::File;
 use std::os::fd::{AsFd, AsRawFd, FromRawFd};
 use std::sync::Arc;

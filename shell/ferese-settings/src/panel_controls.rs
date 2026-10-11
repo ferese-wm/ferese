@@ -169,6 +169,26 @@ impl App {
                         .width(cosmic::iced::Length::Fill)
                         .class(crate::visuals::surface(palette.card, 14.)),
                 );
+                if preset == Some(ferese_panel::PanelStyle::Morph) {
+                    let enabled = self.draft.boolean("panels.0.morph.peek_on_hover", true);
+                    rows = rows.push(
+                        widget::container(
+                            self.panel_appearance_row(
+                                "Preview on hover",
+                                "Hover to see the current track or date. Click to open its panel.",
+                                widget::container(
+                                    ferese_theme::controls::switch(enabled, palette)
+                                        .name("Preview on hover")
+                                        .on_press(Message::PanelEdit(Action::SetPeekOnHover(!enabled))),
+                                )
+                                .align_right(cosmic::iced::Length::Fill)
+                                .into(),
+                            ),
+                        )
+                        .padding(16)
+                        .class(crate::visuals::surface(palette.card, 14.)),
+                    );
+                }
                 let pins = self.preview_panel().is_ok_and(|panel| {
                     panel.geometry != ferese_panel::GeometryIntent::default() || panel.corner_radius.is_some()
                 });

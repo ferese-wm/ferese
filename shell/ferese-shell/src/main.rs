@@ -199,10 +199,8 @@ struct OutputSurfaces {
 
 #[derive(Clone, Debug)]
 enum Message {
-    HubHover(window::Id, bool),
     HubOpen(window::Id, status_ui::Menu),
     HubClose(window::Id),
-    HubSettled(window::Id, Instant),
     HubToastExpired(window::Id, Instant),
     HubIgnore,
     PanelScale(window::Id, f32),
@@ -353,7 +351,11 @@ impl cosmic::Application for FereseShell {
                     .load(Ordering::Relaxed)
                     .then_some(Message::Event(event, id)),
                 Event::Keyboard(_)
-                | Event::Mouse(cosmic::iced::mouse::Event::ButtonPressed(_) | cosmic::iced::mouse::Event::CursorLeft)
+                | Event::Mouse(
+                    cosmic::iced::mouse::Event::ButtonPressed(_)
+                    | cosmic::iced::mouse::Event::CursorLeft
+                    | cosmic::iced::mouse::Event::CursorEntered,
+                )
                 | Event::Window(window::Event::Opened { .. } | window::Event::Closed | window::Event::Rescaled(_))
                 | Event::PlatformSpecific(PlatformSpecific::Wayland(
                     wayland::Event::Popup(..) | wayland::Event::Layer(..) | wayland::Event::Output(..),
@@ -372,10 +374,8 @@ impl cosmic::Application for FereseShell {
 
     fn update(&mut self, message: Self::Message) -> Task<Self::Message> {
         match message {
-            Message::HubHover(id, entered) => self.hub_hover(id, entered),
             Message::HubOpen(id, kind) => self.open_hub(id, kind),
             Message::HubClose(id) => self.close_hub(id),
-            Message::HubSettled(id, revision) => self.hub_settled(id, revision),
             Message::HubToastExpired(id, revision) => self.hub_toast_expired(id, revision),
             Message::HubIgnore => Task::none(),
             Message::PanelResolved(id, resolution) => {

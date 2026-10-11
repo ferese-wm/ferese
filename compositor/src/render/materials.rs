@@ -207,7 +207,7 @@ pub(super) fn material_element_with_role(
         capture_geometry,
         alpha,
     } = surface_geometry;
-    let material = resolve_surface_material(role, state.theme_settings, state.panel_background_opacity);
+    let mut material = resolve_surface_material(role, state.theme_settings, state.panel_background_opacity);
     let presentation_alpha = opacity * alpha;
     let mode = output.current_mode()?;
     let scale = output.current_scale().fractional_scale();
@@ -217,7 +217,15 @@ pub(super) fn material_element_with_role(
     } else {
         state.theme_settings.surface_base_color
     };
-    let [red, green, blue, _] = background.0;
+    let mut background = background.0;
+    if role == crate::effects::SemanticRole::Panel && state.panel_style == ferese_panel::PanelStyle::Morph {
+        background[3] = material.opacity;
+        background = ferese_panel::morph::surface_color(background);
+        if state.panel_background_opacity.is_none() {
+            material.opacity = background[3];
+        }
+    }
+    let [red, green, blue, _] = background;
     let logical_radii = if role == crate::effects::SemanticRole::Panel {
         state.panel_corner_radius
     } else {

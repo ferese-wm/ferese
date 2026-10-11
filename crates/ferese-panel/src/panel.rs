@@ -1,4 +1,3 @@
-//! Panel composition, independent of widgets, services, and Wayland surfaces.
 pub(crate) mod geometry;
 pub mod layout;
 pub use geometry::{GeometryIntent, PanelGeometry};

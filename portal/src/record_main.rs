@@ -1,5 +1,3 @@
-//! Native recording client. The portal retains capture authorization; encoding
-//! and file I/O live in this separate process, never in the shell render loop.
 mod recorder;
 mod recording;
 

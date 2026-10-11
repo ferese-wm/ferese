@@ -1,4 +1,3 @@
-//! Visible clock labels, driven by realtime boundaries and timezone changes.
 use std::ffi::{CString, OsString};
 use std::io;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};

@@ -1,4 +1,3 @@
-//! Watch the parent directory so atomic editor saves keep working.
 use std::path::Path;
 use std::time::Duration;
 

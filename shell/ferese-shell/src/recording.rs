@@ -1,5 +1,3 @@
-//! The bar only controls the recorder and consumes bounded status messages.
-//! Encoding and portal negotiation run in the separate ferese-record process.
 use std::io::{BufRead, BufReader, Read};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};

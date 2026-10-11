@@ -1,4 +1,3 @@
-//! Deterministic elapsed-time traces and the frozen pre-analytic oracle.
 use super::*;
 
 #[derive(Debug, Clone, Copy)]

@@ -1,4 +1,3 @@
-//! Local item dragging. Pointer motion changes only the drop hint; release saves once.
 use cosmic::iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, renderer, widget};
 use cosmic::iced::{Border, Color, Event, Length, Point, Rectangle, Size, Vector, keyboard};
 use cosmic::{Element, Renderer, Theme};

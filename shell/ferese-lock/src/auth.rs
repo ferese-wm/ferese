@@ -1,4 +1,3 @@
-//! PAM stays on a worker thread. No password is placed in argv, logs or IPC.
 use std::ffi::{CStr, CString, c_char, c_int, c_void};
 
 use zeroize::Zeroizing;

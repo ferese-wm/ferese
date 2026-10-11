@@ -69,9 +69,9 @@ pub struct Motion {
 
 impl Motion {
     pub fn new(geometry: Geometry) -> Result<Self, &'static str> {
-        Ok(Self {
-            values: geometry.validate()?.values().map(AnimatedValue::new),
-            spring: SpringConfig {
+        Self::with_spring(
+            geometry,
+            SpringConfig {
                 stiffness: 6400.,
                 damping: 160.,
                 position_tolerance: 0.05,
@@ -79,6 +79,44 @@ impl Motion {
                 crossing: CrossingPolicy::NoCrossing,
                 ..Default::default()
             },
+        )
+    }
+
+    pub(crate) fn with_spring(geometry: Geometry, spring: SpringConfig) -> Result<Self, &'static str> {
+        Ok(Self {
+            values: geometry.validate()?.values().map(AnimatedValue::new),
+            spring,
+        })
+    }
+
+    /// Largest future dimensions, including the momentum carried through a retarget.
+    pub(crate) fn maximum_size(&self) -> [f64; 2] {
+        let omega2 = self.spring.stiffness / self.spring.mass;
+        let decay = self.spring.damping / (2. * self.spring.mass);
+        [self.values[2], self.values[3]].map(|value| {
+            let displacement = value.current - value.target;
+            let mut maximum = value.current.max(value.target);
+            if omega2 > decay * decay {
+                let frequency = (omega2 - decay * decay).sqrt();
+                let sine = (value.velocity + decay * displacement) / frequency;
+                let derivative_sine = -(decay * value.velocity + omega2 * displacement) / frequency;
+                let first = (-value.velocity)
+                    .atan2(derivative_sine)
+                    .rem_euclid(std::f64::consts::PI);
+                // Extrema alternate; later peaks decay, so the first two suffice.
+                for phase in [first, first + std::f64::consts::PI] {
+                    let t = phase / frequency;
+                    let position =
+                        value.target + (-decay * t).exp() * (displacement * phase.cos() + sine * phase.sin());
+                    maximum = maximum.max(position);
+                }
+            } else {
+                // Total spring energy bounds displacement for any nonnegative damping.
+                maximum = maximum.max(
+                    value.target + (displacement * displacement + value.velocity * value.velocity / omega2).sqrt(),
+                );
+            }
+            maximum
         })
     }
 
@@ -173,6 +211,38 @@ mod tests {
         motion.advance(Duration::from_millis(16), false);
         assert!(!motion.advance(Duration::ZERO, true));
         assert_eq!(motion.current(), expanded());
+    }
+
+    #[test]
+    fn underdamped_reversals_preserve_velocity_and_fit_the_predicted_extrema() {
+        let mut motion = Motion::with_spring(
+            collapsed(),
+            SpringConfig {
+                stiffness: 300.,
+                damping: 2. * 0.7 * 300_f64.sqrt(),
+                crossing: CrossingPolicy::AllowOvershoot,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        for turn in 0..60 {
+            let before = motion.current();
+            let velocity = motion.values.map(|value| value.velocity);
+            motion
+                .retarget(if turn % 2 == 0 { expanded() } else { collapsed() })
+                .unwrap();
+            assert_eq!(motion.current(), before);
+            assert_eq!(motion.values.map(|value| value.velocity), velocity);
+            let bound = motion.maximum_size();
+            let mut prediction = motion.clone();
+            for _ in 0..200 {
+                prediction.advance(Duration::from_millis(8), false);
+                let geometry = prediction.current();
+                assert!(geometry.bounds.width <= bound[0] + 1e-9);
+                assert!(geometry.bounds.height <= bound[1] + 1e-9);
+            }
+            motion.advance(Duration::from_millis(16 + turn * 7), false);
+        }
     }
 
     #[test]

@@ -1,5 +1,3 @@
-//! PipeWire runs outside the compositor. Keep one frame, drop old frames under
-//! backpressure, and destroy the node when the portal's control pipe closes.
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};

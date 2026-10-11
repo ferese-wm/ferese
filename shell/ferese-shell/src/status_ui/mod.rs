@@ -170,23 +170,27 @@ impl FereseShell {
             opacity,
         };
         let mut rows = column::with_capacity(8).spacing(8).width(Length::Fill);
-        if matches!(
-            kind,
-            Menu::Network | Menu::Bluetooth | Menu::Battery | Menu::Audio | Menu::Recording | Menu::System
-        ) {
-            let heading = row![
-                text(kind.title())
-                    .size(13)
-                    .class(theme::Text::Color(style.primary))
-                    .width(Length::Fill)
-            ]
-            .align_y(cosmic::iced::Alignment::Center);
-            let heading = match kind {
-                Menu::Network => network::heading(self, heading, style),
-                Menu::Audio => audio::heading(self, heading, style),
-                _ => heading,
-            };
-            rows = rows.push(heading);
+        if kind == Menu::Network
+            && let Some(network) = &self.status.network
+        {
+            rows = rows.push(toggle_row(
+                "Wi-Fi",
+                network.enabled,
+                Action::Wifi(!network.enabled),
+                theme,
+                opacity,
+            ));
+        }
+        if kind == Menu::Audio
+            && let Some(audio) = &self.status.audio
+        {
+            rows = rows.push(toggle_row(
+                "Mute",
+                audio.muted,
+                Action::Mute(!audio.muted),
+                theme,
+                opacity,
+            ));
         }
         let mut rows = match kind {
             Menu::System => system::view(self, rows, style),

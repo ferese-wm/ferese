@@ -1,5 +1,3 @@
-//! Startup handshake: the invoking command exits successfully only after the
-//! compositor's confirmation. The UI child remains alive for authentication.
 use std::io::{BufRead, BufReader};
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;

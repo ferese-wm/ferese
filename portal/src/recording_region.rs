@@ -1,4 +1,3 @@
-//! Map an approved logical recording region into the upright video stream.
 use crate::recording::Crop;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -1,5 +1,3 @@
-//! Geometry shared by panel renderers. These rules do not expose styles in
-//! configuration until the corresponding rendering backend supports them.
 use crate::{CornerRadii, Edge};
 use ferese_layout::Rect;
 use serde::{Deserialize, Serialize};

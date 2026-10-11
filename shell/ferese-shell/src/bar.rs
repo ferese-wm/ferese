@@ -242,6 +242,14 @@ impl FereseShell {
                 cosmic::Action::App(Message::PanelSurfaceChanged(id, Box::new(scene.clone())))
             })),
         );
+        self.with_workspace_hover(id, content)
+    }
+
+    pub(super) fn with_workspace_hover<'a>(
+        &'a self,
+        id: window::Id,
+        content: Element<'a, cosmic::Action<Message>>,
+    ) -> Element<'a, cosmic::Action<Message>> {
         presentation::hover(
             content,
             self.workspace_ui
@@ -291,7 +299,7 @@ impl FereseShell {
                 1.0,
             ),
             ItemKind::Workspaces { style } => {
-                let workspaces = self.view_workspace_item(id, style, &item.id.0);
+                let workspaces = self.view_workspace_item(id, style, &item.id.0, 1.);
                 if let Some(width) = width {
                     cosmic::iced::widget::scrollable(workspaces)
                         .direction(cosmic::iced::widget::scrollable::Direction::Horizontal(
@@ -465,14 +473,19 @@ impl FereseShell {
         rows
     }
 
-    fn view_workspace_item(
+    pub(super) fn view_workspace_item(
         &self,
         id: window::Id,
         style: ferese_panel::WorkspaceStyle,
         instance: &str,
+        opacity: f32,
     ) -> Element<'_, cosmic::Action<Message>> {
         let focused_output = self.output_for_bar(id);
         let shell_theme = self.config.theme.for_bar();
+        let mut palette = shell_theme.palette();
+        palette.text.a *= opacity;
+        palette.muted.a *= opacity;
+        palette.accent.a *= opacity;
         let bar = BarMetrics::from(self.panel_for_bar(id).resolved_geometry());
         let mut workspace_buttons = row::with_capacity(self.snapshot.workspaces.len())
             .spacing(1)
@@ -505,12 +518,17 @@ impl FereseShell {
                     ferese_theme::workspaces::indicator(
                         style,
                         details.clone(),
-                        shell_theme.palette(),
+                        palette,
                         super::shell_font(),
                         bar.group_item_height,
                         transition.progress(now),
                         apps.iter()
-                            .map(|handle| cosmic::widget::icon::icon(handle.clone()).size(16).into())
+                            .map(|handle| {
+                                cosmic::widget::icon::icon(handle.clone())
+                                    .size(16)
+                                    .opacity(opacity)
+                                    .into()
+                            })
                             .collect(),
                     )
                 },
@@ -536,7 +554,7 @@ impl FereseShell {
                     shell_theme.text_primary
                 }),
                 false,
-                1.0,
+                opacity,
             );
             let target =
                 cosmic::iced::advanced::widget::Id::new(format!("workspace:{id:?}:{instance}:{}", workspace.id));

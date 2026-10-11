@@ -239,12 +239,15 @@ fn transport_sized<'a>(
         }
     };
     let mut control = button::custom(
-        container(accented_icon(
-            source,
-            (size - 20.) as u16,
-            foreground,
-            color_with_opacity(style.theme.accent, style.opacity),
-        ))
+        container(
+            accented_icon(
+                source,
+                (size - 20.) as u16,
+                cosmic::iced::Color { a: 1., ..foreground },
+                color(style.theme.accent),
+            )
+            .opacity(foreground.a),
+        )
         .center_x(size - 20.)
         .center_y(size - 20.),
     )
@@ -261,37 +264,43 @@ fn transport_sized<'a>(
 
 pub(super) fn hub<'a>(shell: &'a FereseShell, rows: MenuRows<'a>, style: MenuStyle) -> MenuRows<'a> {
     let Some(player) = &shell.media.snapshot.selected else {
-        return rows.push(text("No active player").size(13).class(theme::Text::Color(style.muted)));
+        return rows.push(text("No active player").size(14).class(theme::Text::Color(style.muted)));
     };
     let cover: Element<'_, cosmic::Action<Message>> =
         match shell.media.artwork.as_ref().and_then(|art| art.handle.as_ref()) {
             Some(handle) => image(handle.clone())
-                .width(40)
-                .height(40)
+                .width(64)
+                .height(64)
                 .opacity(style.opacity)
                 .content_fit(cosmic::iced::ContentFit::Cover)
-                .border_radius(8.)
+                .border_radius(10.)
                 .into(),
-            None => container(accented_icon(
-                icons::MEDIA,
-                24,
-                style.primary,
-                color_with_opacity(style.theme.accent, style.opacity),
-            ))
-            .center_x(40)
-            .center_y(40)
+            None => container(
+                accented_icon(
+                    icons::MEDIA,
+                    26,
+                    color(style.theme.text_primary),
+                    color(style.theme.accent),
+                )
+                .opacity(style.opacity),
+            )
+            .center_x(64)
+            .center_y(64)
+            .class(theme::Container::custom(move |_| {
+                ferese_theme::controls::surface_appearance(style.primary.scale_alpha(0.06), 10.)
+            }))
             .into(),
         };
-    let info = column![
+    let mut info = column![
         text(player.label())
-            .size(13)
+            .size(14)
             .class(theme::Text::Color(style.primary))
             .width(Length::Fill)
             .ellipsize(cosmic::iced::widget::text::Ellipsize::End(
                 cosmic::iced::advanced::text::EllipsizeHeightLimit::Lines(1)
             )),
         text(&player.artist)
-            .size(11)
+            .size(12)
             .class(theme::Text::Color(style.muted))
             .width(Length::Fill)
             .ellipsize(cosmic::iced::widget::text::Ellipsize::End(
@@ -300,7 +309,6 @@ pub(super) fn hub<'a>(shell: &'a FereseShell, rows: MenuRows<'a>, style: MenuSty
     ]
     .spacing(4)
     .width(Length::Fill);
-    let mut rows = rows.push(row![cover, info].spacing(10).align_y(Alignment::Center));
     if let (Some(length), Some(position)) = (
         player.length_us.filter(|length| *length > 0),
         player.position_at(shell.media.now_us),
@@ -308,7 +316,7 @@ pub(super) fn hub<'a>(shell: &'a FereseShell, rows: MenuRows<'a>, style: MenuSty
         let value =
             (shell.media.seeking.unwrap_or(position).min(length) as f64 / length as f64 * 10_000.).round() as u32;
         if player.can_control && player.can_seek && player.track_id.is_some() {
-            rows = rows.push(
+            info = info.push(
                 slider(0..=10_000_u32, value, move |value| {
                     cosmic::Action::App(Message::MediaSeek(seek_position(length, value)))
                 })
@@ -320,6 +328,7 @@ pub(super) fn hub<'a>(shell: &'a FereseShell, rows: MenuRows<'a>, style: MenuSty
             );
         }
     }
+    let rows = rows.push(row![cover, info].spacing(12).align_y(Alignment::Center));
     let playing = player.status == Playback::Playing;
     rows.push(
         container(

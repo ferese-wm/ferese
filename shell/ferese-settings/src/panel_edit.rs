@@ -34,6 +34,7 @@ pub(super) enum Action {
     SetRadius(String),
     SetCorner(usize, f32),
     SetBorder(bool),
+    SetPeekOnHover(bool),
     SetOpacity(f32),
     ClearOpacity,
     ClearRadius,
@@ -203,6 +204,7 @@ pub(super) fn plan(snapshot: &Snapshot, action: Action) -> Result<Vec<Edit>, Str
         }
         Action::SetOpacity(value) => vec![set("panels.0.background_opacity", value)],
         Action::ClearOpacity => vec![Edit::Unset("panels.0.background_opacity".into())],
+        Action::SetPeekOnHover(enabled) => vec![set("panels.0.morph.peek_on_hover", enabled)],
         Action::SetBorder(enabled) => vec![set("panels.0.border", enabled)],
         Action::SetCorner(index, value) => {
             let mut radii = panel.corner_radius.ok_or("Customize corners first.")?;
@@ -498,6 +500,23 @@ animations { speed 0.8; }
             zone,
             group: GroupId(group.into()),
         }
+    }
+
+    #[test]
+    fn hover_preference_round_trips_without_changing_shape_or_items() {
+        let mut snapshot = Snapshot::parse("panel main { style morph; morph { idle-width 180; }; }".into()).unwrap();
+        let before = serde_json::from_value::<Vec<Panel>>(snapshot.item("panels").unwrap().clone()).unwrap();
+        apply(&mut snapshot, Action::SetPeekOnHover(false));
+        let after = serde_json::from_value::<Vec<Panel>>(snapshot.item("panels").unwrap().clone()).unwrap();
+        assert!(!after[0].morph.peek_on_hover);
+        let mut expected = before.clone();
+        expected[0].morph.peek_on_hover = false;
+        assert_eq!(after, expected);
+        apply(&mut snapshot, Action::SetPeekOnHover(true));
+        assert_eq!(
+            serde_json::from_value::<Vec<Panel>>(snapshot.item("panels").unwrap().clone()).unwrap(),
+            before
+        );
     }
 
     #[test]

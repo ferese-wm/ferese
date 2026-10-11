@@ -6,10 +6,26 @@ use serde::{Deserialize, Serialize};
 use crate::motion::{Geometry, Motion};
 
 const FADE: Duration = Duration::from_millis(120);
+const CONTENT_DELAY: Duration = Duration::from_millis(130);
+
+/// A denser surface that retains the theme's hue and foreground contrast.
+pub fn surface_color(mut background: [f32; 4]) -> [f32; 4] {
+    let dark = background[0] * 0.2126 + background[1] * 0.7152 + background[2] * 0.0722 < 0.5;
+    for channel in &mut background[..3] {
+        *channel = if dark {
+            *channel * 0.72
+        } else {
+            *channel + (1. - *channel) * 0.04
+        };
+    }
+    background[3] = background[3].max(0.96);
+    background
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Profile {
+    pub peek_on_hover: bool,
     pub idle_width: f64,
     pub peek_width: f64,
     pub peek_height: f64,
@@ -26,6 +42,7 @@ pub struct Profile {
 impl Default for Profile {
     fn default() -> Self {
         Self {
+            peek_on_hover: true,
             idle_width: 150.,
             peek_width: 260.,
             peek_height: 44.,
@@ -35,7 +52,7 @@ impl Default for Profile {
             media_height: 170.,
             calendar_height: 230.,
             notifications_height: 176.,
-            controls_height: 156.,
+            controls_height: 248.,
             expanded_radius: 26.,
         }
     }
@@ -130,7 +147,7 @@ pub struct Hub {
     previous_opacity: f32,
     initial_opacity: f32,
     elapsed: Duration,
-    ready_at: Option<Duration>,
+    available: [f64; 2],
 }
 
 impl Hub {
@@ -144,13 +161,23 @@ impl Hub {
             profile,
             pins: None,
             height: collapsed_height,
-            motion: Motion::new(Geometry::rounded(Rect::new(0., 0., size[0], size[1]), size[1] / 2.))?,
+            motion: Motion::with_spring(
+                Geometry::rounded(Rect::new(0., 0., size[0], size[1]), size[1] / 2.),
+                ferese_animation::SpringConfig {
+                    stiffness: 300.,
+                    damping: 2. * 0.7 * 300_f64.sqrt(),
+                    position_tolerance: 0.05,
+                    velocity_tolerance: 0.05,
+                    crossing: ferese_animation::CrossingPolicy::AllowOvershoot,
+                    ..Default::default()
+                },
+            )?,
             mode: Mode::Idle,
             previous: Mode::Idle,
             previous_opacity: 0.,
             initial_opacity: 1.,
             elapsed: FADE,
-            ready_at: Some(Duration::ZERO),
+            available: [f64::MAX; 2],
         })
     }
 
@@ -177,6 +204,17 @@ impl Hub {
         self.mode
     }
 
+    pub fn retarget_peek(&mut self, width: f64, available: [f64; 2]) -> Result<(), &'static str> {
+        if !width.is_finite() || !(24. ..=1024.).contains(&width) {
+            return Err("peek width must be 24..1024");
+        }
+        let configured = self.profile.peek_width;
+        self.profile.peek_width = width;
+        let result = self.retarget(Mode::Peek, available);
+        self.profile.peek_width = configured;
+        result
+    }
+
     pub fn retarget(&mut self, mode: Mode, available: [f64; 2]) -> Result<(), &'static str> {
         if available.iter().any(|value| !value.is_finite() || *value <= 0.) {
             return Err("hub requires a finite positive available area");
@@ -192,9 +230,11 @@ impl Hub {
         let mut geometry = Geometry::rounded(Rect::new(0., 0., width, height), radius);
         geometry.radii = self.pins.unwrap_or(geometry.radii);
         if mode == self.mode && geometry == self.motion.target() {
+            self.available = available;
             return Ok(());
         }
         let sample = self.sample();
+        self.available = available;
         if sample.previous_opacity > sample.opacity {
             self.previous = sample.previous;
             self.previous_opacity = sample.previous_opacity;
@@ -214,7 +254,6 @@ impl Hub {
         }
         self.mode = mode;
         self.elapsed = Duration::ZERO;
-        self.ready_at = None;
         self.motion.retarget(geometry)
     }
 
@@ -224,18 +263,14 @@ impl Hub {
         self.previous_opacity = self.sample().opacity;
         self.initial_opacity = 0.;
         self.elapsed = Duration::ZERO;
-        self.ready_at = (!self.motion.active()).then_some(Duration::ZERO);
     }
 
     pub fn advance(&mut self, elapsed: Duration, reduced_motion: bool) -> bool {
         self.elapsed = self.elapsed.saturating_add(elapsed);
-        if !self.motion.advance(elapsed, reduced_motion) && self.ready_at.is_none() {
-            self.ready_at = Some(self.elapsed);
-        }
+        self.motion.advance(elapsed, reduced_motion);
         if reduced_motion {
             self.previous_opacity = 0.;
             self.initial_opacity = 1.;
-            self.ready_at = Some(Duration::ZERO);
         }
         self.active()
     }
@@ -246,16 +281,24 @@ impl Hub {
 
     pub fn sample(&self) -> Sample {
         let fade = |elapsed: Duration| (elapsed.as_secs_f32() / FADE.as_secs_f32()).clamp(0., 1.);
-        let opacity = self.ready_at.map_or(self.initial_opacity, |ready| {
-            self.initial_opacity + (1. - self.initial_opacity) * fade(self.elapsed.saturating_sub(ready))
-        });
+        let opacity =
+            self.initial_opacity + (1. - self.initial_opacity) * fade(self.elapsed.saturating_sub(CONTENT_DELAY));
+        let mut geometry = self.motion.current();
+        geometry.bounds.width = geometry.bounds.width.clamp(0., self.available[0]);
+        geometry.bounds.height = geometry.bounds.height.clamp(0., self.available[1]);
+        geometry.radii = geometry.radii.map(|radius| radius.max(0.));
         Sample {
-            geometry: self.motion.current(),
+            geometry,
             previous: self.previous,
             previous_opacity: self.previous_opacity * (1. - fade(self.elapsed)),
             current: self.mode,
             opacity,
         }
+    }
+
+    pub fn allocation_size(&self) -> [f64; 2] {
+        let maximum = self.motion.maximum_size();
+        std::array::from_fn(|i| maximum[i].min(self.available[i]))
     }
 
     pub fn target_size(&self) -> [f64; 2] {
@@ -280,25 +323,86 @@ mod tests {
         assert_eq!(hub.sample().opacity, 0.);
         assert_eq!(hub.sample().previous_opacity, 1.);
         hub.advance(Duration::from_millis(60), false);
-        assert!((hub.sample().opacity - 0.5).abs() < 0.001);
+        assert_eq!(hub.sample().opacity, 0.);
         assert!((hub.sample().previous_opacity - 0.5).abs() < 0.001);
+        hub.advance(Duration::from_millis(130), false);
+        assert!((hub.sample().opacity - 0.5).abs() < 0.001);
+        assert_eq!(hub.sample().previous_opacity, 0.);
         hub.advance(Duration::from_millis(60), false);
         assert!(!hub.active());
     }
 
     #[test]
-    fn expanded_content_waits_for_the_shape_and_idle_stops_scheduling() {
+    fn content_swap_uses_a_fixed_delay_instead_of_waiting_for_spring_settlement() {
         let mut hub = Hub::new(Profile::default(), 34.).unwrap();
         assert!(!hub.active());
         hub.retarget(Mode::Expanded(Content::Calendar), [800., 600.]).unwrap();
         assert_eq!(hub.target_size(), [340., 230.]);
-        hub.advance(Duration::from_millis(100), false);
+        hub.advance(Duration::from_millis(120), false);
         assert_eq!(hub.sample().opacity, 0.);
+        assert_eq!(hub.sample().previous_opacity, 0.);
+        hub.advance(Duration::from_millis(70), false);
+        assert!((hub.sample().opacity - 0.5).abs() < 0.001);
+        hub.advance(Duration::from_millis(60), false);
+        assert_eq!(hub.sample().opacity, 1.);
+        assert!(hub.active(), "content finishes while the shape is still settling");
         for _ in 0..50 {
             hub.advance(Duration::from_millis(16), false);
         }
         assert_eq!(hub.sample().opacity, 1.);
         assert_eq!(hub.sample().previous_opacity, 0.);
+        assert!(!hub.active());
+    }
+
+    #[test]
+    fn an_interrupted_content_delay_never_reveals_the_cancelled_panel() {
+        let mut hub = Hub::new(Profile::default(), 34.).unwrap();
+        hub.retarget(Mode::Expanded(Content::Media), [800., 600.]).unwrap();
+        hub.advance(Duration::from_millis(80), false);
+        hub.retarget(Mode::Expanded(Content::Calendar), [800., 600.]).unwrap();
+        for _ in 0..130 {
+            hub.advance(Duration::from_millis(8), false);
+            let sample = hub.sample();
+            assert_eq!(sample.current, Mode::Expanded(Content::Calendar));
+            assert_eq!(sample.previous, Mode::Idle);
+        }
+        assert!(!hub.active());
+        assert_eq!(hub.sample().opacity, 1.);
+    }
+
+    #[test]
+    fn spring_overshoots_then_settles_within_its_reserved_surface() {
+        let mut hub = Hub::new(Profile::default(), 34.).unwrap();
+        hub.retarget(Mode::Expanded(Content::Calendar), [800., 600.]).unwrap();
+        let allocation = hub.allocation_size();
+        let mut peak = 340_f64;
+        for _ in 0..200 {
+            hub.advance(Duration::from_millis(8), false);
+            let sample = hub.sample();
+            peak = peak.max(sample.geometry.bounds.width);
+            assert!(sample.geometry.bounds.width <= allocation[0] + 1e-9);
+            assert!(sample.geometry.bounds.height <= allocation[1] + 1e-9);
+        }
+        let overshoot = (peak - 340.) / (340. - 150.);
+        assert!((0.04..0.05).contains(&overshoot));
+        assert_eq!(hub.sample().geometry.bounds, Rect::new(0., 0., 340., 230.));
+        assert!(!hub.active());
+    }
+
+    #[test]
+    fn overshoot_is_clipped_to_small_outputs_and_reduced_motion_removes_all_fades() {
+        let mut hub = Hub::new(Profile::default(), 34.).unwrap();
+        hub.retarget(Mode::Expanded(Content::Calendar), [240., 180.]).unwrap();
+        for _ in 0..60 {
+            hub.advance(Duration::from_millis(8), false);
+            let bounds = hub.sample().geometry.bounds;
+            assert!(bounds.width <= 240. && bounds.height <= 180.);
+        }
+        hub.retarget(Mode::Idle, [240., 180.]).unwrap();
+        hub.advance(Duration::ZERO, true);
+        assert_eq!(hub.sample().geometry.bounds, Rect::new(0., 0., 150., 34.));
+        assert_eq!(hub.sample().previous_opacity, 0.);
+        assert_eq!(hub.sample().opacity, 1.);
         assert!(!hub.active());
     }
 

@@ -1,4 +1,3 @@
-//! Measured panel allocation. This module has no frame timing or service ownership.
 use super::{ItemId, OverflowPolicy, Panel, Representation, Zone};
 use std::collections::BTreeMap;
 

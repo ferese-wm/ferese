@@ -1,4 +1,3 @@
-//! Resolved theme values and pure color operations. No configuration or runtime access.
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 mod color;

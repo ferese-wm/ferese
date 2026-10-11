@@ -136,6 +136,11 @@ impl Config {
             bindings,
             window_rules: self.window_rules()?,
             theme_settings: self.theme_settings()?,
+            panel_style: self
+                .panels
+                .as_ref()
+                .and_then(|panels| panels.first())
+                .map_or(ferese_panel::PanelStyle::Flat, |panel| panel.style),
             panel_corner_radius: self
                 .panels
                 .as_ref()
