@@ -1,4 +1,4 @@
-name: Workspace tests and capture checks
+name: Workspace and native stability checks
 on:
   pull_request:
     paths:
@@ -56,14 +56,26 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential pkg-config dbus-daemon libwayland-dev \
             libxkbcommon-dev xkb-data libinput-dev libudev-dev libseat-dev libgbm-dev \
-            libegl-dev libegl-mesa0 libgl1-mesa-dri mesa-vulkan-drivers libdrm-dev libfontconfig1-dev libfreetype-dev libexpat1-dev xauth \
+            python3-gi python3-pil xdg-desktop-portal libegl-dev libegl-mesa0 libgl1-mesa-dri mesa-vulkan-drivers libdrm-dev libfontconfig1-dev libfreetype-dev libexpat1-dev xauth \
             clang libclang-dev libpipewire-0.3-dev libspa-0.2-dev libglib2.0-dev libgstreamer1.0-dev libpam-modules
       - name: Create private test runtime directory
         run: install -d -m 0700 "$XDG_RUNTIME_DIR"
       - name: Install Rust
-        run: rustup toolchain install 1.95.0 --profile minimal
+        run: rustup toolchain install 1.95.0 --profile minimal --component rustfmt --component clippy
+      - name: Check formatting and all workspace lints
+        run: |
+          cargo +1.95.0 fmt --all --check
+          cargo +1.95.0 clippy --locked --workspace --all-targets -- -D warnings
+      - name: Build desktop binaries
+        run: cargo +1.95.0 build --locked --workspace
       - name: Test every workspace package
         run: cargo +1.95.0 test --locked --workspace --no-fail-fast -- --nocapture
+      - name: Validate every Settings control against the compositor
+        env:
+          FERESE_TEST_BINARY: ${{ github.workspace }}/target/debug/ferese
+        run: cargo +1.95.0 test --locked -p ferese-settings all_gui_controls_and_presets_pass_compositor_validation -- --ignored --nocapture
+      - name: Test installer, session recovery and private portal contracts
+        run: python3 -m unittest discover -s scripts/tests -v
       - name: Test capture privacy, resize dependencies and cursor composition
         env:
           LIBGL_ALWAYS_SOFTWARE: "1"
@@ -72,3 +84,64 @@ jobs:
           cargo +1.95.0 test --locked -p ferese state::capture_privacy::tests -- --ignored --nocapture
           cargo +1.95.0 test --locked -p ferese backends::direct::capture::tests::capture_recomposes_cursor_without_touching_the_display_target -- --ignored --nocapture
           cargo +1.95.0 test --locked -p ferese winit::tests::capture_failure_restores_display_target_and_subsequent_frames_render -- --ignored --nocapture
+      - name: Share desktop binaries with native checks
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-check-binaries
+          path: |
+            target/debug/ferese
+            target/debug/ferese-shell
+            target/debug/feresectl
+          if-no-files-found: error
+          retention-days: 1
+  native:
+    name: Native panel and XWayland checks
+    needs: workspace
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      CARGO_BUILD_JOBS: "2"
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      LIBGL_ALWAYS_SOFTWARE: "1"
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install native test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y weston xwayland x11-utils xauth dbus-daemon \
+            build-essential pkg-config libxcb1-dev libxcb-cursor-dev libxkbcommon-dev \
+            libwayland-dev libgbm1 libseat1 libinput10 libpipewire-0.3-0t64 \
+            libegl1 libegl-mesa0 libgl1-mesa-dri fonts-dejavu-core
+      - name: Create the shared X11 socket directory
+        run: sudo install -d -m 1777 -o root -g root /tmp/.X11-unix
+      - uses: actions/download-artifact@v8
+        with:
+          name: native-check-binaries
+          path: target/debug
+      - name: Restore executable permissions
+        run: chmod +x target/debug/ferese target/debug/ferese-shell target/debug/feresectl
+      - name: Install pinned Rust
+        run: rustup toolchain install 1.95.0 --profile minimal
+      - name: Build pinned XWayland Satellite with readiness support
+        uses: actions/checkout@v6
+        with:
+          repository: Supreeeme/xwayland-satellite
+          ref: b83eab900644e4c7c77982ce3d44cb490f0c5e1d # v0.8.3
+          path: build/xwayland-satellite
+      - name: Build XWayland Satellite
+        run: cargo +1.95.0 build --manifest-path build/xwayland-satellite/Cargo.toml --locked --features systemd
+      - name: Run isolated native checks on a headless Wayland host
+        env:
+          FERESE_TEST_BINARY: target/debug/ferese
+          FERESE_TEST_SHELL: target/debug/ferese-shell
+          FERESE_TEST_CTL: target/debug/feresectl
+          FERESE_TEST_SATELLITE: build/xwayland-satellite/target/debug/xwayland-satellite
+        run: python3 scripts/ci/run-native-checks.py --log-dir build/native-check-logs
+      - name: Save native test logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-check-logs
+          path: build/native-check-logs
+          if-no-files-found: warn
+          retention-days: 7

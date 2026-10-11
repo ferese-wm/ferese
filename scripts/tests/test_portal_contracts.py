@@ -59,6 +59,7 @@ def private_bus_checks(standalone=False):
         env = dict(os.environ, XDG_CONFIG_HOME=directory, XDG_RUNTIME_DIR=str(runtime),
                    WAYLAND_DISPLAY="wayland-unavailable")
         env.pop("WAYLAND_SOCKET", None)
+        env.pop("FERESE_SOCKET", None)
         process = subprocess.Popen([str(BINARY)], env=env, stdout=log, stderr=log, start_new_session=True)
         try:
             deadline = time.monotonic() + 15
