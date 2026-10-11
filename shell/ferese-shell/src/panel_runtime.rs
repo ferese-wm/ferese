@@ -9,6 +9,7 @@ use ferese_panel::{Panel, PanelStyle};
 use crate::{FereseShell, Message, control::ShellSnapshot, output_bar_hidden};
 
 pub(super) struct Runtime {
+    pub(super) hub: Option<std::cell::RefCell<crate::panel_hub::Runtime>>,
     projection: Option<Panel>,
     adaptive: Adaptive,
     epoch: Instant,
@@ -21,6 +22,7 @@ impl Runtime {
         let adaptive = Adaptive::new(window_state(snapshot, name));
         let projection = project(panel, &adaptive);
         Self {
+            hub: crate::panel_hub::new(panel),
             projection,
             adaptive,
             epoch: Instant::now(),
@@ -37,6 +39,20 @@ impl Runtime {
         let ticket = self.ticket.wrapping_add(1);
         *self = Self::new(panel, snapshot, name);
         self.ticket = ticket;
+    }
+
+    pub(super) fn update_appearance(&mut self, panel: &Panel) {
+        if let Some(hub) = &self.hub {
+            hub.borrow_mut()
+                .hub
+                .pin_radii(panel.corner_radius.map(|r| r.0.map(f64::from)))
+                .expect("validated panel radii");
+        }
+        if let Some(projection) = &mut self.projection {
+            projection.border = panel.border;
+            projection.background_opacity = panel.background_opacity;
+            projection.corner_radius = panel.corner_radius;
+        }
     }
 
     fn observe(&mut self, panel: &Panel, snapshot: &ShellSnapshot, name: Option<&str>) -> bool {
@@ -198,6 +214,28 @@ mod tests {
         assert_eq!(runtime.panel(&panel).start, panel.start);
         assert_eq!(panel.style, PanelStyle::Adaptive);
         assert_eq!(panel.geometry.side_margins, Some(24));
+    }
+
+    #[test]
+    fn appearance_reload_updates_the_projection_without_resetting_adaptive_state() {
+        let mut panel = Panel::from_preset(PanelStyle::Adaptive);
+        let mut runtime = Runtime::new(&panel, &ShellSnapshot::default(), None);
+        runtime.adaptive.observe(
+            WindowState {
+                maximized: true,
+                fullscreen: false,
+            },
+            Duration::ZERO,
+        );
+        let pending = runtime.adaptive.deadline();
+        panel.background_opacity = Some(0.4);
+        panel.border = true;
+        panel.corner_radius = Some(ferese_panel::CornerRadii::uniform(12.));
+        runtime.update_appearance(&panel);
+        assert_eq!(runtime.panel(&panel).background_opacity, Some(0.4));
+        assert_eq!(runtime.panel(&panel).corner_radius, panel.corner_radius);
+        assert!(runtime.panel(&panel).border);
+        assert_eq!(runtime.adaptive.deadline(), pending);
     }
 
     #[test]

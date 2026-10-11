@@ -138,10 +138,17 @@ impl FereseShell {
     }
 
     pub fn media_tick_subscription(&self) -> Subscription<()> {
-        let visible = self
-            .menu
-            .as_ref()
-            .is_some_and(|menu| menu.kind == crate::status_ui::Menu::Media && !menu.motion.closing())
+        let hub_visible = self.outputs.iter().any(|entry| {
+            !entry.hidden
+                && entry.runtime.hub.as_ref().is_some_and(|hub| {
+                    hub.borrow().hub.mode() == ferese_panel::morph::Mode::Expanded(ferese_panel::morph::Content::Media)
+                })
+        });
+        let visible = (hub_visible
+            || self
+                .menu
+                .as_ref()
+                .is_some_and(|menu| menu.kind == crate::status_ui::Menu::Media && !menu.motion.closing()))
             && self.outputs.iter().any(|output| !output.hidden);
         let on_battery = self
             .status

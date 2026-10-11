@@ -42,6 +42,9 @@ impl FereseShell {
             return container(text("")).width(Length::Fill).height(Length::Fill).into();
         }
         let panel = self.panel_for_bar(id);
+        if panel.style == ferese_panel::PanelStyle::Morph {
+            return self.view_hub(id);
+        }
         let mut shell_theme = self.config.theme.for_bar();
         shell_theme.bar_background[3] = (shell_theme.panel_opacity(panel.background_opacity) * 255.).round() as u8;
         let output = self.outputs.iter().find(|output| output.bar == id);

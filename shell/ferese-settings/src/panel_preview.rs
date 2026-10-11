@@ -98,6 +98,40 @@ impl App {
     }
 
     fn panel_preview_frame(&self, panel: Panel) -> Element<'_, Message> {
+        if panel.style == ferese_panel::PanelStyle::Morph {
+            let palette = visuals::Palette::from_resolved(&self.resolved.presented);
+            let height = panel.resolved_geometry().height;
+            let hub = container(self.label("●   10:09", 13.))
+                .center_x(panel.morph.idle_width as f32)
+                .center_y(height);
+            let hub = ferese_theme::panel_surface::frame(
+                hub.into(),
+                ferese_theme::panel_surface::Options {
+                    parameters: panel.shape_parameters(),
+                    bounds: None,
+                    groups: Vec::new(),
+                    scale: self.render_scale,
+                    background: cosmic::iced::Color {
+                        a: if self.resolved.presented.accessibility.reduce_transparency {
+                            1.
+                        } else {
+                            panel.background_opacity.unwrap_or(palette.card.a)
+                        },
+                        ..palette.card
+                    },
+                    border: if panel.border {
+                        palette.muted.scale_alpha(0.4)
+                    } else {
+                        cosmic::iced::Color::TRANSPARENT
+                    },
+                    divider: cosmic::iced::Color::TRANSPARENT,
+                    native: false,
+                },
+                |_| {},
+                None,
+            );
+            return container(hub).center_x(Length::Fill).height(height).into();
+        }
         let mut samples = Vec::new();
         for zone in [&panel.center, &panel.start, &panel.end] {
             for item in zone

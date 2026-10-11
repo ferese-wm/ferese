@@ -1,5 +1,5 @@
 mod frames;
-pub(crate) use frames::frame_driven;
+pub(crate) use frames::{frame_driven, geometry_driven};
 
 use cosmic::iced::advanced::{Clipboard, Layout, Renderer as _, Shell, Widget, layout, mouse, renderer, widget};
 use cosmic::iced::{Event, Length, Rectangle, Size, Transformation, Vector};

@@ -548,6 +548,16 @@ pub(crate) fn config_path() -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn morph_profile_uses_the_current_strict_schema() {
+        let config =
+            parse_test_source("panel main { style morph; morph { idle-width 180; media-height 184; }; }\n").unwrap();
+        assert_eq!(config.panels[0].morph.idle_width, 180.);
+        assert_eq!(config.panels[0].morph.media_height, 184.);
+        assert!(parse_test_source("panel main { style morph; morph { idle-wdth 180; }; }\n").is_err());
+        assert!(parse_test_source("panel main { style morph; morph { idle-width -1; }; }\n").is_err());
+    }
+
+    #[test]
     fn removed_geometry_is_rejected_before_a_runtime_snapshot_can_hide_it() {
         for key in [
             "top-bar-radius",

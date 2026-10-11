@@ -46,6 +46,9 @@ impl FereseShell {
         {
             return Task::none();
         }
+        if self.panel_for_bar(anchor.parent).style == ferese_panel::PanelStyle::Morph {
+            return self.open_hub(anchor.parent, kind);
+        }
         if self
             .menu
             .as_ref()

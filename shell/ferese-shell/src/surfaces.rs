@@ -105,6 +105,12 @@ impl FereseShell {
         ));
         let (edge_anchor, margin) = panel_placement(self.config.panels[0].edge, geometry.edge_margin, 0);
         let bar = BarMetrics::from(geometry);
+        let hub_size = runtime.hub.as_ref().map(|hub| hub.borrow().allocation);
+        let bar_anchor = if hub_size.is_some() {
+            edge_anchor
+        } else {
+            edge_anchor | Anchor::LEFT | Anchor::RIGHT
+        };
         let wallpaper_output = output.clone();
         let bar_output = output.clone();
         let hidden = output_bar_hidden(
@@ -158,12 +164,14 @@ impl FereseShell {
                 input_zone: super::bar::input_region(panel_surface, hidden, &[]),
                 layer: Layer::Top,
                 keyboard_interactivity: KeyboardInteractivity::None,
-                anchor: edge_anchor | Anchor::LEFT | Anchor::RIGHT,
+                anchor: bar_anchor,
                 output: IcedOutput::Output(bar_output.clone()),
                 namespace: "ferese-shell-top-bar".to_owned(),
                 // Measure at full width before applying the requested side inset.
                 margin,
-                size: Some((None, Some(bar.height.round() as u32))),
+                size: Some(hub_size.map_or((None, Some(bar.height.round() as u32)), |size| {
+                    (Some(size[0]), Some(size[1]))
+                })),
                 size_limits: Limits::NONE,
                 // Reserve space toward the desktop; layer-shell accounts for the edge margin.
                 exclusive_zone,
@@ -204,7 +212,7 @@ impl FereseShell {
 
     pub(super) fn handle_event(&mut self, event: Event, id: window::Id) -> Task<Message> {
         if matches!(event, Event::Mouse(cosmic::iced::mouse::Event::CursorLeft)) {
-            return self.dismiss_workspace_tooltip_for_bar(id);
+            return Task::batch([self.dismiss_workspace_tooltip_for_bar(id), self.hub_hover(id, false)]);
         }
         if let Event::Mouse(cosmic::iced::mouse::Event::ButtonPressed(_)) = &event
             && let Some(modal) = &mut self.system_modal
@@ -253,6 +261,24 @@ impl FereseShell {
             ..
         }) = &event
             && !modifiers.control()
+            && self.hub_mode(id).is_some_and(|mode| mode.expanded())
+        {
+            use cosmic::iced::advanced::widget::{Id, operation};
+            let target = Id::new("ferese-panel-hub");
+            let focus: Box<dyn cosmic::iced::advanced::widget::Operation<cosmic::Action<Message>>> =
+                if modifiers.shift() {
+                    Box::new(operation::scoped(target, operation::focusable::focus_previous()))
+                } else {
+                    Box::new(operation::scoped(target, operation::focusable::focus_next()))
+                };
+            return cosmic::iced::advanced::widget::operate(focus);
+        }
+        if let Event::Keyboard(cosmic::iced::keyboard::Event::KeyPressed {
+            key: cosmic::iced::keyboard::Key::Named(cosmic::iced::keyboard::key::Named::Tab),
+            modifiers,
+            ..
+        }) = &event
+            && !modifiers.control()
             && self.system_modal.as_ref().is_some_and(|modal| modal.contains(id))
         {
             return self.navigate_system_modal(modifiers.shift());
@@ -264,6 +290,9 @@ impl FereseShell {
                 ..
             })
         ) {
+            if self.hub_mode(id).is_some() {
+                return self.close_hub(id);
+            }
             if self.system_modal.is_some() {
                 return self.close_system_modal();
             }
@@ -272,6 +301,15 @@ impl FereseShell {
             }
         }
 
+        if let Event::PlatformSpecific(PlatformSpecific::Wayland(wayland::Event::Layer(
+            wayland::LayerEvent::Unfocused,
+            _,
+            layer,
+        ))) = &event
+            && self.hub_mode(*layer).is_some_and(|mode| mode.expanded())
+        {
+            return self.close_hub(*layer);
+        }
         match event {
             Event::PlatformSpecific(PlatformSpecific::Wayland(wayland::Event::Output(event, output))) => {
                 self.output_event(event, output)

@@ -157,6 +157,18 @@ impl FereseShell {
     }
 
     pub(super) fn toggle_notification_history(&mut self) -> Task<Message> {
+        if let Some(parent) = self.active_bar()
+            && self.hub_mode(parent).is_some()
+        {
+            return if self.hub_mode(parent)
+                == Some(ferese_panel::morph::Mode::Expanded(
+                    ferese_panel::morph::Content::Notifications,
+                )) {
+                self.close_hub(parent)
+            } else {
+                self.open_hub(parent, status_ui::Menu::Notifications)
+            };
+        }
         if self.notifications.history_open {
             return self.close_menu();
         }
@@ -200,7 +212,10 @@ impl FereseShell {
             });
         }
         let count = self.notifications.popup_groups().len();
-        let wanted = self.notifications.ready && !self.notifications.history_open && count > 0;
+        let wanted = self.config.panels[0].style != ferese_panel::PanelStyle::Morph
+            && self.notifications.ready
+            && !self.notifications.history_open
+            && count > 0;
         let selected = self
             .outputs
             .iter()

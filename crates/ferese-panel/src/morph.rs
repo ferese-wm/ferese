@@ -218,6 +218,15 @@ impl Hub {
         self.motion.retarget(geometry)
     }
 
+    /// Replace content inside an already settled shape without restarting its springs.
+    pub fn replace_content(&mut self) {
+        self.previous = self.mode;
+        self.previous_opacity = self.sample().opacity;
+        self.initial_opacity = 0.;
+        self.elapsed = Duration::ZERO;
+        self.ready_at = (!self.motion.active()).then_some(Duration::ZERO);
+    }
+
     pub fn advance(&mut self, elapsed: Duration, reduced_motion: bool) -> bool {
         self.elapsed = self.elapsed.saturating_add(elapsed);
         if !self.motion.advance(elapsed, reduced_motion) && self.ready_at.is_none() {
@@ -258,6 +267,24 @@ impl Hub {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_content_swap_fades_without_restarting_the_geometry() {
+        let mut hub = Hub::new(Profile::default(), 34.).unwrap();
+        hub.retarget(Mode::Expanded(Content::Controls), [800., 600.]).unwrap();
+        hub.advance(Duration::from_secs(2), false);
+        hub.advance(Duration::from_secs(1), false);
+        let geometry = hub.sample().geometry;
+        hub.replace_content();
+        assert_eq!(hub.sample().geometry, geometry);
+        assert_eq!(hub.sample().opacity, 0.);
+        assert_eq!(hub.sample().previous_opacity, 1.);
+        hub.advance(Duration::from_millis(60), false);
+        assert!((hub.sample().opacity - 0.5).abs() < 0.001);
+        assert!((hub.sample().previous_opacity - 0.5).abs() < 0.001);
+        hub.advance(Duration::from_millis(60), false);
+        assert!(!hub.active());
+    }
 
     #[test]
     fn expanded_content_waits_for_the_shape_and_idle_stops_scheduling() {

@@ -3,6 +3,16 @@
 use super::*;
 use std::time::Instant;
 
+pub(crate) fn geometry_driven<'a, M: 'a>(
+    revision: Option<Instant>,
+    build: impl Fn(Instant) -> Element<'a, M> + 'a,
+    active: impl Fn(Instant) -> bool + 'a,
+    after_frame: impl Fn(Instant) + 'a,
+    completion: impl Fn(Instant) -> Option<M> + 'a,
+) -> Element<'a, M> {
+    driven(revision, build, active, after_frame, completion, true)
+}
+
 pub(crate) fn frame_driven<'a, M: 'a>(
     revision: Option<Instant>,
     build: impl Fn(Instant) -> Element<'a, M> + 'a,
@@ -10,11 +20,23 @@ pub(crate) fn frame_driven<'a, M: 'a>(
     after_frame: impl Fn(Instant) + 'a,
     completion: impl Fn(Instant) -> Option<M> + 'a,
 ) -> Element<'a, M> {
+    driven(revision, build, active, after_frame, completion, false)
+}
+
+fn driven<'a, M: 'a>(
+    revision: Option<Instant>,
+    build: impl Fn(Instant) -> Element<'a, M> + 'a,
+    active: impl Fn(Instant) -> bool + 'a,
+    after_frame: impl Fn(Instant) + 'a,
+    completion: impl Fn(Instant) -> Option<M> + 'a,
+    geometry_changes: bool,
+) -> Element<'a, M> {
     let now = Instant::now();
     let content = build(now);
     let content_active = active(now);
     Element::new(FrameDriven {
         content,
+        geometry_changes,
         content_active,
         revision,
         build: Box::new(build),
@@ -29,6 +51,7 @@ struct FrameState {
     revision: Option<Instant>,
     last_frame: Option<Instant>,
     completed: bool,
+    pending: bool,
 }
 
 impl FrameState {
@@ -42,6 +65,7 @@ impl FrameState {
             return false;
         }
         self.last_frame = Some(at);
+        self.pending = true;
         true
     }
 
@@ -57,6 +81,7 @@ impl FrameState {
 struct FrameDriven<'a, M> {
     content: Element<'a, M>,
     content_active: bool,
+    geometry_changes: bool,
     revision: Option<Instant>,
     build: Box<dyn Fn(Instant) -> Element<'a, M> + 'a>,
     active: Box<dyn Fn(Instant) -> bool + 'a>,
@@ -118,14 +143,22 @@ impl<'a, M: 'a> Widget<M, Theme, cosmic::Renderer> for FrameDriven<'a, M> {
             None
         };
         if let Some(at) = redraw {
-            // Only paint parameters depend on time. Preserve the child tree's
-            // focus/hover/scroll state and its existing layout.
+            // Preserve focus and scroll state while sampling the current frame.
             let active = (self.active)(at);
             // Include the final settled sample, then reuse the tree on hover
             // and other redraws. Application updates build fresh content.
             if active || self.content_active {
                 self.content = (self.build)(at);
                 tree.children[0].diff(&mut self.content);
+                if self.geometry_changes {
+                    self.content_active = (self.active)(at);
+                    shell.invalidate_layout();
+                    if (self.active)(at) {
+                        shell.request_redraw();
+                    }
+                    // The rebuilt child must receive its new layout before update.
+                    return;
+                }
             }
             self.content_active = active;
         }
@@ -144,12 +177,9 @@ impl<'a, M: 'a> Widget<M, Theme, cosmic::Renderer> for FrameDriven<'a, M> {
             if active {
                 shell.request_redraw();
             }
-            // Iced can replay the same redraw after a child invalidates layout.
-            // Keep its NextFrame request, but sample/publish only once.
-            if redraw.is_some() {
+            // Complete only after a valid layout, including the replay of this frame.
+            if std::mem::take(&mut tree.state.downcast_mut::<FrameState>().pending) {
                 (self.after_frame)(*at);
-            }
-            if redraw.is_some() {
                 let completion = (self.completion)(*at);
                 if tree.state.downcast_mut::<FrameState>().complete(completion.is_none())
                     && let Some(message) = completion

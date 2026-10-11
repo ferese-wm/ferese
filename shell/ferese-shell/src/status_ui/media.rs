@@ -212,6 +212,18 @@ fn transport<'a>(
     enabled: bool,
     style: MenuStyle,
 ) -> Element<'a, cosmic::Action<Message>> {
+    transport_sized(shell, source, label, action, enabled, style, 44.)
+}
+
+fn transport_sized<'a>(
+    shell: &'a FereseShell,
+    source: &'static [u8],
+    label: &'static str,
+    action: &str,
+    enabled: bool,
+    style: MenuStyle,
+    size: f32,
+) -> Element<'a, cosmic::Action<Message>> {
     let fill = (action == "play-pause").then_some(if enabled { style.primary } else { style.muted });
     let foreground = match fill {
         Some(fill) => cosmic::iced::Color {
@@ -227,19 +239,123 @@ fn transport<'a>(
         }
     };
     let mut control = button::custom(
-        container(accented_icon(source, 24, foreground, color(style.theme.accent)))
-            .center_x(24)
-            .center_y(24),
+        container(accented_icon(
+            source,
+            (size - 20.) as u16,
+            foreground,
+            color_with_opacity(style.theme.accent, style.opacity),
+        ))
+        .center_x(size - 20.)
+        .center_y(size - 20.),
     )
     .padding(10)
-    .width(44)
-    .height(44)
+    .width(size)
+    .height(size)
     .name(label);
     if enabled {
         control = control.on_press(cosmic::Action::App(Message::MediaAction(shell.media.action(action))));
     }
 
-    motion::circular_button(control, foreground, fill, style.opacity, 44.0)
+    motion::circular_button(control, foreground, fill, style.opacity, size)
+}
+
+pub(super) fn hub<'a>(shell: &'a FereseShell, rows: MenuRows<'a>, style: MenuStyle) -> MenuRows<'a> {
+    let Some(player) = &shell.media.snapshot.selected else {
+        return rows.push(text("No active player").size(13).class(theme::Text::Color(style.muted)));
+    };
+    let cover: Element<'_, cosmic::Action<Message>> =
+        match shell.media.artwork.as_ref().and_then(|art| art.handle.as_ref()) {
+            Some(handle) => image(handle.clone())
+                .width(40)
+                .height(40)
+                .opacity(style.opacity)
+                .content_fit(cosmic::iced::ContentFit::Cover)
+                .border_radius(8.)
+                .into(),
+            None => container(accented_icon(
+                icons::MEDIA,
+                24,
+                style.primary,
+                color_with_opacity(style.theme.accent, style.opacity),
+            ))
+            .center_x(40)
+            .center_y(40)
+            .into(),
+        };
+    let info = column![
+        text(player.label())
+            .size(13)
+            .class(theme::Text::Color(style.primary))
+            .width(Length::Fill)
+            .ellipsize(cosmic::iced::widget::text::Ellipsize::End(
+                cosmic::iced::advanced::text::EllipsizeHeightLimit::Lines(1)
+            )),
+        text(&player.artist)
+            .size(11)
+            .class(theme::Text::Color(style.muted))
+            .width(Length::Fill)
+            .ellipsize(cosmic::iced::widget::text::Ellipsize::End(
+                cosmic::iced::advanced::text::EllipsizeHeightLimit::Lines(1)
+            ))
+    ]
+    .spacing(4)
+    .width(Length::Fill);
+    let mut rows = rows.push(row![cover, info].spacing(10).align_y(Alignment::Center));
+    if let (Some(length), Some(position)) = (
+        player.length_us.filter(|length| *length > 0),
+        player.position_at(shell.media.now_us),
+    ) {
+        let value =
+            (shell.media.seeking.unwrap_or(position).min(length) as f64 / length as f64 * 10_000.).round() as u32;
+        if player.can_control && player.can_seek && player.track_id.is_some() {
+            rows = rows.push(
+                slider(0..=10_000_u32, value, move |value| {
+                    cosmic::Action::App(Message::MediaSeek(seek_position(length, value)))
+                })
+                .on_release(cosmic::Action::App(Message::MediaSeekCommit))
+                .height(16)
+                .handle_width(SEEK_THUMB_DIAMETER)
+                .class(seek_slider_style(style))
+                .width(Length::Fill),
+            );
+        }
+    }
+    let playing = player.status == Playback::Playing;
+    rows.push(
+        container(
+            row![
+                transport_sized(
+                    shell,
+                    icons::MEDIA_PREVIOUS,
+                    "Previous track",
+                    "previous",
+                    player.can_control && player.can_previous,
+                    style,
+                    36.
+                ),
+                transport_sized(
+                    shell,
+                    if playing { icons::MEDIA_PAUSE } else { icons::MEDIA_PLAY },
+                    if playing { "Pause" } else { "Play" },
+                    "play-pause",
+                    player.can_toggle(),
+                    style,
+                    36.
+                ),
+                transport_sized(
+                    shell,
+                    icons::MEDIA_NEXT,
+                    "Next track",
+                    "next",
+                    player.can_control && player.can_next,
+                    style,
+                    36.
+                ),
+            ]
+            .spacing(8),
+        )
+        .center_x(Length::Fill),
+    )
 }
 
 pub(super) fn view<'a>(shell: &'a FereseShell, mut rows: MenuRows<'a>, style: MenuStyle) -> MenuRows<'a> {

@@ -199,6 +199,14 @@ impl App {
                     })
                 {
                     let mut field = field;
+                    if preset == Some(ferese_panel::PanelStyle::Morph) {
+                        if matches!(field.path.rsplit('.').next(), Some("inner_padding" | "side_margins")) {
+                            continue;
+                        }
+                        if field.path.ends_with(".height") {
+                            field.label = "Collapsed height".into();
+                        }
+                    }
                     if let crate::schema::Kind::Range { default, .. } = &mut field.kind {
                         let geometry = serde_json::to_value(
                             self.preview_panel()
@@ -561,6 +569,7 @@ impl App {
             PanelStyle::Flat,
             PanelStyle::Fused,
             PanelStyle::Adaptive,
+            PanelStyle::Morph,
         ];
         let mut grid = widget::column([]).spacing(8);
         for pair in choices.chunks(2) {
@@ -585,8 +594,13 @@ impl App {
                     .align_y(Alignment::Center),
                     widget::container(island(2, 18)).center_x(Length::Fill).height(16),
                 ];
+                let preview: Element<'static, Message> = if style == PanelStyle::Morph {
+                    widget::container(preview).width(56).into()
+                } else {
+                    preview.into()
+                };
                 let preview = ferese_theme::panel_surface::frame(
-                    preview.into(),
+                    preview,
                     ferese_theme::panel_surface::Options {
                         parameters: Parameters {
                             style,
@@ -625,7 +639,8 @@ impl App {
                 .align_y(Alignment::Center);
                 cards = cards.push(
                     widget::button::custom(
-                        widget::column![label, widget::container(preview).height(20).width(Length::Fill)].spacing(10),
+                        widget::column![label, widget::container(preview).height(20).center_x(Length::Fill)]
+                            .spacing(10),
                     )
                     .name(format!("Panel style: {}", style.label()))
                     .padding(12)
@@ -643,6 +658,12 @@ impl App {
             grid = grid.push(
                 self.note("Floats with ordinary windows, fills the edge when maximized, and hides in fullscreen."),
             );
+        }
+        if selected == PanelStyle::Morph {
+            grid =
+                grid.push(self.note(
+                    "A centered clock and activity hub. Click to expand music, calendar, alerts or panel controls.",
+                ));
         }
         grid.into()
     }

@@ -8,7 +8,7 @@ use ferese_panel::shape::{PixelGrid, ZonePosition};
 
 pub struct Options {
     pub parameters: Parameters,
-    pub bounds: Option<ferese_layout::Rect>,
+    pub bounds: Option<widget::Id>,
     pub groups: Vec<(widget::Id, ZonePosition)>,
     pub scale: f64,
     pub background: Color,
@@ -53,6 +53,8 @@ struct Collect<'a> {
     targets: &'a [(widget::Id, ZonePosition)],
     origin: Point,
     groups: Vec<GroupBounds>,
+    bounds_id: Option<&'a widget::Id>,
+    bounds: Option<ferese_layout::Rect>,
 }
 
 impl widget::Operation for Collect<'_> {
@@ -60,6 +62,14 @@ impl widget::Operation for Collect<'_> {
         children(self);
     }
     fn container(&mut self, id: Option<&widget::Id>, bounds: Rectangle) {
+        if self.bounds_id.is_some() && id == self.bounds_id {
+            self.bounds = Some(ferese_layout::Rect::new(
+                (bounds.x - self.origin.x).into(),
+                (bounds.y - self.origin.y).into(),
+                bounds.width.into(),
+                bounds.height.into(),
+            ));
+        }
         if let Some((_, zone)) = self.targets.iter().find(|(target, _)| Some(target) == id) {
             self.groups.push(GroupBounds {
                 zone: *zone,
@@ -80,6 +90,8 @@ impl<M> Surface<'_, M> {
             targets: &self.options.groups,
             origin: layout.bounds().position(),
             groups: Vec::new(),
+            bounds_id: self.options.bounds.as_ref(),
+            bounds: None,
         };
         self.content
             .as_widget_mut()
@@ -89,7 +101,7 @@ impl<M> Surface<'_, M> {
             .and_then(|grid| {
                 ferese_panel::scene::derive(
                     self.options.parameters,
-                    self.options
+                    collector
                         .bounds
                         .unwrap_or_else(|| ferese_layout::Rect::new(0., 0., size.width.into(), size.height.into())),
                     &collector.groups,
@@ -171,7 +183,8 @@ impl<M> Widget<M, Theme, cosmic::Renderer> for Surface<'_, M> {
             shell,
             viewport,
         );
-        if matches!(event, Event::Window(cosmic::iced::window::Event::RedrawRequested(_))) {
+        if matches!(event, Event::Window(cosmic::iced::window::Event::RedrawRequested(_))) && !shell.is_layout_invalid()
+        {
             self.measure(tree, layout, renderer);
             (self.present)(&tree.state.downcast_ref::<State>().scene);
             let state = tree.state.downcast_mut::<State>();

@@ -161,6 +161,122 @@ impl OpenMenu {
 }
 
 impl FereseShell {
+    pub(crate) fn view_hub_menu(&self, kind: Menu, opacity: f32) -> Element<'_, cosmic::Action<Message>> {
+        let theme = self.config.theme;
+        let style = MenuStyle {
+            theme,
+            primary: color_with_opacity(theme.text_primary, opacity),
+            muted: color_with_opacity(theme.text_muted, opacity),
+            opacity,
+        };
+        let mut rows = column::with_capacity(8).spacing(8).width(Length::Fill);
+        if matches!(
+            kind,
+            Menu::Network | Menu::Bluetooth | Menu::Battery | Menu::Audio | Menu::Recording | Menu::System
+        ) {
+            let heading = row![
+                text(kind.title())
+                    .size(13)
+                    .class(theme::Text::Color(style.primary))
+                    .width(Length::Fill)
+            ]
+            .align_y(cosmic::iced::Alignment::Center);
+            let heading = match kind {
+                Menu::Network => network::heading(self, heading, style),
+                Menu::Audio => audio::heading(self, heading, style),
+                _ => heading,
+            };
+            rows = rows.push(heading);
+        }
+        let mut rows = match kind {
+            Menu::System => system::view(self, rows, style),
+            Menu::Network => network::view(self, rows, style),
+            Menu::Bluetooth => bluetooth::view(self, rows, style),
+            Menu::Audio => audio::view(self, rows, style, false),
+            Menu::Battery => battery::view(self, rows, style),
+            Menu::Calendar => rows.push(calendar::hub(self.calendar_offset, theme, opacity)),
+            Menu::Media => media::hub(self, rows, style),
+            Menu::Notifications => {
+                let mut rows = notification_controls(self, rows, style, true);
+                if self.notifications.entries.is_empty() {
+                    rows = rows.push(text("No notifications").size(13).class(theme::Text::Color(style.muted)));
+                } else {
+                    rows = rows.push(menu_button(
+                        "Clear notifications",
+                        Message::ClearNotifications,
+                        style.muted,
+                        opacity,
+                    ));
+                    for notice in &self.notifications.entries {
+                        rows = rows.push(control_card(
+                            column![
+                                row![
+                                    text(notice.app.clone())
+                                        .size(11)
+                                        .class(theme::Text::Color(style.muted))
+                                        .width(Length::Fill),
+                                    menu_button("×", Message::RemoveNotification(notice.id), style.muted, opacity)
+                                ],
+                                text(notice.title.clone())
+                                    .size(13)
+                                    .class(theme::Text::Color(style.primary)),
+                                text(notice.body.clone())
+                                    .size(12)
+                                    .class(theme::Text::Color(style.muted)),
+                            ]
+                            .spacing(4)
+                            .into(),
+                            style.primary,
+                            opacity,
+                        ));
+                        for (action, label) in &notice.actions {
+                            rows = rows.push(menu_button(
+                                label,
+                                Message::InvokeNotification(notice.id, action.clone()),
+                                style.primary,
+                                opacity,
+                            ));
+                        }
+                    }
+                }
+                rows
+            }
+            Menu::Recording => rows.push(menu_button(
+                if self.recorder.busy() {
+                    "Stop recording"
+                } else {
+                    "Record screen"
+                },
+                if self.recorder.busy() {
+                    Message::StopRecording
+                } else {
+                    Message::StartRecording
+                },
+                style.primary,
+                opacity,
+            )),
+            Menu::Overflow => rows,
+        };
+        if !kind.available(&self.status) {
+            rows = rows.push(
+                text("Service unavailable")
+                    .size(13)
+                    .class(theme::Text::Color(style.muted)),
+            );
+        }
+        if let Some(error) = self.status_error.as_ref().and_then(|error| kind.action_error(error)) {
+            rows = rows.push(text(error).size(12).class(theme::Text::Color(style.muted)));
+        }
+        container(rows)
+            .width(Length::Fill)
+            .class(theme::Container::custom(move |_| container::Style {
+                text_color: Some(style.primary),
+                icon_color: Some(style.primary),
+                ..Default::default()
+            }))
+            .into()
+    }
+
     fn view_status_menu(&self) -> Element<'_, cosmic::Action<Message>> {
         let Some(menu) = &self.menu else { return text("").into() };
         motion::frame_driven(
