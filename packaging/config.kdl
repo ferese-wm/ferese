@@ -147,7 +147,7 @@ status {
 }
 
 // Panel composition is explicit; visibility and item options belong to each item.
-// Background opacity and corner radius inherit from the shell unless overridden here.
+// Opacity follows the shell; corners follow the panel style unless overridden here.
 panel "main" {
     geometry {
         height 30

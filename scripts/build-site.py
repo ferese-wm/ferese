@@ -18,6 +18,7 @@ PAGES = [
     ('installation', 'Installation', ROOT / 'docs/installation.md'),
     ('packaging', 'Packages and releases', ROOT / 'docs/packaging.md'),
     ('configuration', 'Configuration', ROOT / 'docs/configuration.md'),
+    ('panel-configuration', 'Panel configuration', ROOT / 'docs/panel-configuration.md'),
     ('animation-model', 'Animation model', ROOT / 'docs/animation-model.md'),
     ('shortcuts', 'Shortcuts and gestures', ROOT / 'docs/shortcuts.md'),
     ('locking', 'Lock screen', ROOT / 'docs/locking.md'),

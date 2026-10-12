@@ -39,6 +39,7 @@ group windows, resize them and move between workspaces.
 
 ## Desktop guides
 
+- [Panel configuration](panel-configuration.md): choose a style, arrange controls, and configure Morph.
 - [Lock screen](locking.md): appearance, automatic locking, and display sleep.
 - [Screen sharing and recording](screen-sharing.md): share an app or display, or save a video.
 - [Desktop portals](portals.md): integration with applications.

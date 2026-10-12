@@ -16,10 +16,10 @@ this at fractional scaling too.
 ## Compare renderers
 
 Repeat the check with `ICED_BACKEND=wgpu` and `ICED_BACKEND=tiny-skia` to compare
-renderers. The shell and Settings prefer software rendering with GPU fallback,
-which keeps Settings labels visible inside scrolling content but can be slower
-when resampling wallpaper. Setting `ICED_BACKEND` explicitly overrides that
-preference.
+renderers. The shell prefers tiny-skia with a wgpu fallback for its small
+surfaces, while Settings prefers wgpu with a tiny-skia fallback for larger
+scrolling pages. An explicit `ICED_BACKEND` selects the requested backend, and
+the shell's automatic preference is not passed to Settings when it launches it.
 
 Follow the trace from host resize through layer configure, client acknowledgement,
 new buffer commit and compositor rendering. A quick acknowledgement does not mean

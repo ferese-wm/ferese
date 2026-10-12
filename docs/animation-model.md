@@ -69,6 +69,12 @@ The main spring responds more quickly than the viewport spring, allowing a windo
 
 Bounce must be strictly between −1 and 1. Negative values produce overdamping; positive values require `overshoot #true` so the crossing policy permits the requested bounce. Duration and speed must be finite and positive, and the resolved stiffness and damping must remain finite and positive too. If the configuration fails these checks, Ferese keeps the last accepted settings.
 
+The [Morph panel](panel-configuration.md#morph) uses the same spring solver with
+its own geometry response, while following the shared speed and reduced-motion
+policy. Its shape expands around content laid out at the destination size,
+and content fades manage changes between views without moving the window
+reservation. Regular status popups continue to use the main shell spring.
+
 The global speed setting scales elapsed spring time, so 0.5 takes twice as long and 2.0 takes half as long. It applies to both compositor and Ferese shell motion. Setting `reduced-motion #true` takes precedence over enabled animations and applies the destination directly. Neither setting controls animations that applications draw inside their own windows.
 
 ## Passing a gesture’s velocity into the release

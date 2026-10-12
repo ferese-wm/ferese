@@ -4,6 +4,7 @@
 
 - [Installation](installation.md): install dependencies, log in, preview changes, update and recover a session.
 - [Configuration](configuration.md): configure layouts, input, shortcuts and displays in KDL.
+- [Panel configuration](panel-configuration.md): choose a panel style, arrange groups and items, and configure the Morph hub.
 - [Why Ferese](why-ferese.md): window layouts and a shared theme for the desktop.
 - [Screenshots](screenshots.md): see the themes, overview and shell controls.
 
@@ -21,5 +22,4 @@
 - [Development](development.md): build Ferese, run tests and check portal contracts.
 - [Nested resize checks](nested-resize-testing.md).
 - [Client soak testing](native-soak-testing.md).
-- [Performance measurements](performance-baseline.md).
 - [Website development](../site/README.md).

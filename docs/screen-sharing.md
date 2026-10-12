@@ -1,12 +1,12 @@
 # Screen sharing and recording
 
 Share a monitor or window from a Wayland-compatible recording or conferencing app,
-or save a video using the top bar. [Installation](installation.md) includes the
-portal and PipeWire dependencies.
+or save a video using the panel's Recording control. The
+[installation guide](installation.md) covers the portal and PipeWire dependencies.
 
-## Record from the top bar
+## Record from the panel
 
-1. Click the recording icon.
+1. Click the Recording item in the panel, or open Controls → Recording in Morph.
 2. Choose a display and an audio source: **Off**, **System sound**, **Microphone**,
    or **Both**. Audio is off by default; the other choices use
    your default output or input device from audio settings.
@@ -38,9 +38,9 @@ The picker follows your shell colors, font, corners, opacity, and blur.
 ## Stop sharing
 
 Click **Stop sharing** or close the sharing window. For the built-in recorder,
-use the stop button in the top bar. Sharing also ends when the app closes or
-Ferese locks. If you disconnect a shared monitor or change its capture size,
-its stream ends and you need to start sharing again.
+use the panel's stop button, which Morph also shows while recording. Sharing
+also ends when the app closes or Ferese locks. If you disconnect a shared monitor
+or change its capture size, its stream ends and you need to start sharing again.
 
 ## Remember permissions
 
