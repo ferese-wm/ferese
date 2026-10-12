@@ -58,10 +58,10 @@ views and opens the matching setting directly.
 ## Saving and validation
 
 Settings saves text when you press Enter or leave the field, and sliders when
-you release them. Undo restores the previous save. Reload reads external edits
-without merging unfinished drafts. Wallpaper browsing needs `zenity`, but you
-can also enter a path directly.
-Settings keeps `config.kdl.settings-backup` before saving.
+you release them, keeping `config.kdl.settings-backup` before each save. Use
+Undo to restore the previous save, or Reload to read external edits without
+merging unfinished drafts. To browse for a wallpaper, install `zenity`; you can
+also enter its path directly.
 
 File edits reload automatically, including atomic editor saves, so changes to
 appearance, wallpaper, motion, input, bindings, rules, layouts, displays,
@@ -94,10 +94,10 @@ cancels pending pairing. Passwords are sent to NetworkManager, not saved in KDL;
 pairing keys are managed by BlueZ. These controls affect the system even when
 Settings is opened with a separate preview config.
 
-Defaults below are built-in defaults, not your personal or packaged overrides.
-Dimensions are logical pixels unless noted; numbers must be finite. Optional
-values are omitted, not `null`. Colors use `#RRGGBB` or `#RRGGBBAA`.
-Live config is limited to 60 KiB.
+The tables below give built-in defaults; your configuration or the packaged
+example may override them. Dimensions use logical pixels unless noted, and
+numbers must be finite. Omit optional values rather than writing `null`, use
+`#RRGGBB` or `#RRGGBBAA` for colors, and keep the live config within 60 KiB.
 
 ## Layout
 
@@ -187,9 +187,9 @@ immediate. Reduced motion takes precedence over `enabled #true`; setting
 `speed 0` is invalid. These settings control Ferese's animations, not animations
 inside other applications.
 
-Morph has its own geometry spring and content fades, while following the shared
-speed and reduced-motion policy; see the [panel guide](panel-configuration.md#morph)
-for its states and size controls.
+Morph animates its shape with its own spring and fades between views, while
+following the shared speed and reduced-motion policy; see the
+[panel guide](panel-configuration.md#morph) for its states and size controls.
 
 Shell animations sample motion on each surface's redraw, paced by its Wayland
 frame callbacks. They request animation frames only while moving.
@@ -820,18 +820,17 @@ Panel & Shell** to choose a style and position, then **Edit panel** to arrange
 items in Start, Center and End groups. The composition preview stays visible
 while you edit, and changes save automatically.
 
-The panel owns its style, opacity and corners; groups control layout and
+Choose style, opacity and corners for the whole panel; groups control layout and
 spacing. The available styles are Floating, Capsules, Notch, Edge to edge,
 Fused islands, Adaptive and Morph. Capsules and Fused islands join neighboring
 **groups within a zone**, so a zone with one group remains a single island.
 Adaptive follows window state independently on each output, while Morph combines
 the panel into a centered hub with expandable workspace, media and status views.
 
-The [panel configuration guide](panel-configuration.md) covers the full style,
-geometry, group, item and Morph options, with examples you can adapt. Its defaults
-come from the selected style: most panels are 36 logical pixels high, Morph is
-34, and detached styles use 8-pixel margins. The packaged configuration has its
-own explicit geometry overrides.
+Most panels default to 36 logical pixels high, Morph to 34, and detached styles
+use 8-pixel margins unless your configuration overrides them. The packaged
+configuration includes its own geometry overrides. For the complete options and
+examples, see the [panel configuration guide](panel-configuration.md).
 
 ```kdl
 panel "main" {
@@ -859,11 +858,11 @@ panel "main" {
 }
 ```
 
-Omitting the panel block uses the default composition. An authored block defines
-its own groups and items, and empty zones stay empty. Only one panel block is
-accepted; group and item IDs must be unique within it. Use `edge "bottom"` to
-move the same arrangement to the bottom, with popups opening toward the desktop
-and edge-relative corners mirroring vertically.
+If you omit the panel block, Ferese uses its default composition; if you write
+one, its groups and items define the contents, and empty zones stay empty. Only
+one panel block is accepted, and group and item IDs must be unique within it.
+Use `edge "bottom"` to move the same arrangement to the bottom, with popups
+opening toward the desktop and edge-relative corners mirroring vertically.
 
 ## Status controls
 

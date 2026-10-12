@@ -1,10 +1,10 @@
 # Panel configuration
 
 Use **Settings → Panel & Shell** to change the panel's style, position and
-contents, or edit the `panel` block in `~/.config/ferese/config.kdl`. Both edit the
-same configuration, so you can arrange controls in Settings and then adjust
-their values in the file. Changes apply live, and an invalid edit leaves the
-last working configuration active.
+contents, or edit the `panel` block in `~/.config/ferese/config.kdl`. Settings
+writes to this file, so you can arrange controls visually and then adjust their
+values in KDL. Changes apply live, and an invalid edit leaves the last working
+configuration active.
 
 Ferese uses one panel configuration across all outputs. Each output lays out
 its own panel using the space and services available there; workspace controls
@@ -26,29 +26,30 @@ outline and corners, while **Size & spacing** controls its height and distance
 from windows and screen edges. A reset button beside a dimension clears that
 override; **Reset to style** clears geometry and corner overrides together.
 
-Choose **Edit panel** to open Arrange. **Add group** creates a group in Start,
-Center or End, and each group has an **Add item** menu. Selecting an item opens
-its placement, visibility, overflow and preferred-size controls, along with
-options specific to that item. Selecting a group opens its placement, item
-spacing and padding controls. Move or remove its items before removing the group.
+Choose **Edit panel** to open Arrange, where **Add group** creates a group in
+Start, Center or End. Use its **Add item** menu to fill it, then select an item
+to change its placement, visibility, overflow, preferred size or options
+specific to that control. Select the group itself to change its placement,
+item spacing and padding; before removing it, move or remove its items.
 
-Drag handles move items within or between groups, or use the arrow buttons to
-reorder them. Dropping an item into an empty zone creates a group there. A drag
-shows a drop hint and saves the move on release; Escape, focus loss or a release
-outside a valid target cancels it. Ordinary controls save automatically, with
-sliders saving when you release them. **Undo** restores the previous save,
-**Reload configuration** reads external edits, and **Back to Panels** returns
-to the appearance controls.
+Use the drag handles to move items within or between groups, or the arrow
+buttons to reorder them. A drop hint shows where the item will go, and dropping
+it into an empty zone creates a group there. The move saves on release;
+Escape, focus loss or a release outside a valid target cancels it.
 
-**Remove custom panel** restores the built-in composition and style, including
-their default geometry. You can use Undo to restore the composition you removed.
+Other controls save automatically, with sliders saving when you release them.
+**Undo** restores the previous save, **Reload configuration** reads external
+edits, and **Back to Panels** returns to the appearance controls.
+
+**Remove custom panel** restores the built-in composition, style and geometry;
+Undo brings back the composition you removed.
 
 You can open this page directly with `ferese-settings --page bar`.
 
 ## Choose a style
 
-The panel owns its appearance, and every group inherits it. Groups control
-arrangement and spacing rather than choosing their own background or surface.
+Choose the style for the whole panel; its groups share that appearance and
+control only arrangement and spacing.
 
 | Settings name | KDL value | Appearance and behavior |
 | --- | --- | --- |
@@ -60,17 +61,18 @@ arrangement and spacing rather than choosing their own background or surface.
 | Adaptive | `adaptive` | Floating with ordinary windows, edge to edge when maximized, and hidden in fullscreen |
 | Morph | `morph` | One centered hub that expands into workspace, media and status controls |
 
-Capsules and Fused islands join groups **within the same zone**. If a zone has
-only one group, there is nothing to join, so it appears as a single pill. To see
-the difference, put Overview and Workspaces in separate Start groups, or split
-status controls and Clock into separate End groups. Capsules removes the gap
-between those groups; Fused islands keeps the configured spacing and blends
-nearby shapes. Floating leaves their gaps open.
+Capsules and Fused islands join groups **within the same zone**, so a zone with
+one group appears as a single pill in either style. To see the joins, put
+Overview and Workspaces in separate Start groups, or separate the status controls
+and Clock into two End groups. With Capsules, those groups touch and have a
+divider between them; Fused islands keeps their configured spacing and blends
+nearby shapes, while Floating leaves the gaps open.
 
-Empty groups do not draw a surface. As items become unavailable or move into
-overflow, the shapes follow the remaining visible content, and transparent
-gaps remain click-through. The panel hides on an output whose active workspace
-contains a fullscreen window, releasing its reserved space there.
+When a group has no visible items, its background disappears, and the remaining
+shapes adjust as items become unavailable or move into overflow. Clicks in
+transparent gaps reach the windows underneath. If the active workspace contains
+a fullscreen window, the panel hides on that output and releases its reserved
+space.
 
 Changing the style preserves your composition and saved appearance overrides.
 Adaptive evaluates each output independently, with a 150 ms delay between
@@ -100,17 +102,16 @@ overrides for them. Those values remain in the file and apply again when you
 choose a detached style. Attached Morph also uses zero edge margin, while its
 saved floating margin returns when attachment is disabled.
 
-Side margins are a requested inset rather than a promise to remove that much
-space. On each output, Ferese limits the inset using measured content widths
-so it does not introduce additional overflow. The applied margin can shrink
-when the output becomes narrower or more content appears. Settings adjusts
-the slider range to the available display and preview measurements, while KDL
-accepts the wider range shown above.
+Ferese uses the requested side margins only while the content fits. It measures
+the controls on each output and reduces the inset when the output narrows or
+more content appears, so the margins do not cause additional overflow. Settings
+limits the slider to the available display and preview measurements; KDL accepts
+the wider range shown above.
 
-Morph's expanded controls overlay windows while its reservation stays at the
-collapsed height plus window clearance. Increasing an expanded view's height
-therefore does not push windows down. Morph also accounts for the layout's
-outer gap at its reserved edge so the two gaps do not accumulate there.
+Morph reserves space for its collapsed height plus window clearance. Its
+expanded views overlay windows, so increasing their height does not push windows
+down. At the panel edge, Morph accounts for the layout's outer gap rather than
+adding the two gaps together.
 
 ## Background, outline and corners
 
@@ -127,7 +128,7 @@ See [Appearance](configuration.md#appearance) for the shared theme controls.
 
 Set `border #true` to draw the panel outline. Its color comes from
 `theme.colors.border`, and Capsules also uses that color for its dividers.
-The default is `#false`.
+Leave it at the default `#false` for no outline.
 
 Automatic corners follow the style and panel height. Choose **Custom** to pin
 them, or return to **Automatic** to remove the override. The four controls are
@@ -152,11 +153,10 @@ you switch styles.
 
 ## Groups and items
 
-Start, Center and End contain ordered groups, which contain ordered item
-instances. Start sits on the left, End on the right, and Center stays centered
-on the panel even when the two sides have different widths. Each group and
-item has an ID so Settings can move it without changing which instance you
-are editing.
+Place groups in Start on the left, Center in the middle or End on the right,
+then arrange items within them. Center stays centered on the panel even when
+the two sides have different widths. Each group and item has an ID, so Settings
+keeps track of the one you are editing when you move it.
 
 Panel IDs, group IDs and item IDs contain 1–128 ASCII letters or digits, or
 `-_.:@`, and cannot start with `_`. Group IDs must be unique across the panel,
@@ -225,24 +225,26 @@ supports Full and Icon. Workspaces and Focused window have one form that can
 shrink, while other controls use icons. An unsupported preference falls back
 to the item's normal form.
 
-When space runs short, lower-priority items yield first, with composition order
-breaking ties. Flexible content can shrink, supported items can use a smaller
-representation, and overflow keeps displaced controls accessible. **Keep
-visible** maps to `never`, **When needed** to `auto`, and **Always** to `always`.
-Even `never` can move into overflow if the mandatory controls cannot fit at
-their minimum sizes.
+When space runs short, lower-priority items yield first, with their order in the
+composition breaking ties. Flexible content can shrink, and items can switch
+to smaller supported forms; overflow keeps the remaining controls accessible
+from the chevron. **Keep visible** maps to `never`, **When needed** to `auto`,
+and **Always** to `always`. Even `never` can move into overflow if the mandatory
+controls cannot fit at their minimum sizes.
 
 The overflow chevron appears before the End controls, and selecting an entry
 opens that item's usual controls. The panel itself does not scroll; workspace
-indicators may scroll inside their allocation, while window titles ellipsize.
+indicators may scroll within the space they receive, while long window titles
+end with an ellipsis.
 
 ## Morph
 
-Morph combines the panel into one centered hub. Its collapsed view includes a
-compact workspace strip and contextual content: artwork, track title and an
-equalizer during playback, or the focused-window title with a date fallback.
-Recording and low-battery states take priority over ordinary content. Hovering
-can expand a preview, and clicking opens the hub's Workspaces, Music, Calendar,
+Morph combines the panel into one centered hub. Alongside a compact workspace
+strip, it shows artwork, the track title and an equalizer during playback.
+Otherwise it shows the focused-window title, falling back to the date when
+there is no title. Recording and low-battery states take priority over ordinary
+content. Hovering can expand a preview, and clicking opens the hub's Workspaces,
+Music, Calendar,
 Notifications or Controls view. Escape or the close button collapses it.
 
 The Workspaces view shows miniature window layouts. Click a tile to switch
@@ -250,12 +252,11 @@ workspace, use Tab and the arrow keys to navigate it, or drag a miniature window
 to another tile on the same output. Scrolling over the collapsed hub changes
 workspace, with a brief workspace preview after a switch.
 
-The authored composition remains saved when Morph is selected, but the hub has
-its own arrangement. Start/Center/End positions, group padding and the regular
-workspace indicator style do not reproduce that arrangement inside the hub;
-its workspace strip uses compact dots, and the expanded views use their own
-layouts. Item settings still determine the authored controls available to its
-Controls view and shortcuts.
+Morph keeps your saved composition for when you switch back to a regular panel.
+The hub uses its own layouts and compact workspace dots, so Start/Center/End
+positions, group padding and the regular workspace indicator style do not apply
+inside it. Item settings still determine which configured controls appear in
+its Controls view and shortcuts.
 
 Turn on **Attach to screen edge** to join the hub to the chosen edge with curved
 shoulders, or set `morph { attached #true; }`. **Preview on hover** maps to
@@ -281,18 +282,20 @@ below can be adjusted in KDL.
 | `expanded-radius` | 26 | Default corners for expanded views |
 
 All width and height values must be finite numbers from 24 to 1024, and
-`expanded-radius` accepts 0–128. The shell fits collapsed content and workspace
-feedback to their measured width, may fit Controls to a shorter height, and
-limits the result to the available output area. Configured widths therefore
-act as budgets rather than forcing empty space around short content.
-For ordinary media and date previews, `peek-width` sets the maximum width after
-being limited to 200–280 pixels; activity previews choose their own width, and
-workspace feedback can fit more narrowly. Custom panel corner pins take
-precedence over `expanded-radius`.
+`expanded-radius` accepts 0–128. The collapsed hub and workspace feedback fit
+their content, Controls may open at a shorter height, and all views stay within
+the available output area. A configured width therefore allows room for content
+without forcing empty space around it.
 
-Morph follows animation speed and reduced motion. Expansion changes its shape
-and input region without changing its window reservation, while interrupted
-transitions continue from the geometry already on screen.
+For ordinary media and date previews, the maximum width is `peek-width` clamped
+to 200–280 pixels. Activity previews choose their own width, and workspace
+feedback can be narrower. If you have pinned the panel's corners, those values
+override `expanded-radius`.
+
+Morph follows animation speed and reduced motion. As it expands, the area that
+accepts clicks follows its shape while the space kept clear of windows stays
+unchanged; if you interrupt a transition, it continues from the shape already
+on screen.
 
 ## Examples
 

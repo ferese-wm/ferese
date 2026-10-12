@@ -69,11 +69,11 @@ The main spring responds more quickly than the viewport spring, allowing a windo
 
 Bounce must be strictly between −1 and 1. Negative values produce overdamping; positive values require `overshoot #true` so the crossing policy permits the requested bounce. Duration and speed must be finite and positive, and the resolved stiffness and damping must remain finite and positive too. If the configuration fails these checks, Ferese keeps the last accepted settings.
 
-The [Morph panel](panel-configuration.md#morph) uses the same spring solver with
-its own geometry response, while following the shared speed and reduced-motion
-policy. Its shape expands around content laid out at the destination size,
-and content fades manage changes between views without moving the window
-reservation. Regular status popups continue to use the main shell spring.
+The [Morph panel](panel-configuration.md#morph) uses the same spring solver,
+with its own response and the shared speed and reduced-motion settings. Content
+is laid out at the destination size while the shape expands around it, and
+fades handle changes between views. The space kept clear of windows stays
+unchanged throughout; regular status popups continue to use the main shell spring.
 
 The global speed setting scales elapsed spring time, so 0.5 takes twice as long and 2.0 takes half as long. It applies to both compositor and Ferese shell motion. Setting `reduced-motion #true` takes precedence over enabled animations and applies the destination directly. Neither setting controls animations that applications draw inside their own windows.
 
@@ -113,7 +113,7 @@ These slides use the viewport spring through [workspace navigation](../composito
 
 An application’s surface lifetime does not always match the duration of its visible exit. Window entrance starts when content is available, but on unmap the live surface can disappear before a closing animation would finish. Ferese retains content for that exit, moving toward 98% of the current bounds while opacity, emphasis, and shadow fade to zero.
 
-Closing during resize also retains the resize snapshots and their handoffs. Their progress must continue during close so the old buffer does not remain frozen over the exiting image. Retaining a picture is only part of the work; the presentation state that determines how it blends with the newer content has to continue advancing too.
+Closing during resize also retains the resize snapshots and their handoffs. Their progress must continue during close so the old buffer does not remain frozen over the exiting image. The presentation state must keep advancing so the retained image can blend with the newer content.
 
 Shell popups keep their surface until the closing motion settles, then destroy it. If you reopen the same panel during close, Ferese retargets that existing motion. Switching from Battery to Wi-Fi is different: the surface stays, but the new panel gets its own entrance. This behavior lives in [panel lifecycle handling](../shell/ferese-shell/src/status_ui/lifecycle.rs) and avoids a destroy-then-create gap between panels.
 

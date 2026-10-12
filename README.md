@@ -76,7 +76,8 @@ guide](docs/installation.md) also walks you through previews, updates and recove
 ## Configure
 
 Configure Ferese through **Control Center → Settings** or `~/.config/ferese/config.kdl`.
-Changes apply live. Invalid edits leave the last working configuration in place.
+Changes apply live, and if an edit is invalid, the last working configuration stays
+in place.
 
 The [configuration reference](docs/configuration.md) and [example
 config](packaging/config.kdl) cover appearance, window layouts,
