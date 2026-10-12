@@ -1,6 +1,17 @@
 use super::*;
 
 impl Config {
+    pub fn default_column_display(&self) -> ferese_layout::ColumnDisplay {
+        match self
+            .scrolling
+            .default_column_display
+            .unwrap_or(ColumnDisplayValue::Stacked)
+        {
+            ColumnDisplayValue::Stacked => ferese_layout::ColumnDisplay::Stacked,
+            ColumnDisplayValue::Tabbed => ferese_layout::ColumnDisplay::Tabbed,
+        }
+    }
+
     pub fn layout_mode(&self) -> LayoutMode {
         match self.layout.mode.unwrap_or(LayoutModeValue::Scrolling) {
             LayoutModeValue::Scrolling => LayoutMode::Scrolling,

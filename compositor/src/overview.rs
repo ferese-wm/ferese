@@ -44,7 +44,7 @@ pub(crate) fn init_font_loader(
     event_loop.handle().insert_source(source, |event, _, state| {
         if let channel::Event::Msg((family, font)) = event
             && state.overview.complete_font_load(&family, font)
-            && state.overview.is_presenting()
+            && (state.overview.is_presenting() || state.tab_bars.values().any(|bars| !bars.is_empty()))
         {
             crate::backends::direct::render_all(state);
         }
@@ -60,20 +60,7 @@ pub(crate) fn init_font_loader(
                 // Rescan on a font change so newly installed fonts remain usable.
                 let mut database = fontdb::Database::new();
                 database.load_system_fonts();
-                let families = [fontdb::Family::Name(&family), fontdb::Family::SansSerif];
-                let font = database
-                    .query(&fontdb::Query {
-                        families: &families,
-                        ..Default::default()
-                    })
-                    .and_then(|id| {
-                        database.with_face_data(id, |bytes, index| {
-                            FontVec::try_from_vec_and_index(bytes.to_vec(), index)
-                                .ok()
-                                .map(FontArc::new)
-                        })
-                    })
-                    .flatten();
+                let font = label_font(&database, &family);
                 if results.send((family, font)).is_err() {
                     break;
                 }
@@ -85,8 +72,34 @@ pub(crate) fn init_font_loader(
     Ok(())
 }
 
+// fontdb's generic sans may name a font that is absent on this system.
+// Resolve the requested family first, then use an installed text face.
+fn label_font(database: &fontdb::Database, family: &str) -> Option<FontArc> {
+    let families = [
+        fontdb::Family::Name(family),
+        fontdb::Family::SansSerif,
+        fontdb::Family::Name("Noto Sans"),
+        fontdb::Family::Name("DejaVu Sans"),
+        fontdb::Family::Name("Liberation Sans"),
+    ];
+    let preferred = database.query(&fontdb::Query {
+        families: &families,
+        ..Default::default()
+    });
+    preferred
+        .into_iter()
+        .chain(database.faces().map(|face| face.id))
+        .find_map(|id| {
+            database.with_face_data(id, |bytes, index| {
+                let font = FontVec::try_from_vec_and_index(bytes.to_vec(), index).ok()?;
+                // Skip symbol-only fonts when searching the fallback faces.
+                (font.glyph_id('A').0 != 0 && font.glyph_id('0').0 != 0).then(|| FontArc::new(font))
+            })?
+        })
+}
+
 type LabelBuffer = (MemoryRenderBuffer, smithay::utils::Size<i32, smithay::utils::Buffer>);
-type LabelStyle = (u64, [u32; 4]);
+type LabelStyle = (u64, u64, [u32; 4]);
 type OverviewStateLabel = HashMap<String, HashMap<LabelStyle, LabelBuffer>>;
 
 #[derive(Debug)]
@@ -234,12 +247,16 @@ impl OverviewState {
         scale: f64,
         color: [f32; 4],
     ) -> Option<(MemoryRenderBuffer, smithay::utils::Size<i32, smithay::utils::Buffer>)> {
-        let key = (scale.to_bits(), color.map(f32::to_bits));
+        self.label_with_size(text, scale, color, 13.0)
+    }
+
+    fn label_with_size(&mut self, text: &str, scale: f64, color: [f32; 4], font_size: f64) -> Option<LabelBuffer> {
+        let key = (scale.to_bits(), font_size.to_bits(), color.map(f32::to_bits));
         if let Some(buffer) = self.labels.get(text).and_then(|styles| styles.get(&key)) {
             return Some(buffer.clone());
         }
         let font = self.font.as_ref()?;
-        let scaled = font.as_scaled((13.0 * scale) as f32);
+        let scaled = font.as_scaled((font_size * scale) as f32);
         let width = (text
             .chars()
             .map(|ch| scaled.h_advance(font.glyph_id(ch)))
@@ -247,7 +264,7 @@ impl OverviewState {
             .ceil() as i32
             + 4)
         .max(1);
-        let height = (18.0 * scale).ceil() as i32;
+        let height = ((font_size + 5.0) * scale).ceil() as i32;
         let mut pixels = vec![0_u8; (width * height * 4) as usize];
         let mut pen = 2.0;
         for ch in text.chars() {
@@ -507,10 +524,20 @@ impl Ferese {
     }
 
     pub(crate) fn overview_window_label(&mut self, id: WindowId, scale: f64, width: f64) -> Option<LabelBuffer> {
+        self.window_title_label(id, scale, width, 13.0)
+    }
+
+    pub(crate) fn window_title_label(
+        &mut self,
+        id: WindowId,
+        scale: f64,
+        width: f64,
+        font_size: f64,
+    ) -> Option<LabelBuffer> {
         let record = self.windows.record(id)?;
         let limit = ((width - 16.0) / 8.0).clamp(1.0, 48.0) as usize;
         let color = self.theme_settings.text_primary_color.0;
-        let style = (scale.to_bits(), color.map(f32::to_bits));
+        let style = (scale.to_bits(), font_size.to_bits(), color.map(f32::to_bits));
 
         if let Some(label) = self.overview.window_labels.get(&id)
             && label.revision == record.metadata_revision
@@ -536,7 +563,7 @@ impl Ferese {
         }
 
         let revision = record.metadata_revision;
-        let buffer = self.overview.label(&text, scale, color)?;
+        let buffer = self.overview.label_with_size(&text, scale, color, font_size)?;
         self.overview.window_labels.insert(
             id,
             WindowLabel {
@@ -547,6 +574,30 @@ impl Ferese {
             },
         );
         Some(buffer)
+    }
+
+    pub(crate) fn indicator_text_width(&self, text: &str, size: f64) -> f64 {
+        let chars = text.chars().filter(|c| !c.is_control());
+        if let Some(font) = self.overview.font.as_ref() {
+            let scaled = font.as_scaled(size as f32);
+            chars
+                .map(|c| f64::from(scaled.h_advance(font.glyph_id(c))))
+                .sum::<f64>()
+                .ceil()
+                + 4.0
+        } else {
+            chars.count() as f64 * size * 0.65 + 4.0
+        }
+    }
+
+    pub(crate) fn indicator_label(
+        &mut self,
+        text: &str,
+        scale: f64,
+        color: [f32; 4],
+        size: f64,
+    ) -> Option<LabelBuffer> {
+        self.overview.label_with_size(text, scale, color, size)
     }
 
     pub(crate) fn overview_workspace_label(
@@ -1175,6 +1226,14 @@ mod tests {
             })?
         });
         font.expect("overview rendering tests require a system font")
+    }
+
+    #[test]
+    fn missing_label_font_falls_back_to_an_installed_text_font() {
+        let mut database = fontdb::Database::new();
+        database.load_system_fonts();
+        assert!(label_font(&database, "ferese-missing-font-fixture").is_some());
+        assert!(label_font(&fontdb::Database::new(), "sans-serif").is_none());
     }
 
     #[test]

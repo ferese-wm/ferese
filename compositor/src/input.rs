@@ -484,6 +484,7 @@ impl Ferese {
                 }
                 let position = self.constrain_pointer_position(&pointer, position);
 
+                self.update_tab_indicator_hover(position);
                 pointer.motion(
                     self,
                     self.surface_under(position),
@@ -528,6 +529,7 @@ impl Ferese {
                 let requested = self.clamp_pointer_position(position + delta);
                 let location = self.constrain_pointer_position(&pointer, requested);
 
+                self.update_tab_indicator_hover(location);
                 pointer.motion(
                     self,
                     self.surface_under(location),
@@ -548,6 +550,9 @@ impl Ferese {
                     if self.input_capture.captures(2) {
                         self.input_capture.push(serde_json::json!({"type":"button", "button":event.button_code(), "pressed":event.state() == ButtonState::Pressed}));
                     }
+                    return;
+                }
+                if event.state() == ButtonState::Released && self.tab_buttons.remove(&event.button_code()) {
                     return;
                 }
                 let pointer = self.seat.get_pointer().expect("seat has a pointer");
@@ -577,6 +582,17 @@ impl Ferese {
                         },
                     );
                     pointer.frame(self);
+                    return;
+                }
+
+                if event.state() == ButtonState::Pressed
+                    && !pointer.is_grabbed()
+                    && let Some(id) = self.tab_at(pointer.current_location())
+                {
+                    self.tab_buttons.insert(event.button_code());
+                    if event.button_code() == BTN_LEFT {
+                        self.activate_managed_window(id);
+                    }
                     return;
                 }
 
@@ -698,6 +714,12 @@ impl Ferese {
                     return;
                 }
                 let pointer = self.seat.get_pointer().expect("seat has a pointer");
+                if self.scroll_tab_indicator(
+                    pointer.current_location(),
+                    if vertical != 0.0 { vertical } else { horizontal },
+                ) {
+                    return;
+                }
                 if self.scroll_overview_strip(
                     pointer.current_location(),
                     if horizontal != 0.0 { horizontal } else { vertical },
@@ -905,6 +927,9 @@ impl Ferese {
         if self.session_lock.active() {
             self.focus_output_at(position);
             self.focus_lock_surface();
+            return;
+        }
+        if self.tab_at(position).is_some() {
             return;
         }
         let keyboard = self.seat.get_keyboard().expect("seat has a keyboard");
@@ -1161,6 +1186,10 @@ impl Ferese {
             BindingAction::ToggleLayout => self.toggle_layout_mode(),
             BindingAction::CycleColumnWidth => self.cycle_focused_column_width(),
             BindingAction::CenterColumn => self.center_focused_column(),
+            BindingAction::ToggleColumnTabbed => self.toggle_column_tabbed(),
+            BindingAction::JoinTab(direction) => self.join_tab(direction),
+            BindingAction::LeaveTab => self.leave_tab(),
+            BindingAction::CycleTab(previous) => self.cycle_tab(previous),
             BindingAction::Consume => self.consume_focused_window(),
             BindingAction::Expel => self.expel_focused_window(),
             BindingAction::ToggleFloating => self.toggle_focused_floating(),

@@ -366,6 +366,22 @@ mod tests {
     }
 
     #[test]
+    fn tab_commands_validate_directions_and_reject_extra_arguments() {
+        for direction in ["left", "right", "up", "down"] {
+            assert_eq!(
+                parse_args(["join-tab".into(), direction.into()]).unwrap(),
+                ("join-tab".into(), json!({"direction": direction}))
+            );
+        }
+        assert!(parse_args(["join-tab".into()]).is_err());
+        assert!(parse_args(["join-tab".into(), "diagonal".into()]).is_err());
+        for action in ["toggle-column-tabbed", "leave-tab", "next-tab", "previous-tab"] {
+            assert_eq!(parse_args([action.into()]).unwrap(), (action.into(), json!({})));
+            assert!(parse_args([action.into(), "extra".into()]).is_err());
+        }
+    }
+
+    #[test]
     fn rejects_unknown_or_missing_arguments() {
         assert_eq!(parse_args(["exit".to_owned()]).unwrap(), ("exit".to_owned(), json!({})));
         assert!(parse_args(["exit".to_owned(), "extra".to_owned()]).is_err());

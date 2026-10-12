@@ -56,6 +56,12 @@ width/height with left/up and grows them with right/down by 32 logical pixels,
 subject to client size limits. Fullscreen and maximized floating windows ignore
 these actions.
 
+`toggle-column-tabbed` changes a scrolling column between stacked rows and tabs.
+In either layout, `join-tab left|right|up|down` joins the focused window to a
+neighbouring tab group. `next-tab` and `previous-tab` switch tabs, and `leave-tab`
+splits the focused tab out. See [Tabbed windows](tabbed-windows.md)
+for grouping behavior and shortcuts.
+
 ## Live Activities
 
 Use `feresectl run --title "Tests" -- cargo test` to publish a command's lifetime,

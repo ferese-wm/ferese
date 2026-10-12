@@ -1084,6 +1084,11 @@ impl Ferese {
             }
             "cycle-column-width" => self.cycle_focused_column_width(),
             "center-column" => self.center_focused_column(),
+            "toggle-column-tabbed" => self.toggle_column_tabbed(),
+            "join-tab" => self.join_tab(direction_arg(args)?),
+            "leave-tab" => self.leave_tab(),
+            "next-tab" => self.cycle_tab(false),
+            "previous-tab" => self.cycle_tab(true),
             "consume" => self.consume_focused_window(),
             "expel" => self.expel_focused_window(),
             "close" => self.close_focused_window(),

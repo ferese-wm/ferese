@@ -4,7 +4,9 @@ use std::fmt;
 
 mod scrolling;
 
-pub use scrolling::{Column, ColumnWidth, ScrollingLayout, ViewportFocusStrategy, ViewportTarget};
+pub use scrolling::{Column, ColumnDisplay, ColumnWidth, ScrollingLayout, ViewportFocusStrategy, ViewportTarget};
+
+pub const TAB_BAR_HEIGHT: f64 = 24.0;
 
 const MIN_SPLIT_RATIO: f64 = 0.05;
 const MAX_SPLIT_RATIO: f64 = 0.95;
@@ -14,6 +16,18 @@ pub struct WindowId(pub u64);
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct NodeId(u64);
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct TabGroup {
+    pub windows: Vec<WindowId>,
+    pub active: WindowId,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct TabBar {
+    pub group: TabGroup,
+    pub rect: Rect,
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Axis {
@@ -108,6 +122,7 @@ pub struct ConstraintWarning {
 pub struct LayoutResult {
     pub geometry: HashMap<WindowId, Rect>,
     pub warnings: Vec<ConstraintWarning>,
+    pub tab_bars: Vec<TabBar>,
 }
 
 impl Default for GapConfig {
@@ -165,6 +180,18 @@ impl LayoutTree {
         self.windows.keys().copied()
     }
 
+    pub fn visible_window_count(&self) -> usize {
+        fn count(tree: &LayoutTree, node: NodeId) -> usize {
+            match tree.nodes.get(&node) {
+                Some(Node::Window(_)) => 1,
+                Some(Node::Split { first, second, .. }) => count(tree, *first) + count(tree, *second),
+                Some(Node::Stack { children, active }) => children.get(*active).map_or(0, |child| count(tree, *child)),
+                None => 0,
+            }
+        }
+        self.root.map_or(0, |root| count(self, root))
+    }
+
     pub fn preferred_window(&self) -> Option<WindowId> {
         let leaf = self.first_window(self.root?).ok()?;
         match self.nodes.get(&leaf)? {
@@ -211,6 +238,8 @@ impl LayoutTree {
                 .ok_or(LayoutError::UnknownWindow(focused))?,
             None => self.first_window(root)?,
         };
+        // A new split belongs beside the whole tab group, not inside one tab.
+        let target = self.tab_parent(target).unwrap_or(target);
         let old_parent = self.parents.get(&target).copied();
         let window_node = self.insert_node(Node::Window(window));
         self.windows.insert(window, window_node);
@@ -307,6 +336,13 @@ impl LayoutTree {
             return Err(LayoutError::UnknownWindow(window));
         }
 
+        if self
+            .tab_group(window)
+            .is_some_and(|group| group.windows.contains(&target))
+        {
+            return self.activate_window(window);
+        }
+
         self.remove(window)?;
 
         let target_node = self
@@ -316,6 +352,17 @@ impl LayoutTree {
             .ok_or(LayoutError::UnknownWindow(target))?;
         let old_parent = self.parents.get(&target_node).copied();
         let window_node = self.insert_node(Node::Window(window));
+        if let Some(parent) = self.tab_parent(target_node) {
+            let Some(Node::Stack { children, active }) = self.nodes.get_mut(&parent) else {
+                unreachable!()
+            };
+            children.push(window_node);
+            *active = children.len() - 1;
+            self.windows.insert(window, window_node);
+            self.parents.insert(window_node, parent);
+            debug_assert!(self.validate().is_ok());
+            return Ok(());
+        }
         let stack = self.insert_node(Node::Stack {
             children: vec![target_node, window_node],
             active: 1,
@@ -334,6 +381,73 @@ impl LayoutTree {
 
         debug_assert!(self.validate().is_ok());
         Ok(())
+    }
+
+    fn tab_parent(&self, leaf: NodeId) -> Option<NodeId> {
+        let parent = *self.parents.get(&leaf)?;
+        match self.nodes.get(&parent)? {
+            Node::Stack { children, .. }
+                if children
+                    .iter()
+                    .all(|id| matches!(self.nodes.get(id), Some(Node::Window(_)))) =>
+            {
+                Some(parent)
+            }
+            _ => None,
+        }
+    }
+
+    fn group_at(&self, node: NodeId) -> Option<TabGroup> {
+        let Node::Stack { children, active } = self.nodes.get(&node)? else {
+            return None;
+        };
+        let windows: Option<Vec<_>> = children
+            .iter()
+            .map(|id| match self.nodes.get(id) {
+                Some(Node::Window(window)) => Some(*window),
+                _ => None,
+            })
+            .collect();
+        let windows = windows?;
+        Some(TabGroup {
+            active: *windows.get(*active)?,
+            windows,
+        })
+    }
+
+    pub fn tab_group(&self, window: WindowId) -> Option<TabGroup> {
+        self.group_at(*self.parents.get(self.windows.get(&window)?)?)
+    }
+
+    pub fn tab_groups(&self) -> Vec<TabGroup> {
+        let mut groups: Vec<_> = self.nodes.keys().filter_map(|id| self.group_at(*id)).collect();
+        groups.sort_by_key(|group| group.windows[0].0);
+        groups
+    }
+
+    pub fn adjacent_tab(&self, window: WindowId, previous: bool) -> Option<WindowId> {
+        let group = self.tab_group(window)?;
+        let index = group.windows.iter().position(|id| *id == window)?;
+        let step = if previous { group.windows.len() - 1 } else { 1 };
+        Some(group.windows[(index + step) % group.windows.len()])
+    }
+
+    /// Leave the group in place and split the departing window to its right.
+    pub fn leave_tab_group(&mut self, window: WindowId) -> Result<bool, LayoutError> {
+        if !self.contains(window) {
+            return Err(LayoutError::UnknownWindow(window));
+        }
+        let Some(group) = self.tab_group(window) else {
+            return Ok(false);
+        };
+        let target = group
+            .windows
+            .into_iter()
+            .find(|id| *id != window)
+            .expect("group has at least two tabs");
+        self.remove(window)?;
+        self.insert(window, Some(target), Axis::Horizontal, 0.5)?;
+        Ok(true)
     }
 
     pub fn activate_window(&mut self, window: WindowId) -> Result<(), LayoutError> {
@@ -1574,5 +1688,73 @@ mod tests {
             2 => Direction::Up,
             _ => Direction::Down,
         }
+    }
+}
+
+#[cfg(test)]
+mod tab_tests {
+    use super::*;
+
+    fn nested() -> LayoutTree {
+        let mut tree = LayoutTree::default();
+        tree.insert(WindowId(1), None, Axis::Horizontal, 0.5).unwrap();
+        tree.insert(WindowId(2), Some(WindowId(1)), Axis::Horizontal, 0.6)
+            .unwrap();
+        tree.insert(WindowId(3), Some(WindowId(1)), Axis::Vertical, 0.4)
+            .unwrap();
+        tree.insert(WindowId(4), Some(WindowId(3)), Axis::Horizontal, 0.5)
+            .unwrap();
+        tree
+    }
+
+    #[test]
+    fn joining_and_leaving_tabs_preserve_neighboring_splits() {
+        let mut tree = nested();
+        let bounds = Rect::new(0., 0., 1000., 800.);
+        let neighbor = tree.geometry(bounds).unwrap()[&WindowId(2)];
+        tree.stack_window(WindowId(4), WindowId(3)).unwrap();
+        tree.stack_window(WindowId(1), WindowId(3)).unwrap();
+        assert_eq!(
+            tree.tab_group(WindowId(1)).unwrap().windows,
+            [WindowId(3), WindowId(4), WindowId(1)]
+        );
+        assert_eq!(tree.geometry(bounds).unwrap()[&WindowId(2)], neighbor);
+        assert_eq!(tree.visible_window_count(), 2);
+        let before = tree.clone();
+        tree.stack_window(WindowId(1), WindowId(4)).unwrap();
+        assert_eq!(tree, before, "joining the same group must not reorder it");
+        assert_eq!(tree.adjacent_tab(WindowId(1), false), Some(WindowId(3)));
+        assert_eq!(tree.adjacent_tab(WindowId(3), true), Some(WindowId(1)));
+        assert!(tree.leave_tab_group(WindowId(1)).unwrap());
+        assert_eq!(tree.geometry(bounds).unwrap()[&WindowId(2)], neighbor);
+        assert_eq!(tree.tab_group(WindowId(4)).unwrap().windows, [WindowId(3), WindowId(4)]);
+        assert!(tree.tab_group(WindowId(1)).is_none());
+        assert!(!tree.leave_tab_group(WindowId(1)).unwrap());
+        tree.remove(WindowId(4)).unwrap();
+        assert!(tree.tab_groups().is_empty());
+        assert!(tree.validate().is_ok());
+    }
+
+    #[test]
+    fn opening_beside_a_group_and_removing_active_tabs_keep_all_members_reachable() {
+        let mut tree = nested();
+        tree.stack_window(WindowId(4), WindowId(3)).unwrap();
+        tree.stack_window(WindowId(1), WindowId(3)).unwrap();
+        tree.insert(WindowId(5), Some(WindowId(1)), Axis::Vertical, 0.3)
+            .unwrap();
+        assert_eq!(tree.tab_groups().len(), 1);
+        let bounds = Rect::new(0., 0., 1000., 800.);
+        for id in [WindowId(3), WindowId(4), WindowId(1)] {
+            tree.activate_window(id).unwrap();
+            let geometry = tree.geometry(bounds).unwrap();
+            assert!(geometry.contains_key(&WindowId(5)));
+            assert!(geometry.contains_key(&id));
+            assert_eq!(geometry.len(), 3);
+        }
+        tree.remove(WindowId(1)).unwrap();
+        assert_eq!(tree.tab_group(WindowId(3)).unwrap().active, WindowId(4));
+        tree.remove(WindowId(3)).unwrap();
+        assert!(tree.tab_groups().is_empty());
+        assert!(tree.validate().is_ok());
     }
 }

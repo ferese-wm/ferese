@@ -79,10 +79,14 @@ FERESE_TEST_WINDOW_CAPTURE=1 python3 scripts/tests/test_window_capture_isolated.
 FERESE_TEST_INHIBIT=1 python3 scripts/tests/test_inhibit_isolated.py
 FERESE_TEST_RESTORE=1 python3 scripts/tests/test_restore_isolated.py
 FERESE_TEST_WINDOW_STREAM=1 python3 scripts/tests/test_window_stream_isolated.py
+FERESE_TEST_TREE_TABS=1 python3 scripts/tests/test_tree_tabs_isolated.py
 ```
 
 These checks use disposable nested sessions or private buses to test shortcut
-cleanup, window capture, inhibitors, restored permissions and live window streams.
+cleanup, window capture, inhibitors, restored permissions, live window streams,
+and tree and scrolling tab groups. The tab test checks real terminal windows and rendered title
+pixels; `FERESE_TEST_TABS_SCREENSHOT=/tmp/tabs.png` saves screenshots with `-tree` and
+`-scrolling` suffixes.
 Check each script's dependencies before running it.
 
 For monitor streaming and lock revocation, install Python GI/GStreamer with

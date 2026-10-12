@@ -196,6 +196,7 @@ impl Ferese {
             .iter()
             .any(|window| Some(window.output) == self.output_id(output))
             || self.overview.is_animating(self.spring_config)
+            || self.tab_indicator_output_animating(output)
             || self
                 .dismissing_popups
                 .iter()

@@ -50,6 +50,13 @@ impl WorkspaceLayout {
         }
     }
 
+    fn with_column_display(mut self, display: ferese_layout::ColumnDisplay) -> Self {
+        if let Self::Scrolling(layout) = &mut self {
+            layout.set_default_display(display);
+        }
+        self
+    }
+
     pub fn mode(&self) -> LayoutMode {
         match self {
             Self::Scrolling(_) => LayoutMode::Scrolling,
@@ -111,6 +118,20 @@ impl WorkspaceLayout {
         }
     }
 
+    pub fn tab_group(&self, window: WindowId) -> Option<ferese_layout::TabGroup> {
+        match self {
+            Self::Tree(tree) => tree.tab_group(window),
+            Self::Scrolling(layout) => layout.tab_group(window),
+        }
+    }
+
+    pub fn adjacent_tab(&self, window: WindowId, previous: bool) -> Option<WindowId> {
+        match self {
+            Self::Tree(tree) => tree.adjacent_tab(window, previous),
+            Self::Scrolling(layout) => layout.adjacent_tab(window, previous),
+        }
+    }
+
     pub fn stack_window(&mut self, window: WindowId, target: WindowId) -> Result<(), LayoutError> {
         match self {
             Self::Scrolling(layout) => layout.move_into_column(window, target),
@@ -158,7 +179,32 @@ impl WorkspaceLayout {
                 constraints,
                 focused.filter(|window| layout.contains(*window)),
             ),
-            Self::Tree(layout) => layout.geometry_with_constraints(bounds, gaps, constraints, focused),
+            Self::Tree(layout) => {
+                let groups = layout.tab_groups();
+                if groups.is_empty() {
+                    return layout.geometry_with_constraints(bounds, gaps, constraints, focused);
+                }
+                const TAB_HEIGHT: f64 = ferese_layout::TAB_BAR_HEIGHT;
+                let mut constraints = constraints.clone();
+                for group in &groups {
+                    for id in &group.windows {
+                        let constraint = constraints.entry(*id).or_default();
+                        constraint.min_height += TAB_HEIGHT;
+                        constraint.max_height = constraint.max_height.map(|height| height + TAB_HEIGHT);
+                    }
+                }
+                let mut result = layout.geometry_with_constraints(bounds, gaps, &constraints, focused)?;
+                for group in groups {
+                    if let Some(rect) = result.geometry.get_mut(&group.active) {
+                        let height = TAB_HEIGHT.min((rect.height - 1.0).max(0.0));
+                        let header = Rect::new(rect.x, rect.y, rect.width, height);
+                        rect.y += height;
+                        rect.height -= height;
+                        result.tab_bars.push(ferese_layout::TabBar { group, rect: header });
+                    }
+                }
+                Ok(result)
+            }
         }
     }
 
@@ -206,7 +252,7 @@ impl WorkspaceLayout {
                 layout.extract_to_column(window)?;
                 Ok(grouped)
             }
-            Self::Tree(_) => Ok(false),
+            Self::Tree(layout) => layout.leave_tab_group(window),
         }
     }
 
@@ -345,6 +391,7 @@ pub struct WorkspaceSet {
     default_layout_mode: LayoutMode,
     default_column_width: ColumnWidth,
     scrolling_focus_strategy: ViewportFocusStrategy,
+    default_column_display: ferese_layout::ColumnDisplay,
     next_id: u64,
 }
 
@@ -382,7 +429,18 @@ impl WorkspaceSet {
             default_layout_mode,
             default_column_width,
             scrolling_focus_strategy,
+            default_column_display: ferese_layout::ColumnDisplay::Stacked,
             next_id: 2,
+        }
+    }
+
+    /// Applies to future columns, including those in future workspaces.
+    pub fn set_default_column_display(&mut self, display: ferese_layout::ColumnDisplay) {
+        self.default_column_display = display;
+        for workspace in self.workspaces.values_mut() {
+            if let WorkspaceLayout::Scrolling(layout) = &mut workspace.layout {
+                layout.set_default_display(display);
+            }
         }
     }
 
@@ -427,6 +485,7 @@ impl WorkspaceSet {
                     }
                 }
                 scrolling.set_default_width(width);
+                scrolling.set_default_display(self.default_column_display);
                 if strategy != self.scrolling_focus_strategy {
                     scrolling.set_focus_strategy(strategy);
                 }
@@ -508,11 +567,15 @@ impl WorkspaceSet {
     pub fn set_active_layout_mode(&mut self, mode: LayoutMode, bounds: Rect) -> Result<bool, WorkspaceError> {
         let default_column_width = self.default_column_width;
         let focus_strategy = self.scrolling_focus_strategy;
+        let display = self.default_column_display;
         let workspace = self.active_mut();
         let focused = tiled_focus(workspace);
         let changed = workspace
             .layout
             .set_mode(mode, bounds, focused, default_column_width, focus_strategy)?;
+        if let WorkspaceLayout::Scrolling(layout) = &mut workspace.layout {
+            layout.set_default_display(display);
+        }
 
         debug_assert!(self.validate().is_ok());
         Ok(changed)
@@ -689,7 +752,8 @@ impl WorkspaceSet {
                     self.default_layout_mode,
                     self.default_column_width,
                     self.scrolling_focus_strategy,
-                ),
+                )
+                .with_column_display(self.default_column_display),
                 floating: Vec::new(),
                 last_focused: None,
                 fullscreen: None,
@@ -1688,5 +1752,99 @@ mod tests {
             (random.rotate_left(21) % 900 + 1) as f64,
             (random.rotate_left(33) % 700 + 1) as f64,
         )
+    }
+}
+
+#[cfg(test)]
+mod tab_geometry_tests {
+    use super::*;
+
+    #[test]
+    fn live_layout_conversion_preserves_default_column_display() {
+        use ferese_layout::ColumnDisplay;
+        let mut workspaces = WorkspaceSet::default();
+        workspaces.set_default_column_display(ColumnDisplay::Tabbed);
+        for mode in [LayoutMode::Tree, LayoutMode::Scrolling] {
+            workspaces
+                .reconfigure_live(
+                    mode,
+                    workspaces.default_column_width,
+                    workspaces.scrolling_focus_strategy,
+                    &HashMap::new(),
+                )
+                .unwrap();
+        }
+        workspaces.insert_window(WindowId(1), Axis::Horizontal, 0.5).unwrap();
+        let WorkspaceLayout::Scrolling(layout) = &workspaces.active().layout else {
+            panic!()
+        };
+        assert_eq!(layout.columns()[0].display, ColumnDisplay::Tabbed);
+    }
+
+    #[test]
+    fn default_column_display_only_changes_future_columns_and_reaches_new_workspaces() {
+        use ferese_layout::ColumnDisplay;
+        let mut workspaces = WorkspaceSet::default();
+        workspaces.insert_window(WindowId(1), Axis::Horizontal, 0.5).unwrap();
+        workspaces.set_default_column_display(ColumnDisplay::Tabbed);
+        workspaces.insert_window(WindowId(2), Axis::Horizontal, 0.5).unwrap();
+        let WorkspaceLayout::Scrolling(layout) = &workspaces.active().layout else {
+            panic!()
+        };
+        assert_eq!(layout.columns()[0].display, ColumnDisplay::Stacked);
+        assert_eq!(layout.columns()[1].display, ColumnDisplay::Tabbed);
+        let next = workspaces.create_workspace();
+        workspaces.activate(next).unwrap();
+        workspaces.insert_window(WindowId(3), Axis::Horizontal, 0.5).unwrap();
+        let WorkspaceLayout::Scrolling(layout) = &workspaces.active().layout else {
+            panic!()
+        };
+        assert_eq!(layout.columns()[0].display, ColumnDisplay::Tabbed);
+        workspaces.set_default_column_display(ColumnDisplay::Stacked);
+        workspaces.insert_window(WindowId(4), Axis::Horizontal, 0.5).unwrap();
+        let WorkspaceLayout::Scrolling(layout) = &workspaces.active().layout else {
+            panic!()
+        };
+        assert_eq!(layout.columns()[0].display, ColumnDisplay::Tabbed);
+        assert_eq!(layout.columns()[1].display, ColumnDisplay::Stacked);
+    }
+
+    #[test]
+    fn tab_header_reserves_space_and_disappears_after_leaving() {
+        let mut layout = WorkspaceLayout::Tree(LayoutTree::default());
+        layout.insert(WindowId(1), None, Axis::Horizontal, 0.5).unwrap();
+        layout
+            .insert(WindowId(2), Some(WindowId(1)), Axis::Horizontal, 0.5)
+            .unwrap();
+        layout.stack_window(WindowId(2), WindowId(1)).unwrap();
+        for height in [12., 200., 600.] {
+            let bounds = Rect::new(0., 0., 800., height);
+            let gaps = GapConfig {
+                inner: 0.,
+                outer: 0.,
+                smart: false,
+            };
+            let result = layout
+                .resolve_geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(WindowId(2)))
+                .unwrap();
+            assert_eq!(result.tab_bars.len(), 1);
+            let header = result.tab_bars[0].rect;
+            let content = result.geometry[&WindowId(2)];
+            assert_eq!(header.y + header.height, content.y);
+            assert_eq!(content.height + header.height, height);
+            assert!(content.height > 0.0);
+            assert!(!result.geometry.contains_key(&WindowId(1)));
+        }
+        layout.extract_window(WindowId(2)).unwrap();
+        let result = layout
+            .resolve_geometry_with_constraints(
+                Rect::new(0., 0., 800., 600.),
+                GapConfig::default(),
+                &HashMap::new(),
+                None,
+            )
+            .unwrap();
+        assert!(result.tab_bars.is_empty());
+        assert_eq!(result.geometry.len(), 2);
     }
 }

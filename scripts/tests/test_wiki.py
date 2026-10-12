@@ -161,6 +161,33 @@ class WikiTests(unittest.TestCase):
             self.assertIn('## Start using it', usage)
             self.assertIn('## Publisher ownership and lifecycle', usage)
 
+    def test_tabbed_windows_usage_and_settings_are_published_separately(self):
+        with mock.patch.object(wiki, 'ROOT', ROOT):
+            output = wiki.render('deadbeef')
+            usage = output['Tabbed-Windows.md']
+            layout = output['Configuration-Layout.md']
+            bindings = output['Configuration-Bindings.md']
+            navigation = output['_Sidebar.md'].split('## Usage', 1)[1].split('## Configuration', 1)[0]
+            self.assertIn(wiki.WIKI + '/Tabbed-Windows)', navigation)
+            self.assertIn('segmented rail', usage)
+            self.assertIn('feresectl join-tab left', usage)
+            self.assertIn(wiki.WIKI + '/Configuration-Layout#tabbed-columns', usage)
+            self.assertIn('default-column-display "tabbed"', layout)
+            self.assertNotIn('default-column-display', output['Configuration.md'])
+            for action in ('toggle-column-tabbed', 'join-tab', 'leave-tab', 'next-tab', 'previous-tab'):
+                with self.subTest(action=action):
+                    self.assertIn('`' + action + '`', bindings)
+            for page in ('Shortcuts-and-Gestures.md', 'IPC.md', 'Configuration-Bindings.md'):
+                self.assertIn(wiki.WIKI + '/Tabbed-Windows', output[page])
+
+    def test_tab_indicator_reference_documents_every_configuration_field(self):
+        source = (ROOT / 'compositor/src/config/tab_indicator.rs').read_text()
+        reference = (ROOT / 'docs/configuration/layout.md').read_text()
+        body = re.search(r'struct TabIndicatorConfig\s*\{([^}]+)\}', source).group(1)
+        for field in re.findall(r'^\s+(\w+):', body, re.MULTILINE):
+            with self.subTest(field=field):
+                self.assertIn('| `' + field.replace('_', '-') + '` |', reference)
+
     def test_activity_publishing_has_its_own_development_page(self):
         with mock.patch.object(wiki, 'ROOT', ROOT):
             output = wiki.render('deadbeef')

@@ -13,6 +13,9 @@ impl Ferese {
         if self.overview_strip_at(position).is_some() {
             return None;
         }
+        if self.tab_at(position).is_some() {
+            return None;
+        }
         self.layer_surface_under(position, &[Layer::Overlay, Layer::Top])
             .map(|(_, surface, origin)| (surface, origin))
             .or_else(|| self.window_surface_under(position))

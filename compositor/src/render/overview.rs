@@ -30,13 +30,13 @@ pub(super) fn overview_chrome_element(
         focus_gradient_line: [0.0; 4],
         focus_mix: 0.0,
     };
-    let program = if key.1 == OverviewChromePart::Outline {
+    let program = if matches!(key.1, OverviewChromePart::Outline | OverviewChromePart::TabListOutline) {
         rounded_clip_program(&mut state.render, renderer)?.border
     } else {
         material_program(&mut state.render, renderer)?.0
     };
     let uniforms = |p: &BorderParameters| {
-        if key.1 == OverviewChromePart::Outline {
+        if matches!(key.1, OverviewChromePart::Outline | OverviewChromePart::TabListOutline) {
             border_uniforms(p)
         } else {
             tint_uniforms(p)
@@ -122,7 +122,14 @@ pub(super) fn overview_strip_elements(
         && let Some(cache) = state.render.outputs.get_mut(&output_id)
     {
         cache.chrome.retain(|(id, part), _| match part {
-            OverviewChromePart::Caption => state.windows.window(ferese_layout::WindowId(*id)).is_some(),
+            OverviewChromePart::Caption
+            | OverviewChromePart::Tab
+            | OverviewChromePart::TabActive
+            | OverviewChromePart::TabRail
+            | OverviewChromePart::TabListOutline
+            | OverviewChromePart::TabList
+            | OverviewChromePart::TabRow
+            | OverviewChromePart::TabFlash => state.windows.window(ferese_layout::WindowId(*id)).is_some(),
             OverviewChromePart::Card | OverviewChromePart::Outline => card_ids.contains(id),
             OverviewChromePart::Strip => true,
         });

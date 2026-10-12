@@ -19,7 +19,7 @@ Ferese combines a window manager and desktop shell with one configuration.
 
 ## Features
 
-- Scrolling columns, window groups, tree tiling and floating windows with saved size and position
+- Scrolling columns, [tabbed window groups](https://github.com/ferese-wm/ferese/wiki/Tabbed-Windows), tree tiling and floating windows with saved size and position
 - Integrated shell with notifications, media controls, Settings and Control Center
 - [Custom panels](https://github.com/ferese-wm/ferese/wiki/Panel-Configuration) with seven styles, editable groups and items, and top or bottom placement
 - [Live Activities](https://github.com/ferese-wm/ferese/wiki/Live-Activities) for build status, running commands and progress from connected apps

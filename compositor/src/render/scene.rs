@@ -195,6 +195,7 @@ fn scene_elements(
         if let Some(group) = closing.remove(&Some(id)) {
             elements.extend(group);
         }
+        elements.extend(super::tabs::tab_elements(state, renderer, output, frame, id, capture));
         let constrain = rounded_visual_rect(visual, output_geometry.loc);
         let material_surface = window
             .toplevel()

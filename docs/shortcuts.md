@@ -49,14 +49,23 @@ two most recently focused windows.
 | --- | --- |
 | Super + R | Cycle column width |
 | Super + C | Center the focused column |
-| Super + [ | Place the window in a neighbouring column |
-| Super + ] | Extract the window into its own column |
+| Super + [ | Join a neighbouring column or tree tab group |
+| Super + ] | Leave the column or tree tab group |
+| Super + Ctrl + [ / ] | Previous / next tab in a group |
+| Super + Shift + T | Toggle a scrolling column between stacked rows and tabs |
 | Super + M | Switch scrolling / tree layout |
 | Super + Tab | Open or close overview |
 
 In scrolling mode, **Super + [** uses the left neighbour when available, otherwise
 the right. Try it with two terminals to place them vertically in one column.
-**Super + ]** separates the focused window again.
+**Super + ]** separates the focused window again. **Super + Shift + T** changes
+the column to tabs or restores its stacked rows. In tabbed columns, **Super + J/K**
+switches tabs; the usual left/right focus keys still switch columns.
+
+In tree mode, **Super + [** joins the focused window to a neighbouring window
+as a tab. Click a title in the tab bar or use **Super + Ctrl + [ / ]** to switch
+tabs. **Super + ]** splits the focused tab out beside the group. For a specific
+neighbour, bind `join-tab` with a direction; see [Tabbed windows](tabbed-windows.md).
 
 In overview, select a workspace to see its windows, then click the window you
 want. Directional focus keys move selection; Enter activates it and Escape closes
@@ -169,3 +178,7 @@ binding "Super+Q" disabled=#true
 
 See [Commands and bindings](configuration/bindings.md#commands-and-bindings) for action
 names, arguments, and physical-key matching.
+
+In scrolling columns, hover over the left-edge tab indicator for window titles.
+Click a segment or title to switch tabs. Keyboard tab switching briefly shows the
+selected tab number and title without opening the list.
