@@ -80,14 +80,11 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let launch =
         LaunchConfig::from_environment().map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
-    let initial_source = config::config_path()
-        .filter(|path| path.exists())
-        .map(|path| theme::read_source(&path))
-        .transpose()?;
-    let directory = config::config_path()
-        .and_then(|path| path.parent().map(ToOwned::to_owned))
-        .unwrap_or_else(|| std::path::PathBuf::from("."));
-    let (_, runtime, candidate) = theme::prepare(initial_source.as_deref().unwrap_or(""), &directory)?;
+    let config_path = config::config_path();
+    let startup = config::startup(config_path.as_deref())?;
+    if let Some(error) = &startup.error {
+        warn!(%error, "configuration could not be loaded at startup; using defaults");
+    }
     let mut event_loop = EventLoop::try_new()?;
     let signals = Signals::new(&[Signal::SIGINT, Signal::SIGTERM])?;
     event_loop
@@ -101,8 +98,14 @@ fn main() -> Result<(), Box<dyn Error>> {
         backends::BackendKind::Drm => ipc::Endpoint::desktop()?,
         backends::BackendKind::Nested => ipc::Endpoint::instance()?,
     };
-    let mut state = Ferese::new_with_session(&mut event_loop, display, runtime, endpoint, launch.session_policy)?;
-    state.config_source = initial_source.filter(|source| source.len() <= 60 * 1024);
+    let mut state = Ferese::new_with_session(
+        &mut event_loop,
+        display,
+        startup.runtime,
+        endpoint,
+        launch.session_policy,
+    )?;
+    state.config_source = startup.source;
     state.config_sections = state
         .config_source
         .as_deref()
@@ -114,7 +117,10 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
             value
         });
-    theme::init(&mut event_loop, &mut state, candidate)?;
+    if let Some(error) = startup.error {
+        state.theme_engine.startup_failed(config_path.as_deref(), error);
+    }
+    theme::init(&mut event_loop, &mut state, startup.theme)?;
     let _resume_monitor = resume::init(&mut event_loop)?;
     idle_inhibition::media::init(&mut event_loop)?;
     overview::init_font_loader(&mut event_loop, &mut state)?;
@@ -173,8 +179,8 @@ fn init_logging() {
 }
 
 fn check_config(path: &std::path::Path) -> Result<(), String> {
-    let source = theme::read_source(path)?;
-    theme::prepare(&source, path.parent().unwrap_or(std::path::Path::new(".")))?;
+    let source = config::read_source(path)?;
+    config::prepare(&source, path.parent().unwrap_or(std::path::Path::new(".")))?;
     Ok(())
 }
 

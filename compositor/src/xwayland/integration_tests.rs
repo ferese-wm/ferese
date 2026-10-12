@@ -646,7 +646,7 @@ mod manager_loop {
 
     /// A `Ferese` wired to a real event loop, ready to run the manager.
     fn session(directory: &Path, path: PathBuf) -> (EventLoop<'static, Ferese>, Ferese) {
-        let (_, runtime, _) = crate::theme::prepare("xwayland { }", directory).expect("prepare configuration");
+        let (_, runtime, _) = crate::config::prepare("xwayland { }", directory).expect("prepare configuration");
         // Owned inputs, so this test never competes for a real display slot.
         let allocator = directory.join("x11");
         fs::create_dir_all(&allocator).expect("create the allocator directory");

@@ -68,9 +68,10 @@ appearance, wallpaper, motion, input, bindings, rules, layouts, displays,
 and login items take effect live. If a reload is invalid, Ferese reports the error
 and keeps the last working configuration.
 
-When the shell starts, it loads your configuration or, if no file exists, uses
-the defaults. An invalid file stops startup with an error message, leaving your
-configuration untouched.
+At login, Ferese loads your configuration or uses the built-in defaults if the
+file is missing or invalid. For an invalid file, it shows a notification once
+the desktop is ready and leaves the file untouched, so you can correct it to
+match the current schema and reload your settings.
 
 ```sh
 feresectl reload-config          # reload with error feedback

@@ -148,7 +148,7 @@ impl Prepared {
                     .map(|path| ferese_config::theme::theme_path(directory, path)),
             );
         }
-        let (_, runtime, candidate) = crate::theme::prepare_document(&document, directory)?;
+        let (_, runtime, candidate) = crate::config::prepare_document(&document, directory)?;
         let mut sections = document.value().clone();
         if let Some(object) = sections.as_object_mut() {
             object.remove("theme");
@@ -229,7 +229,7 @@ impl Worker {
                             || request.fallback.ok_or_else(|| "No configuration available".into()),
                             |path| {
                                 if path.exists() || !request.force {
-                                    crate::theme::read_source(path)
+                                    crate::config::read_source(path)
                                 } else {
                                     Ok(String::new())
                                 }
@@ -362,7 +362,7 @@ impl crate::Ferese {
 
     pub(crate) fn reload_config(&mut self) -> Result<(), String> {
         let path = crate::config::config_path().ok_or("config directory is unavailable")?;
-        self.reload_config_source(crate::theme::read_source(&path)?)
+        self.reload_config_source(crate::config::read_source(&path)?)
     }
 }
 
@@ -418,7 +418,7 @@ mod tests {
             return;
         }
 
-        let (_, runtime, _) = crate::theme::prepare("", std::path::Path::new(".")).unwrap();
+        let (_, runtime, _) = crate::config::prepare("", std::path::Path::new(".")).unwrap();
         let mut event_loop = calloop::EventLoop::try_new().unwrap();
         let display = smithay::reexports::wayland_server::Display::new().unwrap();
         let mut state = crate::Ferese::new(&mut event_loop, display, runtime).unwrap();
@@ -498,7 +498,7 @@ mod tests {
         }
         let source = "appearance { focus-effect { inactive-opacity 0.8; inactive-dim 0.25; }; }";
         let directory = Directory::new();
-        let (_, runtime, candidate) = crate::theme::prepare(source, &directory.0).unwrap();
+        let (_, runtime, candidate) = crate::config::prepare(source, &directory.0).unwrap();
         let mut event_loop = smithay::reexports::calloop::EventLoop::try_new().unwrap();
         let display = smithay::reexports::wayland_server::Display::new().unwrap();
         let mut state = crate::Ferese::new(&mut event_loop, display, runtime).unwrap();
@@ -566,7 +566,7 @@ mod tests {
         }
 
         let directory = Directory::new();
-        let (_, runtime, _) = crate::theme::prepare("xwayland { enabled #false; }", &directory.0).unwrap();
+        let (_, runtime, _) = crate::config::prepare("xwayland { enabled #false; }", &directory.0).unwrap();
         let mut event_loop = smithay::reexports::calloop::EventLoop::try_new().unwrap();
         let display = smithay::reexports::wayland_server::Display::new().unwrap();
         let mut state = crate::Ferese::new(&mut event_loop, display, runtime).unwrap();
@@ -615,7 +615,7 @@ mod tests {
         }
         let directory = Directory::new();
         let source = "output-profile mobile { output eDP-1 scale=1.75; }";
-        let (_, runtime, _) = crate::theme::prepare(source, &directory.0).unwrap();
+        let (_, runtime, _) = crate::config::prepare(source, &directory.0).unwrap();
         let mut event_loop = smithay::reexports::calloop::EventLoop::try_new().unwrap();
         let display = smithay::reexports::wayland_server::Display::new().unwrap();
         let mut state = crate::Ferese::new(&mut event_loop, display, runtime).unwrap();

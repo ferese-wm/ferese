@@ -1,4 +1,5 @@
 use std::fs;
+use std::io::Read;
 use std::path::PathBuf;
 
 use serde::Deserialize;
@@ -353,7 +354,16 @@ fn load_path(path: &std::path::Path) -> Result<ShellConfig, String> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(ShellConfig::default()),
         Err(error) => return Err(format!("cannot read {}: {error}", path.display())),
     }
-    let source = fs::read_to_string(path).map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+    let mut source = String::new();
+    fs::File::open(path)
+        .and_then(|file| {
+            file.take((ferese_config::file::LIMIT + 1) as u64)
+                .read_to_string(&mut source)
+        })
+        .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+    if source.len() > ferese_config::file::LIMIT {
+        return Err(format!("{} exceeds 60 KiB", path.display()));
+    }
     parse_source(&source).map_err(|error| format!("invalid configuration in {}: {error}", path.display()))
 }
 
@@ -786,7 +796,7 @@ theme {
     }
 
     #[test]
-    fn startup_rejects_invalid_configuration_without_replacing_it() {
+    fn loader_reports_invalid_configuration_without_replacing_it() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("config.kdl");
         let source =
@@ -798,6 +808,10 @@ theme {
         assert_eq!(std::fs::read_to_string(&path).unwrap(), source);
         std::fs::write(&path, "panel main {").unwrap();
         assert!(super::load_path(&path).is_err());
+        let oversized = " ".repeat(ferese_config::file::LIMIT + 1);
+        std::fs::write(&path, &oversized).unwrap();
+        assert!(super::load_path(&path).unwrap_err().contains("60 KiB"));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), oversized);
     }
 
     #[test]

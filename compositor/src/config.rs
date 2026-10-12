@@ -2,6 +2,7 @@ mod appearance;
 mod bindings;
 mod input_motion;
 mod layout;
+mod loading;
 mod outputs;
 mod xwayland;
 
@@ -10,6 +11,7 @@ use std::error::Error;
 use std::fmt;
 use std::path::PathBuf;
 
+pub(crate) use self::loading::{prepare, prepare_document, read_source, startup};
 pub(crate) use self::xwayland::{XwaylandConfig, XwaylandStartup};
 use appearance::*;
 pub use appearance::{BorderGradient, FocusEffectSettings, MaterialStyle, ThemeSettings};
@@ -409,7 +411,7 @@ mod tests {
                     .contains("unknown field")
             );
             assert!(
-                crate::theme::prepare(&source, std::path::Path::new("/tmp"))
+                crate::config::prepare(&source, std::path::Path::new("/tmp"))
                     .err()
                     .unwrap()
                     .contains(&key.replace('-', "_"))

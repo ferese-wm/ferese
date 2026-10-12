@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use std::io::{self, Read};
+use std::io;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, mpsc};
@@ -20,9 +20,9 @@ use serde_json::{Value, json};
 use smithay::backend::renderer::gles::GlesRenderer;
 use smithay::output::Output;
 
+use crate::Ferese;
 use crate::config::Config;
 use crate::wallpaper::{WallpaperConfig, WallpaperState};
-use crate::{Ferese, RuntimeConfig};
 
 const DEBOUNCE: Duration = Duration::from_millis(150);
 const WALLPAPER_TIMEOUT: Duration = Duration::from_secs(2);
@@ -35,34 +35,14 @@ fn transition_progress(elapsed: Duration, duration: Duration) -> f64 {
     }
 }
 
-pub(crate) fn read_source(path: &Path) -> Result<String, String> {
-    let mut source = String::new();
-    std::fs::File::open(path)
-        .map_err(|e| format!("{}: {e}", path.display()))?
-        .take(60 * 1024 + 1)
-        .read_to_string(&mut source)
-        .map_err(|e| e.to_string())?;
-    if source.len() > 60 * 1024 {
-        return Err(format!("{} exceeds 60 KiB", path.display()));
-    }
-    Ok(source)
-}
-
-pub(crate) fn prepare(source: &str, directory: &Path) -> Result<(Config, RuntimeConfig, Candidate), String> {
-    let document = Document::parse(source).map_err(|e| e.to_string())?;
-    prepare_document(&document, directory)
-}
-
-pub(crate) fn prepare_document(
-    document: &Document,
-    directory: &Path,
-) -> Result<(Config, RuntimeConfig, Candidate), String> {
-    let candidate = resolve_with_context(document, directory, Timestamp::now(), &auto_context(), read_source)?;
-    let config: Config =
-        serde_json::from_value(document.with_theme(&candidate.theme).value().clone()).map_err(|e| e.to_string())?;
-    let mut runtime = config.runtime_config().map_err(|e| e.to_string())?;
-    runtime.theme_settings = Config::resolved_theme_settings(&candidate.theme).map_err(|e| e.to_string())?;
-    Ok((config, runtime, candidate))
+pub(crate) fn resolve_candidate(document: &Document, directory: &Path) -> Result<Candidate, String> {
+    resolve_with_context(
+        document,
+        directory,
+        Timestamp::now(),
+        &auto_context(),
+        crate::config::read_source,
+    )
 }
 
 pub(crate) fn preview(args: &Value) -> Result<Value, String> {
@@ -76,7 +56,7 @@ pub(crate) fn preview(args: &Value) -> Result<Value, String> {
         .or_else(|| crate::config::config_path().and_then(|path| path.parent().map(ToOwned::to_owned)))
         .unwrap_or_else(|| PathBuf::from("."));
     let document = Document::parse(source).map_err(|e| e.to_string())?;
-    let candidate = resolve_with_context(&document, &directory, Timestamp::now(), &auto_context(), read_source)?;
+    let candidate = resolve_candidate(&document, &directory)?;
     Ok(
         json!({"theme": candidate.theme, "warnings": candidate.warnings, "families": candidate.families, "fallback_note": candidate.fallback_note}),
     )
@@ -165,6 +145,7 @@ pub(crate) struct Engine {
     pending: Option<Pending>,
     transition: Option<Transition>,
     last_frame: Option<Instant>,
+    startup_rejection: Option<String>,
 }
 
 impl Engine {
@@ -207,7 +188,21 @@ impl Engine {
         }
     }
 
+    pub(crate) fn startup_failed(&mut self, path: Option<&Path>, error: String) {
+        let path = path
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| "configuration".into());
+        self.live.error = Some(format!(
+            "Ferese started with default settings because {path} could not be loaded. Your file has not been changed.\n\n{error}"
+        ));
+        self.startup_rejection = Some(error);
+    }
+
     pub(crate) fn reject(&mut self, error: String) {
+        if self.startup_rejection.as_ref() == Some(&error) {
+            return;
+        }
+        self.startup_rejection = None;
         if self.live.error.as_ref() != Some(&error) {
             tracing::warn!(%error, "theme reload rejected; retaining active theme");
             self.live.error = Some(error);
@@ -400,6 +395,7 @@ impl Ferese {
     }
 
     pub(crate) fn accept_theme(&mut self, candidate: Candidate, wallpaper: WallpaperConfig) {
+        self.theme_engine.startup_rejection = None;
         self.theme_engine.active_files = candidate.files.clone();
         self.theme_engine.watch_files(&candidate.files);
         if let Err(error) = self.theme_engine.arm_clock(candidate.next_transition) {
@@ -584,11 +580,11 @@ impl Ferese {
 
     pub(crate) fn set_theme_mode(&mut self, mode: Mode) -> Result<Value, String> {
         let path = crate::config::config_path().ok_or("No configuration directory")?;
-        let original = read_source(&path)?;
+        let original = crate::config::read_source(&path)?;
         let mut document = Document::parse(&original).map_err(|e| e.to_string())?;
         document.set("theme.mode", json!(mode)).map_err(|e| e.to_string())?;
         let source = document.to_string();
-        prepare(&source, path.parent().unwrap_or(Path::new(".")))?;
+        crate::config::prepare(&source, path.parent().unwrap_or(Path::new(".")))?;
         let temporary = path.with_extension(format!("kdl.{}.tmp", std::process::id()));
         let result = (|| -> Result<(), String> {
             use std::io::Write;
@@ -603,7 +599,7 @@ impl Ferese {
             }
             file.write_all(source.as_bytes()).map_err(|e| e.to_string())?;
             file.sync_all().map_err(|e| e.to_string())?;
-            if read_source(&path)? != original {
+            if crate::config::read_source(&path)? != original {
                 return Err("Configuration changed while updating the mode; please try again".into());
             }
             std::fs::rename(&temporary, &path).map_err(|e| e.to_string())?;
@@ -621,6 +617,26 @@ impl Ferese {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn startup_warning_survives_repeated_rejection_without_duplicate_publication() {
+        let mut engine = Engine::default();
+        engine.startup_failed(Some(Path::new("/config.kdl")), "unknown field group_surface".into());
+        engine.publish();
+        let initial = engine.value();
+        assert!(initial["error"].as_str().unwrap().contains("default settings"));
+        assert!(initial["error"].as_str().unwrap().contains("/config.kdl"));
+        for _ in 0..3 {
+            engine.reject("unknown field group_surface".into());
+            assert_eq!(engine.value(), initial);
+        }
+        engine.reject("different invalid edit".into());
+        assert_eq!(engine.live.error.as_deref(), Some("different invalid edit"));
+        assert_eq!(engine.revision, 2);
+        engine.reject("unknown field group_surface".into());
+        assert_eq!(engine.live.error.as_deref(), Some("unknown field group_surface"));
+        assert_eq!(engine.revision, 3);
+    }
 
     #[test]
     fn publication_projects_live_values_and_preserves_revision_semantics() {
