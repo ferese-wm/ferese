@@ -795,6 +795,7 @@ impl FereseShell {
                 .render
                 .text(activity.data.title.clone())
                 .size(12)
+                .line_height(cosmic::iced::widget::text::LineHeight::Relative(1.1))
                 .class(theme::Text::Color(palette.text.scale_alpha(opacity)))
                 .ellipsize(cosmic::iced::widget::text::Ellipsize::End(
                     cosmic::iced::advanced::text::EllipsizeHeightLimit::Lines(1),
@@ -804,9 +805,10 @@ impl FereseShell {
                 self.render
                     .text(label(activity))
                     .size(10)
+                    .line_height(cosmic::iced::widget::text::LineHeight::Relative(1.1))
                     .class(theme::Text::Color(palette.text.scale_alpha(opacity * 0.7)))
             ]
-            .spacing(1);
+            .spacing(0);
             let item = row![
                 self.activity_icon(activity, tint.scale_alpha(opacity), !intrinsic),
                 text
@@ -897,6 +899,7 @@ impl FereseShell {
                 self.render
                     .text(activity.data.title.clone())
                     .size(13)
+                    .line_height(cosmic::iced::widget::text::LineHeight::Relative(1.1))
                     .width(Length::Fill)
                     .ellipsize(cosmic::iced::widget::text::Ellipsize::End(
                         cosmic::iced::advanced::text::EllipsizeHeightLimit::Lines(1)
@@ -904,13 +907,14 @@ impl FereseShell {
                 self.render
                     .text(label(activity))
                     .size(12)
+                    .line_height(cosmic::iced::widget::text::LineHeight::Relative(1.1))
                     .width(Length::Fill)
                     .ellipsize(cosmic::iced::widget::text::Ellipsize::End(
                         cosmic::iced::advanced::text::EllipsizeHeightLimit::Lines(1)
                     ))
                     .class(theme::Text::Color(palette.text.scale_alpha(opacity * 0.7)))
             ]
-            .spacing(2)
+            .spacing(0)
             .width(Length::Fill);
             let mut body = column![
                 row![
