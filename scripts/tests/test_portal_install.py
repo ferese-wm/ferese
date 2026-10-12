@@ -517,6 +517,52 @@ class FrontendTest(unittest.TestCase):
 
 
 class UserSetupTest(unittest.TestCase):
+    def test_activity_setup_detects_shell_and_preserves_later_config_edits(self):
+        for shell in ('fish', 'bash', 'zsh'):
+            with self.subTest(shell=shell), tempfile.TemporaryDirectory(prefix="ferese user's ") as directory:
+                home = Path(directory)
+                config = home / 'custom config'
+                startup = (config / 'fish/conf.d/ferese-activities.fish' if shell == 'fish' else
+                           home / ('.bashrc' if shell == 'bash' else 'zdir/.zshrc'))
+                startup.parent.mkdir(parents=True, exist_ok=True)
+                if shell != 'fish':
+                    original = '# My existing shell configuration\nexport MY_VALUE=kept\n'
+                    real = home / 'dotfile'
+                    real.write_text(original)
+                    startup.symlink_to(real)
+                env = dict(HOME=str(home), SHELL='/usr/bin/' + shell, ZDOTDIR=str(home / 'zdir'))
+                with mock.patch.dict(os.environ, env), mock.patch.object(installer.subprocess, 'run') as run:
+                    installer.setup_activities(config, ctl=Path('/test/feresectl'), assets=REPO / 'contrib/activities')
+                    first = startup.read_text()
+                    installer.setup_activities(config, ctl=Path('/test/feresectl'), assets=REPO / 'contrib/activities')
+                    self.assertEqual(run.call_count, 1, 'later installs must not reset edited config')
+                self.assertEqual(startup.read_text(), first)
+                self.assertTrue((config / f'ferese/activities/ferese.{shell}').exists())
+                if shell != 'fish':
+                    self.assertTrue(first.startswith(original))
+                    self.assertTrue(startup.is_symlink())
+                    self.assertEqual(len(list(home.glob('dotfile.before-activities-*'))), 1)
+                if shutil.which(shell):
+                    check = subprocess.run([shell, '-n', str(startup)], capture_output=True)
+                    self.assertEqual(check.returncode, 0, check.stderr)
+                if shell == 'bash':
+                    check = subprocess.run(['bash', '--rcfile', str(startup), '-i', '-c',
+                                            '[[ ${preexec_functions[*]} == *_ferese_preexec* ]]'],
+                                           env=dict(os.environ, **env), capture_output=True)
+                    self.assertEqual(check.returncode, 0, check.stderr)
+
+    def test_failed_activity_configuration_can_be_retried(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory)
+            with mock.patch.dict(os.environ, SHELL='/usr/bin/fish'), mock.patch.object(installer.subprocess, 'run') as run:
+                run.side_effect = subprocess.CalledProcessError(1, 'feresectl')
+                with self.assertRaises(subprocess.CalledProcessError):
+                    installer.setup_activities(config, assets=REPO / 'contrib/activities')
+                self.assertFalse((config / 'ferese/activities/installed.json').exists())
+                run.side_effect = None
+                installer.setup_activities(config, assets=REPO / 'contrib/activities')
+                self.assertTrue((config / 'ferese/activities/installed.json').exists())
+
     def test_repeatable_migration_and_reload_after_failure(self):
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory)
@@ -530,7 +576,7 @@ class UserSetupTest(unittest.TestCase):
             systemctl.chmod(0o755)
             env = dict(os.environ, HOME=str(home), XDG_CONFIG_HOME=str(home / '.config'), PATH=str(bin_dir))
             # User setup intentionally refuses root; emulate the user identity in root-run CI.
-            command = [sys.executable, '-c', f"import runpy, os; os.geteuid = lambda: 1000; runpy.run_path({str(HELPER)!r}, run_name='__main__')", 'user-setup']
+            command = [sys.executable, '-c', f"import runpy, os; os.geteuid = lambda: 1000; runpy.run_path({str(HELPER)!r}, run_name='__main__')", 'user-setup', '--no-activities']
             result = subprocess.run(command, env=env, capture_output=True)
             self.assertNotEqual(result.returncode, 0)
             self.assertFalse(override.exists())

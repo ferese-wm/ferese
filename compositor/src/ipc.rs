@@ -13,6 +13,7 @@ use std::{fs, io, thread};
 use ferese_core::LayoutMode;
 use ferese_ipc::{Request, Response, VERSION};
 
+pub(crate) mod activity_owner;
 mod transport;
 use ferese_layout::Direction;
 use serde_json::{Value, json};
@@ -40,8 +41,13 @@ const _: () = assert!(
 const SWEEP_INTERVAL: Duration = crate::handlers::screenshot_worker::SWEEP_INTERVAL;
 
 #[derive(Debug)]
-struct IpcCall {
+pub(crate) struct IpcCall {
     native_portal: bool,
+    activity: Option<(
+        activity_owner::VerifiedOwner,
+        ferese_ipc::activities::Publish,
+        Option<ferese_config::activities::Matched>,
+    )>,
     owner: u64,
     request: Request,
     response: SyncSender<Response>,
@@ -49,9 +55,15 @@ struct IpcCall {
 }
 
 #[derive(Debug)]
-enum IpcEvent {
-    Call(IpcCall),
+pub(crate) enum IpcEvent {
+    Call(Box<IpcCall>),
     Closed(u64),
+    ActivityOwnerExited(ferese_activities::Owner),
+    ActivityDetected(
+        ferese_activities::Owner,
+        Box<ferese_config::activities::Matched>,
+        Arc<std::os::fd::OwnedFd>,
+    ),
 }
 
 struct IpcConnection {
@@ -149,8 +161,28 @@ pub(crate) fn init(
     event_loop.handle().insert_source(receiver, |event, _, state| {
         if let channel::Event::Msg(event) = event {
             let call = match event {
-                IpcEvent::Call(call) => call,
+                IpcEvent::Call(call) => *call,
+                IpcEvent::ActivityDetected(owner, matched, fd) => {
+                    let output = state
+                        .outputs_json()
+                        .as_array()
+                        .and_then(|outputs| {
+                            outputs
+                                .iter()
+                                .find(|output| output["focused"] == true)
+                                .or_else(|| outputs.first())
+                        })
+                        .and_then(|output| output["name"].as_str())
+                        .map(str::to_owned);
+                    state.activities.detect_process(owner, *matched, output, &fd);
+                    return;
+                }
+                IpcEvent::ActivityOwnerExited(owner) => {
+                    state.activities.owner_exit(owner);
+                    return;
+                }
                 IpcEvent::Closed(owner) => {
+                    state.activities.remove_connection(owner);
                     state.ipc_events.remove(owner);
                     for request in state.screenshot.terminate_owner(owner) {
                         state
@@ -170,7 +202,67 @@ pub(crate) fn init(
                     return;
                 }
             };
-            if call.request.command == "event-stream" {
+            if call.request.command == "activity-publish" {
+                let result = validate_request(&call.request)
+                    .map_err(|error| error.message)
+                    .and_then(|()| {
+                        if state.session_lock.active() {
+                            return Err("Session locked".into());
+                        }
+                        let (owner, publish, matched) = call.activity.ok_or("Unverified activity owner")?;
+                        let output = state
+                            .outputs_json()
+                            .as_array()
+                            .and_then(|outputs| {
+                                outputs
+                                    .iter()
+                                    .find(|output| output["focused"] == true)
+                                    .or_else(|| outputs.first())
+                            })
+                            .and_then(|output| output["name"].as_str())
+                            .map(str::to_owned);
+                        let window = state.activity_window(&owner);
+                        state
+                            .activities
+                            .publish_verified(owner, publish, matched, output, window)
+                    });
+                state.activities.schedule();
+                let response = match result {
+                    Ok(result) => Response::success(call.request.id, result),
+                    Err(error) => Response::error(call.request.id, "activity_rejected", error),
+                };
+                let _ = call.response.try_send(response);
+            } else if call.request.command == "activity-get" {
+                if state.session_lock.active() {
+                    let _ = call.response.try_send(Response::error(
+                        call.request.id,
+                        "session_locked",
+                        "IPC unavailable while session is locked",
+                    ));
+                } else if let Err(error) = validate_request(&call.request) {
+                    let _ = call
+                        .response
+                        .try_send(Response::error(call.request.id, error.code, error.message));
+                } else {
+                    state.activities.get(call.request.id, call.response);
+                }
+            } else if call.request.command == "activity-watch" {
+                if let Err(error) = validate_request(&call.request) {
+                    let _ = call
+                        .response
+                        .try_send(Response::error(call.request.id, error.code, error.message));
+                } else if let Some(since) = call.request.args["since"].as_u64() {
+                    state
+                        .activities
+                        .watch(call.owner, call.request.id, since, call.response);
+                } else {
+                    let _ = call.response.try_send(Response::error(
+                        call.request.id,
+                        "invalid_argument",
+                        "Missing activity revision",
+                    ));
+                }
+            } else if call.request.command == "event-stream" {
                 let result = validate_request(&call.request).and_then(|()| {
                     if call.request.args["version"].as_u64() != Some(u64::from(ferese_ipc::events::VERSION)) {
                         return Err(CommandError::new(
@@ -317,10 +409,26 @@ pub(crate) fn init(
     })?;
     let worker = Worker::spawn(encoded);
 
+    let activity_timer = DeadlineTimer::new(event_loop.handle(), |state: &mut Ferese, _| state.activities.tick());
+    let (rules_send, rules_receive) = sync_channel(1);
+    let monitor = activity_owner::Monitor::new(sender.clone());
+    let state_monitor = monitor.clone();
+    let state_sender = sender.clone();
+    event_loop.handle().insert_idle(move |state| {
+        state.activities.timer = Some(activity_timer);
+        state.activities.monitor = Some(state_monitor);
+        state.activities.attach_process_source(state_sender);
+        state.activities.schedule();
+        let _ = rules_send.send(state.activities.rules.clone());
+    });
     let signal = event_loop.get_signal();
     thread::Builder::new()
         .name("ferese-ipc-listener".to_owned())
-        .spawn(move || accept_connections(listener, sender, signal))?;
+        .spawn(move || {
+            if let Ok(rules) = rules_receive.recv() {
+                accept_connections(listener, sender, signal, rules, monitor);
+            }
+        })?;
 
     // A client that dies between receiving a screenshot path and unlinking it
     // leaves the file behind, so staged files are reclaimed at startup and then
@@ -415,7 +523,13 @@ impl<Data: 'static> Drop for DeadlineTimer<Data> {
     }
 }
 
-fn accept_connections(listener: UnixListener, sender: channel::SyncSender<IpcEvent>, signal: LoopSignal) {
+fn accept_connections(
+    listener: UnixListener,
+    sender: channel::SyncSender<IpcEvent>,
+    signal: LoopSignal,
+    rules: crate::activities::SharedRules,
+    monitor: activity_owner::Monitor,
+) {
     let active_connections = Arc::new(AtomicUsize::new(0));
     let connection_ids = AtomicU64::new(1);
 
@@ -448,11 +562,13 @@ fn accept_connections(listener: UnixListener, sender: channel::SyncSender<IpcEve
         let sender = sender.clone();
         let owner = connection_ids.fetch_add(1, Ordering::Relaxed);
         let signal = signal.clone();
+        let monitor = monitor.clone();
+        let rules = rules.clone();
         if let Err(error) = thread::Builder::new()
             .name("ferese-ipc-client".to_owned())
             .spawn(move || {
                 let _permit = permit;
-                serve_connection(stream, sender, signal, owner);
+                serve_connection_with_activities(stream, sender, signal, owner, Some((monitor, rules)));
             })
         {
             tracing::warn!(%error, "could not start IPC connection worker");
@@ -475,7 +591,17 @@ fn try_acquire_connection(active: &Arc<AtomicUsize>) -> Option<ConnectionPermit>
     Some(ConnectionPermit { active: active.clone() })
 }
 
-fn serve_connection(mut stream: UnixStream, sender: channel::SyncSender<IpcEvent>, signal: LoopSignal, owner: u64) {
+#[cfg(test)]
+fn serve_connection(stream: UnixStream, sender: channel::SyncSender<IpcEvent>, signal: LoopSignal, owner: u64) {
+    serve_connection_with_activities(stream, sender, signal, owner, None)
+}
+fn serve_connection_with_activities(
+    mut stream: UnixStream,
+    sender: channel::SyncSender<IpcEvent>,
+    signal: LoopSignal,
+    owner: u64,
+    activity_host: Option<(activity_owner::Monitor, crate::activities::SharedRules)>,
+) {
     let native_portal = crate::handlers::window_capture::is_portal(&stream);
     let _connection = IpcConnection {
         owner,
@@ -484,7 +610,7 @@ fn serve_connection(mut stream: UnixStream, sender: channel::SyncSender<IpcEvent
     let mut idle = Some(transport::FRAME_TIMEOUT);
     let mut owns_lease = false;
     loop {
-        let request: Request = match transport::read_request(&stream, idle) {
+        let mut request: Request = match transport::read_request(&stream, idle) {
             Ok(request) => request,
             Err(ferese_ipc::FrameError::Io(error))
                 if matches!(
@@ -512,6 +638,61 @@ fn serve_connection(mut stream: UnixStream, sender: channel::SyncSender<IpcEvent
             }
             continue;
         }
+        let activity = if request.command == "activity-publish" {
+            let verified = (|| -> Result<_, String> {
+                validate_request(&request).map_err(|error| error.message)?;
+                let wire: ferese_ipc::activities::Request =
+                    serde_json::from_value(std::mem::take(&mut request.args)).map_err(|error| error.to_string())?;
+                if wire.version != ferese_ipc::activities::VERSION {
+                    return Err("Unsupported activity schema".into());
+                }
+                let (monitor, rules) = activity_host.as_ref().ok_or("Activity host unavailable")?;
+                let (mut identity, parents) = monitor
+                    .verify(
+                        &stream,
+                        matches!(wire.owner, ferese_ipc::activities::OwnerScope::Parent),
+                    )
+                    .map_err(|error| error.to_string())?;
+                let mut publish = wire.publish;
+                let is_run = matches!(publish, ferese_ipc::activities::Publish::Run { .. });
+                let matched = if let ferese_ipc::activities::Publish::Hook { command, cwd, .. }
+                | ferese_ipc::activities::Publish::Run { command, cwd, .. } = &mut publish
+                {
+                    let rules = rules.read().map_err(|_| "Activity rules unavailable")?.clone();
+                    let matched = if rules.enabled || is_run {
+                        rules.matcher.matches(command, cwd, &parents)
+                    } else {
+                        None
+                    };
+                    command.clear();
+                    cwd.clear();
+                    matched
+                } else {
+                    None
+                };
+                if matches!(
+                    publish,
+                    ferese_ipc::activities::Publish::Start { .. } | ferese_ipc::activities::Publish::Run { .. }
+                ) || (matches!(publish, ferese_ipc::activities::Publish::Hook { .. }) && matched.is_some())
+                {
+                    identity.capture_ancestors();
+                }
+                Ok((identity, publish, matched))
+            })();
+            match verified {
+                Ok(verified) => Some(verified),
+                Err(error) => {
+                    if transport::write_response(&stream, &Response::error(request.id, "owner_rejected", error))
+                        .is_err()
+                    {
+                        return;
+                    }
+                    continue;
+                }
+            }
+        } else {
+            None
+        };
         let (response, receiver) = sync_channel(1);
         let event_stream_requested = request.command == "event-stream";
         let (events, event_receiver) = sync_channel(crate::ipc_events::QUEUE_CAPACITY);
@@ -525,14 +706,21 @@ fn serve_connection(mut stream: UnixStream, sender: channel::SyncSender<IpcEvent
                 | "begin-session-end"
         );
         let screenshot_requested = matches!(request.command.as_str(), "screenshot" | "screenshot-window");
-        let call = IpcEvent::Call(IpcCall {
+        let call = IpcEvent::Call(Box::new(IpcCall {
             native_portal,
+            activity,
             owner,
             request,
             response,
             events: event_stream_requested.then_some(events),
-        });
-        if sender.try_send(call).is_err() {
+        }));
+        let terminal_activity = matches!(&call, IpcEvent::Call(call) if matches!(call.activity.as_ref().map(|(_, publish, _)| publish), Some(ferese_ipc::activities::Publish::End { .. } | ferese_ipc::activities::Publish::Cancel { .. })));
+        let sent = if terminal_activity {
+            sender.send(call).is_ok()
+        } else {
+            sender.try_send(call).is_ok()
+        };
+        if !sent {
             tracing::warn!("disconnecting IPC client because the request queue is full");
             return;
         }

@@ -2,7 +2,7 @@ use cosmic::iced::futures::SinkExt;
 use ferese_ipc::theme::Snapshot;
 
 pub fn current() -> Snapshot {
-    ferese_ipc::theme::Connection::connect()
+    ferese_ipc::Connection::connect()
         .ok()
         .and_then(|mut connection| connection.get(ferese_config::families::builtins).ok())
         .unwrap_or_else(fallback)
@@ -31,7 +31,7 @@ pub fn subscription() -> cosmic::iced::Subscription<Snapshot> {
 fn stream() -> impl cosmic::iced::futures::Stream<Item = Snapshot> {
     cosmic::iced::stream::channel(1, async |mut output| {
         loop {
-            let connection = tokio::task::spawn_blocking(ferese_ipc::theme::Connection::connect).await;
+            let connection = tokio::task::spawn_blocking(ferese_ipc::Connection::connect).await;
             let Ok(Ok(mut connection)) = connection else {
                 tokio::time::sleep(std::time::Duration::from_secs(1)).await;
                 continue;
@@ -103,7 +103,7 @@ mod tests {
         }
         // No compositor: return the same standalone values without connecting elsewhere.
         assert_eq!(current(), fallback());
-        let path = ferese_ipc::theme::socket_path().unwrap();
+        let path = ferese_ipc::socket_path().unwrap();
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         let listener = UnixListener::bind(path).unwrap();
         let (watch_send, watch_receive) = std::sync::mpsc::channel();

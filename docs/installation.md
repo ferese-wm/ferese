@@ -145,16 +145,23 @@ entry, icons, default wallpaper and example config. Releases live under
 `/usr/local/lib/ferese/releases/` and commands under `/usr/local/bin/`, with `current`
 and `previous` links for switching between releases during updates and rollback.
 
-The installer preserves your configuration, other desktop sessions and existing PAM
-policy. Ferese starts its authentication agent and portal services with the session.
+On first user setup, the installer detects Fish, Bash or Zsh, installs its
+[Live Activities hook](activities.md#start-using-it), and adds Activities to your
+panel. It backs up changed config and shell startup files, preserves an explicit
+`shell-hook #false`, and leaves later activity and panel edits alone. Open a new
+terminal to load the hook, or pass `--no-activities` to skip this setup.
+
+Other desktop sessions and existing PAM policy are preserved. Ferese starts its
+authentication agent and portal services with the session.
 The authentication agent registers for the login session, so requests from desktop
 apps use the Ferese dialog. Remove other polkit agents from your Ferese autostart
 configuration to avoid competing session registrations.
 
 ### Initial configuration
 
-You can start with Ferese’s built-in defaults, or copy the example config if you’d like
-a file to customize:
+Activities setup creates a config file if one doesn't exist. You can edit that
+file in Settings. If you skipped setup, Ferese uses its built-in defaults; you
+can copy the example config to start a file yourself:
 
 ```sh
 mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/ferese"
@@ -318,7 +325,9 @@ python3 scripts/installer/install.py user-setup
 
 This backs up the exact old development portal override when present and reloads
 user systemd configuration. It preserves custom overrides and does not restart the
-running desktop or portal.
+running desktop or portal. It also installs the detected shell's Activities hook
+and performs first-time Activities configuration if needed. See
+[existing installations](activities.md#existing-installations) for details.
 
 Installer options:
 
@@ -326,6 +335,7 @@ Installer options:
 ./scripts/install.sh --dry-run
 ./scripts/install.sh --offline --release-id my-build
 ./scripts/install.sh --resize-metrics
+./scripts/install.sh --no-activities
 ./scripts/install.sh --bundle-only ./target/bundles/my-build --release-id my-build
 ./scripts/install.sh --bundle ./target/bundles/my-build
 ```

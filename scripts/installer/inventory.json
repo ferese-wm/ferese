@@ -182,6 +182,31 @@
       "source": "packaging/pam.d/ferese-lock.generic",
       "target": "pam/generic",
       "mode": "0644"
+    },
+    {
+      "source": "contrib/activities/ferese.fish",
+      "target": "activities/ferese.fish",
+      "mode": "0644"
+    },
+    {
+      "source": "contrib/activities/ferese.zsh",
+      "target": "activities/ferese.zsh",
+      "mode": "0644"
+    },
+    {
+      "source": "contrib/activities/ferese.bash",
+      "target": "activities/ferese.bash",
+      "mode": "0644"
+    },
+    {
+      "source": "contrib/activities/bash-preexec/bash-preexec.sh",
+      "target": "activities/bash-preexec/bash-preexec.sh",
+      "mode": "0644"
+    },
+    {
+      "source": "contrib/activities/bash-preexec/LICENSE.md",
+      "target": "activities/bash-preexec/LICENSE.md",
+      "mode": "0644"
     }
   ]
 }

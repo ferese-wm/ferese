@@ -135,7 +135,7 @@ impl FereseShell {
         )
     }
 
-    pub(super) fn hub_workspace_width(&self, id: window::Id) -> f64 {
+    pub(crate) fn hub_workspace_width(&self, id: window::Id) -> f64 {
         f64::from(self.hub_workspace_selection(id).width())
     }
 
@@ -257,7 +257,7 @@ impl FereseShell {
         self.dismiss_workspace_tooltip_for_bar(id)
     }
 
-    pub(super) fn hub_workspaces(&self, id: window::Id, opacity: f32) -> Element<'_, cosmic::Action<Message>> {
+    pub(crate) fn hub_workspaces(&self, id: window::Id, opacity: f32) -> Element<'_, cosmic::Action<Message>> {
         let selection = self.hub_workspace_selection(id);
         let width = selection.width();
         let output = self.output_for_bar(id);

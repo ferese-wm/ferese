@@ -3,6 +3,24 @@ use cosmic::iced::{Color, ContentFit, Length};
 use cosmic::theme;
 use cosmic::widget::icon;
 
+/// Morph's compact outline set. Curved corners use tangent-continuous paths;
+/// all glyphs share a 24-unit canvas and a 1.7-unit stroke.
+pub mod morph {
+    pub const WORKSPACES: &[u8] = include_bytes!("../assets/icons/morph/workspaces.svg");
+    pub const MUSIC: &[u8] = include_bytes!("../assets/icons/morph/music.svg");
+    pub const CALENDAR: &[u8] = include_bytes!("../assets/icons/morph/calendar.svg");
+    pub const NOTIFICATIONS: &[u8] = include_bytes!("../assets/icons/morph/notifications.svg");
+    pub const CONTROLS: &[u8] = include_bytes!("../assets/icons/morph/controls.svg");
+    pub const SETTINGS: &[u8] = include_bytes!("../assets/icons/morph/settings.svg");
+    pub const ACTIVITIES: &[u8] = include_bytes!("../assets/icons/morph/activities.svg");
+    pub const CLOSE: &[u8] = include_bytes!("../assets/icons/morph/close.svg");
+    pub const RECORD: &[u8] = include_bytes!("../assets/icons/morph/record.svg");
+    pub const DISPLAY: &[u8] = include_bytes!("../assets/icons/morph/display.svg");
+}
+
+pub const ACTIVITY_HAMMER: &[u8] = include_bytes!("../assets/icons/status/activity-hammer.svg");
+pub const ACTIVITY_TIMER: &[u8] = include_bytes!("../assets/icons/status/activity-timer.svg");
+pub const ACTIVITY_DOWNLOAD: &[u8] = include_bytes!("../assets/icons/status/activity-download.svg");
 pub const ARROW: &[u8] = include_bytes!("../assets/icons/arrow.svg");
 pub const BATTERY: &[u8] = include_bytes!("../assets/icons/battery.svg");
 pub const CHECK: &[u8] = include_bytes!("../assets/icons/check.svg");

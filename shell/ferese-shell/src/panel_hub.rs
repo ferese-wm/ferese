@@ -8,6 +8,7 @@ use cosmic::iced::{Alignment, Length, window};
 use cosmic::widget::{button, column, container, row, scrollable};
 
 mod activity;
+mod battery;
 mod content_frame;
 mod equalizer;
 mod scroll;
@@ -65,12 +66,13 @@ pub(super) struct Runtime {
     workspace_selected: Option<u64>,
     workspace_selection_pending: Option<u64>,
     hovered: bool,
-    idle_content_width: Option<f64>,
+    pub(crate) idle_content_width: Option<f64>,
     available: [f64; 2],
     peek_width: f64,
     idle_width: f64,
     workspace_width: f64,
     workspace_scroll: workspaces::Scroll,
+    pub(super) activities: crate::activities::Presentation,
 }
 
 impl Runtime {
@@ -116,17 +118,44 @@ impl Runtime {
             idle_width: panel.morph.idle_width,
             workspace_width: 0.,
             workspace_scroll: Default::default(),
+            activities: Default::default(),
         }
     }
 
     fn sample(&mut self, now: Instant) -> Sample {
         let policy = self.motion;
+        self.activities
+            .advance(now.saturating_duration_since(self.sampled), !policy.motion_enabled());
         self.hub.advance(
             now.saturating_duration_since(self.sampled).mul_f64(policy.speed),
             !policy.motion_enabled(),
         );
         self.sampled = self.sampled.max(now);
         self.hub.sample()
+    }
+
+    pub(crate) fn refresh_activity_size(&mut self) {
+        if self.activities.selection.visible.is_empty() {
+            return;
+        }
+        if self.hub.mode() == Mode::Idle {
+            let width = self
+                .idle_content_width
+                .map_or(self.idle_width + self.workspace_width, |width| {
+                    width + self.workspace_width
+                })
+                .clamp(24., 1024.);
+            let _ = self.hub.retarget_idle(width, self.available);
+        } else if self.hub.mode() == Mode::Peek
+            && self.peek != Peek::Workspaces
+            && self.priority.is_none()
+            && let Some(width) = self.idle_content_width
+        {
+            self.peek_width = width + self.workspace_width;
+            let _ = self
+                .hub
+                .retarget_peek(self.peek_width.clamp(24., 1024.), self.available);
+        }
     }
 
     fn retarget(&mut self, mode: Mode, available: [f64; 2], menu: Option<status_ui::Menu>) {
@@ -138,6 +167,13 @@ impl Runtime {
         if mode == Mode::Idle {
             self.hub.retarget_idle(
                 self.idle_content_width
+                    .map(|width| {
+                        if self.activities.selection.visible.is_empty() {
+                            width
+                        } else {
+                            width + self.workspace_width
+                        }
+                    })
                     .unwrap_or(self.idle_width + self.workspace_width)
                     .clamp(24., 1024.),
                 shape_available,
@@ -165,6 +201,7 @@ pub(super) fn new(panel: &Panel) -> Option<RefCell<Runtime>> {
 
 fn content(kind: status_ui::Menu) -> Content {
     match kind {
+        status_ui::Menu::Activities => Content::Activities,
         status_ui::Menu::Workspaces => Content::Workspaces,
         status_ui::Menu::Media => Content::Media,
         status_ui::Menu::Calendar => Content::Calendar,
@@ -188,6 +225,20 @@ impl FereseShell {
         if self.bar_hidden(id) {
             return Task::none();
         }
+        if let Some(runtime) = self
+            .outputs
+            .iter()
+            .find(|entry| entry.bar == id)
+            .and_then(|entry| entry.runtime.hub.as_ref())
+        {
+            let mut runtime = runtime.borrow_mut();
+            if entered {
+                runtime.activities.selection.enter();
+            } else {
+                runtime.activities.selection.leave();
+            }
+        }
+        self.sync_activity_presentations();
         self.transition_hub(
             id,
             Event::Hover {
@@ -210,6 +261,7 @@ impl FereseShell {
             if let Some(status) = &mut self.status.notifications {
                 status.count = 0;
             }
+            self.sync_activity_presentations();
         }
         if kind == status_ui::Menu::Calendar {
             self.calendar_offset = 0;
@@ -363,6 +415,9 @@ impl FereseShell {
             .and_then(|entry| entry.runtime.hub.as_ref())
             .expect("Morph runtime");
         let runtime = runtime.borrow();
+        if !runtime.activities.selection.visible.is_empty() && self.activities_configured(id) {
+            return runtime.hub.target_size()[0].min(runtime.available[0]) as f32;
+        }
         let artwork_width = if self.hub_priority().is_some() {
             64.
         } else if self
@@ -376,7 +431,7 @@ impl FereseShell {
         } else {
             0.
         };
-        (runtime.idle_width + runtime.workspace_width + artwork_width)
+        (runtime.idle_width + artwork_width + runtime.workspace_width)
             .min(runtime.available[0])
             .min(f64::from(runtime.allocation[0].saturating_sub(runtime.fillet_space)) / 1.1) as f32
     }
@@ -388,7 +443,7 @@ impl FereseShell {
         let revision = runtime.borrow().revision;
         let mode = runtime.borrow().hub.mode();
         let workspace_feedback = mode == Mode::Peek && runtime.borrow().peek == Peek::Workspaces;
-        let measurement = if mode == Mode::Idle || workspace_feedback {
+        let measurement = if (mode == Mode::Idle && !self.has_compact_activities(id)) || workspace_feedback {
             let cap = if workspace_feedback {
                 let runtime = runtime.borrow();
                 260_f64
@@ -451,7 +506,10 @@ impl FereseShell {
                 };
                 self.view_hub_at(id, sample, menu, previous_menu)
             },
-            move |_| runtime.borrow().hub.active(),
+            move |_| {
+                let runtime = runtime.borrow();
+                runtime.hub.active() || runtime.activities.active()
+            },
             |_| {},
             |_| None,
             measurement,
@@ -516,7 +574,12 @@ impl FereseShell {
         let mut background = palette.surface_raised.map(|value| f32::from(value) / 255.);
         background[3] = palette.panel_opacity(panel.background_opacity);
         let background = cosmic::iced::Color::from_rgba(background[0], background[1], background[2], background[3]);
-        let border = crate::color(palette.border);
+        let mut border = crate::color(palette.border);
+        if let Some((tint, alpha)) = self.activity_result_tint(id) {
+            border.r += (tint.r - border.r) * alpha;
+            border.g += (tint.g - border.g) * alpha;
+            border.b += (tint.b - border.b) * alpha;
+        }
         ferese_theme::panel_surface::frame(
             self.with_workspace_hover(id, root.into()),
             ferese_theme::panel_surface::Options {
@@ -565,7 +628,27 @@ impl FereseShell {
         let primary = color_with_opacity(palette.text_primary, opacity);
         let icon_primary = crate::color(palette.text_primary);
         let icon_muted = crate::color(palette.text_muted);
+        let peek = self
+            .outputs
+            .iter()
+            .find(|entry| entry.bar == id)
+            .and_then(|entry| entry.runtime.hub.as_ref())
+            .map_or(Peek::Date, |runtime| {
+                let runtime = runtime.borrow();
+                if !interactive && !intrinsic {
+                    runtime.previous.peek
+                } else {
+                    runtime.peek
+                }
+            });
         let content: Element<'_, cosmic::Action<Message>> = match mode {
+            Mode::Idle | Mode::Peek
+                if self.has_compact_activities(id)
+                    && self.hub_priority().is_none()
+                    && !(mode == Mode::Peek && peek == Peek::Workspaces) =>
+            {
+                self.activity_compact(id, opacity, intrinsic)
+            }
             Mode::Idle | Mode::Peek | Mode::Toast => {
                 let playing = self
                     .media
@@ -577,19 +660,6 @@ impl FereseShell {
                     .clock
                     .split_once(", ")
                     .map_or(self.clock.as_str(), |(_, time)| time);
-                let peek = self
-                    .outputs
-                    .iter()
-                    .find(|entry| entry.bar == id)
-                    .and_then(|entry| entry.runtime.hub.as_ref())
-                    .map_or(Peek::Date, |runtime| {
-                        let runtime = runtime.borrow();
-                        if !interactive && !intrinsic {
-                            runtime.previous.peek
-                        } else {
-                            runtime.peek
-                        }
-                    });
                 let priority = self.hub_priority();
                 let activity = if mode == Mode::Idle {
                     priority
@@ -668,17 +738,22 @@ impl FereseShell {
                         Peek::Recording => status_ui::Menu::Overflow,
                         Peek::Battery => status_ui::Menu::Battery,
                         Peek::Media => status_ui::Menu::Media,
-                        Peek::Date => status_ui::Menu::Calendar,
+                        Peek::Date => status_ui::Menu::Workspaces,
                         Peek::Workspaces => status_ui::Menu::Workspaces,
                     }
                 } else if playing.is_some() {
                     status_ui::Menu::Media
+                } else if crate::bar::focused_bar_title(&self.snapshot, self.output_for_bar(id))
+                    .trim()
+                    .is_empty()
+                {
+                    status_ui::Menu::Workspaces
                 } else {
                     self.outputs
                         .iter()
                         .find(|entry| entry.bar == id)
                         .and_then(|entry| entry.runtime.hub.as_ref())
-                        .map_or(status_ui::Menu::Media, |runtime| runtime.borrow().last_menu)
+                        .map_or(status_ui::Menu::Workspaces, |runtime| runtime.borrow().last_menu)
                 };
                 let label = self
                     .render
@@ -697,7 +772,9 @@ impl FereseShell {
                             Peek::Recording | Peek::Battery => unreachable!("activity strip handled above"),
                             Peek::Media => self.hub_music_art(opacity),
                             Peek::Workspaces => self.hub_workspaces(id, opacity),
-                            Peek::Date => icons::tinted(icons::CALENDAR, 18, icon_primary).opacity(opacity).into(),
+                            Peek::Date => icons::tinted(icons::morph::CALENDAR, 18, icon_primary)
+                                .opacity(opacity)
+                                .into(),
                         };
                         let width = if intrinsic { Length::Shrink } else { Length::Fill };
                         let label = label.width(width).align_x(if peek == Peek::Date {
@@ -712,7 +789,7 @@ impl FereseShell {
                         strip.into()
                     }
                     Mode::Toast => row![
-                        icons::tinted(icons::NOTIFICATIONS, 16, icon_muted).opacity(opacity),
+                        icons::tinted(icons::morph::NOTIFICATIONS, 16, icon_muted).opacity(opacity),
                         label.width(Length::Fill)
                     ]
                     .spacing(10)
@@ -795,12 +872,29 @@ impl FereseShell {
                     .align_y(Alignment::Center);
                 let shortcuts = self.hub_shortcuts(id);
                 for (kind, label, icon) in [
-                    (status_ui::Menu::Workspaces, "Workspaces", icons::OVERVIEW),
-                    (status_ui::Menu::Media, "Music", icons::MEDIA),
-                    (status_ui::Menu::Calendar, "Calendar", icons::CALENDAR),
-                    (status_ui::Menu::Notifications, "Notifications", icons::NOTIFICATIONS),
-                    (status_ui::Menu::Overflow, "Controls", icons::CONTROL_CENTER),
+                    (status_ui::Menu::Workspaces, "Workspaces", icons::morph::WORKSPACES),
+                    (status_ui::Menu::Media, "Music", icons::morph::MUSIC),
+                    (status_ui::Menu::Calendar, "Calendar", icons::morph::CALENDAR),
+                    (
+                        status_ui::Menu::Notifications,
+                        "Notifications",
+                        icons::morph::NOTIFICATIONS,
+                    ),
+                    (status_ui::Menu::Overflow, "Controls", icons::morph::CONTROLS),
+                    (status_ui::Menu::Activities, "Activities", icons::morph::ACTIVITIES),
                 ] {
+                    if kind == status_ui::Menu::Media && self.media.snapshot.selected.is_none() {
+                        continue;
+                    }
+                    if kind == status_ui::Menu::Activities {
+                        // Activities follows both the main tabs and optional shortcuts.
+                        for shortcut in shortcuts.iter().copied().filter(|kind| *kind != ItemKind::Overview) {
+                            tabs = tabs.push(self.hub_shortcut_button(id, shortcut, menu, opacity));
+                        }
+                        if !self.activities_configured(id) {
+                            continue;
+                        }
+                    }
                     let active = if selected == Content::Controls {
                         menu.unwrap_or(status_ui::Menu::Overflow) == kind
                     } else {
@@ -834,9 +928,6 @@ impl FereseShell {
                         opacity,
                     ));
                 }
-                for shortcut in shortcuts.into_iter().filter(|kind| *kind != ItemKind::Overview) {
-                    tabs = tabs.push(self.hub_shortcut_button(id, shortcut, menu, opacity));
-                }
                 let navigation = scrollable(tabs.width(Length::Shrink))
                     .direction(cosmic::iced::widget::scrollable::Direction::Horizontal(
                         cosmic::iced::widget::scrollable::Scrollbar::default()
@@ -846,9 +937,12 @@ impl FereseShell {
                     .width(Length::Fill);
                 let tabs = row::with_capacity(2).spacing(2).align_y(Alignment::Center);
                 let mut tabs = tabs.push(navigation);
+                if let Some(battery) = self.hub_battery(id, menu == Some(status_ui::Menu::Battery), opacity) {
+                    tabs = tabs.push(battery);
+                }
                 tabs = tabs.push(motion::button(
                     self.render,
-                    button::custom(icons::tinted(icons::CLOSE, 18, icon_primary).opacity(opacity))
+                    button::custom(icons::tinted(icons::morph::CLOSE, 18, icon_primary).opacity(opacity))
                         .name("Collapse panel hub")
                         .padding([5, 3])
                         .width(30)
@@ -859,13 +953,16 @@ impl FereseShell {
                     opacity,
                 ));
                 let kind = match selected {
+                    Content::Activities => status_ui::Menu::Activities,
                     Content::Workspaces => status_ui::Menu::Workspaces,
                     Content::Media => status_ui::Menu::Media,
                     Content::Calendar => status_ui::Menu::Calendar,
                     Content::Notifications => status_ui::Menu::Notifications,
                     Content::Controls => menu.unwrap_or(status_ui::Menu::Overflow),
                 };
-                let body = if kind == status_ui::Menu::Workspaces {
+                let body = if kind == status_ui::Menu::Activities {
+                    self.activity_list(id, opacity)
+                } else if kind == status_ui::Menu::Workspaces {
                     self.hub_workspace_grid(id, opacity)
                 } else if kind == status_ui::Menu::Overflow {
                     self.hub_controls(id, opacity)
@@ -911,7 +1008,7 @@ impl FereseShell {
                 .border_radius(5.)
                 .into(),
             None => container(
-                icons::tinted(icons::MEDIA, 18, crate::color(self.config.theme.text_primary)).opacity(opacity),
+                icons::tinted(icons::morph::MUSIC, 18, crate::color(self.config.theme.text_primary)).opacity(opacity),
             )
             .center_x(24)
             .center_y(24)
@@ -961,21 +1058,22 @@ impl FereseShell {
 
     fn hub_control_action(&self, id: window::Id, kind: ItemKind) -> Option<ControlAction> {
         let (icon, menu) = match kind {
-            ItemKind::Overview => (icons::OVERVIEW, None),
-            ItemKind::QuickSettings => (icons::SETTINGS, Some(status_ui::Menu::System)),
+            ItemKind::Overview => (icons::morph::WORKSPACES, None),
+            ItemKind::Activities => (icons::morph::ACTIVITIES, Some(status_ui::Menu::Activities)),
+            ItemKind::QuickSettings => (icons::morph::SETTINGS, Some(status_ui::Menu::System)),
             ItemKind::Network => (icons::WIFI, Some(status_ui::Menu::Network)),
             ItemKind::Recording => (
                 match self.recorder.state {
                     crate::recording::State::Selecting => icons::RECORD_CANCEL,
                     crate::recording::State::Recording(_) => icons::RECORD_STOP,
                     crate::recording::State::Saving => icons::RECORD_SAVING,
-                    _ => icons::RECORD,
+                    _ => icons::morph::RECORD,
                 },
                 None,
             ),
             ItemKind::Audio => (icons::VOLUME, Some(status_ui::Menu::Audio)),
             ItemKind::Battery { .. } => (icons::BATTERY, Some(status_ui::Menu::Battery)),
-            ItemKind::DisplayMode if self.display_mode.external_connected() => (icons::DISPLAY, None),
+            ItemKind::DisplayMode if self.display_mode.external_connected() => (icons::morph::DISPLAY, None),
             _ => return None,
         };
         let message = match kind {
@@ -1018,8 +1116,14 @@ impl FereseShell {
                 (f64::from(width) - 2. * f64::from(panel.resolved_geometry().side_margins)).max(0.)
             });
         let width = panel.morph.expanded_width.min(available);
-        // Five tabs and Close keep their space through the morph.
-        let capacity = ((width - 28. - 6. * 32. - 8.).max(0.) / 32.).floor() as usize;
+        // Built-in tabs, battery and Close keep their space through the morph.
+        let tabs = 5. + f64::from(self.media.snapshot.selected.is_some()) + f64::from(self.activities_configured(id));
+        let battery = if self.status.battery.is_some() {
+            battery::WIDTH + 2.
+        } else {
+            0.
+        };
+        let capacity = ((width - 28. - tabs * 32. - battery - 8.).max(0.) / 32.).floor() as usize;
         let mut shortcuts = Vec::new();
         for item in [&panel.start, &panel.center, &panel.end]
             .into_iter()
@@ -1030,7 +1134,7 @@ impl FereseShell {
             if shortcuts.len() == capacity {
                 break;
             }
-            if item.kind == ItemKind::Overview {
+            if matches!(item.kind, ItemKind::Overview | ItemKind::Activities) {
                 continue;
             }
             if matches!(
@@ -1058,10 +1162,10 @@ impl FereseShell {
             .flat_map(|group| &group.items)
             .filter(|item| item.visible)
         {
-            if shortcuts.contains(&item.kind) {
+            if shortcuts.contains(&item.kind) || matches!(item.kind, ItemKind::Battery { .. }) {
                 continue;
             }
-            if item.kind == ItemKind::Overview {
+            if matches!(item.kind, ItemKind::Overview | ItemKind::Activities) {
                 continue;
             }
             let Some(action) = self.hub_control_action(id, item.kind) else {
@@ -1133,6 +1237,681 @@ mod tests {
         shell
     }
 
+    fn seed_activities(shell: &mut FereseShell, count: usize) {
+        use ferese_activities::{Data, Owner, Source, Store, Template, Value};
+        let now = ferese_ipc::activities::now_ms();
+        if !shell.config.panels[0]
+            .end
+            .groups
+            .iter()
+            .flat_map(|group| &group.items)
+            .any(|item| item.kind == ItemKind::Activities)
+        {
+            shell.config.panels[0].end.groups[0]
+                .items
+                .push(ferese_panel::Item::new("test-activities", ItemKind::Activities));
+        }
+        if shell.snapshot.outputs.is_empty() {
+            shell.snapshot.outputs.push(crate::control::OutputSnapshot {
+                id: 4,
+                name: "test".into(),
+                active_workspace: 1,
+                focused: true,
+            });
+        }
+        let mut store = Store::new(7);
+        for index in 0..count {
+            store
+                .start(
+                    Owner { pid: 40, birth: 1 },
+                    format!("task-{index}"),
+                    Data {
+                        source: Source::Publisher,
+                        output: shell
+                            .output_for_bar(shell.outputs[0].bar)
+                            .map(|output| output.name.clone()),
+                        priority: 100 + index as u8,
+                        icon: if index == 0 { "hammer" } else { "download" }.into(),
+                        title: if index == 2 {
+                            "Installing update"
+                        } else if index == 0 {
+                            "Cargo test: a deliberately long title which must leave all neighboring controls accessible"
+                        } else {
+                            "Downloading update"
+                        }
+                        .into(),
+                        value: if index == 0 {
+                            Value::Indeterminate
+                        } else {
+                            Value::Progress(0.62)
+                        },
+                        template: Template::Progress,
+                    },
+                    now.saturating_sub(500),
+                    0,
+                    None,
+                    true,
+                    true,
+                    None,
+                )
+                .unwrap();
+        }
+        shell.activities.snapshot = std::sync::Arc::new(ferese_ipc::activities::Snapshot {
+            activities: store.entries().cloned().collect(),
+            now_ms: now,
+            revision: 1,
+            ..Default::default()
+        });
+    }
+    #[test]
+    fn activity_target_must_still_exist_and_activities_has_no_duplicate_shortcut() {
+        let mut app = shell();
+        let bar = app.outputs[0].bar;
+        seed_activities(&mut app, 1);
+        let activity = app.activities.snapshot.activities[0].id.clone();
+        assert_eq!(app.activity_window(&activity), None);
+        std::sync::Arc::make_mut(&mut app.activities.snapshot)
+            .windows
+            .push(ferese_ipc::activities::ActivityWindow {
+                activity: activity.clone(),
+                window: 42,
+            });
+        assert_eq!(app.activity_window(&activity), None);
+        app.snapshot.windows.push(crate::control::WindowSnapshot {
+            id: 42,
+            workspace: 1,
+            geometry: None,
+            app_id: "foot".into(),
+            title: "Terminal".into(),
+            focused: false,
+            urgent: false,
+            fullscreen: false,
+            maximized: false,
+            floating: false,
+        });
+        assert_eq!(app.activity_window(&activity), Some(42));
+        app.snapshot.windows.clear();
+        assert_eq!(app.activity_window(&activity), None);
+        app.config.panels[0].morph.expanded_width = 400.;
+        assert!(!app.hub_shortcuts(bar).contains(&ItemKind::Activities));
+        app.status.battery = None;
+        assert!(app.hub_battery(bar, false, 1.).is_none());
+        app.status.battery = Some(crate::status::Battery {
+            percent: 100,
+            status: "Full".into(),
+        });
+        assert!(app.hub_battery(bar, false, 1.).is_some());
+    }
+
+    #[test]
+    fn open_activity_list_survives_publisher_churn() {
+        use cosmic::iced::advanced::renderer::Headless;
+        let renderer = cosmic::iced::futures::executor::block_on(cosmic::Renderer::new(
+            cosmic::iced::Font::default(),
+            cosmic::iced::Pixels(14.),
+            Some("tiny-skia"),
+        ))
+        .unwrap();
+        let mut app = shell();
+        let id = app.outputs[0].bar;
+        seed_activities(&mut app, 3);
+        drop(app.sync_hub_activity());
+        drop(app.open_hub(id, status_ui::Menu::Activities));
+        let mut tree = widget::Tree::empty();
+        for count in [3, 2, 1, 3, 0, 2, 3] {
+            let opacity = app.outputs[0]
+                .runtime
+                .hub
+                .as_ref()
+                .unwrap()
+                .borrow()
+                .hub
+                .sample()
+                .opacity;
+            seed_activities(&mut app, count);
+            app.sync_activity_presentations();
+            assert_eq!(
+                app.outputs[0]
+                    .runtime
+                    .hub
+                    .as_ref()
+                    .unwrap()
+                    .borrow()
+                    .hub
+                    .sample()
+                    .opacity,
+                opacity,
+                "publisher changes must not restart the open panel's crossfade"
+            );
+            for _ in 0..50 {
+                let runtime = app.outputs[0].runtime.hub.as_ref().unwrap();
+                let (sample, previous_menu) = {
+                    let mut runtime = runtime.borrow_mut();
+                    runtime.hub.advance(Duration::from_millis(16), false);
+                    (runtime.hub.sample(), runtime.previous.menu)
+                };
+                let mut view = app.view_hub_at(id, sample, Some(status_ui::Menu::Activities), previous_menu);
+                widget::tree::NAMED.with(|named| *named.borrow_mut() = tree.take_all_named());
+                tree.diff(&mut view);
+                view.as_widget_mut().layout(
+                    &mut tree,
+                    &renderer,
+                    &layout::Limits::new(Size::ZERO, Size::new(1200., 800.)),
+                );
+                widget::tree::NAMED.with(|named| named.borrow_mut().clear());
+            }
+        }
+    }
+
+    #[test]
+    fn activity_transitions_reconcile_the_existing_widget_tree() {
+        use cosmic::iced::advanced::renderer::Headless;
+        let renderer = cosmic::iced::futures::executor::block_on(cosmic::Renderer::new(
+            cosmic::iced::Font::default(),
+            cosmic::iced::Pixels(14.),
+            Some("tiny-skia"),
+        ))
+        .unwrap();
+        let mut app = shell();
+        let id = app.outputs[0].bar;
+        seed_activities(&mut app, 3);
+        drop(app.sync_hub_activity());
+        let mut tree = widget::Tree::empty();
+        for menu in [
+            None,
+            Some(status_ui::Menu::Activities),
+            Some(status_ui::Menu::Calendar),
+            Some(status_ui::Menu::Activities),
+            None,
+        ] {
+            if let Some(menu) = menu {
+                drop(app.open_hub(id, menu));
+            } else {
+                drop(app.close_hub(id));
+            }
+            for _ in 0..50 {
+                let runtime = app.outputs[0].runtime.hub.as_ref().unwrap();
+                let (sample, previous_menu) = {
+                    let mut runtime = runtime.borrow_mut();
+                    runtime.hub.advance(Duration::from_millis(16), false);
+                    (runtime.hub.sample(), runtime.previous.menu)
+                };
+                let mut view = app.view_hub_at(id, sample, menu, previous_menu);
+                // Application rebuilds temporarily extract named widget state.
+                widget::tree::NAMED.with(|named| *named.borrow_mut() = tree.take_all_named());
+                tree.diff(&mut view);
+                view.as_widget_mut().layout(
+                    &mut tree,
+                    &renderer,
+                    &layout::Limits::new(Size::ZERO, Size::new(1200., 800.)),
+                );
+                widget::tree::NAMED.with(|named| named.borrow_mut().clear());
+            }
+        }
+    }
+
+    #[test]
+    fn live_activity_keeps_workspace_wheel_handler() {
+        use cosmic::iced::advanced::{Layout, Shell, clipboard, layout, renderer::Headless, widget};
+        use cosmic::iced::{Event, Size, mouse};
+        let renderer = cosmic::iced::futures::executor::block_on(cosmic::Renderer::new(
+            cosmic::iced::Font::default(),
+            cosmic::iced::Pixels(14.),
+            Some("tiny-skia"),
+        ))
+        .unwrap();
+        for with_activity in [false, true] {
+            let mut app = shell();
+            let id = app.outputs[0].bar;
+            if with_activity {
+                seed_activities(&mut app, 1);
+            }
+            drop(app.sync_hub_activity());
+            let mut view = app.hub_content(id, Mode::Peek, 1., None, true, false);
+            let mut tree = widget::Tree::new(&view);
+            let node = view.as_widget_mut().layout(
+                &mut tree,
+                &renderer,
+                &layout::Limits::new(Size::ZERO, Size::new(260., 44.)),
+            );
+            let viewport = cosmic::iced::Rectangle::with_size(Size::new(260., 44.));
+            let mut messages = Vec::new();
+            view.as_widget_mut().update(
+                &mut tree,
+                &Event::Mouse(mouse::Event::WheelScrolled {
+                    delta: mouse::ScrollDelta::Lines { x: 0., y: 1. },
+                }),
+                Layout::new(&node),
+                mouse::Cursor::Available(cosmic::iced::Point::new(130., 20.)),
+                &renderer,
+                &mut clipboard::Null,
+                &mut Shell::new(&mut messages),
+                &viewport,
+            );
+            assert!(
+                messages
+                    .iter()
+                    .any(|message| matches!(message, cosmic::Action::App(Message::HubWorkspaceScroll(_, _)))),
+                "workspace scrolling stopped with_activity={with_activity}"
+            );
+        }
+    }
+
+    #[test]
+    fn workspace_feedback_takes_precedence_over_compact_activities() {
+        use cosmic::iced::advanced::renderer::Headless;
+        #[derive(Debug, Default)]
+        struct Labels(Vec<String>);
+        impl widget::Operation for Labels {
+            fn traverse(&mut self, visit: &mut dyn FnMut(&mut dyn widget::Operation)) {
+                visit(self);
+            }
+            fn text(&mut self, _: Option<&widget::Id>, _: Rectangle, text: &str) {
+                self.0.push(text.into());
+            }
+        }
+        let renderer = cosmic::iced::futures::executor::block_on(cosmic::Renderer::new(
+            cosmic::iced::Font::default(),
+            cosmic::iced::Pixels(14.),
+            Some("tiny-skia"),
+        ))
+        .unwrap();
+        let mut app = shell();
+        let bar = app.outputs[0].bar;
+        seed_activities(&mut app, 1);
+        app.snapshot.workspaces = vec![crate::control::WorkspaceSnapshot {
+            id: 1,
+            name: "Code".into(),
+            output: Some(4),
+            index: 1,
+            window_count: 1,
+            visible: true,
+            focused: true,
+        }];
+        drop(app.sync_hub_activity());
+        drop(app.transition_hub(bar, transition::Event::Workspaces(Instant::now())));
+        assert_eq!(app.hub_mode(bar), Some(Mode::Peek));
+        let mut view = app.hub_content(bar, Mode::Peek, 1., None, true, false);
+        let mut tree = widget::Tree::new(&view);
+        let node = view.as_widget_mut().layout(
+            &mut tree,
+            &renderer,
+            &layout::Limits::new(Size::ZERO, Size::new(260., 44.)),
+        );
+        let mut labels = Labels::default();
+        view.as_widget_mut()
+            .operate(&mut tree, Layout::new(&node), &renderer, &mut labels);
+        assert!(labels.0.iter().any(|text| text == "1 · Code"), "{labels:?}");
+        assert!(!labels.0.iter().any(|text| text.contains("Cargo test")));
+    }
+
+    #[test]
+    fn dnd_list_keeps_result_rows_reachable_and_preserves_focus_on_update() {
+        use cosmic::iced::keyboard::key::Named;
+        let mut app = shell();
+        let bar = app.outputs[0].bar;
+        seed_activities(&mut app, 3);
+        let activity = &mut std::sync::Arc::make_mut(&mut app.activities.snapshot).activities[0];
+        activity.state = ferese_activities::State::Done;
+        activity.result_deadline = Some(ferese_ipc::activities::now_ms() + 10_000);
+        let completed = activity.id.clone();
+        app.notifications.dnd = true;
+        drop(app.sync_hub_activity());
+        drop(app.open_hub(bar, status_ui::Menu::Activities));
+        let expected: Vec<_> = ferese_activities::ranked(
+            app.activities.snapshot.activities.iter(),
+            ferese_ipc::activities::now_ms(),
+            app.activities.snapshot.limits,
+            app.output_for_bar(bar).unwrap().name.as_str(),
+            false,
+        )
+        .iter()
+        .map(|entry| entry.id.clone())
+        .collect();
+        let runtime = app.outputs[0].runtime.hub.as_ref().unwrap();
+        assert!(expected.contains(&completed));
+        assert!(!runtime.borrow().activities.selection.visible.contains(&completed));
+        for (index, id) in expected.iter().enumerate() {
+            let key = if index == 0 { Named::Home } else { Named::ArrowDown };
+            drop(app.activity_navigation(bar, None, Some(key)));
+            assert_eq!(
+                app.outputs[0]
+                    .runtime
+                    .hub
+                    .as_ref()
+                    .unwrap()
+                    .borrow()
+                    .activities
+                    .focus
+                    .as_ref(),
+                Some(id)
+            );
+        }
+        drop(app.activity_navigation(bar, Some(completed.clone()), None));
+        drop(app.sync_hub_activity());
+        assert_eq!(
+            app.outputs[0].runtime.hub.as_ref().unwrap().borrow().activities.focus,
+            Some(completed)
+        );
+    }
+
+    #[test]
+    fn activity_arrows_follow_tab_focus() {
+        use cosmic::iced::advanced::widget::operation;
+        use cosmic::iced::advanced::{Layout, layout, renderer::Headless, widget};
+        use cosmic::iced::{Size, keyboard::key::Named};
+        let renderer = cosmic::iced::futures::executor::block_on(cosmic::Renderer::new(
+            cosmic::iced::Font::default(),
+            cosmic::iced::Pixels(14.),
+            Some("tiny-skia"),
+        ))
+        .unwrap();
+        let mut app = shell();
+        let bar = app.outputs[0].bar;
+        seed_activities(&mut app, 3);
+        drop(app.sync_hub_activity());
+        drop(app.open_hub(bar, status_ui::Menu::Activities));
+        let ranked = ferese_activities::ranked(
+            app.activities.snapshot.activities.iter(),
+            ferese_ipc::activities::now_ms(),
+            app.activities.snapshot.limits,
+            app.output_for_bar(bar).unwrap().name.as_str(),
+            false,
+        );
+        let ids: Vec<_> = ranked.iter().map(|entry| entry.id.clone()).collect();
+        let id = &ids[0];
+        let first = widget::Id::new(format!(
+            "activity-{bar:?}-{}-{}-{}-{}",
+            id.session, id.generation, id.owner.pid, id.owner.birth
+        ));
+        let focused = {
+            let mut query = app.activity_focus_query(bar).unwrap();
+            let mut view = app.activity_list(bar, 1.);
+            let mut tree = widget::Tree::new(&view);
+            let node = view.as_widget_mut().layout(
+                &mut tree,
+                &renderer,
+                &layout::Limits::new(Size::ZERO, Size::new(312., 600.)),
+            );
+            view.as_widget_mut().operate(
+                &mut tree,
+                Layout::new(&node),
+                &renderer,
+                &mut operation::focusable::focus::<()>(first),
+            );
+            let mut tab: Box<dyn widget::Operation> = Box::new(operation::focusable::focus_next());
+            loop {
+                view.as_widget_mut()
+                    .operate(&mut tree, Layout::new(&node), &renderer, &mut tab);
+                match tab.finish() {
+                    operation::Outcome::Chain(next) => tab = next,
+                    _ => break,
+                }
+            }
+            view.as_widget_mut().operate(
+                &mut tree,
+                Layout::new(&node),
+                &renderer,
+                &mut operation::black_box(&mut query),
+            );
+            match widget::Operation::finish(&query) {
+                operation::Outcome::Some(focused) => focused,
+                _ => panic!("missing focus query result"),
+            }
+        };
+        assert_eq!(focused, Some(ids[1].clone()));
+        drop(app.activity_navigation(bar, focused, Some(Named::ArrowDown)));
+        assert_eq!(
+            app.outputs[0].runtime.hub.as_ref().unwrap().borrow().activities.focus,
+            Some(ids[2].clone()),
+            "Tab focuses row two, so Down must focus row three"
+        );
+    }
+
+    #[test]
+    fn compact_activities_fit_titles_and_keep_the_badge_adjacent() {
+        use cosmic::iced::advanced::renderer::Headless;
+        #[derive(Default)]
+        struct TextBounds(Vec<(String, Rectangle)>);
+        impl widget::Operation for TextBounds {
+            fn traverse(&mut self, visit: &mut dyn FnMut(&mut dyn widget::Operation)) {
+                visit(self);
+            }
+            fn text(&mut self, _: Option<&widget::Id>, bounds: Rectangle, text: &str) {
+                self.0.push((text.into(), bounds));
+            }
+        }
+        let renderer = cosmic::iced::futures::executor::block_on(cosmic::Renderer::new(
+            cosmic::iced::Font::default(),
+            cosmic::iced::Pixels(14.),
+            Some("tiny-skia"),
+        ))
+        .unwrap();
+        let mut app = shell();
+        let id = app.outputs[0].bar;
+        let mut widths = Vec::new();
+        for count in [1, 2, 3] {
+            seed_activities(&mut app, count);
+            for activity in &mut std::sync::Arc::make_mut(&mut app.activities.snapshot).activities {
+                activity.data.title = "Build".into();
+            }
+            drop(app.sync_hub_activity());
+            let width = app.outputs[0].runtime.hub.as_ref().unwrap().borrow().hub.target_size()[0];
+            widths.push(width);
+            drop(app.hub_hover(id, true));
+            assert_eq!(
+                app.outputs[0].runtime.hub.as_ref().unwrap().borrow().hub.target_size()[0],
+                width
+            );
+            let mut view = app.activity_compact(id, 1., false);
+            let mut tree = widget::Tree::new(&view);
+            let node = view.as_widget_mut().layout(
+                &mut tree,
+                &renderer,
+                &layout::Limits::new(Size::ZERO, Size::new(width as f32, 44.)),
+            );
+            let mut labels = TextBounds::default();
+            view.as_widget_mut()
+                .operate(&mut tree, Layout::new(&node), &renderer, &mut labels);
+            if count == 3 {
+                let title = labels.0.iter().rfind(|(text, _)| text == "Build").unwrap().1;
+                let badge = labels.0.iter().find(|(text, _)| text == "+1").unwrap().1;
+                assert!((badge.x - title.x - title.width - 8.).abs() < 1., "{:#?}", labels.0);
+                assert!(
+                    (width as f32 - badge.x - badge.width - 14.).abs() < 1.,
+                    "{:#?}",
+                    labels.0
+                );
+            }
+            drop(view);
+            drop(app.hub_hover(id, false));
+        }
+        assert!(widths[0] < 180., "short single activity should shrink: {widths:?}");
+        assert!(widths[0] < widths[1] && widths[1] < widths[2], "{widths:?}");
+        for activity in &mut std::sync::Arc::make_mut(&mut app.activities.snapshot).activities {
+            activity.data.value = ferese_activities::Value::Text("A much longer changing phase".into());
+        }
+        drop(app.sync_hub_activity());
+        assert_eq!(
+            app.outputs[0].runtime.hub.as_ref().unwrap().borrow().hub.target_size()[0],
+            widths[2]
+        );
+        std::sync::Arc::make_mut(&mut app.activities.snapshot).limits.show_badge = false;
+        drop(app.sync_hub_activity());
+        assert_eq!(
+            app.outputs[0].runtime.hub.as_ref().unwrap().borrow().hub.target_size()[0],
+            widths[1],
+            "hiding the badge must remove its reserved width"
+        );
+        std::sync::Arc::make_mut(&mut app.activities.snapshot).limits.show_badge = true;
+        drop(app.sync_hub_activity());
+        for activity in &mut std::sync::Arc::make_mut(&mut app.activities.snapshot).activities {
+            activity.data.title = "A very long title which must be capped in the compact strip".into();
+        }
+        drop(app.sync_hub_activity());
+        let wider = app.outputs[0].runtime.hub.as_ref().unwrap().borrow().hub.target_size()[0];
+        assert!(wider > widths[2] && wider < 450., "{wider}");
+        app.outputs[0].size = Some((240, 800));
+        drop(app.sync_hub_activity());
+        let width = app.outputs[0].runtime.hub.as_ref().unwrap().borrow().hub.target_size()[0] as f32;
+        assert!(width <= 240.);
+        let mut view = app.activity_compact(id, 1., false);
+        let mut tree = widget::Tree::new(&view);
+        let node = view.as_widget_mut().layout(
+            &mut tree,
+            &renderer,
+            &layout::Limits::new(Size::ZERO, Size::new(width, 44.)),
+        );
+        let mut labels = TextBounds::default();
+        view.as_widget_mut()
+            .operate(&mut tree, Layout::new(&node), &renderer, &mut labels);
+        let badge = labels.0.iter().find(|(text, _)| text == "+1").unwrap().1;
+        assert!(
+            (width - badge.x - badge.width - 14.).abs() < 1.,
+            "badge must fit a narrow output: {:#?}",
+            labels.0
+        );
+    }
+
+    #[test]
+    fn activity_values_do_not_resize_and_hover_pins_survivors_and_dnd_overrides() {
+        let mut shell = shell();
+        let id = shell.outputs[0].bar;
+        seed_activities(&mut shell, 3);
+        drop(shell.sync_hub_activity());
+        let runtime = shell.outputs[0].runtime.hub.as_ref().unwrap();
+        let width = runtime.borrow().hub.target_size()[0];
+        let first = runtime.borrow().activities.selection.visible.clone();
+        drop(shell.hub_hover(id, true));
+        std::sync::Arc::make_mut(&mut shell.activities.snapshot).activities[0]
+            .data
+            .priority = 255;
+        std::sync::Arc::make_mut(&mut shell.activities.snapshot).activities[2]
+            .data
+            .value = ferese_activities::Value::Text("A changed phase".into());
+        drop(shell.sync_hub_activity());
+        let runtime = shell.outputs[0].runtime.hub.as_ref().unwrap();
+        assert_eq!(runtime.borrow().activities.selection.visible, first);
+        assert_eq!(runtime.borrow().hub.target_size()[0], width);
+        std::sync::Arc::make_mut(&mut shell.activities.snapshot)
+            .activities
+            .retain(|entry| entry.id != first[0]);
+        drop(shell.sync_hub_activity());
+        assert_eq!(
+            shell.outputs[0]
+                .runtime
+                .hub
+                .as_ref()
+                .unwrap()
+                .borrow()
+                .activities
+                .selection
+                .visible,
+            vec![first[1].clone()]
+        );
+        shell.notifications.dnd = true;
+        drop(shell.sync_hub_activity());
+        let runtime = shell.outputs[0].runtime.hub.as_ref().unwrap();
+        assert_eq!(runtime.borrow().activities.selection.visible.len(), 1);
+        assert_eq!(runtime.borrow().activities.selection.hidden, 0);
+        drop(shell.hub_hover(id, false));
+        drop(shell.open_hub(id, status_ui::Menu::Activities));
+        assert_eq!(shell.hub_mode(id), Some(Mode::Expanded(Content::Activities)));
+    }
+    #[test]
+    fn shared_activity_item_and_popup_work_in_flat_floating_and_adaptive_panels() {
+        for style in [PanelStyle::Flat, PanelStyle::Floating, PanelStyle::Adaptive] {
+            let mut shell = shell();
+            let id = shell.outputs[0].bar;
+            seed_activities(&mut shell, 2);
+            shell.config.panels[0].style = style;
+            shell.outputs[0]
+                .runtime
+                .reset(&shell.config.panels[0], &shell.snapshot, Some("test"));
+            drop(shell.sync_hub_activity());
+            assert!(shell.activity_available(id));
+            assert!(shell.outputs[0].runtime.hub.is_none());
+            let item = shell.config.panels[0]
+                .item(&ferese_panel::ItemId("test-activities".into()))
+                .unwrap();
+            assert!(
+                shell
+                    .view_activity_item(id, item, ferese_panel::Representation::Compact, false, Some(160.), 28.)
+                    .1
+            );
+            let anchor = crate::status_ui::PopoverAnchor {
+                parent: id,
+                panel: shell.config.panels[0].id.clone(),
+                item: Some(item.id.clone()),
+                rectangle: cosmic::iced::Rectangle {
+                    x: 20,
+                    y: 0,
+                    width: 160,
+                    height: 28,
+                },
+            };
+            drop(shell.open_menu(status_ui::Menu::Activities, anchor));
+            assert_eq!(shell.menu.as_ref().unwrap().kind, status_ui::Menu::Activities);
+            assert!(
+                shell
+                    .activity_key(
+                        shell.menu.as_ref().unwrap().id,
+                        cosmic::iced::keyboard::key::Named::ArrowDown
+                    )
+                    .is_some()
+            );
+            shell.activities.snapshot = std::sync::Arc::new(Default::default());
+            drop(shell.sync_hub_activity());
+            assert!(!shell.activity_available(id));
+        }
+    }
+    #[test]
+    fn empty_activity_updates_preserve_the_measured_idle_width() {
+        let mut app = shell();
+        seed_activities(&mut app, 0);
+        drop(app.sync_hub_activity());
+        {
+            let mut runtime = app.outputs[0].runtime.hub.as_ref().unwrap().borrow_mut();
+            let available = runtime.available;
+            // Layout measures the whole ordinary idle row, including workspace dots.
+            runtime.idle_content_width = Some(224.);
+            runtime.hub.retarget_idle(224., available).unwrap();
+            runtime.hub.advance(Duration::ZERO, true);
+        }
+        for _ in 0..3 {
+            drop(app.sync_hub_activity());
+            let runtime = app.outputs[0].runtime.hub.as_ref().unwrap().borrow();
+            assert_eq!(runtime.idle_content_width, Some(224.));
+            assert_eq!(runtime.hub.target_size()[0], 224.);
+            assert!(!runtime.hub.active(), "status refresh restarted the idle morph");
+        }
+    }
+
+    #[test]
+    fn progress_updates_do_not_start_a_second_hub_animation() {
+        let mut app = shell();
+        let bar = app.outputs[0].bar;
+        seed_activities(&mut app, 1);
+        drop(app.sync_hub_activity());
+        let runtime = app.outputs[0].runtime.hub.as_ref().unwrap();
+        runtime.borrow_mut().activities.advance(Duration::ZERO, true);
+        assert!(!runtime.borrow().activities.active());
+        std::sync::Arc::make_mut(&mut app.activities.snapshot).activities[0]
+            .data
+            .value = ferese_activities::Value::Progress(0.75);
+        drop(app.sync_hub_activity());
+        assert!(
+            !app.outputs[0]
+                .runtime
+                .hub
+                .as_ref()
+                .unwrap()
+                .borrow()
+                .activities
+                .active()
+        );
+        assert!(app.activity_available(bar));
+    }
     #[test]
     fn shell_rendering_configuration_is_instance_owned() {
         let mut animated = shell();
@@ -1749,6 +2528,60 @@ mod tests {
     }
 
     #[test]
+    fn date_click_opens_workspaces_in_idle_and_peek_regardless_of_last_tab() {
+        use cosmic::iced::advanced::renderer::Headless;
+        let renderer = cosmic::iced::futures::executor::block_on(cosmic::Renderer::new(
+            cosmic::iced::Font::default(),
+            cosmic::iced::Pixels(14.),
+            Some("tiny-skia"),
+        ))
+        .unwrap();
+        let mut app = shell();
+        let id = app.outputs[0].bar;
+        app.snapshot.windows.clear();
+        app.snapshot.workspaces.clear();
+        app.status.battery = None;
+        std::sync::Arc::make_mut(&mut app.media.snapshot).selected = None;
+        for last in [status_ui::Menu::Calendar, status_ui::Menu::Activities] {
+            app.outputs[0].runtime.hub.as_ref().unwrap().borrow_mut().last_menu = last;
+            for mode in [Mode::Idle, Mode::Peek] {
+                let mut view = app.hub_content(id, mode, 1., None, true, false);
+                let mut tree = widget::Tree::new(&view);
+                let viewport = Rectangle::with_size(Size::new(280., 44.));
+                let node = view.as_widget_mut().layout(
+                    &mut tree,
+                    &renderer,
+                    &layout::Limits::new(viewport.size(), viewport.size()),
+                );
+                let mut messages = Vec::new();
+                for event in [
+                    mouse::Event::ButtonPressed(mouse::Button::Left),
+                    mouse::Event::ButtonReleased(mouse::Button::Left),
+                ] {
+                    view.as_widget_mut().update(
+                        &mut tree,
+                        &Event::Mouse(event),
+                        Layout::new(&node),
+                        mouse::Cursor::Available(viewport.center()),
+                        &renderer,
+                        &mut clipboard::Null,
+                        &mut Shell::new(&mut messages),
+                        &viewport,
+                    );
+                }
+                let opened: Vec<_> = messages
+                    .iter()
+                    .filter_map(|message| match message {
+                        cosmic::Action::App(Message::HubOpen(_, menu)) => Some(*menu),
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(opened, vec![status_ui::Menu::Workspaces], "{mode:?}, last tab {last:?}");
+            }
+        }
+    }
+
+    #[test]
     fn collapse_remembers_the_last_selected_panel() {
         let mut shell = shell();
         let id = shell.outputs[0].bar;
@@ -1769,15 +2602,26 @@ mod tests {
     fn header_shortcuts_fit_the_settled_width_and_respect_item_visibility() {
         let mut shell = shell();
         let id = shell.outputs[0].bar;
-        for (width, count) in [(240., 0), (340., 2), (400., 2)] {
-            shell.config.panels[0].morph.expanded_width = width;
-            let shortcuts = shell.hub_shortcuts(id);
-            assert_eq!(shortcuts.len(), count);
-            assert!(!shortcuts.contains(&ItemKind::Network));
-            assert_eq!(shortcuts.contains(&ItemKind::Recording), count > 0);
-            assert!(!shortcuts.contains(&ItemKind::DisplayMode));
-            assert!(!shortcuts.contains(&ItemKind::Audio));
-            assert!(!shortcuts.iter().any(|kind| matches!(kind, ItemKind::Battery { .. })));
+        for (playback, counts) in [
+            (None, [1, 2, 2]),
+            (Some(ferese_ipc::media::Playback::Playing), [0, 2, 2]),
+            (Some(ferese_ipc::media::Playback::Paused), [0, 2, 2]),
+        ] {
+            std::sync::Arc::make_mut(&mut shell.media.snapshot).selected =
+                playback.map(|status| ferese_ipc::media::Player {
+                    status,
+                    ..Default::default()
+                });
+            for (width, count) in [240., 340., 400.].into_iter().zip(counts) {
+                shell.config.panels[0].morph.expanded_width = width;
+                let shortcuts = shell.hub_shortcuts(id);
+                assert_eq!(shortcuts.len(), count);
+                assert!(!shortcuts.contains(&ItemKind::Network));
+                assert_eq!(shortcuts.contains(&ItemKind::Recording), count > 1);
+                assert!(!shortcuts.contains(&ItemKind::DisplayMode));
+                assert!(!shortcuts.contains(&ItemKind::Audio));
+                assert!(!shortcuts.iter().any(|kind| matches!(kind, ItemKind::Battery { .. })));
+            }
         }
         let before = shell.hub_shortcuts(id);
         drop(shell.open_hub(id, status_ui::Menu::Calendar));
@@ -2039,11 +2883,35 @@ mod tests {
             })
             .collect();
         drop(shell.update_workspace_ui());
-        let theme = shell.config.theme.palette().native_theme();
         for scale in [1., 1.25, 1.5] {
             shell.outputs[0].scale = scale;
             let mut date_pixels = None;
             for (name, mode, menu) in [
+                (
+                    "activities-battery-full",
+                    Mode::Expanded(Content::Activities),
+                    Some(status_ui::Menu::Activities),
+                ),
+                (
+                    "activities-battery-low",
+                    Mode::Expanded(Content::Activities),
+                    Some(status_ui::Menu::Activities),
+                ),
+                (
+                    "activities-battery-light",
+                    Mode::Expanded(Content::Activities),
+                    Some(status_ui::Menu::Activities),
+                ),
+                ("activities-light", Mode::Idle, None),
+                ("activities-narrow", Mode::Idle, None),
+                ("activities-single", Mode::Idle, None),
+                ("activities-split", Mode::Idle, None),
+                ("activities-translucent", Mode::Idle, None),
+                (
+                    "activities-list",
+                    Mode::Expanded(Content::Activities),
+                    Some(status_ui::Menu::Activities),
+                ),
                 ("idle", Mode::Idle, None),
                 ("idle-attached", Mode::Idle, None),
                 ("idle-attached-bottom", Mode::Idle, None),
@@ -2176,6 +3044,41 @@ mod tests {
                     percent: 12,
                     status: "Discharging".into(),
                 });
+                if name.starts_with("activities-battery-") {
+                    shell.status.battery = Some(crate::status::Battery {
+                        percent: if name.ends_with("full") {
+                            100
+                        } else if name.ends_with("low") {
+                            9
+                        } else {
+                            87
+                        },
+                        status: if name.ends_with("full") {
+                            "Full"
+                        } else if name.ends_with("low") {
+                            "Discharging"
+                        } else {
+                            "Charging"
+                        }
+                        .into(),
+                    });
+                }
+                let document = ferese_config::Document::parse(
+                    if matches!(name, "activities-light" | "activities-battery-light") {
+                        "theme { mode light; }"
+                    } else {
+                        "theme { mode dark; }"
+                    },
+                )
+                .unwrap();
+                let candidate = ferese_config::theme::resolve(
+                    &document,
+                    std::path::Path::new("/tmp"),
+                    jiff::Timestamp::now(),
+                    |_| Err("unexpected theme read".into()),
+                )
+                .unwrap();
+                shell.config.apply_theme(&candidate.theme);
                 shell.config.theme.bar_background[3] = if name.ends_with("translucent") { 128 } else { 255 };
                 let panel = &mut shell.config.panels[0];
                 panel.morph.attached = name.contains("attached");
@@ -2196,9 +3099,10 @@ mod tests {
                         signal: 80,
                     });
                 }
+                shell.outputs[0].size = Some((if name == "activities-narrow" { 240 } else { 1200 }, 800));
                 let workspace_width = shell.hub_workspace_width(id);
                 let hub = shell.outputs[0].runtime.hub.as_ref().unwrap();
-                let (mut sample, allocation) = {
+                let (mut sample, mut allocation) = {
                     let mut hub = hub.borrow_mut();
                     let animation_time = name.strip_prefix("spring-").map(|ms| ms.parse::<u64>().unwrap());
                     *hub = Runtime::new(&shell.config.panels[0]);
@@ -2220,13 +3124,29 @@ mod tests {
                     } else {
                         200.
                     };
-                    hub.retarget(mode, [1200., 800.], menu);
+                    hub.retarget(
+                        mode,
+                        [if name == "activities-narrow" { 240. } else { 1200. }, 800.],
+                        menu,
+                    );
                     hub.hub.advance(
                         Duration::from_millis(animation_time.unwrap_or(0)),
                         animation_time.is_none(),
                     );
                     (hub.hub.sample(), hub.allocation)
                 };
+                if name.starts_with("activities") {
+                    seed_activities(&mut shell, if name == "activities-single" { 1 } else { 3 });
+                    drop(shell.sync_hub_activity());
+                    let mut hub = shell.outputs[0].runtime.hub.as_ref().unwrap().borrow_mut();
+                    hub.hub.advance(Duration::from_secs(2), true);
+                    hub.activities.advance(Duration::ZERO, true);
+                    sample = hub.hub.sample();
+                    allocation = hub.allocation;
+                } else {
+                    shell.activities.snapshot = std::sync::Arc::new(Default::default());
+                }
+                let hub = shell.outputs[0].runtime.hub.as_ref().unwrap();
                 if mode == Mode::Idle || mode == Mode::Expanded(Content::Controls) || name == "peek-workspaces" {
                     let mut measured = shell.view_hub(id);
                     let mut measured_tree = widget::Tree::new(&measured);
@@ -2266,7 +3186,7 @@ mod tests {
                     &renderer,
                     &layout::Limits::new(Size::ZERO, viewport.size()),
                 );
-                if shell.hub_priority().is_some() {
+                if shell.hub_priority().is_some() && !mode.expanded() {
                     #[derive(Default)]
                     struct TextBounds(Vec<(String, Rectangle)>);
                     impl widget::Operation for TextBounds {
@@ -2374,6 +3294,7 @@ mod tests {
                 } else {
                     mouse::Cursor::Unavailable
                 };
+                let theme = shell.config.theme.palette().native_theme();
                 renderer.reset(viewport);
                 view.as_widget().draw(
                     &tree,

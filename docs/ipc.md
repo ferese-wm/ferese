@@ -24,6 +24,7 @@ feresectl output-profiles
 feresectl theme get
 feresectl xwayland status
 feresectl media
+feresectl activity list
 ```
 
 The `get-*` spellings remain hidden aliases for the corresponding queries and
@@ -54,6 +55,18 @@ also handle floating windows. Moves use 32 logical pixels. Resizing shrinks
 width/height with left/up and grows them with right/down by 32 logical pixels,
 subject to client size limits. Fullscreen and maximized floating windows ignore
 these actions.
+
+## Live Activities
+
+Use `feresectl run --title "Tests" -- cargo test` to publish a command's lifetime,
+or `feresectl activity start`, `update`, `end` and `cancel` to publish status from
+an integration. The [Live Activities guide](activities.md) covers setup and
+examples; its [publisher section](activities.md#publisher-ownership-and-lifecycle) explains ownership,
+leases and the `activity-publish`, `activity-get` and `activity-watch` commands.
+
+`feresectl activity setup --config PATH` updates a local config for shell
+activities and the panel item without connecting to a session. It preserves an
+explicit `shell-hook #false`; the installer uses it during first-time user setup.
 
 ## Choose a session
 

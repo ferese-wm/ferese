@@ -82,6 +82,7 @@ impl FereseShell {
         let effects = output.and_then(|output| output.effects.as_ref());
         let compositor_material = effects.is_some();
         let availability = Availability {
+            activities: self.activity_available(id),
             media: self.media.snapshot.selected.is_some(),
             network: self.status.network.is_some(),
             audio: self.status.audio.is_some(),
@@ -433,6 +434,9 @@ impl FereseShell {
                     .class(theme::Text::Color(foreground))
                     .into();
                 return (container(element).max_width(360).into(), !title.is_empty());
+            }
+            ItemKind::Activities => {
+                return self.view_activity_item(id, item, representation, selected, width, control_height);
             }
             ItemKind::Media => self.view_media_item(representation, selected, width),
             ItemKind::QuickSettings => self.view_status_item(status_ui::Menu::System, false, selected),

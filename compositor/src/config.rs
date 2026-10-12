@@ -35,6 +35,8 @@ use crate::window_rules::{WindowRule, WindowRuleConfig};
 #[derive(Debug, Default, Deserialize)]
 pub struct Config {
     #[serde(default)]
+    activities: ferese_config::activities::Settings,
+    #[serde(default)]
     panels: Option<Vec<ferese_panel::Panel>>,
     #[serde(default)]
     notifications: ferese_config::notifications::NotificationConfig,
@@ -121,6 +123,7 @@ impl Config {
         if let Some(panels) = &self.panels {
             ferese_panel::validate(panels).map_err(ConfigError::Binding)?;
         }
+        self.activities.validate().map_err(ConfigError::Binding)?;
         self.notifications.validate().map_err(ConfigError::Binding)?;
         self.xwayland.validate().map_err(ConfigError::Binding)?;
         for daemon in &self.autostart {
@@ -132,6 +135,9 @@ impl Config {
         let bindings = self.bindings(&input_settings)?;
         let binding_modes = self.binding_modes(&input_settings, &bindings)?;
         Ok(crate::RuntimeConfig {
+            activity_settings: self.activities.clone(),
+            activity_matcher: ferese_config::activities::Matcher::new(&self.activities)
+                .map_err(ConfigError::Binding)?,
             lock_idle: self.lock_screen.validate()?,
             idle_inhibit: self.idle_inhibit,
             autostart: self.autostart.clone(),

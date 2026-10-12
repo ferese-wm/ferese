@@ -233,6 +233,33 @@ pub fn reload_running() -> bool {
 mod tests {
     use super::*;
     #[test]
+    fn activity_display_settings_roundtrip_without_changing_rules() {
+        for source in [
+            "",
+            "// keep this rule\nactivities { rule cargo { match \"^cargo\"; title Custom; }; }\n",
+        ] {
+            let mut snapshot = Snapshot::parse(source.into()).unwrap();
+            let rules = snapshot.doc.value()["activities"]["rules"].clone();
+            snapshot.edit(&set("activities.max_visible", 1)).unwrap();
+            snapshot.edit(&set("activities.show_badge", false)).unwrap();
+            let loaded = Snapshot::parse(snapshot.source.clone()).unwrap();
+            let settings: ferese_config::activities::Settings =
+                serde_json::from_value(loaded.doc.value()["activities"].clone()).unwrap();
+            assert_eq!(settings.limits().max_visible, 1);
+            assert!(!settings.limits().show_badge);
+            if !source.is_empty() {
+                assert_eq!(loaded.doc.value()["activities"]["rules"], rules);
+                assert!(loaded.source.contains("// keep this rule"));
+            }
+            snapshot.edit(&set("activities.max_visible", 2)).unwrap();
+            snapshot.edit(&set("activities.show_badge", true)).unwrap();
+            let loaded = Snapshot::parse(snapshot.source).unwrap();
+            assert_eq!(loaded.number("activities.max_visible", 0.), 2.);
+            assert!(loaded.boolean("activities.show_badge", false));
+        }
+    }
+
+    #[test]
     fn edits_preserve_comments_custom_keys_and_other_rules() {
         let source = r#"// personal theme
 // keep this

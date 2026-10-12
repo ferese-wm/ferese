@@ -6,6 +6,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+ferese-activities = { path = "../crates/ferese-activities" }
 clap = { version = "4.5", features = ["derive"] }
 ferese-config = { path = "../crates/ferese-config" }
 ferese-ipc = { path = "../crates/ferese-ipc" }

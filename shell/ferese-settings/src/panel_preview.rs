@@ -7,6 +7,7 @@ use ferese_theme::panel::{Sample, Spacing, frame};
 use crate::{App, Element, Message, panel_controls, visuals};
 
 const SAMPLE_AVAILABILITY: Availability = Availability {
+    activities: true,
     media: true,
     network: true,
     audio: true,
@@ -17,6 +18,18 @@ const SAMPLE_AVAILABILITY: Availability = Availability {
 
 fn available(item: &Item) -> bool {
     item.available(SAMPLE_AVAILABILITY)
+}
+
+fn panel_background(theme: &ferese_config::theme::ResolvedTheme, panel: &Panel) -> cosmic::iced::Color {
+    let fill = if panel.style == ferese_panel::PanelStyle::Morph {
+        &theme.tokens.colors.surface_raised
+    } else {
+        &theme.tokens.surface.bar.background
+    };
+    cosmic::iced::Color {
+        a: theme.panel_opacity(panel.background_opacity),
+        ..visuals::color(fill, cosmic::iced::Color::TRANSPARENT)
+    }
 }
 
 impl App {
@@ -115,14 +128,7 @@ impl App {
                     groups: Vec::new(),
                     scale: self.render_scale,
                     high_contrast: palette.high_contrast,
-                    background: cosmic::iced::Color {
-                        a: if self.resolved.presented.accessibility.reduce_transparency {
-                            1.
-                        } else {
-                            panel.background_opacity.unwrap_or(palette.card.a)
-                        },
-                        ..palette.card
-                    },
+                    background: panel_background(&self.resolved.presented, &panel),
                     border: if panel.border {
                         visuals::color(
                             &self.resolved.presented.tokens.colors.border,
@@ -194,7 +200,7 @@ impl App {
             ferese_panel::shape::ZonePosition::End,
         )))
         .collect();
-        let opacity = self.resolved.presented.panel_opacity(panel.background_opacity);
+        let background = panel_background(&self.resolved.presented, &panel);
         let height = panel.resolved_geometry().height;
         let padding = panel.resolved_geometry().inner_padding;
         let border = panel.border;
@@ -265,10 +271,7 @@ impl App {
                 groups,
                 scale: self.render_scale,
                 high_contrast: palette.high_contrast,
-                background: cosmic::iced::Color {
-                    a: opacity,
-                    ..palette.card
-                },
+                background,
                 border: if border {
                     visuals::color(
                         &self.resolved.presented.tokens.colors.border,
@@ -367,6 +370,7 @@ impl App {
             ItemKind::Workspaces { .. } => icons::OVERVIEW,
             ItemKind::FocusedWindow => icons::DISPLAY,
             ItemKind::Media => icons::MEDIA,
+            ItemKind::Activities => icons::FERESE,
             ItemKind::QuickSettings => icons::CONTROL_CENTER,
             ItemKind::Network => icons::WIFI_FULL,
             ItemKind::Audio => icons::VOLUME_HIGH,
@@ -380,6 +384,14 @@ impl App {
         let label = match (item.kind, representation) {
             (ItemKind::Workspaces { .. }, _) => "1  2  3",
             (ItemKind::FocusedWindow, _) => "Settings",
+            (ItemKind::Activities, Representation::Wide) => {
+                if self.draft.boolean("activities.show_badge", true) {
+                    "Build · 62%  +1"
+                } else {
+                    "Build · 62%"
+                }
+            }
+            (ItemKind::Activities, Representation::Compact) => "Build",
             (ItemKind::Media, Representation::Wide) => "Song title · Artist  ▷",
             (ItemKind::Media, Representation::Compact) => "Song title",
             (ItemKind::Battery { percentage: true }, Representation::Wide) => "75%",
@@ -477,6 +489,37 @@ mod tests {
     use cosmic::Application;
     use cosmic::iced::advanced::{Layout, Shell, clipboard, layout, mouse, renderer::Headless, widget};
     use cosmic::iced::{Event, Font, Pixels, Point, Rectangle, Size};
+
+    #[test]
+    fn preview_uses_bar_tokens_and_inherited_opacity_for_every_available_style() {
+        let mut theme = ferese_config::theme::default_theme();
+        theme.tokens.colors.surface_raised = "#112233".into();
+        theme.tokens.surface.bar.background = "#abcdef".into();
+        theme.tokens.material.style = "translucent".into();
+        theme.tokens.material.opacity = 0.35;
+        for style in ferese_panel::PanelStyle::AVAILABLE {
+            let mut panel = Panel::from_preset(style);
+            let expected = if style == ferese_panel::PanelStyle::Morph {
+                cosmic::iced::Color::from_rgb8(0x11, 0x22, 0x33)
+            } else {
+                cosmic::iced::Color::from_rgb8(0xab, 0xcd, 0xef)
+            };
+            for (override_opacity, opacity) in [(None, 0.35), (Some(0.), 0.), (Some(0.7), 0.7)] {
+                panel.background_opacity = override_opacity;
+                for reduce in [false, true] {
+                    theme.accessibility.reduce_transparency = reduce;
+                    assert_eq!(
+                        panel_background(&theme, &panel),
+                        cosmic::iced::Color {
+                            a: if reduce { 1. } else { opacity },
+                            ..expected
+                        },
+                        "{style:?}, opacity={override_opacity:?}, reduce={reduce}",
+                    );
+                }
+            }
+        }
+    }
 
     #[derive(Default)]
     struct Bounds {

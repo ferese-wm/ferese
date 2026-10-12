@@ -120,6 +120,7 @@ pub enum ItemKind {
     },
     FocusedWindow,
     Media,
+    Activities,
     QuickSettings,
     Network,
     Audio,
@@ -141,6 +142,7 @@ impl ItemKind {
             Self::Workspaces { .. } => "Workspaces",
             Self::FocusedWindow => "Focused window",
             Self::Media => "Media",
+            Self::Activities => "Activities",
             Self::QuickSettings => "Quick Settings",
             Self::Network => "Network",
             Self::Audio => "Audio",
@@ -155,7 +157,7 @@ impl ItemKind {
     pub fn representations(self) -> &'static [Representation] {
         use Representation::*;
         match self {
-            Self::Media | Self::Clock => &[Wide, Compact, Icon],
+            Self::Activities | Self::Media | Self::Clock => &[Wide, Compact, Icon],
             Self::Battery { percentage: true } => &[Wide, Icon],
             Self::Workspaces { .. } | Self::FocusedWindow => &[Wide],
             _ => &[Icon],
@@ -283,6 +285,8 @@ impl Item {
             },
             priority: if matches!(kind, ItemKind::Overview | ItemKind::Workspaces { .. }) {
                 100
+            } else if kind == ItemKind::Activities {
+                20
             } else {
                 50
             },
@@ -294,6 +298,7 @@ impl Item {
             return false;
         }
         match self.kind {
+            ItemKind::Activities => availability.activities,
             ItemKind::Media => availability.media,
             ItemKind::Network => availability.network,
             ItemKind::Audio => availability.audio,
@@ -308,6 +313,7 @@ impl Item {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Availability {
     pub media: bool,
+    pub activities: bool,
     pub network: bool,
     pub audio: bool,
     pub notifications: bool,
@@ -792,6 +798,7 @@ mod tests {
         );
         assert_eq!(
             visible(Availability {
+                activities: true,
                 media: true,
                 network: true,
                 audio: true,

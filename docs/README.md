@@ -10,6 +10,7 @@
 
 ## Use the desktop
 
+- [Live Activities](activities.md): show running commands in the panel, configure detection and troubleshoot missing tasks.
 - [Shortcuts and gestures](shortcuts.md): keyboard navigation, moving and resizing with Super-drag, and window grouping.
 - [Lock screen](locking.md): change its appearance, set up automatic locking and configure display sleep.
 - [Screen sharing and recording](screen-sharing.md): choose a source and stop sharing.

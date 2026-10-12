@@ -25,6 +25,9 @@ varying vec2 v_coords;
 
 void main() {
     float sdf = material_distance(gl_FragCoord.xy, visible_rect, material_radii);
+    // The capture includes a sampling halo, but this draw owns only its visible
+    // region. The shared panel mask also contains neighboring islands.
+    if (panel_count > 0.5) sdf = max(sdf, panel_box_distance(gl_FragCoord.xy, visible_rect));
     float coverage = alpha * presentation_alpha * edge_coverage(sdf);
     if (coverage <= 0.0) { gl_FragColor = vec4(0.0); return; }
     vec2 coords = (gl_FragCoord.xy - capture_origin) / texture_size;

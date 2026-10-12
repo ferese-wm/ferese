@@ -101,6 +101,7 @@ impl FereseShell {
 
         if kind == Menu::Notifications && self.notifications.ready {
             self.notifications.toggle_history();
+            self.sync_activity_presentations();
         }
 
         let notifications = self.sync_notification_surface();
