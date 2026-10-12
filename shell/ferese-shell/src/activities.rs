@@ -947,6 +947,17 @@ impl FereseShell {
                 );
             }
             let selected = focus.as_ref() == Some(&activity.id);
+            let radius = self.render.radius(10.);
+            let appearance = move |strength: f32, focused: bool| button::Style {
+                background: Some(palette.text.scale_alpha(strength * opacity).into()),
+                text_color: Some(palette.text.scale_alpha(opacity)),
+                icon_color: Some(palette.text.scale_alpha(opacity)),
+                shape: Some(cosmic::iced::border::Shape::Continuous),
+                border_radius: radius.into(),
+                outline_width: if focused { 1. } else { 0. },
+                outline_color: palette.accent.scale_alpha(opacity),
+                ..Default::default()
+            };
             rows.push(
                 row![
                     button::custom(body)
@@ -954,6 +965,12 @@ impl FereseShell {
                         .id(activity_widget_id(id, &activity.id))
                         .name(format!("{}, {}", activity.data.title, label(activity)))
                         .selected(selected)
+                        .class(theme::Button::Custom {
+                            active: Box::new(move |focused, _| appearance(0.045, focused)),
+                            hovered: Box::new(move |focused, _| appearance(0.075, focused)),
+                            pressed: Box::new(move |focused, _| appearance(0.10, focused)),
+                            disabled: Box::new(move |_| appearance(0.025, false)),
+                        })
                         .on_press(cosmic::Action::App(Message::ActivityFocus(id, activity.id.clone())))
                         .width(Length::Fill),
                 ]
