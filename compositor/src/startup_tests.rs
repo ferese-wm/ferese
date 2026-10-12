@@ -273,11 +273,11 @@ fn check_config_rejects_an_otherwise_valid_oversized_file() {
     let valid = format!("//{}\n", "x".repeat(60 * 1024 - 3));
     std::fs::write(&path, &valid).unwrap();
     crate::check_config(&path).unwrap();
-    assert!(crate::theme::prepare(&(valid.clone() + "\n"), directory.path()).is_ok());
+    assert!(crate::config::prepare(&(valid.clone() + "\n"), directory.path()).is_ok());
     std::fs::write(&path, valid + "\n").unwrap();
     let error = crate::check_config(&path).unwrap_err();
     assert!(error.contains("exceeds 60 KiB"), "{error}");
-    assert_eq!(crate::theme::read_source(&path).unwrap_err(), error);
+    assert_eq!(crate::config::read_source(&path).unwrap_err(), error);
 }
 
 #[test]

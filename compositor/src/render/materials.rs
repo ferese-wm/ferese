@@ -697,7 +697,8 @@ mod region_geometry_tests {
                     let source = format!(
                         "theme {{ material {{ style translucent; opacity 0.7; }}; accessibility {{ reduce-transparency #{reduce}; }}; }}; panel main {{ style {surface}; background-opacity {opacity}; }}"
                     );
-                    let (_, runtime, candidate) = crate::theme::prepare(&source, std::path::Path::new("/tmp")).unwrap();
+                    let (_, runtime, candidate) =
+                        crate::config::prepare(&source, std::path::Path::new("/tmp")).unwrap();
                     let material = resolve_surface_material(
                         SemanticRole::Panel,
                         runtime.theme_settings,
@@ -736,7 +737,7 @@ mod region_geometry_tests {
             let source = format!(
                 "theme {{ material {{ style translucent; opacity 0.6; blur-radius 20; }}; accessibility {{ reduce-transparency #{reduce}; }}; }}; panel main {{ style morph; }}"
             );
-            let (_, runtime, candidate) = crate::theme::prepare(&source, std::path::Path::new("/tmp")).unwrap();
+            let (_, runtime, candidate) = crate::config::prepare(&source, std::path::Path::new("/tmp")).unwrap();
             let material =
                 resolve_surface_material(SemanticRole::Panel, runtime.theme_settings, None, runtime.panel_style);
             assert_eq!(material.shadow, [0.; 3]);

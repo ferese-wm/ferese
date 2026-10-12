@@ -100,10 +100,16 @@ impl From<panel::PanelGeometry> for BarMetrics {
 }
 
 fn main() -> cosmic::iced::Result {
-    let mut config = config::load().unwrap_or_else(|error| {
-        eprintln!("ferese-shell: {error}; shell was not started");
-        std::process::exit(2);
-    });
+    let (mut config, startup_error) = match config::load() {
+        Ok(config) => (config, None),
+        Err(error) => {
+            eprintln!("ferese-shell: {error}; starting with defaults");
+            let notice = format!(
+                "The shell started with default settings. Your configuration file has not been changed.\n\n{error}"
+            );
+            (ShellConfig::default(), Some(notice))
+        }
+    };
     renderer::configure_shell();
 
     let compositor_wallpaper = std::env::var_os("FERESE_COMPOSITOR_WALLPAPER").is_some();
@@ -133,7 +139,7 @@ fn main() -> cosmic::iced::Result {
         .default_font(shell_font)
         .theme(config.theme.palette().native_theme());
 
-    cosmic::app::run::<FereseShell>(settings, (config, wallpaper))
+    cosmic::app::run::<FereseShell>(settings, (config, wallpaper, startup_error))
 }
 
 type WallpaperLoad = cosmic::iced::futures::channel::oneshot::Receiver<Result<image::Handle, String>>;
@@ -158,6 +164,7 @@ struct FereseShell {
     calendar_offset: i32,
     status_error: Option<status::ActionError>,
     theme_error: Option<String>,
+    pending_config_error: Option<String>,
     menu: Option<status_ui::OpenMenu>,
     system_modal: Option<system_modal::SystemModal>,
     display_mode: display_mode::Model,
@@ -267,7 +274,7 @@ enum Message {
 
 impl cosmic::Application for FereseShell {
     type Executor = cosmic::executor::Default;
-    type Flags = (ShellConfig, Option<WallpaperLoad>);
+    type Flags = (ShellConfig, Option<WallpaperLoad>, Option<String>);
     type Message = Message;
 
     const APP_ID: &'static str = APP_ID;
@@ -280,7 +287,13 @@ impl cosmic::Application for FereseShell {
         &mut self.core
     }
 
-    fn init(core: Core, (config, wallpaper): Self::Flags) -> (Self, Task<Self::Message>) {
+    fn init(core: Core, (config, wallpaper, startup_error): Self::Flags) -> (Self, Task<Self::Message>) {
+        let control = ShellControl::connect()
+            .map_err(|error| eprintln!("ferese-shell: shell control unavailable: {error}"))
+            .ok();
+        // The compositor reports the complete configuration error through its
+        // accepted-theme snapshot. Use the local warning only when standalone.
+        let pending_config_error = if control.is_none() { startup_error } else { None };
         let app = Self {
             core,
             notifications: notifications::Center::new(config.notifications.clone(), config.animations),
@@ -292,6 +305,7 @@ impl cosmic::Application for FereseShell {
             calendar_offset: 0,
             status_error: None,
             theme_error: None,
+            pending_config_error,
             menu: None,
             system_modal: None,
             display_mode: display_mode::Model::default(),
@@ -302,11 +316,7 @@ impl cosmic::Application for FereseShell {
             render: rendering::Rendering::new(&config),
             config,
             wallpaper: None,
-            control: ShellControl::connect()
-                .map_err(|error| {
-                    eprintln!("ferese-shell: shell control unavailable: {error}");
-                })
-                .ok(),
+            control,
             snapshot: ShellSnapshot::default(),
             workspace_ui: Default::default(),
             overview_active: false,
@@ -366,7 +376,7 @@ impl cosmic::Application for FereseShell {
     }
 
     fn update(&mut self, message: Self::Message) -> Task<Self::Message> {
-        match message {
+        let task = match message {
             Message::HubOpen(id, kind) => self.open_hub(id, kind),
             Message::HubClose(id) => self.close_hub(id),
             Message::HubWorkspaceScroll(id, delta) => self.scroll_hub_workspaces(id, delta),
@@ -471,9 +481,7 @@ impl cosmic::Application for FereseShell {
                 config.apply_theme(&snapshot.presented);
                 config.theme_mode = snapshot.mode;
                 if snapshot.error != self.theme_error {
-                    if let Some(error) = &snapshot.error {
-                        self.notifications.service_error("Theme could not be loaded", error);
-                    }
+                    self.pending_config_error = snapshot.error.clone();
                     self.theme_error = snapshot.error;
                 }
                 self.apply_config(config)
@@ -875,7 +883,9 @@ impl cosmic::Application for FereseShell {
                 }
                 self.dismiss_workspace_tooltip()
             }
-        }
+        };
+        self.flush_config_error();
+        task
     }
 
     fn style(&self) -> Option<cosmic::iced::theme::Style> {
@@ -894,6 +904,17 @@ impl cosmic::Application for FereseShell {
 }
 
 impl FereseShell {
+    fn flush_config_error(&mut self) {
+        if self.notifications.ready
+            && self.outputs.iter().any(|output| !output.hidden)
+            && let Some(error) = self.pending_config_error.take()
+        {
+            eprintln!("ferese-shell: configuration warning: {error}");
+            self.notifications
+                .service_error("Configuration could not be loaded", &error);
+        }
+    }
+
     fn reload_config(&mut self, source: String) -> Task<Message> {
         let config = match config::parse_source(&source) {
             Ok(config) => config,
@@ -1080,6 +1101,7 @@ mod tests {
             calendar_offset: 0,
             status_error: None,
             theme_error: None,
+            pending_config_error: None,
             menu: None,
             system_modal: None,
             display_mode: Default::default(),
