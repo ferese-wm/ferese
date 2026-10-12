@@ -33,11 +33,11 @@ struct PreviewWindow {
 }
 
 impl Ferese {
-    /// Morph owns the gap on its reserved edge. Keep the layout's outer gap
+    /// The panel owns the gap on its reserved edge. Keep the layout's outer gap
     /// on the other three edges, and keep floating work-area bounds unchanged.
-    pub(super) fn morph_layout_bounds(&self, mut bounds: Rect, outer: f64) -> Rect {
+    pub(super) fn panel_layout_bounds(&self, mut bounds: Rect, outer: f64) -> Rect {
         use smithay::wayland::shell::wlr_layer::{Anchor, ExclusiveZone};
-        if self.panel_style != ferese_panel::PanelStyle::Morph || outer <= 0. || !outer.is_finite() {
+        if outer <= 0. || !outer.is_finite() {
             return bounds;
         }
         let Some(output) = self
@@ -64,7 +64,7 @@ impl Ferese {
             };
             let top = f64::from(output_geometry.loc.y + geometry.loc.y);
             let bottom = top + f64::from(geometry.size.h);
-            // Only remove a gap if Morph actually borders the usable area.
+            // Only remove a gap if the panel actually borders the usable area.
             // Another reserved bar on this edge must retain its own spacing.
             if policy.anchor.contains(Anchor::TOP)
                 && !policy.anchor.contains(Anchor::BOTTOM)
@@ -91,7 +91,7 @@ impl Ferese {
         } else {
             self.gap_config.outer
         };
-        self.morph_layout_bounds(bounds, outer)
+        self.panel_layout_bounds(bounds, outer)
     }
     pub(super) fn visible_workspace_ids(&self) -> HashSet<WorkspaceId> {
         let mut visible = self
@@ -321,7 +321,7 @@ impl Ferese {
             };
 
             let layout_bounds = self.workspace_layout_bounds(bounds, &workspace.layout);
-            let maximized_bounds = self.morph_layout_bounds(bounds, self.gap_config.outer);
+            let maximized_bounds = self.panel_layout_bounds(bounds, self.gap_config.outer);
             let workspace_fullscreen = workspace.fullscreen;
             let is_scrolling_layout = matches!(workspace.layout, WorkspaceLayout::Scrolling(_));
             let workspace_focus = workspace.last_focused;
@@ -750,7 +750,7 @@ impl Ferese {
             windows.sort_by_key(|w| w.id.0);
             let input = PreviewInput {
                 bounds: self.workspace_layout_bounds(bounds, &workspace.layout),
-                maximized_bounds: self.morph_layout_bounds(bounds, self.gap_config.outer),
+                maximized_bounds: self.panel_layout_bounds(bounds, self.gap_config.outer),
                 fullscreen_bounds: self.full_output_bounds_for(output).unwrap_or(bounds),
                 gaps: self.gap_config,
                 focused: workspace.last_focused,
@@ -835,3 +835,7 @@ impl Ferese {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "panel_clearance_tests.rs"]
+mod panel_clearance_tests;

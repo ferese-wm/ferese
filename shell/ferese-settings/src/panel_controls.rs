@@ -366,6 +366,18 @@ impl App {
 
     fn panel_opacity_controls(&self) -> Element<'static, Message> {
         use cosmic::iced::{Alignment, Length};
+        if self.draft.boolean("theme.accessibility.reduce_transparency", false) {
+            return self.panel_appearance_row(
+                "Background opacity",
+                "Reduce transparency is on. Turn it off in Accessibility to change opacity.",
+                self.settings_button(
+                    "Accessibility",
+                    "M9 18l6-6-6-6",
+                    Some(Message::Page(Page::Accessibility)),
+                    false,
+                ),
+            );
+        }
         let palette = crate::visuals::Palette::from_resolved(&self.resolved.presented);
         let tokens = &self.resolved.presented.tokens;
         let inherited = if tokens.material.style == "translucent" {
