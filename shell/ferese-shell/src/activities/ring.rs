@@ -96,12 +96,12 @@ impl canvas::Program<cosmic::Action<Message>, Theme, cosmic::Renderer> for Ring 
     ) -> Vec<canvas::Geometry<cosmic::Renderer>> {
         let mut frame = canvas::Frame::new(renderer, bounds.size());
         let center = Point::new(bounds.width / 2., bounds.height / 2.);
-        let radius = bounds.width.min(bounds.height) / 2. - 1.5;
+        let radius = bounds.width.min(bounds.height) / 2. - 3.;
         frame.stroke(
             &canvas::Path::circle(center, radius),
             canvas::Stroke::default()
                 .with_color(self.color.scale_alpha(0.15))
-                .with_width(1.5),
+                .with_width(1.8),
         );
         let (start, fraction) = if self.progress.is_some() {
             (
@@ -131,7 +131,7 @@ impl canvas::Program<cosmic::Action<Message>, Theme, cosmic::Renderer> for Ring 
                 &arc,
                 canvas::Stroke::default()
                     .with_color(self.color)
-                    .with_width(1.5)
+                    .with_width(1.8)
                     .with_line_cap(canvas::LineCap::Round),
             );
         }
