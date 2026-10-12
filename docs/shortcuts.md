@@ -101,7 +101,7 @@ Keep before the confirmation timeout or Revert to restore the last confirmed
 configuration. Bind `toggle-display-mode` if your keyboard uses another key.
 
 In Satty, Enter saves the edited screenshot and copies it to the clipboard;
-Escape discards it. See [Configuration](configuration.md#commands-and-bindings)
+Escape discards it. See [Configuration](configuration/bindings.md#commands-and-bindings)
 for dependencies and custom screenshot commands.
 
 ## Touchpad gestures
@@ -167,5 +167,5 @@ These are examples, not defaults. To disable a built-in binding:
 binding "Super+Q" disabled=#true
 ```
 
-See [Commands and bindings](configuration.md#commands-and-bindings) for action
+See [Commands and bindings](configuration/bindings.md#commands-and-bindings) for action
 names, arguments, and physical-key matching.

@@ -88,7 +88,7 @@ xwayland {
 ```
 
 Start a new session, then check `feresectl xwayland status`. See
-[X11 support](configuration.md#x11-support-xwayland-satellite) for the full key
+[X11 support](configuration/xwayland.md#x11-support-xwayland-satellite) for the full key
 list, diagnostics, and known limitations.
 
 #### Sandboxed applications

@@ -24,14 +24,14 @@ Ferese combines a window manager and desktop shell with one configuration.
 - [Custom panels](https://github.com/ferese-wm/ferese/wiki/Panel-Configuration) with seven styles, editable groups and items, and top or bottom placement
 - [Live Activities](https://github.com/ferese-wm/ferese/wiki/Live-Activities) for build status, running commands and progress from connected apps
 - Workspace overview and recent-window switching
-- [Continuum animations](https://github.com/ferese-wm/ferese/wiki/Configuration#animations): interruptible springs, gesture momentum and shared motion controls
+- [Continuum animations](https://github.com/ferese-wm/ferese/wiki/Configuration-Animations): interruptible springs, gesture momentum and shared motion controls
 - Live wallpapers and blur, custom KDL themes, and Light/Dark/Auto modes
 - Multiple monitors, fractional scaling and lower refresh rates on low battery
 - Wi-Fi, Bluetooth and audio controls
 - Custom keyboard shortcuts and touchpad gestures
 - Screenshot annotation, screen sharing and recording
 - Lock screen and authentication dialogs
-- [Keep awake](https://github.com/ferese-wm/ferese/wiki/Configuration#idle-inhibition) during fullscreen media playback or for selected apps
+- [Keep awake](https://github.com/ferese-wm/ferese/wiki/Configuration-Idle-Inhibition) during fullscreen media playback or for selected apps
 - Continuous corners for windows and shell
 
 ## How Ferese compares

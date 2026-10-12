@@ -25,24 +25,24 @@ NAMES = {
     "shortcuts": "Shortcuts-and-Gestures",
 }
 ALIASES = {
-    "Appearance": [("Configuration", "appearance", "Appearance")],
+    "Appearance": [("Configuration-Appearance", "", "Appearance")],
     "Desktop-Widgets": [("Configuration", "", "Configuration")],
-    "Displays": [("Configuration", "displays", "Displays")],
+    "Displays": [("Configuration-Outputs", "", "Displays")],
     "Input-and-Bindings": [
-        ("Configuration", "input", "Input"),
-        ("Configuration", "commands-and-bindings", "Commands and bindings"),
+        ("Configuration-Input", "", "Input"),
+        ("Configuration-Bindings", "", "Commands and bindings"),
     ],
     "Layout-and-Motion": [
-        ("Configuration", "layout", "Layout"),
-        ("Configuration", "animations", "Animation configuration"),
+        ("Configuration-Layout", "", "Layout"),
+        ("Configuration-Animations", "", "Animation configuration"),
         ("Animation-Model", "", "Animation model"),
     ],
     "Services-and-Locking": [
-        ("Configuration", "login-items-and-locking", "Login items"),
+        ("Configuration-Startup-And-Locking", "", "Login items"),
         ("Lock-Screen", "", "Lock screen"),
         ("Desktop-Portals", "", "Desktop portals"),
     ],
-    "Window-Rules": [("Configuration", "window-rules", "Window rules")],
+    "Window-Rules": [("Configuration-Window-Rules", "", "Window rules")],
 }
 # Inline links/images and reference definitions. Only destinations recognized by
 # the Markdown parser are rewritten; examples in code blocks remain untouched.
@@ -54,6 +54,8 @@ def page_name(source):
         return "Website-Development"
     if source == ROOT / "crates/ferese-theme/README.md":
         return "Theme-Components"
+    if source.parent == ROOT / "docs/configuration":
+        return "Configuration-" + "-".join(word.capitalize() for word in source.stem.split("-"))
     return NAMES.get(source.stem, "-".join(word.capitalize() for word in source.stem.split("-")))
 
 
@@ -131,8 +133,14 @@ def rewrite(text, source, pages, revision):
     return "".join(line if number in protected else LINK.sub(replace, line) for number, line in enumerate(lines))
 
 
+def guide_sources():
+    return (sorted((ROOT / "docs").glob("*.md"))
+            + sorted((ROOT / "docs/configuration").glob("*.md"))
+            + [ROOT / "site/README.md", ROOT / "crates/ferese-theme/README.md"])
+
+
 def render(revision):
-    sources = sorted((ROOT / "docs").glob("*.md")) + [ROOT / "site/README.md", ROOT / "crates/ferese-theme/README.md"]
+    sources = guide_sources()
     pages = {source.resolve(): page_name(source) for source in sources}
     if len(set(pages.values())) != len(pages):
         raise ValueError("Wiki page names must be unique")

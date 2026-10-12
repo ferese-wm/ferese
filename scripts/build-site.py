@@ -43,11 +43,13 @@ def main():
     handbook = OUTPUT / 'docs'
     handbook.mkdir()
     (handbook / 'index.html').write_text(redirect_page(wiki.WIKI))
-    for source in sorted((ROOT / 'docs').glob('*.md')):
-        if source.stem == 'README':
+    for source in wiki.guide_sources():
+        if not source.is_relative_to(ROOT / 'docs') or source.stem == 'README':
             continue
         destination = wiki.WIKI + '/' + wiki.page_name(source)
-        (handbook / (source.stem + '.html')).write_text(redirect_page(destination))
+        output = handbook / source.relative_to(ROOT / 'docs').with_suffix('.html')
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(redirect_page(destination))
     print(f'Built homepage and documentation redirects at {OUTPUT}')
 
 

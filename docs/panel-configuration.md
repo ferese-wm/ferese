@@ -128,7 +128,7 @@ The panel uses the shared material settings under `theme.material`, including
 translucency and backdrop blur. Morph uses the theme's `surface-raised` color
 and suppresses the material shadow. **Reduce Transparency** takes precedence
 over a panel opacity override, making the background opaque and removing blur.
-See [Appearance](configuration.md#appearance) for the shared theme controls.
+See [Appearance](configuration/appearance.md#appearance) for the shared theme controls.
 
 Set `border #true` to draw the panel outline. Its color comes from
 `theme.colors.border`, and Capsules also uses that color for its dividers.

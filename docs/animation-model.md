@@ -135,4 +135,4 @@ Rendering checks need to follow the interruptions people can make while using th
 
 Those checks establish state and rendering behavior, but input-to-presentation latency and smoothness at 60, 120, 144, and 240 Hz still need measurements on the target hardware. The solver’s correctness cannot tell us whether a particular frame arrived in time to be displayed.
 
-For user settings and KDL examples, see [Animation configuration](configuration.md#animations).
+For user settings and KDL examples, see [Animation configuration](configuration/animations.md#animations).

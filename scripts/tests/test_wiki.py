@@ -113,7 +113,7 @@ class WikiTests(unittest.TestCase):
     def test_every_repository_guide_is_published_and_navigable(self):
         with mock.patch.object(wiki, 'ROOT', ROOT):
             output = wiki.render('deadbeef')
-            sources = sorted((ROOT / 'docs').glob('*.md')) + [ROOT / 'site/README.md', ROOT / 'crates/ferese-theme/README.md']
+            sources = wiki.guide_sources()
             sidebar = output['_Sidebar.md']
             self.assertEqual([line for line in sidebar.splitlines() if line.startswith('## ')], ['## Usage', '## Configuration', '## Development'])
             self.assertNotIn('Wiki-Publishing.md', output)
@@ -128,6 +128,36 @@ class WikiTests(unittest.TestCase):
                 for href in wiki.destinations(content):
                     self.assertFalse(href.endswith('.md') and not href.startswith('https://'), (name, href))
 
+    def test_configuration_topics_have_distinct_pages_and_direct_navigation(self):
+        with mock.patch.object(wiki, 'ROOT', ROOT):
+            output = wiki.render('deadbeef')
+            for path in (ROOT / 'docs/configuration').glob('*.md'):
+                with self.subTest(topic=path.name):
+                    page = wiki.page_name(path)
+                    self.assertTrue(page.startswith('Configuration-'))
+                    self.assertIn(page + '.md', output)
+                    self.assertIn(wiki.WIKI + '/' + page + ')', output['_Sidebar.md'])
+            self.assertIn('## Layout', output['Configuration.md'])
+            self.assertNotIn('default-column-width', output['Configuration.md'])
+            self.assertIn('default-column-width', output['Configuration-Layout.md'])
+            self.assertIn('### Binding modes', output['Configuration.md'])
+            self.assertIn('## Binding modes', output['Configuration-Bindings.md'])
+            self.assertIn(wiki.WIKI + '/Configuration-Bindings', output['Input-and-Bindings.md'])
+
+    def test_legacy_configuration_anchors_point_to_published_topics(self):
+        with mock.patch.object(wiki, 'ROOT', ROOT):
+            output = wiki.render('deadbeef')
+            introduction = output['Configuration.md']
+            for href in wiki.destinations(introduction):
+                prefix = wiki.WIKI + '/Configuration-'
+                if not href.startswith(prefix):
+                    continue
+                page, _, anchor = href[len(wiki.WIKI) + 1:].partition('#')
+                self.assertIn(page + '.md', output)
+                if anchor:
+                    self.assertIn(anchor, wiki.heading_ids(output[page + '.md']))
+            self.assertIn(wiki.WIKI + '/Configuration-Bindings#binding-modes', introduction)
+
     def test_homepage_redirects_keep_old_paths_and_fragments(self):
         subprocess.run([sys.executable, str(ROOT / 'scripts/build-site.py')], check=True, capture_output=True)
         destination = ROOT / 'build/site/docs/configuration.html'
@@ -137,6 +167,7 @@ class WikiTests(unittest.TestCase):
         self.assertIn('http-equiv="refresh"', content)
         self.assertIn('<a href="' + wiki.WIKI + '/Configuration">', content)
         self.assertTrue((ROOT / 'build/site/assets/screenshots/ferese-media.webp').is_file())
+        self.assertIn(wiki.WIKI + '/Configuration-Appearance', (ROOT / 'build/site/docs/configuration/appearance.html').read_text())
 
 
 if __name__ == '__main__':
