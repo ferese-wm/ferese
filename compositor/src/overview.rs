@@ -44,7 +44,7 @@ pub(crate) fn init_font_loader(
     event_loop.handle().insert_source(source, |event, _, state| {
         if let channel::Event::Msg((family, font)) = event
             && state.overview.complete_font_load(&family, font)
-            && state.overview.is_presenting()
+            && (state.overview.is_presenting() || state.tab_bars.values().any(|bars| !bars.is_empty()))
         {
             crate::backends::direct::render_all(state);
         }
@@ -60,20 +60,7 @@ pub(crate) fn init_font_loader(
                 // Rescan on a font change so newly installed fonts remain usable.
                 let mut database = fontdb::Database::new();
                 database.load_system_fonts();
-                let families = [fontdb::Family::Name(&family), fontdb::Family::SansSerif];
-                let font = database
-                    .query(&fontdb::Query {
-                        families: &families,
-                        ..Default::default()
-                    })
-                    .and_then(|id| {
-                        database.with_face_data(id, |bytes, index| {
-                            FontVec::try_from_vec_and_index(bytes.to_vec(), index)
-                                .ok()
-                                .map(FontArc::new)
-                        })
-                    })
-                    .flatten();
+                let font = label_font(&database, &family);
                 if results.send((family, font)).is_err() {
                     break;
                 }
@@ -83,6 +70,32 @@ pub(crate) fn init_font_loader(
     requests.request(&state.overview.font_family);
     state.overview.font_requests = Some(requests);
     Ok(())
+}
+
+// fontdb's generic sans may name a font that is absent on this system.
+// Resolve the requested family first, then use an installed text face.
+fn label_font(database: &fontdb::Database, family: &str) -> Option<FontArc> {
+    let families = [
+        fontdb::Family::Name(family),
+        fontdb::Family::SansSerif,
+        fontdb::Family::Name("Noto Sans"),
+        fontdb::Family::Name("DejaVu Sans"),
+        fontdb::Family::Name("Liberation Sans"),
+    ];
+    let preferred = database.query(&fontdb::Query {
+        families: &families,
+        ..Default::default()
+    });
+    preferred
+        .into_iter()
+        .chain(database.faces().map(|face| face.id))
+        .find_map(|id| {
+            database.with_face_data(id, |bytes, index| {
+                let font = FontVec::try_from_vec_and_index(bytes.to_vec(), index).ok()?;
+                // Skip symbol-only fonts when searching the fallback faces.
+                (font.glyph_id('A').0 != 0 && font.glyph_id('0').0 != 0).then(|| FontArc::new(font))
+            })?
+        })
 }
 
 type LabelBuffer = (MemoryRenderBuffer, smithay::utils::Size<i32, smithay::utils::Buffer>);
@@ -1175,6 +1188,14 @@ mod tests {
             })?
         });
         font.expect("overview rendering tests require a system font")
+    }
+
+    #[test]
+    fn missing_label_font_falls_back_to_an_installed_text_font() {
+        let mut database = fontdb::Database::new();
+        database.load_system_fonts();
+        assert!(label_font(&database, "ferese-missing-font-fixture").is_some());
+        assert!(label_font(&fontdb::Database::new(), "sans-serif").is_none());
     }
 
     #[test]

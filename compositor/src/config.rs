@@ -166,6 +166,7 @@ impl Config {
                 .and_then(|panel| panel.background_opacity),
             focus_effect: self.focus_effect_settings()?,
             default_column_width: self.default_column_width()?,
+            default_column_display: self.default_column_display(),
             scrolling_focus_strategy: self.scrolling_focus_strategy(),
             column_width_presets: self.width_presets()?,
             animations_enabled: self.animations_enabled(),
@@ -229,10 +230,18 @@ enum LayoutModeValue {
 
 #[derive(Debug, Default, Deserialize)]
 struct ScrollingConfig {
+    default_column_display: Option<ColumnDisplayValue>,
     default_column_width: Option<ColumnWidthValue>,
     focus_strategy: Option<FocusStrategyValue>,
     #[serde(default)]
     width_presets: Vec<ColumnWidthValue>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum ColumnDisplayValue {
+    Stacked,
+    Tabbed,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize)]
@@ -1160,12 +1169,44 @@ mod tests {
     }
 
     #[test]
+    fn scrolling_column_display_default_is_validated() {
+        assert_eq!(
+            parse("").default_column_display(),
+            ferese_layout::ColumnDisplay::Stacked
+        );
+        assert_eq!(
+            parse("scrolling { default-column-display \"tabbed\"; }\n").default_column_display(),
+            ferese_layout::ColumnDisplay::Tabbed
+        );
+        assert!(Config::parse_source("scrolling { default-column-display \"unknown\"; }\n").is_err());
+    }
+
+    #[test]
+    fn tab_actions_validate_arguments() {
+        assert_eq!(
+            parse_action("join-tab", Some("left"), &HashMap::new()).unwrap(),
+            BindingAction::JoinTab(ferese_layout::Direction::Left)
+        );
+        assert!(parse_action("join-tab", None, &HashMap::new()).is_err());
+        assert!(parse_action("join-tab", Some("diagonal"), &HashMap::new()).is_err());
+        for (name, action) in [
+            ("toggle-column-tabbed", BindingAction::ToggleColumnTabbed),
+            ("leave-tab", BindingAction::LeaveTab),
+            ("next-tab", BindingAction::CycleTab(false)),
+            ("previous-tab", BindingAction::CycleTab(true)),
+        ] {
+            assert_eq!(parse_action(name, None, &HashMap::new()).unwrap(), action);
+            assert!(parse_action(name, Some("extra"), &HashMap::new()).is_err());
+        }
+    }
+
+    #[test]
     fn supplies_complete_v0_bindings_and_terminal_command() {
         let config = parse("");
         let input = config.input_settings().unwrap();
         let bindings = config.bindings(&input).unwrap();
 
-        assert_eq!(bindings.len(), 59);
+        assert_eq!(bindings.len(), 62);
         for (shift, action) in [
             (false, BindingAction::ToggleMaximized),
             (true, BindingAction::ToggleFullscreen),
@@ -1176,6 +1217,10 @@ mod tests {
                 && binding.action == action));
         }
         assert!(bindings.iter().any(|binding| binding.action == BindingAction::Exit));
+        assert!(bindings.iter().any(|binding| binding.modifiers.logo
+            && binding.modifiers.shift
+            && binding.trigger == BindingTrigger::Keysym(keysyms::KEY_t)
+            && binding.action == BindingAction::ToggleColumnTabbed));
         assert!(bindings.iter().any(|binding| {
             binding.modifiers.logo
                 && binding.trigger == BindingTrigger::Keysym(keysyms::KEY_Return)
@@ -1209,7 +1254,7 @@ mod tests {
 
         let input = replaced.input_settings().unwrap();
         let bindings = replaced.bindings(&input).unwrap();
-        assert_eq!(bindings.len(), 59);
+        assert_eq!(bindings.len(), 62);
         assert!(bindings.iter().any(|binding| {
             binding.action
                 == BindingAction::Spawn(vec!["foot".to_owned(), "--app-id".to_owned(), "work".to_owned()].into())
@@ -1217,7 +1262,7 @@ mod tests {
 
         let input = unbound.input_settings().unwrap();
         let bindings = unbound.bindings(&input).unwrap();
-        assert_eq!(bindings.len(), 58);
+        assert_eq!(bindings.len(), 61);
         assert!(!bindings.iter().any(|binding| binding.action == BindingAction::Close));
     }
 

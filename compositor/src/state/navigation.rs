@@ -270,13 +270,30 @@ impl Ferese {
     }
 
     pub fn consume_focused_window(&mut self) {
+        if self.workspaces.active().fullscreen.is_some() {
+            return;
+        }
         let Some(window) = self.focused_window else {
             return;
         };
         let Some(bounds) = self.output_bounds() else {
             return;
         };
-        if self.workspaces.active().layout.mode() != LayoutMode::Scrolling {
+        if self.workspaces.active().layout.mode() == LayoutMode::Tree {
+            if let Some(direction) = [Direction::Left, Direction::Right, Direction::Up, Direction::Down]
+                .into_iter()
+                .find(|direction| {
+                    self.workspaces
+                        .active()
+                        .layout
+                        .directional_neighbor(window, *direction, bounds)
+                        .ok()
+                        .flatten()
+                        .is_some()
+                })
+            {
+                self.join_tab(direction);
+            }
             return;
         }
         let target = self
@@ -306,6 +323,9 @@ impl Ferese {
     }
 
     pub fn expel_focused_window(&mut self) {
+        if self.workspaces.active().fullscreen.is_some() {
+            return;
+        }
         let Some(window) = self.focused_window else {
             return;
         };

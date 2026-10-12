@@ -113,6 +113,7 @@ numbers must be finite. Omit optional values rather than writing `null`, use
 
 | `scrolling` key | Type / values | Default | Meaning |
 | --- | --- | --- | --- |
+| `default-column-display` | `"stacked"`, `"tabbed"` | `"stacked"` | Display mode of new columns; reload preserves existing column choices |
 | `default-column-width` | proportion > 0; or `"full"` | `0.5` | Width of new columns |
 | `focus-strategy` | `"minimal"`, `"center_on_focus"`, `"paged"` | `"minimal"` | Viewport movement on focus |
 | `width-presets` | array of widths | `[0.3333333333333333, 0.5, 0.6666666666666666, "full"]` | Super+R cycle; empty uses defaults |
@@ -526,7 +527,7 @@ invalid. A disabled binding must omit `action` and `argument`.
 | --- | --- |
 | `spawn` | Name in `commands` |
 | `binding-mode` | Named mode, or `"default"` to leave it |
-| `focus`, `move`, `resize` | `"left"`, `"right"`, `"up"`, `"down"` |
+| `focus`, `move`, `resize`, `join-tab` | `"left"`, `"right"`, `"up"`, `"down"` |
 | `workspace`, `move-to-workspace` | Workspace number string, 1–255 |
 | `workspace-next`, `workspace-previous` | None; next/previous workspace on this monitor |
 | `workspace-back-and-forth` | None; return to the previous workspace on this monitor |
@@ -534,7 +535,7 @@ invalid. A disabled binding must omit `action` and `argument`.
 | `focus-floating` | None; focus the last focused window in the opposite tiled/floating layer on this workspace |
 | `focus-mru-next`, `focus-mru-previous` | None; cycle windows in focus order |
 | `none` | None; ignore this trigger |
-| `close`, `exit`, `toggle-maximized`, `toggle-fullscreen`, `toggle-layout`, `cycle-column-width`, `center-column`, `consume`, `expel`, `toggle-floating`, `toggle-overview` | None |
+| `close`, `exit`, `toggle-maximized`, `toggle-fullscreen`, `toggle-layout`, `cycle-column-width`, `center-column`, `consume`, `expel`, `toggle-column-tabbed`, `leave-tab`, `next-tab`, `previous-tab`, `toggle-floating`, `toggle-overview` | None |
 
 ```kdl
 commands {
@@ -542,6 +543,45 @@ commands {
 }
 binding keys="Super+Enter" action="spawn" argument="terminal"
 binding keys="Super+V" action="focus-floating"
+```
+
+`join-tab` moves the focused window into the group in the given direction. In
+tree layout, `consume` chooses a neighbour in left, right, up, down order.
+`leave-tab` splits the focused tab out to the right of its group. `next-tab` and
+`previous-tab` cycle within the group and wrap at either end.
+
+In scrolling layout, **Super+Shift+T** (`toggle-column-tabbed`) switches the
+focused column between stacked rows and tabs. Toggling back restores its row
+sizes. `consume` adds a window using the destination column's display mode;
+`expel` separates it into a column of its own. Up/down focus switches tabs,
+while left/right focus moves between columns. Tab selection preserves the
+column's width and scroll position. Vertical resizing is inactive in tabbed mode.
+`join-tab` explicitly makes the destination column tabbed, including when joining
+two rows that already share a column.
+
+The tab bar shows window titles above the active window and reserves space
+inside its allocation. Click a title to switch. New windows open beside the
+group. Closing, floating, or moving a tab to another workspace removes it from
+the group; a single remaining window loses its tab bar. Maximized and fullscreen
+windows hide the bar. Fullscreen remains per-window: restore before grouping or
+switching tabs. Switching layout modes keeps every window but dissolves groups.
+
+To make future scrolling columns tabbed by default:
+
+```kdl
+scrolling {
+    default-column-display "tabbed"
+}
+```
+
+The same actions are available through `feresectl`:
+
+```sh
+feresectl toggle-column-tabbed
+feresectl join-tab left
+feresectl next-tab
+feresectl previous-tab
+feresectl leave-tab
 ```
 
 `focus-floating` switches focus between tiled and floating windows without
@@ -610,7 +650,8 @@ matches. A mode/configuration transition stops that action's repeats.
 Defaults: Super+Enter terminal; Super+Q close; Super+H/J/K/L focus;
 Super+Shift+H/J/K/L move; Super+Ctrl+H/J/K/L resize; Super+1–9 workspace;
 Super+Shift+1–9 move to workspace; Super+R width cycle; Super+C center;
-Super+[/] consume/expel; Super+F maximize; Super+Shift+F fullscreen;
+Super+[/] consume/expel; Super+Shift+T stacked/tabbed column; Super+Ctrl+[/] previous/next tab;
+Super+F maximize; Super+Shift+F fullscreen;
 Super+M layout; Super+Shift+Space floating; Super+V focus tiled/floating; Super+Tab overview;
 Super+Escape previous visited workspace;
 Super+BackSpace last focused window; Alt+Tab/Alt+Shift+Tab MRU switching;

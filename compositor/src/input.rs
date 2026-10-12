@@ -550,6 +550,9 @@ impl Ferese {
                     }
                     return;
                 }
+                if event.state() == ButtonState::Released && self.tab_buttons.remove(&event.button_code()) {
+                    return;
+                }
                 let pointer = self.seat.get_pointer().expect("seat has a pointer");
                 let serial = SERIAL_COUNTER.next_serial();
                 if self.session_lock.active() {
@@ -577,6 +580,17 @@ impl Ferese {
                         },
                     );
                     pointer.frame(self);
+                    return;
+                }
+
+                if event.state() == ButtonState::Pressed
+                    && !pointer.is_grabbed()
+                    && let Some(id) = self.tab_at(pointer.current_location())
+                {
+                    self.tab_buttons.insert(event.button_code());
+                    if event.button_code() == BTN_LEFT {
+                        self.activate_managed_window(id);
+                    }
                     return;
                 }
 
@@ -907,6 +921,9 @@ impl Ferese {
             self.focus_lock_surface();
             return;
         }
+        if self.tab_at(position).is_some() {
+            return;
+        }
         let keyboard = self.seat.get_keyboard().expect("seat has a keyboard");
         self.focus_output_at(position);
 
@@ -1161,6 +1178,10 @@ impl Ferese {
             BindingAction::ToggleLayout => self.toggle_layout_mode(),
             BindingAction::CycleColumnWidth => self.cycle_focused_column_width(),
             BindingAction::CenterColumn => self.center_focused_column(),
+            BindingAction::ToggleColumnTabbed => self.toggle_column_tabbed(),
+            BindingAction::JoinTab(direction) => self.join_tab(direction),
+            BindingAction::LeaveTab => self.leave_tab(),
+            BindingAction::CycleTab(previous) => self.cycle_tab(previous),
             BindingAction::Consume => self.consume_focused_window(),
             BindingAction::Expel => self.expel_focused_window(),
             BindingAction::ToggleFloating => self.toggle_focused_floating(),

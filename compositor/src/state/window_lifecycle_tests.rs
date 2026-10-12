@@ -976,3 +976,100 @@ fn reloading_mode_bindings_cancels_the_modes_focus_preview() {
     key(&mut state, 64, false);
     assert!(state.intercepted_keys.is_empty());
 }
+
+#[test]
+fn tree_tabs_join_switch_leave_and_hide_inactive_maximized_windows() {
+    if !crate::startup_tests::private_runtime(
+        "state::window_lifecycle_tests::tree_tabs_join_switch_leave_and_hide_inactive_maximized_windows",
+    ) {
+        return;
+    }
+    let (mut events, mut state, _output) = fixture();
+    state.toggle_layout_mode();
+    let (first, _first_wire) = window(&mut state, &mut events, 0xff112233);
+    let (second, _second_wire) = window(&mut state, &mut events, 0xff445566);
+    let a = state.windows.ids()[&first];
+    let b = state.windows.ids()[&second];
+    state.focused_window = Some(b);
+    state.consume_focused_window();
+    let workspace = state.workspaces.active_id();
+    assert_eq!(state.tab_bars[&workspace].len(), 1);
+    assert!(state.space.element_location(&first).is_none());
+    assert!(state.space.element_location(&second).is_some());
+    let bar = &state.tab_bars[&workspace][0];
+    let header = bar.rect;
+    let content = state.windows.geometry(&b).unwrap().visual.target;
+    assert_eq!(content.y, header.y + header.height);
+    let hit = Point::from((header.x + header.width * 0.25, header.y + header.height * 0.5));
+    assert_eq!(state.tab_at(hit), Some(a));
+    assert!(state.surface_under(hit).is_none());
+    state.cycle_tab(false);
+    assert_eq!(state.focused_window, Some(a));
+    assert!(state.space.element_location(&first).is_some());
+    assert!(state.space.element_location(&second).is_none());
+    state.toggle_focused_maximized();
+    assert_eq!(state.visible_tab_bars(workspace).count(), 0);
+    state.cycle_tab(true);
+    assert_eq!(state.focused_window, Some(b));
+    assert!(
+        state.space.element_location(&first).is_none(),
+        "inactive maximized tab must remain hidden"
+    );
+    assert_eq!(state.visible_tab_bars(workspace).count(), 1);
+    state.toggle_focused_fullscreen();
+    let tree = state.workspaces.active().layout.clone();
+    state.leave_tab();
+    state.expel_focused_window();
+    state.cycle_tab(false);
+    assert_eq!(state.workspaces.active().layout, tree);
+    assert_eq!(state.visible_tab_bars(workspace).count(), 0);
+    state.toggle_focused_fullscreen();
+    state.leave_tab();
+    assert!(state.tab_bars[&workspace].is_empty());
+    assert!(state.space.element_location(&first).is_some());
+    assert!(state.space.element_location(&second).is_some());
+    assert!(state.workspaces.active().layout.validate().is_ok());
+}
+
+#[test]
+fn scrolling_tabs_switch_with_directional_focus_and_drop_hidden_resize_holds() {
+    if !crate::startup_tests::private_runtime(
+        "state::window_lifecycle_tests::scrolling_tabs_switch_with_directional_focus_and_drop_hidden_resize_holds",
+    ) {
+        return;
+    }
+    let (mut events, mut state, _output) = fixture();
+    let (first, _first_wire) = window(&mut state, &mut events, 0xff112233);
+    state.toggle_column_tabbed();
+    let (second, _second_wire) = window(&mut state, &mut events, 0xff445566);
+    state.consume_focused_window();
+    let (third, _third_wire) = window(&mut state, &mut events, 0xff778899);
+    state.consume_focused_window();
+    let a = state.windows.ids()[&first];
+    let b = state.windows.ids()[&second];
+    let c = state.windows.ids()[&third];
+    let workspace = state.workspaces.active_id();
+    assert_eq!(state.tab_bars[&workspace][0].group.windows, [a, b, c]);
+    assert_eq!(state.space.elements().count(), 1);
+    let position = state.workspaces.active().layout.viewport_x();
+    state.windows.set_transaction(
+        c,
+        crate::resize_transaction::ResizeTransaction::new(SERIAL_COUNTER.next_serial(), state.presentation_now()),
+    );
+    state.focus_direction(Direction::Up);
+    assert_eq!(state.focused_window, Some(b));
+    assert!(state.windows.transaction(&c).is_none());
+    assert!(state.space.element_location(&third).is_none());
+    assert!(state.space.element_location(&second).is_some());
+    assert_eq!(state.workspaces.active().layout.viewport_x(), position);
+    state.focus_direction(Direction::Down);
+    assert_eq!(state.focused_window, Some(c));
+    state.toggle_column_tabbed();
+    assert_eq!(state.space.elements().count(), 3);
+    assert!(state.tab_bars[&workspace].is_empty());
+    state.toggle_column_tabbed();
+    assert_eq!(state.space.elements().count(), 1);
+    state.leave_tab();
+    assert_eq!(state.space.elements().count(), 2);
+    assert_eq!(state.tab_bars[&workspace][0].group.windows, [a, b]);
+}

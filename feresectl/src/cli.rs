@@ -70,9 +70,19 @@ pub enum Command {
     CycleColumnWidth,
     /// Center the focused column.
     CenterColumn,
-    /// Pull a window into the focused column.
+    /// Toggle the focused scrolling column between stacked windows and tabs.
+    ToggleColumnTabbed,
+    /// Join the focused window to the adjacent tab group.
+    JoinTab { direction: Direction },
+    /// Split the focused tab out beside its group.
+    LeaveTab,
+    /// Focus the next tab in the group.
+    NextTab,
+    /// Focus the previous tab in the group.
+    PreviousTab,
+    /// Join a neighboring column or tree tab group.
     Consume,
-    /// Move a window out of the focused column.
+    /// Leave the focused column or tree tab group.
     Expel,
     /// Close the focused window.
     Close,
@@ -244,6 +254,11 @@ impl Command {
             Self::ToggleKeybindingGuide => ("toggle-keybinding-guide", json!({})),
             Self::CycleColumnWidth => ("cycle-column-width", json!({})),
             Self::CenterColumn => ("center-column", json!({})),
+            Self::ToggleColumnTabbed => ("toggle-column-tabbed", json!({})),
+            Self::JoinTab { direction } => ("join-tab", json!({"direction": value_name(direction)})),
+            Self::LeaveTab => ("leave-tab", json!({})),
+            Self::NextTab => ("next-tab", json!({})),
+            Self::PreviousTab => ("previous-tab", json!({})),
             Self::Consume => ("consume", json!({})),
             Self::Expel => ("expel", json!({})),
             Self::Close => ("close", json!({})),

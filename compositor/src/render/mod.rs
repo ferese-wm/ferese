@@ -11,6 +11,7 @@ mod overview;
 mod resources;
 mod scene;
 mod shader;
+mod tabs;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -329,6 +330,8 @@ pub(crate) enum OverviewChromePart {
     Outline,
     Strip,
     Caption,
+    Tab,
+    TabActive,
 }
 
 #[derive(Debug)]

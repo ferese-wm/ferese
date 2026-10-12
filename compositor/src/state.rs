@@ -7,6 +7,7 @@ mod layout;
 mod navigation;
 mod outputs;
 mod reconciliation;
+mod tabs;
 #[cfg(test)]
 mod window_lifecycle_tests;
 pub(crate) use reconciliation::{DesktopChanges, DesktopOutput, DesktopTransition};
@@ -455,6 +456,8 @@ pub struct Ferese {
     workspace_slides: HashMap<OutputId, WorkspaceSlide>,
     workspace_slide_offsets: HashMap<WorkspaceId, (f64, f64)>,
     pub focused_window: Option<WindowId>,
+    pub(crate) tab_bars: HashMap<WorkspaceId, Vec<ferese_layout::TabBar>>,
+    pub(crate) tab_buttons: HashSet<u32>,
     pub(crate) focus_history: ferese_core::FocusHistory,
     pub(crate) focus_cycle: Option<ferese_core::FocusCycle>,
     column_width_presets: Vec<ColumnWidth>,
@@ -572,6 +575,7 @@ pub struct RuntimeConfig {
     pub(crate) panel_style: ferese_panel::PanelStyle,
     pub focus_effect: crate::config::FocusEffectSettings,
     pub default_column_width: ColumnWidth,
+    pub default_column_display: ferese_layout::ColumnDisplay,
     pub scrolling_focus_strategy: ViewportFocusStrategy,
     pub column_width_presets: Vec<ColumnWidth>,
     pub animations_enabled: bool,
@@ -748,6 +752,8 @@ impl Ferese {
             workspace_slides: HashMap::new(),
             workspace_slide_offsets: HashMap::new(),
             focused_window: None,
+            tab_bars: HashMap::new(),
+            tab_buttons: HashSet::new(),
             focus_history: Default::default(),
             focus_cycle: None,
             column_width_presets: config.column_width_presets,
@@ -846,6 +852,9 @@ impl Ferese {
         state.screenshot_worker = Some(screenshot.worker);
         state._ipc_socket = Some(screenshot._guard);
 
+        state
+            .workspaces
+            .set_default_column_display(config.default_column_display);
         Ok(state)
     }
 
@@ -951,6 +960,8 @@ impl Ferese {
             // Hidden layouts are resolved independently of presented geometry.
             self.workspace_preview_revision = self.workspace_preview_revision.wrapping_add(1);
         }
+        self.workspaces
+            .set_default_column_display(config.default_column_display);
         self.gap_config = config.gap_config;
         self.input_settings = config.input_settings;
         if bindings_changed || input_changed {

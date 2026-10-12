@@ -333,6 +333,23 @@ pub(super) fn parse_action(
             no_argument()?;
             Ok(BindingAction::CenterColumn)
         }
+        "toggle-column-tabbed" => {
+            no_argument()?;
+            Ok(BindingAction::ToggleColumnTabbed)
+        }
+        "join-tab" => Ok(BindingAction::JoinTab(parse_direction(required_argument()?)?)),
+        "leave-tab" => {
+            no_argument()?;
+            Ok(BindingAction::LeaveTab)
+        }
+        "next-tab" => {
+            no_argument()?;
+            Ok(BindingAction::CycleTab(false))
+        }
+        "previous-tab" => {
+            no_argument()?;
+            Ok(BindingAction::CycleTab(true))
+        }
         "consume" => {
             no_argument()?;
             Ok(BindingAction::Consume)
@@ -403,6 +420,9 @@ pub(super) fn default_bindings() -> Vec<BindingConfig> {
         binding("Super+C", "center-column", None),
         binding("Super+[", "consume", None),
         binding("Super+]", "expel", None),
+        binding("Super+Shift+T", "toggle-column-tabbed", None),
+        binding("Super+Ctrl+[", "previous-tab", None),
+        binding("Super+Ctrl+]", "next-tab", None),
         binding("Super+Shift+Space", "toggle-floating", None),
         binding("Super+V", "focus-floating", None),
         binding("Super+Tab", "toggle-overview", None),
@@ -495,6 +515,10 @@ pub enum BindingAction {
     ToggleLayout,
     CycleColumnWidth,
     CenterColumn,
+    ToggleColumnTabbed,
+    JoinTab(ferese_layout::Direction),
+    LeaveTab,
+    CycleTab(bool),
     Consume,
     Expel,
     ToggleFloating,
@@ -609,8 +633,12 @@ impl Binding {
             BindingAction::ToggleLayout => "Switch workspace layout".into(),
             BindingAction::CycleColumnWidth => "Cycle column width".into(),
             BindingAction::CenterColumn => "Center focused column".into(),
-            BindingAction::Consume => "Join window into column".into(),
-            BindingAction::Expel => "Move window out of column".into(),
+            BindingAction::ToggleColumnTabbed => "Toggle stacked / tabbed column".into(),
+            BindingAction::JoinTab(direction) => format!("Join tab group {direction:?}"),
+            BindingAction::LeaveTab => "Leave tab group".into(),
+            BindingAction::CycleTab(previous) => if *previous { "Previous tab" } else { "Next tab" }.into(),
+            BindingAction::Consume => "Join window into column or tab group".into(),
+            BindingAction::Expel => "Leave column or tab group".into(),
             BindingAction::ToggleFloating => "Toggle floating window".into(),
             BindingAction::Media(action) => match *action {
                 "next" => "Next track",

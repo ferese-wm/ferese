@@ -86,7 +86,11 @@ impl Ferese {
     }
 
     pub(super) fn workspace_layout_bounds(&self, bounds: Rect, layout: &WorkspaceLayout) -> Rect {
-        let outer = if self.gap_config.smart && layout.window_ids().count() == 1 {
+        let visible = match layout {
+            WorkspaceLayout::Tree(tree) => tree.visible_window_count(),
+            WorkspaceLayout::Scrolling(layout) => layout.visible_window_count(),
+        };
+        let outer = if self.gap_config.smart && visible == 1 {
             0.
         } else {
             self.gap_config.outer
@@ -118,6 +122,12 @@ impl Ferese {
 
     pub(super) fn unmap_invisible_windows(&mut self, visible: &HashSet<WindowId>) -> bool {
         let mut changed = false;
+        let inactive_tabs: HashSet<_> = self
+            .tab_bars
+            .values()
+            .flatten()
+            .flat_map(|bar| bar.group.windows.iter().copied().filter(|id| *id != bar.group.active))
+            .collect();
         let windows = self
             .windows
             .ids()
@@ -136,6 +146,11 @@ impl Ferese {
                 geometry.settle_presentation();
             }
 
+            if inactive_tabs.contains(&id) {
+                // An inactive client must not hold its column's resize or viewport.
+                self.windows.clear_transaction(&id);
+                self.windows.update(id, |record| record.coupled_width = None);
+            }
             self.space.unmap_elem(&window);
         }
         self.refresh_idle_inhibition();
@@ -195,6 +210,7 @@ impl Ferese {
         self.refresh_input_capture_zones();
         let visible_workspaces = self.visible_workspace_ids();
         self.reconcile_workspaces(&visible_workspaces);
+        self.tab_bars.retain(|id, _| visible_workspaces.contains(id));
         if self.session_lock.active() {
             self.configure_lock_surfaces();
         }
@@ -228,11 +244,18 @@ impl Ferese {
                                 .iter()
                                 .find(|column| column.windows.contains(&id))
                                 .and_then(|column| {
-                                    column.windows.iter().find_map(|sibling| {
-                                        self.windows.transaction(sibling).and_then(|transaction| {
-                                            transaction.column_width().map(|(source, _)| source)
+                                    column
+                                        .windows
+                                        .iter()
+                                        .filter(|sibling| {
+                                            column.display != ferese_layout::ColumnDisplay::Tabbed
+                                                || **sibling == column.windows[column.active]
                                         })
-                                    })
+                                        .find_map(|sibling| {
+                                            self.windows.transaction(sibling).and_then(|transaction| {
+                                                transaction.column_width().map(|(source, _)| source)
+                                            })
+                                        })
                                 })
                         })
                         .or_else(|| layout.allocated_column_width(id))?,
@@ -255,9 +278,12 @@ impl Ferese {
                     // to every row; sibling configure holds already release the
                     // whole column together, including partial client commits.
                     let mut rows = column.windows.iter().filter(|id| {
-                        self.windows
-                            .geometry(id)
-                            .is_some_and(|geometry| !geometry.is_zooming() && !geometry.is_fullscreen())
+                        (column.display != ferese_layout::ColumnDisplay::Tabbed
+                            || **id == column.windows[column.active])
+                            && self
+                                .windows
+                                .geometry(id)
+                                .is_some_and(|geometry| !geometry.is_zooming() && !geometry.is_fullscreen())
                     });
                     let source = rows
                         .clone()
@@ -345,6 +371,7 @@ impl Ferese {
                     continue;
                 }
             };
+            self.tab_bars.insert(workspace_id, layout.tab_bars);
             let viewport_target = workspace.layout.viewport_x();
             let viewport_motion = viewport_target.map(|target| {
                 let viewport = self
@@ -380,6 +407,10 @@ impl Ferese {
                     self.windows.record(*id).is_some_and(|w| w.maximized) && workspace_fullscreen != Some(*id);
                 let placement = self.workspaces.placement(*id);
                 let is_floating = matches!(placement, Some(WindowPlacement::Floating { .. }));
+                // Maximization cannot make an inactive tab visible again.
+                if !is_floating && workspace_fullscreen != Some(*id) && !layout.geometry.contains_key(id) {
+                    continue;
+                }
                 let rect = if workspace_fullscreen == Some(*id) {
                     fullscreen_bounds
                 } else if is_maximized && (!is_scrolling_layout || is_floating) {

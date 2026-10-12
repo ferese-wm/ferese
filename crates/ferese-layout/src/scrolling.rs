@@ -11,6 +11,13 @@ const MAX_COLUMN_WIDTH: f64 = 2.0;
 const MIN_ROW_HEIGHT: f64 = 0.05;
 const REVEAL_EPSILON: f64 = 0.5;
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum ColumnDisplay {
+    #[default]
+    Stacked,
+    Tabbed,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ColumnWidth {
     Proportion(f64),
@@ -60,6 +67,7 @@ pub struct Column {
     pub active: usize,
     pub width: ColumnWidth,
     pub heights: Vec<f64>,
+    pub display: ColumnDisplay,
 }
 
 impl Column {
@@ -69,6 +77,7 @@ impl Column {
             active: 0,
             width: normalized_width(width),
             heights: vec![1.0],
+            display: ColumnDisplay::Stacked,
         }
     }
 
@@ -191,6 +200,7 @@ pub struct ScrollingLayout {
     active_column: Option<usize>,
     viewport_x: f64,
     default_width: ColumnWidth,
+    default_display: ColumnDisplay,
     focus_strategy: ViewportFocusStrategy,
     pending_viewport: Option<PendingViewportRequest>,
     last_column_sizing: Option<ColumnSizing>,
@@ -205,6 +215,7 @@ impl Default for ScrollingLayout {
             active_column: None,
             viewport_x: 0.0,
             default_width: ColumnWidth::default(),
+            default_display: ColumnDisplay::default(),
             focus_strategy: ViewportFocusStrategy::Minimal,
             pending_viewport: None,
             last_column_sizing: None,
@@ -235,6 +246,55 @@ impl ScrollingLayout {
         if !matches!(self.pending_focus(), Some(PendingFocusRequest::Slide { .. })) {
             self.request_focus(window.map(PendingFocusRequest::Reveal));
         }
+    }
+
+    pub fn set_default_display(&mut self, display: ColumnDisplay) {
+        self.default_display = display;
+    }
+
+    pub fn set_column_display(&mut self, window: WindowId, display: ColumnDisplay) -> Result<(), LayoutError> {
+        let (index, _) = self.window_location(window).ok_or(LayoutError::UnknownWindow(window))?;
+        self.columns[index].display = display;
+        Ok(())
+    }
+
+    pub fn toggle_column_tabbed(&mut self, window: WindowId) -> Result<(), LayoutError> {
+        let (index, _) = self.window_location(window).ok_or(LayoutError::UnknownWindow(window))?;
+        let column = &mut self.columns[index];
+        column.display = match column.display {
+            ColumnDisplay::Stacked => ColumnDisplay::Tabbed,
+            ColumnDisplay::Tabbed => ColumnDisplay::Stacked,
+        };
+        Ok(())
+    }
+
+    pub fn tab_group(&self, window: WindowId) -> Option<crate::TabGroup> {
+        let (index, _) = self.window_location(window)?;
+        let column = &self.columns[index];
+        (column.display == ColumnDisplay::Tabbed && column.windows.len() > 1).then(|| crate::TabGroup {
+            windows: column.windows.clone(),
+            active: column.windows[column.active],
+        })
+    }
+
+    pub fn adjacent_tab(&self, window: WindowId, previous: bool) -> Option<WindowId> {
+        let group = self.tab_group(window)?;
+        let index = group.windows.iter().position(|id| *id == window)?;
+        let step = if previous { group.windows.len() - 1 } else { 1 };
+        Some(group.windows[(index + step) % group.windows.len()])
+    }
+
+    pub fn visible_window_count(&self) -> usize {
+        self.columns
+            .iter()
+            .map(|c| {
+                if c.display == ColumnDisplay::Tabbed {
+                    1
+                } else {
+                    c.windows.len()
+                }
+            })
+            .sum()
     }
 
     pub fn set_default_width(&mut self, width: ColumnWidth) {
@@ -333,7 +393,9 @@ impl ScrollingLayout {
             .and_then(|focused| self.window_location(focused))
             .map(|(column, _)| column + 1)
             .unwrap_or(self.columns.len());
-        self.columns.insert(index, Column::new(window, self.default_width));
+        let mut column = Column::new(window, self.default_width);
+        column.display = self.default_display;
+        self.columns.insert(index, column);
         self.active_column = Some(index);
         self.request_reveal((self.columns.len() > 1).then_some(window));
 
@@ -399,7 +461,14 @@ impl ScrollingLayout {
 
     /// An explicit selection must reveal even a window already focused by hover.
     pub fn focus_and_reveal(&mut self, window: WindowId) -> Result<(), LayoutError> {
+        let (column, row) = self.window_location(window).ok_or(LayoutError::UnknownWindow(window))?;
+        let switching_tab = self.active_column == Some(column)
+            && self.columns[column].display == ColumnDisplay::Tabbed
+            && self.columns[column].active != row;
         self.focus_without_reveal(window)?;
+        if switching_tab {
+            return Ok(());
+        }
         self.request_focus(Some(PendingFocusRequest::Reveal(window)));
         Ok(())
     }
@@ -407,6 +476,12 @@ impl ScrollingLayout {
     pub fn slide_focus_from(&mut self, previous: WindowId, focused: WindowId) -> Result<(), LayoutError> {
         self.window_location(previous)
             .ok_or(LayoutError::UnknownWindow(previous))?;
+        if self
+            .tab_group(previous)
+            .is_some_and(|group| group.windows.contains(&focused))
+        {
+            return self.focus_without_reveal(focused);
+        }
         if self.focus_strategy == ViewportFocusStrategy::Minimal {
             return self.focus_and_reveal(focused);
         }
@@ -450,7 +525,9 @@ impl ScrollingLayout {
         let width = self.columns[source].width;
         self.remove(window)?;
         let insertion = (source + 1).min(self.columns.len());
-        self.columns.insert(insertion, Column::new(window, width));
+        let mut column = Column::new(window, width);
+        column.display = self.default_display;
+        self.columns.insert(insertion, column);
         self.active_column = Some(insertion);
         self.request_reveal(self.active_window());
 
@@ -598,6 +675,10 @@ impl ScrollingLayout {
             return Ok(false);
         }
 
+        if self.columns[column].display == ColumnDisplay::Tabbed && matches!(direction, Direction::Up | Direction::Down)
+        {
+            return Ok(false);
+        }
         let changed = match direction {
             Direction::Left | Direction::Right => {
                 let current = match normalized_width(self.columns[column].width) {
@@ -646,7 +727,7 @@ impl ScrollingLayout {
             return Ok(LayoutResult::default());
         }
 
-        let window_count = self.window_ids().count();
+        let window_count = self.visible_window_count();
         let inner = finite_nonnegative(gaps.inner);
         let outer = if gaps.smart && window_count == 1 {
             0.0
@@ -751,6 +832,51 @@ impl ScrollingLayout {
         let mut result = LayoutResult::default();
         for (column_index, column) in self.columns.iter().enumerate() {
             let (column_x, column_width) = column_positions[column_index];
+            if column.display == ColumnDisplay::Tabbed {
+                let window = column.windows[column.active];
+                let header = if column.windows.len() > 1 {
+                    crate::TAB_BAR_HEIGHT.min((viewport_height - 1.0).max(0.0))
+                } else {
+                    0.0
+                };
+                let mut rect = Rect::new(
+                    bounds.x + outer + column_x - self.viewport_x,
+                    bounds.y + outer + header,
+                    column_width,
+                    viewport_height - header,
+                );
+                // All tabs use one size, even when their client constraints differ.
+                // Keep the column allocation stable and honor compatible maximums.
+                let mut common = SizeConstraints::default();
+                for id in &column.windows {
+                    let c = normalized_constraints(constraints.get(id).copied().unwrap_or_default());
+                    common.min_width = common.min_width.max(c.min_width);
+                    common.min_height = common.min_height.max(c.min_height);
+                    common.max_width = match (common.max_width, c.max_width) {
+                        (Some(a), Some(b)) => Some(a.min(b)),
+                        (a, b) => a.or(b),
+                    };
+                    common.max_height = match (common.max_height, c.max_height) {
+                        (Some(a), Some(b)) => Some(a.min(b)),
+                        (a, b) => a.or(b),
+                    };
+                }
+                let common = normalized_constraints(common);
+                record_minimum_warnings(window, rect, common, &mut result.warnings);
+                apply_maximums(window, &mut rect, common, &mut result.warnings);
+                if header > 0.0 {
+                    result.tab_bars.push(crate::TabBar {
+                        group: crate::TabGroup {
+                            windows: column.windows.clone(),
+                            active: window,
+                        },
+                        rect: Rect::new(rect.x, rect.y - header, rect.width, header),
+                    });
+                }
+                result.geometry.insert(window, rect);
+                continue;
+            }
+
             let available_height = (viewport_height - inner * (column.windows.len().saturating_sub(1) as f64)).max(0.0);
             let row_constraints = column
                 .windows
@@ -875,7 +1001,9 @@ impl ScrollingLayout {
         let width = self.columns[source].width;
         self.remove(window)?;
         let insertion = insertion.min(self.columns.len());
-        self.columns.insert(insertion, Column::new(window, width));
+        let mut column = Column::new(window, width);
+        column.display = self.default_display;
+        self.columns.insert(insertion, column);
         self.active_column = Some(insertion);
         self.request_reveal(self.active_window());
         Ok(())
@@ -2519,6 +2647,154 @@ mod tests {
             1 => Direction::Right,
             2 => Direction::Up,
             _ => Direction::Down,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tabbed_tests {
+    use super::*;
+
+    fn fixture() -> ScrollingLayout {
+        let mut layout = ScrollingLayout::default();
+        for id in 1..=4 {
+            layout.insert(WindowId(id), layout.active_window()).unwrap();
+        }
+        layout.move_into_column(WindowId(3), WindowId(2)).unwrap();
+        layout.move_into_column(WindowId(4), WindowId(3)).unwrap();
+        layout
+    }
+
+    #[test]
+    fn toggling_tabs_restores_weights_and_keeps_viewport_and_column_widths() {
+        for strategy in [
+            ViewportFocusStrategy::Minimal,
+            ViewportFocusStrategy::Center,
+            ViewportFocusStrategy::Paged,
+        ] {
+            let mut layout = fixture();
+            layout.set_focus_strategy(strategy);
+            layout.resize_window(WindowId(3), Direction::Up, 0.1).unwrap();
+            let bounds = Rect::new(0., 0., 1000., 800.);
+            let gaps = GapConfig::default();
+            let before = layout
+                .resolve_geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(WindowId(4)))
+                .unwrap();
+            let widths = layout.allocated_widths.clone();
+            let weights = layout.columns[1].heights.clone();
+            layout.toggle_column_tabbed(WindowId(4)).unwrap();
+            let tabbed = layout
+                .resolve_geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(WindowId(4)))
+                .unwrap();
+            let viewport = layout.viewport_x();
+            assert_eq!(tabbed.geometry.len(), 2);
+            assert_eq!(tabbed.tab_bars.len(), 1);
+            assert_eq!(layout.allocated_widths, widths);
+            let rect = tabbed.geometry[&WindowId(4)];
+            for id in [WindowId(2), WindowId(3), WindowId(4)] {
+                layout.focus_and_reveal(id).unwrap();
+                let result = layout
+                    .resolve_geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(id))
+                    .unwrap();
+                assert_eq!(result.geometry[&id], rect);
+                assert_eq!(layout.viewport_x(), viewport);
+                assert_eq!(layout.allocated_widths, widths);
+            }
+            assert!(!layout.resize_window(WindowId(3), Direction::Up, 0.1).unwrap());
+            layout.toggle_column_tabbed(WindowId(4)).unwrap();
+            let after = layout
+                .resolve_geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(WindowId(4)))
+                .unwrap();
+            assert_eq!(layout.columns[1].heights, weights);
+            assert_eq!(before.geometry, after.geometry);
+            assert!(after.tab_bars.is_empty());
+        }
+    }
+
+    #[test]
+    fn tab_navigation_join_leave_and_single_column_policy_remain_consistent() {
+        let mut layout = fixture();
+        layout.set_default_display(ColumnDisplay::Tabbed);
+        layout.toggle_column_tabbed(WindowId(4)).unwrap();
+        assert_eq!(
+            layout.directional_neighbor(WindowId(3), Direction::Up).unwrap(),
+            Some(WindowId(2))
+        );
+        assert_eq!(layout.adjacent_tab(WindowId(4), false), Some(WindowId(2)));
+        assert_eq!(layout.adjacent_tab(WindowId(2), true), Some(WindowId(4)));
+        layout.move_into_column(WindowId(1), WindowId(2)).unwrap();
+        assert_eq!(layout.visible_window_count(), 1);
+        assert_eq!(layout.columns[0].display, ColumnDisplay::Tabbed);
+        layout.extract_to_column(WindowId(1)).unwrap();
+        assert_eq!(layout.columns.len(), 2);
+        assert!(layout.columns.iter().all(|c| c.display == ColumnDisplay::Tabbed));
+        assert!(layout.tab_group(WindowId(1)).is_none());
+        layout.remove(WindowId(4)).unwrap();
+        layout.remove(WindowId(3)).unwrap();
+        assert!(layout.tab_group(WindowId(2)).is_none());
+        layout.insert(WindowId(5), Some(WindowId(2))).unwrap();
+        assert_eq!(layout.columns[1].display, ColumnDisplay::Tabbed);
+        assert!(layout.validate().is_ok());
+    }
+
+    #[test]
+    fn tab_swipe_does_not_recenter_a_manually_offset_viewport() {
+        let mut layout = fixture();
+        layout.set_focus_strategy(ViewportFocusStrategy::Center);
+        layout.toggle_column_tabbed(WindowId(4)).unwrap();
+        let bounds = Rect::new(0., 0., 1000., 800.);
+        layout
+            .resolve_geometry_with_constraints(bounds, GapConfig::default(), &HashMap::new(), Some(WindowId(4)))
+            .unwrap();
+        layout.viewport_x += 33.0;
+        let position = layout.viewport_x;
+        layout.focus_and_reveal(WindowId(3)).unwrap();
+        layout.slide_focus_from(WindowId(4), WindowId(3)).unwrap();
+        layout
+            .resolve_geometry_with_constraints(bounds, GapConfig::default(), &HashMap::new(), Some(WindowId(3)))
+            .unwrap();
+        assert_eq!(layout.viewport_x, position);
+    }
+
+    #[test]
+    fn constraints_do_not_change_tab_geometry_on_selection() {
+        let mut layout = fixture();
+        layout.toggle_column_tabbed(WindowId(4)).unwrap();
+        let constraints = HashMap::from([
+            (
+                WindowId(2),
+                SizeConstraints {
+                    min_width: 400.,
+                    max_height: Some(300.),
+                    ..Default::default()
+                },
+            ),
+            (
+                WindowId(3),
+                SizeConstraints {
+                    max_width: Some(450.),
+                    min_height: 200.,
+                    ..Default::default()
+                },
+            ),
+        ]);
+        let mut previous = None;
+        for id in [WindowId(2), WindowId(3), WindowId(4)] {
+            let result = layout
+                .resolve_geometry_with_constraints(
+                    Rect::new(0., 0., 1000., 800.),
+                    GapConfig::default(),
+                    &constraints,
+                    Some(id),
+                )
+                .unwrap();
+            let rect = result.geometry[&id];
+            assert_eq!(rect.width, 450.);
+            assert_eq!(rect.height, 300.);
+            if let Some(previous) = previous {
+                assert_eq!(rect, previous);
+            }
+            previous = Some(rect);
         }
     }
 }

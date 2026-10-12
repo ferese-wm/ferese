@@ -69,6 +69,11 @@ impl RenderResources {
 
     pub fn remove_window(&mut self, id: WindowId) {
         self.windows.remove(&id);
+        for output in self.outputs.values_mut() {
+            output.chrome.retain(|(key, part), _| {
+                *key != id.0 || !matches!(part, OverviewChromePart::Tab | OverviewChromePart::TabActive)
+            });
+        }
     }
 
     pub fn remove_output(&mut self, id: OutputId) {
