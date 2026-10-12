@@ -917,3 +917,104 @@ fn window_tint_does_not_inherit_panel_geometry() {
         );
     }
 }
+
+#[test]
+#[ignore = "requires an EGL rendering device"]
+fn floating_blur_sampling_halo_does_not_paint_neighboring_islands() {
+    use smithay::backend::renderer::ImportMem;
+    use smithay::backend::renderer::gles::UniformValue;
+    let mut renderer = renderer();
+    let mut resources = RenderResources::default();
+    let program = blur_program(&mut resources, &mut renderer).unwrap();
+    for scale in [1.0_f64, 1.25, 1.5, 1.75, 2.0] {
+        let size: Size<i32, Physical> = ((256. * scale) as i32, (96. * scale) as i32).into();
+        let full = Rectangle::from_size(size);
+        let shapes: Vec<[f32; 9]> = [24., 112.]
+            .into_iter()
+            .map(|x| [x, 24., 80., 32., 16., 16., 16., 16., 0.].map(|v| v * scale as f32))
+            .collect();
+        // Each island captures an extra 32 logical pixels on every side for
+        // blur sampling. That capture includes part of its neighboring island.
+        for island in 0..2 {
+            let shape = shapes[island];
+            let visible = [shape[0], shape[1], shape[2], shape[3]];
+            let halo = 32. * scale as f32;
+            let capture = [
+                (visible[0] - halo).max(0.),
+                (visible[1] - halo).max(0.),
+                (visible[0] + visible[2] + halo).min(size.w as f32),
+                (visible[1] + visible[3] + halo).min(size.h as f32),
+            ];
+            let rect = Rectangle::<i32, Physical>::new(
+                (capture[0] as i32, capture[1] as i32).into(),
+                ((capture[2] - capture[0]) as i32, (capture[3] - capture[1]) as i32).into(),
+            );
+            let mut pixels = vec![128_u8; (rect.size.w * rect.size.h * 4) as usize];
+            for p in pixels.chunks_exact_mut(4) {
+                p[3] = 255;
+            }
+            let source = renderer
+                .import_memory(&pixels, Fourcc::Abgr8888, (rect.size.w, rect.size.h).into(), false)
+                .unwrap();
+            let uniforms = vec![
+                Uniform::new("visible_rect", visible),
+                Uniform::new("material_radii", [16. * scale as f32; 4]),
+                Uniform::new("texture_size", [rect.size.w as f32, rect.size.h as f32]),
+                Uniform::new("capture_origin", [capture[0], capture[1]]),
+                Uniform::new("blur_radius", halo),
+                Uniform::new("presentation_alpha", 1.0_f32),
+                Uniform::new("background_opacity", 0.6_f32),
+                Uniform::new("tint", [0.1_f32, 0.1, 0.1, 0.5]),
+                Uniform::new("panel_count", 2.0_f32),
+                Uniform::new("panel_fusion", 0.0_f32),
+                Uniform::new(
+                    "panel_shapes[0]",
+                    UniformValue::Matrix3x3 {
+                        matrices: shapes.clone(),
+                        transpose: false,
+                    },
+                ),
+            ];
+            let mut texture: GlesTexture = renderer
+                .create_buffer(Fourcc::Abgr8888, (size.w, size.h).into())
+                .unwrap();
+            let mut target = renderer.bind(&mut texture).unwrap();
+            let mut frame = renderer.render(&mut target, size, Transform::Normal).unwrap();
+            frame.clear([0.; 4].into(), &[full]).unwrap();
+            // OpenGL coordinates have the opposite Y direction from the frame.
+            let dst = Rectangle::new((rect.loc.x, size.h - rect.loc.y - rect.size.h).into(), rect.size);
+            frame
+                .render_texture_from_to(
+                    &source,
+                    Rectangle::from_size(source.size().to_f64()),
+                    dst,
+                    &[Rectangle::from_size(dst.size)],
+                    &[],
+                    Transform::Normal,
+                    1.,
+                    Some(&program.0),
+                    &uniforms,
+                )
+                .unwrap();
+            let _ = frame.finish().unwrap();
+            let mapping = renderer
+                .copy_framebuffer(&target, Rectangle::from_size((size.w, size.h).into()), Fourcc::Abgr8888)
+                .unwrap();
+            let rendered = renderer.map_texture(&mapping).unwrap().to_vec();
+            let mut painted = 0;
+            for pixel in rendered.chunks_exact(4).enumerate() {
+                let (index, rgba) = pixel;
+                let x = (index % size.w as usize) as f32 + 0.5;
+                if x < visible[0] || x >= visible[0] + visible[2] {
+                    assert_eq!(
+                        rgba[3], 0,
+                        "island {island} paints outside its bounds at x={x}, scale={scale}"
+                    );
+                } else if rgba[3] > 0 {
+                    painted += 1;
+                }
+            }
+            assert!(painted > 100, "fixture must paint its own island");
+        }
+    }
+}
