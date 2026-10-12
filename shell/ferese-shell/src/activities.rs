@@ -128,6 +128,17 @@ fn icon(name: &str) -> &'static [u8] {
         _ => icons::FERESE,
     }
 }
+fn progress_percent(activity: &Activity) -> Option<u8> {
+    match activity.data.value {
+        Value::Progress(value) if activity.state == State::Running => Some((value.clamp(0., 1.) * 100.).round() as u8),
+        _ => None,
+    }
+}
+
+fn detail(activity: &Activity) -> Option<String> {
+    progress_percent(activity).is_none().then(|| label(activity))
+}
+
 fn label(activity: &Activity) -> String {
     if activity.state != State::Running {
         return activity.result_message.clone().unwrap_or_else(|| {
@@ -466,13 +477,17 @@ impl FereseShell {
             reduced,
             ring_color,
         );
-        cosmic::iced::widget::stack![
-            ring,
-            container(icons::tinted(icon(&activity.data.icon), 14, color))
-                .center_x(26)
-                .center_y(26)
-        ]
-        .into()
+        let center: Element<'_, cosmic::Action<Message>> = if let Some(percent) = progress_percent(activity) {
+            self.render
+                .text(percent.to_string())
+                .size(if percent == 100 { 9. } else { 10. })
+                .line_height(cosmic::iced::widget::text::LineHeight::Relative(1.))
+                .class(theme::Text::Color(color))
+                .into()
+        } else {
+            icons::tinted(icon(&activity.data.icon), 14, color).into()
+        };
+        cosmic::iced::widget::stack![ring, container(center).center_x(26).center_y(26)].into()
     }
     pub fn activity_available(&self, id: window::Id) -> bool {
         let name = self.output_for_bar(id).map(|output| output.name.as_str()).unwrap_or("");
@@ -557,7 +572,10 @@ impl FereseShell {
             content = content.push(
                 self.render
                     .text(if representation == Representation::Wide {
-                        format!("{} · {}", activity.data.title, label(activity))
+                        detail(activity).map_or_else(
+                            || activity.data.title.clone(),
+                            |detail| format!("{} · {detail}", activity.data.title),
+                        )
                     } else {
                         activity.data.title.clone()
                     })
@@ -575,7 +593,11 @@ impl FereseShell {
         let panel = self.panel_for_bar(id).id.clone();
         let item = item.id.clone();
         let button = button::custom(content)
-            .name(format!("Activities: {}. Open list", activity.data.title))
+            .name(format!(
+                "Activities: {}, {}. Open list",
+                activity.data.title,
+                label(activity)
+            ))
             .selected(selected)
             .height(height)
             .padding([0, 5])
@@ -814,6 +836,7 @@ impl FereseShell {
         let mut strip = row::with_capacity(5)
             .spacing(compact::ITEM_GAP)
             .align_y(Alignment::Center);
+        let mut descriptions = Vec::with_capacity(2);
         for (index, identity) in presentation.selection.visible.iter().enumerate() {
             let Some(activity) = self
                 .activities
@@ -825,6 +848,7 @@ impl FereseShell {
             else {
                 continue;
             };
+            descriptions.push(format!("{}, {}", activity.data.title, label(activity)));
             if index == 1 {
                 let alpha = presentation
                     .divider
@@ -867,20 +891,23 @@ impl FereseShell {
                 .ellipsize(cosmic::iced::widget::text::Ellipsize::End(
                     cosmic::iced::advanced::text::EllipsizeHeightLimit::Lines(1),
                 ));
-            let text = column![
-                title,
-                self.render
-                    .text(label(activity))
-                    .size(10)
-                    .width(Length::Fill)
-                    .ellipsize(cosmic::iced::widget::text::Ellipsize::End(
-                        cosmic::iced::advanced::text::EllipsizeHeightLimit::Lines(1)
-                    ))
-                    .line_height(cosmic::iced::widget::text::LineHeight::Relative(1.1))
-                    .class(theme::Text::Color(palette.text.scale_alpha(opacity * 0.7)))
-            ]
-            .spacing(0)
-            .width(presentation.compact.text_width(identity));
+            let mut text = column![title].spacing(0).width(Length::Fill);
+            if let Some(detail) = detail(activity) {
+                text = text.push(
+                    self.render
+                        .text(detail)
+                        .size(10)
+                        .width(Length::Fill)
+                        .ellipsize(cosmic::iced::widget::text::Ellipsize::End(
+                            cosmic::iced::advanced::text::EllipsizeHeightLimit::Lines(1),
+                        ))
+                        .line_height(cosmic::iced::widget::text::LineHeight::Relative(1.1))
+                        .class(theme::Text::Color(palette.text.scale_alpha(opacity * 0.7))),
+                );
+            }
+            let text = container(text)
+                .center_y(26)
+                .width(presentation.compact.text_width(identity));
             let item = row![
                 self.activity_icon(activity, tint.scale_alpha(opacity), !intrinsic),
                 text
@@ -909,7 +936,10 @@ impl FereseShell {
         };
         controls = controls.push(
             button::custom(container(strip).center_y(Length::Fill))
-                .name("Activities. Open the activity list")
+                .name(format!(
+                    "Activities: {}. Open the activity list",
+                    descriptions.join("; ")
+                ))
                 .padding(0)
                 .width(Length::Fill)
                 .height(Length::Fill)
@@ -964,27 +994,33 @@ impl FereseShell {
             return self.render.text("No active tasks").size(13).into();
         }
         for activity in entries {
-            let text = column![
+            let mut text = column![
                 self.render
                     .text(activity.data.title.clone())
                     .size(13)
                     .line_height(cosmic::iced::widget::text::LineHeight::Relative(1.1))
                     .width(Length::Fill)
                     .ellipsize(cosmic::iced::widget::text::Ellipsize::End(
-                        cosmic::iced::advanced::text::EllipsizeHeightLimit::Lines(1)
-                    )),
-                self.render
-                    .text(label(activity))
-                    .size(12)
-                    .line_height(cosmic::iced::widget::text::LineHeight::Relative(1.1))
-                    .width(Length::Fill)
-                    .ellipsize(cosmic::iced::widget::text::Ellipsize::End(
-                        cosmic::iced::advanced::text::EllipsizeHeightLimit::Lines(1)
+                        cosmic::iced::advanced::text::EllipsizeHeightLimit::Lines(1),
                     ))
-                    .class(theme::Text::Color(palette.text.scale_alpha(opacity * 0.7)))
             ]
             .spacing(0)
             .width(Length::Fill);
+            if let Some(detail) = detail(activity) {
+                text = text.push(
+                    self.render
+                        .text(detail)
+                        .size(12)
+                        .line_height(cosmic::iced::widget::text::LineHeight::Relative(1.1))
+                        .width(Length::Fill)
+                        .ellipsize(cosmic::iced::widget::text::Ellipsize::End(
+                            cosmic::iced::advanced::text::EllipsizeHeightLimit::Lines(1),
+                        ))
+                        .class(theme::Text::Color(palette.text.scale_alpha(opacity * 0.7))),
+                );
+            }
+            // Keep the row stable when progress becomes a result or a text phase.
+            let text = container(text).center_y(28).width(Length::Fill);
             let mut body = column![
                 row![
                     self.activity_icon(activity, palette.text.scale_alpha(opacity), false),
