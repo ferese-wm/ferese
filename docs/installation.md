@@ -342,7 +342,7 @@ Installer options:
 
 `--bundle` replaces `--skip-build` and installs a complete bundle instead of loose
 files in `target/release/`. Build options cannot be combined with `--bundle`.
-The front-end dry run prints commands. To inspect the filesystem changes planned
+The `install.sh` dry run prints commands. To inspect the filesystem changes planned
 for an existing bundle, run:
 
 ```sh

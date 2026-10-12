@@ -1,6 +1,7 @@
 """Wiki publication must preserve examples and resolve links before writing."""
 import importlib.util
 import json
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -159,6 +160,59 @@ class WikiTests(unittest.TestCase):
             self.assertIn(wiki.WIKI + '/Configuration-Activities#command-rules', usage)
             self.assertIn('## Start using it', usage)
             self.assertIn('## Publisher ownership and lifecycle', usage)
+
+    def test_activity_publishing_has_its_own_development_page(self):
+        with mock.patch.object(wiki, 'ROOT', ROOT):
+            output = wiki.render('deadbeef')
+            developer = output['Development-Activities.md']
+            usage = output['Live-Activities.md']
+            navigation = output['_Sidebar.md'].split('## Development', 1)[1]
+            self.assertIn(wiki.WIKI + '/Development-Activities)', navigation)
+            self.assertIn('Linux 6.5', developer)
+            self.assertIn('socket-bound pidfd', ' '.join(developer.split()))
+            self.assertNotIn('socket-bound pidfd', usage)
+            for anchor in ('publish-your-own-status', 'publisher-ownership-and-lifecycle', 'extensions-and-templates'):
+                with self.subTest(anchor=anchor):
+                    self.assertIn(anchor, wiki.heading_ids(usage))
+                    self.assertIn(wiki.WIKI + '/Development-Activities#' + anchor, usage)
+                    self.assertIn(anchor, wiki.heading_ids(developer))
+
+    def test_activity_reference_documents_every_configuration_field(self):
+        source = (ROOT / 'crates/ferese-config/src/activities.rs').read_text()
+        reference = (ROOT / 'docs/configuration/activities.md').read_text()
+        special = {'name': 'Rule name', 'pattern': '`match`', 'sources': '## Sources', 'rules': '## Command rules', 'result': '`result.ok`'}
+        for name in ('Settings', 'Sources', 'Rule', 'ResultText'):
+            body = re.search(r'pub struct ' + name + r'\s*\{([^}]+)\}', source).group(1)
+            for field in re.findall(r'pub (\w+):', body):
+                label = special.get(field, '`' + ('result.' if name == 'ResultText' else '') + field.replace('_', '-') + '`')
+                with self.subTest(struct=name, field=field):
+                    self.assertIn(label, reference)
+
+    def test_readme_wiki_links_resolve_to_published_pages(self):
+        from html.parser import HTMLParser
+        from urllib.parse import urlsplit
+        class Links(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.hrefs = set()
+            def handle_starttag(self, tag, attrs):
+                if tag == 'a':
+                    self.hrefs.update(value for key, value in attrs if key == 'href')
+        with mock.patch.object(wiki, 'ROOT', ROOT):
+            output = wiki.render('deadbeef')
+            readme = (ROOT / 'README.md').read_text()
+            links = Links()
+            links.feed(readme)
+            for href in wiki.destinations(readme) | links.hrefs:
+                if not href.startswith(wiki.WIKI):
+                    continue
+                relative = href[len(wiki.WIKI):].lstrip('/')
+                url = urlsplit(relative)
+                page = (url.path or 'Home') + '.md'
+                with self.subTest(href=href):
+                    self.assertIn(page, output)
+                    if url.fragment:
+                        self.assertIn(url.fragment, wiki.heading_ids(output[page]))
 
     def test_legacy_configuration_anchors_point_to_published_topics(self):
         with mock.patch.object(wiki, 'ROOT', ROOT):

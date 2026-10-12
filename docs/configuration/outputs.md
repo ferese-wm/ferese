@@ -146,6 +146,5 @@ Smithay performs the real commits; logical changes follow successful hardware
 application. Failed commits attempt restoration, and outputs that cannot be
 restored are removed from logical state. Each GPU commits separately. If a later GPU fails, Ferese attempts to restore
 the earlier GPUs. Legacy KMS lacks atomic
-test-only validation. Hardware failures can still prevent every monitor from
-working; Ferese tries preferred modes to recover a display instead of
+test-only validation. Hardware failures can still leave the session without a working monitor; Ferese tries preferred modes to recover a display instead of
 intentionally turning off the last working one.

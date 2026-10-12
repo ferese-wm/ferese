@@ -15,9 +15,9 @@ Use release builds for performance and animation checks. Preview changes in a
 [nested session](installation.md#preview-and-logs) before testing hardware behavior.
 Keep another desktop available for direct-session recovery.
 
-Run CI manually when a change needs it. Ordinary pushes and pull requests do not
-start build runners, and website deployment is manual. Release tags and pull
-requests labeled `release` run the release checks and package builds.
+Workspace checks and website deployment run manually. Documentation changes on
+main publish to the wiki automatically. Release tags and pull requests labeled
+`release` run the release checks and package builds.
 
 The workspace workflow checks formatting, lints and tests on Ubuntu, including
 the shell, Settings, portal and CLI. It builds the desktop binaries, runs the
@@ -29,15 +29,15 @@ host. Hardware checks remain separate.
 
 - [Live Activities checks](#live-activities-checks): core, CLI, shell hooks, installer setup and native rendering.
 - [Desktop reconciliation](desktop-reconciliation.md): topology publication, hardware failure and presentation ownership.
-
 - [Output management tests](output-management-testing.md): profiles, hotplug, mirroring, lid handling and failed DRM commits.
 - [Nested resize checks](nested-resize-testing.md): wallpaper and bar responsiveness.
 - [Client soak testing](native-soak-testing.md): repeated client lifecycle and resource growth.
 
 ## Live Activities checks
 
-See [Live Activities](activities.md) for setup, configuration and the publisher
-protocol.
+See [Live Activities](activities.md) for setup and use,
+[Activities configuration](configuration/activities.md) for settings, and
+[Publishing activities](development/activities.md) for the IPC protocol.
 
 Hidden items and measurement widgets do not animate. Reduced motion snaps
 progress and uses a static track. Workspace buttons retain their own actions;
@@ -129,7 +129,7 @@ cargo test --release --locked -p ferese session_lock::tests -- --nocapture
 ```
 
 These tests create private runtime directories and Wayland clients. They run in
-normal test suites and in the compositor lifecycle CI job, without a host desktop or DRM.
+normal test suites and in the workspace CI job, without a host desktop or DRM.
 They cover confirmation, rejected unlocks, owner death and replacement, output
 removal, keyboard focus and idle timers. Physical display protection still needs
 hardware testing.
@@ -142,7 +142,7 @@ cargo test --release --locked -p ferese resume::tests -- --nocapture
 
 These tests need `dbus-daemon`. They use a private bus to test missed resumes,
 logind replacement and listener shutdown during connection setup, signal waits
-and retries. They run in the compositor lifecycle CI job and never contact system logind.
+and retries. They run in the workspace CI job and never contact system logind.
 Recovery requests fresh hardware and theme state without resetting idle activity.
 Hardware suspend/resume still needs testing on a direct session.
 

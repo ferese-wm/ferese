@@ -17,7 +17,7 @@ after changing the site sources.
 
 - `site/index.html` and `site/home.css`: homepage and desktop screenshots.
 - `site/styles.css`: shared dark appearance, typography and navigation.
-- `docs/*.md`: guide sources published to the wiki.
+- `docs/*.md` and its configuration/development topic directories: guide sources published to the wiki.
 - `scripts/build-site.py`: copies homepage assets and writes handbook redirects.
 - `scripts/build-wiki.py`: validates and generates wiki pages.
 

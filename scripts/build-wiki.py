@@ -54,6 +54,8 @@ def page_name(source):
         return "Website-Development"
     if source == ROOT / "crates/ferese-theme/README.md":
         return "Theme-Components"
+    if source.parent == ROOT / "docs/development":
+        return "Development-" + "-".join(word.capitalize() for word in source.stem.split("-"))
     if source.parent == ROOT / "docs/configuration":
         return "Configuration-" + "-".join(word.capitalize() for word in source.stem.split("-"))
     return NAMES.get(source.stem, "-".join(word.capitalize() for word in source.stem.split("-")))
@@ -136,6 +138,7 @@ def rewrite(text, source, pages, revision):
 def guide_sources():
     return (sorted((ROOT / "docs").glob("*.md"))
             + sorted((ROOT / "docs/configuration").glob("*.md"))
+            + sorted((ROOT / "docs/development").glob("*.md"))
             + [ROOT / "site/README.md", ROOT / "crates/ferese-theme/README.md"])
 
 

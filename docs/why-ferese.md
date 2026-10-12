@@ -1,6 +1,6 @@
 # Why Ferese
 
-Alongside a window manager, you need Wi-Fi, audio and display controls, notifications and a lock screen. Choosing separate desktop components remains useful when you want that independence, though keeping them consistent becomes another job when their settings and behaviour are maintained separately.
+Alongside a window manager, you need Wi-Fi, audio and display controls, notifications and a lock screen. You can choose these components separately, but keeping their settings and behaviour consistent takes extra work.
 
 Ferese includes a Wayland compositor, desktop shell, Settings, Control Center and a lock screen with shared configuration and theming. It keeps window management configurable while defining how a desktop change applies across those components.
 
@@ -34,4 +34,4 @@ A window’s content, clipping and border need to follow the same presented boun
 
 ## Testing the whole interaction
 
-A shared theme does not resolve a late application buffer, and a correct spring equation does not make a missed frame arrive on time. Resize coordination, output timing and interrupted transitions still need testing and measurements on the hardware where the desktop runs.
+Resize coordination, output timing and interrupted transitions need testing and measurements on the hardware where the desktop runs.

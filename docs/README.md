@@ -36,6 +36,7 @@
 
 - [Packages and releases](packaging.md): build Fedora and Arch packages and publish a tagged release.
 - [Development](development.md): build Ferese, run tests and check portal contracts.
+- [Publishing activities](development/activities.md): IPC schema, ownership, limits and templates.
 - [Animation model](animation-model.md): geometry, spring motion, gestures and prediction.
 - [Desktop reconciliation](desktop-reconciliation.md): topology publication and presentation ownership.
 - [Output management tests](output-management-testing.md): profiles, hotplug and DRM failures.

@@ -26,7 +26,7 @@ one appearance.
 | `theme.schedule.light-at`, `theme.schedule.dark-at` | `HH:MM` | `"07:00"`, `"19:00"` | Auto boundaries; times must differ |
 | `theme.accessibility.increase-contrast` | boolean | `false` | Strengthen text and borders |
 | `theme.accessibility.reduce-transparency` | boolean | `false` | Solid surfaces; skip background blur |
-| `appearance.focus-effect.enabled` | boolean | `true` | Apply window opacity and dimming; disabling keeps the configured values |
+| `appearance.focus-effect.enabled` | boolean | `true` | Apply window opacity and dimming; disabling preserves the saved settings |
 | `appearance.focus-effect.active-opacity` | number 0–1 | `1` | Active application opacity, including fullscreen |
 | `appearance.focus-effect.inactive-opacity` | number 0–1 | `1` | Other application window opacity |
 | `appearance.focus-effect.inactive-dim` | number 0–1 | `0` | Darkening strength for inactive windows; 0 disables |
