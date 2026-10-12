@@ -525,6 +525,7 @@ invalid. A disabled binding must omit `action` and `argument`.
 | Actions | Argument |
 | --- | --- |
 | `spawn` | Name in `commands` |
+| `binding-mode` | Named mode, or `"default"` to leave it |
 | `focus`, `move`, `resize` | `"left"`, `"right"`, `"up"`, `"down"` |
 | `workspace`, `move-to-workspace` | Workspace number string, 1–255 |
 | `workspace-next`, `workspace-previous` | None; next/previous workspace on this monitor |
@@ -546,6 +547,65 @@ binding keys="Super+V" action="focus-floating"
 `focus-floating` switches focus between tiled and floating windows without
 changing placement. It stays on the active workspace and does nothing when the
 opposite layer has no candidate. `toggle-floating` changes window placement.
+
+### Binding modes
+
+Named modes provide a separate keyboard map for resizing, launching, or other
+sets of actions. No modes are enabled by default. For example:
+
+```kdl
+binding "Super+Shift+r" "binding-mode" "resize"
+binding "Super+Shift+Return" "binding-mode" "launch"
+binding-mode "resize" {
+    binding "h" "resize" "left"
+    binding "j" "resize" "down"
+    binding "k" "resize" "up"
+    binding "l" "resize" "right"
+    binding "Return" "binding-mode" "default"
+}
+binding-mode "launch" {
+    binding "t" "spawn" "terminal"
+    binding "r" "binding-mode" "resize"
+    binding "Return" "binding-mode" "default"
+}
+```
+
+Release the entry chord's modifiers before using an unmodified mode binding.
+Modifiers keep their usual exact matching semantics; entering a mode never
+changes the application's modifier state. Escape exits with any modifiers held
+and cannot be overridden inside a mode. The bar shows the active name and Escape
+hint, including over fullscreen windows, and restores its ordinary contents on
+exit. Long names truncate to keep the exit hint visible. Mode changes reach the
+shell through its existing snapshot protocol.
+
+Entering a mode closes panel popovers and workspace tooltips. An expanded Morph
+panel collapses and releases keyboard focus. Hover, activity updates, and queued
+menu requests cannot reopen it while the mode indicator is displayed.
+Live Activities continue updating their data, but leave the hidden Morph panel's
+geometry unchanged until the mode exits.
+
+Mode bindings replace the default keyboard map while active. Unmatched keys
+reach the focused application; default compositor bindings and portal shortcuts
+do not run as fallbacks. Gestures keep the default configuration. Normal shortcut
+inhibition still applies, with Escape available to leave the mode. A mode remains
+active across actions and focus/workspace changes until explicitly changed or
+exited; launching an application does not implicitly leave it.
+
+Each mode must have a unique name of 1–48 ASCII letters, digits, underscores, or
+hyphens. `default` is reserved. Mode bindings accept the same actions and physical
+key matching as ordinary bindings; swipes, disabled records, duplicate chords,
+and Escape bindings are rejected, including physical keys remapped to Escape.
+References to undefined modes reject the configuration before it is applied.
+
+An accepted change to bindings, modes, commands, or input settings returns to
+default and closes any focus preview. Unrelated reloads preserve the mode;
+rejected reloads keep the previous configuration and mode. Locking, input capture,
+and session suspension also exit.
+The first press owns its matching release across these transitions. Held keys
+are never reinterpreted by a new mode; consumed releases stay consumed. Repeated
+presses retain their original action and repeat only while its chord still
+matches. A mode/configuration transition stops that action's repeats.
+`feresectl keybindings` lists the active keyboard map.
 
 Defaults: Super+Enter terminal; Super+Q close; Super+H/J/K/L focus;
 Super+Shift+H/J/K/L move; Super+Ctrl+H/J/K/L resize; Super+1–9 workspace;

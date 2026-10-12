@@ -1,5 +1,9 @@
 # feresectl and IPC events
 
+`feresectl keybindings` lists the active binding mode's shortcuts. Outside a
+mode it lists the configured default shortcuts. Escape is always available to
+leave a mode; see [Binding modes](configuration.md#binding-modes).
+
 `feresectl` controls a running Ferese session. Run `feresectl --help` for commands
 and `feresectl COMMAND --help` for arguments.
 

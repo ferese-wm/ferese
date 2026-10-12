@@ -14,6 +14,7 @@ use wayland_client::{Connection, Dispatch, Proxy, QueueHandle, delegate_noop};
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct ShellSnapshot {
+    pub(crate) binding_mode: Option<String>,
     pub(crate) outputs: Vec<OutputSnapshot>,
     pub(crate) workspaces: Vec<WorkspaceSnapshot>,
     pub(crate) windows: Vec<WindowSnapshot>,
@@ -136,7 +137,7 @@ impl ShellControl {
         let connection = control_connection()?;
         let (globals, mut queue) = registry_queue_init::<ControlState>(&connection)?;
         let qh = queue.handle();
-        let manager = globals.bind::<FereseShellManagerV1, _, _>(&qh, 7..=8, ())?;
+        let manager = globals.bind::<FereseShellManagerV1, _, _>(&qh, 7..=9, ())?;
         let shell = manager.get_shell(&qh, ());
         let (sender, updates) = mpsc::channel();
         let wake = Wake(Arc::new(tokio::sync::Notify::new()));
@@ -329,6 +330,9 @@ impl Dispatch<FereseShellV1, ()> for ControlState {
             ferese_shell_v1::Event::SnapshotBegin { serial } => {
                 state.serial = Some(serial);
                 state.pending = ShellSnapshot::default();
+            }
+            ferese_shell_v1::Event::BindingMode { name } => {
+                state.pending.binding_mode = (!name.is_empty()).then_some(name);
             }
             ferese_shell_v1::Event::Output {
                 output_hi,
@@ -556,6 +560,50 @@ mod tests {
             assert_eq!(split_id(id), (hi, lo));
             assert_eq!(join_id(hi, lo), id);
         }
+    }
+
+    #[test]
+    fn binding_mode_is_published_atomically_and_cleared_by_the_next_snapshot() {
+        let (control, mut state, queue, _peer) = control_fixture();
+        dispatch_event(
+            &control,
+            &mut state,
+            &queue,
+            ferese_shell_v1::Event::SnapshotBegin { serial: 1 },
+        );
+        dispatch_event(
+            &control,
+            &mut state,
+            &queue,
+            ferese_shell_v1::Event::BindingMode { name: "resize".into() },
+        );
+        assert!(control.poll().snapshot.is_none());
+        dispatch_event(
+            &control,
+            &mut state,
+            &queue,
+            ferese_shell_v1::Event::SnapshotEnd { serial: 1 },
+        );
+        assert_eq!(control.poll().snapshot.unwrap().binding_mode.as_deref(), Some("resize"));
+        dispatch_event(
+            &control,
+            &mut state,
+            &queue,
+            ferese_shell_v1::Event::SnapshotBegin { serial: 2 },
+        );
+        dispatch_event(
+            &control,
+            &mut state,
+            &queue,
+            ferese_shell_v1::Event::BindingMode { name: String::new() },
+        );
+        dispatch_event(
+            &control,
+            &mut state,
+            &queue,
+            ferese_shell_v1::Event::SnapshotEnd { serial: 2 },
+        );
+        assert!(control.poll().snapshot.unwrap().binding_mode.is_none());
     }
 
     #[test]

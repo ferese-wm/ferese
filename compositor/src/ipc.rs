@@ -1104,7 +1104,8 @@ impl Ferese {
             "get-keybindings" => {
                 let map = crate::config::physical_keymap(&self.input_settings).ok();
                 return Ok(json!(
-                    self.bindings
+                    self.binding_modes
+                        .bindings(&self.bindings)
                         .iter()
                         .filter_map(|binding| binding.guide_entry(map.as_ref()))
                         .take(256)

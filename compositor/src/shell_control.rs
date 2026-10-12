@@ -10,7 +10,7 @@ use crate::private_client::ClientCapabilities;
 use crate::state::ClientState;
 
 pub(crate) fn init_global(display: &DisplayHandle) {
-    display.create_global::<Ferese, FereseShellManagerV1, _>(8, ());
+    display.create_global::<Ferese, FereseShellManagerV1, _>(9, ());
 }
 
 pub(crate) fn config_chunks(source: &str) -> Vec<&str> {
@@ -339,7 +339,9 @@ impl Ferese {
     }
 
     fn shell_snapshot_matches(&self, snapshot: &ShellSnapshot) -> bool {
-        if snapshot.workspace_preview_revision != self.workspace_preview_revision {
+        if snapshot.workspace_preview_revision != self.workspace_preview_revision
+            || snapshot.binding_mode.as_deref() != self.binding_modes.active()
+        {
             return false;
         }
         let mut outputs = self.output_workspaces.connected_outputs();
@@ -409,6 +411,7 @@ impl Ferese {
 
     fn shell_snapshot(&self) -> ShellSnapshot {
         ShellSnapshot {
+            binding_mode: self.binding_modes.active().map(str::to_owned),
             workspace_preview_revision: self.workspace_preview_revision,
             outputs: self.output_snapshots(),
             workspaces: self.workspace_snapshots(),
@@ -553,6 +556,7 @@ enum ShellWindowAction {
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ShellSnapshot {
+    binding_mode: Option<String>,
     workspace_preview_revision: u64,
     outputs: Vec<OutputSnapshot>,
     workspaces: Vec<WorkspaceSnapshot>,
@@ -562,6 +566,9 @@ pub(crate) struct ShellSnapshot {
 impl ShellSnapshot {
     fn send(&self, shell: &FereseShellV1, serial: u32) {
         shell.snapshot_begin(serial);
+        if shell.version() >= 9 {
+            shell.binding_mode(self.binding_mode.clone().unwrap_or_default());
+        }
         for output in &self.outputs {
             let (output_hi, output_lo) = split_id(output.id.0);
             let (workspace_hi, workspace_lo) = split_id(output.active_workspace.0);
@@ -809,6 +816,7 @@ mod tests {
     #[test]
     fn snapshot_deduplication_preserves_shell_visible_changes() {
         let original = ShellSnapshot {
+            binding_mode: None,
             workspace_preview_revision: 0,
             outputs: vec![OutputSnapshot {
                 bounds: None,
@@ -838,6 +846,7 @@ mod tests {
         };
         assert_eq!(original, original.clone());
         let changes: &[fn(&mut ShellSnapshot)] = &[
+            |s| s.binding_mode = Some("resize".into()),
             |s| s.workspace_preview_revision += 1,
             |s| s.outputs[0].focused = false,
             |s| s.outputs[0].active_workspace = WorkspaceId(2),

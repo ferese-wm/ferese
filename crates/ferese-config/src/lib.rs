@@ -76,6 +76,7 @@ fn field(name: &str, parent: &str) -> String {
 
     match name {
         "binding" => "bindings".into(),
+        "binding-mode" => "binding_modes".into(),
         "window-rule" => "window_rules".into(),
         "output-profile" => "output_profiles".into(),
         "output" => "outputs".into(),
@@ -91,8 +92,9 @@ fn is_records(key: &str, parent: &str) -> bool {
         (parent, key),
         (
             "",
-            "bindings" | "window_rules" | "output_profiles" | "autostart" | "panels"
+            "bindings" | "binding_modes" | "window_rules" | "output_profiles" | "autostart" | "panels"
         ) | ("output_profiles", "outputs")
+            | ("binding_modes", "bindings")
             | ("start" | "center" | "end", "groups")
             | ("groups", "items")
     )
@@ -185,6 +187,7 @@ fn node_value(node: &KdlNode, key: &str, parent: &str) -> Result<Value, Error> {
         }
         let positional: &[&str] = match key {
             "bindings" => &["keys", "action", "argument"],
+            "binding_modes" => &["name"],
             "output_profiles" => &["name"],
             "outputs" => &["match"],
             "panels" | "groups" | "items" => &["id"],
@@ -704,6 +707,7 @@ fn set_in(doc: &mut KdlDocument, parts: &[&str], parent: &str, value: Value) -> 
         if rest.len() == 1 {
             let positions: &[&str] = match key {
                 "bindings" => &["keys", "action", "argument"],
+                "binding_modes" => &["name"],
                 "outputs" => &["match"],
                 "output_profiles" => &["name"],
                 "panels" | "groups" | "items" => &["id"],
@@ -795,6 +799,7 @@ fn node_name(key: &str, parent: &str) -> String {
 
     match key {
         "bindings" => "binding".into(),
+        "binding_modes" => "binding-mode".into(),
         "window_rules" => "window-rule".into(),
         "output_profiles" => "output-profile".into(),
         "outputs" => "output".into(),
@@ -812,6 +817,7 @@ fn value_node(key: &str, value: &Value, parent: &str) -> Result<KdlNode, Error> 
         Value::Object(map) => {
             let positions: &[&str] = match key {
                 "bindings" => &["keys", "action", "argument"],
+                "binding_modes" => &["name"],
                 "output_profiles" => &["name"],
                 "outputs" => &["match"],
                 "panels" | "groups" | "items" => &["id"],
@@ -880,6 +886,21 @@ pub fn from_str<T: DeserializeOwned>(source: &str) -> Result<T, Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn named_binding_modes_round_trip_and_keep_nested_bindings_editable() {
+        let mut document = super::Document::parse(
+            "binding-mode resize { binding h resize left; binding l resize right; }\nbinding-mode launch { binding t spawn terminal; }\n",
+        ).unwrap();
+        assert_eq!(document.get("binding_modes.0.name").unwrap(), "resize");
+        assert_eq!(document.get("binding_modes.1.bindings.0.argument").unwrap(), "terminal");
+        document
+            .set("binding_modes.0.bindings.0.argument", "up".into())
+            .unwrap();
+        let reparsed = super::Document::parse(&document.to_string()).unwrap();
+        assert_eq!(reparsed.get("binding_modes.0.bindings.0.argument").unwrap(), "up");
+        assert_eq!(reparsed.get("binding_modes.0.bindings.1.argument").unwrap(), "right");
+    }
     #[test]
     fn adopting_appearance_modes_preserves_legacy_colors_and_comments() {
         let mut document = Document::parse(

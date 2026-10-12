@@ -830,10 +830,13 @@ impl cosmic::Application for FereseShell {
                     }
 
                     if let Some(snapshot) = poll.snapshot {
+                        let mode_was_active = self.snapshot.binding_mode.is_some();
                         self.snapshot = snapshot;
+                        let mode = self.binding_mode_transition(mode_was_active);
                         let feedback = self.sync_hub_workspace_feedback(overview_was_active || self.overview_active);
                         let mut tasks = vec![
                             reload_task,
+                            mode,
                             self.update_workspace_ui(),
                             feedback,
                             self.refresh_adaptive_panels(),
@@ -1506,8 +1509,9 @@ mod tests {
         assert_eq!(focused_bar_title(&snapshot, None), "");
     }
 
-    fn snapshot_with_fullscreen_window(workspace: u64) -> ShellSnapshot {
+    pub(super) fn snapshot_with_fullscreen_window(workspace: u64) -> ShellSnapshot {
         ShellSnapshot {
+            binding_mode: None,
             outputs: vec![OutputSnapshot {
                 id: 1,
                 name: "eDP-1".to_owned(),

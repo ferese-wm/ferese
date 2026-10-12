@@ -22,7 +22,7 @@
     DEALINGS IN THE SOFTWARE.
   </copyright>
 
-  <interface name="ferese_shell_manager_v1" version="8">
+  <interface name="ferese_shell_manager_v1" version="9">
     <description summary="create a capability-scoped Ferese shell controller">
       This private global is visible only to clients granted the shell-control
       capability. It does not assign a Wayland surface role.
@@ -35,7 +35,7 @@
     <request name="destroy" type="destructor"/>
   </interface>
 
-  <interface name="ferese_shell_v1" version="8">
+  <interface name="ferese_shell_v1" version="9">
     <description summary="managed-window metadata and shell control">
       Window, workspace, and output identifiers are unsigned 64-bit values
       encoded as high and low 32-bit words. Each snapshot atomically replaces
@@ -205,5 +205,13 @@
       <arg name="workspace_hi" type="uint"/>
       <arg name="workspace_lo" type="uint"/>
     </request>
+    <event name="binding_mode" since="9">
+      <description summary="active keyboard binding mode inside a snapshot">
+        Sent between snapshot_begin and snapshot_end. An empty name denotes
+        the default bindings. Other names must be displayed with an Escape exit
+        hint until the next snapshot replaces them.
+      </description>
+      <arg name="name" type="string"/>
+    </event>
   </interface>
 </protocol>

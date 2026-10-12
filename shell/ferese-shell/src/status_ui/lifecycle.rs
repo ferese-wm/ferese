@@ -39,7 +39,8 @@ impl OpenMenu {
 
 impl FereseShell {
     pub fn open_menu(&mut self, kind: Menu, anchor: PopoverAnchor) -> Task<Message> {
-        if !anchor.belongs_to(&self.config.panels[0])
+        if (self.snapshot.binding_mode.is_some() && anchor.item.is_some())
+            || !anchor.belongs_to(&self.config.panels[0])
             || !self.outputs.iter().any(|output| output.bar == anchor.parent)
             || self.bar_hidden(anchor.parent)
             || !kind.available(&self.status)

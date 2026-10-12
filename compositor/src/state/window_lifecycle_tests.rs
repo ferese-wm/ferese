@@ -844,3 +844,135 @@ fn window_rule_minimum_size_replaces_the_client_advertised_minimum() {
         (800, 600)
     );
 }
+
+#[test]
+fn resize_binding_mode_repeats_resize_a_mapped_window_and_stop_on_escape() {
+    if !crate::startup_tests::private_runtime(
+        "state::window_lifecycle_tests::resize_binding_mode_repeats_resize_a_mapped_window_and_stop_on_escape",
+    ) {
+        return;
+    }
+    use crate::input::binding_mode_tests::key;
+    let (mut events, mut state, _) = fixture();
+    state
+        .reload_config_source("binding-mode resize { binding h resize left; }".into())
+        .unwrap();
+    let (window, _wire) = window(&mut state, &mut events, 0xff112233);
+    let id = state.windows.ids()[&window];
+    state.toggle_focused_floating();
+    state
+        .workspaces
+        .set_floating_rect(id, Rect::new(120., 100., 224., 128.))
+        .unwrap();
+    state.relayout_window(id);
+    state.set_binding_mode("resize");
+    key(&mut state, 43, true);
+    assert_eq!(
+        state.workspaces.placement(id),
+        Some(WindowPlacement::Floating {
+            rect: Rect::new(120., 100., 192., 128.)
+        })
+    );
+    key(&mut state, 43, true);
+    assert_eq!(
+        state.workspaces.placement(id),
+        Some(WindowPlacement::Floating {
+            rect: Rect::new(120., 100., 160., 128.)
+        })
+    );
+    key(&mut state, 9, true);
+    key(&mut state, 9, false);
+    key(&mut state, 43, true);
+    assert_eq!(
+        state.workspaces.placement(id),
+        Some(WindowPlacement::Floating {
+            rect: Rect::new(120., 100., 160., 128.)
+        })
+    );
+    key(&mut state, 43, false);
+    assert!(state.intercepted_keys.is_empty());
+}
+
+#[test]
+fn resize_binding_mode_repeats_require_the_original_modifiers() {
+    if !crate::startup_tests::private_runtime(
+        "state::window_lifecycle_tests::resize_binding_mode_repeats_require_the_original_modifiers",
+    ) {
+        return;
+    }
+    use crate::input::binding_mode_tests::key;
+    let (mut events, mut state, _) = fixture();
+    state
+        .reload_config_source("binding-mode resize { binding h resize left; }".into())
+        .unwrap();
+    let (window, _wire) = window(&mut state, &mut events, 0xff112233);
+    let id = state.windows.ids()[&window];
+    state.toggle_focused_floating();
+    state
+        .workspaces
+        .set_floating_rect(id, Rect::new(120., 100., 320., 128.))
+        .unwrap();
+    state.relayout_window(id);
+    state.set_binding_mode("resize");
+    key(&mut state, 43, true);
+    let resized = state.workspaces.placement(id);
+    key(&mut state, 133, true);
+    key(&mut state, 43, true);
+    assert_eq!(
+        state.workspaces.placement(id),
+        resized,
+        "Super+h is not a resize-mode chord"
+    );
+    assert!(
+        state
+            .intercepted_keys
+            .contains(&smithay::input::keyboard::Keycode::new(43))
+    );
+    key(&mut state, 133, false);
+    key(&mut state, 43, true);
+    assert_eq!(
+        state.workspaces.placement(id),
+        Some(WindowPlacement::Floating {
+            rect: Rect::new(120., 100., 256., 128.),
+        })
+    );
+    key(&mut state, 43, false);
+    assert!(state.intercepted_keys.is_empty());
+}
+
+#[test]
+fn reloading_mode_bindings_cancels_the_modes_focus_preview() {
+    if !crate::startup_tests::private_runtime(
+        "state::window_lifecycle_tests::reloading_mode_bindings_cancels_the_modes_focus_preview",
+    ) {
+        return;
+    }
+    use crate::input::binding_mode_tests::key;
+    let (mut events, mut state, _) = fixture();
+    let source = "binding-mode cycle { binding Alt+Tab focus-mru-next; }";
+    state.reload_config_source(source.into()).unwrap();
+    let (_first, _first_wire) = window(&mut state, &mut events, 0xff112233);
+    let (_second, _second_wire) = window(&mut state, &mut events, 0xff223344);
+    let origin = state.focused_window;
+    state.set_binding_mode("cycle");
+    key(&mut state, 64, true);
+    key(&mut state, 23, true);
+    assert!(state.focus_cycle.is_some());
+    state
+        .reload_config_source(format!("{source}\ninput {{ repeat-rate 30; }}"))
+        .unwrap();
+    assert_eq!(state.binding_modes.active(), None);
+    assert!(
+        state.focus_cycle.is_none(),
+        "the exited mode cannot keep its focus preview"
+    );
+    assert_eq!(state.focused_window, origin);
+    assert!(
+        state
+            .intercepted_keys
+            .contains(&smithay::input::keyboard::Keycode::new(23))
+    );
+    key(&mut state, 23, false);
+    key(&mut state, 64, false);
+    assert!(state.intercepted_keys.is_empty());
+}

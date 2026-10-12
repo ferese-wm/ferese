@@ -80,6 +80,9 @@ impl FereseShell {
 
     pub(crate) fn sync_hub_activity(&mut self) -> Task<Message> {
         self.sync_activity_presentations();
+        if self.snapshot.binding_mode.is_some() {
+            return Task::none();
+        }
         let priority = self.hub_priority();
         let changes: Vec<_> = self
             .outputs

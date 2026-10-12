@@ -14,7 +14,32 @@ pub(super) mod presentation;
 use crate::panel::Representation;
 use crate::panel_layout::Placement;
 
+#[cfg(test)]
+mod binding_mode_tests;
+
 impl FereseShell {
+    pub(super) fn binding_mode_transition(&mut self, was_active: bool) -> cosmic::app::Task<Message> {
+        match (was_active, self.snapshot.binding_mode.is_some()) {
+            (false, true) => {
+                let mut tasks = vec![self.destroy_menu(), self.dismiss_workspace_tooltip()];
+                let hubs: Vec<_> = self
+                    .outputs
+                    .iter()
+                    .filter(|entry| entry.runtime.hub.is_some())
+                    .map(|entry| entry.bar)
+                    .collect();
+                for id in hubs {
+                    // Release keyboard ownership and return to the collapsed
+                    // backing allocation before displaying the mode indicator.
+                    tasks.push(self.suspend_hub(id));
+                }
+                cosmic::app::Task::batch(tasks)
+            }
+            (true, false) => self.sync_hub_activity(),
+            _ => cosmic::app::Task::none(),
+        }
+    }
+
     pub(super) fn output_for_bar(&self, id: window::Id) -> Option<&control::OutputSnapshot> {
         let name = self.outputs.iter().find(|entry| entry.bar == id)?.name.as_deref()?;
         self.snapshot.outputs.iter().find(|output| output.name == name)
@@ -45,6 +70,9 @@ impl FereseShell {
                 .into();
         }
         let panel = self.panel_for_bar(id);
+        if let Some(name) = &self.snapshot.binding_mode {
+            return self.view_binding_mode(id, name);
+        }
         if panel.style == ferese_panel::PanelStyle::Morph {
             return self.view_hub(id);
         }
@@ -248,6 +276,72 @@ impl FereseShell {
             })),
         );
         self.with_workspace_hover(id, content)
+    }
+
+    fn view_binding_mode<'a>(&'a self, id: window::Id, name: &'a str) -> Element<'a, cosmic::Action<Message>> {
+        let panel = self.panel_for_bar(id);
+        let output = self.outputs.iter().find(|entry| entry.bar == id).expect("panel output");
+        let effects = output.effects.as_ref();
+        let width = output
+            .runtime
+            .hub
+            .as_ref()
+            .map(|hub| hub.borrow().allocation[0])
+            .unwrap_or_else(|| output.size.map_or(320, |size| size.0 as u32))
+            .min(320);
+        let badge_id = cosmic::iced::advanced::widget::Id::new("ferese-binding-mode");
+        let title = self
+            .render
+            .text(format!("Mode: {name}"))
+            .size(14)
+            .width(Length::Fill)
+            .ellipsize(cosmic::iced::widget::text::Ellipsize::End(
+                cosmic::iced::advanced::text::EllipsizeHeightLimit::Lines(1),
+            ));
+        let badge = container(
+            row![title, self.render.text("Esc to exit").size(12)]
+                .spacing(12)
+                .align_y(cosmic::iced::Alignment::Center),
+        )
+        .id(badge_id.clone())
+        .padding([0, 12])
+        .width(width as f32)
+        .height(panel.resolved_geometry().height)
+        .align_y(alignment::Vertical::Center);
+        let content = container(badge).center_x(Length::Fill).center_y(Length::Fill);
+        let palette = self.config.theme.for_bar();
+        let mut background = color(palette.bar_background);
+        background.a = palette.panel_opacity(panel.background_opacity);
+        // Replace the native paint/input scene as well as the text. Retaining
+        // the previous bar or Morph scene can clip a newly displayed mode.
+        ferese_theme::panel_surface::frame(
+            content.into(),
+            ferese_theme::panel_surface::Options {
+                parameters: panel.shape_parameters(),
+                bounds: Some(badge_id.clone()),
+                groups: vec![(badge_id, ferese_panel::shape::ZonePosition::Center)],
+                scale: output.scale,
+                high_contrast: palette.high_contrast,
+                background,
+                border: if panel.border {
+                    color(palette.border)
+                } else {
+                    Color::TRANSPARENT
+                },
+                divider: Color::TRANSPARENT,
+                native: effects.is_some(),
+            },
+            move |scene| {
+                if let Some(effects) = effects
+                    && let Err(error) = effects.set_panel_presentation(scene)
+                {
+                    eprintln!("ferese-shell: could not update binding mode material: {error}");
+                }
+            },
+            Some(Box::new(move |scene| {
+                cosmic::Action::App(Message::PanelSurfaceChanged(id, Box::new(scene.clone())))
+            })),
+        )
     }
 
     pub(super) fn with_workspace_hover<'a>(
@@ -706,6 +800,9 @@ pub(super) fn bar_hidden(snapshot: &ShellSnapshot) -> bool {
 }
 
 pub(super) fn output_bar_hidden(snapshot: &ShellSnapshot, output: Option<u64>) -> bool {
+    if snapshot.binding_mode.is_some() {
+        return false;
+    }
     let active_workspace = snapshot
         .outputs
         .iter()
@@ -832,6 +929,17 @@ pub(super) fn bar_group_style(theme: ShellTheme) -> container::Style {
 #[cfg(test)]
 mod island_tests {
     use super::*;
+
+    #[test]
+    fn mode_indicator_stays_visible_on_fullscreen_outputs() {
+        let mut snapshot = super::super::tests::snapshot_with_fullscreen_window(7);
+        assert!(output_bar_hidden(&snapshot, Some(1)));
+        snapshot.binding_mode = Some("resize".into());
+        assert!(!output_bar_hidden(&snapshot, Some(1)));
+        snapshot.binding_mode = None;
+        assert!(output_bar_hidden(&snapshot, Some(1)));
+    }
+
     use crate::panel::{ItemId, Panel};
     use cosmic::iced::advanced::{Layout, layout, renderer::Headless, widget};
     use cosmic::iced::{Font, Pixels, Rectangle, Size};

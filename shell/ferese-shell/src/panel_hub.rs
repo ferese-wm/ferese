@@ -251,7 +251,7 @@ impl FereseShell {
     }
 
     pub(super) fn open_hub(&mut self, id: window::Id, kind: status_ui::Menu) -> Task<Message> {
-        if self.bar_hidden(id) || self.hub_mode(id).is_none() {
+        if self.snapshot.binding_mode.is_some() || self.bar_hidden(id) || self.hub_mode(id).is_none() {
             return Task::none();
         }
         if kind == status_ui::Menu::Notifications {
@@ -296,7 +296,8 @@ impl FereseShell {
         let Some(id) = self.active_bar() else {
             return Task::none();
         };
-        if self.bar_hidden(id)
+        if self.snapshot.binding_mode.is_some()
+            || self.bar_hidden(id)
             || self.hub_priority().is_some()
             || !matches!(self.hub_mode(id), Some(Mode::Idle | Mode::Peek | Mode::Toast))
             || !self
@@ -361,6 +362,9 @@ impl FereseShell {
     }
 
     fn transition_hub(&mut self, id: window::Id, event: Event) -> Task<Message> {
+        if self.snapshot.binding_mode.is_some() && !matches!(event, Event::Close | Event::Resize) {
+            return Task::none();
+        }
         let workspace_width = self.hub_workspace_width(id);
         let panel = self.panel_for_bar(id);
         let geometry = panel.resolved_geometry();
@@ -1881,6 +1885,43 @@ mod tests {
             assert_eq!(runtime.hub.target_size()[0], 224.);
             assert!(!runtime.hub.active(), "status refresh restarted the idle morph");
         }
+    }
+
+    #[test]
+    fn activity_updates_keep_the_binding_indicator_as_the_only_geometry_owner() {
+        let mut app = shell();
+        let bar = app.outputs[0].bar;
+        app.snapshot.binding_mode = Some("resize".into());
+        drop(app.binding_mode_transition(false));
+        let (allocation, target) = {
+            let runtime = app.outputs[0].runtime.hub.as_ref().unwrap().borrow();
+            (runtime.allocation, runtime.hub.target_size())
+        };
+        seed_activities(&mut app, 3);
+        drop(app.sync_hub_activity());
+        {
+            let runtime = app.outputs[0].runtime.hub.as_ref().unwrap().borrow();
+            assert_eq!(
+                runtime.activities.selection.visible.len(),
+                2,
+                "activity data must still update"
+            );
+            assert_eq!(
+                runtime.hub.target_size(),
+                target,
+                "hidden activity content cannot retarget the hub"
+            );
+            assert_eq!(runtime.allocation, allocation);
+            assert!(!runtime.hub.active());
+        }
+        app.snapshot.binding_mode = None;
+        drop(app.binding_mode_transition(true));
+        assert_ne!(
+            app.outputs[0].runtime.hub.as_ref().unwrap().borrow().hub.target_size(),
+            target
+        );
+        drop(app.open_hub(bar, status_ui::Menu::Activities));
+        assert_eq!(app.hub_mode(bar), Some(Mode::Expanded(Content::Activities)));
     }
 
     #[test]
