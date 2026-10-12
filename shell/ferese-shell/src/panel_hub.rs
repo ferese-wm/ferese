@@ -960,10 +960,18 @@ impl FereseShell {
             ItemKind::Overview => (icons::OVERVIEW, None),
             ItemKind::QuickSettings => (icons::SETTINGS, Some(status_ui::Menu::System)),
             ItemKind::Network => (icons::WIFI, Some(status_ui::Menu::Network)),
-            ItemKind::Recording => (icons::RECORD, None),
+            ItemKind::Recording => (
+                match self.recorder.state {
+                    crate::recording::State::Selecting => icons::RECORD_CANCEL,
+                    crate::recording::State::Recording(_) => icons::RECORD_STOP,
+                    crate::recording::State::Saving => icons::RECORD_SAVING,
+                    _ => icons::RECORD,
+                },
+                None,
+            ),
             ItemKind::Audio => (icons::VOLUME, Some(status_ui::Menu::Audio)),
             ItemKind::Battery { .. } => (icons::BATTERY, Some(status_ui::Menu::Battery)),
-            ItemKind::DisplayMode => (icons::DISPLAY, None),
+            ItemKind::DisplayMode if self.display_mode.external_connected() => (icons::DISPLAY, None),
             _ => return None,
         };
         let message = match kind {
@@ -1023,7 +1031,7 @@ impl FereseShell {
             }
             if matches!(
                 item.kind,
-                ItemKind::Network | ItemKind::Recording | ItemKind::Audio | ItemKind::Battery { .. }
+                ItemKind::Network | ItemKind::Audio | ItemKind::Battery { .. }
             ) {
                 continue;
             }
@@ -1762,7 +1770,8 @@ mod tests {
             let shortcuts = shell.hub_shortcuts(id);
             assert_eq!(shortcuts.len(), count);
             assert!(!shortcuts.contains(&ItemKind::Network));
-            assert!(!shortcuts.contains(&ItemKind::Recording));
+            assert_eq!(shortcuts.contains(&ItemKind::Recording), count > 0);
+            assert!(!shortcuts.contains(&ItemKind::DisplayMode));
             assert!(!shortcuts.contains(&ItemKind::Audio));
             assert!(!shortcuts.iter().any(|kind| matches!(kind, ItemKind::Battery { .. })));
         }
@@ -1782,13 +1791,14 @@ mod tests {
             if item.kind == ItemKind::Overview {
                 item.visible = false;
             }
-            if item.kind == ItemKind::DisplayMode {
+            if matches!(item.kind, ItemKind::DisplayMode | ItemKind::Recording) {
                 item.overflow = ferese_panel::OverflowPolicy::Always;
             }
         }
         let shortcuts = shell.hub_shortcuts(id);
         assert!(!shortcuts.contains(&ItemKind::Overview));
         assert!(!shortcuts.contains(&ItemKind::DisplayMode));
+        assert!(!shortcuts.contains(&ItemKind::Recording));
         shell.outputs[0].size = Some((200, 600));
         assert!(
             shell.hub_shortcuts(id).is_empty(),
