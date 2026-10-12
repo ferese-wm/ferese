@@ -381,7 +381,14 @@ impl FereseShell {
             } else {
                 runtime.idle_content_width = None;
             }
-            if before != runtime.activities.selection.visible {
+            // Compact ranking changes must not replay the expanded panel's
+            // crossfade: its live rows update in place, preserving focus/scroll.
+            if before != runtime.activities.selection.visible
+                && matches!(
+                    runtime.hub.mode(),
+                    ferese_panel::morph::Mode::Idle | ferese_panel::morph::Mode::Peek
+                )
+            {
                 runtime.hub.replace_content();
             }
             runtime.refresh_activity_size();
@@ -821,18 +828,25 @@ impl FereseShell {
         if self.hub_workspace_width(id) > 0. {
             controls = controls.push(self.hub_workspaces(id, opacity));
         }
-        controls = controls.push(crate::motion::button(
-            self.render,
-            button::custom(container(strip).height(Length::Fill))
+        let appearance = button::Style {
+            text_color: Some(palette.text.scale_alpha(opacity)),
+            icon_color: Some(palette.text.scale_alpha(opacity)),
+            ..Default::default()
+        };
+        controls = controls.push(
+            button::custom(container(strip).center_y(Length::Fill))
                 .name("Activities. Open the activity list")
                 .padding(0)
                 .width(Length::Fill)
                 .height(Length::Fill)
+                .class(theme::Button::Custom {
+                    active: Box::new(move |_, _| appearance),
+                    hovered: Box::new(move |_, _| appearance),
+                    pressed: Box::new(move |_, _| appearance),
+                    disabled: Box::new(move |_| appearance),
+                })
                 .on_press(cosmic::Action::App(Message::HubOpen(id, status_ui::Menu::Activities))),
-            palette.text,
-            false,
-            opacity,
-        ));
+        );
         let budget = if presentation.selection.visible.len() == 2 {
             330.
         } else {
@@ -879,25 +893,34 @@ impl FereseShell {
             return self.render.text("No active tasks").size(13).into();
         }
         for activity in entries {
-            let mut body = column![
-                row![
-                    self.activity_icon(activity, palette.text.scale_alpha(opacity), false),
-                    self.render
-                        .text(activity.data.title.clone())
-                        .size(13)
-                        .width(Length::Fill)
-                        .ellipsize(cosmic::iced::widget::text::Ellipsize::End(
-                            cosmic::iced::advanced::text::EllipsizeHeightLimit::Lines(1)
-                        ))
-                ]
-                .spacing(8)
-                .align_y(Alignment::Center),
+            let text = column![
+                self.render
+                    .text(activity.data.title.clone())
+                    .size(13)
+                    .width(Length::Fill)
+                    .ellipsize(cosmic::iced::widget::text::Ellipsize::End(
+                        cosmic::iced::advanced::text::EllipsizeHeightLimit::Lines(1)
+                    )),
                 self.render
                     .text(label(activity))
                     .size(12)
-                    .class(theme::Text::Color(palette.text.scale_alpha(opacity)))
+                    .width(Length::Fill)
+                    .ellipsize(cosmic::iced::widget::text::Ellipsize::End(
+                        cosmic::iced::advanced::text::EllipsizeHeightLimit::Lines(1)
+                    ))
+                    .class(theme::Text::Color(palette.text.scale_alpha(opacity * 0.7)))
             ]
-            .spacing(6)
+            .spacing(2)
+            .width(Length::Fill);
+            let mut body = column![
+                row![
+                    self.activity_icon(activity, palette.text.scale_alpha(opacity), false),
+                    text
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center)
+            ]
+            .spacing(4)
             .width(Length::Fill);
             match &activity.data.template {
                 Template::Media { artist, playing } => {
@@ -925,17 +948,22 @@ impl FereseShell {
             }
             let selected = focus.as_ref() == Some(&activity.id);
             rows.push(
-                button::custom(container(body).padding(10))
-                    .id(activity_widget_id(id, &activity.id))
-                    .name(format!("{}, {}", activity.data.title, label(activity)))
-                    .selected(selected)
-                    .on_press(cosmic::Action::App(Message::ActivityFocus(id, activity.id.clone())))
-                    .width(Length::Fill)
-                    .into(),
+                row![
+                    button::custom(body)
+                        .padding([6, 8])
+                        .id(activity_widget_id(id, &activity.id))
+                        .name(format!("{}, {}", activity.data.title, label(activity)))
+                        .selected(selected)
+                        .on_press(cosmic::Action::App(Message::ActivityFocus(id, activity.id.clone())))
+                        .width(Length::Fill),
+                ]
+                .width(Length::Fill)
+                .into(),
             );
         }
-        // Named button IDs preserve row state across reordering. The toolkit's
-        // keyed column bypasses the named-state restoration during UI rebuilds.
-        column::with_children(rows).spacing(8).width(Length::Fill).into()
+        // Keep unnamed row roots: the toolkit's column does not move directly
+        // named child trees when their order changes. Inner button IDs restore
+        // focus through the normal named-state reconciliation on each rebuild.
+        column::with_children(rows).spacing(4).width(Length::Fill).into()
     }
 }

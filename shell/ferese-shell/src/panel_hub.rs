@@ -1276,6 +1276,66 @@ mod tests {
         });
     }
     #[test]
+    fn open_activity_list_survives_publisher_churn() {
+        use cosmic::iced::advanced::renderer::Headless;
+        let renderer = cosmic::iced::futures::executor::block_on(cosmic::Renderer::new(
+            cosmic::iced::Font::default(),
+            cosmic::iced::Pixels(14.),
+            Some("tiny-skia"),
+        ))
+        .unwrap();
+        let mut app = shell();
+        let id = app.outputs[0].bar;
+        seed_activities(&mut app, 3);
+        drop(app.sync_hub_activity());
+        drop(app.open_hub(id, status_ui::Menu::Activities));
+        let mut tree = widget::Tree::empty();
+        for count in [3, 2, 1, 3, 0, 2, 3] {
+            let opacity = app.outputs[0]
+                .runtime
+                .hub
+                .as_ref()
+                .unwrap()
+                .borrow()
+                .hub
+                .sample()
+                .opacity;
+            seed_activities(&mut app, count);
+            app.sync_activity_presentations();
+            assert_eq!(
+                app.outputs[0]
+                    .runtime
+                    .hub
+                    .as_ref()
+                    .unwrap()
+                    .borrow()
+                    .hub
+                    .sample()
+                    .opacity,
+                opacity,
+                "publisher changes must not restart the open panel's crossfade"
+            );
+            for _ in 0..50 {
+                let runtime = app.outputs[0].runtime.hub.as_ref().unwrap();
+                let (sample, previous_menu) = {
+                    let mut runtime = runtime.borrow_mut();
+                    runtime.hub.advance(Duration::from_millis(16), false);
+                    (runtime.hub.sample(), runtime.previous.menu)
+                };
+                let mut view = app.view_hub_at(id, sample, Some(status_ui::Menu::Activities), previous_menu);
+                widget::tree::NAMED.with(|named| *named.borrow_mut() = tree.take_all_named());
+                tree.diff(&mut view);
+                view.as_widget_mut().layout(
+                    &mut tree,
+                    &renderer,
+                    &layout::Limits::new(Size::ZERO, Size::new(1200., 800.)),
+                );
+                widget::tree::NAMED.with(|named| named.borrow_mut().clear());
+            }
+        }
+    }
+
+    #[test]
     fn activity_transitions_reconcile_the_existing_widget_tree() {
         use cosmic::iced::advanced::renderer::Headless;
         let renderer = cosmic::iced::futures::executor::block_on(cosmic::Renderer::new(
