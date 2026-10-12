@@ -22,6 +22,7 @@ Ferese combines a window manager and desktop shell with one configuration.
 - Scrolling columns, window groups, tree tiling and floating windows with saved size and position
 - Integrated shell with notifications, media controls, Settings and Control Center
 - [Custom panels](docs/panel-configuration.md) with seven styles, editable groups and items, and top or bottom placement
+- [Live Activities](docs/activities.md) for build status, running commands and progress from connected apps
 - Workspace overview and recent-window switching
 - [Continuum animations](docs/configuration.md#animations): interruptible springs, gesture momentum and shared motion controls
 - Live wallpapers and blur, custom KDL themes, and Light/Dark/Auto modes

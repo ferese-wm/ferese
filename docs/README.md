@@ -10,6 +10,7 @@
 
 ## Use the desktop
 
+- [Live Activities](activities.md): show running commands in the panel, configure detection and troubleshoot missing tasks.
 - [Shortcuts and gestures](shortcuts.md): keyboard navigation, moving and resizing with Super-drag, and window grouping.
 - [Lock screen](locking.md): change its appearance, set up automatic locking and configure display sleep.
 - [Screen sharing and recording](screen-sharing.md): choose a source and stop sharing.
@@ -18,10 +19,9 @@
 
 ## Develop Ferese
 
+- [Live Activities reference](activities-reference.md): command rules, publisher ownership, templates and IPC.
 - [Packages and releases](packaging.md): build Fedora and Arch packages and publish a tagged release.
 - [Development](development.md): build Ferese, run tests and check portal contracts.
 - [Nested resize checks](nested-resize-testing.md).
 - [Client soak testing](native-soak-testing.md).
 - [Website development](../site/README.md).
-
-- [Live Activities](activities.md): configurable item, local publishers, rules and hooks.

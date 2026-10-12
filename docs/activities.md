@@ -1,118 +1,149 @@
 # Live Activities
 
-Add **Activities** from Settings → Panels → Arrange to any group in Start,
-Center, or End. It is a normal item with visibility, representation, priority,
-gaps, and overflow settings. Existing panel definitions keep their item order.
-Flat, Floating, and Adaptive panels use the configured position and an anchored
-list popup. Morph uses the configured item inside its existing central island,
-with compact/split content and the same list. Morph's zones remain its control
-catalog; they do not create separate islands.
+Live Activities shows running commands and other tasks in your panel. A build
+can stay visible while you work in another window; click its activity to return
+to the terminal when Ferese can identify that window. The panel supplies the
+appearance, so tasks use your theme and animation settings.
 
-```kdl
-panel "main" {
-    style "floating"
-    end {
-        group "tasks" {
-            item "activities" kind="activities" priority=20
-        }
-    }
-}
-```
+## Start using it
 
-The item has no content when no ordinary task is eligible. Known progress shows
-the percentage inside a ring; indeterminate work shows a rotating arc around its
-icon, without a percentage. Hidden items and measurement widgets do not animate.
-Reduced motion snaps progress and uses a static track. Morph preserves recording
-and low-battery priority, including their combined presentation. DND limits ordinary
-running activities to one, hides the count, and suppresses terminal flashes.
-Click opens the list; arrow keys select rows and their identity survives reorder.
-Clicking a linked activity, or pressing Enter on its row, brings its terminal
-window into focus and closes the list. The compositor matches the publisher's
-process ancestry to a Wayland window when the activity starts. If the window has closed,
-or a terminal server owns several possible windows, clicking leaves the list
-open. Selecting a particular tmux pane is not supported.
-Workspace buttons retain their own actions. Automatic expansion is disabled.
-
-## Publishing
-
-Use the same socket selection as every other control command: `--socket`, then
-`FERESE_SOCKET`, then the session runtime default. Separate nested sessions keep
-separate brokers. One-shot commands use their verified immediate parent (normally
-the shell), not the CLI connection, as lifetime owner. IDs are local to that owner.
-A direct publisher and `run` use the publishing process itself. The host obtains
-kernel peer credentials and a socket-bound pidfd, checks the parent relationship,
-process birth and UID, and monitors owner exit. This requires Linux 6.5 or newer;
-an unverifiable owner is rejected instead of trusting a JSON PID.
+After installing with `./scripts/install.sh`, open a new terminal and run a
+command as usual:
 
 ```sh
-feresectl activity start build --icon hammer --title "Build"
-feresectl activity update build --progress 0.6
-feresectl activity end build --result ok --message "Built"
-feresectl activity cancel build
-feresectl activity start tea --icon timer --title "Tea" --remaining-ms 180000
-feresectl run --title "cargo test" -- cargo test
+cargo build
 ```
 
-`start` prints a JSON handle containing owner, session and generation. The
-`--handle` option on update/end/cancel checks that exact invocation. Omitting it
-resolves the local ID only within the same verified owner. Duplicate starts are
-rejected. Repeated identical accepted results keep the original result deadline;
-a removed or superseded generation is stale. Register again after broker restart.
+The installer detects Fish, Bash or Zsh, installs its shell hook, enables shell
+activities and adds an Activities item to your panel. A Cargo build appears
+once it has run for **1.5 seconds**. A cached build that finishes sooner stays
+hidden, including its completion message.
 
-Each owner may hold three records, including delayed and terminal entries. The
-session defaults to 128 records, a priority ceiling of 160 and two compact slots.
-New publications are limited to ten per owner per second. Replaceable updates
-are limited to 30 per owner per second; rejected updates get
-an explicit error. The bar coalesces snapshots through a bounded latest-value
-subscription while the broker retains accepted results. Terminal/cancel dispatch waits for bounded dispatcher capacity
-on the socket worker. A CLI disconnect does not remove an owner's records.
-Running owner death and expired leases remove entries without assigning a result.
-Results survive owner exit until their original deadline. Leases are positive and
-at most five minutes; valid refreshes renew only the lease.
+These command rules are included:
 
-Activities stay on their creation output, initially the focused output. On output
-removal they move to the first surviving output, or become unpresented until an
-output is available. Host timestamps use `CLOCK_BOOTTIME`, including suspend.
-Countdown wire timestamps are ignored and replaced with host sample time.
+| Command | Delay before appearing |
+| --- | --- |
+| `cargo build`, `check`, `test`, `run`, `clippy` | 1.5 seconds |
+| `npm` or `pnpm` followed by `install`, `build`, `test`, `run` | 1.5 seconds |
+| `make` | 300 ms |
+| `git push` | 300 ms |
+| `docker build` | 1.5 seconds |
 
-## Extensions and templates
+Rules match the command text at the start of the line. Commands such as
+`cargo +nightly build`, `npm ci`, or `env RUSTFLAGS=... cargo build` need a custom
+rule or an explicit wrapper. Commands that don't match a rule are discarded
+without being logged.
 
-The version-1 activity schema is carried inside the existing versioned,
-length-prefixed JSON `activity-publish` command. `activity-get` and long-poll
-`activity-watch` provide snapshots. See `ferese_ipc::activities` and
-`ferese_activities::Data`; there is no second socket or JSON-lines protocol.
-
-Extensions publish typed Progress, Timer, Media, or List data. The bar controls
-rendering. Values are indeterminate, finite progress in `[0,1]`, bounded text, or
-countdown durations. Titles/text are limited to 256 UTF-8 bytes; lists to eight
-rows. Icons are symbolic names; unknown names use the Ferese symbol, and paths
-are rejected. No extension widgets, markup, colors, shaders or drawing programs
-are accepted.
-
-For example, an actual download integration can publish its own reliable fraction:
+To check the display without waiting for a build, run:
 
 ```sh
-feresectl activity start download --source download --icon download \
-    --title "Downloading update" --progress 0.2
-feresectl activity update download --progress 0.7
+feresectl run --title "Activity check" -- sleep 5
 ```
 
-Use `--template` with a typed JSON template, e.g.
-`'{"kind":"list","data":{"rows":["Indexing files","Waiting for server"]}}'`.
-Capture/call integrations use `--source capture` and describe the state they
-actually observe. Process names, microphone use, or camera use do not infer calls
-or downloads. Existing MPRIS state supplies Media rows and transport controls;
-recording/battery reuse the shell's existing protected state and watchers.
+This publishes directly and doesn't need a shell hook, but the panel still needs
+an Activities item. The check appears after 300 ms and finishes after five
+seconds.
 
-The optional notification bridge uses existing notification state, ranks below
-all other ordinary sources, and respects DND and popup privacy. When enabled, a
-notice becomes an activity rather than a duplicate toast. It is off by default.
+### Existing installations
 
-## Rules and opt-in detection
+From an updated Ferese checkout, rerun user setup as your normal user:
 
-In Settings → Panel & Shell → Appearance, **Visible activities** sets the Morph
-limit to one or two. **Show activity count** toggles the `+n` badge. Clicking the
-activity strip opens the full list even when the badge is hidden.
+```sh
+python3 scripts/installer/install.py user-setup
+```
+
+This needs the updated `feresectl` installed. Setup backs up changed config and
+shell startup files. It preserves an explicit `shell-hook #false` setting and
+an existing Activities item, including one you've hidden. After the first
+successful setup, later installs update the hook files without restoring panel
+items you've removed or changing your activity settings.
+
+Open a new terminal to load the hook. In an existing Fish terminal, you can
+load it immediately with:
+
+```fish
+source ~/.config/fish/conf.d/ferese-activities.fish
+```
+
+The paths above use the default configuration directory. If you set
+`XDG_CONFIG_HOME`, use that directory in place of `~/.config`.
+
+### Add Activities to your panel
+
+Open **Settings → Panel & Shell → Edit panel**, select a group in Arrange, and
+choose **Add item → Activities**. Keep its visibility enabled. This is also how
+to restore the item after removing it.
+
+Activities can live in Start, Center or End. Regular panels use that position
+and open the activity list in a popup. Morph presents tasks inside its existing
+island and adds an Activities tab. Changing a group's position doesn't create
+another Morph island. See [Panel configuration](panel-configuration.md) for item
+placement and overflow controls.
+
+## Run a command explicitly
+
+Use `feresectl run` for commands outside the built-in rules, unsupported shells,
+or scripts where an interactive hook doesn't run:
+
+```sh
+feresectl run --title "Backup" -- ./backup.sh
+feresectl run --title "Tests" -- npm test
+```
+
+Arguments after `--` are passed to the command. It keeps its terminal input,
+output, working directory and exit status, and still runs if activity publishing
+fails. Completion follows the command's exit. A background descendant holding
+stdout open does not keep the wrapper alive indefinitely.
+
+### Cargo progress
+
+A normal `cargo build` shows that the command is running and whether it finishes
+successfully. It doesn't report a percentage. To show the number of compilation
+units completed, use the Cargo adapter:
+
+```sh
+feresectl run --cargo-json -- cargo build
+```
+
+The adapter reads Cargo's JSON output while keeping diagnostics readable in the
+terminal. It reports completed units as text because Cargo doesn't supply a
+reliable total for a percentage. Setting `progress "cargo-json"` in a rule enables
+this adapter for matching `feresectl run` commands; it does not wrap plain
+`cargo build` automatically.
+
+## Use the activity list
+
+Morph shows up to two activities in its collapsed and peek states, with a `+n`
+badge for additional tasks. Higher-priority tasks appear first, with temporary
+boosts for new tasks and completion results. Hovering holds the current selection
+in place while its values continue updating. Recording and low battery take
+priority over ordinary activities.
+
+Click the activity strip or open the Activities tab to see the list. Arrow keys
+select a row and Enter activates it. Selecting a linked task focuses its terminal
+and closes the list. If the terminal has closed, or one terminal process owns
+several possible windows, Ferese leaves the list open. It cannot select a
+particular tmux pane.
+
+Tasks with reported progress show a percentage inside a ring. Tasks without a
+percentage show an animated arc around their icon. Reduced motion makes progress
+changes immediate and uses a static track. Activities do not automatically open
+the expanded panel.
+
+A visible task's result stays for 1.5 seconds by default. Do not disturb limits
+ordinary running activities to one, hides the badge and suppresses result
+flashes. When there are no eligible tasks, the regular Activities item has no
+content and Morph returns to its other content.
+
+## Configure Activities
+
+In **Settings → Panel & Shell → Appearance**, **Visible activities** chooses one
+or two slots in Morph's collapsed and peek states. **Show activity count** controls
+the `+n` badge; hiding it still lets you open the full list.
+
+For source and timing settings, edit the top-level `activities` block in
+`~/.config/ferese/config.kdl`. Merge these fields into an existing block rather
+than adding a second one:
 
 ```kdl
 activities {
@@ -125,72 +156,92 @@ activities {
         process-watch #false
         notification-bridge #false
     }
-    rule "cargo" {
-        match #"^cargo (build|check|test|run|clippy)\b"#
-        title "cargo {1}"
-        icon "hammer"
-        priority 100
-        progress "indeterminate"
-        min-duration-ms 1500
-        ignore-parents "rust-analyzer"
-        dedupe-by "cwd"
-        flash-on-fail #true
-        result ok="Finished" fail="Command failed"
-    }
 }
 ```
 
-User rules run in declaration order, then unreplaced built-ins in Cargo,
-npm/pnpm, make, git-push, docker-build order. A user rule replaces the entire
-built-in with the same name. One command selects one rule, pinned for its lifetime.
-`ignore-parents` accepts multiple names. Regex input/pattern/program sizes are
-bounded. Command and cwd metadata are used only during matching; nonmatches are
-discarded and never logged. Grouping hashes cwd within owner/rule. Invocations
-retain independent lifetimes and progress is never averaged.
+| Setting | Effect |
+| --- | --- |
+| `max-visible` | One or two compact activity slots. |
+| `show-badge` | Show `+n` for tasks beyond those slots. |
+| `start-delay-ms` | Minimum delay for a new task; a rule can require a longer delay. |
+| `result-flash-ms` | How long an eligible completion result remains visible. |
+| `shell-hook` | Accept command start/end events from an installed shell hook. |
+| `process-watch` | Opt-in process sampling when hooks aren't available; process disappearance removes the task without inferring success or failure. |
+| `notification-bridge` | Present notifications as activities instead of duplicate toasts, respecting Do not disturb and notification popup settings. |
 
-The global/rule visibility delay is their maximum. Completion before that delay,
-including failure, never flashes. Eligible results last 1500 ms by default;
-`flash-on-fail #false` removes failures directly. Configuration is validated
-before application; an invalid reload preserves the last valid configuration.
-Diagnostics include source offsets for activity configuration errors.
+The process watcher and notification bridge stay off unless you enable them.
+Media comes from MPRIS; downloads and call statuses need an integration that
+publishes them. Microphone or camera use alone does not create a call activity.
 
-`scripts/install.sh` detects your login shell and installs its hook during user
-setup. On first setup it enables shell activities and adds the Activities item
-without replacing your panel layout. Existing `shell-hook #false` settings are
-preserved, and later installs leave your activity settings and panel items alone.
-Use `--no-activities` to skip this setup. Open a new terminal after installing.
+Changes reload live. Invalid edits leave the last valid configuration in use;
+check an edit with `ferese --check-config ~/.config/ferese/config.kdl`.
+For command patterns, custom titles, per-rule delays and completion messages,
+see [Command rules](activities-reference.md#command-rules).
 
-For manual setup, source the matching file in `contrib/activities/`. zsh uses
-`add-zsh-hook`, fish uses named pre/postexec events, and Bash composes with
-[bash-preexec](https://github.com/rcaloras/bash-preexec)'s hook arrays. Load
-bash-preexec before the Bash hook; the hook does not replace an existing DEBUG
-trap. Hook files never execute captured command text and preserve command status.
-Without installer setup, hooks and process watching are off by default. The optional process watcher is
-an alternative when hooks are unavailable; it performs bounded sampling on one
-worker, and disappearance means expiry, never inferred success/failure.
+### Turn off automatic command detection
 
-`feresectl run` preserves argv, cwd, environment, terminal process group,
-stdout/stderr, and child exit/signal status. Publishing failure leaves execution
-available. It does not automatically wrap shell commands. `progress "cargo-json"`
-opts a matched rule into the supported `run` adapter; `run --cargo-json` explicitly
-opts in one Cargo invocation. The adapter adds Cargo JSON diagnostics, preserves
-rendered diagnostics and non-JSON output, and reports completed units as text.
-`build-finished` never completes the activity; the actual child exit does.
-Cargo does not provide a reliable total-work denominator. See the
-[Cargo JSON contract](https://doc.rust-lang.org/cargo/reference/external-tools.html).
+Set `shell-hook #false` inside `activities.sources`. Leave `process-watch` off
+as well if you don't want process detection. You can still use `feresectl run`
+and direct publishers.
 
-## Validation
+To skip shell and Activities setup during installation, pass
+`./scripts/install.sh --no-activities`. This skips setup for that installation;
+it doesn't remove an existing hook or disable an already configured source.
+
+## If nothing appears
+
+1. **Try the five-second check above.** If it appears, the display and broker
+   work; check shell setup and command matching next.
+2. **Check the panel item.** In Arrange, confirm that Activities exists and is
+   visible. On a regular panel, also check its overflow and available space.
+3. **Open a new terminal.** Installing a hook doesn't load it into terminals
+   that are already open. Confirm `shell-hook #true` in your config too.
+4. **Check the command and duration.** Cargo and npm tasks must last at least
+   1.5 seconds under the built-in rules. A custom rule can increase that delay.
+   Prefixes and different subcommands may not match the built-in patterns.
+5. **Inspect the broker while the task runs:**
+
+   ```sh
+   feresectl -j activity list
+   ```
+
+   An empty `activities` array means no task is registered in that session.
+   A registered task can still be waiting for its delay, ranked below another
+   task, or hidden by panel settings. In Morph, also check for recording or a
+   low-battery state taking priority.
+6. **Check the session and build.** A nested preview has its own broker; use the
+   same [session socket](ipc.md#choose-a-session) for publishing and listing.
+   If `activity` or `run` is an unknown command, update the installed binaries.
+   Log out and back in after upgrading the compositor and shell.
+
+Shell hooks suppress publishing errors so they don't interrupt your commands.
+For an ownership or permission error, use a direct publication from the same
+terminal to see the response:
 
 ```sh
-cargo test --locked -p ferese-activities -p ferese-config -p ferese-ipc -p feresectl
-cargo test --locked -p ferese-shell
-python3 scripts/tests/test_activity_hooks.py -v
-FERESE_TEST_ACTIVITIES=1 python3 scripts/tests/test_activities_isolated.py -v
-FERESE_REVIEW_BACKEND=tiny-skia cargo test --locked -p ferese-shell \
-    render_hub_review_states -- --ignored --nocapture
+feresectl activity start diagnostic --title "Activity check" --lease-ms 10000
+feresectl activity cancel diagnostic
 ```
 
-The isolated check starts a private Weston host and broker. Render captures live
-in `/tmp/ferese-hub-review`; they include single/split/list content, long titles,
-translucency and 1×/1.25×/1.5× scales. Direct DRM, physical multi-monitor hotplug,
-suspend and live capture hardware still need hardware validation.
+The lease removes this diagnostic after ten seconds if you omit the cancel.
+Ownership verification needs Linux 6.5 or newer. See the
+[publisher reference](activities-reference.md#publisher-ownership-and-lifecycle)
+for ownership, limits and expiry behavior.
+
+## Publish your own status
+
+Run these commands from the same shell. The ID `download` belongs to that shell,
+so another terminal cannot update it:
+
+```sh
+feresectl activity start download --source download --icon download \
+    --title "Downloading update" --progress 0.2
+sleep 2
+feresectl activity update download --progress 0.7
+feresectl activity end download --result ok --message "Downloaded"
+```
+
+This example publishes status only; it doesn't perform a download. Your program
+supplies real progress and completion results. For custom integrations, see the
+[Live Activities reference](activities-reference.md), which covers IDs, leases,
+fixed view templates and the local IPC protocol.

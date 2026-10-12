@@ -41,6 +41,10 @@ Other controls save automatically, with sliders saving when you release them.
 **Undo** restores the previous save, **Reload configuration** reads external
 edits, and **Back to Panels** returns to the appearance controls.
 
+Add **Activities** to show running commands and published task progress. Its
+visibility and overflow follow the same item controls. The
+[Live Activities guide](activities.md) covers shell setup and command detection.
+
 **Remove custom panel** restores the built-in composition, style and geometry;
 Undo brings back the composition you removed.
 
@@ -246,6 +250,11 @@ there is no title. Recording and low-battery states take priority over ordinary
 content. Hovering can expand a preview, and clicking opens the hub's Workspaces,
 Music, Calendar,
 Notifications or Controls view. Escape or the close button collapses it.
+
+With an Activities item configured, running tasks can occupy the collapsed and
+peek states, and the hub gains an Activities tab. **Visible activities** and
+**Show activity count** in Appearance control its compact slots and `+n` badge;
+see [Activities configuration](activities.md#configure-activities).
 
 The Workspaces view shows miniature window layouts. Click a tile to switch
 workspace, use Tab and the arrow keys to navigate it, or drag a miniature window

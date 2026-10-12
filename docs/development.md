@@ -27,6 +27,7 @@ host. Hardware checks remain separate.
 
 ## Test guides
 
+- [Live Activities checks](activities-reference.md#validation): core, CLI, shell hooks, installer setup and native rendering.
 - [Desktop reconciliation](desktop-reconciliation.md): topology publication, hardware failure and presentation ownership.
 
 - [Output management tests](output-management-testing.md): profiles, hotplug, mirroring, lid handling and failed DRM commits.

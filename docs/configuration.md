@@ -7,6 +7,8 @@ and display settings. Its browser/editor shortcuts need Firefox/Zed; brightness
 keys need `brightnessctl` and audio keys need `wpctl`.
 This reference covers layouts, appearance, input, and desktop behavior.
 See [Desktop portals](portals.md) for application integration options.
+The [Live Activities guide](activities.md#configure-activities) covers task
+visibility, shell detection, command rules and notification bridging.
 
 ## KDL syntax
 
