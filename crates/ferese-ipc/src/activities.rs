@@ -69,6 +69,14 @@ pub struct Request {
     pub owner: OwnerScope,
     pub publish: Publish,
 }
+/// Assigned by the compositor, never supplied by publishers.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ActivityWindow {
+    pub activity: Id,
+    pub window: u64,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Snapshot {
@@ -77,6 +85,8 @@ pub struct Snapshot {
     pub now_ms: u64,
     pub limits: Limits,
     pub activities: Vec<Activity>,
+    #[serde(default)]
+    pub windows: Vec<ActivityWindow>,
 }
 impl Default for Snapshot {
     fn default() -> Self {
@@ -86,6 +96,7 @@ impl Default for Snapshot {
             now_ms: now_ms(),
             limits: Limits::default(),
             activities: vec![],
+            windows: vec![],
         }
     }
 }

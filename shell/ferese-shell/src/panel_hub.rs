@@ -8,6 +8,7 @@ use cosmic::iced::{Alignment, Length, window};
 use cosmic::widget::{button, column, container, row, scrollable};
 
 mod activity;
+mod battery;
 mod content_frame;
 mod equalizer;
 mod scroll;
@@ -911,6 +912,9 @@ impl FereseShell {
                     .width(Length::Fill);
                 let tabs = row::with_capacity(2).spacing(2).align_y(Alignment::Center);
                 let mut tabs = tabs.push(navigation);
+                if let Some(battery) = self.hub_battery(id, menu == Some(status_ui::Menu::Battery), opacity) {
+                    tabs = tabs.push(battery);
+                }
                 tabs = tabs.push(motion::button(
                     self.render,
                     button::custom(icons::tinted(icons::CLOSE, 18, icon_primary).opacity(opacity))
@@ -1087,9 +1091,14 @@ impl FereseShell {
                 (f64::from(width) - 2. * f64::from(panel.resolved_geometry().side_margins)).max(0.)
             });
         let width = panel.morph.expanded_width.min(available);
-        // Five tabs and Close keep their space through the morph.
+        // Built-in tabs, battery and Close keep their space through the morph.
         let tabs = if self.activities_configured(id) { 7. } else { 6. };
-        let capacity = ((width - 28. - tabs * 32. - 8.).max(0.) / 32.).floor() as usize;
+        let battery = if self.status.battery.is_some() {
+            battery::WIDTH + 2.
+        } else {
+            0.
+        };
+        let capacity = ((width - 28. - tabs * 32. - battery - 8.).max(0.) / 32.).floor() as usize;
         let mut shortcuts = Vec::new();
         for item in [&panel.start, &panel.center, &panel.end]
             .into_iter()
@@ -1100,7 +1109,7 @@ impl FereseShell {
             if shortcuts.len() == capacity {
                 break;
             }
-            if item.kind == ItemKind::Overview {
+            if matches!(item.kind, ItemKind::Overview | ItemKind::Activities) {
                 continue;
             }
             if matches!(
@@ -1128,10 +1137,10 @@ impl FereseShell {
             .flat_map(|group| &group.items)
             .filter(|item| item.visible)
         {
-            if shortcuts.contains(&item.kind) {
+            if shortcuts.contains(&item.kind) || matches!(item.kind, ItemKind::Battery { .. }) {
                 continue;
             }
-            if item.kind == ItemKind::Overview {
+            if matches!(item.kind, ItemKind::Overview | ItemKind::Activities) {
                 continue;
             }
             let Some(action) = self.hub_control_action(id, item.kind) else {
@@ -1269,6 +1278,46 @@ mod tests {
             ..Default::default()
         });
     }
+    #[test]
+    fn activity_target_must_still_exist_and_activities_has_no_duplicate_shortcut() {
+        let mut app = shell();
+        let bar = app.outputs[0].bar;
+        seed_activities(&mut app, 1);
+        let activity = app.activities.snapshot.activities[0].id.clone();
+        assert_eq!(app.activity_window(&activity), None);
+        std::sync::Arc::make_mut(&mut app.activities.snapshot)
+            .windows
+            .push(ferese_ipc::activities::ActivityWindow {
+                activity: activity.clone(),
+                window: 42,
+            });
+        assert_eq!(app.activity_window(&activity), None);
+        app.snapshot.windows.push(crate::control::WindowSnapshot {
+            id: 42,
+            workspace: 1,
+            geometry: None,
+            app_id: "foot".into(),
+            title: "Terminal".into(),
+            focused: false,
+            urgent: false,
+            fullscreen: false,
+            maximized: false,
+            floating: false,
+        });
+        assert_eq!(app.activity_window(&activity), Some(42));
+        app.snapshot.windows.clear();
+        assert_eq!(app.activity_window(&activity), None);
+        app.config.panels[0].morph.expanded_width = 400.;
+        assert!(!app.hub_shortcuts(bar).contains(&ItemKind::Activities));
+        app.status.battery = None;
+        assert!(app.hub_battery(bar, false, 1.).is_none());
+        app.status.battery = Some(crate::status::Battery {
+            percent: 100,
+            status: "Full".into(),
+        });
+        assert!(app.hub_battery(bar, false, 1.).is_some());
+    }
+
     #[test]
     fn open_activity_list_survives_publisher_churn() {
         use cosmic::iced::advanced::renderer::Headless;
@@ -2675,6 +2724,21 @@ mod tests {
             shell.outputs[0].scale = scale;
             let mut date_pixels = None;
             for (name, mode, menu) in [
+                (
+                    "activities-battery-full",
+                    Mode::Expanded(Content::Activities),
+                    Some(status_ui::Menu::Activities),
+                ),
+                (
+                    "activities-battery-low",
+                    Mode::Expanded(Content::Activities),
+                    Some(status_ui::Menu::Activities),
+                ),
+                (
+                    "activities-battery-light",
+                    Mode::Expanded(Content::Activities),
+                    Some(status_ui::Menu::Activities),
+                ),
                 ("activities-light", Mode::Idle, None),
                 ("activities-narrow", Mode::Idle, None),
                 ("activities-single", Mode::Idle, None),
@@ -2817,11 +2881,32 @@ mod tests {
                     percent: 12,
                     status: "Discharging".into(),
                 });
-                let document = ferese_config::Document::parse(if name == "activities-light" {
-                    "theme { mode light; }"
-                } else {
-                    "theme { mode dark; }"
-                })
+                if name.starts_with("activities-battery-") {
+                    shell.status.battery = Some(crate::status::Battery {
+                        percent: if name.ends_with("full") {
+                            100
+                        } else if name.ends_with("low") {
+                            9
+                        } else {
+                            87
+                        },
+                        status: if name.ends_with("full") {
+                            "Full"
+                        } else if name.ends_with("low") {
+                            "Discharging"
+                        } else {
+                            "Charging"
+                        }
+                        .into(),
+                    });
+                }
+                let document = ferese_config::Document::parse(
+                    if matches!(name, "activities-light" | "activities-battery-light") {
+                        "theme { mode light; }"
+                    } else {
+                        "theme { mode dark; }"
+                    },
+                )
                 .unwrap();
                 let candidate = ferese_config::theme::resolve(
                     &document,
@@ -2938,7 +3023,7 @@ mod tests {
                     &renderer,
                     &layout::Limits::new(Size::ZERO, viewport.size()),
                 );
-                if shell.hub_priority().is_some() {
+                if shell.hub_priority().is_some() && !mode.expanded() {
                     #[derive(Default)]
                     struct TextBounds(Vec<(String, Rectangle)>);
                     impl widget::Operation for TextBounds {

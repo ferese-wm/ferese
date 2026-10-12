@@ -15,6 +15,44 @@ use std::sync::{Arc, Condvar, Mutex};
 pub(crate) struct VerifiedOwner {
     pub owner: Owner,
     fd: OwnedFd,
+    ancestors: Vec<(u32, OwnedFd)>,
+}
+
+impl VerifiedOwner {
+    /// Run on the IPC worker, only for starts. Hold ancestor identities until
+    /// dispatch; a recycled PID must never select a window.
+    pub fn capture_ancestors(&mut self) {
+        let mut next = self.owner.pid;
+        let mut child = None;
+        for _ in 0..16 {
+            let Ok((birth, parent)) = identity(next) else { break };
+            if next == self.owner.pid && birth != self.owner.birth {
+                break;
+            }
+            let Ok(fd) = pidfd(next) else { break };
+            if identity(next).ok() != Some((birth, parent)) || exited(&fd) {
+                break;
+            }
+            if let Some((pid, expected)) = child
+                && identity(pid).ok() != Some(expected)
+            {
+                break;
+            }
+            self.ancestors.push((next, fd));
+            child = Some((next, (birth, parent)));
+            if parent <= 1 || parent == next {
+                break;
+            }
+            next = parent;
+        }
+    }
+
+    pub fn ancestor_pids(&self) -> impl Iterator<Item = u32> + '_ {
+        self.ancestors
+            .iter()
+            .take_while(|(_, fd)| !exited(fd))
+            .map(|(pid, _)| *pid)
+    }
 }
 
 #[derive(Clone)]
@@ -100,10 +138,17 @@ impl Monitor {
             }
             next = parent;
         }
-        Ok((VerifiedOwner { owner, fd }, parents))
+        Ok((
+            VerifiedOwner {
+                owner,
+                fd,
+                ancestors: Vec::new(),
+            },
+            parents,
+        ))
     }
     pub fn register(&self, verified: VerifiedOwner) -> io::Result<Owner> {
-        let VerifiedOwner { owner, fd } = verified;
+        let VerifiedOwner { owner, fd, .. } = verified;
         if exited(&fd) {
             return Err(io::Error::other("activity owner exited before admission"));
         }
@@ -228,6 +273,23 @@ pub(crate) fn inspect(pid: u32) -> io::Result<(Owner, OwnedFd, Vec<String>)> {
 mod tests {
     use super::*;
     #[test]
+    fn captured_ancestry_stops_at_an_exited_process() {
+        let mut child = std::process::Command::new("sleep").arg("30").spawn().unwrap();
+        let (owner, fd, _) = inspect(child.id()).unwrap();
+        let mut verified = VerifiedOwner {
+            owner,
+            fd,
+            ancestors: Vec::new(),
+        };
+        verified.capture_ancestors();
+        assert_eq!(verified.ancestor_pids().next(), Some(child.id()));
+        assert!(verified.ancestor_pids().any(|pid| pid == std::process::id()));
+        child.kill().unwrap();
+        child.wait().unwrap();
+        assert!(verified.ancestor_pids().next().is_none());
+    }
+
+    #[test]
     fn pending_start_survives_monitor_pruning() {
         use ferese_activities::{Data, Source, Template, Value};
         let (sender, _receiver) = channel::sync_channel(16);
@@ -258,6 +320,7 @@ mod tests {
                 },
                 None,
                 Some("test".into()),
+                None,
             )
             .unwrap();
         assert_eq!(engine.store.entries().count(), 1);
@@ -275,7 +338,15 @@ mod tests {
         let (owner, fd, _) = inspect(child.id()).unwrap();
         child.kill().unwrap();
         child.wait().unwrap();
-        assert!(monitor.register(VerifiedOwner { owner, fd }).is_err());
+        assert!(
+            monitor
+                .register(VerifiedOwner {
+                    owner,
+                    fd,
+                    ancestors: Vec::new()
+                })
+                .is_err()
+        );
         assert!(monitor.0.0.lock().unwrap().is_empty());
     }
 

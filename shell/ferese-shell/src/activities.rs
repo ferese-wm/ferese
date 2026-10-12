@@ -621,6 +621,49 @@ impl FereseShell {
             .and_then(|entry| entry.runtime.hub.as_ref())
             .is_some_and(|runtime| !runtime.borrow().activities.selection.visible.is_empty())
     }
+    pub(crate) fn activity_window(&self, activity: &Id) -> Option<u64> {
+        if !self
+            .activities
+            .snapshot
+            .activities
+            .iter()
+            .any(|entry| &entry.id == activity)
+        {
+            return None;
+        }
+        let target = self
+            .activities
+            .snapshot
+            .windows
+            .iter()
+            .find(|target| &target.activity == activity)?;
+        self.snapshot
+            .windows
+            .iter()
+            .any(|window| window.id == target.window)
+            .then_some(target.window)
+    }
+
+    pub fn activate_activity(&mut self, id: window::Id, activity: Id) -> Task<Message> {
+        self.focus_activity(id, activity.clone());
+        let Some(target) = self.activity_window(&activity) else {
+            return Task::none();
+        };
+        let Some(control) = &self.control else {
+            return Task::none();
+        };
+        control.activate_window(target);
+        if let Some(bar) = self.activity_list_bar(id)
+            && self
+                .outputs
+                .iter()
+                .any(|output| output.bar == bar && output.runtime.hub.is_some())
+        {
+            return self.close_hub(bar);
+        }
+        self.close_menu()
+    }
+
     pub fn focus_activity(&mut self, id: window::Id, activity: Id) {
         if let Some(runtime) = self
             .outputs
@@ -993,7 +1036,16 @@ impl FereseShell {
                     button::custom(body)
                         .padding([6, 8])
                         .id(activity_widget_id(id, &activity.id))
-                        .name(format!("{}, {}", activity.data.title, label(activity)))
+                        .name(format!(
+                            "{}, {}{}",
+                            activity.data.title,
+                            label(activity),
+                            if self.activity_window(&activity.id).is_some() {
+                                ". Open terminal"
+                            } else {
+                                ""
+                            }
+                        ))
                         .selected(selected)
                         .class(theme::Button::Custom {
                             active: Box::new(move |focused, _| appearance(0.045, focused)),
@@ -1001,7 +1053,7 @@ impl FereseShell {
                             pressed: Box::new(move |focused, _| appearance(0.10, focused)),
                             disabled: Box::new(move |_| appearance(0.025, false)),
                         })
-                        .on_press(cosmic::Action::App(Message::ActivityFocus(id, activity.id.clone())))
+                        .on_press(cosmic::Action::App(Message::ActivityActivate(id, activity.id.clone())))
                         .width(Length::Fill),
                 ]
                 .width(Length::Fill)

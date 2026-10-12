@@ -211,10 +211,6 @@ impl ShellControl {
         let _ = self.connection.flush();
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "Window-targeting API; the current UI targets workspaces.")
-    )]
     pub(crate) fn activate_window(&self, id: u64) {
         let (hi, lo) = split_id(id);
         self.shell.activate_window(hi, lo);

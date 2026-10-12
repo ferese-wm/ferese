@@ -29,6 +29,7 @@ pub(crate) struct Engine {
     revision: u64,
     watchers: BTreeMap<u64, (u64, SyncSender<Response>)>,
     rates: BTreeMap<Owner, (u64, u16)>,
+    windows: BTreeMap<Id, u64>,
     results: BTreeMap<Id, ferese_config::activities::ResultText>,
 }
 impl Default for Engine {
@@ -49,6 +50,7 @@ impl Default for Engine {
             watchers: BTreeMap::new(),
             rates: BTreeMap::new(),
             results: BTreeMap::new(),
+            windows: BTreeMap::new(),
         }
     }
 }
@@ -93,6 +95,14 @@ impl Engine {
             now_ms: ferese_ipc::activities::now_ms(),
             limits: self.store.limits,
             activities: self.store.entries().cloned().collect(),
+            windows: self
+                .windows
+                .iter()
+                .map(|(activity, window)| ferese_ipc::activities::ActivityWindow {
+                    activity: activity.clone(),
+                    window: *window,
+                })
+                .collect(),
         }
     }
     pub fn remove_connection(&mut self, owner: u64) {
@@ -119,6 +129,8 @@ impl Engine {
     pub fn changed(&mut self) {
         self.revision = self.revision.saturating_add(1);
         self.results
+            .retain(|id, _| self.store.entries().any(|entry| &entry.id == id));
+        self.windows
             .retain(|id, _| self.store.entries().any(|entry| &entry.id == id));
         let snapshot = json!(self.snapshot());
         for (_, (id, sender)) in std::mem::take(&mut self.watchers) {
@@ -156,6 +168,7 @@ impl Engine {
         publish: Publish,
         matched: Option<ferese_config::activities::Matched>,
         output: Option<String>,
+        window: Option<u64>,
     ) -> Result<serde_json::Value, String> {
         // Admission and publication run in one compositor dispatch. A queued
         // request owns its pidfd, but is not yet subject to monitor pruning.
@@ -165,7 +178,9 @@ impl Engine {
             .ok_or("Activity owner monitor unavailable")?
             .register(verified)
             .map_err(|error| error.to_string())?;
-        let result = self.publish(owner, publish, matched, output).map_err(str::to_owned);
+        let result = self
+            .publish_from(owner, publish, matched, output, window)
+            .map_err(str::to_owned);
         self.schedule();
         result
     }
@@ -177,6 +192,23 @@ impl Engine {
         matched: Option<ferese_config::activities::Matched>,
         output: Option<String>,
     ) -> Result<serde_json::Value, &'static str> {
+        self.publish_from(owner, publish, matched, output, None)
+    }
+
+    fn publish_from(
+        &mut self,
+        owner: Owner,
+        publish: Publish,
+        matched: Option<ferese_config::activities::Matched>,
+        output: Option<String>,
+        window: Option<u64>,
+    ) -> Result<serde_json::Value, &'static str> {
+        let started = match &publish {
+            Publish::Start { local, .. } | Publish::Run { local, .. } | Publish::Hook { local, .. } => {
+                Some(local.clone())
+            }
+            _ => None,
+        };
         let now = ferese_ipc::activities::now_ms();
         if matches!(publish, Publish::Hook { .. }) && matched.is_none() {
             return Ok(json!({"matched":false}));
@@ -323,6 +355,12 @@ impl Engine {
                 json!({})
             }
         };
+        if let Some(local) = started
+            && let Some(id) = self.store.resolve(owner, &local)
+            && let Some(window) = window
+        {
+            self.windows.insert(id.clone(), window);
+        }
         self.changed();
         Ok(result)
     }
@@ -337,6 +375,35 @@ impl Engine {
                 .ok_or("unknown owner-scoped activity"),
         }
     }
+}
+
+impl crate::Ferese {
+    pub(crate) fn activity_window(&self, owner: &crate::ipc::activity_owner::VerifiedOwner) -> Option<u64> {
+        use smithay::reexports::wayland_server::Resource;
+        let mut ancestors = owner.ancestor_pids().peekable();
+        ancestors.peek()?;
+        let windows: Vec<_> = self
+            .windows
+            .records()
+            .filter_map(|(id, record)| {
+                let client = record.surface.as_ref()?.client()?;
+                let pid = u32::try_from(client.get_credentials(&self.display_handle).ok()?.pid).ok()?;
+                Some((pid, id.0))
+            })
+            .collect();
+        origin_window(ancestors, &windows)
+    }
+}
+
+fn origin_window(ancestors: impl Iterator<Item = u32>, windows: &[(u32, u64)]) -> Option<u64> {
+    for pid in ancestors {
+        let mut matches = windows.iter().filter(|(client, _)| *client == pid);
+        if let Some((_, window)) = matches.next() {
+            // A terminal server may own several windows. Never guess from focus.
+            return matches.next().is_none().then_some(*window);
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -356,6 +423,72 @@ mod tests {
             template: Template::Progress,
         }
     }
+    #[test]
+    fn terminal_matching_uses_nearest_unique_ancestor_and_never_guesses() {
+        let ancestry = [400, 300, 200, 100];
+        assert_eq!(origin_window(ancestry.into_iter(), &[(200, 7), (100, 8)]), Some(7));
+        assert_eq!(
+            origin_window(ancestry.into_iter(), &[(200, 7), (200, 9), (100, 8)]),
+            None
+        );
+        assert_eq!(origin_window(ancestry.into_iter(), &[(900, 7)]), None);
+        assert_eq!(origin_window([].into_iter(), &[(200, 7)]), None);
+    }
+
+    #[test]
+    fn activity_window_survives_updates_and_results_then_expires() {
+        let mut engine = Engine::default();
+        engine.store.limits.start_delay_ms = 0;
+        engine
+            .publish_from(
+                owner(),
+                Publish::Run {
+                    local: "build".into(),
+                    title: Some("Build".into()),
+                    command: String::new(),
+                    cwd: String::new(),
+                },
+                None,
+                None,
+                Some(42),
+            )
+            .unwrap();
+        let id = engine.store.entries().next().unwrap().id.clone();
+        assert_eq!(engine.snapshot().windows[0].window, 42);
+        engine
+            .publish(
+                owner(),
+                Publish::Update {
+                    local: "build".into(),
+                    handle: Some(id.clone()),
+                    value: Some(Value::Progress(0.5)),
+                    lease_ms: None,
+                },
+                None,
+                None,
+            )
+            .unwrap();
+        assert_eq!(engine.snapshot().windows[0].window, 42);
+        engine
+            .publish(
+                owner(),
+                Publish::End {
+                    local: "build".into(),
+                    handle: Some(id.clone()),
+                    result: State::Done,
+                    message: None,
+                },
+                None,
+                None,
+            )
+            .unwrap();
+        engine.owner_exit(owner());
+        assert_eq!(engine.snapshot().windows[0].activity, id);
+        engine.store.advance(ferese_ipc::activities::now_ms() + 2_000);
+        engine.changed();
+        assert!(engine.snapshot().windows.is_empty());
+    }
+
     #[test]
     fn one_shot_disconnect_does_not_own_lifetime_and_rate_limit_preserves_completion() {
         let mut engine = Engine::default();

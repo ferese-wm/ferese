@@ -217,7 +217,7 @@ enum Message {
     ActivitiesUpdated(std::sync::Arc<ferese_ipc::activities::Snapshot>),
     ActivityTick,
     ActivityHover(window::Id, bool),
-    ActivityFocus(window::Id, ferese_activities::Id),
+    ActivityActivate(window::Id, ferese_activities::Id),
     ActivityNavigation(
         window::Id,
         Option<ferese_activities::Id>,
@@ -452,10 +452,7 @@ impl cosmic::Application for FereseShell {
                 self.activity_hover(id, entered);
                 self.sync_hub_activity()
             }
-            Message::ActivityFocus(id, activity) => {
-                self.focus_activity(id, activity);
-                Task::none()
-            }
+            Message::ActivityActivate(id, activity) => self.activate_activity(id, activity),
             Message::ActivityNavigation(id, focused, key) => {
                 self.activity_navigation(id, focused, key).unwrap_or_else(Task::none)
             }

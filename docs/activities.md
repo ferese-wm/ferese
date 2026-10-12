@@ -26,6 +26,11 @@ Reduced motion snaps progress and uses a static track. Morph preserves recording
 and low-battery priority, including their combined presentation. DND limits ordinary
 running activities to one, hides the count, and suppresses terminal flashes.
 Click opens the list; arrow keys select rows and their identity survives reorder.
+Clicking a linked activity, or pressing Enter on its row, brings its terminal
+window into focus and closes the list. The compositor matches the publisher's
+process ancestry to a Wayland window when the activity starts. If the window has closed,
+or a terminal server owns several possible windows, clicking leaves the list
+open. Selecting a particular tmux pane is not supported.
 Workspace buttons retain their own actions. Automatic expansion is disabled.
 
 ## Publishing

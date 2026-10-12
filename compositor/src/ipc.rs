@@ -241,7 +241,10 @@ pub(crate) fn init(
                             })
                             .and_then(|output| output["name"].as_str())
                             .map(str::to_owned);
-                        state.activities.publish_verified(owner, publish, matched, output)
+                        let window = state.activity_window(&owner);
+                        state
+                            .activities
+                            .publish_verified(owner, publish, matched, output, window)
                     });
                 state.activities.schedule();
                 let response = match result {
@@ -650,7 +653,7 @@ fn serve_connection_with_activities(
                     return Err("Unsupported activity schema".into());
                 }
                 let (monitor, rules) = activity_host.as_ref().ok_or("Activity host unavailable")?;
-                let (identity, parents) = monitor
+                let (mut identity, parents) = monitor
                     .verify(
                         &stream,
                         matches!(wire.owner, ferese_ipc::activities::OwnerScope::Parent),
@@ -673,6 +676,13 @@ fn serve_connection_with_activities(
                 } else {
                     None
                 };
+                if matches!(
+                    publish,
+                    ferese_ipc::activities::Publish::Start { .. } | ferese_ipc::activities::Publish::Run { .. }
+                ) || (matches!(publish, ferese_ipc::activities::Publish::Hook { .. }) && matched.is_some())
+                {
+                    identity.capture_ancestors();
+                }
                 Ok((identity, publish, matched))
             })();
             match verified {
