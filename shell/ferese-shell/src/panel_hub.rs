@@ -730,17 +730,22 @@ impl FereseShell {
                         Peek::Recording => status_ui::Menu::Overflow,
                         Peek::Battery => status_ui::Menu::Battery,
                         Peek::Media => status_ui::Menu::Media,
-                        Peek::Date => status_ui::Menu::Calendar,
+                        Peek::Date => status_ui::Menu::Workspaces,
                         Peek::Workspaces => status_ui::Menu::Workspaces,
                     }
                 } else if playing.is_some() {
                     status_ui::Menu::Media
+                } else if crate::bar::focused_bar_title(&self.snapshot, self.output_for_bar(id))
+                    .trim()
+                    .is_empty()
+                {
+                    status_ui::Menu::Workspaces
                 } else {
                     self.outputs
                         .iter()
                         .find(|entry| entry.bar == id)
                         .and_then(|entry| entry.runtime.hub.as_ref())
-                        .map_or(status_ui::Menu::Media, |runtime| runtime.borrow().last_menu)
+                        .map_or(status_ui::Menu::Workspaces, |runtime| runtime.borrow().last_menu)
                 };
                 let label = self
                     .render
@@ -759,7 +764,9 @@ impl FereseShell {
                             Peek::Recording | Peek::Battery => unreachable!("activity strip handled above"),
                             Peek::Media => self.hub_music_art(opacity),
                             Peek::Workspaces => self.hub_workspaces(id, opacity),
-                            Peek::Date => icons::tinted(icons::CALENDAR, 18, icon_primary).opacity(opacity).into(),
+                            Peek::Date => icons::tinted(icons::morph::CALENDAR, 18, icon_primary)
+                                .opacity(opacity)
+                                .into(),
                         };
                         let width = if intrinsic { Length::Shrink } else { Length::Fill };
                         let label = label.width(width).align_x(if peek == Peek::Date {
@@ -774,7 +781,7 @@ impl FereseShell {
                         strip.into()
                     }
                     Mode::Toast => row![
-                        icons::tinted(icons::NOTIFICATIONS, 16, icon_muted).opacity(opacity),
+                        icons::tinted(icons::morph::NOTIFICATIONS, 16, icon_muted).opacity(opacity),
                         label.width(Length::Fill)
                     ]
                     .spacing(10)
@@ -857,15 +864,25 @@ impl FereseShell {
                     .align_y(Alignment::Center);
                 let shortcuts = self.hub_shortcuts(id);
                 for (kind, label, icon) in [
-                    (status_ui::Menu::Activities, "Activities", icons::FERESE),
-                    (status_ui::Menu::Workspaces, "Workspaces", icons::OVERVIEW),
-                    (status_ui::Menu::Media, "Music", icons::MEDIA),
-                    (status_ui::Menu::Calendar, "Calendar", icons::CALENDAR),
-                    (status_ui::Menu::Notifications, "Notifications", icons::NOTIFICATIONS),
-                    (status_ui::Menu::Overflow, "Controls", icons::CONTROL_CENTER),
+                    (status_ui::Menu::Workspaces, "Workspaces", icons::morph::WORKSPACES),
+                    (status_ui::Menu::Media, "Music", icons::morph::MUSIC),
+                    (status_ui::Menu::Calendar, "Calendar", icons::morph::CALENDAR),
+                    (
+                        status_ui::Menu::Notifications,
+                        "Notifications",
+                        icons::morph::NOTIFICATIONS,
+                    ),
+                    (status_ui::Menu::Overflow, "Controls", icons::morph::CONTROLS),
+                    (status_ui::Menu::Activities, "Activities", icons::morph::ACTIVITIES),
                 ] {
-                    if kind == status_ui::Menu::Activities && !self.activities_configured(id) {
-                        continue;
+                    if kind == status_ui::Menu::Activities {
+                        // Activities follows both the main tabs and optional shortcuts.
+                        for shortcut in shortcuts.iter().copied().filter(|kind| *kind != ItemKind::Overview) {
+                            tabs = tabs.push(self.hub_shortcut_button(id, shortcut, menu, opacity));
+                        }
+                        if !self.activities_configured(id) {
+                            continue;
+                        }
                     }
                     let active = if selected == Content::Controls {
                         menu.unwrap_or(status_ui::Menu::Overflow) == kind
@@ -900,9 +917,6 @@ impl FereseShell {
                         opacity,
                     ));
                 }
-                for shortcut in shortcuts.into_iter().filter(|kind| *kind != ItemKind::Overview) {
-                    tabs = tabs.push(self.hub_shortcut_button(id, shortcut, menu, opacity));
-                }
                 let navigation = scrollable(tabs.width(Length::Shrink))
                     .direction(cosmic::iced::widget::scrollable::Direction::Horizontal(
                         cosmic::iced::widget::scrollable::Scrollbar::default()
@@ -917,7 +931,7 @@ impl FereseShell {
                 }
                 tabs = tabs.push(motion::button(
                     self.render,
-                    button::custom(icons::tinted(icons::CLOSE, 18, icon_primary).opacity(opacity))
+                    button::custom(icons::tinted(icons::morph::CLOSE, 18, icon_primary).opacity(opacity))
                         .name("Collapse panel hub")
                         .padding([5, 3])
                         .width(30)
@@ -983,7 +997,7 @@ impl FereseShell {
                 .border_radius(5.)
                 .into(),
             None => container(
-                icons::tinted(icons::MEDIA, 18, crate::color(self.config.theme.text_primary)).opacity(opacity),
+                icons::tinted(icons::morph::MUSIC, 18, crate::color(self.config.theme.text_primary)).opacity(opacity),
             )
             .center_x(24)
             .center_y(24)
@@ -1033,22 +1047,22 @@ impl FereseShell {
 
     fn hub_control_action(&self, id: window::Id, kind: ItemKind) -> Option<ControlAction> {
         let (icon, menu) = match kind {
-            ItemKind::Overview => (icons::OVERVIEW, None),
-            ItemKind::Activities => (icons::FERESE, Some(status_ui::Menu::Activities)),
-            ItemKind::QuickSettings => (icons::SETTINGS, Some(status_ui::Menu::System)),
+            ItemKind::Overview => (icons::morph::WORKSPACES, None),
+            ItemKind::Activities => (icons::morph::ACTIVITIES, Some(status_ui::Menu::Activities)),
+            ItemKind::QuickSettings => (icons::morph::SETTINGS, Some(status_ui::Menu::System)),
             ItemKind::Network => (icons::WIFI, Some(status_ui::Menu::Network)),
             ItemKind::Recording => (
                 match self.recorder.state {
                     crate::recording::State::Selecting => icons::RECORD_CANCEL,
                     crate::recording::State::Recording(_) => icons::RECORD_STOP,
                     crate::recording::State::Saving => icons::RECORD_SAVING,
-                    _ => icons::RECORD,
+                    _ => icons::morph::RECORD,
                 },
                 None,
             ),
             ItemKind::Audio => (icons::VOLUME, Some(status_ui::Menu::Audio)),
             ItemKind::Battery { .. } => (icons::BATTERY, Some(status_ui::Menu::Battery)),
-            ItemKind::DisplayMode if self.display_mode.external_connected() => (icons::DISPLAY, None),
+            ItemKind::DisplayMode if self.display_mode.external_connected() => (icons::morph::DISPLAY, None),
             _ => return None,
         };
         let message = match kind {
@@ -2427,6 +2441,60 @@ mod tests {
         drop(shell.hub_hover(id, false));
         drop(shell.hub_hover(id, true));
         assert_eq!(shell.outputs[0].runtime.hub.as_ref().unwrap().borrow().peek, Peek::Date);
+    }
+
+    #[test]
+    fn date_click_opens_workspaces_in_idle_and_peek_regardless_of_last_tab() {
+        use cosmic::iced::advanced::renderer::Headless;
+        let renderer = cosmic::iced::futures::executor::block_on(cosmic::Renderer::new(
+            cosmic::iced::Font::default(),
+            cosmic::iced::Pixels(14.),
+            Some("tiny-skia"),
+        ))
+        .unwrap();
+        let mut app = shell();
+        let id = app.outputs[0].bar;
+        app.snapshot.windows.clear();
+        app.snapshot.workspaces.clear();
+        app.status.battery = None;
+        std::sync::Arc::make_mut(&mut app.media.snapshot).selected = None;
+        for last in [status_ui::Menu::Calendar, status_ui::Menu::Activities] {
+            app.outputs[0].runtime.hub.as_ref().unwrap().borrow_mut().last_menu = last;
+            for mode in [Mode::Idle, Mode::Peek] {
+                let mut view = app.hub_content(id, mode, 1., None, true, false);
+                let mut tree = widget::Tree::new(&view);
+                let viewport = Rectangle::with_size(Size::new(280., 44.));
+                let node = view.as_widget_mut().layout(
+                    &mut tree,
+                    &renderer,
+                    &layout::Limits::new(viewport.size(), viewport.size()),
+                );
+                let mut messages = Vec::new();
+                for event in [
+                    mouse::Event::ButtonPressed(mouse::Button::Left),
+                    mouse::Event::ButtonReleased(mouse::Button::Left),
+                ] {
+                    view.as_widget_mut().update(
+                        &mut tree,
+                        &Event::Mouse(event),
+                        Layout::new(&node),
+                        mouse::Cursor::Available(viewport.center()),
+                        &renderer,
+                        &mut clipboard::Null,
+                        &mut Shell::new(&mut messages),
+                        &viewport,
+                    );
+                }
+                let opened: Vec<_> = messages
+                    .iter()
+                    .filter_map(|message| match message {
+                        cosmic::Action::App(Message::HubOpen(_, menu)) => Some(*menu),
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(opened, vec![status_ui::Menu::Workspaces], "{mode:?}, last tab {last:?}");
+            }
+        }
     }
 
     #[test]

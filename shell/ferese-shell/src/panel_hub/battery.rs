@@ -3,7 +3,7 @@ use super::*;
 use cosmic::iced::{Background, Border};
 use cosmic::widget::Space;
 
-pub(super) const WIDTH: f64 = 44.;
+pub(super) const WIDTH: f64 = 34.;
 
 impl FereseShell {
     pub(super) fn hub_battery(
@@ -23,11 +23,12 @@ impl FereseShell {
         } else {
             foreground
         };
-        let fill = container(Space::new().width(28. * f32::from(percent) / 100.).height(12)).class(
+        let fill = container(Space::new().width(20. * f32::from(percent) / 100.).height(10)).class(
             theme::Container::custom(move |_| container::Style {
                 background: Some(Background::Color(outline.scale_alpha(0.16))),
                 border: Border {
-                    radius: 1.5.into(),
+                    shape: cosmic::iced::border::Shape::Continuous,
+                    radius: 4.0.into(),
                     ..Default::default()
                 },
                 ..Default::default()
@@ -36,26 +37,27 @@ impl FereseShell {
         let number = self
             .render
             .text(percent.to_string())
-            .size(11.)
+            .size(9.5)
             .line_height(cosmic::iced::widget::text::LineHeight::Relative(1.))
             .class(theme::Text::Color(foreground));
         let body = container(cosmic::iced::widget::stack![
-            container(fill).padding([3, 2]).width(32).height(18),
-            container(number).center_x(32).center_y(18),
+            container(fill).padding(2).width(24).height(14),
+            container(number).center_x(24).center_y(14),
         ])
-        .width(32)
-        .height(18)
+        .width(24)
+        .height(14)
         .class(theme::Container::custom(move |_| container::Style {
             border: Border {
                 color: outline,
-                width: 1.5,
-                radius: 3.5.into(),
+                width: 1.2,
+                shape: cosmic::iced::border::Shape::Continuous,
+                radius: 5.5.into(),
                 ..Default::default()
             },
             ..Default::default()
         }));
         let terminal =
-            container(Space::new().width(2).height(6)).class(theme::Container::custom(move |_| container::Style {
+            container(Space::new().width(1.5).height(4)).class(theme::Container::custom(move |_| container::Style {
                 background: Some(Background::Color(outline)),
                 border: Border {
                     radius: 1.0.into(),
@@ -70,7 +72,7 @@ impl FereseShell {
                     "Battery, {percent} percent, {}. Open battery controls",
                     battery.status
                 ))
-                .padding([5, 4])
+                .padding([7, 3])
                 .width(WIDTH as f32)
                 .height(28)
                 .on_press(cosmic::Action::App(Message::HubOpen(id, status_ui::Menu::Battery))),
