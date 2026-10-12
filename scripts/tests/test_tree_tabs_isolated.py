@@ -119,7 +119,7 @@ class TabGroupsTest(unittest.TestCase):
                         image = Image.open(io.BytesIO(captured)).convert("RGB")
                         for index in range(3):
                             left = active["x"] + active["width"] * index / 3 + 4
-                            right = left + min(100, active["width"] / 3 - 8)
+                            right = active["x"] + active["width"] * (index + 1) / 3 - 4
                             box = (round(left * scale), round((active["y"] - 25) * scale),
                                    round(right * scale), round((active["y"] - 5) * scale))
                             pixels = image.crop(box).tobytes()

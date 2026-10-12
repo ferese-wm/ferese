@@ -34,6 +34,23 @@ pub(super) fn tab_elements(
     };
     let scale = output.current_scale().fractional_scale();
     let width = content.width / bar.group.windows.len() as f64;
+    let shell = ferese_layout::Rect::new(content.x, content.y - bar.rect.height, content.width, bar.rect.height);
+    let radius = state
+        .theme_settings
+        .material_radius
+        .min(shell.height * 0.5)
+        .min(shell.width * 0.5);
+    let inset = 3.0_f64.min(shell.height * 0.25).min(width * 0.25);
+    let material = crate::effects::resolve_material(
+        crate::effects::SemanticRole::Panel,
+        state.theme_settings.material_style,
+        state.theme_settings.shell_opacity as f32,
+    );
+    let opacity = if state.theme_settings.reduce_transparency {
+        1.0
+    } else {
+        material.opacity
+    };
     let mut elements = Vec::new();
     state.retain_overview_labels();
     for (index, id) in bar.group.windows.iter().copied().enumerate() {
@@ -50,10 +67,14 @@ pub(super) fn tab_elements(
                 .is_none_or(|window| state.capture_protected(window));
         if !protected
             && width > 20.0
+            && rect.height >= 16.0
             && let Some((buffer, size)) = state.overview_window_label(id, scale, width)
         {
             let location = Point::<i32, Physical>::from((
-                ((rect.x - f64::from(output_geometry.loc.x) + 8.0) * scale).round() as i32,
+                ((rect.x - f64::from(output_geometry.loc.x)
+                    + ((rect.width - f64::from(size.w) / scale) * 0.5).max(8.0))
+                    * scale)
+                    .round() as i32,
                 ((rect.y - f64::from(output_geometry.loc.y) + rect.height * 0.5) * scale).round() as i32 - size.h / 2,
             ));
             if let Ok(element) = MemoryRenderBufferRenderElement::from_buffer(
@@ -82,8 +103,19 @@ pub(super) fn tab_elements(
             }
         }
         if id == active {
-            let thickness = rect.height.min(2.0);
-            let underline = ferese_layout::Rect::new(rect.x, rect.y + rect.height - thickness, rect.width, thickness);
+            let selected = ferese_layout::Rect::new(
+                rect.x + inset,
+                rect.y + inset,
+                (rect.width - 2.0 * inset).max(0.0),
+                (rect.height - 2.0 * inset).max(0.0),
+            );
+            // The shell palette supplies the surface and accent. Keep selection
+            // inside the shell so its corners follow the same continuous profile.
+            let mut fill = state.theme_settings.surface_raised_color.0;
+            for (channel, accent) in fill[..3].iter_mut().zip(state.theme_settings.accent_color.0) {
+                *channel += (accent - *channel) * 0.16;
+            }
+            fill[3] = alpha * opacity;
             if let Some(element) = overview_chrome_element(
                 state,
                 renderer,
@@ -91,33 +123,30 @@ pub(super) fn tab_elements(
                 output_geometry,
                 scale,
                 (id.0, OverviewChromePart::TabActive),
-                underline,
-                color_with_alpha(state.theme_settings.accent_color.0, alpha),
+                selected,
+                fill,
                 0.0,
-                0.0,
+                (radius - inset).max(0.0),
             ) {
                 elements.push(element.into());
             }
         }
-        let color = if id == active {
-            state.theme_settings.surface_raised_color.0
-        } else {
-            state.theme_settings.surface_base_color.0
-        };
-        if let Some(element) = overview_chrome_element(
-            state,
-            renderer,
-            output,
-            output_geometry,
-            scale,
-            (id.0, OverviewChromePart::Tab),
-            rect,
-            color_with_alpha(color, alpha),
-            0.0,
-            0.0,
-        ) {
-            elements.push(element.into());
-        }
+    }
+    let mut fill = state.theme_settings.surface_base_color.0;
+    fill[3] = alpha * opacity;
+    if let Some(element) = overview_chrome_element(
+        state,
+        renderer,
+        output,
+        output_geometry,
+        scale,
+        (bar.group.windows[0].0, OverviewChromePart::Tab),
+        shell,
+        fill,
+        0.0,
+        radius,
+    ) {
+        elements.push(element.into());
     }
     elements
 }
