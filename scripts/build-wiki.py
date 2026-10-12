@@ -50,8 +50,6 @@ LINK = re.compile(r"(?P<code>(?P<ticks>`+).*?(?P=ticks))|(?P<prefix>\]\(|^ {0,3}
 
 
 def page_name(source):
-    if source == ROOT / "site/content/index.md":
-        return "Getting-Started"
     if source == ROOT / "site/README.md":
         return "Website-Development"
     if source == ROOT / "crates/ferese-theme/README.md":
@@ -134,15 +132,14 @@ def rewrite(text, source, pages, revision):
 
 
 def render(revision):
-    sources = sorted((ROOT / "docs").glob("*.md")) + [ROOT / "site/README.md", ROOT / "site/content/index.md", ROOT / "crates/ferese-theme/README.md"]
+    sources = sorted((ROOT / "docs").glob("*.md")) + [ROOT / "site/README.md", ROOT / "crates/ferese-theme/README.md"]
     pages = {source.resolve(): page_name(source) for source in sources}
     if len(set(pages.values())) != len(pages):
         raise ValueError("Wiki page names must be unique")
     output = {}
     for source, name in pages.items():
         text = rewrite(source.read_text(), source, pages, revision)
-        path = source.relative_to(ROOT).as_posix()
-        output[name + ".md"] = text.rstrip() + f"\n\n---\n\nThis page is published from [{path}]({REPO}/blob/{revision}/{path}). Submit documentation changes to the main repository.\n"
+        output[name + ".md"] = text
     for alias, links in ALIASES.items():
         targets = []
         for name, anchor, title in links:
@@ -152,17 +149,19 @@ def render(revision):
                 raise ValueError(f"Alias points to absent heading {name}#{anchor}")
             targets.append(f"- [{title}]({WIKI}/{name}" + ("#" + anchor if anchor else "") + ")")
         output[alias + ".md"] = "# " + alias.replace("-", " ") + "\n\nSee the current guides:\n\n" + "\n".join(targets) + "\n"
-    home = output["Home.md"].split("\n---\n", 1)[0]
+    home = output["Home.md"]
     # The documentation index is also the navigation source. Keep descriptions
     # on Home, and use its grouped link list for the Wiki sidebar.
-    sidebar = [f"[Home]({WIKI})", ""]
+    sidebar = [f"[Home]({WIKI})"]
     for line in home.splitlines():
         if line.startswith("## "):
             sidebar.extend(["", line, ""])
         elif line.startswith("- "):
-            sidebar.append(line.split("): ", 1)[0] + ")" if "): " in line else line.rstrip("."))
+            link = re.match(r"- \[[^]]+\]\([^)]+\)", line)
+            if link:
+                sidebar.append(link[0])
     output["_Sidebar.md"] = "\n".join(sidebar) + "\n"
-    output["_Footer.md"] = f"[Ferese source]({REPO}) · [Report an issue]({REPO}/issues)\n"
+    output["Home.md"] += f"\nEdit the guide sources in the [main repository]({REPO}/tree/main/docs).\n"
     return output
 
 

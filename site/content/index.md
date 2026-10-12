@@ -3,14 +3,14 @@
 Ferese combines a window manager and desktop shell with one configuration.
 This handbook covers installation, settings and desktop controls.
 
-[Browse screenshots](../../docs/screenshots.md) to see the themes, layouts and desktop controls in
+[Browse screenshots](screenshots.md) to see the themes, layouts and desktop controls in
 use.
 
 ## Get started
 
-1. [Install Ferese](../../docs/installation.md), or try a [nested preview](../../docs/installation.md#preview-and-logs).
+1. [Install Ferese](installation.md), or try a [nested preview](installation.md#preview-and-logs).
 2. Choose Light, Dark, or Auto in **Control Center**. Open **Settings** for theme files and presets.
-3. Use the [configuration reference](../../docs/configuration.md) for shortcuts, gestures, window rules, and displays.
+3. Use the [configuration reference](configuration.md) for shortcuts, gestures, window rules, and displays.
 
 ## Default shortcuts
 
@@ -34,16 +34,16 @@ Use `Super`, usually the Windows key, for the shortcuts below, and make them you
 | Three-finger swipe left / right | Focus the window to the right / left |
 | Login shortcut guide | Appears at login; disable in Settings → Keyboard & mouse → Shortcuts |
 
-The [shortcuts and mouse actions guide](../../docs/shortcuts.md) covers the rest, including how to
+The [shortcuts and mouse actions guide](shortcuts.md) covers the rest, including how to
 group windows, resize them and move between workspaces.
 
 ## Desktop guides
 
-- [Panel configuration](../../docs/panel-configuration.md): choose a style, arrange controls, and configure Morph.
-- [Lock screen](../../docs/locking.md): appearance, automatic locking, and display sleep.
-- [Screen sharing and recording](../../docs/screen-sharing.md): share an app or display, or save a video.
-- [Desktop portals](../../docs/portals.md): integration with applications.
-- [Animation model](../../docs/animation-model.md): spring motion, geometry ownership, and resize presentation.
+- [Panel configuration](panel-configuration.md): choose a style, arrange controls, and configure Morph.
+- [Lock screen](locking.md): appearance, automatic locking, and display sleep.
+- [Screen sharing and recording](screen-sharing.md): share an app or display, or save a video.
+- [Desktop portals](portals.md): integration with applications.
+- [Animation model](animation-model.md): spring motion, geometry ownership, and resize presentation.
 
 Configure the desktop in Settings or edit `~/.config/ferese/config.kdl` directly;
 changes apply live, and an invalid edit leaves the last working configuration in
@@ -53,8 +53,8 @@ place.
 
 If you need to end a session, `feresectl request-logout` asks for confirmation and
 `feresectl exit` exits immediately, so save your work first. The [logs and recovery
-guide](../../docs/installation.md#logout-and-recovery) helps when something stops responding.
+guide](installation.md#logout-and-recovery) helps when something stops responding.
 
 To [report a problem](https://github.com/ferese-wm/ferese/issues), include the steps to
 reproduce it, relevant logs and whether you were using a nested preview or a direct
-session. See [Development](../../docs/development.md) to contribute.
+session. See [Development](development.md) to contribute.

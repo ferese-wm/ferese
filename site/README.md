@@ -21,8 +21,6 @@ after changing the site sources.
 - `scripts/build-site.py`: copies homepage assets and writes handbook redirects.
 - `scripts/build-wiki.py`: validates and generates wiki pages.
 
-See [Wiki publishing](../docs/wiki-publishing.md) for the documentation workflow.
-
 ## GitHub Pages
 
 Choose **Settings → Pages → Source → GitHub Actions** to enable publishing, then

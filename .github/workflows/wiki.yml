@@ -5,7 +5,6 @@ on:
     paths:
       - 'docs/**'
       - 'site/README.md'
-      - 'site/content/*.md'
       - 'crates/ferese-theme/README.md'
       - 'scripts/build-wiki.py'
       - 'scripts/tests/test_wiki.py'
@@ -13,7 +12,7 @@ on:
       - '.github/workflows/wiki.yml'
   workflow_dispatch:
 permissions:
-  contents: read
+  contents: write
 concurrency:
   group: wiki
   cancel-in-progress: false
@@ -34,10 +33,9 @@ jobs:
           .site-venv/bin/python scripts/build-wiki.py
       - name: Publish changed wiki pages
         env:
-          GH_TOKEN: ${{ secrets.WIKI_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -eu
-          test -n "$GH_TOKEN" || { echo 'Set the WIKI_TOKEN Actions secret before enabling automatic publishing' >&2; exit 1; }
           gh auth setup-git --hostname github.com
           git clone --depth 1 https://github.com/ferese-wm/ferese.wiki.git build/wiki-checkout
           .site-venv/bin/python scripts/build-wiki.py --output build/wiki-checkout

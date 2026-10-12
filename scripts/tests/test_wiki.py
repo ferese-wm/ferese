@@ -113,8 +113,11 @@ class WikiTests(unittest.TestCase):
     def test_every_repository_guide_is_published_and_navigable(self):
         with mock.patch.object(wiki, 'ROOT', ROOT):
             output = wiki.render('deadbeef')
-            sources = sorted((ROOT / 'docs').glob('*.md')) + [ROOT / 'site/README.md', ROOT / 'site/content/index.md', ROOT / 'crates/ferese-theme/README.md']
+            sources = sorted((ROOT / 'docs').glob('*.md')) + [ROOT / 'site/README.md', ROOT / 'crates/ferese-theme/README.md']
             sidebar = output['_Sidebar.md']
+            self.assertEqual([line for line in sidebar.splitlines() if line.startswith('## ')], ['## Usage', '## Configuration', '## Development'])
+            self.assertNotIn('Wiki-Publishing.md', output)
+            self.assertNotIn('Getting-Started.md', output)
             for source in sources:
                 name = wiki.page_name(source)
                 with self.subTest(source=source):
