@@ -53,6 +53,43 @@ pub(crate) fn prepare(source: &str, directory: &Path) -> Result<(Config, Runtime
     prepare_document(&document, directory)
 }
 
+pub(crate) struct StartupConfig {
+    pub(crate) source: Option<String>,
+    pub(crate) runtime: RuntimeConfig,
+    pub(crate) theme: Candidate,
+    pub(crate) error: Option<String>,
+}
+
+pub(crate) fn startup(path: Option<&Path>) -> Result<StartupConfig, String> {
+    let directory = path.and_then(Path::parent).unwrap_or(Path::new("."));
+    let source = path.map_or(Ok(None), |path| match std::fs::symlink_metadata(path) {
+        Ok(_) => read_source(path).map(Some),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(format!("{}: {error}", path.display())),
+    });
+    let prepared = source.and_then(|source| {
+        let (_, runtime, theme) = prepare(source.as_deref().unwrap_or(""), directory)?;
+        Ok(StartupConfig {
+            source,
+            runtime,
+            theme,
+            error: None,
+        })
+    });
+    match prepared {
+        Ok(config) => Ok(config),
+        Err(error) => {
+            let (_, runtime, theme) = prepare("", directory)?;
+            Ok(StartupConfig {
+                source: Some(String::new()),
+                runtime,
+                theme,
+                error: Some(error),
+            })
+        }
+    }
+}
+
 pub(crate) fn prepare_document(
     document: &Document,
     directory: &Path,
@@ -165,6 +202,7 @@ pub(crate) struct Engine {
     pending: Option<Pending>,
     transition: Option<Transition>,
     last_frame: Option<Instant>,
+    startup_rejection: Option<String>,
 }
 
 impl Engine {
@@ -207,7 +245,21 @@ impl Engine {
         }
     }
 
+    pub(crate) fn startup_failed(&mut self, path: Option<&Path>, error: String) {
+        let path = path
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| "configuration".into());
+        self.live.error = Some(format!(
+            "Ferese started with default settings because {path} could not be loaded. Your file has not been changed.\n\n{error}"
+        ));
+        self.startup_rejection = Some(error);
+    }
+
     pub(crate) fn reject(&mut self, error: String) {
+        if self.startup_rejection.as_ref() == Some(&error) {
+            return;
+        }
+        self.startup_rejection = None;
         if self.live.error.as_ref() != Some(&error) {
             tracing::warn!(%error, "theme reload rejected; retaining active theme");
             self.live.error = Some(error);
@@ -400,6 +452,7 @@ impl Ferese {
     }
 
     pub(crate) fn accept_theme(&mut self, candidate: Candidate, wallpaper: WallpaperConfig) {
+        self.theme_engine.startup_rejection = None;
         self.theme_engine.active_files = candidate.files.clone();
         self.theme_engine.watch_files(&candidate.files);
         if let Err(error) = self.theme_engine.arm_clock(candidate.next_transition) {
@@ -621,6 +674,86 @@ impl Ferese {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn invalid_startup_uses_defaults_and_keeps_the_authored_file() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("config.kdl");
+        let (_, defaults, default_theme) = prepare("", directory.path()).unwrap();
+        for source in [
+            "panel main { surface solid; group-surface none; }",
+            "panel main { geometry { height 1; }; }",
+            "animations { speed 0; }",
+            "theme { file \"missing-theme.kdl\"; }",
+            "panel main {",
+        ] {
+            std::fs::write(&path, source).unwrap();
+            let config = startup(Some(&path)).unwrap();
+            assert!(config.error.is_some(), "{source}");
+            assert_eq!(config.source.as_deref(), Some(""));
+            assert_eq!(config.runtime.panel_style, defaults.panel_style);
+            assert_eq!(config.runtime.layout_mode, defaults.layout_mode);
+            assert_eq!(config.theme.theme, default_theme.theme);
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), source);
+            assert!(
+                prepare(source, directory.path()).is_err(),
+                "strict validation must still reject {source}"
+            );
+        }
+    }
+
+    #[test]
+    fn startup_distinguishes_missing_valid_and_unreadable_files() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("config.kdl");
+        let missing = startup(Some(&path)).unwrap();
+        assert!(missing.error.is_none());
+        assert!(missing.source.is_none());
+        assert!(!path.exists());
+
+        let source = "// keep me\npanel main { style floating; geometry { height 42; }; }";
+        std::fs::write(&path, source).unwrap();
+        let valid = startup(Some(&path)).unwrap();
+        assert!(valid.error.is_none());
+        assert_eq!(valid.source.as_deref(), Some(source));
+        assert_eq!(valid.runtime.panel_style, ferese_panel::PanelStyle::Floating);
+        assert_eq!(
+            Document::parse(valid.source.as_deref().unwrap())
+                .unwrap()
+                .get("panels.0.geometry.height"),
+            Some(&serde_json::json!(42))
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), source);
+
+        std::fs::write(&path, [0xff]).unwrap();
+        assert!(startup(Some(&path)).unwrap().error.is_some());
+        assert_eq!(std::fs::read(&path).unwrap(), [0xff]);
+        assert!(startup(Some(directory.path())).unwrap().error.is_some());
+        std::fs::remove_file(&path).unwrap();
+        std::os::unix::fs::symlink(directory.path().join("missing"), &path).unwrap();
+        assert!(startup(Some(&path)).unwrap().error.is_some());
+        assert!(path.is_symlink());
+    }
+
+    #[test]
+    fn startup_warning_survives_repeated_rejection_without_duplicate_publication() {
+        let mut engine = Engine::default();
+        engine.startup_failed(Some(Path::new("/config.kdl")), "unknown field group_surface".into());
+        engine.publish();
+        let initial = engine.value();
+        assert!(initial["error"].as_str().unwrap().contains("default settings"));
+        assert!(initial["error"].as_str().unwrap().contains("/config.kdl"));
+        for _ in 0..3 {
+            engine.reject("unknown field group_surface".into());
+            assert_eq!(engine.value(), initial);
+        }
+        engine.reject("different invalid edit".into());
+        assert_eq!(engine.live.error.as_deref(), Some("different invalid edit"));
+        assert_eq!(engine.revision, 2);
+        engine.reject("unknown field group_surface".into());
+        assert_eq!(engine.live.error.as_deref(), Some("unknown field group_surface"));
+        assert_eq!(engine.revision, 3);
+    }
 
     #[test]
     fn publication_projects_live_values_and_preserves_revision_semantics() {
