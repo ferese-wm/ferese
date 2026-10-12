@@ -3,8 +3,8 @@ use super::{
     EventQueue, FereseEffectsManagerV1, FereseShell, FereseSurfaceEffectsV1, GlobalListContents, IcedMargin,
     IcedOutput, KeyboardInteractivity, Layer, Length, Limits, Message, Ordering, OutputSurfaces, PlatformSpecific,
     Proxy, QueueHandle, SctkLayerSurfaceSettings, Task, WallpaperMode, config, container, delegate_noop,
-    destroy_layer_surface, ferese_surface_effects_v1, image, output_bar_hidden, registry_queue_init, status_ui, text,
-    theme, wayland, window, wl_output, wl_registry, wl_surface,
+    destroy_layer_surface, ferese_surface_effects_v1, image, output_bar_hidden, registry_queue_init, status_ui, theme,
+    wayland, window, wl_output, wl_registry, wl_surface,
 };
 
 pub(super) fn panel_placement(edge: ferese_panel::Edge, margin: i32, side: i32) -> (Anchor, IcedMargin) {
@@ -493,7 +493,7 @@ impl FereseShell {
 
     pub(super) fn view_wallpaper(&self) -> Element<'_, cosmic::Action<Message>> {
         let Some(handle) = self.wallpaper.as_ref() else {
-            return container(text(""))
+            return container(self.render.text(""))
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .class(theme::Container::custom(wallpaper_fallback_style))

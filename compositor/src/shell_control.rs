@@ -705,17 +705,22 @@ mod tests {
         state.space.map_output(&output, (0, 0));
         state.register_output(&output, "snapshot-test".into());
         let original = state.shell_snapshot();
+        let initial_cache = state.preview_cache_stats();
 
         for _ in 0..100 {
+            // Building a snapshot for metadata changes must reuse layout geometry.
+            assert_eq!(state.shell_snapshot(), original);
             assert!(state.shell_snapshot_matches(&original));
         }
 
+        assert_eq!(state.preview_cache_stats(), initial_cache);
         state
             .workspaces
             .insert_window(WindowId(99), ferese_layout::Axis::Horizontal, 0.5)
             .unwrap();
         assert!(!state.shell_snapshot_matches(&original));
         let occupied = state.shell_snapshot();
+        assert_eq!(state.preview_cache_stats().0, initial_cache.0 + 1);
         assert!(state.shell_snapshot_matches(&occupied));
         let output_id = state.output_ids[&output];
         let next = state.workspaces.create_workspace();
@@ -729,6 +734,30 @@ mod tests {
         assert_eq!(state.output_workspaces.active_workspace(output_id), Some(next));
         assert_eq!(state.workspaces.workspace(next).unwrap().layout.window_ids().count(), 0);
         let hidden_before = state.workspace_preview_rects()[&WindowId(99)];
+        let before = state.preview_cache_stats();
+        state.output_names.insert(output_id, "Renamed".into());
+        state.shell_snapshot();
+        assert_eq!(state.preview_cache_stats(), before, "names do not affect previews");
+        state.output_names.insert(output_id, "snapshot-test".into());
+        // The second workspace is empty; modifying its layout should not solve the hidden one.
+        state
+            .workspaces
+            .workspace_mut(next)
+            .unwrap()
+            .layout
+            .insert(WindowId(100), None, ferese_layout::Axis::Horizontal, 0.5)
+            .unwrap();
+        state.workspace_preview_rects();
+        assert_eq!(state.preview_cache_stats().0, before.0 + 1);
+        state
+            .workspaces
+            .workspace_mut(next)
+            .unwrap()
+            .layout
+            .remove(WindowId(100))
+            .unwrap();
+        state.workspace_preview_rects();
+        let selected = state.shell_snapshot();
         state
             .reload_config_source("layout { inner-gap 30; outer-gap 40; smart-gaps #false; }".into())
             .unwrap();
@@ -750,6 +779,12 @@ mod tests {
         );
         state.unregister_output(&output);
         assert!(!state.shell_snapshot_matches(&refreshed));
+        state.workspace_preview_rects();
+        assert_eq!(
+            state.preview_cache_stats().1,
+            0,
+            "removed outputs release cached previews"
+        );
     }
 
     #[test]

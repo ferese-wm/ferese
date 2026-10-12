@@ -2,7 +2,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::{Element, Message, container, text};
+use crate::{Element, Message, container};
 use cosmic::app::Task;
 use cosmic::iced::advanced::widget::{Id, Operation, operation};
 use cosmic::iced::{Rectangle, window};
@@ -299,7 +299,7 @@ impl FereseShell {
                 .iter()
                 .find(|workspace| workspace.id == hover.workspace)
         }) else {
-            return text("").into();
+            return self.render.text("").into();
         };
         let active = self
             .snapshot
@@ -315,7 +315,8 @@ impl FereseShell {
         });
         cosmic::widget::autosize::autosize(
             container(
-                text(label)
+                self.render
+                    .text(label)
                     .size(11)
                     .wrapping(cosmic::iced::widget::text::Wrapping::None)
                     .ellipsize(cosmic::iced::widget::text::Ellipsize::End(

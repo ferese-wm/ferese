@@ -20,6 +20,7 @@ mod panel_layout;
 mod panel_runtime;
 mod recording;
 mod renderer;
+mod rendering;
 mod status;
 mod status_ui;
 mod system_modal;
@@ -59,23 +60,8 @@ const APP_ID: &str = "dev.ferese.Shell";
 // that compatibility path gated; current backends use Window::Opened and
 // window::run to retrieve handles without updates at the display refresh rate.
 static EFFECT_FRAME_PENDING: AtomicBool = AtomicBool::new(true);
-static SHELL_FONT: std::sync::OnceLock<std::sync::RwLock<cosmic::font::Font>> = std::sync::OnceLock::new();
-
 fn configured_font(family: Option<&str>) -> cosmic::font::Font {
     ferese_theme::font(family)
-}
-
-fn shell_font() -> cosmic::font::Font {
-    *SHELL_FONT
-        .get_or_init(|| std::sync::RwLock::new(cosmic::font::default()))
-        .read()
-        .unwrap()
-}
-
-fn text<'a>(
-    content: impl Into<std::borrow::Cow<'a, str>> + 'a,
-) -> cosmic::widget::Text<'a, cosmic::Theme, cosmic::Renderer> {
-    ferese_theme::text(content, shell_font())
 }
 
 #[derive(Clone, Copy)]
@@ -120,7 +106,6 @@ fn main() -> cosmic::iced::Result {
     });
     renderer::configure_shell();
 
-    motion::configure(config.animations, config.theme.material_radius);
     let compositor_wallpaper = std::env::var_os("FERESE_COMPOSITOR_WALLPAPER").is_some();
     if compositor_wallpaper {
         // The compositor owns one GPU image, shared across output renderers;
@@ -128,7 +113,6 @@ fn main() -> cosmic::iced::Result {
         config.wallpaper.path = None;
     }
     let shell_font = configured_font(config.font_family.as_deref());
-    let _ = SHELL_FONT.set(std::sync::RwLock::new(shell_font));
     // Decode alongside toolkit/GPU initialization, never during a UI draw.
     let wallpaper = config.wallpaper.path.clone().map(|path| {
         let (sender, receiver) = cosmic::iced::futures::channel::oneshot::channel();
@@ -157,6 +141,7 @@ type WallpaperLoad = cosmic::iced::futures::channel::oneshot::Receiver<Result<im
 struct FereseShell {
     core: Core,
     config: ShellConfig,
+    render: rendering::Rendering,
     wallpaper: Option<image::Handle>,
     control: Option<ShellControl>,
     snapshot: ShellSnapshot,
@@ -298,7 +283,7 @@ impl cosmic::Application for FereseShell {
     fn init(core: Core, (config, wallpaper): Self::Flags) -> (Self, Task<Self::Message>) {
         let app = Self {
             core,
-            notifications: notifications::Center::new(config.notifications.clone()),
+            notifications: notifications::Center::new(config.notifications.clone(), config.animations),
             notification_surface: None,
             status_service: status::Service::start(config.status.settings_command.clone()),
             status: status::Snapshot::default(),
@@ -314,6 +299,7 @@ impl cosmic::Application for FereseShell {
             guide_load: Default::default(),
             guide_attempts: 0,
             pending_power: None,
+            render: rendering::Rendering::new(&config),
             config,
             wallpaper: None,
             control: ShellControl::connect()
@@ -899,11 +885,11 @@ impl cosmic::Application for FereseShell {
     }
 
     fn view(&self) -> Element<'_, Self::Message> {
-        text("").into()
+        self.render.text("").into()
     }
 
     fn view_window(&self, _id: window::Id) -> Element<'_, Self::Message> {
-        text("").into()
+        self.render.text("").into()
     }
 }
 
@@ -927,13 +913,7 @@ impl FereseShell {
             config.wallpaper.path = None;
         }
 
-        if self.config.font_family != config.font_family {
-            *SHELL_FONT
-                .get_or_init(|| std::sync::RwLock::new(cosmic::font::default()))
-                .write()
-                .unwrap() = configured_font(config.font_family.as_deref());
-        }
-        motion::configure(config.animations, config.theme.material_radius);
+        self.render = rendering::Rendering::new(&config);
 
         if self.config.animations != config.animations {
             self.notifications.update_motion_settings(config.animations);
@@ -1091,7 +1071,7 @@ mod tests {
         let output = wl_output::WlOutput::inert(connection.backend().downgrade());
         FereseShell {
             core: Core::default(),
-            notifications: notifications::Center::new(config.notifications.clone()),
+            notifications: notifications::Center::new(config.notifications.clone(), config.animations),
             notification_surface: None,
             status_service: status::Service::start(None),
             status: Default::default(),
@@ -1107,6 +1087,7 @@ mod tests {
             guide_load: Default::default(),
             guide_attempts: 0,
             pending_power: None,
+            render: rendering::Rendering::new(&config),
             config,
             wallpaper: None,
             control: None,

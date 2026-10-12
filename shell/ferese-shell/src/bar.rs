@@ -2,7 +2,7 @@
 use super::Background;
 use super::{
     BarMetrics, Color, Element, FereseShell, Length, Message, ShellSnapshot, ShellTheme, alignment, bar_icon, button,
-    color, container, control, motion, row, status_ui, text, theme, window,
+    color, container, control, motion, row, status_ui, theme, window,
 };
 use crate::panel::{Availability, Item, ItemKind, Panel, Zone};
 #[cfg(test)]
@@ -39,7 +39,10 @@ impl FereseShell {
 
     pub(super) fn view_layer(&self, id: window::Id) -> Element<'_, cosmic::Action<Message>> {
         if self.bar_hidden(id) {
-            return container(text("")).width(Length::Fill).height(Length::Fill).into();
+            return container(self.render.text(""))
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into();
         }
         let panel = self.panel_for_bar(id);
         if panel.style == ferese_panel::PanelStyle::Morph {
@@ -288,6 +291,7 @@ impl FereseShell {
         });
         let element = match item.kind {
             ItemKind::Overview => motion::button(
+                self.render,
                 button::custom(overview_control(
                     BarMetrics { control_height, ..bar },
                     color(shell_theme.accent),
@@ -320,7 +324,9 @@ impl FereseShell {
                 } else {
                     ""
                 };
-                let element: Element<'_, cosmic::Action<Message>> = text(title)
+                let element: Element<'_, cosmic::Action<Message>> = self
+                    .render
+                    .text(title)
                     .size(bar.text_size)
                     .width(width.map_or(Length::Shrink, Length::Fixed))
                     .height(control_height)
@@ -356,19 +362,22 @@ impl FereseShell {
                     .align_y(cosmic::iced::Alignment::Center);
                 if representation == Representation::Wide && !date.is_empty() {
                     content = content.push(
-                        text(date)
+                        self.render
+                            .text(date)
                             .size(12)
                             .wrapping(cosmic::iced::widget::text::Wrapping::None)
                             .class(theme::Text::Color(foreground)),
                     );
                 }
                 let content = content.push(
-                    text(time)
+                    self.render
+                        .text(time)
                         .size(bar.text_size)
                         .wrapping(cosmic::iced::widget::text::Wrapping::None)
                         .class(theme::Text::Color(foreground)),
                 );
                 motion::button(
+                    self.render,
                     button::custom(container(content).center_y(bar.group_item_height))
                         .padding([0, 4])
                         .height(bar.group_item_height)
@@ -390,6 +399,7 @@ impl FereseShell {
                 )
             }
             ItemKind::DisplayMode => motion::button(
+                self.render,
                 button::custom(bar_content(
                     bar_icon(ferese_theme::icons::DISPLAY, bar.icon_size, foreground),
                     control_height,
@@ -469,7 +479,7 @@ impl FereseShell {
                 ) => cosmic::Action::App(Message::PanelAction(Box::new(message))),
                 other => other,
             });
-            rows = rows.push(cosmic::widget::column![text(item.kind.label()).size(12), element].spacing(4));
+            rows = rows.push(cosmic::widget::column![self.render.text(item.kind.label()).size(12), element].spacing(4));
         }
         rows
     }
@@ -520,7 +530,7 @@ impl FereseShell {
                         style,
                         details.clone(),
                         palette,
-                        super::shell_font(),
+                        self.render.font,
                         bar.group_item_height,
                         transition.progress(now),
                         apps.iter()
@@ -548,6 +558,7 @@ impl FereseShell {
                 .on_press(cosmic::Action::App(Message::ActivateWorkspace(workspace.id)));
 
             let selector = motion::button(
+                self.render,
                 workspace_button,
                 color(if active {
                     shell_theme.accent

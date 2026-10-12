@@ -8,7 +8,7 @@ use serde_json::json;
 
 use super::{Menu, MenuRows, MenuStyle};
 use crate::{
-    BarMetrics, FereseShell, Message, ShellTheme, accented_icon, bar_content, color, color_with_opacity, motion, text,
+    BarMetrics, FereseShell, Message, ShellTheme, accented_icon, bar_content, color, color_with_opacity, motion,
 };
 
 const SEEK_THUMB_DIAMETER: f32 = 10.0;
@@ -78,7 +78,7 @@ pub(super) fn bar<'a>(
     width: Option<f32>,
 ) -> Element<'a, cosmic::Action<Message>> {
     let Some(player) = &shell.media.snapshot.selected else {
-        return text("").into();
+        return shell.render.text("").into();
     };
     let foreground = color(if selected { palette.accent } else { palette.text_primary });
     let height = (metrics.group_item_height - 4.0).max(0.0);
@@ -89,7 +89,7 @@ pub(super) fn bar<'a>(
                 .width(side)
                 .height(side)
                 .content_fit(cosmic::iced::ContentFit::Cover)
-                .border_radius(motion::radius(6.0))
+                .border_radius(shell.render.radius(6.0))
                 .shape(BorderShape::Continuous)
                 .into(),
             None => container(accented_icon(
@@ -103,7 +103,9 @@ pub(super) fn bar<'a>(
             .width(side)
             .into(),
         };
-    let label = text(player.label())
+    let label = shell
+        .render
+        .text(player.label())
         .size(metrics.text_size)
         .wrapping(cosmic::iced::widget::text::Wrapping::None)
         .ellipsize(cosmic::iced::widget::text::Ellipsize::End(
@@ -170,8 +172,8 @@ pub(super) fn bar<'a>(
 
     let controls = container(
         row![
-            motion::button(details, foreground, false, 1.0),
-            motion::button(toggle, foreground, false, 1.0)
+            motion::button(shell.render, details, foreground, false, 1.0),
+            motion::button(shell.render, toggle, foreground, false, 1.0)
         ]
         .spacing(2)
         .align_y(Alignment::Center),
@@ -259,12 +261,18 @@ fn transport_sized<'a>(
         control = control.on_press(cosmic::Action::App(Message::MediaAction(shell.media.action(action))));
     }
 
-    motion::circular_button(control, foreground, fill, style.opacity, size)
+    motion::circular_button(shell.render, control, foreground, fill, style.opacity, size)
 }
 
 pub(super) fn hub<'a>(shell: &'a FereseShell, rows: MenuRows<'a>, style: MenuStyle) -> MenuRows<'a> {
     let Some(player) = &shell.media.snapshot.selected else {
-        return rows.push(text("No active player").size(14).class(theme::Text::Color(style.muted)));
+        return rows.push(
+            shell
+                .render
+                .text("No active player")
+                .size(14)
+                .class(theme::Text::Color(style.muted)),
+        );
     };
     let cover: Element<'_, cosmic::Action<Message>> =
         match shell.media.artwork.as_ref().and_then(|art| art.handle.as_ref()) {
@@ -292,14 +300,18 @@ pub(super) fn hub<'a>(shell: &'a FereseShell, rows: MenuRows<'a>, style: MenuSty
             .into(),
         };
     let mut info = column![
-        text(player.label())
+        shell
+            .render
+            .text(player.label())
             .size(14)
             .class(theme::Text::Color(style.primary))
             .width(Length::Fill)
             .ellipsize(cosmic::iced::widget::text::Ellipsize::End(
                 cosmic::iced::advanced::text::EllipsizeHeightLimit::Lines(1)
             )),
-        text(&player.artist)
+        shell
+            .render
+            .text(&player.artist)
             .size(12)
             .class(theme::Text::Color(style.muted))
             .width(Length::Fill)
@@ -375,7 +387,7 @@ pub(super) fn view<'a>(shell: &'a FereseShell, mut rows: MenuRows<'a>, style: Me
                     .width(64)
                     .height(64)
                     .content_fit(cosmic::iced::ContentFit::Contain)
-                    .border_radius(motion::radius(12.0))
+                    .border_radius(shell.render.radius(12.0))
                     .shape(BorderShape::Continuous)
                     .into(),
                 None => container(accented_icon(icons::MEDIA, 30, style.muted, color(style.theme.accent)))
@@ -384,14 +396,23 @@ pub(super) fn view<'a>(shell: &'a FereseShell, mut rows: MenuRows<'a>, style: Me
                     .into(),
             };
         let text_size = if player.label().len() >= 24 { 13 } else { 15 };
-        let mut info = column![text(player.label()).size(text_size).width(Length::Fill).ellipsize(
-            cosmic::iced::widget::text::Ellipsize::End(cosmic::iced::advanced::text::EllipsizeHeightLimit::Lines(2))
-        )]
+        let mut info = column![
+            shell
+                .render
+                .text(player.label())
+                .size(text_size)
+                .width(Length::Fill)
+                .ellipsize(cosmic::iced::widget::text::Ellipsize::End(
+                    cosmic::iced::advanced::text::EllipsizeHeightLimit::Lines(2)
+                ))
+        ]
         .spacing(4)
         .width(Length::Fill);
         if !player.artist.is_empty() {
             info = info.push(
-                text(&player.artist)
+                shell
+                    .render
+                    .text(&player.artist)
                     .size(12)
                     .width(Length::Fill)
                     .ellipsize(cosmic::iced::widget::text::Ellipsize::End(
@@ -402,7 +423,9 @@ pub(super) fn view<'a>(shell: &'a FereseShell, mut rows: MenuRows<'a>, style: Me
         }
         if !player.album.is_empty() {
             info = info.push(
-                text(&player.album)
+                shell
+                    .render
+                    .text(&player.album)
                     .size(11)
                     .width(Length::Fill)
                     .ellipsize(cosmic::iced::widget::text::Ellipsize::End(
@@ -467,12 +490,16 @@ pub(super) fn view<'a>(shell: &'a FereseShell, mut rows: MenuRows<'a>, style: Me
 
             progress = progress.push(
                 row![
-                    text(time_label(position))
+                    shell
+                        .render
+                        .text(time_label(position))
                         .font(cosmic::iced::Font::MONOSPACE)
                         .size(11)
                         .class(theme::Text::Color(style.muted))
                         .width(Length::Fill),
-                    text(time_label(length))
+                    shell
+                        .render
+                        .text(time_label(length))
                         .font(cosmic::iced::Font::MONOSPACE)
                         .size(11)
                         .class(theme::Text::Color(style.muted))
@@ -523,7 +550,8 @@ pub(super) fn view<'a>(shell: &'a FereseShell, mut rows: MenuRows<'a>, style: Me
             player.identity.clone()
         };
         rows = rows.push(motion::button(
-            button::custom(text(label).size(12))
+            shell.render,
+            button::custom(shell.render.text(label).size(12))
                 .padding([6, 8])
                 .on_press(cosmic::Action::App(Message::MediaChoose)),
             style.primary,
@@ -531,12 +559,19 @@ pub(super) fn view<'a>(shell: &'a FereseShell, mut rows: MenuRows<'a>, style: Me
             style.opacity,
         ));
     } else {
-        rows = rows.push(text("No active player").size(13).class(theme::Text::Color(style.muted)));
+        rows = rows.push(
+            shell
+                .render
+                .text("No active player")
+                .size(13)
+                .class(theme::Text::Color(style.muted)),
+        );
     }
 
     if shell.media.choosing || shell.media.snapshot.selected.is_none() {
         let mut choices = column::with_capacity(shell.media.snapshot.players.len() + 1).spacing(4);
         choices = choices.push(super::controls::menu_button(
+            shell.render,
             "Choose automatically",
             Message::MediaAction(json!({"action":"auto"})),
             style.primary,
@@ -557,12 +592,14 @@ pub(super) fn view<'a>(shell: &'a FereseShell, mut rows: MenuRows<'a>, style: Me
             choices = choices.push(
                 row![
                     super::controls::menu_button(
+                        shell.render,
                         label,
                         Message::MediaAction(pin),
                         if player.ignored { style.muted } else { style.primary },
                         style.opacity
                     ),
                     super::controls::menu_button(
+                        shell.render,
                         if player.ignored { "Show" } else { "Ignore" },
                         Message::MediaAction(ignore),
                         style.muted,
@@ -577,7 +614,7 @@ pub(super) fn view<'a>(shell: &'a FereseShell, mut rows: MenuRows<'a>, style: Me
     }
 
     if let Some(error) = &shell.media.error {
-        rows = rows.push(text(error).size(12).class(theme::Text::Color(style.muted)));
+        rows = rows.push(shell.render.text(error).size(12).class(theme::Text::Color(style.muted)));
     }
 
     rows

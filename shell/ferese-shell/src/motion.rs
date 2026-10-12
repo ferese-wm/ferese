@@ -10,29 +10,6 @@ pub type Regions = std::sync::Arc<std::sync::Mutex<Vec<[f32; 5]>>>;
 pub(crate) use ferese_animation::MotionSettings as Settings;
 use ferese_animation::{AnimatedValue, SpringConfig};
 
-static SETTINGS: std::sync::OnceLock<std::sync::RwLock<Settings>> = std::sync::OnceLock::new();
-static SHELL_RADIUS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(14.0_f32.to_bits());
-
-/// All shell shapes share one radius, capped to fit smaller controls.
-pub(crate) fn radius(limit: f32) -> f32 {
-    f32::from_bits(SHELL_RADIUS.load(std::sync::atomic::Ordering::Relaxed)).min(limit)
-}
-
-pub(crate) fn configure(settings: Settings, radius: f32) {
-    SHELL_RADIUS.store(radius.to_bits(), std::sync::atomic::Ordering::Relaxed);
-    *SETTINGS
-        .get_or_init(|| std::sync::RwLock::new(Settings::default()))
-        .write()
-        .unwrap() = settings;
-}
-
-pub(crate) fn settings() -> Settings {
-    *SETTINGS
-        .get_or_init(|| std::sync::RwLock::new(Settings::default()))
-        .read()
-        .unwrap()
-}
-
 pub(crate) struct PopupMotion {
     value: AnimatedValue,
     started: Option<std::time::Instant>,
@@ -129,18 +106,20 @@ impl PopupMotion {
 /// Animate paint only; the original button retains its layout, hit target,
 /// keyboard handling, pressed state, and accessibility identity.
 pub(crate) fn button<'a, M: Clone + 'a>(
+    render: crate::rendering::Rendering,
     button: cosmic::widget::button::Button<'a, M>,
     foreground: cosmic::iced::Color,
     selected: bool,
     opacity: f32,
 ) -> Element<'a, M> {
     let paint = move |progress: f32, pressed: bool| {
-        ferese_theme::controls::shell_button(foreground, selected, opacity, radius(14.), progress, pressed)
+        ferese_theme::controls::shell_button(foreground, selected, opacity, render.radius(14.), progress, pressed)
     };
-    painted_button(button, paint)
+    painted_button(render, button, paint)
 }
 
 pub(crate) fn circular_button<'a, M: Clone + 'a>(
+    render: crate::rendering::Rendering,
     button: cosmic::widget::button::Button<'a, M>,
     foreground: cosmic::iced::Color,
     fill: Option<cosmic::iced::Color>,
@@ -163,10 +142,11 @@ pub(crate) fn circular_button<'a, M: Clone + 'a>(
 
         style
     };
-    painted_button(button, paint)
+    painted_button(render, button, paint)
 }
 
 fn painted_button<'a, M: Clone + 'a>(
+    render: crate::rendering::Rendering,
     button: cosmic::widget::button::Button<'a, M>,
     paint: impl Fn(f32, bool) -> cosmic::widget::button::Style + Copy + 'static,
 ) -> Element<'a, M> {
@@ -184,10 +164,7 @@ fn painted_button<'a, M: Clone + 'a>(
     Element::new(Hover {
         content,
         progress,
-        duration: SETTINGS
-            .get()
-            .map_or_else(Settings::default, |settings| *settings.read().unwrap())
-            .duration(120.0),
+        duration: render.motion.duration(120.0),
     })
 }
 

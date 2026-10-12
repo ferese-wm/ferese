@@ -176,6 +176,7 @@ impl FereseShell {
             && let Some(network) = &self.status.network
         {
             rows = rows.push(toggle_row(
+                self.render,
                 "Wi-Fi",
                 network.enabled,
                 Action::Wifi(!network.enabled),
@@ -187,6 +188,7 @@ impl FereseShell {
             && let Some(audio) = &self.status.audio
         {
             rows = rows.push(toggle_row(
+                self.render,
                 "Mute",
                 audio.muted,
                 Action::Mute(!audio.muted),
@@ -200,14 +202,20 @@ impl FereseShell {
             Menu::Bluetooth => bluetooth::view(self, rows, style, true),
             Menu::Audio => audio::view(self, rows, style, false),
             Menu::Battery => battery::view(self, rows, style),
-            Menu::Calendar => rows.push(calendar::hub(self.calendar_offset, theme, opacity)),
+            Menu::Calendar => rows.push(calendar::hub(self.render, self.calendar_offset, theme, opacity)),
             Menu::Media => media::hub(self, rows, style),
             Menu::Notifications => {
                 let mut rows = notification_controls(self, rows, style, true);
                 if self.notifications.entries.is_empty() {
-                    rows = rows.push(text("No notifications").size(13).class(theme::Text::Color(style.muted)));
+                    rows = rows.push(
+                        self.render
+                            .text("No notifications")
+                            .size(13)
+                            .class(theme::Text::Color(style.muted)),
+                    );
                 } else {
                     rows = rows.push(menu_button(
+                        self.render,
                         "Clear notifications",
                         Message::ClearNotifications,
                         style.muted,
@@ -215,18 +223,28 @@ impl FereseShell {
                     ));
                     for notice in &self.notifications.entries {
                         rows = rows.push(control_card(
+                            self.render,
                             column![
                                 row![
-                                    text(notice.app.clone())
+                                    self.render
+                                        .text(notice.app.clone())
                                         .size(11)
                                         .class(theme::Text::Color(style.muted))
                                         .width(Length::Fill),
-                                    menu_button("×", Message::RemoveNotification(notice.id), style.muted, opacity)
+                                    menu_button(
+                                        self.render,
+                                        "×",
+                                        Message::RemoveNotification(notice.id),
+                                        style.muted,
+                                        opacity
+                                    )
                                 ],
-                                text(notice.title.clone())
+                                self.render
+                                    .text(notice.title.clone())
                                     .size(13)
                                     .class(theme::Text::Color(style.primary)),
-                                text(notice.body.clone())
+                                self.render
+                                    .text(notice.body.clone())
                                     .size(12)
                                     .class(theme::Text::Color(style.muted)),
                             ]
@@ -237,6 +255,7 @@ impl FereseShell {
                         ));
                         for (action, label) in &notice.actions {
                             rows = rows.push(menu_button(
+                                self.render,
                                 label,
                                 Message::InvokeNotification(notice.id, action.clone()),
                                 style.primary,
@@ -248,6 +267,7 @@ impl FereseShell {
                 rows
             }
             Menu::Recording => rows.push(menu_button(
+                self.render,
                 if self.recorder.busy() {
                     "Stop recording"
                 } else {
@@ -265,13 +285,14 @@ impl FereseShell {
         };
         if !kind.available(&self.status) {
             rows = rows.push(
-                text("Service unavailable")
+                self.render
+                    .text("Service unavailable")
                     .size(13)
                     .class(theme::Text::Color(style.muted)),
             );
         }
         if let Some(error) = self.status_error.as_ref().and_then(|error| kind.action_error(error)) {
-            rows = rows.push(text(error).size(12).class(theme::Text::Color(style.muted)));
+            rows = rows.push(self.render.text(error).size(12).class(theme::Text::Color(style.muted)));
         }
         container(rows)
             .width(Length::Fill)
@@ -284,7 +305,9 @@ impl FereseShell {
     }
 
     fn view_status_menu(&self) -> Element<'_, cosmic::Action<Message>> {
-        let Some(menu) = &self.menu else { return text("").into() };
+        let Some(menu) = &self.menu else {
+            return self.render.text("").into();
+        };
         motion::frame_driven(
             menu.motion.revision(),
             |now| self.view_status_menu_at(now),
@@ -308,7 +331,7 @@ impl FereseShell {
 
     fn view_status_menu_at(&self, now: Instant) -> Element<'_, cosmic::Action<Message>> {
         let Some(menu) = &self.menu else {
-            return text("").into();
+            return self.render.text("").into();
         };
         if menu.kind == Menu::Notifications && self.notifications.ready {
             return cosmic::widget::autosize::autosize(
@@ -339,9 +362,9 @@ impl FereseShell {
             .into(),
             color(theme.accent),
             p,
-            motion::radius(20.),
+            self.render.radius(20.),
         );
-        let mut heading = ferese_theme::menus::heading(badge, kind.title(), shell_font());
+        let mut heading = ferese_theme::menus::heading(badge, kind.title(), self.render.font);
         let style = MenuStyle {
             theme,
             primary,
@@ -364,14 +387,19 @@ impl FereseShell {
             Menu::Bluetooth => bluetooth::view(self, rows, style, false),
             Menu::Audio => audio::view(self, rows, style, false),
             Menu::Battery => battery::view(self, rows, style),
-            Menu::Calendar => rows.push(calendar::view(self.calendar_offset, theme, p)),
+            Menu::Calendar => rows.push(calendar::view(self.render, self.calendar_offset, theme, p)),
             Menu::Notifications => notification_controls(self, rows, style, false),
             Menu::Recording | Menu::Workspaces => rows,
             Menu::Overflow => self.view_panel_overflow(rows),
             Menu::Media => media::view(self, rows, style),
         };
         if kind != Menu::Calendar && !kind.available(&self.status) {
-            rows = rows.push(text("Service unavailable").size(13).class(theme::Text::Color(muted)));
+            rows = rows.push(
+                self.render
+                    .text("Service unavailable")
+                    .size(13)
+                    .class(theme::Text::Color(muted)),
+            );
         }
 
         if let Some(error) = self
@@ -379,7 +407,7 @@ impl FereseShell {
             .as_ref()
             .and_then(|error| menu.kind.action_error(error))
         {
-            rows = rows.push(text(error).size(12).class(theme::Text::Color(Color {
+            rows = rows.push(self.render.text(error).size(12).class(theme::Text::Color(Color {
                 a: p,
                 ..Color::from_rgb8(230, 172, 90)
             })));
@@ -444,9 +472,9 @@ fn notification_controls<'a>(
         opacity: p,
     } = style;
     if let Some(n) = &shell.status.notifications {
-        let toggle = toggle_row("Do Not Disturb", n.dnd, Action::Dnd(!n.dnd), theme, p);
+        let toggle = toggle_row(shell.render, "Do Not Disturb", n.dnd, Action::Dnd(!n.dnd), theme, p);
         rows = rows.push(if combined {
-            control_card(toggle, primary, p)
+            control_card(shell.render, toggle, primary, p)
         } else {
             toggle
         });
@@ -454,17 +482,20 @@ fn notification_controls<'a>(
         if !combined {
             rows = rows
                 .push(
-                    text(if n.count == 0 {
-                        "No notifications".to_owned()
-                    } else if n.count == 1 {
-                        "1 notification".to_owned()
-                    } else {
-                        format!("{} notifications", n.count)
-                    })
-                    .size(13)
-                    .class(theme::Text::Color(muted)),
+                    shell
+                        .render
+                        .text(if n.count == 0 {
+                            "No notifications".to_owned()
+                        } else if n.count == 1 {
+                            "1 notification".to_owned()
+                        } else {
+                            format!("{} notifications", n.count)
+                        })
+                        .size(13)
+                        .class(theme::Text::Color(muted)),
                 )
                 .push(menu_button(
+                    shell.render,
                     "Open notification center",
                     Message::Control(Action::Notifications),
                     primary,

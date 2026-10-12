@@ -5,7 +5,7 @@ use cosmic::{Element, theme};
 
 use super::Menu;
 use crate::status::Snapshot;
-use crate::{BarMetrics, FereseShell, Message, accented_icon, bar_content, color, motion, recording, text};
+use crate::{BarMetrics, FereseShell, Message, accented_icon, bar_content, color, motion, recording};
 
 impl FereseShell {
     pub(crate) fn view_media_item(
@@ -70,7 +70,8 @@ impl FereseShell {
             && let Some(elapsed) = self.recorder.elapsed()
         {
             content = content.push(
-                text(elapsed)
+                self.render
+                    .text(elapsed)
                     .size(metrics.text_size)
                     .class(theme::Text::Color(foreground)),
             );
@@ -81,7 +82,8 @@ impl FereseShell {
             && let Some(battery) = &self.status.battery
         {
             content = content.push(
-                text(format!("{}%", battery.percent))
+                self.render
+                    .text(format!("{}%", battery.percent))
                     .size(metrics.text_size)
                     .class(theme::Text::Color(foreground)),
             );
@@ -94,14 +96,14 @@ impl FereseShell {
                 .is_some_and(|n| n.count > 0 && !n.dnd)
         {
             content = content.push(
-                container(text(""))
+                container(self.render.text(""))
                     .width(4)
                     .height(4)
                     .class(theme::Container::custom(move |_| container::Style {
                         background: Some(Background::Color(foreground)),
                         border: Border {
                             shape: BorderShape::Continuous,
-                            radius: motion::radius(2.0).into(),
+                            radius: self.render.radius(2.0).into(),
                             ..Default::default()
                         },
                         ..Default::default()
@@ -138,7 +140,7 @@ impl FereseShell {
                     },
                 ))
             });
-        motion::button(control, foreground, selected, 1.0)
+        motion::button(self.render, control, foreground, selected, 1.0)
     }
 }
 

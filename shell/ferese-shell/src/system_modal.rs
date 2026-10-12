@@ -468,10 +468,10 @@ impl FereseShell {
 
     fn view_system_modal(&self, id: window::Id) -> Element<'_, cosmic::Action<Message>> {
         let Some(modal) = &self.system_modal else {
-            return text("").into();
+            return self.render.text("").into();
         };
         let Some(surface) = modal.surfaces.iter().find(|surface| surface.id == id) else {
-            return text("").into();
+            return self.render.text("").into();
         };
         motion::frame_driven(
             modal.motion.revision(),
@@ -496,10 +496,10 @@ impl FereseShell {
 
     fn view_system_modal_at(&self, id: window::Id, now: Instant) -> Element<'_, cosmic::Action<Message>> {
         let Some(modal) = &self.system_modal else {
-            return text("").into();
+            return self.render.text("").into();
         };
         let Some(surface) = modal.surfaces.iter().find(|surface| surface.id == id) else {
-            return text("").into();
+            return self.render.text("").into();
         };
         let progress = modal.motion.progress_at(now);
         let content: Element<'_, cosmic::Action<Message>> = if surface.primary {
@@ -510,8 +510,9 @@ impl FereseShell {
             let rows = match &modal.content {
                 Content::Power(action) => {
                     let mut rows = column![
-                        text(action.title()).size(17),
-                        text(action.description())
+                        self.render.text(action.title()).size(17),
+                        self.render
+                            .text(action.description())
                             .size(13)
                             .class(theme::Text::Color(palette.muted)),
                     ]
@@ -520,13 +521,14 @@ impl FereseShell {
                         && !inhibitors.reasons.is_empty()
                     {
                         rows = rows.push(
-                            text("Applications requested that this action be prevented:")
+                            self.render
+                                .text("Applications requested that this action be prevented:")
                                 .size(13)
                                 .class(theme::Text::Color(palette.muted)),
                         );
                         let items = inhibitors.reasons.iter().fold(
                             column::with_capacity(inhibitors.reasons.len()).spacing(6),
-                            |rows, reason| rows.push(text(reason).size(13)),
+                            |rows, reason| rows.push(self.render.text(reason).size(13)),
                         );
                         rows = rows
                             .push(container(cosmic::widget::scrollable(items).height(Length::Shrink)).max_height(160));
@@ -537,13 +539,13 @@ impl FereseShell {
                         action.label().to_owned()
                     };
                     if let Some(error) = &modal.error {
-                        rows = rows.push(text(error).size(13));
+                        rows = rows.push(self.render.text(error).size(13));
                     }
                     rows.push(
                         container(
                             row![
                                 Space::new().width(Length::Fill),
-                                ferese_theme::controls::text_button("Cancel", shell_font(), palette, false)
+                                ferese_theme::controls::text_button("Cancel", self.render.font, palette, false)
                                     .class(ferese_theme::controls::material_button_style_with_focus(
                                         palette,
                                         false,
@@ -552,7 +554,7 @@ impl FereseShell {
                                     ))
                                     .id("ferese-modal-cancel".into())
                                     .on_press(cosmic::Action::App(Message::CancelPower)),
-                                ferese_theme::controls::text_button(label, shell_font(), palette, true)
+                                ferese_theme::controls::text_button(label, self.render.font, palette, true)
                                     .class(ferese_theme::controls::button_style_with_focus(
                                         palette,
                                         true,
@@ -576,8 +578,11 @@ impl FereseShell {
                     for entry in entries {
                         bindings = bindings.push(
                             row![
-                                text(&entry.keys).size(13).width(Length::FillPortion(1)),
-                                text(&entry.description).size(13).width(Length::FillPortion(1)),
+                                self.render.text(&entry.keys).size(13).width(Length::FillPortion(1)),
+                                self.render
+                                    .text(&entry.description)
+                                    .size(13)
+                                    .width(Length::FillPortion(1)),
                             ]
                             .spacing(16),
                         );
@@ -592,16 +597,19 @@ impl FereseShell {
                         .saturating_sub(360)
                         .clamp(40, 400) as f32;
                     column![
-                        text("Welcome to Ferese").size(23),
-                        ferese_theme::menus::section_label("Your active shortcuts", shell_font(), palette.muted,)
+                        self.render.text("Welcome to Ferese").size(23),
+                        ferese_theme::menus::section_label("Your active shortcuts", self.render.font, palette.muted,)
                             .size(14),
                         container(cosmic::widget::scrollable(bindings).height(Length::Shrink)).max_height(height),
-                        text("Disable this guide in Settings → Shortcuts. It appears at each login until disabled.")
+                        self.render
+                            .text(
+                                "Disable this guide in Settings → Shortcuts. It appears at each login until disabled."
+                            )
                             .size(12)
                             .class(theme::Text::Color(palette.muted)),
                         container(row![
                             Space::new().width(Length::Fill),
-                            ferese_theme::controls::text_button("Got it", shell_font(), palette, true,)
+                            ferese_theme::controls::text_button("Got it", self.render.font, palette, true,)
                                 .class(ferese_theme::controls::button_style_with_focus(
                                     palette,
                                     true,
@@ -641,7 +649,7 @@ impl FereseShell {
                 }))
                 .into()
         } else {
-            text("").into()
+            self.render.text("").into()
         };
         let content = if surface.primary {
             motion::animated(

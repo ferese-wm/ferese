@@ -6,9 +6,9 @@ use cosmic::widget::{button, container, row};
 use cosmic::{Element, theme};
 use ferese_panel::{ItemKind, morph::Mode};
 
-use super::Peek;
+use super::Event;
 use crate::control::WorkspaceSnapshot;
-use crate::{FereseShell, Message, color_with_opacity, motion, text};
+use crate::{FereseShell, Message, color_with_opacity, motion};
 
 const SLOT: f32 = 12.;
 const ACTIVE_EXTRA: f32 = 12.;
@@ -155,14 +155,10 @@ impl FereseShell {
                     return None;
                 }
                 runtime.workspace_width = width;
-                matches!(runtime.hub.mode(), Mode::Idle).then_some((entry.bar, runtime.hub.mode(), runtime.menu))
+                matches!(runtime.hub.mode(), Mode::Idle).then_some(entry.bar)
             })
             .collect();
-        Task::batch(
-            changes
-                .into_iter()
-                .map(|(id, mode, menu)| self.set_hub_mode(id, mode, menu)),
-        )
+        Task::batch(changes.into_iter().map(|id| self.transition_hub(id, Event::Resize)))
     }
 
     pub(crate) fn open_hub_overview(&mut self, id: window::Id) -> Task<Message> {
@@ -204,22 +200,8 @@ impl FereseShell {
             return Task::none();
         };
         let revision = Instant::now();
-        let first = {
-            let mut runtime = runtime.borrow_mut();
-            let first = runtime.workspace_feedback.is_none();
-            if first {
-                runtime.previous_peek = runtime.peek;
-                runtime.previous_peek_width = runtime.peek_width;
-                runtime.peek = Peek::Workspaces;
-                runtime.peek_width = 260.;
-                if runtime.hub.mode() == Mode::Peek {
-                    runtime.hub.replace_content();
-                }
-            }
-            runtime.workspace_feedback = Some(revision);
-            first
-        };
-        let policy = motion::settings();
+        let first = runtime.borrow().transient.workspace_token().is_none();
+        let policy = self.render.motion;
         let fade = if first && policy.motion_enabled() {
             0.25 / policy.speed
         } else {
@@ -227,7 +209,7 @@ impl FereseShell {
         };
         let timeout = Duration::from_secs_f64(1.2 + fade);
         Task::batch([
-            self.set_hub_mode(id, Mode::Peek, None),
+            self.transition_hub(id, Event::Workspaces(revision)),
             Task::perform(
                 async move {
                     tokio::time::sleep(timeout).await;
@@ -238,30 +220,7 @@ impl FereseShell {
     }
 
     pub(crate) fn hub_workspace_feedback_expired(&mut self, id: window::Id, revision: Instant) -> Task<Message> {
-        let Some(runtime) = self
-            .outputs
-            .iter()
-            .find(|entry| entry.bar == id)
-            .and_then(|entry| entry.runtime.hub.as_ref())
-        else {
-            return Task::none();
-        };
-        let hovered = {
-            let mut runtime = runtime.borrow_mut();
-            if runtime.workspace_feedback != Some(revision) || runtime.hub.mode() != Mode::Peek {
-                return Task::none();
-            }
-            runtime.workspace_feedback = None;
-            let previous = runtime.previous_peek;
-            runtime.previous_peek = Peek::Workspaces;
-            runtime.peek = previous;
-            runtime.peek_width = runtime.previous_peek_width;
-            if runtime.hovered {
-                runtime.hub.replace_content();
-            }
-            runtime.hovered
-        };
-        self.set_hub_mode(id, if hovered { Mode::Peek } else { Mode::Idle }, None)
+        self.transition_hub(id, Event::WorkspacesExpired(revision))
     }
 
     pub(crate) fn scroll_hub_workspaces(&mut self, id: window::Id, delta: ScrollDelta) -> Task<Message> {
@@ -385,7 +344,8 @@ impl FereseShell {
             }
             dots = dots.push(
                 container(
-                    text(format!("+{}", selection.hidden))
+                    self.render
+                        .text(format!("+{}", selection.hidden))
                         .size(11)
                         .class(theme::Text::Color(if hidden_urgent {
                             palette.error.scale_alpha(opacity)

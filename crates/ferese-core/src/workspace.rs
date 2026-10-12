@@ -26,7 +26,7 @@ pub enum LayoutMode {
     Tree,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum WorkspaceLayout {
     Scrolling(ScrollingLayout),
     Tree(LayoutTree),

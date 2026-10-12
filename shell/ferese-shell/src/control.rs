@@ -409,8 +409,8 @@ impl Dispatch<FereseShellV1, ()> for ControlState {
                     && let Some(window) = state
                         .pending
                         .windows
-                        .iter_mut()
-                        .find(|window| window.id == join_id(window_hi, window_lo))
+                        .last_mut()
+                        .filter(|window| window.id == join_id(window_hi, window_lo))
                 {
                     window.geometry = Some([x, y, width, height]);
                 }
@@ -646,6 +646,58 @@ mod tests {
             control.poll().snapshot.unwrap().windows[0].geometry,
             Some([-640., 20., 620., 480.])
         );
+    }
+
+    #[test]
+    fn geometry_stream_uses_only_the_preceding_window() {
+        let (control, mut state, queue, _peer) = control_fixture();
+        dispatch_event(
+            &control,
+            &mut state,
+            &queue,
+            ferese_shell_v1::Event::SnapshotBegin { serial: 9 },
+        );
+        for id in 1..=512 {
+            dispatch_event(&control, &mut state, &queue, window_event(id, 0));
+            let (window_hi, window_lo) = split_id(id);
+            dispatch_event(
+                &control,
+                &mut state,
+                &queue,
+                ferese_shell_v1::Event::WindowGeometry {
+                    window_hi,
+                    window_lo,
+                    x: id as f64,
+                    y: 0.,
+                    width: 50.,
+                    height: 40.,
+                },
+            );
+        }
+        // A malformed late event must not overwrite an earlier window.
+        dispatch_event(
+            &control,
+            &mut state,
+            &queue,
+            ferese_shell_v1::Event::WindowGeometry {
+                window_hi: 0,
+                window_lo: 1,
+                x: -1.,
+                y: 0.,
+                width: 50.,
+                height: 40.,
+            },
+        );
+        dispatch_event(
+            &control,
+            &mut state,
+            &queue,
+            ferese_shell_v1::Event::SnapshotEnd { serial: 9 },
+        );
+        let snapshot = control.poll().snapshot.unwrap();
+        for window in snapshot.windows {
+            assert_eq!(window.geometry, Some([window.id as f64, 0., 50., 40.]));
+        }
     }
 
     #[test]

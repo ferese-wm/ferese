@@ -2,11 +2,10 @@ use cosmic::app::Task;
 use cosmic::iced::{Alignment, Length, window};
 use cosmic::widget::{button, container, row};
 use cosmic::{Element, theme};
-use ferese_panel::morph::Mode;
 use ferese_theme::icons;
 
-use super::Peek;
-use crate::{FereseShell, Message, recording, status_ui, text};
+use super::{Event, Peek};
+use crate::{FereseShell, Message, recording, status_ui};
 
 impl FereseShell {
     pub(super) fn hub_low_battery(&self) -> Option<u8> {
@@ -70,37 +69,14 @@ impl FereseShell {
         let changes: Vec<_> = self
             .outputs
             .iter()
-            .filter_map(|entry| {
-                let (peek, width) = self.hub_peek_content(entry.bar);
-                let mut runtime = entry.runtime.hub.as_ref()?.borrow_mut();
-                let changed = runtime.priority != priority;
-                let mode = runtime.hub.mode();
-                let resized = priority.is_some() && mode == Mode::Peek && runtime.peek_width != width;
-                if !changed && !resized {
-                    return None;
-                }
-                runtime.priority = priority;
-                if mode.expanded() {
-                    return None;
-                }
-                if mode == Mode::Peek || (mode == Mode::Toast && priority.is_some()) {
-                    runtime.workspace_feedback = None;
-                    if changed {
-                        runtime.previous_peek = runtime.peek;
-                    }
-                    runtime.peek = peek;
-                    runtime.peek_width = width;
-                    if changed && mode == Mode::Peek {
-                        runtime.hub.replace_content();
-                    }
-                    let target = if runtime.hovered { Mode::Peek } else { Mode::Idle };
-                    Some((entry.bar, target))
-                } else {
-                    None
-                }
-            })
+            .filter(|entry| entry.runtime.hub.is_some())
+            .map(|entry| (entry.bar, self.hub_peek_content(entry.bar)))
             .collect();
-        Task::batch(changes.into_iter().map(|(id, mode)| self.set_hub_mode(id, mode, None)))
+        Task::batch(
+            changes
+                .into_iter()
+                .map(|(id, peek)| self.transition_hub(id, Event::Activity { priority, peek })),
+        )
     }
 
     pub(super) fn hub_activity_strip(
@@ -135,7 +111,8 @@ impl FereseShell {
             );
             return row![
                 icons::tinted(icons::BATTERY_25, 18, warning),
-                text(label)
+                self.render
+                    .text(label)
                     .size(13)
                     .class(theme::Text::Color(foreground))
                     .width(width)
@@ -160,7 +137,8 @@ impl FereseShell {
         if let Some(elapsed) = elapsed {
             if expanded {
                 strip = strip.push(
-                    text("Recording")
+                    self.render
+                        .text("Recording")
                         .size(13)
                         .class(theme::Text::Color(foreground))
                         .width(Length::Fill),
@@ -168,20 +146,23 @@ impl FereseShell {
             }
             // Reserve the same width for every second, regardless of digit advances.
             let timer_width = elapsed.len().max(5) as f32 * 8.;
-            strip = strip
-                .push(container(text(elapsed).size(13).class(theme::Text::Color(foreground))).center_x(timer_width));
+            strip = strip.push(
+                container(self.render.text(elapsed).size(13).class(theme::Text::Color(foreground)))
+                    .center_x(timer_width),
+            );
         } else {
             strip = strip.push(
-                text(if saving && !expanded {
-                    "Saving…"
-                } else if saving {
-                    "Saving recording…"
-                } else {
-                    "Recording ended"
-                })
-                .size(13)
-                .class(theme::Text::Color(foreground))
-                .width(width),
+                self.render
+                    .text(if saving && !expanded {
+                        "Saving…"
+                    } else if saving {
+                        "Saving recording…"
+                    } else {
+                        "Recording ended"
+                    })
+                    .size(13)
+                    .class(theme::Text::Color(foreground))
+                    .width(width),
             );
         }
         if let Some(percent) = self.hub_low_battery() {
@@ -193,7 +174,10 @@ impl FereseShell {
                 button::custom(
                     row![
                         icons::tinted(icons::BATTERY_25, 16, warning),
-                        text(format!("{percent}%")).size(12).class(theme::Text::Color(warning))
+                        self.render
+                            .text(format!("{percent}%"))
+                            .size(12)
+                            .class(theme::Text::Color(warning))
                     ]
                     .spacing(4)
                     .align_y(Alignment::Center),

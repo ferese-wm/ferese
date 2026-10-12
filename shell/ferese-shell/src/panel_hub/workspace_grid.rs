@@ -1,4 +1,5 @@
 mod drag;
+mod thumbnail;
 
 use cosmic::app::Task;
 use cosmic::iced::advanced::widget::{Id, operation};
@@ -7,7 +8,7 @@ use cosmic::widget::{button, column, container, mouse_area, row, scrollable};
 use cosmic::{Element, theme};
 
 use crate::control::{WindowSnapshot, WorkspaceSnapshot};
-use crate::{FereseShell, Message, motion, text};
+use crate::{FereseShell, Message, motion};
 
 const TILE_WIDTH: f32 = 56.;
 const TILE_HEIGHT: f32 = 40.;
@@ -107,29 +108,6 @@ fn mini_rects(windows: &[&WindowSnapshot]) -> Vec<(u64, cosmic::iced::Rectangle)
             )
         })
         .collect()
-}
-
-fn miniature(windows: &[&WindowSnapshot], color: cosmic::iced::Color) -> cosmic::widget::Svg<'static, cosmic::Theme> {
-    let mut svg = String::from("<svg xmlns='http://www.w3.org/2000/svg' width='44' height='17' viewBox='0 0 44 17'>");
-    for (_, r) in mini_rects(windows) {
-        use std::fmt::Write;
-        let _ = write!(
-            svg,
-            "<rect x='{}' y='{}' width='{}' height='{}' rx='0.8' fill='rgb({},{},{})' fill-opacity='{}'/>",
-            r.x,
-            r.y,
-            r.width,
-            r.height,
-            (color.r * 255.) as u8,
-            (color.g * 255.) as u8,
-            (color.b * 255.) as u8,
-            color.a
-        );
-    }
-    svg.push_str("</svg>");
-    cosmic::widget::svg(cosmic::widget::svg::Handle::from_memory(svg.into_bytes()))
-        .width(44)
-        .height(17)
 }
 
 impl FereseShell {
@@ -323,6 +301,7 @@ impl FereseShell {
                     .iter()
                     .filter(|w| w.workspace == workspace_id)
                     .collect();
+                let miniatures: thumbnail::Geometry = mini_rects(&windows).into();
                 let index_in_grid = targets.len();
                 let origin = cosmic::iced::Vector::new(
                     (index_in_grid % cols) as f32 * (TILE_WIDTH + GAP),
@@ -334,8 +313,9 @@ impl FereseShell {
                         cosmic::iced::Point::ORIGIN + origin,
                         cosmic::iced::Size::new(TILE_WIDTH.min(width), TILE_HEIGHT),
                     ),
-                    windows: mini_rects(&windows)
-                        .into_iter()
+                    windows: miniatures
+                        .iter()
+                        .copied()
                         .map(|(id, rect)| (id, rect + origin + cosmic::iced::Vector::new(6., 19.)))
                         .collect(),
                 });
@@ -367,14 +347,15 @@ impl FereseShell {
                             ..Default::default()
                         };
                         let mut heading = row![
-                            text(index.to_string())
+                            self.render
+                                .text(index.to_string())
                                 .size(11)
                                 .class(theme::Text::Color(foreground))
                                 .width(Length::Fill)
                         ]
                         .align_y(Alignment::Center);
                         if urgent {
-                            let pulse = if motion::settings().motion_enabled() {
+                            let pulse = if self.render.motion.motion_enabled() {
                                 0.65 + 0.35
                                     * (now
                                         .saturating_duration_since(transition.revision().unwrap_or(now))
@@ -395,8 +376,11 @@ impl FereseShell {
                                 }),
                             ));
                         }
-                        let content =
-                            column![container(heading).height(14), miniature(&windows, foreground)].spacing(1);
+                        let content = column![
+                            container(heading).height(14),
+                            thumbnail::view(miniatures.clone(), foreground)
+                        ]
+                        .spacing(1);
                         mouse_area(
                             button::custom(content)
                                 .id(tile_id(id, workspace_id))
@@ -423,7 +407,7 @@ impl FereseShell {
                         .on_exit(cosmic::Action::App(Message::HubWorkspaceHover(id, None)))
                         .into()
                     },
-                    move |now| transition.active(now) || (urgent && motion::settings().motion_enabled()),
+                    move |now| transition.active(now) || (urgent && self.render.motion.motion_enabled()),
                     |_| {},
                     |_| None,
                     None,
@@ -440,7 +424,8 @@ impl FereseShell {
                         .width(0)
                         .scroller_width(0)
                 )),
-            text(label)
+            self.render
+                .text(label)
                 .size(12)
                 .class(theme::Text::Color(palette.muted.scale_alpha(opacity)))
                 .width(Length::Fill)

@@ -139,7 +139,7 @@ impl fmt::Display for LayoutError {
 
 impl Error for LayoutError {}
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct LayoutTree {
     root: Option<NodeId>,
     nodes: HashMap<NodeId, Node>,

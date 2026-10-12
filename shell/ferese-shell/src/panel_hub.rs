@@ -11,6 +11,8 @@ mod activity;
 mod content_frame;
 mod equalizer;
 mod scroll;
+mod transition;
+use transition::{Event, Transient};
 mod workspace_grid;
 mod workspaces;
 use cosmic::{Element, theme};
@@ -18,7 +20,7 @@ use ferese_panel::morph::{Content, Hub, Mode, Sample};
 use ferese_panel::{Edge, ItemKind, Panel, PanelStyle};
 use ferese_theme::icons;
 
-use crate::{FereseShell, Message, color_with_opacity, motion, status_ui, text};
+use crate::{FereseShell, Message, color_with_opacity, motion, status_ui};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Peek {
@@ -36,23 +38,28 @@ struct ControlAction {
     menu: Option<status_ui::Menu>,
 }
 
+#[derive(Clone, Copy)]
+struct PreviousContent {
+    menu: Option<status_ui::Menu>,
+    peek: Peek,
+    toast: Option<u32>,
+    size: [f64; 2],
+}
+
 pub(super) struct Runtime {
     pub(super) hub: Hub,
     pub(super) menu: Option<status_ui::Menu>,
-    previous_menu: Option<status_ui::Menu>,
-    previous_content_size: [f64; 2],
-    toast: Option<u32>,
+    previous: PreviousContent,
+    transient: Transient,
     pub(super) allocation: [u32; 2],
     minimum_allocation: [u32; 2],
     fillet_space: u32,
     pub(super) revision: Instant,
     sampled: Instant,
+    motion: motion::Settings,
     last_menu: status_ui::Menu,
     priority: Option<Peek>,
     peek: Peek,
-    previous_peek: Peek,
-    previous_peek_width: f64,
-    workspace_feedback: Option<Instant>,
     observed_workspace: Option<u64>,
     workspace_hover: Option<u64>,
     workspace_selected: Option<u64>,
@@ -85,17 +92,19 @@ impl Runtime {
             fillet_space,
             hub,
             menu: None,
-            previous_menu: None,
-            previous_content_size: [panel.morph.idle_width, f64::from(panel.resolved_geometry().height)],
-            toast: None,
+            previous: PreviousContent {
+                menu: None,
+                peek: Peek::Date,
+                toast: None,
+                size: [panel.morph.idle_width, f64::from(panel.resolved_geometry().height)],
+            },
+            transient: Transient::None,
             revision: now,
             sampled: now,
+            motion: Default::default(),
             last_menu: status_ui::Menu::Workspaces,
             priority: None,
             peek: Peek::Date,
-            previous_peek: Peek::Date,
-            previous_peek_width: 200.,
-            workspace_feedback: None,
             observed_workspace: None,
             workspace_hover: None,
             workspace_selected: None,
@@ -111,7 +120,7 @@ impl Runtime {
     }
 
     fn sample(&mut self, now: Instant) -> Sample {
-        let policy = motion::settings();
+        let policy = self.motion;
         self.hub.advance(
             now.saturating_duration_since(self.sampled).mul_f64(policy.speed),
             !policy.motion_enabled(),
@@ -124,16 +133,7 @@ impl Runtime {
         let now = Instant::now();
         let shape_available = [(available[0] - f64::from(self.fillet_space)).max(24.), available[1]];
         self.available = shape_available;
-        if mode != Mode::Peek && self.workspace_feedback.take().is_some() {
-            std::mem::swap(&mut self.previous_peek, &mut self.peek);
-            self.peek_width = self.previous_peek_width;
-        }
-        let before = self.sample(now);
-        if before.opacity >= before.previous_opacity {
-            self.previous_menu = self.menu;
-            self.previous_content_size = self.hub.target_size();
-        }
-        let replace_content = self.hub.mode() == mode && self.menu != menu;
+        self.sample(now);
         self.menu = menu;
         if mode == Mode::Idle {
             self.hub.retarget_idle(
@@ -148,9 +148,6 @@ impl Runtime {
             self.hub.retarget(mode, shape_available)
         }
         .expect("bounded hub area");
-        if replace_content {
-            self.hub.replace_content();
-        }
         let mut target = self.hub.allocation_size().map(|n| n.ceil() as u32);
         target[0] = target[0]
             .saturating_add(self.fillet_space)
@@ -191,50 +188,20 @@ impl FereseShell {
         if self.bar_hidden(id) {
             return Task::none();
         }
-        if let Some(runtime) = self
-            .outputs
-            .iter()
-            .find(|entry| entry.bar == id)
-            .and_then(|entry| entry.runtime.hub.as_ref())
-        {
-            runtime.borrow_mut().hovered = entered;
-        }
-        match self.hub_mode(id) {
-            Some(Mode::Idle) if entered && self.panel_for_bar(id).morph.peek_on_hover => {
-                let (peek, width) = self.hub_peek_content(id);
-                if let Some(runtime) = self
-                    .outputs
-                    .iter()
-                    .find(|entry| entry.bar == id)
-                    .and_then(|entry| entry.runtime.hub.as_ref())
-                {
-                    let mut runtime = runtime.borrow_mut();
-                    runtime.previous_peek = runtime.peek;
-                    runtime.peek = peek;
-                    runtime.priority = self.hub_priority();
-                    runtime.peek_width = width;
-                }
-                self.set_hub_mode(id, Mode::Peek, None)
-            }
-            Some(Mode::Peek) if !entered => self.set_hub_mode(id, Mode::Idle, None),
-            _ => Task::none(),
-        }
+        self.transition_hub(
+            id,
+            Event::Hover {
+                entered,
+                enabled: self.panel_for_bar(id).morph.peek_on_hover,
+                peek: self.hub_peek_content(id),
+                priority: self.hub_priority(),
+            },
+        )
     }
 
     pub(super) fn open_hub(&mut self, id: window::Id, kind: status_ui::Menu) -> Task<Message> {
         if self.bar_hidden(id) || self.hub_mode(id).is_none() {
             return Task::none();
-        }
-        if let Some(runtime) = self
-            .outputs
-            .iter()
-            .find(|entry| entry.bar == id)
-            .and_then(|entry| entry.runtime.hub.as_ref())
-        {
-            let mut runtime = runtime.borrow_mut();
-            runtime.last_menu = kind;
-            runtime.workspace_hover = None;
-            runtime.workspace_selected = None;
         }
         if kind == status_ui::Menu::Notifications {
             for notice in &mut self.notifications.entries {
@@ -253,7 +220,7 @@ impl FereseShell {
             self.media.error = None;
         }
         let close = self.destroy_menu();
-        let open = self.set_hub_mode(id, Mode::Expanded(content(kind)), Some(kind));
+        let open = self.transition_hub(id, Event::Open(kind));
         Task::batch([close, open])
     }
 
@@ -288,22 +255,14 @@ impl FereseShell {
         {
             return Task::none();
         }
-        let open = self.set_hub_mode(id, Mode::Toast, None);
-        let revision = self
-            .outputs
-            .iter()
-            .find(|entry| entry.bar == id)
-            .and_then(|entry| entry.runtime.hub.as_ref())
-            .unwrap()
-            .borrow()
-            .revision;
-        self.outputs
-            .iter()
-            .find(|entry| entry.bar == id)
-            .and_then(|entry| entry.runtime.hub.as_ref())
-            .unwrap()
-            .borrow_mut()
-            .toast = Some(notice);
+        let revision = Instant::now();
+        let open = self.transition_hub(
+            id,
+            Event::Toast {
+                notice,
+                token: revision,
+            },
+        );
         let timeout = std::time::Duration::from_millis(u64::from(self.config.notifications.timeout_ms));
         Task::batch([
             open,
@@ -323,7 +282,7 @@ impl FereseShell {
             .filter_map(|entry| {
                 let hub = entry.runtime.hub.as_ref()?.borrow();
                 (hub.hub.mode() == Mode::Toast
-                    && hub.toast.is_some_and(|id| {
+                    && hub.transient.toast().is_some_and(|id| {
                         !self
                             .notifications
                             .entries
@@ -337,23 +296,19 @@ impl FereseShell {
     }
 
     pub(super) fn hub_toast_expired(&mut self, id: window::Id, revision: Instant) -> Task<Message> {
-        let current = self
-            .outputs
-            .iter()
-            .find(|entry| entry.bar == id)
-            .and_then(|entry| entry.runtime.hub.as_ref())
-            .is_some_and(|hub| {
-                let hub = hub.borrow();
-                hub.revision == revision && hub.hub.mode() == Mode::Toast
-            });
-        if current { self.close_hub(id) } else { Task::none() }
+        self.transition_hub(id, Event::ToastExpired(revision))
     }
 
     pub(super) fn close_hub(&mut self, id: window::Id) -> Task<Message> {
-        self.set_hub_mode(id, Mode::Idle, None)
+        self.transition_hub(id, Event::Close)
     }
 
-    pub(super) fn set_hub_mode(&mut self, id: window::Id, mode: Mode, menu: Option<status_ui::Menu>) -> Task<Message> {
+    #[cfg(test)]
+    fn set_hub_mode(&mut self, id: window::Id, mode: Mode, menu: Option<status_ui::Menu>) -> Task<Message> {
+        self.transition_hub(id, Event::Present(mode, menu))
+    }
+
+    fn transition_hub(&mut self, id: window::Id, event: Event) -> Task<Message> {
         let workspace_width = self.hub_workspace_width(id);
         let panel = self.panel_for_bar(id);
         let geometry = panel.resolved_geometry();
@@ -368,16 +323,19 @@ impl FereseShell {
             (f64::from(width) - 2. * f64::from(geometry.side_margins)).max(24.),
             (f64::from(height) - f64::from(geometry.edge_margin)).max(24.),
         ];
-        let resize = {
+        let (resize, mode) = {
             let mut hub = hub.borrow_mut();
+            hub.motion = self.render.motion;
             let before = hub.allocation;
             hub.workspace_width = if workspace_width > 0. {
                 workspace_width + 10.
             } else {
                 0.
             };
-            hub.retarget(mode, available, menu);
-            (before != hub.allocation).then_some(hub.allocation)
+            if !hub.transition(event, available) {
+                return Task::none();
+            }
+            ((before != hub.allocation).then_some(hub.allocation), hub.hub.mode())
         };
         Task::batch([
             resize.map_or_else(Task::none, |size| set_size(id, Some(size[0]), Some(size[1]))),
@@ -422,6 +380,7 @@ impl FereseShell {
     pub(super) fn view_hub(&self, id: window::Id) -> Element<'_, cosmic::Action<Message>> {
         let entry = self.outputs.iter().find(|entry| entry.bar == id).expect("panel output");
         let runtime = entry.runtime.hub.as_ref().expect("Morph runtime");
+        runtime.borrow_mut().motion = self.render.motion;
         let revision = runtime.borrow().revision;
         let mode = runtime.borrow().hub.mode();
         let workspace_feedback = mode == Mode::Peek && runtime.borrow().peek == Peek::Workspaces;
@@ -484,7 +443,7 @@ impl FereseShell {
             move |now| {
                 let (sample, menu, previous_menu) = {
                     let mut runtime = runtime.borrow_mut();
-                    (runtime.sample(now), runtime.menu, runtime.previous_menu)
+                    (runtime.sample(now), runtime.menu, runtime.previous.menu)
                 };
                 self.view_hub_at(id, sample, menu, previous_menu)
             },
@@ -508,7 +467,7 @@ impl FereseShell {
         let bounds = sample.geometry.bounds;
         let (target_size, previous_size) = {
             let runtime = entry.runtime.hub.as_ref().expect("Morph runtime").borrow();
-            (runtime.hub.target_size(), runtime.previous_content_size)
+            (runtime.hub.target_size(), runtime.previous.size)
         };
         let mut layers = cosmic::iced::widget::Stack::new();
         if sample.previous_opacity > 0. {
@@ -622,7 +581,7 @@ impl FereseShell {
                     .map_or(Peek::Date, |runtime| {
                         let runtime = runtime.borrow();
                         if !interactive && !intrinsic {
-                            runtime.previous_peek
+                            runtime.previous.peek
                         } else {
                             runtime.peek
                         }
@@ -640,7 +599,14 @@ impl FereseShell {
                         .iter()
                         .find(|entry| entry.bar == id)
                         .and_then(|entry| entry.runtime.hub.as_ref())
-                        .and_then(|hub| hub.borrow().toast)
+                        .and_then(|hub| {
+                            let hub = hub.borrow();
+                            if !interactive && !intrinsic {
+                                hub.previous.toast
+                            } else {
+                                hub.transient.toast()
+                            }
+                        })
                         .and_then(|id| self.notifications.entries.iter().find(|notice| notice.id == id))
                         .map_or_else(|| time.to_owned(), |notice| notice.title.clone())
                 } else if mode == Mode::Peek {
@@ -710,11 +676,14 @@ impl FereseShell {
                         .and_then(|entry| entry.runtime.hub.as_ref())
                         .map_or(status_ui::Menu::Media, |runtime| runtime.borrow().last_menu)
                 };
-                let label = text(label).size(13).class(theme::Text::Color(primary)).ellipsize(
-                    cosmic::iced::widget::text::Ellipsize::End(
+                let label = self
+                    .render
+                    .text(label)
+                    .size(13)
+                    .class(theme::Text::Color(primary))
+                    .ellipsize(cosmic::iced::widget::text::Ellipsize::End(
                         cosmic::iced::advanced::text::EllipsizeHeightLimit::Lines(1),
-                    ),
-                );
+                    ));
                 let body: Element<'_, cosmic::Action<Message>> = match mode {
                     _ if activity.is_some() => {
                         self.hub_activity_strip(id, activity.unwrap(), mode == Mode::Peek, intrinsic, opacity)
@@ -849,6 +818,7 @@ impl FereseShell {
                         label.to_owned()
                     };
                     tabs = tabs.push(motion::button(
+                        self.render,
                         button::custom(icons::tinted(icon, 18, foreground).opacity(opacity))
                             .name(accessible_name)
                             .padding([5, 3])
@@ -873,6 +843,7 @@ impl FereseShell {
                 let tabs = row::with_capacity(2).spacing(2).align_y(Alignment::Center);
                 let mut tabs = tabs.push(navigation);
                 tabs = tabs.push(motion::button(
+                    self.render,
                     button::custom(icons::tinted(icons::CLOSE, 18, icon_primary).opacity(opacity))
                         .name("Collapse panel hub")
                         .padding([5, 3])
@@ -951,7 +922,7 @@ impl FereseShell {
             .selected
             .as_ref()
             .is_some_and(|player| player.status == ferese_ipc::media::Playback::Playing);
-        let animate = playing && motion::settings().motion_enabled();
+        let animate = playing && self.render.motion.motion_enabled();
         let started = self
             .outputs
             .iter()
@@ -971,6 +942,7 @@ impl FereseShell {
         let action = self.hub_control_action(id, kind).expect("shortcut action");
         let primary = crate::color(self.config.theme.for_bar().text_primary);
         motion::button(
+            self.render,
             button::custom(icons::tinted(action.icon, 18, primary).opacity(opacity))
                 .name(action.label)
                 .padding([5, 3])
@@ -1087,6 +1059,7 @@ impl FereseShell {
                 icon, label, message, ..
             } = action;
             tiles.push(motion::button(
+                self.render,
                 button::custom(
                     row![
                         container(
@@ -1094,7 +1067,8 @@ impl FereseShell {
                         )
                         .center_x(30)
                         .center_y(28),
-                        text(label)
+                        self.render
+                            .text(label)
                             .size(12)
                             .class(theme::Text::Color(primary))
                             .height(28)
@@ -1145,6 +1119,136 @@ mod tests {
             .reset(&shell.config.panels[0], &shell.snapshot, Some("test"));
         shell.clock = "11 oct, 10:09 am".into();
         shell
+    }
+
+    #[test]
+    fn shell_rendering_configuration_is_instance_owned() {
+        let mut animated = shell();
+        let mut snap = shell();
+        let original = animated.render;
+        let mut config = snap.config.clone();
+        config.font_family = Some("monospace".into());
+        config.theme.material_radius = 3.;
+        config.animations.reduced_motion = true;
+        drop(snap.apply_config(config));
+        assert_eq!(animated.render.font, original.font);
+        assert_ne!(snap.render.font, animated.render.font);
+        assert_eq!(animated.render.radius(20.), original.radius(20.));
+        assert_eq!(snap.render.radius(20.), 3.);
+        for instance in [&mut animated, &mut snap] {
+            drop(instance.open_hub(instance.outputs[0].bar, status_ui::Menu::Calendar));
+        }
+        let mut a = animated.outputs[0].runtime.hub.as_ref().unwrap().borrow_mut();
+        let mut b = snap.outputs[0].runtime.hub.as_ref().unwrap().borrow_mut();
+        let now = Instant::now() + Duration::from_millis(50);
+        assert_ne!(a.sample(now).geometry.bounds.height, a.hub.target_size()[1]);
+        assert_eq!(b.sample(now).geometry.bounds.height, b.hub.target_size()[1]);
+        assert!(a.motion.motion_enabled());
+        assert!(!b.motion.motion_enabled());
+    }
+
+    #[test]
+    fn closing_and_repeated_feedback_preserve_the_outgoing_content() {
+        use transition::Event as Transition;
+        let mut runtime = Runtime::new(&Panel::default());
+        let area = [1000., 700.];
+        runtime.transition(
+            Transition::Hover {
+                entered: true,
+                enabled: true,
+                peek: (Peek::Media, 240.),
+                priority: None,
+            },
+            area,
+        );
+        runtime.hub.advance(Duration::from_secs(1), false);
+        runtime.transition(Transition::Close, area);
+        assert_eq!(
+            runtime.previous.peek,
+            Peek::Media,
+            "the closing fade keeps its media content"
+        );
+        runtime.hub.advance(Duration::from_secs(1), false);
+
+        let token = Instant::now();
+        runtime.transition(Transition::Toast { notice: 7, token }, area);
+        runtime.hub.advance(Duration::from_secs(1), false);
+        runtime.transition(Transition::ToastExpired(token), area);
+        assert_eq!(
+            runtime.previous.toast,
+            Some(7),
+            "expiry keeps the outgoing toast for its fade"
+        );
+        runtime.hub.advance(Duration::from_secs(1), false);
+
+        runtime.transition(
+            Transition::Hover {
+                entered: true,
+                enabled: true,
+                peek: (Peek::Media, 240.),
+                priority: None,
+            },
+            area,
+        );
+        runtime.hub.advance(Duration::from_secs(1), false);
+        runtime.transition(Transition::Workspaces(token), area);
+        runtime.hub.advance(Duration::from_millis(60), false);
+        runtime.transition(Transition::Workspaces(token + Duration::from_millis(1)), area);
+        assert_eq!(
+            runtime.previous.peek,
+            Peek::Media,
+            "repeated feedback must not replace the fading content"
+        );
+        assert_eq!(runtime.peek, Peek::Workspaces);
+    }
+
+    #[test]
+    fn stale_transient_expiry_cannot_close_new_content() {
+        use transition::Event as Transition;
+        let panel = Panel::default();
+        let mut runtime = Runtime::new(&panel);
+        let area = [1000., 700.];
+        let first = Instant::now();
+        let second = first + Duration::from_millis(1);
+        runtime.transition(
+            Transition::Toast {
+                notice: 1,
+                token: first,
+            },
+            area,
+        );
+        runtime.transition(
+            Transition::Toast {
+                notice: 2,
+                token: second,
+            },
+            area,
+        );
+        assert!(!runtime.transition(Transition::ToastExpired(first), area));
+        assert_eq!(runtime.transient.toast(), Some(2));
+        runtime.transition(Transition::Open(status_ui::Menu::Calendar), area);
+        assert!(!runtime.transition(Transition::ToastExpired(second), area));
+        assert_eq!(runtime.hub.mode(), Mode::Expanded(Content::Calendar));
+        runtime.transition(Transition::Close, area);
+        runtime.transition(Transition::Workspaces(first), area);
+        runtime.transition(
+            Transition::Activity {
+                priority: Some(Peek::Recording),
+                peek: (Peek::Recording, 240.),
+            },
+            area,
+        );
+        assert!(!runtime.transition(Transition::WorkspacesExpired(first), area));
+        assert_eq!(runtime.peek, Peek::Recording);
+        assert!(matches!(runtime.transient, Transient::None));
+        assert!(!runtime.transition(
+            Transition::Toast {
+                notice: 3,
+                token: second
+            },
+            area
+        ));
+        assert!(!runtime.transition(Transition::Workspaces(second), area));
     }
 
     #[test]
@@ -1278,7 +1382,8 @@ mod tests {
                 .as_ref()
                 .unwrap()
                 .borrow()
-                .workspace_feedback
+                .transient
+                .workspace_token()
                 .is_none()
         );
         shell.snapshot.outputs[0].active_workspace = 3;
@@ -1446,7 +1551,7 @@ mod tests {
             let mut runtime = shell.outputs[0].runtime.hub.as_ref().unwrap().borrow_mut();
             assert_eq!(runtime.peek, Peek::Workspaces);
             runtime.hub.advance(Duration::ZERO, true);
-            runtime.workspace_feedback.unwrap()
+            runtime.transient.workspace_token().unwrap()
         };
         shell.snapshot.outputs[0].active_workspace = 3;
         drop(shell.sync_hub_workspace_feedback(false));
@@ -1457,7 +1562,7 @@ mod tests {
                 1.,
                 "repeated switches must not restart the fade"
             );
-            runtime.workspace_feedback.unwrap()
+            runtime.transient.workspace_token().unwrap()
         };
         assert_ne!(first, latest);
         drop(shell.hub_workspace_feedback_expired(id, first));
@@ -1477,7 +1582,8 @@ mod tests {
             .as_ref()
             .unwrap()
             .borrow()
-            .workspace_feedback
+            .transient
+            .workspace_token()
             .unwrap();
         drop(shell.hub_workspace_feedback_expired(id, revision));
         assert_eq!(
@@ -2323,28 +2429,6 @@ mod tests {
 
     #[test]
     fn content_layout_stays_fixed_through_spring_settlement_and_rebuilds() {
-        // Other shell tests reload the process-wide font and motion settings.
-        // Measure this animation in a fresh process so those reloads cannot
-        // change text metrics between its frames.
-        const CHILD: &str = "FERESE_HUB_LAYOUT_TEST_CHILD";
-        if std::env::var_os(CHILD).is_none() {
-            let output = std::process::Command::new(std::env::current_exe().unwrap())
-                .args([
-                    "--exact",
-                    "panel_hub::tests::content_layout_stays_fixed_through_spring_settlement_and_rebuilds",
-                    "--nocapture",
-                ])
-                .env(CHILD, "1")
-                .output()
-                .expect("start isolated layout test");
-            assert!(
-                output.status.success(),
-                "{}\n{}",
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr),
-            );
-            return;
-        }
         use cosmic::iced::advanced::renderer::Headless;
         #[derive(Default)]
         struct Bounds {
