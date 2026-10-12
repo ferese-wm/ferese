@@ -14,6 +14,7 @@ Build, bundle and install Ferese. Run as your normal user.
   --replace-portal-config  Back up and replace modified Ferese portal config
   --offline               Build using cached Cargo dependencies
   --resize-metrics        Build with resize-barrier measurements
+  --no-activities         Skip automatic shell hook and Activities setup
   --dry-run               Show commands without building or installing
   -h, --help              Show this help
 
@@ -33,6 +34,7 @@ replace_portal_config=false
 offline=false
 resize_metrics=false
 dry_run=false
+no_activities=false
 while (($#)); do
     case $1 in
         --release-id|--bundle|--bundle-only)
@@ -46,6 +48,7 @@ while (($#)); do
         --replace-portal-config) replace_portal_config=true; shift ;;
         --offline) offline=true; shift ;;
         --resize-metrics) resize_metrics=true; shift ;;
+        --no-activities) no_activities=true; shift ;;
         --dry-run) dry_run=true; shift ;;
         -h|--help) usage; exit 0 ;;
         *) fail "unknown option: $1 (see --help)" ;;
@@ -100,8 +103,10 @@ if $dry_run; then
     exit 0
 fi
 
+user_setup=(python3 "$helper" user-setup)
+if $no_activities; then user_setup+=(--no-activities); fi
 if [[ -z $bundle_only ]] && ((EUID != 0)); then
-    python3 "$helper" user-setup --check
+    "${user_setup[@]}" --check
 fi
 if [[ ${prepare+x} ]]; then
     for tool in cargo desktop-file-validate dbus-run-session; do
@@ -118,7 +123,7 @@ fi
 python3 "$helper" verify "$bundle_path"
 "${installer[@]}"
 if ((EUID != 0)); then
-    if ! python3 "$helper" user-setup; then
+    if ! "${user_setup[@]}"; then
         echo 'System installation succeeded; user setup is incomplete.' >&2
         echo "Retry as your normal user: python3 '$helper' user-setup" >&2
         exit 1

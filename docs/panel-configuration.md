@@ -41,6 +41,10 @@ Other controls save automatically, with sliders saving when you release them.
 **Undo** restores the previous save, **Reload configuration** reads external
 edits, and **Back to Panels** returns to the appearance controls.
 
+Add **Activities** to show running commands and published task progress. Its
+visibility and overflow follow the same item controls. The
+[Live Activities guide](activities.md) covers shell setup and command detection.
+
 **Remove custom panel** restores the built-in composition, style and geometry;
 Undo brings back the composition you removed.
 
@@ -94,7 +98,7 @@ style supply it.
 | `height` | 36; Morph uses 34 | Number 24–128 | Panel height, or Morph's collapsed height |
 | `edge-margin` | 8 for detached styles; 0 for Notch and Edge to edge | Integer 0–4096 | Distance from the selected screen edge |
 | `side-margins` | 8 for detached styles; 0 for Notch and Edge to edge | Integer 0–4096 | Requested inset at both ends of the panel |
-| `window-clearance` | 0 | Integer 0–4096 | Additional reserved space between the panel and windows |
+| `window-clearance` | 0 | Integer 0–4096 | Space between the panel and tiled or maximized windows |
 | `inner-padding` | 12 | Number 0–64 | Space inside the row before its first and after its last group |
 
 Notch and Edge to edge use zero edge and side margins even if you have saved
@@ -108,10 +112,10 @@ more content appears, so the margins do not cause additional overflow. Settings
 limits the slider to the available display and preview measurements; KDL accepts
 the wider range shown above.
 
-Morph reserves space for its collapsed height plus window clearance. Its
-expanded views overlay windows, so increasing their height does not push windows
-down. At the panel edge, Morph accounts for the layout's outer gap rather than
-adding the two gaps together.
+All panel styles reserve their height plus window clearance. At the panel edge,
+clearance replaces the layout's outer gap; the other edges keep their usual gaps.
+Morph reserves its collapsed height, and expanded views overlay windows without
+pushing them down.
 
 ## Background, outline and corners
 
@@ -247,6 +251,11 @@ content. Hovering can expand a preview, and clicking opens the hub's Workspaces,
 Music, Calendar,
 Notifications or Controls view. Escape or the close button collapses it.
 
+With an Activities item configured, running tasks can occupy the collapsed and
+peek states, and the hub gains an Activities tab. **Visible activities** and
+**Show activity count** in Appearance control its compact slots and `+n` badge;
+see [Activities configuration](activities.md#configure-activities).
+
 The Workspaces view shows miniature window layouts. Click a tile to switch
 workspace, use Tab and the arrow keys to navigate it, or drag a miniature window
 to another tile on the same output. Scrolling over the collapsed hub changes
@@ -255,8 +264,9 @@ workspace, with a brief workspace preview after a switch.
 Morph keeps your saved composition for when you switch back to a regular panel.
 The hub uses its own layouts and compact workspace dots, so Start/Center/End
 positions, group padding and the regular workspace indicator style do not apply
-inside it. Item settings still determine which configured controls appear in
-its Controls view and shortcuts.
+inside it. `inner-padding` and `side-margins` also belong to the regular panel;
+Morph uses its own content spacing and width budgets. Item settings still
+determine which configured controls appear in its Controls view and shortcuts.
 
 Turn on **Attach to screen edge** to join the hub to the chosen edge with curved
 shoulders, or set `morph { attached #true; }`. **Preview on hover** maps to

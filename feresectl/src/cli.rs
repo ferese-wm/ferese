@@ -19,6 +19,20 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
+    /// Publish bounded activity data owned by the invoking shell.
+    Activity {
+        #[command(subcommand)]
+        action: crate::activities::Action,
+    },
+    /// Run a command with activity publishing; preserve its actual exit status.
+    Run {
+        #[arg(long)]
+        title: Option<String>,
+        #[arg(long)]
+        cargo_json: bool,
+        #[arg(last = true, required = true)]
+        command: Vec<String>,
+    },
     /// Show the active window.
     #[command(alias = "get-focused-window")]
     FocusedWindow,
@@ -214,6 +228,7 @@ fn value_name(value: &impl ValueEnum) -> String {
 impl Command {
     pub fn ipc(&self) -> Option<(&'static str, Value)> {
         let (command, args) = match self {
+            Self::Activity { .. } | Self::Run { .. } => return None,
             Self::FocusedWindow => ("get-focused-window", json!({})),
             Self::Windows => ("get-windows", json!({})),
             Self::IdleInhibition => ("get-idle-inhibition", json!({})),

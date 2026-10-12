@@ -197,6 +197,21 @@ pub(super) fn border_uniforms(parameters: &BorderParameters) -> Vec<Uniform<'sta
     ]
 }
 
+// The material program is shared with panels. GL uniforms survive between
+// draws, so every ordinary tint must explicitly disable the panel mask.
+pub(super) fn tint_uniforms(p: &BorderParameters) -> Vec<Uniform<'static>> {
+    vec![
+        Uniform::new("visible_rect", p.clip_rect),
+        Uniform::new("material_radii", [p.radius; 4]),
+        Uniform::new("tint", p.color),
+        Uniform::new("paint_mode", 0.0_f32),
+        Uniform::new("shadow_rect", p.clip_rect),
+        Uniform::new("shadow_values", [0.0_f32; 2]),
+        Uniform::new("panel_count", 0.0_f32),
+        Uniform::new("panel_fusion", 0.0_f32),
+    ]
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn window_tint_element(
     resources: &mut RenderResources,
@@ -231,16 +246,7 @@ pub(super) fn window_tint_element(
         focus_gradient_line: [0.0; 4],
         focus_mix: 0.0,
     };
-    let uniforms = |p: &BorderParameters| {
-        vec![
-            Uniform::new("visible_rect", p.clip_rect),
-            Uniform::new("material_radii", [p.radius; 4]),
-            Uniform::new("tint", p.color),
-            Uniform::new("paint_mode", 0.0_f32),
-            Uniform::new("shadow_rect", p.clip_rect),
-            Uniform::new("shadow_values", [0.0_f32; 2]),
-        ]
-    };
+    let uniforms = tint_uniforms;
     let context = renderer.context_id().erased();
     let buffers = if resize_fill {
         &mut resources.windows.entry(id).or_default().resize_fill

@@ -53,7 +53,7 @@ pub(crate) struct Settings(Arc<RwLock<Appearance>>);
 
 impl Settings {
     pub(crate) fn new() -> Self {
-        let theme = ferese_ipc::theme::Connection::connect()
+        let theme = ferese_ipc::Connection::connect()
             .ok()
             .and_then(|mut connection| connection.get(ferese_config::families::builtins).ok())
             .map(|snapshot| snapshot.theme);
@@ -78,7 +78,7 @@ impl Settings {
     pub(crate) async fn watch(self, connection: Connection) {
         let emitter = SignalEmitter::new(&connection, PATH).unwrap();
         loop {
-            let connection = tokio::task::spawn_blocking(ferese_ipc::theme::Connection::connect).await;
+            let connection = tokio::task::spawn_blocking(ferese_ipc::Connection::connect).await;
             if let Ok(Ok(mut connection)) = connection
                 && let Ok(cancellation) = connection.cancellation()
             {

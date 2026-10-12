@@ -3,6 +3,7 @@ members = [
     "compositor",
     "feresectl",
     "crates/ferese-animation",
+    "crates/ferese-activities",
     "crates/ferese-core",
     "crates/ferese-config",
     "crates/ferese-theme",

@@ -1,3 +1,4 @@
+mod activities;
 mod bar;
 mod surfaces;
 
@@ -161,6 +162,7 @@ struct FereseShell {
     status: status::Snapshot,
     recorder: recording::Recorder,
     media: media::Model,
+    activities: activities::Model,
     calendar_offset: i32,
     status_error: Option<status::ActionError>,
     theme_error: Option<String>,
@@ -219,6 +221,15 @@ enum Message {
     MediaAction(serde_json::Value),
     MediaCompleted(Result<(), String>),
     MediaTick,
+    ActivitiesUpdated(std::sync::Arc<ferese_ipc::activities::Snapshot>),
+    ActivityTick,
+    ActivityHover(window::Id, bool),
+    ActivityActivate(window::Id, ferese_activities::Id),
+    ActivityNavigation(
+        window::Id,
+        Option<ferese_activities::Id>,
+        Option<cosmic::iced::keyboard::key::Named>,
+    ),
     MediaChoose,
     MediaSeek(u64),
     MediaSeekCommit,
@@ -294,14 +305,17 @@ impl cosmic::Application for FereseShell {
         // The compositor reports the complete configuration error through its
         // accepted-theme snapshot. Use the local warning only when standalone.
         let pending_config_error = if control.is_none() { startup_error } else { None };
+        let mut notification_center = notifications::Center::new(config.notifications.clone(), config.animations);
+        notification_center.activity_bridge = config.activities.sources.notification_bridge;
         let app = Self {
             core,
-            notifications: notifications::Center::new(config.notifications.clone(), config.animations),
+            notifications: notification_center,
             notification_surface: None,
             status_service: status::Service::start(config.status.settings_command.clone()),
             status: status::Snapshot::default(),
             recorder: recording::Recorder::default(),
             media: media::Model::default(),
+            activities: activities::Model::default(),
             calendar_offset: 0,
             status_error: None,
             theme_error: None,
@@ -366,6 +380,8 @@ impl cosmic::Application for FereseShell {
                 _ => None,
             }),
             clock::subscription(self.outputs.iter().any(|output| !output.hidden)).map(Message::ClockChanged),
+            activities::subscription::subscription().map(Message::ActivitiesUpdated),
+            self.activity_tick_subscription().map(|_| Message::ActivityTick),
             self.media.subscription().map(Message::MediaUpdated),
             self.media_tick_subscription().map(|_| Message::MediaTick),
             self.media.art.subscription().map(Message::MediaArt),
@@ -437,6 +453,19 @@ impl cosmic::Application for FereseShell {
                 )
             }
 
+            Message::ActivitiesUpdated(snapshot) => {
+                self.activities.snapshot = snapshot;
+                self.sync_hub_activity()
+            }
+            Message::ActivityTick => self.sync_hub_activity(),
+            Message::ActivityHover(id, entered) => {
+                self.activity_hover(id, entered);
+                self.sync_hub_activity()
+            }
+            Message::ActivityActivate(id, activity) => self.activate_activity(id, activity),
+            Message::ActivityNavigation(id, focused, key) => {
+                self.activity_navigation(id, focused, key).unwrap_or_else(Task::none)
+            }
             Message::MediaUpdated(snapshot) => {
                 self.media.receive(snapshot);
                 self.refresh_media_art(
@@ -488,7 +517,7 @@ impl cosmic::Application for FereseShell {
             }
             Message::ThemeMode(mode) => cosmic::task::future(async move {
                 let result = tokio::task::spawn_blocking(move || {
-                    let mut connection = ferese_ipc::theme::Connection::connect().map_err(|e| e.to_string())?;
+                    let mut connection = ferese_ipc::Connection::connect().map_err(|e| e.to_string())?;
                     connection
                         .call("theme-set-mode", serde_json::json!({"mode": mode}))
                         .map(|_| ())
@@ -578,24 +607,35 @@ impl cosmic::Application for FereseShell {
                         dnd: self.notifications.dnd,
                     });
                 }
-                let hub = notice.map_or_else(Task::none, |notice| self.hub_notice(notice));
-                Task::batch([hub, self.sync_hub_notices(), self.sync_notification_surface()])
+                let hub = notice
+                    .filter(|_| !self.config.activities.sources.notification_bridge)
+                    .map_or_else(Task::none, |notice| self.hub_notice(notice));
+                Task::batch([
+                    hub,
+                    self.sync_hub_activity(),
+                    self.sync_hub_notices(),
+                    self.sync_notification_surface(),
+                ])
             }
             Message::NotificationTick => {
                 self.notifications.tick();
-                Task::batch([self.sync_hub_notices(), self.sync_notification_surface()])
+                Task::batch([
+                    self.sync_hub_activity(),
+                    self.sync_hub_notices(),
+                    self.sync_notification_surface(),
+                ])
             }
             Message::DismissNotification(id) => {
                 self.notifications.close(id, 2);
-                self.sync_notification_surface()
+                Task::batch([self.sync_hub_activity(), self.sync_notification_surface()])
             }
             Message::RemoveNotification(id) => {
                 self.notifications.dismiss(id);
-                self.sync_notification_surface()
+                Task::batch([self.sync_hub_activity(), self.sync_notification_surface()])
             }
             Message::InvokeNotification(id, action) => {
                 self.notifications.invoke(id, action);
-                self.sync_notification_surface()
+                Task::batch([self.sync_hub_activity(), self.sync_notification_surface()])
             }
             Message::HoverNotification(id, hovered) => {
                 self.notifications.hover(id, hovered);
@@ -608,11 +648,11 @@ impl cosmic::Application for FereseShell {
             }
             Message::RemoveNotificationGroup(app) => {
                 self.notifications.dismiss_group(&app);
-                self.sync_notification_surface()
+                Task::batch([self.sync_hub_activity(), self.sync_notification_surface()])
             }
             Message::ClearNotifications => {
                 self.notifications.clear();
-                self.sync_notification_surface()
+                Task::batch([self.sync_hub_activity(), self.sync_notification_surface()])
             }
             Message::AnimateMenu => self.animate_menu(),
             Message::PanelAction(message) => {
@@ -956,6 +996,8 @@ impl FereseShell {
         let geometry = config.panels[0].resolved_geometry();
         let geometry_changed = edge_changed || old_geometry != geometry;
         self.notifications.configure(config.notifications.clone());
+        self.notifications
+            .configure_activity_bridge(config.activities.sources.notification_bridge);
         self.config = config;
         if composition_changed || geometry_changed {
             for entry in &mut self.outputs {
@@ -1098,6 +1140,7 @@ mod tests {
             status: Default::default(),
             recorder: Default::default(),
             media: Default::default(),
+            activities: Default::default(),
             calendar_offset: 0,
             status_error: None,
             theme_error: None,

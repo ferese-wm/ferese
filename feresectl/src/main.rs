@@ -1,3 +1,4 @@
+mod activities;
 mod autostart;
 mod cli;
 mod output;
@@ -18,6 +19,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     if matches!(cli.command, Command::Autostart) {
         return autostart::run();
     }
+    if let Command::Activity {
+        action: activities::Action::Setup { config },
+    } = &cli.command
+    {
+        return activities::setup::configure(config);
+    }
     for alias in env::args().skip(1).filter(|arg| {
         matches!(
             arg.as_str(),
@@ -35,9 +42,19 @@ fn main() -> Result<(), Box<dyn Error>> {
             alias.trim_start_matches("get-")
         );
     }
+    if let Command::Run {
+        title,
+        command,
+        cargo_json,
+    } = &cli.command
+    {
+        let socket = ferese_ipc::socket::resolve(cli.socket.as_deref()).ok();
+        return activities::run(title.as_deref(), command, socket.as_deref(), *cargo_json);
+    }
     let socket = ferese_ipc::socket::resolve(cli.socket.as_deref())?;
     match &cli.command {
         Command::Theme { action } => theme_command(action, &socket, cli.json),
+        Command::Activity { action } => activities::command(action, &socket, cli.json),
         Command::EventStream => event_stream(&socket),
         command => {
             let (command, args) = command.ipc().expect("IPC command");
@@ -52,7 +69,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 }
 
-fn request(stream: &mut UnixStream, command: &str, args: Value) -> Result<Value, Box<dyn Error>> {
+fn request(stream: &mut (impl io::Read + io::Write), command: &str, args: Value) -> Result<Value, Box<dyn Error>> {
     write_frame(
         stream,
         &Request {
@@ -74,7 +91,7 @@ fn request(stream: &mut UnixStream, command: &str, args: Value) -> Result<Value,
 }
 
 fn theme_command(action: &ThemeAction, socket: &Path, json_output: bool) -> Result<(), Box<dyn Error>> {
-    let mut connection = ferese_ipc::theme::Connection::connect_to(socket)?;
+    let mut connection = ferese_ipc::Connection::connect_to(socket)?;
     let result = match action {
         ThemeAction::Get => serde_json::to_value(connection.get(ferese_config::families::builtins)?)?,
         ThemeAction::Subscribe => {

@@ -34,13 +34,14 @@ impl std::fmt::Display for StyleChoice {
     }
 }
 
-const CATALOG: [CatalogItem; 12] = [
+const CATALOG: [CatalogItem; 13] = [
     CatalogItem(ItemKind::Overview),
     CatalogItem(ItemKind::Workspaces {
         style: ferese_panel::WorkspaceStyle::Dots,
     }),
     CatalogItem(ItemKind::FocusedWindow),
     CatalogItem(ItemKind::Media),
+    CatalogItem(ItemKind::Activities),
     CatalogItem(ItemKind::QuickSettings),
     CatalogItem(ItemKind::Network),
     CatalogItem(ItemKind::Audio),
@@ -197,7 +198,45 @@ impl App {
                                 .into(),
                             ),
                         );
+                    let maximum = self.draft.number("activities.max_visible", 2.) as u64;
+                    let choices = widget::row([1_u64, 2].into_iter().map(|count| {
+                        widget::button::custom(self.label(count.to_string(), 12.))
+                            .name(format!("Show up to {count} activities"))
+                            .padding([8, 10])
+                            .width(cosmic::iced::Length::Fill)
+                            .class(crate::visuals::panel_button(palette, count == maximum))
+                            .on_press_maybe(
+                                (count != maximum)
+                                    .then(|| Message::Change(store::set("activities.max_visible", count))),
+                            )
+                            .into()
+                    }))
+                    .spacing(2);
+                    appearance = appearance.push(self.panel_divider()).push(
+                        self.panel_appearance_row(
+                            "Visible activities",
+                            "Maximum activities in the collapsed and peek island.",
+                            widget::container(choices)
+                                .padding(3)
+                                .class(crate::visuals::surface(palette.sidebar, 9.))
+                                .into(),
+                        ),
+                    );
                 }
+                let show_badge = self.draft.boolean("activities.show_badge", true);
+                appearance = appearance.push(self.panel_divider()).push(
+                    self.panel_appearance_row(
+                        "Show activity count",
+                        "Show +n for additional activities.",
+                        widget::container(
+                            ferese_theme::controls::switch(show_badge, palette)
+                                .name("Show activity count")
+                                .on_press(Message::Change(store::set("activities.show_badge", !show_badge))),
+                        )
+                        .align_right(cosmic::iced::Length::Fill)
+                        .into(),
+                    ),
+                );
                 rows = rows.push(
                     widget::container(appearance)
                         .id("panel-appearance-settings")
@@ -327,6 +366,18 @@ impl App {
 
     fn panel_opacity_controls(&self) -> Element<'static, Message> {
         use cosmic::iced::{Alignment, Length};
+        if self.draft.boolean("theme.accessibility.reduce_transparency", false) {
+            return self.panel_appearance_row(
+                "Background opacity",
+                "Reduce transparency is on. Turn it off in Accessibility to change opacity.",
+                self.settings_button(
+                    "Accessibility",
+                    "M9 18l6-6-6-6",
+                    Some(Message::Page(Page::Accessibility)),
+                    false,
+                ),
+            );
+        }
         let palette = crate::visuals::Palette::from_resolved(&self.resolved.presented);
         let tokens = &self.resolved.presented.tokens;
         let inherited = if tokens.material.style == "translucent" {
@@ -809,6 +860,7 @@ pub(super) fn item_icon(kind: ItemKind, tint: cosmic::iced::Color) -> widget::ic
         ItemKind::Workspaces { .. } => icons::OVERVIEW,
         ItemKind::FocusedWindow => icons::DISPLAY,
         ItemKind::Media => icons::MEDIA,
+        ItemKind::Activities => icons::FERESE,
         ItemKind::QuickSettings => icons::CONTROL_CENTER,
         ItemKind::Network => icons::WIFI_FULL,
         ItemKind::Audio => icons::VOLUME_HIGH,

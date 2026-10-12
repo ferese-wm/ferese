@@ -269,6 +269,7 @@ struct Toast {
 }
 
 pub struct Center {
+    pub activity_bridge: bool,
     config: ferese_config::notifications::NotificationConfig,
     service: Service,
     pub ready: bool,
@@ -285,6 +286,7 @@ pub struct Center {
 impl Center {
     pub fn new(config: ferese_config::notifications::NotificationConfig, motion: super::motion::Settings) -> Self {
         Self {
+            activity_bridge: false,
             service: Service::start(&config),
             ready: false,
             dnd: config.do_not_disturb,
@@ -306,6 +308,12 @@ impl Center {
             .try_send(Command::Local(title.into(), body.into()));
     }
 
+    pub fn configure_activity_bridge(&mut self, enabled: bool) {
+        self.activity_bridge = enabled;
+        if enabled {
+            self.toasts.clear();
+        }
+    }
     pub fn configure(&mut self, config: ferese_config::notifications::NotificationConfig) {
         if self.config.do_not_disturb != config.do_not_disturb {
             self.dnd = config.do_not_disturb;
@@ -516,7 +524,7 @@ impl Center {
             }
         }
         notice.unread = !self.history_open;
-        let show = self.config.show_popups && (!self.dnd || notice.critical);
+        let show = !self.activity_bridge && self.config.show_popups && (!self.dnd || notice.critical);
         if show {
             self.toasts.push_back(Toast {
                 id: notice.id,
@@ -553,7 +561,7 @@ impl Center {
             }
             self.toasts.retain(|toast| !ids.contains(&toast.id));
         }
-        if !show {
+        if !show && !self.activity_bridge {
             self.close(id, 1);
         }
     }
@@ -562,11 +570,21 @@ impl Center {
         cosmic::iced::Subscription::run_with(self.service.events.clone(), Events::stream)
     }
 
+    // Notices presented by Activities still own their timeout, even without a toast.
+    fn hidden_deadlines(&self) -> impl Iterator<Item = (u32, Instant)> + '_ {
+        self.entries.iter().filter_map(|notice| {
+            (notice.live && !self.toasts.iter().any(|toast| toast.id == notice.id))
+                .then(|| notice.timeout.map(|timeout| (notice.id, notice.received_at + timeout)))
+                .flatten()
+        })
+    }
+
     fn expiry_deadline(&self) -> Option<Instant> {
         self.toasts
             .iter()
             .filter(|toast| !toast.hovered && toast.closing.is_none())
             .filter_map(|toast| toast.remaining.map(|remaining| self.last_tick + remaining))
+            .chain(self.hidden_deadlines().map(|(_, deadline)| deadline))
             .min()
     }
 
@@ -610,7 +628,10 @@ impl Center {
         let now = Instant::now();
         let delta = now.saturating_duration_since(self.last_tick);
         self.last_tick = now;
-        let mut expired = Vec::new();
+        let mut expired: Vec<_> = self
+            .hidden_deadlines()
+            .filter_map(|(id, deadline)| (deadline <= now).then_some(id))
+            .collect();
         for toast in &mut self.toasts {
             if toast.closing.is_none()
                 && !toast.hovered
@@ -643,6 +664,7 @@ mod tests {
         let (_, events) = tokio::sync::mpsc::channel(256);
         let (commands, receiver) = mpsc::sync_channel(256);
         let center = Center {
+            activity_bridge: false,
             config: NotificationConfig::default(),
             motion: Default::default(),
             service: Service {
@@ -679,6 +701,57 @@ mod tests {
             unread: true,
             received_at: Instant::now(),
         }
+    }
+
+    #[test]
+    fn bridge_creates_an_activity_and_removes_it_on_expiry_and_dismissal() {
+        use cosmic::Application;
+        let mut app = crate::tests::shell_with_measured_panel();
+        app.snapshot.outputs.push(crate::control::OutputSnapshot {
+            id: 4,
+            name: "test".into(),
+            active_workspace: 1,
+            focused: true,
+        });
+        let (center, _commands) = fixture();
+        app.notifications = center;
+        app.config.activities.sources.notification_bridge = true;
+        app.notifications.configure_activity_bridge(true);
+        let bar = app.outputs[0].bar;
+        let mut multilingual = notice(1);
+        multilingual.title = "通知🛠️".repeat(100);
+        multilingual.app = "アプリ".repeat(100);
+        drop(app.update(crate::Message::NotificationEvent(Event::Notice(multilingual))));
+        assert!(app.activity_available(bar));
+        assert!(app.notifications.toasts.is_empty());
+        app.notifications.entries[0].received_at = Instant::now() - Duration::from_secs(7);
+        drop(app.update(crate::Message::NotificationTick));
+        assert!(!app.activity_available(bar));
+        drop(app.update(crate::Message::NotificationEvent(Event::Notice(notice(2)))));
+        assert!(app.activity_available(bar));
+        drop(app.update(crate::Message::DismissNotification(2)));
+        assert!(!app.activity_available(bar));
+    }
+
+    #[test]
+    fn bridged_notice_stays_live_without_toast_until_timeout_or_dismissal() {
+        let (mut center, commands) = fixture();
+        center.configure_activity_bridge(true);
+        center.receive(notice(1));
+        assert!(center.toasts.is_empty());
+        assert!(center.entries[0].live && center.entries[0].unread);
+        assert!(commands.try_recv().is_err());
+        assert!(center.expiry_deadline().is_some());
+        center.entries[0].received_at = Instant::now() - Duration::from_secs(7);
+        center.tick();
+        assert!(!center.entries[0].live);
+        assert!(matches!(commands.try_recv(), Ok(Command::Close(1, 1, 1))));
+        let mut persistent = notice(2);
+        persistent.timeout = None;
+        center.receive(persistent);
+        assert!(center.expiry_deadline().is_none());
+        center.dismiss(2);
+        assert!(matches!(commands.try_recv(), Ok(Command::Close(2, 1, 2))));
     }
 
     #[test]

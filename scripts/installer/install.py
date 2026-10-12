@@ -6,6 +6,7 @@ import fcntl
 import hashlib
 import json
 import os
+import pwd
 from pathlib import Path
 import re
 import shutil
@@ -173,6 +174,7 @@ def validate_bundle(bundle, *, installed=False):
         # release's recorded files without requiring these later additions.
         required = required - {'wallpapers/ferese-wallpaper-dark.png', 'wallpapers/ferese-wallpaper-light.png',
                                'licenses/Ferese-LICENSE.txt'}
+        required = {target for target in required if not target.startswith('activities/')}
 
     if not required <= seen or actual != seen | {'manifest.json'}:
         fail('Bundle is incomplete or contains unlisted files')
@@ -536,6 +538,73 @@ def system_command(args):
         print(f'System {args.command} complete: {manifest["release"]}')
 
 
+def user_file(path, content):
+    # Respect dotfile symlinks and retain the original permissions.
+    path = path.resolve()
+    old = path.read_text() if path.exists() else None
+    if old == content:
+        return
+    mode = stat.S_IMODE(path.stat().st_mode) if path.exists() else 0o600
+    if old is not None:
+        backup = path.with_name(path.name + '.before-activities-' + uuid.uuid4().hex)
+        atomic_bytes(backup, old.encode(), mode)
+        print(f'Backed up {path}: {backup}')
+    atomic_bytes(path, content.encode(), mode)
+
+
+def setup_activities(config, *, ctl=None, assets=None):
+    shell = Path(os.environ.get('SHELL') or pwd.getpwuid(os.getuid()).pw_shell).name
+    if shell not in {'fish', 'zsh', 'bash'}:
+        print(f'Live Activities: no automatic hook for {shell}; use feresectl run.')
+        return
+    root = config / 'ferese/activities'
+    marker = root / 'installed.json'
+    assets = assets or Path(PREFIX) / 'current/activities'
+    if not assets.is_dir():
+        assets = REPO / 'contrib/activities'
+    ctl = ctl or Path(PREFIX) / 'current/feresectl'
+    hook = assets / f'ferese.{shell}'
+    content = hook.read_text()
+    # Stage shell files before enabling the configuration. Repeated installs
+    # update our hooks but do not undo a user's later panel/source edits.
+    user_file(root / hook.name, content)
+    if shell == 'fish':
+        startup = config / 'fish/conf.d/ferese-activities.fish'
+        # Fish accepts single-quoted paths with escaped backslashes and quotes.
+        quoted = "'" + str(root / hook.name).replace('\\', '\\\\').replace("'", "\\'") + "'"
+        loader = f'# Ferese Live Activities\nif status is-interactive; and test -r {quoted}\n    source {quoted}\nend\n'
+        user_file(startup, loader)
+    else:
+        import shlex
+        quoted = shlex.quote(str(root / hook.name))
+        if shell == 'bash':
+            for name in ('bash-preexec.sh', 'LICENSE.md'):
+                user_file(root / 'bash-preexec' / name, (assets / 'bash-preexec' / name).read_text())
+            dependency = shlex.quote(str(root / 'bash-preexec/bash-preexec.sh'))
+            loader = (f'if [[ $- == *i* && -r {quoted} ]]; then\n'
+                      f'    [[ -n ${{bash_preexec_imported:-}} ]] || source {dependency}\n'
+                      f'    source {quoted}\nfi')
+            startup = Path.home() / '.bashrc'
+        else:
+            loader = f'if [[ -o interactive && -r {quoted} ]]; then\n    source {quoted}\nfi'
+            startup = Path(os.environ.get('ZDOTDIR') or Path.home()) / '.zshrc'
+        begin, end = '# >>> Ferese Live Activities >>>', '# <<< Ferese Live Activities <<<'
+        block = f'{begin}\n{loader}\n{end}\n'
+        old = startup.read_text() if startup.exists() else ''
+        if begin in old or end in old:
+            if old.count(begin) != 1 or old.count(end) != 1 or old.index(end) < old.index(begin):
+                fail(f'Malformed Ferese hook block in {startup}; file preserved')
+            start, finish = old.index(begin), old.index(end) + len(end)
+            updated = old[:start] + block.rstrip('\n') + old[finish:]
+        else:
+            updated = old + ('\n' if old and not old.endswith('\n') else '') + block
+        user_file(startup, updated)
+    if not marker.exists():
+        subprocess.run([str(ctl), 'activity', 'setup', '--config', str(config / 'ferese/config.kdl')], check=True)
+        atomic_json(marker, {'format': 1})
+    print(f'Live Activities configured for {shell}. Open a new terminal to load the hook.')
+
+
 def user_setup(args):
     if os.geteuid() == 0:
         fail('Run user-setup as your normal user')
@@ -553,6 +622,8 @@ def user_setup(args):
 
     if not args.check:
         subprocess.run(['systemctl', '--user', 'daemon-reload'], check=True)
+        if not args.no_activities:
+            setup_activities(config, ctl=args.activity_ctl)
         print('User setup complete. Log out and select Ferese to use the installed release.')
 
 
@@ -569,6 +640,8 @@ def parser():
     verify.add_argument('bundle', type=Path)
     user = commands.add_parser('user-setup')
     user.add_argument('--check', action='store_true')
+    user.add_argument('--no-activities', action='store_true', help='Skip shell hook and Activities setup')
+    user.add_argument('--activity-ctl', type=Path, help=argparse.SUPPRESS)
     for name in ('install', 'rollback', 'recover', 'uninstall'):
         command = commands.add_parser(name)
         command.add_argument('--root', type=Path, default=Path('/'), help='Destination filesystem root (for packaging/tests)')

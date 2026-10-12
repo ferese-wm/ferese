@@ -691,7 +691,8 @@ mod region_geometry_tests {
     #[test]
     fn reduce_transparency_wins_over_continuous_and_island_panel_materials() {
         use crate::effects::SemanticRole;
-        for surface in ["flat", "floating", "morph"] {
+        for style in ferese_panel::PanelStyle::AVAILABLE {
+            let surface = style.key();
             for opacity in [0., 0.4, 1.] {
                 for reduce in [false, true] {
                     let source = format!(

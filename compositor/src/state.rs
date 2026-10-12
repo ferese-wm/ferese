@@ -490,6 +490,7 @@ pub struct Ferese {
     pub(crate) idle_inhibit: crate::idle_inhibition::Settings,
     pub(crate) media_players: Vec<crate::idle_inhibition::media::Player>,
     pub(crate) media_engine: crate::idle_inhibition::media::Engine,
+    pub(crate) activities: crate::activities::Engine,
     pub(crate) automatic_idle_inhibited: bool,
     pub active_shortcuts_inhibitor: Option<KeyboardShortcutsInhibitor>,
     pub direct_backend: Option<DirectBackendState>,
@@ -548,6 +549,8 @@ pub struct Ferese {
 
 #[derive(Clone)]
 pub struct RuntimeConfig {
+    pub(crate) activity_settings: ferese_config::activities::Settings,
+    pub(crate) activity_matcher: ferese_config::activities::Matcher,
     pub(crate) lock_idle: IdleSettings,
     pub(crate) idle_inhibit: crate::idle_inhibition::Settings,
     pub(crate) autostart: Vec<DaemonConfig>,
@@ -672,6 +675,8 @@ impl Ferese {
         let default_cursor = crate::cursor::fallback_cursor();
         let named_cursors = HashMap::from([(CursorIcon::Default, default_cursor)]);
 
+        let mut activities = crate::activities::Engine::default();
+        activities.configure(&config.activity_settings, config.activity_matcher.clone());
         let mut state = Self {
             session_lock_state,
             session_lock: crate::session_lock::Lock::default(),
@@ -772,6 +777,7 @@ impl Ferese {
             idle_inhibit: config.idle_inhibit,
             media_players: Vec::new(),
             media_engine: Default::default(),
+            activities,
             automatic_idle_inhibited: false,
             active_shortcuts_inhibitor: None,
             direct_backend: None,
@@ -850,6 +856,10 @@ impl Ferese {
         // session-scoped, so a difference from the running service is reported
         // as `restart_required` rather than applied behind the user's back.
         self.xwayland_config = config.xwayland.clone();
+        if changed(&["activities"]) {
+            self.activities
+                .configure(&config.activity_settings, config.activity_matcher.clone());
+        }
 
         let layout_changed = changed(&["layout", "scrolling", "workspaces"]);
         let bindings_changed = changed(&["bindings", "commands"]);

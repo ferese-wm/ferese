@@ -86,7 +86,7 @@ impl Profile {
                     Content::Workspaces => self.workspaces_height,
                     Content::Media => self.media_height,
                     Content::Calendar => self.calendar_height,
-                    Content::Notifications => self.notifications_height,
+                    Content::Notifications | Content::Activities => self.notifications_height,
                     Content::Controls => self.controls_height,
                 },
             ],
@@ -96,6 +96,7 @@ impl Profile {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Content {
+    Activities,
     Workspaces,
     Media,
     Calendar,

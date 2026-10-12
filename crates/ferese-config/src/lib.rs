@@ -1,3 +1,4 @@
+pub mod activities;
 pub mod families;
 pub mod file;
 pub mod notifications;
@@ -144,7 +145,11 @@ fn object(doc: &KdlDocument, parent: &str) -> Result<Map<String, Value>, Error> 
             continue;
         }
 
-        let value = node_value(node, &key, parent)?;
+        let value = if parent.is_empty() && key == "activities" {
+            activities::parse(node)?
+        } else {
+            node_value(node, &key, parent)?
+        };
         if is_records(&key, parent) {
             let records = result.entry(key).or_insert_with(|| Value::Array(Vec::new()));
             records.as_array_mut().unwrap().push(value);

@@ -13,7 +13,7 @@ pub(super) fn subscription() -> Subscription<Arc<Snapshot>> {
 fn stream() -> impl cosmic::iced::futures::Stream<Item = Arc<Snapshot>> {
     cosmic::iced::stream::channel(1, async |mut output| {
         loop {
-            let connection = tokio::task::spawn_blocking(ferese_ipc::theme::Connection::connect).await;
+            let connection = tokio::task::spawn_blocking(ferese_ipc::Connection::connect).await;
             let Ok(Ok(mut connection)) = connection else {
                 tokio::time::sleep(Duration::from_secs(5)).await;
                 continue;
@@ -93,7 +93,7 @@ mod tests {
             return;
         }
 
-        let path = ferese_ipc::theme::socket_path().unwrap();
+        let path = ferese_ipc::socket_path().unwrap();
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         let listener = UnixListener::bind(path).unwrap();
         let (watch_send, watch_receive) = std::sync::mpsc::channel();
