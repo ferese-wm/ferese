@@ -65,7 +65,7 @@ switches tabs; the usual left/right focus keys still switch columns.
 In tree mode, **Super + [** joins the focused window to a neighbouring window
 as a tab. Click a title in the tab bar or use **Super + Ctrl + [ / ]** to switch
 tabs. **Super + ]** splits the focused tab out beside the group. For a specific
-neighbour, bind `join-tab` with a direction; see [Commands and bindings](configuration.md#commands-and-bindings).
+neighbour, bind `join-tab` with a direction; see [Tabbed windows](tabbed-windows.md).
 
 In overview, select a workspace to see its windows, then click the window you
 want. Directional focus keys move selection; Enter activates it and Escape closes
@@ -110,7 +110,7 @@ Keep before the confirmation timeout or Revert to restore the last confirmed
 configuration. Bind `toggle-display-mode` if your keyboard uses another key.
 
 In Satty, Enter saves the edited screenshot and copies it to the clipboard;
-Escape discards it. See [Configuration](configuration.md#commands-and-bindings)
+Escape discards it. See [Configuration](configuration/bindings.md#commands-and-bindings)
 for dependencies and custom screenshot commands.
 
 ## Touchpad gestures
@@ -176,7 +176,7 @@ These are examples, not defaults. To disable a built-in binding:
 binding "Super+Q" disabled=#true
 ```
 
-See [Commands and bindings](configuration.md#commands-and-bindings) for action
+See [Commands and bindings](configuration/bindings.md#commands-and-bindings) for action
 names, arguments, and physical-key matching.
 
 In scrolling columns, hover over the left-edge tab indicator for window titles.

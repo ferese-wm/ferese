@@ -135,10 +135,12 @@ feresectl run --title "Backup" -- ./backup.sh
 feresectl run --title "Tests" -- npm test
 ```
 
-Arguments after `--` are passed to the command. It keeps its terminal input,
-output, working directory, environment, terminal process group and exit/signal
-status, and still runs if activity publishing fails. Completion follows the command's exit. A background descendant holding
-stdout open does not keep the wrapper alive indefinitely.
+Arguments after `--` are passed to the command. The command keeps its terminal
+input, output, working directory, environment, terminal process group and
+exit/signal status, and still runs if activity publishing fails.
+
+Completion follows the command's exit. A background descendant holding stdout
+open does not keep the wrapper alive indefinitely.
 
 ### Cargo progress
 
@@ -178,105 +180,22 @@ percentage show an animated arc around their icon. Reduced motion makes progress
 changes immediate and uses a static track. Activities do not automatically open
 the expanded panel.
 
-A visible task's result stays for 1.5 seconds by default. Do not disturb limits
-ordinary running activities to one, hides the badge and suppresses result
-flashes. When there are no eligible tasks, the regular Activities item has no
+A visible task's result stays for the configured [result display time](configuration/activities.md#settings).
+Do not disturb limits ordinary running activities to one, hides the badge and
+suppresses result flashes. When there are no eligible tasks, the regular Activities item has no
 content and Morph returns to its other content.
 
 ## Configure Activities
 
-In **Settings → Panel & Shell → Appearance**, **Visible activities** chooses one
-or two slots in Morph's collapsed and peek states. **Show activity count** controls
-the `+n` badge; hiding it still lets you open the full list.
-
-For source and timing settings, edit the top-level `activities` block in
-`~/.config/ferese/config.kdl`. Merge these fields into an existing block rather
-than adding a second one:
-
-```kdl
-activities {
-    max-visible 2
-    show-badge #true
-    start-delay-ms 300
-    result-flash-ms 1500
-    sources {
-        shell-hook #true
-        process-watch #false
-        notification-bridge #false
-    }
-}
-```
-
-| Setting | Effect |
-| --- | --- |
-| `max-visible` | One or two compact activity slots. |
-| `show-badge` | Show `+n` for tasks beyond those slots. |
-| `start-delay-ms` | Minimum delay for a new task; a rule can require a longer delay. |
-| `result-flash-ms` | How long an eligible completion result remains visible. |
-| `shell-hook` | Accept command start/end events from an installed shell hook. |
-| `process-watch` | Opt-in process sampling when hooks aren't available; process disappearance removes the task without inferring success or failure. |
-| `notification-bridge` | Present notifications as activities instead of duplicate toasts, respecting Do not disturb and notification popup settings. |
-
-The process watcher and notification bridge stay off unless you enable them.
-Media comes from MPRIS; downloads and call statuses need an integration that
-publishes them. Microphone or camera use alone does not create a call activity.
-
-Changes reload live. Invalid edits leave the last valid configuration in use;
-check an edit with `ferese --check-config ~/.config/ferese/config.kdl`.
-For command patterns, custom titles, per-rule delays and completion messages,
-see [Command rules](#command-rules).
+[Configure Activities](configuration/activities.md).
 
 ### Turn off automatic command detection
 
-Set `shell-hook #false` inside `activities.sources`. Leave `process-watch` off
-as well if you don't want process detection. You can still use `feresectl run`
-and direct publishers.
-
-To skip shell and Activities setup during installation, pass
-`./scripts/install.sh --no-activities`. This skips setup for that installation;
-it doesn't remove an existing hook or disable an already configured source.
+[Turn off automatic command detection](configuration/activities.md#turn-off-automatic-command-detection).
 
 ### Command rules
 
-```kdl
-activities {
-    max-visible 2
-    show-badge #true
-    start-delay-ms 300
-    result-flash-ms 1500
-    sources {
-        shell-hook #true
-        process-watch #false
-        notification-bridge #false
-    }
-    rule "cargo" {
-        match #"^cargo (build|check|test|run|clippy)\b"#
-        title "cargo {1}"
-        icon "hammer"
-        priority 100
-        progress "indeterminate"
-        min-duration-ms 1500
-        ignore-parents "rust-analyzer"
-        dedupe-by "cwd"
-        flash-on-fail #true
-        result ok="Finished" fail="Command failed"
-    }
-}
-```
-
-User rules run in declaration order, then unreplaced built-ins in Cargo,
-npm/pnpm, make, git-push, docker-build order. A user rule replaces the entire
-built-in with the same name. One command selects one rule, pinned for its lifetime.
-`ignore-parents` accepts multiple names. Regex input/pattern/program sizes are
-bounded. Command and cwd metadata are used only during matching; nonmatches are
-discarded and never logged. Grouping hashes cwd within owner/rule. Invocations
-retain independent lifetimes and progress is never averaged.
-
-The global/rule visibility delay is their maximum. Completion before that delay,
-including failure, never flashes. Eligible results last 1500 ms by default;
-`flash-on-fail #false` removes failures directly. Configuration is validated
-before application; an invalid reload preserves the last valid configuration.
-Diagnostics include source offsets for activity configuration errors.
+[Command rules](configuration/activities.md#command-rules).
 
 ## If nothing appears
 
@@ -314,93 +233,17 @@ feresectl activity cancel diagnostic
 ```
 
 The lease removes this diagnostic after ten seconds if you omit the cancel.
-Ownership verification needs Linux 6.5 or newer. See
-[Publisher ownership and lifecycle](#publisher-ownership-and-lifecycle)
-for ownership, limits and expiry behavior.
+See [Publisher ownership and lifecycle](development/activities.md#publisher-ownership-and-lifecycle)
+for the Linux requirement, ownership checks, limits and expiry behavior.
 
 ## Publish your own status
 
-Run these commands from the same shell. The ID `download` belongs to that shell,
-so another terminal cannot update it:
-
-```sh
-feresectl activity start download --source download --icon download \
-    --title "Downloading update" --progress 0.2
-sleep 2
-feresectl activity update download --progress 0.7
-feresectl activity end download --result ok --message "Downloaded"
-```
-
-This example publishes status only; it doesn't perform a download. Your program
-supplies real progress and completion results.
+See [Publishing activities](development/activities.md#publish-your-own-status) for the CLI examples.
 
 ## Publisher ownership and lifecycle
 
-Use the same socket selection as every other control command: `--socket`, then
-`FERESE_SOCKET`, then the session runtime default. Separate nested sessions keep
-separate brokers. One-shot commands use their verified immediate parent (normally
-the shell), not the CLI connection, as lifetime owner. IDs are local to that owner.
-A direct publisher and `run` use the publishing process itself. The host obtains
-kernel peer credentials and a socket-bound pidfd, checks the parent relationship,
-process birth and UID, and monitors owner exit. This requires Linux 6.5 or newer;
-an unverifiable owner is rejected instead of trusting a JSON PID.
-
-```sh
-feresectl activity start build --icon hammer --title "Build"
-feresectl activity update build --progress 0.6
-feresectl activity end build --result ok --message "Built"
-feresectl activity start tea --icon timer --title "Tea" --remaining-ms 180000
-feresectl run --title "cargo test" -- cargo test
-```
-
-`start` prints a JSON handle containing owner, session and generation. The
-`--handle` option on update/end/cancel checks that exact invocation. Omitting it
-resolves the local ID only within the same verified owner. Duplicate starts are
-rejected. Repeated identical accepted results keep the original result deadline;
-a removed or superseded generation is stale. Register again after broker restart.
-
-The compositor assigns a terminal window at activity creation using the
-publisher's process ancestry. List selection follows the activity ID across
-reordering. Recording and low battery keep their protected priority, including
-the combined recording/low-battery presentation.
-
-Each owner may hold three records, including delayed and terminal entries. The
-session defaults to 128 records, a priority ceiling of 160 and two compact slots.
-New publications are limited to ten per owner per second. Replaceable updates
-are limited to 30 per owner per second; rejected updates get
-an explicit error. The bar coalesces snapshots through a bounded latest-value
-subscription while the broker retains accepted results. Terminal/cancel dispatch waits for bounded dispatcher capacity
-on the socket worker. A CLI disconnect does not remove an owner's records.
-Running owner death and expired leases remove entries without assigning a result.
-Results survive owner exit until their original deadline. Leases are positive and
-at most five minutes; valid refreshes renew only the lease.
-
-Activities stay on their creation output, initially the focused output. On output
-removal they move to the first surviving output, or become unpresented until an
-output is available. Host timestamps use `CLOCK_BOOTTIME`, including suspend.
-Countdown wire timestamps are ignored and replaced with host sample time.
+See [Ownership and lifecycle](development/activities.md#publisher-ownership-and-lifecycle).
 
 ## Extensions and templates
 
-The version-1 activity schema is carried inside the existing versioned,
-length-prefixed JSON `activity-publish` command. `activity-get` and long-poll
-`activity-watch` provide snapshots. See `ferese_ipc::activities` and
-`ferese_activities::Data`; there is no second socket or JSON-lines protocol.
-
-Extensions publish typed Progress, Timer, Media, or List data. The bar controls
-rendering. Values are indeterminate, finite progress in `[0,1]`, bounded text, or
-countdown durations. Titles/text are limited to 256 UTF-8 bytes; lists to eight
-rows. Icons are symbolic names; unknown names use the Ferese symbol, and paths
-are rejected. No extension widgets, markup, colors, shaders or drawing programs
-are accepted.
-
-Use `--template` with a typed JSON template, e.g.
-`'{"kind":"list","data":{"rows":["Indexing files","Waiting for server"]}}'`.
-Capture/call integrations use `--source capture` and describe the state they
-actually observe. Process names, microphone use, or camera use do not infer calls
-or downloads. Existing MPRIS state supplies Media rows and transport controls;
-recording/battery reuse the shell's existing protected state and watchers.
-
-The optional notification bridge uses existing notification state, ranks below
-all other ordinary sources, and respects DND and popup privacy. When enabled, a
-notice becomes an activity rather than a duplicate toast. It is off by default.
+See [Templates and the IPC schema](development/activities.md#extensions-and-templates).

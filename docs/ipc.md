@@ -1,9 +1,5 @@
 # feresectl and IPC events
 
-`feresectl keybindings` lists the active binding mode's shortcuts. Outside a
-mode it lists the configured default shortcuts. Escape is always available to
-leave a mode; see [Binding modes](configuration.md#binding-modes).
-
 `feresectl` controls a running Ferese session. Run `feresectl --help` for commands
 and `feresectl COMMAND --help` for arguments.
 
@@ -26,6 +22,10 @@ feresectl xwayland status
 feresectl media
 feresectl activity list
 ```
+
+`feresectl keybindings` lists the active binding mode's shortcuts. Outside a
+mode it lists the configured default shortcuts. Escape is always available to
+leave a mode; see [Binding modes](configuration/bindings.md#binding-modes).
 
 The `get-*` spellings remain hidden aliases for the corresponding queries and
 print a deprecation warning on stderr. They use the same output rules: scripts
@@ -59,7 +59,7 @@ these actions.
 `toggle-column-tabbed` changes a scrolling column between stacked rows and tabs.
 In either layout, `join-tab left|right|up|down` joins the focused window to a
 neighbouring tab group. `next-tab` and `previous-tab` switch tabs, and `leave-tab`
-splits the focused tab out. See [Commands and bindings](configuration.md#commands-and-bindings)
+splits the focused tab out. See [Tabbed windows](tabbed-windows.md)
 for grouping behavior and shortcuts.
 
 ## Live Activities
@@ -67,7 +67,7 @@ for grouping behavior and shortcuts.
 Use `feresectl run --title "Tests" -- cargo test` to publish a command's lifetime,
 or `feresectl activity start`, `update`, `end` and `cancel` to publish status from
 an integration. The [Live Activities guide](activities.md) covers setup and
-examples; its [publisher section](activities.md#publisher-ownership-and-lifecycle) explains ownership,
+examples; the [publishing guide](development/activities.md#publisher-ownership-and-lifecycle) explains ownership,
 leases and the `activity-publish`, `activity-get` and `activity-watch` commands.
 
 `feresectl activity setup --config PATH` updates a local config for shell

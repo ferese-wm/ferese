@@ -1,4 +1,5 @@
 # Continuum: Ferese’s animation model
+
 When you resize a window, Ferese has to coordinate where the layout wants it, where it currently appears, and what size the application has actually drawn. Those can differ during a transition: the layout may already have requested a larger window while the application is preparing its next buffer and the visible frame is still expanding. Continuum manages that visible movement so the application and your next input can proceed while the animation finishes. It provides the spring implementation and motion settings used by both the compositor and the shell.
 
 How that movement behaves depends on what you’re doing. While dragging, the window follows the pointer directly; adding a spring there would make it trail your hand. When you release a gesture, however, a spring takes over with the velocity of the movement you just made. If you change the destination before it settles, Ferese can retain the current position and velocity rather than restart the movement from rest. Large movements use zero bounce by default, so they settle without oscillating around the destination.
@@ -135,4 +136,4 @@ Rendering checks need to follow the interruptions people can make while using th
 
 Those checks establish state and rendering behavior, but input-to-presentation latency and smoothness at 60, 120, 144, and 240 Hz still need measurements on the target hardware. The solver’s correctness cannot tell us whether a particular frame arrived in time to be displayed.
 
-For user settings and KDL examples, see [Animation configuration](configuration.md#animations).
+For user settings and KDL examples, see [Animation configuration](configuration/animations.md#animations).

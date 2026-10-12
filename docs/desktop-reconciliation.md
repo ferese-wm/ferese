@@ -63,7 +63,7 @@ and then undoing migrations to requested outputs that never became usable.
 
 - `DesktopPlan` is pure data: the staged `OutputWorkspaceMap`, reserved workspace
   IDs, affected output IDs and focus dirtiness. It copies neither window layouts
-  nor client buffers nor the whole compositor. Window layout is not duplicated.
+  nor client buffers nor the whole compositor.
 - `DesktopOutput` adapts actual backend resources to that planner. Its Wayland
   handles, mode, scale and transform stay in the compositor, outside the pure map.
 - `DesktopTransition` holds short-lived resource retirement/redraw bookkeeping and

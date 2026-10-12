@@ -128,7 +128,7 @@ The panel uses the shared material settings under `theme.material`, including
 translucency and backdrop blur. Morph uses the theme's `surface-raised` color
 and suppresses the material shadow. **Reduce Transparency** takes precedence
 over a panel opacity override, making the background opaque and removing blur.
-See [Appearance](configuration.md#appearance) for the shared theme controls.
+See [Appearance](configuration/appearance.md#appearance) for the shared theme controls.
 
 Set `border #true` to draw the panel outline. Its color comes from
 `theme.colors.border`, and Capsules also uses that color for its dividers.
@@ -187,7 +187,7 @@ group a separate height, style or set of corners.
 
 ### Item catalog
 
-The Add item catalog contains these twelve kinds. Service-dependent controls
+The Add item catalog contains these built-in kinds. Service-dependent controls
 appear when their service or hardware is available, and a focused-window item
 disappears when that output has no window title to show.
 
@@ -197,6 +197,7 @@ disappears when that output has no window title to show.
 | Workspaces | `workspaces` | `style`: `numbers`, `dots`, `tabs`, `window-stacks`, `app-icons`; default `dots` |
 | Focused window | `focused-window` | Use the shared `visible` field to show or hide the title |
 | Media | `media` | Full, Compact and Icon representations |
+| Activities | `activities` | Full, Compact and Icon representations; see [Activities configuration](configuration/activities.md) |
 | Quick Settings | `quick-settings` | Opens Control Center |
 | Network | `network` | Opens Wi-Fi controls |
 | Audio | `audio` | Opens audio controls |
@@ -224,7 +225,7 @@ item "desk-clock" kind="clock" {
 ### Adaptation and overflow
 
 In the inspector, **Full**, **Compact** and **Icon** correspond to `wide`,
-`compact` and `icon`. Media and Clock support all three; Battery with percentage
+`compact` and `icon`. Activities, Media and Clock support all three; Battery with percentage
 supports Full and Icon. Workspaces and Focused window have one form that can
 shrink, while other controls use icons. An unsupported preference falls back
 to the item's normal form.
@@ -254,7 +255,7 @@ Notifications or Controls view. Escape or the close button collapses it.
 With an Activities item configured, running tasks can occupy the collapsed and
 peek states, and the hub gains an Activities tab. **Visible activities** and
 **Show activity count** in Appearance control its compact slots and `+n` badge;
-see [Activities configuration](activities.md#configure-activities).
+see [Activities configuration](configuration/activities.md).
 
 The Workspaces view shows miniature window layouts. Click a tile to switch
 workspace, use Tab and the arrow keys to navigate it, or drag a miniature window
