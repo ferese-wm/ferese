@@ -11,6 +11,7 @@ mod overview;
 mod resources;
 mod scene;
 mod shader;
+mod tab_indicator;
 mod tabs;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -332,6 +333,10 @@ pub(crate) enum OverviewChromePart {
     Caption,
     Tab,
     TabActive,
+    TabRail,
+    TabList,
+    TabRow,
+    TabFlash,
 }
 
 #[derive(Debug)]

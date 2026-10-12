@@ -640,6 +640,7 @@ impl Ferese {
         self.rebuild_presentation_dependencies();
         self.sync_window_stacking();
         self.retarget_overview();
+        self.reconcile_tab_indicator();
         if !finalize {
             return;
         }

@@ -1073,3 +1073,101 @@ fn scrolling_tabs_switch_with_directional_focus_and_drop_hidden_resize_holds() {
     assert_eq!(state.space.elements().count(), 2);
     assert_eq!(state.tab_bars[&workspace][0].group.windows, [a, b]);
 }
+
+#[test]
+fn tab_indicator_hover_switch_and_flash_preserve_window_geometry() {
+    if !crate::startup_tests::private_runtime(
+        "state::window_lifecycle_tests::tab_indicator_hover_switch_and_flash_preserve_window_geometry",
+    ) {
+        return;
+    }
+    let (mut events, mut state, _output) = fixture();
+    let (first, _first_wire) = window(&mut state, &mut events, 0xff112233);
+    state.toggle_column_tabbed();
+    let (second, _second_wire) = window(&mut state, &mut events, 0xff445566);
+    state.consume_focused_window();
+    let a = state.windows.ids()[&first];
+    let b = state.windows.ids()[&second];
+    let workspace = state.workspaces.active_id();
+    let bar = state.tab_bars[&workspace][0].clone();
+    let before = state.windows.geometry(&b).unwrap().logical;
+    let g = state
+        .tab_indicator_geometry(&bar, state.presented_window_rect(b).unwrap())
+        .unwrap();
+    let point = (g.hit.x + g.hit.width * 0.5, g.rail.y + g.segment_height * 0.5).into();
+    assert_eq!(state.tab_at(point), Some(a));
+    assert!(
+        state.surface_under(point).is_none(),
+        "the rail must not deliver input to the client"
+    );
+    state.update_tab_indicator_hover(point);
+    assert_eq!(state.tab_indicator.hover.as_ref().unwrap().opacity.current, 1.);
+    assert_eq!(state.windows.geometry(&b).unwrap().logical, before);
+    let row = g.row(0);
+    let point = (row.x + row.width * 0.5, row.y + row.height * 0.5).into();
+    state.update_tab_indicator_hover(point);
+    assert_eq!(state.tab_at(point), Some(a));
+    state.activate_managed_window(a);
+    assert_eq!(state.windows.geometry(&a).unwrap().logical, before);
+    assert!(state.tab_indicator.flash.is_none(), "pointer activation does not flash");
+    state.update_tab_indicator_hover((799., 599.).into());
+    assert_eq!(state.tab_indicator.hover.as_ref().unwrap().opacity.current, 0.);
+    state.tab_indicator_settings.flash_duration = Duration::from_millis(1);
+    state.cycle_tab(false);
+    assert_eq!(state.focused_window, Some(b));
+    assert_eq!(state.tab_indicator.flash.as_ref().unwrap().opacity.current, 1.);
+    assert_eq!(state.windows.geometry(&b).unwrap().logical, before);
+    let deadline = Instant::now() + Duration::from_secs(1);
+    while state
+        .tab_indicator
+        .flash
+        .as_ref()
+        .is_some_and(|f| f.opacity.target != 0.)
+        && Instant::now() < deadline
+    {
+        events.dispatch(Duration::from_millis(5), &mut state).unwrap();
+    }
+    assert_eq!(state.tab_indicator.flash.as_ref().unwrap().opacity.current, 0.);
+    state.toggle_column_tabbed();
+    assert!(state.tab_indicator.hover.is_none());
+    assert!(state.tab_indicator.flash.is_none());
+    assert!(state.tab_at(point).is_none());
+}
+
+#[test]
+fn tab_indicator_yields_to_a_floating_window_and_disappears_with_one_tab() {
+    if !crate::startup_tests::private_runtime(
+        "state::window_lifecycle_tests::tab_indicator_yields_to_a_floating_window_and_disappears_with_one_tab",
+    ) {
+        return;
+    }
+    let (mut events, mut state, _output) = fixture();
+    let (first, _first_wire) = window(&mut state, &mut events, 0xff112233);
+    state.toggle_column_tabbed();
+    let (second, _second_wire) = window(&mut state, &mut events, 0xff445566);
+    state.consume_focused_window();
+    let a = state.windows.ids()[&first];
+    let b = state.windows.ids()[&second];
+    let workspace = state.workspaces.active_id();
+    let (overlay, _overlay_wire) = window(&mut state, &mut events, 0xff778899);
+    let overlay_id = state.windows.ids()[&overlay];
+    state.toggle_focused_floating();
+    let bar = state.tab_bars[&workspace][0].clone();
+    let g = state
+        .tab_indicator_geometry(&bar, state.presented_window_rect(b).unwrap())
+        .unwrap();
+    let point = (g.hit.x + 6., g.hit.y + 5.).into();
+    state
+        .workspaces
+        .set_floating_rect(overlay_id, Rect::new(g.hit.x, g.hit.y, 200., 100.))
+        .unwrap();
+    state.relayout();
+    assert!(
+        state.tab_at(point).is_none(),
+        "floating window above the rail keeps its pointer input"
+    );
+    state.activate_managed_window(b);
+    state.leave_tab();
+    assert!(state.scrolling_tab_bar(a).is_none());
+    assert!(state.tab_indicator.hover.is_none());
+}

@@ -576,6 +576,16 @@ impl Ferese {
         Some(buffer)
     }
 
+    pub(crate) fn indicator_label(
+        &mut self,
+        text: &str,
+        scale: f64,
+        color: [f32; 4],
+        size: f64,
+    ) -> Option<LabelBuffer> {
+        self.overview.label_with_size(text, scale, color, size)
+    }
+
     pub(crate) fn overview_workspace_label(
         &mut self,
         index: u32,

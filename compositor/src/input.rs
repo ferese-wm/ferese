@@ -484,6 +484,7 @@ impl Ferese {
                 }
                 let position = self.constrain_pointer_position(&pointer, position);
 
+                self.update_tab_indicator_hover(position);
                 pointer.motion(
                     self,
                     self.surface_under(position),
@@ -528,6 +529,7 @@ impl Ferese {
                 let requested = self.clamp_pointer_position(position + delta);
                 let location = self.constrain_pointer_position(&pointer, requested);
 
+                self.update_tab_indicator_hover(location);
                 pointer.motion(
                     self,
                     self.surface_under(location),
@@ -712,6 +714,12 @@ impl Ferese {
                     return;
                 }
                 let pointer = self.seat.get_pointer().expect("seat has a pointer");
+                if self.scroll_tab_indicator(
+                    pointer.current_location(),
+                    if vertical != 0.0 { vertical } else { horizontal },
+                ) {
+                    return;
+                }
                 if self.scroll_overview_strip(
                     pointer.current_location(),
                     if horizontal != 0.0 { horizontal } else { vertical },

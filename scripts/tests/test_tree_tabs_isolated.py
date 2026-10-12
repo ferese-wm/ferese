@@ -37,7 +37,8 @@ class TabGroupsTest(unittest.TestCase):
             runtime.mkdir(mode=0o700)
             config = root / "config/ferese"
             config.mkdir(parents=True)
-            (config / "config.kdl").write_text(f'layout {{ mode "{mode}"; }}\nanimations {{ enabled #false; }}\n')
+            (config / "config.kdl").write_text(f'layout {{ mode "{mode}"; }}\nanimations {{ enabled #false; }}\n'
+                + 'scrolling { tab-indicator { active-color "#ff0000"; inactive-color "#00ff00"; }; }\n')
             host = Path(os.environ["WAYLAND_DISPLAY"])
             if not host.is_absolute():
                 host = Path(os.environ["XDG_RUNTIME_DIR"]) / host
@@ -117,6 +118,20 @@ class TabGroupsTest(unittest.TestCase):
                         captured = subprocess.check_output([str(ctl), "screenshot"],
                                                            env=ipc_environment(env), stderr=log, timeout=10)
                         image = Image.open(io.BytesIO(captured)).convert("RGB")
+                        if mode == "scrolling":
+                            # The overlay rail sits inside the left edge at the default 4px gap.
+                            for index, window_id in enumerate(ids):
+                                x = round((active["x"] + 2) * scale)
+                                y = round((active["y"] + active["height"] / 2 + (index - 1) * 22) * scale)
+                                r, g, b = image.getpixel((x, y))
+                                if window_id == active["id"]:
+                                    if r < 180 or g > 60 or b > 60:
+                                        return False
+                                elif g < 180 or r > 60 or b > 60:
+                                    return False
+                            self.assertEqual(active["y"], current_neighbor["y"])
+                            self.assertEqual(active["height"], current_neighbor["height"])
+                            return True
                         for index in range(3):
                             left = active["x"] + active["width"] * index / 3 + 4
                             right = active["x"] + active["width"] * (index + 1) / 3 - 4

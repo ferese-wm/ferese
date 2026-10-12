@@ -197,6 +197,7 @@ impl Ferese {
         }
 
         self.relayout();
+        self.flash_tab_switch(current, next);
     }
 
     pub fn move_direction(&mut self, direction: Direction) {

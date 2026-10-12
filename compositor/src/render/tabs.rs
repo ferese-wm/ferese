@@ -24,6 +24,20 @@ pub(super) fn tab_elements(
     let Some(sample) = frame.windows.get(&active) else {
         return Vec::new();
     };
+    if matches!(
+        state.workspaces.workspace(workspace).map(|w| &w.layout),
+        Some(ferese_core::WorkspaceLayout::Scrolling(_))
+    ) {
+        return super::tab_indicator::elements(
+            state,
+            renderer,
+            output,
+            &bar,
+            sample.presentation.bounds.current,
+            sample.presentation.alpha(),
+            capture,
+        );
+    }
     if bar.rect.height <= 0.0 {
         return Vec::new();
     }

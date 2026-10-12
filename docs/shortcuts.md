@@ -178,3 +178,7 @@ binding "Super+Q" disabled=#true
 
 See [Commands and bindings](configuration.md#commands-and-bindings) for action
 names, arguments, and physical-key matching.
+
+In scrolling columns, hover over the left-edge tab indicator for window titles.
+Click a segment or title to switch tabs. Keyboard tab switching briefly shows the
+selected tab number and title without opening the list.

@@ -4,6 +4,7 @@ mod input_motion;
 mod layout;
 mod loading;
 mod outputs;
+mod tab_indicator;
 mod xwayland;
 
 use std::collections::{HashMap, HashSet};
@@ -28,6 +29,7 @@ use outputs::*;
 pub use outputs::{LidPolicy, OutputLayout, OutputModeRequest, OutputProfile, OutputSettings, OutputTransform};
 use serde::Deserialize;
 use smithay::input::keyboard::{Keycode, keysyms, xkb};
+pub(crate) use tab_indicator::TabIndicatorSettings;
 
 use crate::window_rules;
 use crate::window_rules::{WindowRule, WindowRuleConfig};
@@ -167,6 +169,7 @@ impl Config {
             focus_effect: self.focus_effect_settings()?,
             default_column_width: self.default_column_width()?,
             default_column_display: self.default_column_display(),
+            tab_indicator: self.tab_indicator_settings()?,
             scrolling_focus_strategy: self.scrolling_focus_strategy(),
             column_width_presets: self.width_presets()?,
             animations_enabled: self.animations_enabled(),
@@ -230,6 +233,8 @@ enum LayoutModeValue {
 
 #[derive(Debug, Default, Deserialize)]
 struct ScrollingConfig {
+    #[serde(default)]
+    tab_indicator: tab_indicator::TabIndicatorConfig,
     default_column_display: Option<ColumnDisplayValue>,
     default_column_width: Option<ColumnWidthValue>,
     focus_strategy: Option<FocusStrategyValue>,

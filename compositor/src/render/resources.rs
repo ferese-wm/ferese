@@ -71,7 +71,16 @@ impl RenderResources {
         self.windows.remove(&id);
         for output in self.outputs.values_mut() {
             output.chrome.retain(|(key, part), _| {
-                *key != id.0 || !matches!(part, OverviewChromePart::Tab | OverviewChromePart::TabActive)
+                *key != id.0
+                    || !matches!(
+                        part,
+                        OverviewChromePart::Tab
+                            | OverviewChromePart::TabActive
+                            | OverviewChromePart::TabRail
+                            | OverviewChromePart::TabList
+                            | OverviewChromePart::TabRow
+                            | OverviewChromePart::TabFlash
+                    )
             });
         }
     }

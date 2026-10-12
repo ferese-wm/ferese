@@ -71,8 +71,10 @@ impl Ferese {
         if self.workspaces.active().fullscreen.is_some() {
             return;
         }
-        if let Some(target) = self.workspaces.active().layout.adjacent_tab(window, previous) {
-            self.activate_managed_window(target);
+        if let Some(target) = self.workspaces.active().layout.adjacent_tab(window, previous)
+            && self.activate_managed_window(target)
+        {
+            self.flash_tab_switch(window, target);
         }
     }
 
@@ -100,6 +102,12 @@ impl Ferese {
             return None;
         }
         let workspace = self.workspace_under_pointer(position)?;
+        if matches!(
+            self.workspaces.workspace(workspace)?.layout,
+            WorkspaceLayout::Scrolling(_)
+        ) {
+            return self.indicator_tab_at(position);
+        }
         // Floating windows and popups in front of the group keep their input.
         if self.window_surface_under(position).is_some() {
             return None;

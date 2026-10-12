@@ -559,12 +559,50 @@ column's width and scroll position. Vertical resizing is inactive in tabbed mode
 `join-tab` explicitly makes the destination column tabbed, including when joining
 two rows that already share a column.
 
-The tab bar shows window titles above the active window and reserves space
-inside its allocation. Click a title to switch. New windows open beside the
-group. Closing, floating, or moving a tab to another workspace removes it from
-the group; a single remaining window loses its tab bar. Maximized and fullscreen
-windows hide the bar. Fullscreen remains per-window: restore before grouping or
-switching tabs. Switching layout modes keeps every window but dissolves groups.
+Tree groups show a compact title bar above the active window. Scrolling columns
+use a segmented rail along the left edge. Click a segment to select its tab, or
+hover over the rail to open a title list. The list stays open while the pointer
+is over the rail or list, and scrolls if it is taller than the screen. Keyboard
+tab switching briefly shows `n/N · title` near the top of the window.
+
+The scrolling indicator and its title list are overlays: neither reserves space
+nor changes the window size. With at least 8px of gap to the left, the rail sits
+in that gap; otherwise it sits just inside the window's left edge. Its invisible
+click area is wider than the rail. On very short windows, the segments compress
+to stay within the visible window height.
+
+New windows open beside the group. Closing, floating, or moving a tab to another
+workspace removes it from the group. Single-window groups, maximized windows and
+fullscreen windows hide the tab controls. Fullscreen remains per-window: restore
+before grouping or switching tabs. Switching layout modes keeps every window but
+dissolves groups.
+
+Configure the scrolling indicator under `scrolling.tab-indicator`:
+
+```kdl
+scrolling {
+    tab-indicator {
+        width 4
+        segment-height 18
+        segment-gap 4
+        hit-width 12
+        gap-threshold 8
+        list-width 220
+        row-height 28
+        padding 4
+        font-size 12
+        flash-duration-ms 1000
+    }
+}
+```
+
+Sizes are logical pixels. `flash-duration-ms 0` disables keyboard feedback.
+Optional `active-color`, `inactive-color`, `background-color`, and `text-color`
+accept the same color syntax as theme colors. When omitted, they follow the
+current theme's accent, border, base surface, and primary text respectively.
+The rail has fully rounded ends; the title list follows the shell corner radius.
+Both use flat fills, without blur or shadows. Changes apply on configuration
+reload.
 
 To make future scrolling columns tabbed by default:
 

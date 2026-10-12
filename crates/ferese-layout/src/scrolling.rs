@@ -834,16 +834,11 @@ impl ScrollingLayout {
             let (column_x, column_width) = column_positions[column_index];
             if column.display == ColumnDisplay::Tabbed {
                 let window = column.windows[column.active];
-                let header = if column.windows.len() > 1 {
-                    crate::TAB_BAR_HEIGHT.min((viewport_height - 1.0).max(0.0))
-                } else {
-                    0.0
-                };
                 let mut rect = Rect::new(
                     bounds.x + outer + column_x - self.viewport_x,
-                    bounds.y + outer + header,
+                    bounds.y + outer,
                     column_width,
-                    viewport_height - header,
+                    viewport_height,
                 );
                 // All tabs use one size, even when their client constraints differ.
                 // Keep the column allocation stable and honor compatible maximums.
@@ -864,13 +859,13 @@ impl ScrollingLayout {
                 let common = normalized_constraints(common);
                 record_minimum_warnings(window, rect, common, &mut result.warnings);
                 apply_maximums(window, &mut rect, common, &mut result.warnings);
-                if header > 0.0 {
+                if column.windows.len() > 1 {
                     result.tab_bars.push(crate::TabBar {
                         group: crate::TabGroup {
                             windows: column.windows.clone(),
                             active: window,
                         },
-                        rect: Rect::new(rect.x, rect.y - header, rect.width, header),
+                        rect,
                     });
                 }
                 result.geometry.insert(window, rect);
@@ -2796,5 +2791,40 @@ mod tabbed_tests {
             }
             previous = Some(rect);
         }
+    }
+}
+
+#[cfg(test)]
+mod overlay_tab_tests {
+    use super::*;
+
+    #[test]
+    fn tab_indicator_never_reserves_layout_space() {
+        let mut layout = ScrollingLayout::default();
+        let a = WindowId(1);
+        let b = WindowId(2);
+        layout.insert(a, None).unwrap();
+        layout.toggle_column_tabbed(a).unwrap();
+        let bounds = Rect::new(0., 0., 800., 600.);
+        let gaps = GapConfig {
+            inner: 12.,
+            outer: 8.,
+            smart: false,
+        };
+        let before = layout
+            .resolve_geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(a))
+            .unwrap();
+        layout.insert(b, Some(a)).unwrap();
+        layout.move_into_column(b, a).unwrap();
+        let after = layout
+            .resolve_geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(b))
+            .unwrap();
+        assert_eq!(before.geometry[&a], after.geometry[&b]);
+        assert_eq!(after.tab_bars[0].rect, after.geometry[&b]);
+        layout.focus_and_reveal(a).unwrap();
+        let switched = layout
+            .resolve_geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(a))
+            .unwrap();
+        assert_eq!(switched.geometry[&a], after.geometry[&b]);
     }
 }

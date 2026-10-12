@@ -7,6 +7,7 @@ mod layout;
 mod navigation;
 mod outputs;
 mod reconciliation;
+pub(crate) mod tab_indicator;
 mod tabs;
 #[cfg(test)]
 mod window_lifecycle_tests;
@@ -456,6 +457,8 @@ pub struct Ferese {
     workspace_slides: HashMap<OutputId, WorkspaceSlide>,
     workspace_slide_offsets: HashMap<WorkspaceId, (f64, f64)>,
     pub focused_window: Option<WindowId>,
+    pub(crate) tab_indicator: tab_indicator::TabIndicatorState,
+    pub(crate) tab_indicator_settings: crate::config::TabIndicatorSettings,
     pub(crate) tab_bars: HashMap<WorkspaceId, Vec<ferese_layout::TabBar>>,
     pub(crate) tab_buttons: HashSet<u32>,
     pub(crate) focus_history: ferese_core::FocusHistory,
@@ -576,6 +579,7 @@ pub struct RuntimeConfig {
     pub focus_effect: crate::config::FocusEffectSettings,
     pub default_column_width: ColumnWidth,
     pub default_column_display: ferese_layout::ColumnDisplay,
+    pub(crate) tab_indicator: crate::config::TabIndicatorSettings,
     pub scrolling_focus_strategy: ViewportFocusStrategy,
     pub column_width_presets: Vec<ColumnWidth>,
     pub animations_enabled: bool,
@@ -752,6 +756,8 @@ impl Ferese {
             workspace_slides: HashMap::new(),
             workspace_slide_offsets: HashMap::new(),
             focused_window: None,
+            tab_indicator: tab_indicator::TabIndicatorState::default(),
+            tab_indicator_settings: config.tab_indicator,
             tab_bars: HashMap::new(),
             tab_buttons: HashSet::new(),
             focus_history: Default::default(),
@@ -980,6 +986,8 @@ impl Ferese {
         self.idle_inhibit = config.idle_inhibit;
         self.theme_settings = config.theme_settings;
         self.panel_corner_radius = config.panel_corner_radius;
+        self.tab_indicator_settings = config.tab_indicator;
+        self.clear_tab_indicator();
         self.panel_background_opacity = config.panel_background_opacity;
         self.panel_style = config.panel_style;
         self.focus_effect = config.focus_effect;

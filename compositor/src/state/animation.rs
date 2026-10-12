@@ -102,6 +102,7 @@ impl Ferese {
             || !self.dismissing_popups.is_empty()
             || self.render.snapshots().next().is_some()
             || self.overview.needs_tick()
+            || self.tab_indicator.is_animating()
         {
             return true;
         }
@@ -160,7 +161,9 @@ impl Ferese {
             self.release_presentation_dependencies();
         }
 
-        let mut active_animation = false;
+        let mut active_animation = self
+            .tab_indicator
+            .advance(delta, self.spring_config, self.animations_enabled);
         let mut completed_slides = Vec::new();
         for (output, slide) in &mut self.workspace_slides {
             if slide.held_progress.is_some() {
