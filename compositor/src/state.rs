@@ -464,8 +464,9 @@ pub struct Ferese {
     workspace_auto_back_and_forth: bool,
     pub(crate) window_rules: Vec<WindowRule>,
     pub(crate) theme_settings: ThemeSettings,
-    pub(crate) panel_corner_radius: Option<ferese_config::panel::CornerRadii>,
+    pub(crate) panel_corner_radius: Option<ferese_panel::CornerRadii>,
     pub(crate) panel_background_opacity: Option<f32>,
+    pub(crate) panel_style: ferese_panel::PanelStyle,
     pub(crate) focus_effect: crate::config::FocusEffectSettings,
     animations_enabled: bool,
     animation_speed: f64,
@@ -505,6 +506,8 @@ pub struct Ferese {
     pub(crate) shell_resources: Vec<Weak<FereseShellV1>>,
     pub(crate) shell_snapshot_serial: u32,
     pub(crate) last_shell_snapshot: Option<ShellSnapshot>,
+    pub(crate) workspace_preview_revision: u64,
+    workspace_previews: std::cell::RefCell<layout::PreviewCache>,
     pub(crate) overview: OverviewState,
     next_output_id: u64,
     last_animation_tick: Instant,
@@ -557,8 +560,9 @@ pub struct RuntimeConfig {
     pub workspace_auto_back_and_forth: bool,
     pub window_rules: Vec<WindowRule>,
     pub theme_settings: ThemeSettings,
-    pub(crate) panel_corner_radius: Option<ferese_config::panel::CornerRadii>,
+    pub(crate) panel_corner_radius: Option<ferese_panel::CornerRadii>,
     pub(crate) panel_background_opacity: Option<f32>,
+    pub(crate) panel_style: ferese_panel::PanelStyle,
     pub focus_effect: crate::config::FocusEffectSettings,
     pub default_column_width: ColumnWidth,
     pub scrolling_focus_strategy: ViewportFocusStrategy,
@@ -746,6 +750,7 @@ impl Ferese {
             theme_settings: config.theme_settings,
             panel_corner_radius: config.panel_corner_radius,
             panel_background_opacity: config.panel_background_opacity,
+            panel_style: config.panel_style,
             focus_effect: config.focus_effect,
             animations_enabled: config.animations_enabled,
             animation_speed: config.animation_speed,
@@ -780,6 +785,8 @@ impl Ferese {
             shell_resources: Vec::new(),
             shell_snapshot_serial: 0,
             last_shell_snapshot: None,
+            workspace_preview_revision: 0,
+            workspace_previews: Default::default(),
             overview: OverviewState::with_font_family(config.overview_font_family),
             next_output_id: 1,
             last_animation_tick: start_time,
@@ -849,7 +856,9 @@ impl Ferese {
         let input_changed = changed(&["input"]);
         let daemons_changed = changed(&["autostart"]);
         let lock_changed = changed(&["lock_screen"]);
-        let non_output_scene_changed = layout_changed || changed(&["animations", "appearance", "window_rules"]);
+        let panel_layout_changed = self.panel_style != config.panel_style;
+        let non_output_scene_changed =
+            layout_changed || panel_layout_changed || changed(&["animations", "appearance", "window_rules"]);
         let scene_changed = non_output_scene_changed || changed(&["output_profiles"]);
 
         if self.output_profiles != config.output_profiles {
@@ -921,6 +930,10 @@ impl Ferese {
                 )
                 .map_err(|error| error.to_string())?;
         }
+        if layout_changed || self.gap_config != config.gap_config || panel_layout_changed {
+            // Hidden layouts are resolved independently of presented geometry.
+            self.workspace_preview_revision = self.workspace_preview_revision.wrapping_add(1);
+        }
         self.gap_config = config.gap_config;
         self.input_settings = config.input_settings;
         if bindings_changed {
@@ -936,6 +949,7 @@ impl Ferese {
         self.theme_settings = config.theme_settings;
         self.panel_corner_radius = config.panel_corner_radius;
         self.panel_background_opacity = config.panel_background_opacity;
+        self.panel_style = config.panel_style;
         self.focus_effect = config.focus_effect;
         self.column_width_presets = config.column_width_presets;
         self.animations_enabled = config.animations_enabled;

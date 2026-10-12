@@ -1,4 +1,4 @@
-use ferese_config::panel::{Edge, ItemKind, Panel};
+use ferese_panel::{Edge, ItemKind, Panel};
 
 use crate::panel_edit::{Action, Destination, Zone};
 use crate::{App, Element, Message, schema::Page, store, widget};
@@ -12,7 +12,7 @@ pub(super) enum PanelPage {
 
 pub(super) fn initialize(_snapshot: &store::Snapshot) -> Result<store::Edit, String> {
     let panel = Panel::default();
-    ferese_config::panel::validate(std::slice::from_ref(&panel))?;
+    ferese_panel::validate(std::slice::from_ref(&panel))?;
     Ok(store::set(
         "panels",
         serde_json::to_value(vec![panel]).map_err(|error| error.to_string())?,
@@ -26,10 +26,18 @@ impl std::fmt::Display for CatalogItem {
         formatter.write_str(self.0.label())
     }
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct StyleChoice(ferese_panel::PanelStyle);
+impl std::fmt::Display for StyleChoice {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.0.label())
+    }
+}
+
 const CATALOG: [CatalogItem; 12] = [
     CatalogItem(ItemKind::Overview),
     CatalogItem(ItemKind::Workspaces {
-        style: ferese_config::panel::WorkspaceStyle::Dots,
+        style: ferese_panel::WorkspaceStyle::Dots,
     }),
     CatalogItem(ItemKind::FocusedWindow),
     CatalogItem(ItemKind::Media),
@@ -104,11 +112,6 @@ impl App {
                     .class(crate::visuals::surface(palette.card, 14.)),
                 );
                 let preset = self.preview_panel().ok().and_then(|panel| panel.preset());
-                let preset_key = match preset {
-                    Some(ferese_config::PanelPreset::Continuous) => "continuous",
-                    Some(ferese_config::PanelPreset::Islands) => "islands",
-                    None => "custom",
-                };
                 let position = widget::row([Edge::Top, Edge::Bottom].into_iter().map(|position| {
                     let label = if position == Edge::Top { "Top" } else { "Bottom" };
                     widget::button::custom(self.label(label, 12.))
@@ -134,53 +137,20 @@ impl App {
                     .padding(16)
                     .class(crate::visuals::surface(palette.card, 14.)),
                 );
-                let appearance = widget::column([])
+                let mut appearance = widget::column([])
                     .spacing(16)
                     .push(self.panel_heading("Appearance", 15.))
-                    .push(self.panel_appearance_row(
-                        "Background",
-                        "Apply a preset, then customize each group.",
-                        self.panel_surface_choices(
-                            preset_key,
-                            &[("continuous", "Continuous"), ("islands", "Islands")],
-                            move |key| {
-                                Message::PanelEdit(Action::ApplyPreset(if key == "islands" {
-                                    ferese_config::PanelPreset::Islands
-                                } else {
-                                    ferese_config::PanelPreset::Continuous
-                                }))
-                            },
-                        ),
-                    ))
-                    .push(
-                        self.panel_appearance_row(
-                            "Default group surface",
-                            "Groups can override this in their inspector.",
-                            self.panel_surface_choices(
-                                self.preview_panel()
-                                    .map_or(ferese_config::panel::GroupSurface::None, |panel| panel.group_surface)
-                                    .key(),
-                                &[("none", "None"), ("inset", "Inset"), ("island", "Island")],
-                                |key| {
-                                    Message::PanelEdit(Action::SetDefaultSurface(match key {
-                                        "inset" => ferese_config::panel::GroupSurface::Inset,
-                                        "island" => ferese_config::panel::GroupSurface::Island,
-                                        _ => ferese_config::panel::GroupSurface::None,
-                                    }))
-                                },
-                            ),
-                        ),
-                    )
+                    .push(self.panel_style_choices(preset.unwrap_or_default()))
                     .push(self.panel_divider())
                     .push(self.panel_opacity_controls())
                     .push(self.panel_divider())
                     .push(
                         self.panel_appearance_row(
-                            "Group borders",
-                            "Outline each group of items.",
+                            "Outline",
+                            "Add a fine line around the panel shape.",
                             widget::container(
                                 ferese_theme::controls::switch(self.draft.boolean("panels.0.border", false), palette)
-                                    .name("Group borders")
+                                    .name("Outline")
                                     .on_press(Message::PanelEdit(Action::SetBorder(
                                         !self.draft.boolean("panels.0.border", false),
                                     ))),
@@ -190,7 +160,44 @@ impl App {
                         ),
                     )
                     .push(self.panel_divider())
-                    .push(self.panel_radius_controls());
+                    .push(if preset == Some(ferese_panel::PanelStyle::Flat) {
+                        widget::Space::new().height(0).into()
+                    } else {
+                        self.panel_radius_controls()
+                    });
+                if preset == Some(ferese_panel::PanelStyle::Morph) {
+                    let enabled = self.draft.boolean("panels.0.morph.peek_on_hover", true);
+                    let attached = self.draft.boolean("panels.0.morph.attached", false);
+                    appearance = appearance
+                        .push(self.panel_divider())
+                        .push(
+                            self.panel_appearance_row(
+                                "Attach to screen edge",
+                                "Join the island to the screen edge with curved shoulders.",
+                                widget::container(
+                                    ferese_theme::controls::switch(attached, palette)
+                                        .name("Attach to screen edge")
+                                        .on_press(Message::PanelEdit(Action::SetMorphAttached(!attached))),
+                                )
+                                .align_right(cosmic::iced::Length::Fill)
+                                .into(),
+                            ),
+                        )
+                        .push(self.panel_divider())
+                        .push(
+                            self.panel_appearance_row(
+                                "Preview on hover",
+                                "Expand the island when you hover over it.",
+                                widget::container(
+                                    ferese_theme::controls::switch(enabled, palette)
+                                        .name("Preview on hover")
+                                        .on_press(Message::PanelEdit(Action::SetPeekOnHover(!enabled))),
+                                )
+                                .align_right(cosmic::iced::Length::Fill)
+                                .into(),
+                            ),
+                        );
+                }
                 rows = rows.push(
                     widget::container(appearance)
                         .id("panel-appearance-settings")
@@ -198,21 +205,70 @@ impl App {
                         .width(cosmic::iced::Length::Fill)
                         .class(crate::visuals::surface(palette.card, 14.)),
                 );
-                let mut settings = widget::column([])
-                    .spacing(4)
-                    .push(widget::container(self.panel_heading("Size & spacing", 15.)).padding([4, 10]));
+                let pins = self.preview_panel().is_ok_and(|panel| {
+                    panel.geometry != ferese_panel::GeometryIntent::default() || panel.corner_radius.is_some()
+                });
+                let mut settings = widget::column([]).spacing(4).push(
+                    widget::container(
+                        widget::row![
+                            self.panel_heading("Size & spacing", 15.)
+                                .width(cosmic::iced::Length::Fill),
+                            self.settings_button(
+                                "Reset to style",
+                                "M3 12a9 9 0 1 0 3-6 M3 3v6h6",
+                                pins.then_some(Message::PanelEdit(Action::ResetShape)),
+                                false
+                            )
+                        ]
+                        .align_y(cosmic::iced::Alignment::Center),
+                    )
+                    .padding([4, 10]),
+                );
                 for field in crate::schema::fields(Page::Bar)
                     .into_iter()
                     .filter(|field| field.path.starts_with("panels.0.geometry."))
+                    .filter(|field| {
+                        if preset == Some(ferese_panel::PanelStyle::Morph)
+                            && self.draft.boolean("panels.0.morph.attached", false)
+                            && field.path.ends_with(".edge_margin")
+                        {
+                            return false;
+                        }
+                        !matches!(
+                            preset.unwrap_or_default(),
+                            ferese_panel::PanelStyle::Flat | ferese_panel::PanelStyle::Notch
+                        ) || !matches!(field.path.rsplit('.').next(), Some("edge_margin" | "side_margins"))
+                    })
                 {
                     let mut field = field;
+                    if preset == Some(ferese_panel::PanelStyle::Morph) {
+                        if matches!(field.path.rsplit('.').next(), Some("inner_padding" | "side_margins")) {
+                            continue;
+                        }
+                        if field.path.ends_with(".height") {
+                            field.label = "Collapsed height".into();
+                        }
+                    }
                     if let crate::schema::Kind::Range { default, .. } = &mut field.kind {
-                        let geometry =
-                            serde_json::to_value(self.preview_panel().map(|panel| panel.geometry).unwrap_or_default())
-                                .unwrap();
+                        let geometry = serde_json::to_value(
+                            self.preview_panel()
+                                .map(|panel| panel.resolved_geometry())
+                                .unwrap_or_default(),
+                        )
+                        .unwrap();
                         *default = geometry[field.path.rsplit('.').next().unwrap()].as_f64().unwrap();
                     }
-                    settings = settings.push(self.field(field));
+                    let pinned = self.draft.item(&field.path).is_some();
+                    let reset = pinned.then_some(Message::PanelEdit(Action::ClearGeometry(field.path.clone())));
+                    let reset_label = format!("Reset {}", field.label);
+                    settings = settings.push(
+                        widget::row![
+                            self.field(field),
+                            self.settings_icon_button(&reset_label, "M3 12a9 9 0 1 0 3-6 M3 3v6h6", reset)
+                        ]
+                        .spacing(8)
+                        .align_y(cosmic::iced::Alignment::Center),
+                    );
                 }
                 rows = rows.push(
                     widget::container(settings)
@@ -241,10 +297,11 @@ impl App {
             return None;
         }
         let panel = self.preview_panel().ok()?;
-        Some(
-            self.panel_preview_resolution
-                .side_margin(4096, display.logical_width?, panel.geometry.inner_padding),
-        )
+        Some(self.panel_preview_resolution.side_margin(
+            4096,
+            display.logical_width?,
+            panel.resolved_geometry().inner_padding,
+        ))
     }
 
     fn panel_appearance_row(
@@ -331,13 +388,16 @@ impl App {
     fn panel_radius_controls(&self) -> Element<'static, Message> {
         use cosmic::iced::{Alignment, Length};
         let palette = crate::visuals::Palette::from_resolved(&self.resolved.presented);
-        let shell_radius = self.resolved.presented.tokens.geometry.shell_radius as f32;
+        let shell_radius = self
+            .preview_panel()
+            .map(|panel| panel.resolved_geometry().height * 0.5)
+            .unwrap_or(18.);
         let custom = self
             .draft
             .item("panels.0.corner_radius")
-            .and_then(|value| serde_json::from_value::<ferese_config::panel::CornerRadii>(value.clone()).ok());
-        let radii = custom.unwrap_or_else(|| ferese_config::panel::CornerRadii::uniform(shell_radius));
-        let modes = widget::row([("Shell default", false), ("Custom", true)].map(|(label, selected)| {
+            .and_then(|value| serde_json::from_value::<ferese_panel::CornerRadii>(value.clone()).ok());
+        let radii = custom.unwrap_or_else(|| ferese_panel::CornerRadii::uniform(shell_radius));
+        let modes = widget::row([("Automatic", false), ("Custom", true)].map(|(label, selected)| {
             widget::button::custom(self.label(label, 12.).align_x(Alignment::Center))
                 .name(format!("Corner radius: {label}"))
                 .padding([8, 12])
@@ -359,10 +419,10 @@ impl App {
         let mut corners = Vec::new();
         // Match the physical corners: top row first, then bottom-left / bottom-right.
         for (index, label, icon) in [
-            (0, "Top left", "M5 19V9a4 4 0 0 1 4-4h10"),
-            (1, "Top right", "M5 5h10a4 4 0 0 1 4 4v10"),
-            (3, "Bottom left", "M5 5v10a4 4 0 0 0 4 4h10"),
-            (2, "Bottom right", "M5 19h10a4 4 0 0 0 4-4V5"),
+            (0, "Edge left", "M5 19V9a4 4 0 0 1 4-4h10"),
+            (1, "Edge right", "M5 5h10a4 4 0 0 1 4 4v10"),
+            (3, "Outer left", "M5 5v10a4 4 0 0 0 4 4h10"),
+            (2, "Outer right", "M5 19h10a4 4 0 0 0 4-4V5"),
         ] {
             let value = radii.0[index];
             let tint = if custom.is_some() { palette.text } else { palette.muted };
@@ -406,10 +466,21 @@ impl App {
                 .into(),
             );
         }
+        if custom.is_none() {
+            return self.panel_appearance_row(
+                "Corner radius",
+                "Corners follow the style and panel height.",
+                modes.into(),
+            );
+        }
         let bottom_corners = corners.split_off(2);
-        let mut content = widget::column([])
+        let content = widget::column([])
             .spacing(12)
-            .push(self.panel_appearance_row("Corner radius", "Set the rounding of each corner.", modes.into()))
+            .push(self.panel_appearance_row(
+                "Corner radius",
+                "Pins stay in place when you change styles. Top and bottom panels mirror them.",
+                modes.into(),
+            ))
             .push(
                 widget::column([])
                     .spacing(8)
@@ -426,14 +497,7 @@ impl App {
                             .width(Length::Fill),
                     ),
             );
-        if self.preview_panel().is_ok_and(|panel| panel.geometry.edge_margin == 0) {
-            let bottom = self.preview_panel().is_ok_and(|panel| panel.edge == Edge::Bottom);
-            content = content.push(self.note(if bottom {
-                "Bottom corners stay square while the panel touches the bottom edge."
-            } else {
-                "Top corners stay square while the panel touches the top edge."
-            }));
-        }
+
         content.into()
     }
 
@@ -536,51 +600,45 @@ impl App {
         .into()
     }
 
-    fn panel_surface_choices(
-        &self,
-        selected: &str,
-        options: &'static [(&'static str, &'static str)],
-        message: impl Fn(&'static str) -> Message,
-    ) -> Element<'static, Message> {
-        use cosmic::iced::{Alignment, Length};
+    fn panel_style_choices(&self, selected: ferese_panel::PanelStyle) -> Element<'static, Message> {
+        use cosmic::iced::Length;
+        use ferese_panel::PanelStyle;
         let palette = crate::visuals::Palette::from_resolved(&self.resolved.presented);
-        let options = widget::row(options.iter().map(|&(key, label)| {
-            widget::button::custom(
-                widget::row([])
-                    .spacing(8)
-                    .align_y(Alignment::Center)
-                    .push(crate::visuals::action_icon(
-                        match key {
-                            "continuous" => "M3 7h18v10H3z",
-                            "none" => "M4 4l16 16 M4 20L20 4",
-                            "inset" => "M3 5h18v14H3z M7 9h10v6H7z",
-                            _ => "M2 7h5v10H2z M10 7h4v10h-4z M17 7h5v10h-5z",
-                        },
-                        palette.muted,
-                    ))
-                    .push(self.label(label, 12.)),
+        let description = match selected {
+            PanelStyle::Floating => "Separate floating groups",
+            PanelStyle::Capsules => "Connected groups with rounded ends",
+            PanelStyle::Notch => "Attached to the screen edge",
+            PanelStyle::Flat => "A continuous edge-to-edge panel",
+            PanelStyle::Fused => "Groups blend where they meet",
+            PanelStyle::Adaptive => "Follows the active window state",
+            PanelStyle::Morph => "A clock hub with expandable controls",
+            _ => "",
+        };
+        self.panel_appearance_row(
+            "Style",
+            description,
+            crate::visuals::panel_select(
+                cosmic::iced::widget::pick_list(
+                    PanelStyle::AVAILABLE.map(StyleChoice).to_vec(),
+                    Some(StyleChoice(selected)),
+                    |style| Message::PanelEdit(Action::ApplyPreset(style.0)),
+                )
+                .font(self.font)
+                .text_size(12)
+                .padding([6, 10])
+                .width(Length::Fill),
+                palette,
             )
-            .name(format!("Background: {label}"))
-            .padding([8, 10])
-            .width(Length::Fill)
-            .class(crate::visuals::panel_button(palette, selected == key))
-            .on_press(message(key))
-            .into()
-        }))
-        .spacing(2);
-        widget::container(options)
-            .padding(3)
-            .width(Length::Fill)
-            .class(crate::visuals::surface(palette.sidebar, 9.))
-            .into()
+            .into(),
+        )
     }
 
     fn panel_editor(&self, panel: &Panel) -> Element<'static, Message> {
         use cosmic::iced::{Alignment, Length};
         let palette = crate::visuals::Palette::from_resolved(&self.resolved.presented);
         let mut zones = widget::column([]).spacing(18);
-        if panel.group_count() == ferese_config::panel::MAX_GROUPS {
-            zones = zones.push(self.label(format!("{}-group limit reached", ferese_config::panel::MAX_GROUPS), 12.));
+        if panel.group_count() == ferese_panel::MAX_GROUPS {
+            zones = zones.push(self.label(format!("{}-group limit reached", ferese_panel::MAX_GROUPS), 12.));
         }
         for placement in Zone::ALL {
             let zone = placement.definition(panel);
@@ -592,7 +650,7 @@ impl App {
                         self.settings_button(
                             "Add group",
                             "M12 5v14 M5 12h14",
-                            (panel.group_count() < ferese_config::panel::MAX_GROUPS)
+                            (panel.group_count() < ferese_panel::MAX_GROUPS)
                                 .then_some(Message::PanelEdit(Action::AddGroup(placement))),
                             false,
                         ),
@@ -787,8 +845,8 @@ mod tests {
             modes: Vec::new(),
         }];
         app.panel_preview_resolution.items.insert(
-            ferese_config::panel::ItemId("clock".into()),
-            ferese_config::panel::layout::Placement::Overflow,
+            ferese_panel::ItemId("clock".into()),
+            ferese_panel::layout::Placement::Overflow,
         );
         app.panel_preview_resolution.minimum_width = 600.;
         assert_eq!(app.panel_side_margin_limit(), Some(408));
@@ -806,8 +864,8 @@ mod tests {
         snapshot.edit(&initialize(&snapshot).unwrap()).unwrap();
         let snapshot = store::Snapshot::parse(snapshot.source).unwrap();
         let panels: Vec<Panel> = serde_json::from_value(snapshot.item("panels").unwrap().clone()).unwrap();
-        assert_eq!(panels[0].preset(), Some(ferese_config::PanelPreset::Continuous));
-        assert_eq!(panels[0].geometry, ferese_config::panel::PanelGeometry::default());
+        assert_eq!(panels[0].preset(), Some(ferese_panel::PanelStyle::Flat));
+        assert_eq!(panels[0].resolved_geometry(), ferese_panel::PanelGeometry::default());
         assert!(panels[0].center.groups[0].items[0].visible);
         assert_eq!(snapshot.number("animations.speed", 1.), 0.8);
         assert!(snapshot.source.contains("// keep"));

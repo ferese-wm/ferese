@@ -1,7 +1,7 @@
 pub mod families;
 pub mod file;
 pub mod notifications;
-pub mod panel;
+pub use ferese_panel::panel;
 pub mod presets;
 pub mod theme;
 
@@ -14,17 +14,7 @@ use serde_json::{Map, Value};
 
 pub const DEFAULT_MATERIAL_OPACITY: f64 = 0.78;
 
-#[derive(Clone, Copy, Debug, Default, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum PanelPreset {
-    #[default]
-    Continuous,
-    Islands,
-}
-
-pub const fn default_island_padding() -> f32 {
-    4.0
-}
+pub use ferese_panel::{PanelStyle, default_island_padding};
 
 #[derive(Debug)]
 pub struct Error(String);

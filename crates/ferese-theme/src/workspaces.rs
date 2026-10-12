@@ -3,7 +3,7 @@ use std::borrow::Cow;
 use cosmic::iced::{Alignment, Color, Length};
 use cosmic::widget::{Space, container, row};
 use cosmic::{Element, theme};
-use ferese_config::panel::WorkspaceStyle;
+use ferese_panel::WorkspaceStyle;
 
 use crate::Palette;
 

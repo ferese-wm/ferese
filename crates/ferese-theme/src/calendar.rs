@@ -38,6 +38,32 @@ pub fn grid<'a, M: Clone + 'a>(
     opacity: f32,
     navigation: [Element<'a, M>; 3],
 ) -> Element<'a, M> {
+    grid_with_density(today, offset, palette, font, opacity, navigation, false)
+}
+
+pub fn compact_grid<'a, M: Clone + 'a>(
+    today: jiff::civil::Date,
+    offset: i32,
+    palette: crate::Palette,
+    font: cosmic::font::Font,
+    opacity: f32,
+    navigation: [Element<'a, M>; 3],
+) -> Element<'a, M> {
+    grid_with_density(today, offset, palette, font, opacity, navigation, true)
+}
+
+fn grid_with_density<'a, M: Clone + 'a>(
+    today: jiff::civil::Date,
+    offset: i32,
+    palette: crate::Palette,
+    font: cosmic::font::Font,
+    opacity: f32,
+    navigation: [Element<'a, M>; 3],
+    compact: bool,
+) -> Element<'a, M> {
+    let cell_width = if compact { Length::Fill } else { Length::Fixed(30.) };
+    let cell_height = if compact { 20. } else { 25. };
+    let spacing = if compact { 2. } else { 3. };
     let months = [
         "January",
         "February",
@@ -60,7 +86,7 @@ pub fn grid<'a, M: Clone + 'a>(
     let [previous, today_button, next] = navigation;
     let header = row![
         crate::text(format!("{} {year}", months[(month - 1) as usize]), font)
-            .size(15)
+            .size(if compact { 13 } else { 15 })
             .width(Length::Fill),
         previous,
         today_button,
@@ -68,18 +94,31 @@ pub fn grid<'a, M: Clone + 'a>(
     ]
     .align_y(Alignment::Center)
     .spacing(2);
-    let mut grid = column::with_capacity(8).spacing(3).push(header);
-    let mut weekdays = row::with_capacity(7).spacing(3);
+    let mut grid = column::with_capacity(8)
+        .spacing(spacing)
+        .width(if compact { Length::Fill } else { Length::Shrink })
+        .push(header);
+    let mut weekdays =
+        row::with_capacity(7)
+            .spacing(spacing)
+            .width(if compact { Length::Fill } else { Length::Shrink });
     for label in ["M", "T", "W", "T", "F", "S", "S"] {
         weekdays = weekdays.push(
-            container(crate::text(label, font).size(11).class(theme::Text::Color(muted)))
-                .width(30)
-                .center_x(30),
+            container(
+                crate::text(label, font)
+                    .size(if compact { 9 } else { 11 })
+                    .class(theme::Text::Color(muted)),
+            )
+            .width(cell_width)
+            .center_x(cell_width),
         );
     }
     grid = grid.push(weekdays);
     for week in 0..(start + days).div_ceil(7) {
-        let mut dates = row::with_capacity(7).spacing(3);
+        let mut dates =
+            row::with_capacity(7)
+                .spacing(spacing)
+                .width(if compact { Length::Fill } else { Length::Shrink });
         for weekday in 0..7 {
             let cell = week * 7 + weekday;
             let day = cell.checked_sub(start).map(|day| day + 1).filter(|day| *day <= days);
@@ -91,10 +130,10 @@ pub fn grid<'a, M: Clone + 'a>(
                 } else {
                     muted
                 })))
-                .width(30)
-                .height(25)
-                .center_x(30)
-                .center_y(25)
+                .width(cell_width)
+                .height(cell_height)
+                .center_x(cell_width)
+                .center_y(cell_height)
                 .class(theme::Container::custom(move |_| container::Style {
                     background: is_today.then_some(Background::Color(palette.accent.scale_alpha(0.2 * opacity))),
                     border: Border {

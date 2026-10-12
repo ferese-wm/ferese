@@ -279,10 +279,11 @@ pub struct Center {
     pub entries: VecDeque<Notice>,
     toasts: VecDeque<Toast>,
     last_tick: Instant,
+    motion: super::motion::Settings,
 }
 
 impl Center {
-    pub fn new(config: ferese_config::notifications::NotificationConfig) -> Self {
+    pub fn new(config: ferese_config::notifications::NotificationConfig, motion: super::motion::Settings) -> Self {
         Self {
             service: Service::start(&config),
             ready: false,
@@ -294,6 +295,7 @@ impl Center {
             entries: VecDeque::new(),
             toasts: VecDeque::new(),
             last_tick: Instant::now(),
+            motion,
         }
     }
 
@@ -321,6 +323,7 @@ impl Center {
     }
 
     pub fn update_motion_settings(&mut self, settings: super::motion::Settings) {
+        self.motion = settings;
         for toast in &mut self.toasts {
             toast.motion.update_settings(settings);
         }
@@ -518,7 +521,7 @@ impl Center {
             self.toasts.push_back(Toast {
                 id: notice.id,
                 motion: {
-                    let mut motion = super::motion::PopupMotion::new(super::motion::settings());
+                    let mut motion = super::motion::PopupMotion::new(self.motion);
                     motion.begin(Instant::now());
                     motion
                 },
@@ -641,6 +644,7 @@ mod tests {
         let (commands, receiver) = mpsc::sync_channel(256);
         let center = Center {
             config: NotificationConfig::default(),
+            motion: Default::default(),
             service: Service {
                 timeout: Arc::new(std::sync::atomic::AtomicU32::new(6000)),
                 events: Events(Arc::new(tokio::sync::Mutex::new(events))),

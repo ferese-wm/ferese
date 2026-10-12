@@ -19,11 +19,11 @@ Run CI manually when a change needs it. Ordinary pushes and pull requests do not
 start build runners, and website deployment is manual. Release tags and pull
 requests labeled `release` run the release checks and package builds.
 
-CI checks formatting, lints and tests across the whole workspace, including the
-shell, settings, portal and CLI. The Fedora workspace job also builds desktop
-binaries and runs installer, session-recovery and private portal-contract checks. The
-compositor job runs offscreen capture regressions with software Mesa. Opt-in
-nested and hardware checks remain separate.
+The workspace workflow checks formatting, lints and tests on Ubuntu, including
+the shell, Settings, portal and CLI. It builds the desktop binaries, runs the
+Python integration suite and checks offscreen capture with software Mesa, then
+uses those binaries for isolated panel and XWayland checks on a headless Wayland
+host. Hardware checks remain separate.
 
 ## Test guides
 
@@ -32,7 +32,6 @@ nested and hardware checks remain separate.
 - [Output management tests](output-management-testing.md): profiles, hotplug, mirroring, lid handling and failed DRM commits.
 - [Nested resize checks](nested-resize-testing.md): wallpaper and bar responsiveness.
 - [Client soak testing](native-soak-testing.md): repeated client lifecycle and resource growth.
-- [Performance measurements](performance-baseline.md): sampling and historical results.
 
 ## Portal checks
 

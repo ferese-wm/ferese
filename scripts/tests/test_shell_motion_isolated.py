@@ -1,10 +1,11 @@
 """Exercise real shell frame-driven motion on a private nested desktop and bus.
 
 FERESE_TEST_SHELL_MOTION=1 python3 scripts/tests/test_shell_motion_isolated.py
-Set FERESE_TEST_BAR_LAYOUT=islands to also test island masks and live switching.
+Set FERESE_TEST_BAR_LAYOUT=floating to also test island masks and live switching.
 Uses release binaries by default. Requires a Wayland host, dbus-daemon and gdbus.
 Protocol traces contain only this test's shell traffic, never the host desktop.
 """
+import json
 import os
 from pathlib import Path
 from session_socket import ipc_environment, ipc_socket
@@ -18,10 +19,9 @@ import unittest
 
 
 def panel_config(preset):
-    surface, group_surface = ("solid", "none") if preset == "continuous" else ("none", "island")
+    style = preset
     return f'''panel main {{
-    surface "{surface}"
-    group-surface "{group_surface}"
+    style "{style}"
     start {{ group navigation {{ island-padding 12; item overview kind=overview; item spaces kind=workspaces; }}; }}
     center {{ group title {{ island-padding 12; item title kind=focused-window; }}; }}
     end {{ group status {{ island-padding 12; item media kind=media; item quick kind=quick-settings; item network kind=network; item audio kind=audio; item recording kind=recording; item notifications kind=notifications; item battery kind=battery; item clock kind=clock; item display kind=display-mode; }}; }}
@@ -43,8 +43,8 @@ class ShellMotionTest(unittest.TestCase):
             runtime.mkdir(mode=0o700)
             config = root / "config/ferese"
             config.mkdir(parents=True)
-            bar_layout = os.environ.get("FERESE_TEST_BAR_LAYOUT", "continuous")
-            self.assertIn(bar_layout, ("continuous", "islands"))
+            bar_layout = os.environ.get("FERESE_TEST_BAR_LAYOUT", "flat")
+            self.assertIn(bar_layout, ("flat", "floating"))
             config_file = config / "config.kdl"
             config_file.write_text(
                 'animations { speed 0.5; }\n'
@@ -122,8 +122,17 @@ class ShellMotionTest(unittest.TestCase):
                     return None
 
                 updates = re.findall(
-                    r'ferese_surface_effects_v1[@#]' + effects[-1] + r'\.set_presentation\(\d+, array\[(\d+)\],', trace)
+                    r'ferese_surface_effects_v1[@#]' + effects[-1] + r'\.set_panel_presentation\(array\[(\d+)\],', trace)
                 return int(updates[-1]) // 20 if updates else None
+
+            def bar_size(surface):
+                identity, start = surface
+                trace = log_path.read_text()[start:]
+                match = re.search(r'get_layer_surface\(new id zwlr_layer_surface_v1[@#](\d+), wl_surface[@#]' + identity + r',', trace)
+                if not match:
+                    return None
+                updates = re.findall(r'zwlr_layer_surface_v1[@#]' + match.group(1) + r'\.set_size\((\d+), (\d+)\)', trace)
+                return tuple(map(int, updates[-1])) if updates else None
 
             def bar_input_rectangles(surface):
                 identity, start = surface
@@ -165,9 +174,10 @@ class ShellMotionTest(unittest.TestCase):
                     wait_for(lambda: (ipc_socket(runtime)).is_socket())
                     wait_for(lambda: dbus("GetServerInformation", check=False).returncode == 0)
                     bar = wait_for(lambda: layer_surface("ferese-shell-top-bar"))
-                    if bar_layout == "islands":
+                    if bar_layout == "floating":
                         wait_for(lambda: bar_region_count(bar) == 2)
                         original_input = wait_for(lambda: bar_input_rectangles(bar))
+                        original_start_width = max(x + width for x, y, width, height in original_input if x < 300) - min(x for x, y, width, height in original_input if x < 300)
                     time.sleep(.5)
                     reply = dbus("Notify", "Ferese motion test", "0", "", "Frame cadence", "Synthetic test notification", "[]", "{}", "0").stdout
                     notice = re.search(r'uint32 (\d+)', reply).group(1)
@@ -251,26 +261,84 @@ class ShellMotionTest(unittest.TestCase):
                         wait_for(lambda: destroyed(remaining[0]))
                     print("Modal: rapid toggles released all native surfaces", flush=True)
 
-                    if bar_layout == "islands":
-                        for layout_name, expected_count in [("continuous", 1), ("islands", None)]:
+                    if bar_layout == "floating":
+                        for layout_name, expected_count in [("flat", 1), ("floating", None)]:
                             config_file.write_text('animations { speed 0.5; }\nstatus { keybinding-guide #false; }\n' + panel_config(layout_name))
                             subprocess.run([str(ctl), "reload-config"], env=ipc_environment(env), check=True, capture_output=True, timeout=5)
                             wait_for(lambda: bar_region_count(bar) == (expected_count or 2))
 
                         self.assertIsNone(compositor.poll(), log_path.read_text()[-8000:])
                         self.assertNotIn("panicked at", log_path.read_text())
-                        print("Bar: separate material regions; continuous/islands live switches passed", flush=True)
+                        print("Bar: separate material regions; flat/floating live switches passed", flush=True)
 
                         for padding in [4, 0]:
                             source = config_file.read_text()
                             config_file.write_text(re.sub(
                                 r'island-padding \d+', f'island-padding {padding}', source))
                             subprocess.run([str(ctl), "reload-config"], env=ipc_environment(env), check=True, capture_output=True, timeout=5)
-                            expected_width = original_input[0][2] - 2 * (12 - padding)
-                            wait_for(lambda: len(bar_input_rectangles(bar)) == 2
-                                     and bar_input_rectangles(bar)[0][2] == expected_width)
+                            expected_width = original_start_width - 2 * (12 - padding)
+                            def start_width():
+                                rectangles = [(x, width) for x, y, width, height in bar_input_rectangles(bar) if x < 300]
+                                return max((x + width for x, width in rectangles), default=0) - min((x for x, width in rectangles), default=0)
+                            wait_for(lambda: start_width() == expected_width)
 
                         print("Bar: live padding reductions updated the input regions", flush=True)
+                    if settings_binary := os.environ.get("FERESE_TEST_SETTINGS"):
+                        child_display = next(path for path in runtime.glob("wayland-*") if path.is_socket())
+                        settings_env = dict(ipc_environment(env), WAYLAND_DISPLAY=str(child_display), WINIT_UNIX_BACKEND="wayland", ICED_BACKEND="wgpu")
+                        settings_env.pop("WAYLAND_SOCKET", None)
+                        settings_env.pop("FERESE_SHELL_CONTROL_SOCKET", None)
+                        settings = subprocess.Popen([str(repo / settings_binary), "--page", "bar"], env=settings_env,
+                                                    start_new_session=True, stdout=log, stderr=log)
+                        children.append(settings)
+                        def windows():
+                            response = subprocess.run([str(ctl), "--json", "windows"], env=ipc_environment(env),
+                                                      text=True, capture_output=True, check=True, timeout=5)
+                            return json.loads(response.stdout)
+                        wait_for(lambda: any(window["mapped"] and window["app_id"] == "dev.ferese.Settings" for window in windows()))
+                        config_file.write_text('status { keybinding-guide #false; }\n' + panel_config("floating").replace('style "floating"', 'style "adaptive"'))
+                        subprocess.run([str(ctl), "reload-config"], env=ipc_environment(env), check=True, capture_output=True, timeout=5)
+                        wait_for(lambda: bar_region_count(bar) == 3)
+                        for command, count in [("toggle-maximized", 1), ("toggle-maximized", 3)]:
+                            subprocess.run([str(ctl), command], env=ipc_environment(env), check=True, capture_output=True, timeout=5)
+                            wait_for(lambda: bar_region_count(bar) == count)
+                        subprocess.run([str(ctl), "toggle-fullscreen"], env=ipc_environment(env), check=True, capture_output=True, timeout=5)
+                        wait_for(lambda: not bar_input_rectangles(bar))
+                        subprocess.run([str(ctl), "toggle-fullscreen"], env=ipc_environment(env), check=True, capture_output=True, timeout=5)
+                        wait_for(lambda: bar_input_rectangles(bar))
+                        settings.terminate()
+                        settings.wait(timeout=5)
+                        wait_for(lambda: not windows())
+                        print("Adaptive: maximization changed the real panel; fullscreen released input and restored it", flush=True)
+
+                    if bar_layout == "floating":
+                        for style, regions in [("floating", 2), ("capsules", 2), ("notch", 2), ("flat", 1), ("fused", 2), ("adaptive", 2)]:
+                            config_file.write_text('animations { speed 0.5; }\nstatus { keybinding-guide #false; }\n' + panel_config(style))
+                            subprocess.run([str(ctl), "reload-config"], env=ipc_environment(env), check=True, capture_output=True, timeout=5)
+                            wait_for(lambda: bar_region_count(bar) == regions)
+                            self.assertTrue(bar_input_rectangles(bar), style + " lost its native input")
+                        config_file.write_text('animations { speed 0.5; }\nstatus { keybinding-guide #false; }\nnotifications { timeout-ms 1200; }\n' + panel_config("morph"))
+                        subprocess.run([str(ctl), "reload-config"], env=ipc_environment(env), check=True, capture_output=True, timeout=5)
+                        wait_for(lambda: bar_size(bar) == (150, 34) and bar_region_count(bar) == 1)
+                        reply = dbus("Notify", "Morph test", "0", "", "Hub notification", "Bounded native surface", "[]", "{}", "0").stdout
+                        notice = re.search(r'uint32 (\d+)', reply).group(1)
+                        wait_for(lambda: bar_size(bar) == (320, 48))
+                        # Removing a notice must collapse its hub immediately; an old timeout cannot reopen it.
+                        dbus("CloseNotification", notice)
+                        wait_for(lambda: bar_size(bar) == (150, 34))
+                        time.sleep(.25)
+                        before = commits(bar)
+                        trace_start = len(log_path.read_text())
+                        time.sleep(.5)
+                        # Clock/service updates can cause a short render burst; settled geometry must not animate.
+                        self.assertNotIn(".set_panel_presentation(", log_path.read_text()[trace_start:])
+                        self.assertLessEqual(commits(bar) - before, 4, "settled Morph keeps scheduling frames")
+                        self.assertEqual(bar_region_count(bar), 1)
+                        config_file.write_text('status { keybinding-guide #false; }\n' + panel_config("floating"))
+                        subprocess.run([str(ctl), "reload-config"], env=ipc_environment(env), check=True, capture_output=True, timeout=5)
+                        wait_for(lambda: bar_region_count(bar) == 2)
+                        print("Styles: native masks survived every live switch; Morph grew, closed and stopped frames", flush=True)
+
                     saved = config_file.read_text()
                     config_file.write_text('panel main { surface "invalid-surface"; }\n')
                     rejected = subprocess.run([str(ctl), "reload-config"], env=ipc_environment(env),
@@ -293,6 +361,8 @@ class ShellMotionTest(unittest.TestCase):
                     self.assertNotIn("panicked at", log_path.read_text())
                     print("Reload: invalid config preserved the panel; repaired config reopened and released a modal", flush=True)
                 finally:
+                    if destination := os.environ.get("FERESE_TEST_LOG"):
+                        shutil.copyfile(log_path, destination)
                     for child in reversed(children):
                         if child.poll() is None:
                             os.killpg(child.pid, signal.SIGTERM)

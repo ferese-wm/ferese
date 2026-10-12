@@ -3,14 +3,14 @@ use super::{
     EventQueue, FereseEffectsManagerV1, FereseShell, FereseSurfaceEffectsV1, GlobalListContents, IcedMargin,
     IcedOutput, KeyboardInteractivity, Layer, Length, Limits, Message, Ordering, OutputSurfaces, PlatformSpecific,
     Proxy, QueueHandle, SctkLayerSurfaceSettings, Task, WallpaperMode, config, container, delegate_noop,
-    destroy_layer_surface, ferese_surface_effects_v1, image, output_bar_hidden, registry_queue_init, status_ui, text,
-    theme, wayland, window, wl_output, wl_registry, wl_surface,
+    destroy_layer_surface, ferese_surface_effects_v1, image, output_bar_hidden, registry_queue_init, status_ui, theme,
+    wayland, window, wl_output, wl_registry, wl_surface,
 };
 
-pub(super) fn panel_placement(edge: ferese_config::panel::Edge, margin: i32, side: i32) -> (Anchor, IcedMargin) {
+pub(super) fn panel_placement(edge: ferese_panel::Edge, margin: i32, side: i32) -> (Anchor, IcedMargin) {
     let (anchor, top, bottom) = match edge {
-        ferese_config::panel::Edge::Top => (Anchor::TOP, margin, 0),
-        ferese_config::panel::Edge::Bottom => (Anchor::BOTTOM, 0, margin),
+        ferese_panel::Edge::Top => (Anchor::TOP, margin, 0),
+        ferese_panel::Edge::Bottom => (Anchor::BOTTOM, 0, margin),
     };
     (
         anchor,
@@ -81,15 +81,36 @@ impl FereseShell {
             } else {
                 Task::none()
             };
-            return Task::batch([margin, popup, tooltip]);
+            return Task::batch([
+                margin,
+                popup,
+                tooltip,
+                window::scale_factor(bar).map(move |scale| cosmic::Action::App(Message::PanelScale(bar, scale))),
+            ]);
         }
 
         let bar_surface_id = window::Id::unique();
         let wallpaper_surface_id = window::Id::unique();
-        let geometry = self.config.panels[0].geometry;
-        let panel_surface = self.config.panels[0].surface;
+        let runtime = super::panel_runtime::Runtime::new(&self.config.panels[0], &self.snapshot, name.as_deref());
+        let panel = runtime.panel(&self.config.panels[0]);
+        let geometry = panel.resolved_geometry();
+        let panel_surface = panel.surface();
+        let exclusive_zone = panel.exclusive_zone(output_bar_hidden(
+            &self.snapshot,
+            self.snapshot
+                .outputs
+                .iter()
+                .find(|output| Some(output.name.as_str()) == name.as_deref())
+                .map(|output| output.id),
+        ));
         let (edge_anchor, margin) = panel_placement(self.config.panels[0].edge, geometry.edge_margin, 0);
         let bar = BarMetrics::from(geometry);
+        let hub_size = runtime.hub.as_ref().map(|hub| hub.borrow().allocation);
+        let bar_anchor = if hub_size.is_some() {
+            edge_anchor
+        } else {
+            edge_anchor | Anchor::LEFT | Anchor::RIGHT
+        };
         let wallpaper_output = output.clone();
         let bar_output = output.clone();
         let hidden = output_bar_hidden(
@@ -101,6 +122,8 @@ impl FereseShell {
                 .map(|output| output.id),
         );
         self.outputs.push(OutputSurfaces {
+            runtime,
+            scale: 1.,
             output,
             name,
             bar: bar_surface_id,
@@ -141,15 +164,17 @@ impl FereseShell {
                 input_zone: super::bar::input_region(panel_surface, hidden, &[]),
                 layer: Layer::Top,
                 keyboard_interactivity: KeyboardInteractivity::None,
-                anchor: edge_anchor | Anchor::LEFT | Anchor::RIGHT,
+                anchor: bar_anchor,
                 output: IcedOutput::Output(bar_output.clone()),
                 namespace: "ferese-shell-top-bar".to_owned(),
                 // Measure at full width before applying the requested side inset.
                 margin,
-                size: Some((None, Some(bar.height.round() as u32))),
+                size: Some(hub_size.map_or((None, Some(bar.height.round() as u32)), |size| {
+                    (Some(size[0]), Some(size[1]))
+                })),
                 size_limits: Limits::NONE,
                 // Reserve space toward the desktop; layer-shell accounts for the edge margin.
-                exclusive_zone: (bar.height.round() as i32).saturating_add(geometry.window_clearance),
+                exclusive_zone,
             },
             Some(Box::new(move |app| app.view_layer(bar_surface_id))),
         );
@@ -186,8 +211,11 @@ impl FereseShell {
     }
 
     pub(super) fn handle_event(&mut self, event: Event, id: window::Id) -> Task<Message> {
+        if matches!(event, Event::Mouse(cosmic::iced::mouse::Event::CursorEntered)) {
+            return self.hub_hover(id, true);
+        }
         if matches!(event, Event::Mouse(cosmic::iced::mouse::Event::CursorLeft)) {
-            return self.dismiss_workspace_tooltip_for_bar(id);
+            return Task::batch([self.dismiss_workspace_tooltip_for_bar(id), self.hub_hover(id, false)]);
         }
         if let Event::Mouse(cosmic::iced::mouse::Event::ButtonPressed(_)) = &event
             && let Some(modal) = &mut self.system_modal
@@ -231,6 +259,53 @@ impl FereseShell {
             return self.display_mode_key(key);
         }
         if let Event::Keyboard(cosmic::iced::keyboard::Event::KeyPressed {
+            key: cosmic::iced::keyboard::Key::Named(key),
+            modifiers,
+            ..
+        }) = &event
+            && !modifiers.control()
+            && !modifiers.alt()
+            && self.hub_mode(id)
+                == Some(ferese_panel::morph::Mode::Expanded(
+                    ferese_panel::morph::Content::Workspaces,
+                ))
+            && matches!(
+                key,
+                cosmic::iced::keyboard::key::Named::ArrowLeft
+                    | cosmic::iced::keyboard::key::Named::ArrowRight
+                    | cosmic::iced::keyboard::key::Named::ArrowUp
+                    | cosmic::iced::keyboard::key::Named::ArrowDown
+            )
+        {
+            return self.hub_workspace_key(id, *key);
+        }
+        if let Event::Keyboard(cosmic::iced::keyboard::Event::KeyPressed {
+            key: cosmic::iced::keyboard::Key::Named(cosmic::iced::keyboard::key::Named::Tab),
+            modifiers,
+            ..
+        }) = &event
+            && !modifiers.control()
+            && self.hub_mode(id).is_some_and(|mode| mode.expanded())
+        {
+            use cosmic::iced::advanced::widget::{Id, operation};
+            let target = Id::new("ferese-panel-hub");
+            let focus: Box<dyn cosmic::iced::advanced::widget::Operation<cosmic::Action<Message>>> =
+                if modifiers.shift() {
+                    Box::new(operation::scoped(target, operation::focusable::focus_previous()))
+                } else {
+                    Box::new(operation::scoped(target, operation::focusable::focus_next()))
+                };
+            let task = cosmic::iced::advanced::widget::operate(focus);
+            return if self.hub_mode(id)
+                == Some(ferese_panel::morph::Mode::Expanded(
+                    ferese_panel::morph::Content::Workspaces,
+                )) {
+                task.chain(self.query_hub_workspace_focus(id, None))
+            } else {
+                task
+            };
+        }
+        if let Event::Keyboard(cosmic::iced::keyboard::Event::KeyPressed {
             key: cosmic::iced::keyboard::Key::Named(cosmic::iced::keyboard::key::Named::Tab),
             modifiers,
             ..
@@ -247,6 +322,9 @@ impl FereseShell {
                 ..
             })
         ) {
+            if self.hub_mode(id).is_some() {
+                return self.close_hub(id);
+            }
             if self.system_modal.is_some() {
                 return self.close_system_modal();
             }
@@ -255,9 +333,21 @@ impl FereseShell {
             }
         }
 
+        if let Event::PlatformSpecific(PlatformSpecific::Wayland(wayland::Event::Layer(
+            wayland::LayerEvent::Unfocused,
+            _,
+            layer,
+        ))) = &event
+            && self.hub_mode(*layer).is_some_and(|mode| mode.expanded())
+        {
+            return self.close_hub(*layer);
+        }
         match event {
             Event::PlatformSpecific(PlatformSpecific::Wayland(wayland::Event::Output(event, output))) => {
                 self.output_event(event, output)
+            }
+            Event::Window(window::Event::Rescaled(scale)) => {
+                cosmic::task::message(cosmic::Action::App(Message::PanelScale(id, scale)))
             }
             Event::Window(window::Event::Opened { .. }) if !self.owns_surface(id) => {
                 // Creation is asynchronous. A close can arrive before the
@@ -278,6 +368,7 @@ impl FereseShell {
                         .is_some_and(|surface| surface.id == id) =>
             {
                 Task::batch([
+                    window::scale_factor(id).map(move |scale| cosmic::Action::App(Message::PanelScale(id, scale))),
                     self.focus_system_modal(id),
                     window::run(id, native_wayland_surface)
                         .map(move |surface| cosmic::Action::App(Message::NativeSurface(id, surface))),
@@ -367,7 +458,8 @@ impl FereseShell {
             {
                 self.attach_effects(layer_id, &surface);
                 self.attach_power_material(layer_id, &surface);
-                Task::none()
+                window::scale_factor(layer_id)
+                    .map(move |scale| cosmic::Action::App(Message::PanelScale(layer_id, scale)))
             }
             _ => Task::none(),
         }
@@ -375,7 +467,7 @@ impl FereseShell {
 
     pub(super) fn attach_effects(&mut self, id: window::Id, surface: &wl_surface::WlSurface) {
         let hidden = self.bar_hidden(id);
-        let islands = self.config.panels[0].surface == ferese_config::panel::PanelSurface::None;
+        let islands = self.panel_for_bar(id).surface() == ferese_panel::PanelSurface::None;
         let Some(entry) = self.outputs.iter_mut().find(|entry| entry.bar == id) else {
             return;
         };
@@ -401,7 +493,7 @@ impl FereseShell {
 
     pub(super) fn view_wallpaper(&self) -> Element<'_, cosmic::Action<Message>> {
         let Some(handle) = self.wallpaper.as_ref() else {
-            return container(text(""))
+            return container(self.render.text(""))
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .class(theme::Container::custom(wallpaper_fallback_style))
@@ -488,6 +580,7 @@ pub(super) struct EffectsBinding {
     regions: std::cell::RefCell<Option<Vec<[f32; 5]>>>,
     opacity: std::cell::Cell<Option<u32>>,
     presentation: std::cell::RefCell<Option<EffectPresentation>>,
+    panel_presentation: std::cell::RefCell<Option<ferese_panel::scene::Scene>>,
 }
 
 impl EffectsBinding {
@@ -511,7 +604,7 @@ impl EffectsBinding {
         let connection = Connection::from_backend(backend);
         let (globals, queue) = registry_queue_init::<EffectsState>(&connection)?;
         let qh = queue.handle();
-        let manager = globals.bind::<FereseEffectsManagerV1, _, _>(&qh, 5..=5, ())?;
+        let manager = globals.bind::<FereseEffectsManagerV1, _, _>(&qh, 6..=6, ())?;
         let effects = manager.get_surface_effects(surface, &qh, ());
 
         let opacity = (opacity.clamp(0.0, 1.0) * 1000.0).round() as u32;
@@ -531,7 +624,37 @@ impl EffectsBinding {
             regions: Default::default(),
             opacity: std::cell::Cell::new(Some(opacity)),
             presentation: Default::default(),
+            panel_presentation: Default::default(),
         })
+    }
+
+    pub(super) fn set_panel_presentation(
+        &self,
+        scene: &ferese_panel::scene::Scene,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        if self.panel_presentation.borrow().as_ref() == Some(scene) {
+            return Ok(());
+        }
+        let regions: Vec<_> = scene
+            .damage
+            .iter()
+            .map(|r| [r.x as f32, r.y as f32, r.width as f32, r.height as f32, 0.])
+            .collect();
+        validate_region_counts(regions.len(), 0)?;
+        if scene.paint.len() > ferese_panel::scene::MAX_PRIMITIVES {
+            return Err("too many panel primitives".into());
+        }
+        let shapes: Vec<_> = scene
+            .packets()
+            .into_iter()
+            .flatten()
+            .flat_map(f32::to_ne_bytes)
+            .collect();
+        self.surface
+            .set_panel_presentation(encode_regions(&regions), shapes, scene.fusion, 1000);
+        self.connection.flush()?;
+        *self.panel_presentation.borrow_mut() = Some(scene.clone());
+        Ok(())
     }
 
     pub(super) fn set_presentation(

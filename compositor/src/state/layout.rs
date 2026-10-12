@@ -1,6 +1,98 @@
 use super::*;
 
+#[derive(Default)]
+pub(super) struct PreviewCache {
+    entries: HashMap<WorkspaceId, Preview>,
+    #[cfg(test)]
+    pub(super) resolutions: usize,
+}
+
+struct Preview {
+    layout: WorkspaceLayout,
+    input: PreviewInput,
+    rectangles: HashMap<WindowId, Rect>,
+}
+
+#[derive(PartialEq)]
+struct PreviewInput {
+    bounds: Rect,
+    maximized_bounds: Rect,
+    fullscreen_bounds: Rect,
+    gaps: GapConfig,
+    focused: Option<WindowId>,
+    fullscreen: Option<WindowId>,
+    windows: Vec<PreviewWindow>,
+}
+
+#[derive(PartialEq)]
+struct PreviewWindow {
+    id: WindowId,
+    constraints: SizeConstraints,
+    floating: Option<Rect>,
+    maximized: bool,
+}
+
 impl Ferese {
+    /// Morph owns the gap on its reserved edge. Keep the layout's outer gap
+    /// on the other three edges, and keep floating work-area bounds unchanged.
+    pub(super) fn morph_layout_bounds(&self, mut bounds: Rect, outer: f64) -> Rect {
+        use smithay::wayland::shell::wlr_layer::{Anchor, ExclusiveZone};
+        if self.panel_style != ferese_panel::PanelStyle::Morph || outer <= 0. || !outer.is_finite() {
+            return bounds;
+        }
+        let Some(output) = self
+            .space
+            .outputs()
+            .find(|output| self.output_bounds_for(output) == Some(bounds))
+        else {
+            return bounds;
+        };
+        let Some(output_geometry) = self.space.output_geometry(output) else {
+            return bounds;
+        };
+        let map = layer_map_for_output(output);
+        for layer in map.layers().filter(|layer| layer.namespace() == "ferese-shell-top-bar") {
+            let policy = layer.cached_state();
+            let ExclusiveZone::Exclusive(amount) = policy.exclusive_zone else {
+                continue;
+            };
+            if amount == 0 {
+                continue;
+            }
+            let Some(geometry) = map.layer_geometry(layer) else {
+                continue;
+            };
+            let top = f64::from(output_geometry.loc.y + geometry.loc.y);
+            let bottom = top + f64::from(geometry.size.h);
+            // Only remove a gap if Morph actually borders the usable area.
+            // Another reserved bar on this edge must retain its own spacing.
+            if policy.anchor.contains(Anchor::TOP)
+                && !policy.anchor.contains(Anchor::BOTTOM)
+                && (bounds.y - (top + f64::from(amount))).abs() < 0.01
+            {
+                bounds.y -= outer;
+                bounds.height += outer;
+                break;
+            }
+            if policy.anchor.contains(Anchor::BOTTOM)
+                && !policy.anchor.contains(Anchor::TOP)
+                && (bounds.y + bounds.height - (bottom - f64::from(amount))).abs() < 0.01
+            {
+                bounds.height += outer;
+                break;
+            }
+        }
+        bounds
+    }
+
+    pub(super) fn workspace_layout_bounds(&self, bounds: Rect, layout: &WorkspaceLayout) -> Rect {
+        let outer = if self.gap_config.smart && layout.window_ids().count() == 1 {
+            0.
+        } else {
+            self.gap_config.outer
+        };
+        self.morph_layout_bounds(bounds, outer)
+    }
     pub(super) fn visible_workspace_ids(&self) -> HashSet<WorkspaceId> {
         let mut visible = self
             .output_workspaces
@@ -228,6 +320,8 @@ impl Ferese {
                 continue;
             };
 
+            let layout_bounds = self.workspace_layout_bounds(bounds, &workspace.layout);
+            let maximized_bounds = self.morph_layout_bounds(bounds, self.gap_config.outer);
             let workspace_fullscreen = workspace.fullscreen;
             let is_scrolling_layout = matches!(workspace.layout, WorkspaceLayout::Scrolling(_));
             let workspace_focus = workspace.last_focused;
@@ -239,17 +333,18 @@ impl Ferese {
                 continue;
             };
 
-            let layout =
-                match workspace
-                    .layout
-                    .resolve_geometry_with_constraints(bounds, self.gap_config, &constraints, focused)
-                {
-                    Ok(layout) => layout,
-                    Err(error) => {
-                        tracing::error!(%error, ?workspace_id, "failed to compute tiled geometry");
-                        continue;
-                    }
-                };
+            let layout = match workspace.layout.resolve_geometry_with_constraints(
+                layout_bounds,
+                self.gap_config,
+                &constraints,
+                focused,
+            ) {
+                Ok(layout) => layout,
+                Err(error) => {
+                    tracing::error!(%error, ?workspace_id, "failed to compute tiled geometry");
+                    continue;
+                }
+            };
             let viewport_target = workspace.layout.viewport_x();
             let viewport_motion = viewport_target.map(|target| {
                 let viewport = self
@@ -288,7 +383,7 @@ impl Ferese {
                 let rect = if workspace_fullscreen == Some(*id) {
                     fullscreen_bounds
                 } else if is_maximized && (!is_scrolling_layout || is_floating) {
-                    maximized_rect(bounds, self.gap_config.outer)
+                    maximized_rect(maximized_bounds, self.gap_config.outer)
                 } else {
                     match placement {
                         Some(WindowPlacement::Tiled) => {
@@ -597,12 +692,112 @@ impl Ferese {
     pub(super) fn tiled_layout(&mut self, bounds: Rect) -> Result<LayoutResult, ferese_layout::LayoutError> {
         let constraints = self.window_constraints();
         let focused = self.focused_window;
+        let bounds = self.workspace_layout_bounds(bounds, &self.workspaces.active().layout);
         self.workspaces.active_mut().layout.resolve_geometry_with_constraints(
             bounds,
             self.gap_config,
             &constraints,
             focused,
         )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn preview_cache_stats(&self) -> (usize, usize) {
+        let cache = self.workspace_previews.borrow();
+        (cache.resolutions, cache.entries.len())
+    }
+
+    pub(crate) fn workspace_preview_rects(&self) -> HashMap<WindowId, Rect> {
+        let constraints = self.window_constraints();
+        let mut cache = self.workspace_previews.borrow_mut();
+        let mut live = HashSet::new();
+        let mut previews = HashMap::new();
+        for view in self.output_workspaces.workspace_views_iter(&self.workspaces) {
+            let Some(workspace) = self.workspaces.workspace(view.id) else {
+                continue;
+            };
+            let Some(output) = self
+                .output_ids
+                .iter()
+                .find(|(_, id)| **id == view.output)
+                .map(|(o, _)| o)
+            else {
+                continue;
+            };
+            let Some(bounds) = self.output_bounds_for(output) else {
+                continue;
+            };
+            live.insert(view.id);
+            let mut windows: Vec<_> = workspace
+                .layout
+                .window_ids()
+                .map(|id| (id, false))
+                .chain(workspace.floating.iter().map(|&id| (id, true)))
+                .map(|(id, floating)| PreviewWindow {
+                    id,
+                    constraints: constraints.get(&id).copied().unwrap_or_default(),
+                    floating: if floating {
+                        match self.workspaces.placement(id) {
+                            Some(ferese_core::WindowPlacement::Floating { rect }) => Some(rect),
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    },
+                    maximized: self.windows.record(id).is_some_and(|w| w.maximized),
+                })
+                .collect();
+            windows.sort_by_key(|w| w.id.0);
+            let input = PreviewInput {
+                bounds: self.workspace_layout_bounds(bounds, &workspace.layout),
+                maximized_bounds: self.morph_layout_bounds(bounds, self.gap_config.outer),
+                fullscreen_bounds: self.full_output_bounds_for(output).unwrap_or(bounds),
+                gaps: self.gap_config,
+                focused: workspace.last_focused,
+                fullscreen: workspace.fullscreen,
+                windows,
+            };
+            if !cache
+                .entries
+                .get(&view.id)
+                .is_some_and(|cached| cached.input == input && cached.layout == workspace.layout)
+            {
+                // Only clone and solve the changed workspace. Titles, urgency and
+                // other shell metadata never invalidate geometry.
+                let mut layout = workspace.layout.clone();
+                let mut rectangles = layout
+                    .resolve_geometry_with_constraints(input.bounds, input.gaps, &constraints, input.focused)
+                    .map(|resolved| resolved.geometry)
+                    .unwrap_or_default();
+                for window in &input.windows {
+                    if let Some(rect) = window.floating {
+                        rectangles.insert(window.id, constrained_floating_rect(rect, window.constraints));
+                    }
+                    if input.fullscreen == Some(window.id) {
+                        rectangles.insert(window.id, input.fullscreen_bounds);
+                    } else if window.maximized
+                        && (window.floating.is_some() || !matches!(workspace.layout, WorkspaceLayout::Scrolling(_)))
+                    {
+                        rectangles.insert(window.id, maximized_rect(input.maximized_bounds, input.gaps.outer));
+                    }
+                }
+                cache.entries.insert(
+                    view.id,
+                    Preview {
+                        layout: workspace.layout.clone(),
+                        input,
+                        rectangles,
+                    },
+                );
+                #[cfg(test)]
+                {
+                    cache.resolutions += 1;
+                }
+            }
+            previews.extend(cache.entries[&view.id].rectangles.iter().map(|(&id, &rect)| (id, rect)));
+        }
+        cache.entries.retain(|id, _| live.contains(id));
+        previews
     }
 
     pub(super) fn window_constraints(&self) -> HashMap<WindowId, SizeConstraints> {

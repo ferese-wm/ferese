@@ -15,9 +15,12 @@ mod motion;
 mod notification_ui;
 mod notifications;
 mod panel;
+mod panel_hub;
 mod panel_layout;
+mod panel_runtime;
 mod recording;
 mod renderer;
+mod rendering;
 mod status;
 mod status_ui;
 mod system_modal;
@@ -57,23 +60,8 @@ const APP_ID: &str = "dev.ferese.Shell";
 // that compatibility path gated; current backends use Window::Opened and
 // window::run to retrieve handles without updates at the display refresh rate.
 static EFFECT_FRAME_PENDING: AtomicBool = AtomicBool::new(true);
-static SHELL_FONT: std::sync::OnceLock<std::sync::RwLock<cosmic::font::Font>> = std::sync::OnceLock::new();
-
 fn configured_font(family: Option<&str>) -> cosmic::font::Font {
     ferese_theme::font(family)
-}
-
-fn shell_font() -> cosmic::font::Font {
-    *SHELL_FONT
-        .get_or_init(|| std::sync::RwLock::new(cosmic::font::default()))
-        .read()
-        .unwrap()
-}
-
-fn text<'a>(
-    content: impl Into<std::borrow::Cow<'a, str>> + 'a,
-) -> cosmic::widget::Text<'a, cosmic::Theme, cosmic::Renderer> {
-    ferese_theme::text(content, shell_font())
 }
 
 #[derive(Clone, Copy)]
@@ -83,6 +71,7 @@ struct BarMetrics {
     icon_size: u16,
     overview_icon_size: u16,
     control_height: f32,
+    #[cfg(test)]
     group_height: f32,
     group_item_height: f32,
 }
@@ -103,6 +92,7 @@ impl From<panel::PanelGeometry> for BarMetrics {
             icon_size: 20,
             overview_icon_size: 20,
             control_height,
+            #[cfg(test)]
             group_height,
             group_item_height: (group_height - 4.0).max(0.0),
         }
@@ -116,7 +106,6 @@ fn main() -> cosmic::iced::Result {
     });
     renderer::configure_shell();
 
-    motion::configure(config.animations, config.theme.material_radius);
     let compositor_wallpaper = std::env::var_os("FERESE_COMPOSITOR_WALLPAPER").is_some();
     if compositor_wallpaper {
         // The compositor owns one GPU image, shared across output renderers;
@@ -124,7 +113,6 @@ fn main() -> cosmic::iced::Result {
         config.wallpaper.path = None;
     }
     let shell_font = configured_font(config.font_family.as_deref());
-    let _ = SHELL_FONT.set(std::sync::RwLock::new(shell_font));
     // Decode alongside toolkit/GPU initialization, never during a UI draw.
     let wallpaper = config.wallpaper.path.clone().map(|path| {
         let (sender, receiver) = cosmic::iced::futures::channel::oneshot::channel();
@@ -153,6 +141,7 @@ type WallpaperLoad = cosmic::iced::futures::channel::oneshot::Receiver<Result<im
 struct FereseShell {
     core: Core,
     config: ShellConfig,
+    render: rendering::Rendering,
     wallpaper: Option<image::Handle>,
     control: Option<ShellControl>,
     snapshot: ShellSnapshot,
@@ -179,6 +168,8 @@ struct FereseShell {
 }
 
 struct OutputSurfaces {
+    runtime: panel_runtime::Runtime,
+    scale: f64,
     output: wl_output::WlOutput,
     name: Option<String>,
     bar: window::Id,
@@ -193,7 +184,20 @@ struct OutputSurfaces {
 
 #[derive(Clone, Debug)]
 enum Message {
-    BarRegionsChanged(window::Id, Vec<[f32; 5]>),
+    HubOpen(window::Id, status_ui::Menu),
+    HubClose(window::Id),
+    HubWorkspaceScroll(window::Id, cosmic::iced::mouse::ScrollDelta),
+    HubOverview(window::Id),
+    HubWorkspaceHover(window::Id, Option<u64>),
+    HubWorkspaceSelect(window::Id, u64),
+    HubWorkspaceMove(window::Id, u64, u64),
+    HubWorkspaceFocus(window::Id, Option<u64>, Option<cosmic::iced::keyboard::key::Named>),
+    HubToastExpired(window::Id, Instant),
+    HubWorkspaceFeedbackExpired(window::Id, Instant),
+    HubIgnore,
+    PanelScale(window::Id, f32),
+    AdaptiveDeadline(window::Id, u64),
+    PanelSurfaceChanged(window::Id, Box<ferese_panel::scene::Scene>),
     PanelResolved(window::Id, panel_layout::Resolution),
     ThemeChanged(Box<ferese_ipc::theme::Snapshot>),
     ThemeMode(ferese_config::theme::Mode),
@@ -279,7 +283,7 @@ impl cosmic::Application for FereseShell {
     fn init(core: Core, (config, wallpaper): Self::Flags) -> (Self, Task<Self::Message>) {
         let app = Self {
             core,
-            notifications: notifications::Center::new(config.notifications.clone()),
+            notifications: notifications::Center::new(config.notifications.clone(), config.animations),
             notification_surface: None,
             status_service: status::Service::start(config.status.settings_command.clone()),
             status: status::Snapshot::default(),
@@ -295,6 +299,7 @@ impl cosmic::Application for FereseShell {
             guide_load: Default::default(),
             guide_attempts: 0,
             pending_power: None,
+            render: rendering::Rendering::new(&config),
             config,
             wallpaper: None,
             control: ShellControl::connect()
@@ -339,8 +344,12 @@ impl cosmic::Application for FereseShell {
                     .load(Ordering::Relaxed)
                     .then_some(Message::Event(event, id)),
                 Event::Keyboard(_)
-                | Event::Mouse(cosmic::iced::mouse::Event::ButtonPressed(_) | cosmic::iced::mouse::Event::CursorLeft)
-                | Event::Window(window::Event::Opened { .. } | window::Event::Closed)
+                | Event::Mouse(
+                    cosmic::iced::mouse::Event::ButtonPressed(_)
+                    | cosmic::iced::mouse::Event::CursorLeft
+                    | cosmic::iced::mouse::Event::CursorEntered,
+                )
+                | Event::Window(window::Event::Opened { .. } | window::Event::Closed | window::Event::Rescaled(_))
                 | Event::PlatformSpecific(PlatformSpecific::Wayland(
                     wayland::Event::Popup(..) | wayland::Event::Layer(..) | wayland::Event::Output(..),
                 )) => Some(Message::Event(event, id)),
@@ -358,6 +367,17 @@ impl cosmic::Application for FereseShell {
 
     fn update(&mut self, message: Self::Message) -> Task<Self::Message> {
         match message {
+            Message::HubOpen(id, kind) => self.open_hub(id, kind),
+            Message::HubClose(id) => self.close_hub(id),
+            Message::HubWorkspaceScroll(id, delta) => self.scroll_hub_workspaces(id, delta),
+            Message::HubOverview(id) => self.open_hub_overview(id),
+            Message::HubWorkspaceHover(id, workspace) => self.hub_workspace_hover(id, workspace),
+            Message::HubWorkspaceSelect(id, workspace) => self.hub_workspace_select(id, workspace),
+            Message::HubWorkspaceMove(id, window, workspace) => self.hub_workspace_move(id, window, workspace),
+            Message::HubWorkspaceFocus(id, focused, key) => self.hub_workspace_focus(id, focused, key),
+            Message::HubToastExpired(id, revision) => self.hub_toast_expired(id, revision),
+            Message::HubWorkspaceFeedbackExpired(id, revision) => self.hub_workspace_feedback_expired(id, revision),
+            Message::HubIgnore => Task::none(),
             Message::PanelResolved(id, resolution) => {
                 let allocation_changed = self
                     .outputs
@@ -390,7 +410,12 @@ impl cosmic::Application for FereseShell {
                     Task::batch([margin, tooltip])
                 }
             }
-            Message::BarRegionsChanged(id, regions) => {
+            Message::PanelSurfaceChanged(id, scene) => {
+                let regions = scene
+                    .input_rectangles(1.)
+                    .into_iter()
+                    .map(|r| [r[0] as f32, r[1] as f32, r[2] as f32, r[3] as f32, 0.])
+                    .collect();
                 let Some(output) = self.outputs.iter_mut().find(|output| output.bar == id) else {
                     return Task::none();
                 };
@@ -398,7 +423,7 @@ impl cosmic::Application for FereseShell {
                 output.bar_regions = regions;
                 set_input_zone(
                     id,
-                    bar::input_region(self.config.panels[0].surface, output.hidden, &output.bar_regions),
+                    bar::input_region(ferese_panel::PanelSurface::None, output.hidden, &output.bar_regions),
                 )
             }
 
@@ -515,7 +540,7 @@ impl cosmic::Application for FereseShell {
             }
             Message::StopRecording => {
                 self.recorder.stop();
-                Task::none()
+                self.sync_hub_activity()
             }
             Message::StatusUpdated(update) => {
                 if update.generation >= self.status_service.generation {
@@ -530,9 +555,14 @@ impl cosmic::Application for FereseShell {
                         dnd: self.notifications.dnd,
                     });
                 }
-                self.sync_notification_surface()
+                Task::batch([self.sync_hub_activity(), self.sync_notification_surface()])
             }
             Message::NotificationEvent(event) => {
+                let notice = if let notifications::Event::Notice(notice) = &event {
+                    Some(notice.id)
+                } else {
+                    None
+                };
                 self.notifications.handle_event(event);
                 if self.notifications.ready {
                     self.status.notifications = Some(status::Notifications {
@@ -540,11 +570,12 @@ impl cosmic::Application for FereseShell {
                         dnd: self.notifications.dnd,
                     });
                 }
-                self.sync_notification_surface()
+                let hub = notice.map_or_else(Task::none, |notice| self.hub_notice(notice));
+                Task::batch([hub, self.sync_hub_notices(), self.sync_notification_surface()])
             }
             Message::NotificationTick => {
                 self.notifications.tick();
-                self.sync_notification_surface()
+                Task::batch([self.sync_hub_notices(), self.sync_notification_surface()])
             }
             Message::DismissNotification(id) => {
                 self.notifications.close(id, 2);
@@ -715,10 +746,22 @@ impl cosmic::Application for FereseShell {
             }
             Message::RecorderEvent(event) => {
                 self.recorder.handle(event);
-                Task::none()
+                self.sync_hub_activity()
             }
             Message::RecorderElapsed => Task::none(),
+            Message::PanelScale(id, scale) => {
+                if let Some(entry) = self.outputs.iter_mut().find(|entry| entry.bar == id)
+                    && scale.is_finite()
+                    && scale > 0.
+                    && scale <= 16.
+                {
+                    entry.scale = f64::from(scale);
+                }
+                self.sync_hub_workspaces()
+            }
+            Message::AdaptiveDeadline(id, ticket) => self.adaptive_deadline(id, ticket),
             Message::ControlReady => {
+                let overview_was_active = self.overview_active;
                 let mut reload_task = Task::none();
                 if let Some(control) = &self.control {
                     let poll = control.poll();
@@ -740,9 +783,15 @@ impl cosmic::Application for FereseShell {
 
                     if let Some(snapshot) = poll.snapshot {
                         self.snapshot = snapshot;
-                        let mut tasks = vec![reload_task, self.update_workspace_ui()];
+                        let feedback = self.sync_hub_workspace_feedback(overview_was_active || self.overview_active);
+                        let mut tasks = vec![
+                            reload_task,
+                            self.update_workspace_ui(),
+                            feedback,
+                            self.refresh_adaptive_panels(),
+                        ];
                         let mut visibility_changed = false;
-
+                        let mut suspended_hubs = Vec::new();
                         for entry in &mut self.outputs {
                             let output = self
                                 .snapshot
@@ -756,7 +805,14 @@ impl cosmic::Application for FereseShell {
                                 continue;
                             }
 
+                            tasks.push(set_exclusive_zone(
+                                entry.bar,
+                                entry.runtime.panel(&self.config.panels[0]).exclusive_zone(hidden),
+                            ));
                             entry.hidden = hidden;
+                            if hidden && entry.runtime.hub.is_some() {
+                                suspended_hubs.push(entry.bar);
+                            }
                             visibility_changed = true;
                             if let Some(effects) = &entry.effects
                                 && let Err(error) = effects.set_visible(!hidden)
@@ -765,8 +821,11 @@ impl cosmic::Application for FereseShell {
                             }
                             tasks.push(set_input_zone(
                                 entry.bar,
-                                bar::input_region(self.config.panels[0].surface, hidden, &entry.bar_regions),
+                                bar::input_region(ferese_panel::PanelSurface::None, hidden, &entry.bar_regions),
                             ));
+                        }
+                        for id in suspended_hubs {
+                            tasks.push(self.suspend_hub(id));
                         }
                         if self
                             .menu
@@ -826,11 +885,11 @@ impl cosmic::Application for FereseShell {
     }
 
     fn view(&self) -> Element<'_, Self::Message> {
-        text("").into()
+        self.render.text("").into()
     }
 
     fn view_window(&self, _id: window::Id) -> Element<'_, Self::Message> {
-        text("").into()
+        self.render.text("").into()
     }
 }
 
@@ -854,13 +913,7 @@ impl FereseShell {
             config.wallpaper.path = None;
         }
 
-        if self.config.font_family != config.font_family {
-            *SHELL_FONT
-                .get_or_init(|| std::sync::RwLock::new(cosmic::font::default()))
-                .write()
-                .unwrap() = configured_font(config.font_family.as_deref());
-        }
-        motion::configure(config.animations, config.theme.material_radius);
+        self.render = rendering::Rendering::new(&config);
 
         if self.config.animations != config.animations {
             self.notifications.update_motion_settings(config.animations);
@@ -877,14 +930,25 @@ impl FereseShell {
         let composition_changed = !self.config.panels[0].same_composition(&config.panels[0]);
         let edge_changed = self.config.panels[0].edge != config.panels[0].edge;
         let old = self.config.theme;
-        let old_geometry = self.config.panels[0].geometry;
+        let old_geometry = self.config.panels[0].resolved_geometry();
         let theme = config.theme;
-        let geometry = config.panels[0].geometry;
+        let geometry = config.panels[0].resolved_geometry();
         let geometry_changed = edge_changed || old_geometry != geometry;
         self.notifications.configure(config.notifications.clone());
         self.config = config;
+        if composition_changed || geometry_changed {
+            for entry in &mut self.outputs {
+                entry
+                    .runtime
+                    .reset(&self.config.panels[0], &self.snapshot, entry.name.as_deref());
+            }
+        } else {
+            for entry in &mut self.outputs {
+                entry.runtime.update_appearance(&self.config.panels[0]);
+            }
+        }
         let workspace_task = self.update_workspace_ui();
-        let mut tasks = vec![workspace_task];
+        let mut tasks = vec![workspace_task, self.sync_hub_activity()];
 
         if composition_changed || geometry_changed {
             tasks.push(self.destroy_menu());
@@ -893,7 +957,7 @@ impl FereseShell {
                 // publishes its replacement through PanelResolved.
                 tasks.push(set_input_zone(
                     output.bar,
-                    bar::input_region(self.config.panels[0].surface, output.hidden, &output.bar_regions),
+                    bar::input_region(ferese_panel::PanelSurface::None, output.hidden, &output.bar_regions),
                 ));
             }
         }
@@ -909,21 +973,40 @@ impl FereseShell {
             tasks.push(cosmic::command::set_theme(theme.palette().native_theme()));
         }
 
-        for entry in self.outputs.iter().filter(|_| geometry_changed) {
+        for entry in self.outputs.iter().filter(|_| geometry_changed || composition_changed) {
+            let panel = entry.runtime.panel(&self.config.panels[0]);
+            let geometry = panel.resolved_geometry();
             let (anchor, _) = surfaces::panel_placement(self.config.panels[0].edge, geometry.edge_margin, 0);
-            tasks.push(set_anchor(entry.bar, anchor | Anchor::LEFT | Anchor::RIGHT));
-            tasks.push(set_size(entry.bar, None, Some(geometry.height.round() as u32)));
-            tasks.push(set_exclusive_zone(
+            let hub_size = entry.runtime.hub.as_ref().map(|hub| hub.borrow().allocation);
+            tasks.push(set_anchor(
                 entry.bar,
-                (geometry.height.round() as i32).saturating_add(geometry.window_clearance),
+                if hub_size.is_some() {
+                    anchor
+                } else {
+                    anchor | Anchor::LEFT | Anchor::RIGHT
+                },
             ));
+            let (width, height) = hub_size.map_or((None, Some(geometry.height.round() as u32)), |size| {
+                (Some(size[0]), Some(size[1]))
+            });
+            tasks.push(set_size(entry.bar, width, height));
+            tasks.push(
+                cosmic::iced::platform_specific::shell::commands::layer_surface::set_keyboard_interactivity(
+                    entry.bar,
+                    KeyboardInteractivity::None,
+                ),
+            );
+            tasks.push(set_exclusive_zone(entry.bar, panel.exclusive_zone(entry.hidden)));
         }
 
         let bars: Vec<_> = self.outputs.iter().map(|entry| entry.bar).collect();
         for bar in bars {
-            tasks.push(self.update_panel_margin(bar, edge_changed || old_geometry.edge_margin != geometry.edge_margin));
+            tasks.push(self.update_panel_margin(
+                bar,
+                composition_changed || edge_changed || old_geometry.edge_margin != geometry.edge_margin,
+            ));
         }
-        if geometry_changed {
+        if geometry_changed || composition_changed {
             tasks.push(self.dismiss_workspace_tooltip());
             if let Some(surface) = self.notification_surface.take() {
                 tasks.push(destroy_layer_surface(surface.id));
@@ -934,20 +1017,26 @@ impl FereseShell {
     }
 
     fn update_panel_margin(&mut self, bar: window::Id, force: bool) -> Task<Message> {
-        let geometry = self.config.panels[0].geometry;
+        let panel = self.panel_for_bar(bar);
+        let is_hub = panel.style == ferese_panel::PanelStyle::Morph;
+        let geometry = panel.resolved_geometry();
         let Some(entry) = self.outputs.iter_mut().find(|entry| entry.bar == bar) else {
             return Task::none();
         };
-        let margin = entry.size.zip(entry.panel_resolution.as_ref()).map_or(
-            entry.bar_margin_horizontal,
-            |((width, _), resolution)| {
-                resolution.side_margin(
-                    geometry.side_margins,
-                    width,
-                    f32::from(geometry.inner_padding.round() as u16),
-                )
-            },
-        );
+        let margin = if is_hub {
+            0
+        } else {
+            entry.size.zip(entry.panel_resolution.as_ref()).map_or(
+                entry.bar_margin_horizontal,
+                |((width, _), resolution)| {
+                    resolution.side_margin(
+                        geometry.side_margins,
+                        width,
+                        f32::from(geometry.inner_padding.round() as u16),
+                    )
+                },
+            )
+        };
         if entry.bar_margin_horizontal == margin && !force {
             return Task::none();
         }
@@ -982,7 +1071,7 @@ mod tests {
         let output = wl_output::WlOutput::inert(connection.backend().downgrade());
         FereseShell {
             core: Core::default(),
-            notifications: notifications::Center::new(config.notifications.clone()),
+            notifications: notifications::Center::new(config.notifications.clone(), config.animations),
             notification_surface: None,
             status_service: status::Service::start(None),
             status: Default::default(),
@@ -998,6 +1087,7 @@ mod tests {
             guide_load: Default::default(),
             guide_attempts: 0,
             pending_power: None,
+            render: rendering::Rendering::new(&config),
             config,
             wallpaper: None,
             control: None,
@@ -1006,6 +1096,8 @@ mod tests {
             overview_active: false,
             clock: String::new(),
             outputs: vec![OutputSurfaces {
+                runtime: panel_runtime::Runtime::new(&panel::Panel::default(), &ShellSnapshot::default(), None),
+                scale: 1.,
                 output,
                 name: Some("test".into()),
                 bar: window::Id::unique(),
@@ -1025,7 +1117,7 @@ mod tests {
 
     #[test]
     fn panel_placement_uses_only_the_selected_edge_for_anchor_and_margin() {
-        use ferese_config::panel::Edge;
+        use ferese_panel::Edge;
         for gap in [0, 12] {
             let (anchor, margin) = surfaces::panel_placement(Edge::Top, gap, 32);
             assert_eq!(anchor, Anchor::TOP);
@@ -1039,7 +1131,8 @@ mod tests {
     #[test]
     fn cosmetic_reloads_preserve_measured_margins_and_the_open_popover() {
         let mut shell = shell_with_measured_panel();
-        shell.config.panels[0].geometry.side_margins = 240;
+        shell.config.panels[0].style = ferese_panel::PanelStyle::Floating;
+        shell.config.panels[0].geometry.side_margins = Some(240);
         drop(shell.update_panel_margin(shell.outputs[0].bar, false));
         assert_eq!(shell.outputs[0].bar_margin_horizontal, 240);
         let popup = window::Id::unique();
@@ -1061,7 +1154,6 @@ mod tests {
             ("background_opacity", serde_json::json!(0.5)),
             ("corner_radius", serde_json::json!("4px 8px")),
             ("border", serde_json::json!(true)),
-            ("group_surface", serde_json::json!("inset")),
         ] {
             let edit = field;
             let mut document = ferese_config::Document::parse("").unwrap();
@@ -1205,7 +1297,8 @@ mod tests {
     fn an_empty_measured_panel_is_not_an_unmeasured_panel() {
         let mut shell = shell_with_measured_panel();
         let bar = shell.outputs[0].bar;
-        shell.config.panels[0].geometry.side_margins = 240;
+        shell.config.panels[0].style = ferese_panel::PanelStyle::Floating;
+        shell.config.panels[0].geometry.side_margins = Some(240);
         shell.outputs[0].panel_resolution = None;
         drop(shell.update_panel_margin(bar, false));
         assert_eq!(shell.outputs[0].bar_margin_horizontal, 0);
@@ -1365,7 +1458,9 @@ mod tests {
                 focused: true,
                 urgent: false,
                 fullscreen: true,
+                maximized: false,
                 floating: false,
+                geometry: None,
             }],
         }
     }

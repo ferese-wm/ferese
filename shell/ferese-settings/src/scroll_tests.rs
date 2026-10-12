@@ -348,7 +348,6 @@ fn gpu_panel_text_survives_preview_clipping_and_scrolling() {
                     | "Shown on all displays"
                     | "Position"
                     | "Background"
-                    | "Default group surface"
                     | "Background opacity"
                     | "Group borders"
                     | "Corner radius"
@@ -363,6 +362,8 @@ fn gpu_panel_text_survives_preview_clipping_and_scrolling() {
                     | "Add item"
                     | "Overview"
                     | "Workspaces"
+                    | "Morph"
+                    | "Collapsed height"
                     | "Battery"
                     | "Placement"
                     | "Show item"
@@ -409,8 +410,8 @@ fn gpu_panel_text_survives_preview_clipping_and_scrolling() {
         ))
         .expect("GPU panel rendering requires a hardware or software WGPU adapter");
     for width in [740., 1100.] {
-        for scale in [1., 1.75] {
-            for selection in ["panels", "items", "battery", "status"] {
+        for scale in [1., 1.25, 1.5, 1.75] {
+            for selection in ["panels", "morph", "items", "battery", "status"] {
                 let mut app = App::init(
                     Core::default(),
                     (
@@ -421,14 +422,24 @@ fn gpu_panel_text_survives_preview_clipping_and_scrolling() {
                 )
                 .0;
                 app.font = font;
-                app.panel_page = if selection == "panels" {
+                app.render_scale = f64::from(scale);
+                if selection == "morph" {
+                    for edit in crate::panel_edit::plan(
+                        &app.draft,
+                        crate::panel_edit::Action::ApplyPreset(ferese_panel::PanelStyle::Morph),
+                    )
+                    .unwrap()
+                    {
+                        app.draft.edit(&edit).unwrap();
+                    }
+                }
+                app.panel_page = if matches!(selection, "panels" | "morph") {
                     panel_controls::PanelPage::Panels
                 } else {
                     panel_controls::PanelPage::Arrange
                 };
-                app.panel_selection = (selection == "battery").then(|| ferese_config::panel::ItemId("battery".into()));
-                app.panel_group_selection =
-                    (selection == "status").then(|| ferese_config::panel::GroupId("status".into()));
+                app.panel_selection = (selection == "battery").then(|| ferese_panel::ItemId("battery".into()));
+                app.panel_group_selection = (selection == "status").then(|| ferese_panel::GroupId("status".into()));
                 let bounds = Rectangle::with_size(Size::new(width, 650.));
                 let physical = Size::new((width * scale) as u32, (650. * scale) as u32);
                 let theme = app.native_palette.native_theme();
@@ -565,14 +576,15 @@ fn render_panel_review_states() {
         app.native_palette = visuals::Palette::from_resolved(&app.resolved.presented);
         for (name, tab, item, group) in [
             ("panels", panel_controls::PanelPage::Panels, None, None),
-            ("mixed-surfaces", panel_controls::PanelPage::Panels, None, None),
+            ("floating-groups", panel_controls::PanelPage::Panels, None, None),
             (
-                "surface-inspector",
+                "group-spacing-inspector",
                 panel_controls::PanelPage::Arrange,
                 None,
                 Some("title"),
             ),
             ("corners", panel_controls::PanelPage::Panels, None, None),
+            ("morph", panel_controls::PanelPage::Panels, None, None),
             ("preview-hover", panel_controls::PanelPage::Panels, None, None),
             ("navigation", panel_controls::PanelPage::Arrange, None, None),
             ("shortcuts", panel_controls::PanelPage::Panels, None, None),
@@ -603,14 +615,22 @@ fn render_panel_review_states() {
                 _ => Page::Bar,
             };
             app.draft = Snapshot::parse(String::new()).unwrap();
-            if matches!(name, "mixed-surfaces" | "surface-inspector") {
-                let mut panel = ferese_config::panel::Panel::from_preset(ferese_config::PanelPreset::Islands);
-                panel.center.groups[0].surface = Some(ferese_config::panel::GroupSurface::None);
-                panel.end.groups[0].surface = Some(ferese_config::panel::GroupSurface::Inset);
-                panel.geometry.edge_margin = 6;
+            if matches!(name, "floating-groups" | "group-spacing-inspector") {
+                let mut panel = ferese_panel::Panel::from_preset(ferese_panel::PanelStyle::Floating);
+                panel.geometry.edge_margin = Some(6);
                 app.draft
                     .edit(&crate::store::set("panels", serde_json::to_value(vec![panel]).unwrap()))
                     .unwrap();
+            }
+            if name == "morph" {
+                for edit in crate::panel_edit::plan(
+                    &app.draft,
+                    crate::panel_edit::Action::ApplyPreset(ferese_panel::PanelStyle::Morph),
+                )
+                .unwrap()
+                {
+                    app.draft.edit(&edit).unwrap();
+                }
             }
             if name == "corners" {
                 for edit in crate::panel_edit::plan(
@@ -625,8 +645,8 @@ fn render_panel_review_states() {
             }
             app.panel_page = tab;
             app.sidebar_open = name == "navigation";
-            app.panel_selection = item.map(|id| ferese_config::panel::ItemId(id.into()));
-            app.panel_group_selection = group.map(|id| ferese_config::panel::GroupId(id.into()));
+            app.panel_selection = item.map(|id| ferese_panel::ItemId(id.into()));
+            app.panel_group_selection = group.map(|id| ferese_panel::GroupId(id.into()));
             for (width, height) in [(1100, 860), (740, 650)] {
                 let bounds = Rectangle::with_size(Size::new(width as f32, height as f32));
                 let theme = app.native_palette.native_theme();
@@ -763,10 +783,8 @@ fn selecting_panel_items_preserves_editor_scroll_and_pane_bounds() {
         let mut initial = None;
         for selection in [
             None,
-            Some(Message::PanelSelect(ferese_config::panel::ItemId("battery".into()))),
-            Some(Message::PanelGroupSelect(ferese_config::panel::GroupId(
-                "status".into(),
-            ))),
+            Some(Message::PanelSelect(ferese_panel::ItemId("battery".into()))),
+            Some(Message::PanelGroupSelect(ferese_panel::GroupId("status".into()))),
             Some(Message::PanelClearSelection),
         ] {
             if let Some(selection) = selection {

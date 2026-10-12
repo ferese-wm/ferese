@@ -4,8 +4,8 @@ use cosmic::widget::{column, row};
 use super::bar::status_icon;
 use super::controls::{level_meter, shell_switch, status_summary};
 use super::{Menu, MenuRows, MenuStyle};
+use crate::FereseShell;
 use crate::status::Action;
-use crate::{FereseShell, text};
 
 pub(super) fn view<'a>(shell: &'a FereseShell, mut rows: MenuRows<'a>, style: MenuStyle) -> MenuRows<'a> {
     let MenuStyle {
@@ -14,6 +14,7 @@ pub(super) fn view<'a>(shell: &'a FereseShell, mut rows: MenuRows<'a>, style: Me
     if let Some(n) = &shell.status.network {
         let connected = n.enabled && n.connection.is_some();
         rows = rows.push(status_summary(
+            shell.render,
             status_icon(Menu::Network, &shell.status).0,
             if !n.enabled {
                 "Wi-Fi is off"
@@ -41,10 +42,10 @@ pub(super) fn view<'a>(shell: &'a FereseShell, mut rows: MenuRows<'a>, style: Me
             rows = rows.push(
                 column![
                     row![
-                        text("Signal strength").size(12).width(Length::Fill),
-                        text(strength).size(12)
+                        shell.render.text("Signal strength").size(12).width(Length::Fill),
+                        shell.render.text(strength).size(12)
                     ],
-                    level_meter(n.signal, primary, p),
+                    level_meter(shell.render, n.signal, primary, p),
                 ]
                 .spacing(8),
             );
@@ -61,6 +62,7 @@ pub(super) fn heading<'a>(
     let MenuStyle { theme, opacity: p, .. } = style;
     if let Some(network) = &shell.status.network {
         heading = heading.push(shell_switch(
+            shell.render,
             "Wi-Fi",
             network.enabled,
             Action::Wifi(!network.enabled),

@@ -1,7 +1,7 @@
 use cosmic::iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, renderer, widget};
 use cosmic::iced::{Event, Length, Rectangle, Size, Vector};
 use cosmic::{Element, Theme};
-use ferese_config::panel::PanelSurface;
+use ferese_panel::PanelSurface;
 
 pub(crate) fn island_id() -> widget::Id {
     static ID: std::sync::OnceLock<widget::Id> = std::sync::OnceLock::new();
@@ -13,6 +13,7 @@ pub(crate) fn input_id() -> widget::Id {
     ID.get_or_init(widget::Id::unique).clone()
 }
 
+#[cfg(test)]
 pub(super) fn frame<'a, M: 'a>(
     content: Element<'a, M>,
     mode: PanelSurface,
@@ -29,7 +30,19 @@ pub(super) fn frame<'a, M: 'a>(
         materials,
         hover,
         present: Box::new(present),
-        changed: Box::new(changed),
+        changed: Some(Box::new(changed)),
+    })
+}
+
+pub(super) fn hover<'a, M: 'a>(content: Element<'a, M>, hover: Option<HoverTarget<'a, M>>) -> Element<'a, M> {
+    Element::new(Presentation {
+        content,
+        mode: PanelSurface::None,
+        radius: 0.,
+        materials: Vec::new(),
+        hover,
+        present: Box::new(|_, _| {}),
+        changed: None,
     })
 }
 
@@ -66,6 +79,8 @@ impl widget::Operation for HoverBounds<'_> {
     }
 }
 
+type Changed<'a, M> = Box<dyn Fn(Vec<[f32; 5]>) -> M + 'a>;
+
 type Present<'a> = Box<dyn Fn(&[[f32; 5]], &[f32]) + 'a>;
 
 struct Presentation<'a, M> {
@@ -75,7 +90,7 @@ struct Presentation<'a, M> {
     materials: Vec<(widget::Id, f32)>,
     hover: Option<HoverTarget<'a, M>>,
     present: Present<'a>,
-    changed: Box<dyn Fn(Vec<[f32; 5]>) -> M + 'a>,
+    changed: Option<Changed<'a, M>>,
 }
 
 impl<M> Widget<M, Theme, cosmic::Renderer> for Presentation<'_, M> {
@@ -166,7 +181,7 @@ impl<M> Widget<M, Theme, cosmic::Renderer> for Presentation<'_, M> {
             shell,
             viewport,
         );
-        if !matches!(event, Event::Window(cosmic::iced::window::Event::RedrawRequested(_))) {
+        if self.changed.is_none() || !matches!(event, Event::Window(cosmic::iced::window::Event::RedrawRequested(_))) {
             return;
         }
 
@@ -203,7 +218,7 @@ impl<M> Widget<M, Theme, cosmic::Renderer> for Presentation<'_, M> {
             state.mode = Some(self.mode);
             state.current.clone_from(&collector.regions);
             state.input.clone_from(&collector.input);
-            shell.publish((self.changed)(if self.mode == PanelSurface::Solid {
+            shell.publish((self.changed.as_ref().unwrap())(if self.mode == PanelSurface::Solid {
                 collector.regions.clone()
             } else {
                 collector.input.clone()
@@ -482,25 +497,20 @@ mod tests {
                 )
             };
             let islands = row![section(100), section(200),].spacing(60);
-            let content = container(islands)
+            let content: Element<'_, cosmic::Action<crate::Message>> = container(islands)
                 .padding([0, 12])
                 .width(600)
                 .height(28)
                 .align_y(cosmic::iced::alignment::Vertical::Center)
                 .into();
             let mut view = frame(
-                content,
+                content.map(|_| Vec::<[f32; 5]>::new()),
                 mode,
                 14.,
                 vec![],
                 None,
                 |_, _| {},
-                |regions| {
-                    cosmic::Action::App(crate::Message::BarRegionsChanged(
-                        cosmic::iced::window::Id::unique(),
-                        regions,
-                    ))
-                },
+                |regions| regions,
             );
             let tree = tree.get_or_insert_with(|| widget::Tree::new(&view));
             tree.diff(&mut view);
@@ -531,9 +541,7 @@ mod tests {
             } else {
                 vec![[0., 0., 600., 28., 14.]]
             };
-            let cosmic::Action::App(crate::Message::BarRegionsChanged(_, regions)) = &messages[0] else {
-                panic!("expected measured bar regions");
-            };
+            let regions = &messages[0];
             assert_eq!(*regions, expected);
         }
     }

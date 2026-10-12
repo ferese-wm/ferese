@@ -27,9 +27,10 @@ handbook. Rebuild and refresh the browser after changing the site sources or gui
 
 ## GitHub Pages
 
-Choose **Settings → Pages → Source → GitHub Actions** to publish through the Pages
-workflow. It runs when site or documentation changes reach `main`; you can also
-start it manually. The expected address is https://ferese-wm.github.io/ferese/.
+Choose **Settings → Pages → Source → GitHub Actions** to enable publishing, then
+open **Actions → Deploy website to GitHub Pages → Run workflow** and choose the
+branch to publish. Deployment runs manually, and the expected address is
+https://ferese-wm.github.io/ferese/.
 
 The site uses relative links, including for handbook search, so it also works under the
 `/ferese/` project path. Each build copies screenshots from `docs/images` into

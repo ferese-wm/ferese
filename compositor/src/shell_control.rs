@@ -10,7 +10,7 @@ use crate::private_client::ClientCapabilities;
 use crate::state::ClientState;
 
 pub(crate) fn init_global(display: &DisplayHandle) {
-    display.create_global::<Ferese, FereseShellManagerV1, _>(6, ());
+    display.create_global::<Ferese, FereseShellManagerV1, _>(8, ());
 }
 
 pub(crate) fn config_chunks(source: &str) -> Vec<&str> {
@@ -118,6 +118,18 @@ impl Dispatch<FereseShellV1, ()> for Ferese {
 
                 if !state.activate_managed_workspace(workspace) {
                     send_request_failed(shell, ferese_shell_v1::FailedRequest::ActivateWorkspace, workspace.0);
+                }
+            }
+            ferese_shell_v1::Request::MoveWindowToWorkspace {
+                window_hi,
+                window_lo,
+                workspace_hi,
+                workspace_lo,
+            } => {
+                let window = join_id(window_hi, window_lo);
+                let workspace = WorkspaceId(join_u64(workspace_hi, workspace_lo));
+                if !state.move_managed_window_to_workspace(window, workspace) {
+                    send_request_failed(shell, ferese_shell_v1::FailedRequest::MoveWindowToWorkspace, window.0);
                 }
             }
             ferese_shell_v1::Request::ConfirmLogout { serial } => {
@@ -327,12 +339,21 @@ impl Ferese {
     }
 
     fn shell_snapshot_matches(&self, snapshot: &ShellSnapshot) -> bool {
+        if snapshot.workspace_preview_revision != self.workspace_preview_revision {
+            return false;
+        }
         let mut outputs = self.output_workspaces.connected_outputs();
 
         for previous in &snapshot.outputs {
             if outputs.next() != Some(previous.id)
                 || self.output_names.get(&previous.id) != Some(&previous.name)
                 || self.output_workspaces.active_workspace(previous.id) != Some(previous.active_workspace)
+                || self
+                    .output_ids
+                    .iter()
+                    .find(|(_, id)| **id == previous.id)
+                    .and_then(|(output, _)| self.output_bounds_for(output))
+                    != previous.bounds
                 || (self.output_workspaces.focused_output() == Some(previous.id)) != previous.focused
             {
                 return false;
@@ -377,6 +398,7 @@ impl Ferese {
                 || previous.app_id != app_id
                 || previous.title != title
                 || previous.state != state
+                || previous.source_geometry != self.shell_window_geometry(id)
             {
                 return false;
             }
@@ -387,6 +409,7 @@ impl Ferese {
 
     fn shell_snapshot(&self) -> ShellSnapshot {
         ShellSnapshot {
+            workspace_preview_revision: self.workspace_preview_revision,
             outputs: self.output_snapshots(),
             workspaces: self.workspace_snapshots(),
             windows: self.managed_window_snapshots(),
@@ -416,6 +439,7 @@ impl Ferese {
                     name: output.name(),
                     active_workspace: self.output_workspaces.active_workspace(*id)?,
                     focused: focused == Some(*id),
+                    bounds: self.output_bounds_for(output),
                 })
             })
             .collect::<Vec<_>>();
@@ -445,6 +469,9 @@ impl Ferese {
         self.windows.window(id)?.toplevel()?;
         let mut state = ferese_shell_v1::WindowState::empty();
 
+        if record.maximized {
+            state |= ferese_shell_v1::WindowState::Maximized;
+        }
         if self.focused_window == Some(id) {
             state |= ferese_shell_v1::WindowState::Focused;
         }
@@ -467,7 +494,13 @@ impl Ferese {
         Some((id, workspace.0, &record.app_id, &record.title, state))
     }
 
+    fn shell_window_geometry(&self, id: WindowId) -> Option<ferese_layout::Rect> {
+        let rect = self.windows.geometry(&id)?.visual.target;
+        (rect.width > 0. && rect.height > 0.).then_some(rect)
+    }
+
     fn managed_window_snapshots(&self) -> Vec<ManagedWindowSnapshot> {
+        let previews = self.workspace_preview_rects();
         self.windows
             .ordered_ids()
             .filter_map(|id| self.shell_window_data(id))
@@ -477,6 +510,8 @@ impl Ferese {
                 app_id: app_id.to_owned(),
                 title: title.to_owned(),
                 state,
+                source_geometry: self.shell_window_geometry(id),
+                geometry: previews.get(&id).copied().or_else(|| self.shell_window_geometry(id)),
             })
             .collect()
     }
@@ -518,6 +553,7 @@ enum ShellWindowAction {
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ShellSnapshot {
+    workspace_preview_revision: u64,
     outputs: Vec<OutputSnapshot>,
     workspaces: Vec<WorkspaceSnapshot>,
     windows: Vec<ManagedWindowSnapshot>,
@@ -568,6 +604,11 @@ impl ShellSnapshot {
                 snapshot.title.clone(),
                 snapshot.state,
             );
+            if shell.version() >= 8
+                && let Some(rect) = snapshot.geometry
+            {
+                shell.window_geometry(window_hi, window_lo, rect.x, rect.y, rect.width, rect.height);
+            }
         }
         shell.snapshot_end(serial);
     }
@@ -580,10 +621,13 @@ struct ManagedWindowSnapshot {
     app_id: String,
     title: String,
     state: ferese_shell_v1::WindowState,
+    geometry: Option<ferese_layout::Rect>,
+    source_geometry: Option<ferese_layout::Rect>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 struct OutputSnapshot {
+    bounds: Option<ferese_layout::Rect>,
     id: OutputId,
     name: String,
     active_workspace: WorkspaceId,
@@ -661,17 +705,22 @@ mod tests {
         state.space.map_output(&output, (0, 0));
         state.register_output(&output, "snapshot-test".into());
         let original = state.shell_snapshot();
+        let initial_cache = state.preview_cache_stats();
 
         for _ in 0..100 {
+            // Building a snapshot for metadata changes must reuse layout geometry.
+            assert_eq!(state.shell_snapshot(), original);
             assert!(state.shell_snapshot_matches(&original));
         }
 
+        assert_eq!(state.preview_cache_stats(), initial_cache);
         state
             .workspaces
             .insert_window(WindowId(99), ferese_layout::Axis::Horizontal, 0.5)
             .unwrap();
         assert!(!state.shell_snapshot_matches(&original));
         let occupied = state.shell_snapshot();
+        assert_eq!(state.preview_cache_stats().0, initial_cache.0 + 1);
         assert!(state.shell_snapshot_matches(&occupied));
         let output_id = state.output_ids[&output];
         let next = state.workspaces.create_workspace();
@@ -682,8 +731,60 @@ mod tests {
         assert!(!state.shell_snapshot_matches(&assigned));
         let selected = state.shell_snapshot();
         assert!(state.shell_snapshot_matches(&selected));
+        assert_eq!(state.output_workspaces.active_workspace(output_id), Some(next));
+        assert_eq!(state.workspaces.workspace(next).unwrap().layout.window_ids().count(), 0);
+        let hidden_before = state.workspace_preview_rects()[&WindowId(99)];
+        let before = state.preview_cache_stats();
+        state.output_names.insert(output_id, "Renamed".into());
+        state.shell_snapshot();
+        assert_eq!(state.preview_cache_stats(), before, "names do not affect previews");
+        state.output_names.insert(output_id, "snapshot-test".into());
+        // The second workspace is empty; modifying its layout should not solve the hidden one.
+        state
+            .workspaces
+            .workspace_mut(next)
+            .unwrap()
+            .layout
+            .insert(WindowId(100), None, ferese_layout::Axis::Horizontal, 0.5)
+            .unwrap();
+        state.workspace_preview_rects();
+        assert_eq!(state.preview_cache_stats().0, before.0 + 1);
+        state
+            .workspaces
+            .workspace_mut(next)
+            .unwrap()
+            .layout
+            .remove(WindowId(100))
+            .unwrap();
+        state.workspace_preview_rects();
+        let selected = state.shell_snapshot();
+        state
+            .reload_config_source("layout { inner-gap 30; outer-gap 40; smart-gaps #false; }".into())
+            .unwrap();
+        assert!(
+            !state.shell_snapshot_matches(&selected),
+            "hidden previews must invalidate even with no visible window geometry to change"
+        );
+        assert_ne!(state.workspace_preview_rects()[&WindowId(99)], hidden_before);
+        let refreshed = state.shell_snapshot();
+        assert!(state.shell_snapshot_matches(&refreshed));
+        state
+            .reload_config_source(
+                "layout { inner-gap 30; outer-gap 40; smart-gaps #false; }; input { repeat-rate 35; }".into(),
+            )
+            .unwrap();
+        assert_eq!(
+            state.workspace_preview_revision, refreshed.workspace_preview_revision,
+            "unrelated settings do not invalidate layouts"
+        );
         state.unregister_output(&output);
-        assert!(!state.shell_snapshot_matches(&selected));
+        assert!(!state.shell_snapshot_matches(&refreshed));
+        state.workspace_preview_rects();
+        assert_eq!(
+            state.preview_cache_stats().1,
+            0,
+            "removed outputs release cached previews"
+        );
     }
 
     #[test]
@@ -708,7 +809,9 @@ mod tests {
     #[test]
     fn snapshot_deduplication_preserves_shell_visible_changes() {
         let original = ShellSnapshot {
+            workspace_preview_revision: 0,
             outputs: vec![OutputSnapshot {
+                bounds: None,
                 id: OutputId(1),
                 name: "display".into(),
                 active_workspace: WorkspaceId(1),
@@ -729,10 +832,13 @@ mod tests {
                 app_id: "terminal".into(),
                 title: "shell".into(),
                 state: ferese_shell_v1::WindowState::Focused,
+                geometry: None,
+                source_geometry: None,
             }],
         };
         assert_eq!(original, original.clone());
         let changes: &[fn(&mut ShellSnapshot)] = &[
+            |s| s.workspace_preview_revision += 1,
             |s| s.outputs[0].focused = false,
             |s| s.outputs[0].active_workspace = WorkspaceId(2),
             |s| s.outputs.clear(),

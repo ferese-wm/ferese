@@ -1,4 +1,3 @@
-//! Exact physical spring motion. Presentation policy is deliberately separate.
 use super::SpringConfig;
 
 /// Solve m y'' + c y' + k y = 0, with y = current - target.

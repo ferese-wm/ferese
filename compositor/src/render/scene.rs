@@ -328,6 +328,7 @@ fn scene_elements(
                     output,
                     surface,
                     MaterialSurface {
+                        shape_origin: constrain.loc,
                         geometry: constrain,
                         corners,
                         index: 0,

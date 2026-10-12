@@ -27,6 +27,7 @@ fn blend(base: Color, foreground: Color, amount: f32) -> Color {
 }
 
 fn icon_well<'a>(
+    render: crate::rendering::Rendering,
     content: impl Into<Element<'a, cosmic::Action<Message>>>,
     foreground: Color,
     extent: u16,
@@ -36,7 +37,7 @@ fn icon_well<'a>(
         .center_y(extent)
         .class(ferese_theme::controls::surface(
             foreground.scale_alpha(0.07),
-            motion::radius(f32::from(extent) / 2.0),
+            render.radius(f32::from(extent) / 2.0),
         ))
         .into()
 }
@@ -51,6 +52,7 @@ fn age_label(age: Duration) -> String {
 }
 
 fn card_button<'a>(
+    render: crate::rendering::Rendering,
     content: impl Into<Element<'a, cosmic::Action<Message>>>,
     message: Message,
     foreground: Color,
@@ -65,7 +67,7 @@ fn card_button<'a>(
         .class(ferese_theme::controls::notification_button(
             foreground,
             foreground.scale_alpha(0.08),
-            if round { motion::radius(11.) } else { 0. },
+            if round { render.radius(11.) } else { 0. },
             round,
         ))
         .into()
@@ -89,6 +91,7 @@ fn card_surface<'a>(
 }
 
 fn icon_control<'a>(
+    render: crate::rendering::Rendering,
     source: &'static [u8],
     label: &'static str,
     message: Message,
@@ -97,6 +100,7 @@ fn icon_control<'a>(
     extent: u16,
 ) -> Element<'a, cosmic::Action<Message>> {
     let control = card_button(
+        render,
         container(bar_icon(source, 14, foreground))
             .center_x(extent)
             .center_y(extent),
@@ -107,14 +111,14 @@ fn icon_control<'a>(
     );
     cosmic::widget::tooltip(
         control,
-        text(label).size(11).class(theme::Text::Color(foreground)),
+        render.text(label).size(11).class(theme::Text::Color(foreground)),
         cosmic::widget::tooltip::Position::Left,
     )
     .class(theme::Container::custom(move |_| container::Style {
         background: Some(Background::Color(background)),
         border: Border {
             shape: BorderShape::Continuous,
-            radius: motion::radius(12.0).into(),
+            radius: render.radius(12.0).into(),
             ..Default::default()
         },
         text_color: Some(foreground),
@@ -145,13 +149,30 @@ impl FereseShell {
             })
             .and_then(|output| output.size)
             .map_or(HISTORY_MAX_HEIGHT, |(_, height)| {
-                let geometry = self.config.panels[0].geometry;
+                let geometry = self
+                    .menu
+                    .as_ref()
+                    .map(|menu| self.panel_for_bar(menu.anchor.parent))
+                    .unwrap_or(&self.config.panels[0])
+                    .resolved_geometry();
                 (height as f32 - geometry.edge_margin as f32 - geometry.height - 8.0 - 12.0).max(1.0)
             })
             .min(HISTORY_MAX_HEIGHT)
     }
 
     pub(super) fn toggle_notification_history(&mut self) -> Task<Message> {
+        if let Some(parent) = self.active_bar()
+            && self.hub_mode(parent).is_some()
+        {
+            return if self.hub_mode(parent)
+                == Some(ferese_panel::morph::Mode::Expanded(
+                    ferese_panel::morph::Content::Notifications,
+                )) {
+                self.close_hub(parent)
+            } else {
+                self.open_hub(parent, status_ui::Menu::Notifications)
+            };
+        }
         if self.notifications.history_open {
             return self.close_menu();
         }
@@ -174,7 +195,7 @@ impl FereseShell {
                 x: (width - 48).max(0),
                 y: 0,
                 width: 24,
-                height: self.config.panels[0].geometry.height.round() as i32,
+                height: self.config.panels[0].resolved_geometry().height.round() as i32,
             },
         };
         self.open_menu(status_ui::Menu::Notifications, anchor)
@@ -195,7 +216,10 @@ impl FereseShell {
             });
         }
         let count = self.notifications.popup_groups().len();
-        let wanted = self.notifications.ready && !self.notifications.history_open && count > 0;
+        let wanted = self.config.panels[0].style != ferese_panel::PanelStyle::Morph
+            && self.notifications.ready
+            && !self.notifications.history_open
+            && count > 0;
         let selected = self
             .outputs
             .iter()
@@ -236,7 +260,13 @@ impl FereseShell {
             .find(|entry| entry.output == output)
             .and_then(|entry| entry.size)
             .map_or(1080, |size| size.1);
-        let top = self.config.panels[0].geometry.height + self.config.panels[0].geometry.edge_margin as f32 + 12.0;
+        let geometry = self
+            .outputs
+            .iter()
+            .find(|entry| entry.output == output)
+            .map(|entry| entry.runtime.panel(&self.config.panels[0]).resolved_geometry())
+            .unwrap_or_else(|| self.config.panels[0].resolved_geometry());
+        let top = geometry.height + geometry.edge_margin as f32 + 12.0;
         let height = desired_height.min((output_height as f32 - top - 12.0).max(100.0) as u32);
         if let Some(surface) = &mut self.notification_surface {
             if surface.height != height {
@@ -306,7 +336,7 @@ impl FereseShell {
         let divider = tint(palette.border);
         let well = blend(base, foreground, 0.07);
         let id = notice.id;
-        let mut bold = *SHELL_FONT.get().unwrap().read().unwrap();
+        let mut bold = self.render.font;
         bold.weight = cosmic::iced::font::Weight::Bold;
         let app_icon = if notice.app.to_lowercase().starts_with("ferese") || notice.icon.is_empty() {
             accented_icon(ferese_theme::icons::FERESE, 18, accent, accent)
@@ -316,7 +346,7 @@ impl FereseShell {
             icon::from_name(notice.icon.as_str()).size(18).icon()
         }
         .opacity(opacity);
-        let icon_well = icon_well(app_icon, foreground, 30);
+        let icon_well = icon_well(self.render, app_icon, foreground, 30);
         let icon: Element<'_, cosmic::Action<Message>> = if count > 1 {
             let badge_fill = ferese_theme::composite(
                 color(palette.accent),
@@ -328,7 +358,8 @@ impl FereseShell {
             );
             let (badge_fill, badge_text) = ferese_theme::accent_pair(badge_fill, color(palette.text_primary));
             let badge = container(
-                text(count.to_string())
+                self.render
+                    .text(count.to_string())
                     .size(10)
                     .font(bold)
                     .class(theme::Text::Color(badge_text.scale_alpha(opacity))),
@@ -339,7 +370,7 @@ impl FereseShell {
                 background: Some(Background::Color(badge_fill.scale_alpha(opacity))),
                 border: Border {
                     shape: BorderShape::Continuous,
-                    radius: motion::radius(8.0).into(),
+                    radius: self.render.radius(8.0).into(),
                     ..Default::default()
                 },
                 ..Default::default()
@@ -372,17 +403,25 @@ impl FereseShell {
             .align_y(alignment::Vertical::Center)
             .push(icon)
             .push(
-                container(text(app).size(11).font(bold).class(theme::Text::Color(muted)))
-                    .width(Length::Fill)
-                    .height(16)
-                    .clip(true),
+                container(
+                    self.render
+                        .text(app)
+                        .size(11)
+                        .font(bold)
+                        .class(theme::Text::Color(muted)),
+                )
+                .width(Length::Fill)
+                .height(16)
+                .clip(true),
             )
             .push(
-                text(age_label(notice.received_at.elapsed()))
+                self.render
+                    .text(age_label(notice.received_at.elapsed()))
                     .size(11)
                     .class(theme::Text::Color(muted)),
             )
             .push(icon_control(
+                self.render,
                 ferese_theme::icons::CLOSE,
                 "Dismiss notification",
                 if history && count > 1 {
@@ -398,7 +437,8 @@ impl FereseShell {
             ));
         let mut content = column([]).spacing(4).push(header).push(
             container(
-                text(notice.title.clone())
+                self.render
+                    .text(notice.title.clone())
                     .size(14)
                     .font(bold)
                     .class(theme::Text::Color(foreground)),
@@ -417,7 +457,7 @@ impl FereseShell {
         };
         if !body.is_empty() {
             content = content.push(
-                container(text(body).size(13).class(theme::Text::Color(muted)))
+                container(self.render.text(body).size(13).class(theme::Text::Color(muted)))
                     .height(if history && count == 1 {
                         Length::Shrink
                     } else {
@@ -447,8 +487,10 @@ impl FereseShell {
                             ));
                     }
                     actions = actions.push(card_button(
+                        self.render,
                         container(
-                            text(label.clone())
+                            self.render
+                                .text(label.clone())
                                 .font(bold)
                                 .size(13)
                                 .class(theme::Text::Color(accent)),
@@ -511,7 +553,7 @@ impl FereseShell {
                             })),
                             border: Border {
                                 shape: BorderShape::Continuous,
-                                radius: [0.0, 0.0, motion::radius(6.0), motion::radius(6.0)].into(),
+                                radius: [0.0, 0.0, self.render.radius(6.0), self.render.radius(6.0)].into(),
                                 ..Default::default()
                             },
                             ..Default::default()
@@ -579,7 +621,7 @@ impl FereseShell {
             let base = color(palette.surface_base);
             let compositor_material = surface.is_some_and(|menu| menu.effects.is_some());
             let well = blend(base, primary, 0.07);
-            let mut bold = *SHELL_FONT.get().unwrap().read().unwrap();
+            let mut bold = self.render.font;
             bold.weight = cosmic::iced::font::Weight::Bold;
             let groups = self.notifications.history_groups();
             let count = self.notifications.entries.len();
@@ -596,17 +638,19 @@ impl FereseShell {
             let heading = column([])
                 .spacing(3)
                 .push(
-                    text("Notifications")
+                    self.render
+                        .text("Notifications")
                         .size(16)
                         .font(bold)
                         .class(theme::Text::Color(primary)),
                 )
-                .push(text(subtitle).size(11).class(theme::Text::Color(muted)));
+                .push(self.render.text(subtitle).size(11).class(theme::Text::Color(muted)));
             let header = row([])
                 .spacing(10)
                 .align_y(alignment::Vertical::Center)
                 .push(container(heading).width(Length::Fill))
                 .push(icon_control(
+                    self.render,
                     ferese_theme::icons::CLOSE,
                     "Close notification center",
                     Message::ToggleNotificationHistory,
@@ -629,27 +673,31 @@ impl FereseShell {
                         column([])
                             .spacing(2)
                             .push(
-                                text("Do Not Disturb")
+                                self.render
+                                    .text("Do Not Disturb")
                                     .size(12)
                                     .font(bold)
                                     .class(theme::Text::Color(primary)),
                             )
                             .push(
-                                text(if self.notifications.dnd {
-                                    "Popups paused"
-                                } else {
-                                    "Popups enabled"
-                                })
-                                .size(11)
-                                .class(theme::Text::Color(muted)),
+                                self.render
+                                    .text(if self.notifications.dnd {
+                                        "Popups paused"
+                                    } else {
+                                        "Popups enabled"
+                                    })
+                                    .size(11)
+                                    .class(theme::Text::Color(muted)),
                             ),
                     )
                     .width(Length::Fill),
                 )
                 .push(motion::button(
+                    self.render,
                     button::custom(
                         container(
-                            text(if self.notifications.dnd { "On" } else { "Off" })
+                            self.render
+                                .text(if self.notifications.dnd { "On" } else { "Off" })
                                 .size(12)
                                 .font(bold)
                                 .class(theme::Text::Color(dnd_color)),
@@ -672,18 +720,21 @@ impl FereseShell {
                     .spacing(10)
                     .align_x(alignment::Horizontal::Center)
                     .push(icon_well(
+                        self.render,
                         accented_icon(ferese_theme::icons::NOTIFICATIONS, 26, muted, accent),
                         primary,
                         56,
                     ))
                     .push(
-                        text("You're all caught up")
+                        self.render
+                            .text("You're all caught up")
                             .size(15)
                             .font(bold)
                             .class(theme::Text::Color(primary)),
                     )
                     .push(
-                        text("New notifications will appear here.")
+                        self.render
+                            .text("New notifications will appear here.")
                             .size(11)
                             .class(theme::Text::Color(muted)),
                     );
@@ -693,13 +744,15 @@ impl FereseShell {
                     row([])
                         .align_y(alignment::Vertical::Center)
                         .push(
-                            text("Recent")
+                            self.render
+                                .text("Recent")
                                 .size(11)
                                 .font(bold)
                                 .class(theme::Text::Color(muted))
                                 .width(Length::Fill),
                         )
                         .push(icon_control(
+                            self.render,
                             ferese_theme::icons::TRASH,
                             "Clear all notifications",
                             Message::ClearNotifications,
@@ -721,13 +774,15 @@ impl FereseShell {
                             .spacing(6)
                             .align_y(alignment::Vertical::Center)
                             .push(
-                                text(format!("{} · {}", app, group.len()))
+                                self.render
+                                    .text(format!("{} · {}", app, group.len()))
                                     .size(11)
                                     .font(bold)
                                     .class(theme::Text::Color(muted))
                                     .width(Length::Fill),
                             )
                             .push(icon_control(
+                                self.render,
                                 ferese_theme::icons::CHEVRON_UP,
                                 "Collapse group",
                                 Message::ToggleNotificationGroup(latest.app.clone()),
@@ -736,6 +791,7 @@ impl FereseShell {
                                 24,
                             ))
                             .push(icon_control(
+                                self.render,
                                 ferese_theme::icons::TRASH,
                                 "Clear group",
                                 Message::RemoveNotificationGroup(latest.app.clone()),
@@ -834,7 +890,12 @@ mod tests {
             .unwrap();
         for foreground in [Color::BLACK, Color::WHITE] {
             for extent in [30, 56] {
-                let inset = icon_well(cosmic::widget::Space::new(), foreground, extent);
+                let inset = icon_well(
+                    crate::rendering::Rendering::new(&crate::config::ShellConfig::default()),
+                    cosmic::widget::Space::new(),
+                    foreground,
+                    extent,
+                );
                 let controls = ferese_theme::menus::section(
                     cosmic::widget::Space::new().width(100).height(40).into(),
                     foreground,
@@ -899,6 +960,7 @@ mod tests {
         for history in [false, true] {
             for scale in [1.0, 1.25, 1.5] {
                 let action = card_button(
+                    crate::rendering::Rendering::new(&crate::config::ShellConfig::default()),
                     cosmic::widget::Space::new().height(38),
                     Message::InvokeNotification(1, "action".into()),
                     Color::WHITE,

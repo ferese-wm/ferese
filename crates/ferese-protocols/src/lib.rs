@@ -1,5 +1,3 @@
-//! Generated bindings for Ferese Wayland protocols.
-
 #![forbid(unsafe_code)]
 
 /// Semantic surface effects protocol.

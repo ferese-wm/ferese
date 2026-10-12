@@ -1745,6 +1745,7 @@ dependencies = [
  "ferese-core",
  "ferese-ipc",
  "ferese-layout",
+ "ferese-panel",
  "ferese-protocols",
  "ferese-shape",
  "fontdb",
@@ -1776,6 +1777,7 @@ dependencies = [
 name = "ferese-config"
 version = "0.1.0-beta"
 dependencies = [
+ "ferese-panel",
  "ferese-theme-model",
  "jiff",
  "kdl",
@@ -1827,6 +1829,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "ferese-panel"
+version = "0.1.0-beta"
+dependencies = [
+ "ferese-animation",
+ "ferese-layout",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "ferese-polkit-agent"
 version = "0.1.0-beta"
 dependencies = [
@@ -1863,6 +1875,7 @@ version = "0.1.0-beta"
 dependencies = [
  "ferese-config",
  "ferese-ipc",
+ "ferese-panel",
  "ferese-theme",
  "ferese-theme-client",
  "iced_accessibility",
@@ -1890,6 +1903,8 @@ dependencies = [
  "ferese-animation",
  "ferese-config",
  "ferese-ipc",
+ "ferese-layout",
+ "ferese-panel",
  "ferese-protocols",
  "ferese-theme",
  "ferese-theme-client",
@@ -1915,6 +1930,8 @@ name = "ferese-theme"
 version = "0.1.0-beta"
 dependencies = [
  "ferese-config",
+ "ferese-layout",
+ "ferese-panel",
  "ferese-theme-model",
  "iced_accessibility",
  "jiff",

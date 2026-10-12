@@ -61,22 +61,23 @@ libraries.
 
 To run X11-only applications, Ferese launches
 [xwayland-satellite](https://github.com/Supreeeme/xwayland-satellite),
-which in turn needs an `Xwayland` binary. Both are runtime dependencies, not
-build dependencies, and neither is needed to build Ferese.
+which in turn needs an `Xwayland` binary. Both are runtime dependencies, so
+neither is needed to build Ferese.
 
 - `Xwayland` ships with the X.Org server packages: `xorg-x11-server-Xwayland`
   on Fedora and Debian/Ubuntu, `xorg-xwayland` on Arch.
 - `xwayland-satellite` is not packaged by most distributions. Build or install
   it from its upstream releases **with its `systemd` feature enabled**
-  (`cargo build --release --features systemd`). That feature is what sends the
-  `READY=1` readiness notification Ferese waits for. Upstream's default feature
-  set is empty, so a default build never sends it, Ferese's fixed 10-second
-  startup budget expires, and the service reports a startup failure instead of
-  a display. A spawned process that is still alive is not readiness.
+  (`cargo build --release --features systemd`), which sends the `READY=1`
+  notification Ferese waits for. Upstream's default feature set is empty, so a
+  default build never sends that notification: even if the process remains alive,
+  Ferese's fixed 10-second startup budget expires and the service reports a
+  startup failure instead of a display.
 
 Both the compositor's default and the packaged configuration ship with X11
 enabled, so a session with the two pieces above needs no configuration change.
-If you maintain your own `config.kdl`, the block to keep is
+If you maintain your own `config.kdl`, keep this block in
+`~/.config/ferese/config.kdl`:
 
 ```kdl
 xwayland {
@@ -86,8 +87,7 @@ xwayland {
 }
 ```
 
-in `~/.config/ferese/config.kdl` and starting a new session, then check
-`feresectl xwayland status`. See
+Start a new session, then check `feresectl xwayland status`. See
 [X11 support](configuration.md#x11-support-xwayland-satellite) for the full key
 list, diagnostics, and known limitations.
 

@@ -13,7 +13,7 @@
 
 Ferese combines a window manager and desktop shell with one configuration.
 
-![Ferese desktop with a translucent Now Playing popup showing Spotify artwork and playback controls](docs/images/screenshots/ferese-media.webp)
+![Ferese desktop with Morph's music view open over a sunset wallpaper](docs/images/screenshots/ferese-morph.webp)
 
 [View more screenshots](docs/screenshots.md)
 
@@ -21,7 +21,7 @@ Ferese combines a window manager and desktop shell with one configuration.
 
 - Scrolling columns, window groups, tree tiling and floating windows with saved size and position
 - Integrated shell with notifications, media controls, Settings and Control Center
-- [Custom panels](docs/configuration.md#panel-composition) with editable items, groups, surfaces, and top or bottom placement
+- [Custom panels](docs/panel-configuration.md) with seven styles, editable groups and items, and top or bottom placement
 - Workspace overview and recent-window switching
 - [Continuum animations](docs/configuration.md#animations): interruptible springs, gesture momentum and shared motion controls
 - Live wallpapers and blur, custom KDL themes, and Light/Dark/Auto modes
@@ -76,7 +76,8 @@ guide](docs/installation.md) also walks you through previews, updates and recove
 ## Configure
 
 Configure Ferese through **Control Center → Settings** or `~/.config/ferese/config.kdl`.
-Changes apply live. Invalid edits leave the last working configuration in place.
+Changes apply live, and if an edit is invalid, the last working configuration stays
+in place.
 
 The [configuration reference](docs/configuration.md) and [example
 config](packaging/config.kdl) cover appearance, window layouts,

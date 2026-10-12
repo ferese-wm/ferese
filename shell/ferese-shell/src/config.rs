@@ -60,6 +60,7 @@ pub(crate) struct ShellTheme {
     pub(crate) bar_text_primary: [u8; 4],
     pub(crate) bar_text_muted: [u8; 4],
     pub(crate) surface_base: [u8; 4],
+    pub(crate) surface_raised: [u8; 4],
     pub(crate) surface_popover: [u8; 4],
     pub(crate) text_primary: [u8; 4],
     pub(crate) text_muted: [u8; 4],
@@ -86,13 +87,15 @@ impl Default for ShellTheme {
             bar_text_primary: [240, 243, 250, 255],
             bar_text_muted: [170, 180, 199, 255],
             surface_base: [17, 24, 33, 255],
+            surface_raised: parse_color(&ferese_config::theme::default_tokens().colors.surface_raised)
+                .expect("valid theme surface color"),
             surface_popover: [17, 24, 33, 255],
             text_primary: [244, 247, 251, 255],
             text_muted: [135, 147, 162, 255],
             accent: [61, 123, 230, 255],
             accent_gradient: None,
             on_accent: [244, 247, 251, 255],
-            border: [255, 255, 255, 24],
+            border: parse_color(&default_border()).expect("valid theme border color"),
             shadow: [0, 0, 0, 85],
             bar_radius: 14.0,
             material_radius: 14.0,
@@ -249,6 +252,8 @@ struct TypographyConfig {
 struct ThemeColorsConfig {
     #[serde(default = "default_surface_base")]
     surface_base: String,
+    #[serde(default = "default_surface_raised")]
+    surface_raised: String,
     #[serde(default = "default_text_primary")]
     text_primary: String,
     #[serde(default = "default_text_muted")]
@@ -267,6 +272,7 @@ impl Default for ThemeColorsConfig {
     fn default() -> Self {
         Self {
             surface_base: default_surface_base(),
+            surface_raised: default_surface_raised(),
             text_primary: default_text_primary(),
             text_muted: default_text_muted(),
             accent: default_accent(),
@@ -371,7 +377,7 @@ fn parse_document(
     {
         Ok(config) => {
             if let Some(panels) = &config.panels {
-                ferese_config::panel::validate(panels).map_err(ferese_config::Error::from)?;
+                ferese_panel::validate(panels).map_err(ferese_config::Error::from)?;
             }
 
             config.animations.validate().map_err(ferese_config::Error::from)?;
@@ -447,6 +453,7 @@ fn shell_theme(theme: &ThemeConfig) -> ShellTheme {
         bar_text_primary: parse_color(&theme.surface.bar.text_primary).unwrap_or(defaults.bar_text_primary),
         bar_text_muted: parse_color(&theme.surface.bar.text_muted).unwrap_or(defaults.bar_text_muted),
         surface_base: parse_color(&theme.colors.surface_base).unwrap_or(defaults.surface_base),
+        surface_raised: parse_color(&theme.colors.surface_raised).unwrap_or(defaults.surface_raised),
         surface_popover: {
             let mut color = parse_color(&theme.colors.surface_base).unwrap_or(defaults.surface_base);
             color[3] = alpha;
@@ -501,6 +508,10 @@ fn default_surface_base() -> String {
     "#111821".to_owned()
 }
 
+fn default_surface_raised() -> String {
+    ferese_config::theme::default_tokens().colors.surface_raised
+}
+
 fn default_text_primary() -> String {
     "#F4F7FB".to_owned()
 }
@@ -514,7 +525,7 @@ fn default_accent() -> String {
 }
 
 fn default_border() -> String {
-    "#FFFFFF18".to_owned()
+    ferese_config::theme::default_tokens().colors.border
 }
 
 fn default_shadow() -> String {
@@ -547,6 +558,25 @@ pub(crate) fn config_path() -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn morph_profile_uses_the_current_strict_schema() {
+        let config = parse_test_source(
+            "panel main { style morph; morph { idle-width 180; media-height 184; peek-on-hover #false; }; }\n",
+        )
+        .unwrap();
+        assert_eq!(config.panels[0].morph.idle_width, 180.);
+        assert_eq!(config.panels[0].morph.media_height, 184.);
+        assert!(!config.panels[0].morph.peek_on_hover);
+        assert!(
+            parse_test_source("panel main { style morph; }\n").unwrap().panels[0]
+                .morph
+                .peek_on_hover
+        );
+        assert!(parse_test_source("panel main { style morph; morph { peek-on-hover 1; }; }\n").is_err());
+        assert!(parse_test_source("panel main { style morph; morph { idle-wdth 180; }; }\n").is_err());
+        assert!(parse_test_source("panel main { style morph; morph { idle-width -1; }; }\n").is_err());
+    }
+
     #[test]
     fn removed_geometry_is_rejected_before_a_runtime_snapshot_can_hide_it() {
         for key in [
@@ -583,11 +613,11 @@ mod tests {
 
     #[test]
     fn reduce_transparency_overrides_panel_opacity_for_both_surfaces() {
-        for surface in ["solid", "none"] {
+        for surface in ["flat", "floating"] {
             for opacity in [0., 0.4, 1.] {
                 for reduce in [false, true] {
                     let source = format!(
-                        "theme {{ material {{ style translucent; opacity 0.7; }}; accessibility {{ reduce-transparency #{reduce}; }}; }}; panel main {{ surface {surface}; group-surface island; background-opacity {opacity}; }}"
+                        "theme {{ material {{ style translucent; opacity 0.7; }}; accessibility {{ reduce-transparency #{reduce}; }}; }}; panel main {{ style {surface}; background-opacity {opacity}; }}"
                     );
                     let document = ferese_config::Document::parse(&source).unwrap();
                     let resolved = ferese_config::theme::resolve(
@@ -649,13 +679,13 @@ mod tests {
         use crate::panel::{GroupSurface, ItemKind, PanelSurface};
         let defaults = parse_test_source("").unwrap();
         assert_eq!(ShellConfig::default().panels, defaults.panels);
-        let source = "panel main { surface none; group-surface island; geometry { height 36; edge-margin 6; }; center { group title { surface none; item title kind=focused-window visible=#false; }; }; end { group status { island-padding 9.5; item battery kind=battery percentage=#false; }; }; }";
+        let source = "panel main { style floating; geometry { height 36; edge-margin 6; }; center { group title { item title kind=focused-window visible=#false; }; }; end { group status { island-padding 9.5; item battery kind=battery percentage=#false; }; }; }";
         let current = parse_test_source(source).unwrap();
         let panel = &current.panels[0];
-        assert_eq!(panel.surface, PanelSurface::None);
-        assert_eq!(panel.group_surface, GroupSurface::Island);
-        assert_eq!(panel.geometry.height, 36.);
-        assert_eq!(panel.geometry.edge_margin, 6);
+        assert_eq!(panel.surface(), PanelSurface::None);
+        assert_eq!(panel.group_surface(), GroupSurface::Island);
+        assert_eq!(panel.resolved_geometry().height, 36.);
+        assert_eq!(panel.resolved_geometry().edge_margin, 6);
         assert_eq!(panel.end.groups[0].island_padding, 9.5);
         assert!(!panel.center.groups[0].items[0].visible);
         assert_eq!(
@@ -667,10 +697,10 @@ mod tests {
 
     #[test]
     fn authored_composition_rejects_invalid_reload_data() {
-        let source = r#"panel "custom" { surface "none"; group-surface "island"; end { group "clocks" { item "one" kind="clock"; item "two" kind="clock"; }; }; }"#;
+        let source = r#"panel "custom" { style "floating"; end { group "clocks" { item "one" kind="clock"; item "two" kind="clock"; }; }; }"#;
         let config = parse_test_source(source).unwrap();
         assert_eq!(config.panels[0].id.0, "custom");
-        assert_eq!(config.panels[0].surface, crate::panel::PanelSurface::None);
+        assert_eq!(config.panels[0].surface(), crate::panel::PanelSurface::None);
         assert_eq!(config.panels[0].end.groups[0].items.len(), 2);
         assert!(parse_test_source(&source.replace("item \"two\"", "item \"one\"")).is_err());
         assert!(parse_test_source("panel one; panel two;").is_err());
@@ -680,7 +710,10 @@ mod tests {
     #[test]
     fn group_surfaces_do_not_change_modal_opacity() {
         let normal = parse_test_source("theme { material { style translucent; opacity 0.7; }; }").unwrap();
-        let islands = parse_test_source("panel main { surface none; group-surface island; }\ntheme { material { style translucent; opacity 0.7; }; }").unwrap();
+        let islands = parse_test_source(
+            "panel main { style floating; }\ntheme { material { style translucent; opacity 0.7; }; }",
+        )
+        .unwrap();
         assert_eq!(islands.theme.surface_popover, normal.theme.surface_popover);
         assert_eq!(islands.theme.surface_base, normal.theme.surface_base);
         assert_eq!(islands.theme.bar_background, normal.theme.bar_background);
@@ -696,7 +729,7 @@ mod tests {
             );
             let config = parse_test_source(&source).unwrap();
             assert_eq!(config.panels[0].end.groups[0].island_padding, padding);
-            assert_eq!(config.panels[0].geometry.inner_padding, 12.);
+            assert_eq!(config.panels[0].resolved_geometry().inner_padding, 12.);
         }
         for value in ["-1", "32.5", "\"small\""] {
             assert!(
@@ -788,7 +821,7 @@ theme {
         assert_eq!(config.theme.background.mode, WallpaperMode::Fill);
         let theme = shell_theme(&config.theme);
         assert_eq!(crate::panel::PanelGeometry::default().edge_margin, 0);
-        assert_eq!(crate::panel::PanelGeometry::default().height, 28.0);
+        assert_eq!(crate::panel::PanelGeometry::default().height, 36.0);
         assert_eq!(crate::panel::PanelGeometry::default().side_margins, 0);
         assert_eq!(theme.bar_radius, 14.0);
         assert_eq!(theme.bar_background[3], 255);
@@ -800,6 +833,7 @@ theme {
     fn bar_palette_can_be_changed_without_changing_popovers() {
         let config: FereseConfig = ferese_config::from_str(
             r##"theme {
+    colors { surface-raised "#314159"; }
     surface {
         bar {
             background "#EAECEEDD"
@@ -813,6 +847,7 @@ theme {
         .unwrap();
         let theme = shell_theme(&config.theme);
         assert_eq!(theme.bar_background, [234, 236, 238, 255]);
+        assert_eq!(theme.surface_raised, [49, 65, 89, 255]);
         assert_eq!(theme.for_bar().text_primary, [34, 34, 34, 255]);
         assert_eq!(theme.for_bar().text_muted, [102, 102, 102, 255]);
         assert_eq!(theme.text_primary, ShellTheme::default().text_primary);

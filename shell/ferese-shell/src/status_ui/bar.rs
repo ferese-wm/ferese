@@ -5,7 +5,7 @@ use cosmic::{Element, theme};
 
 use super::Menu;
 use crate::status::Snapshot;
-use crate::{BarMetrics, FereseShell, Message, accented_icon, bar_content, color, motion, recording, text};
+use crate::{BarMetrics, FereseShell, Message, accented_icon, bar_content, color, motion, recording};
 
 impl FereseShell {
     pub(crate) fn view_media_item(
@@ -21,7 +21,7 @@ impl FereseShell {
             super::media::bar(
                 self,
                 theme,
-                BarMetrics::from(self.config.panels[0].geometry),
+                BarMetrics::from(self.config.panels[0].resolved_geometry()),
                 representation,
                 selected,
                 width,
@@ -36,7 +36,7 @@ impl FereseShell {
         selected: bool,
     ) -> Element<'_, cosmic::Action<Message>> {
         let theme = self.config.theme.for_bar();
-        let metrics = BarMetrics::from(self.config.panels[0].geometry);
+        let metrics = BarMetrics::from(self.config.panels[0].resolved_geometry());
         let (source, enabled) = if kind == Menu::Recording {
             let source: &'static [u8] = match self.recorder.state {
                 recording::State::Selecting => ferese_theme::icons::RECORD_CANCEL,
@@ -70,7 +70,8 @@ impl FereseShell {
             && let Some(elapsed) = self.recorder.elapsed()
         {
             content = content.push(
-                text(elapsed)
+                self.render
+                    .text(elapsed)
                     .size(metrics.text_size)
                     .class(theme::Text::Color(foreground)),
             );
@@ -81,7 +82,8 @@ impl FereseShell {
             && let Some(battery) = &self.status.battery
         {
             content = content.push(
-                text(format!("{}%", battery.percent))
+                self.render
+                    .text(format!("{}%", battery.percent))
                     .size(metrics.text_size)
                     .class(theme::Text::Color(foreground)),
             );
@@ -94,14 +96,14 @@ impl FereseShell {
                 .is_some_and(|n| n.count > 0 && !n.dnd)
         {
             content = content.push(
-                container(text(""))
+                container(self.render.text(""))
                     .width(4)
                     .height(4)
                     .class(theme::Container::custom(move |_| container::Style {
                         background: Some(Background::Color(foreground)),
                         border: Border {
                             shape: BorderShape::Continuous,
-                            radius: motion::radius(2.0).into(),
+                            radius: self.render.radius(2.0).into(),
                             ..Default::default()
                         },
                         ..Default::default()
@@ -138,7 +140,7 @@ impl FereseShell {
                     },
                 ))
             });
-        motion::button(control, foreground, selected, 1.0)
+        motion::button(self.render, control, foreground, selected, 1.0)
     }
 }
 
@@ -161,6 +163,7 @@ fn status_label(kind: Menu, s: &Snapshot) -> String {
             Some(n) => format!("Notifications: {} unread", n.count),
             _ => "Notifications: unavailable".into(),
         },
+        Menu::Workspaces => "Workspaces".into(),
         Menu::Calendar => "Calendar".into(),
         Menu::Overflow => "More panel items".into(),
         Menu::Recording => "Screen recording".into(),
@@ -239,6 +242,7 @@ pub(super) fn status_icon(kind: Menu, s: &Snapshot) -> (&'static [u8], bool) {
                 (ferese_theme::icons::NOTIFICATIONS, true)
             }
         }
+        Menu::Workspaces => (ferese_theme::icons::OVERVIEW, true),
         Menu::System => (ferese_theme::icons::CONTROL_CENTER, true),
     }
 }

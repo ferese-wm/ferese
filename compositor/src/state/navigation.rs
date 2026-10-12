@@ -52,8 +52,9 @@ impl Ferese {
             {
                 return;
             }
+            let layout_bounds = self.workspace_layout_bounds(bounds, &candidate);
             if candidate
-                .resolve_geometry_with_constraints(bounds, self.gap_config, &self.window_constraints(), Some(to))
+                .resolve_geometry_with_constraints(layout_bounds, self.gap_config, &self.window_constraints(), Some(to))
                 .is_err()
             {
                 return;
@@ -338,6 +339,7 @@ impl Ferese {
         let Some(bounds) = self.output_bounds() else {
             return;
         };
+        let bounds = self.workspace_layout_bounds(bounds, &self.workspaces.active().layout);
         let constraints = self.window_constraints();
 
         match self
@@ -612,6 +614,48 @@ impl Ferese {
             };
             self.workspace_slides.insert(owner, slide);
         }
+    }
+
+    pub(crate) fn move_managed_window_to_workspace(&mut self, window: WindowId, destination: WorkspaceId) -> bool {
+        if self.session_lock.active() || self.windows.window(window).and_then(|w| w.toplevel()).is_none() {
+            return false;
+        }
+        let Some(source) = self.workspaces.workspace_for_window(window) else {
+            return false;
+        };
+        let Some(output_id) = self.output_workspaces.output_for_workspace(destination) else {
+            return false;
+        };
+        if self.output_workspaces.output_for_workspace(source) != Some(output_id) {
+            return false;
+        }
+        if source == destination {
+            return true;
+        }
+        let bounds = self
+            .output_ids
+            .iter()
+            .find(|(_, id)| **id == output_id)
+            .and_then(|(output, _)| self.output_bounds_for(output));
+        let axis = bounds
+            .and_then(|bounds| {
+                let workspace = self.workspaces.workspace(destination)?;
+                workspace.layout.automatic_axis(workspace.last_focused, bounds).ok()
+            })
+            .unwrap_or(Axis::Horizontal);
+        if self
+            .workspaces
+            .move_window_to_workspace(window, destination, axis, 0.5)
+            .is_err()
+        {
+            return false;
+        }
+        if self.focused_window == Some(window) {
+            self.focused_window = self.workspaces.active().last_focused;
+        }
+        self.relayout();
+        // The shell keeps keyboard focus while a drag updates the overview.
+        true
     }
 
     pub fn move_focused_to_workspace(&mut self, index: u32) {

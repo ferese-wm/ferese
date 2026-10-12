@@ -32,7 +32,7 @@ use crate::window_rules::{WindowRule, WindowRuleConfig};
 #[derive(Debug, Default, Deserialize)]
 pub struct Config {
     #[serde(default)]
-    panels: Option<Vec<ferese_config::panel::Panel>>,
+    panels: Option<Vec<ferese_panel::Panel>>,
     #[serde(default)]
     notifications: ferese_config::notifications::NotificationConfig,
     #[serde(default)]
@@ -114,7 +114,7 @@ impl Config {
 
     pub(crate) fn runtime_config(&self) -> Result<crate::RuntimeConfig, ConfigError> {
         if let Some(panels) = &self.panels {
-            ferese_config::panel::validate(panels).map_err(ConfigError::Binding)?;
+            ferese_panel::validate(panels).map_err(ConfigError::Binding)?;
         }
         self.notifications.validate().map_err(ConfigError::Binding)?;
         self.xwayland.validate().map_err(ConfigError::Binding)?;
@@ -136,6 +136,11 @@ impl Config {
             bindings,
             window_rules: self.window_rules()?,
             theme_settings: self.theme_settings()?,
+            panel_style: self
+                .panels
+                .as_ref()
+                .and_then(|panels| panels.first())
+                .map_or(ferese_panel::PanelStyle::Flat, |panel| panel.style),
             panel_corner_radius: self
                 .panels
                 .as_ref()
@@ -458,11 +463,16 @@ mod tests {
 
     #[test]
     fn panel_surfaces_are_validated_before_live_publication() {
-        for surface in ["none", "inset", "island"] {
+        for style in ferese_panel::PanelStyle::AVAILABLE {
             let source = format!(
-                "panel main {{ surface solid; group-surface {surface}; end {{ group status {{ surface {surface}; }}; }}; }}"
+                "panel main {{ style {}; end {{ group status {{ item clock kind=clock; }}; }}; }}",
+                style.key()
             );
             Config::parse_source(&source).unwrap().runtime_config().unwrap();
+        }
+        for surface in ["none", "inset", "island"] {
+            let invalid = format!("panel main {{ end {{ group status {{ surface {surface}; }}; }}; }}");
+            assert!(Config::parse_source(&invalid).is_err());
         }
         assert!(Config::parse_source("panel main { group-surface invalid; }").is_err());
         assert!(Config::parse_source("panel main { background islands; }").is_err());
@@ -817,6 +827,7 @@ mod tests {
                 focus_ring_gradient: None,
                 shadow_color: RgbaColor([1.0 / 255.0, 2.0 / 255.0, 3.0 / 255.0, 128.0 / 255.0]),
                 surface_base_color: RgbaColor([17.0 / 255.0, 24.0 / 255.0, 33.0 / 255.0, 1.0,]),
+                surface_raised_color: RgbaColor([30.0 / 255.0, 37.0 / 255.0, 48.0 / 255.0, 1.0]),
                 bar_background_color: RgbaColor([17.0 / 255.0, 24.0 / 255.0, 33.0 / 255.0, 1.0,]),
                 text_primary_color: RgbaColor([244.0 / 255.0, 247.0 / 255.0, 251.0 / 255.0, 1.0]),
                 shell_opacity: 0.78,
@@ -906,11 +917,15 @@ mod tests {
 
     #[test]
     fn material_color_comes_from_surface_base() {
-        let theme = parse("theme {\n    colors {\n        surface-base \"#000000\"\n    }\n    surface {\n        bar {\n            background \"#FFFFFF\"\n        }\n    }\n}\n")
+        let theme = parse("theme {\n    colors {\n        surface-base \"#000000\"\n        surface-raised \"#314159\"\n    }\n    surface {\n        bar {\n            background \"#FFFFFF\"\n        }\n    }\n}\n")
             .theme_settings()
             .unwrap();
         assert_eq!(theme.surface_base_color, RgbaColor([0.0, 0.0, 0.0, 1.0]));
         assert_eq!(theme.bar_background_color, RgbaColor([1.0, 1.0, 1.0, 1.0]));
+        assert_eq!(
+            theme.surface_raised_color,
+            RgbaColor([49. / 255., 65. / 255., 89. / 255., 1.])
+        );
     }
 
     #[test]

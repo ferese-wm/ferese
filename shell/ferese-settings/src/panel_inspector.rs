@@ -1,7 +1,7 @@
 use crate::panel_edit::{Action, Destination, Zone};
 use crate::{App, Element, Field, Kind, Message, widget};
 use cosmic::iced::{Alignment, Length};
-use ferese_config::panel::{Group, Item, ItemKind, Panel, Representation};
+use ferese_panel::{Group, Item, ItemKind, Panel, Representation};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Choice(&'static str, &'static str);
@@ -146,7 +146,7 @@ impl App {
             .spacing(6)
             .push(self.label("Workspace style", 13.))
             .push(self.note("A sample of active, occupied and empty workspaces."));
-        for style in ferese_config::panel::WorkspaceStyle::ALL {
+        for style in ferese_panel::WorkspaceStyle::ALL {
             let sample = ferese_theme::workspaces::sample(style, palette, self.font, 22.);
             choices = choices.push(
                 widget::button::custom(
@@ -192,30 +192,6 @@ impl App {
                         palette,
                     )),
             );
-        let surface_choices = [
-            Choice("inherit", "Default"),
-            Choice("none", "None"),
-            Choice("inset", "Inset"),
-            Choice("island", "Island"),
-        ];
-        let selected_surface = group.surface.map_or(surface_choices[0], |surface| {
-            *surface_choices.iter().find(|choice| choice.0 == surface.key()).unwrap()
-        });
-        let surface_id = group.id.clone();
-        rows = rows.push(self.label("Surface", 13.)).push(crate::visuals::panel_select(
-            cosmic::iced::widget::pick_list(surface_choices.to_vec(), Some(selected_surface), move |choice| {
-                Message::PanelEdit(if choice.0 == "inherit" {
-                    Action::ClearGroupSurface(surface_id.clone())
-                } else {
-                    Action::SetGroup(surface_id.clone(), "surface".into(), choice.0.into())
-                })
-            })
-            .font(self.font)
-            .text_size(13)
-            .padding([8, 10])
-            .width(Length::Fill),
-            palette,
-        ));
         rows = rows.push(self.panel_divider());
         let mut spacing = widget::column([]).spacing(12);
         for (name, label, value, maximum) in [
@@ -229,7 +205,7 @@ impl App {
             ),
             ("island_padding", "Island padding", group.island_padding, 32.),
         ] {
-            if panel.resolved_surface(group) != ferese_config::panel::GroupSurface::Island && name == "island_padding" {
+            if panel.group_surface() != ferese_panel::GroupSurface::Island && name == "island_padding" {
                 continue;
             }
             let change = |value: f32| {

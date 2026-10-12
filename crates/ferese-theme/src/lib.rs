@@ -9,6 +9,7 @@ pub mod icons;
 pub mod menus;
 mod palette;
 pub mod panel;
+pub mod panel_surface;
 mod typography;
 pub mod workspaces;
 

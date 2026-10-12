@@ -2,7 +2,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::{Element, Message, container, text};
+use crate::{Element, Message, container};
 use cosmic::app::Task;
 use cosmic::iced::advanced::widget::{Id, Operation, operation};
 use cosmic::iced::{Rectangle, window};
@@ -26,7 +26,7 @@ impl FereseShell {
                 && matches!(
                     item.kind,
                     crate::panel::ItemKind::Workspaces {
-                        style: ferese_config::panel::WorkspaceStyle::AppIcons
+                        style: ferese_panel::WorkspaceStyle::AppIcons
                     }
                 )
         });
@@ -43,7 +43,7 @@ impl FereseShell {
         } else {
             Task::none()
         };
-        Task::batch([icons, tooltip])
+        Task::batch([icons, tooltip, self.sync_hub_workspaces()])
     }
 
     pub(super) fn workspace_icons_loaded(&mut self, result: Result<IconIndex, String>) -> Task<Message> {
@@ -259,8 +259,8 @@ impl FereseShell {
         let id = window::Id::unique();
         let parent = hover.bar;
         let (anchor, gravity, gap) = match self.config.panels[0].edge {
-            ferese_config::panel::Edge::Top => (2u32, 2u32, 6),
-            ferese_config::panel::Edge::Bottom => (1u32, 1u32, -6),
+            ferese_panel::Edge::Top => (2u32, 2u32, 6),
+            ferese_panel::Edge::Bottom => (1u32, 1u32, -6),
         };
         self.workspace_ui.tooltip = Some(id);
         let action = cosmic::surface::action::app_popup::<Self>(
@@ -299,7 +299,7 @@ impl FereseShell {
                 .iter()
                 .find(|workspace| workspace.id == hover.workspace)
         }) else {
-            return text("").into();
+            return self.render.text("").into();
         };
         let active = self
             .snapshot
@@ -315,7 +315,8 @@ impl FereseShell {
         });
         cosmic::widget::autosize::autosize(
             container(
-                text(label)
+                self.render
+                    .text(label)
                     .size(11)
                     .wrapping(cosmic::iced::widget::text::Wrapping::None)
                     .ellipsize(cosmic::iced::widget::text::Ellipsize::End(
@@ -502,7 +503,9 @@ mod tests {
             focused: false,
             urgent: false,
             fullscreen: false,
+            maximized: false,
             floating: false,
+            geometry: None,
         });
     }
 
@@ -553,7 +556,7 @@ mod tests {
             for item in &mut group.items {
                 if matches!(item.kind, crate::panel::ItemKind::Workspaces { .. }) {
                     item.kind = crate::panel::ItemKind::Workspaces {
-                        style: ferese_config::panel::WorkspaceStyle::AppIcons,
+                        style: ferese_panel::WorkspaceStyle::AppIcons,
                     };
                 }
             }
@@ -657,7 +660,9 @@ mod tests {
                 focused: false,
                 urgent: false,
                 fullscreen: false,
+                maximized: false,
                 floating: false,
+                geometry: None,
             })
             .collect();
         let fingerprint = |handles: Vec<icon::Handle>| {
@@ -705,7 +710,7 @@ mod tests {
         use cosmic::iced::advanced::renderer::Headless;
         use cosmic::iced::advanced::{Layout, Shell, clipboard, layout, mouse, widget};
         use cosmic::iced::{Event, Font, Pixels, Point, Size};
-        use ferese_config::panel::WorkspaceStyle;
+        use ferese_panel::WorkspaceStyle;
 
         #[derive(Clone, Copy, Debug)]
         enum Pointer {

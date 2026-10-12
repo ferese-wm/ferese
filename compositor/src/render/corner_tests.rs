@@ -288,6 +288,105 @@ fn rasterize(renderer: &mut GlesRenderer, program: &GlesPixelProgram, uniforms: 
 
 #[test]
 #[ignore = "requires an EGL rendering device"]
+fn panel_shader_matches_core_outlines_and_resets_for_popovers() {
+    use ferese_panel::scene::{GroupBounds, Parameters, Scene, derive};
+    use ferese_panel::shape::{PixelGrid, Style, ZonePosition};
+    use smithay::backend::renderer::gles::UniformValue;
+    let mut renderer = renderer();
+    let mut resources = RenderResources::default();
+    let program = material_program_for_corners(&mut resources, &mut renderer, CornerShape::Circular).unwrap();
+    let bounds = ferese_layout::Rect::new(0., 0., 64., 64.);
+    let groups = [
+        GroupBounds {
+            zone: ZonePosition::Start,
+            bounds: ferese_layout::Rect::new(3., 0., 18., 16.),
+        },
+        GroupBounds {
+            zone: ZonePosition::Start,
+            bounds: ferese_layout::Rect::new(25., 0., 18., 16.),
+        },
+    ];
+    let mut scenes = Vec::new();
+    for style in [
+        Style::Floating,
+        Style::Capsules,
+        Style::Notch,
+        Style::Fused,
+        Style::Morph,
+        Style::Flat,
+        Style::Frame,
+        Style::CornerWrap,
+    ] {
+        for edge in [ferese_panel::Edge::Top, ferese_panel::Edge::Bottom] {
+            for scale in [1., 1.25, 1.5] {
+                scenes.push(
+                    derive(
+                        Parameters {
+                            style,
+                            edge,
+                            height: 16.,
+                            gap: 4.,
+                            frame_insets: [16., 4., 4., 4.],
+                            frame_radius: 10.,
+                            wrap_size: [40., 42.],
+                            wrap_width: 8.,
+                            fillet: 6.,
+                            ..Default::default()
+                        },
+                        bounds,
+                        &groups,
+                        PixelGrid::new(scale).unwrap(),
+                    )
+                    .unwrap(),
+                );
+            }
+        }
+    }
+    for scene in scenes.iter().chain(std::iter::once(&Scene::default())) {
+        let matrices = scene
+            .packets()
+            .into_iter()
+            .map(|p| [p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7], p[8] * 4. + p[9]])
+            .collect::<Vec<_>>();
+        let mut uniforms = vec![
+            Uniform::new("visible_rect", [0.0f32, 0., 64., 64.]),
+            Uniform::new("material_radii", [12.0f32; 4]),
+            Uniform::new("tint", [1.0f32; 4]),
+            Uniform::new("paint_mode", 0.0f32),
+            Uniform::new("panel_count", matrices.len() as f32),
+            Uniform::new("panel_fusion", scene.fusion as f32),
+        ];
+        if !matrices.is_empty() {
+            uniforms.push(Uniform::new(
+                "panel_shapes[0]",
+                UniformValue::Matrix3x3 {
+                    matrices,
+                    transpose: false,
+                },
+            ));
+        }
+        let pixels = rasterize(&mut renderer, &program.0, &uniforms);
+        for y in 0..64 {
+            for x in 0..64 {
+                let point = [x as f64 + 0.5, y as f64 + 0.5];
+                let distance = if scene.paint.is_empty() {
+                    reference_distance(point, [0., 0., 64., 64.], 12., CornerShape::Circular)
+                } else {
+                    scene.distance(point)
+                };
+                let expected = (coverage(distance) * 255.).round() as u8;
+                let actual = pixels[(y * 64 + x) * 4 + 3];
+                assert!(
+                    actual.abs_diff(expected) <= 2,
+                    "panel mask mismatch at ({x},{y}): {actual} != {expected}, {scene:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires an EGL rendering device"]
 fn apple_window_fill_and_inset_border_match_path_reference_at_fractional_scales() {
     let mut renderer = renderer();
     let mut resources = RenderResources::default();
@@ -412,10 +511,8 @@ fn docked_panel_fill_covers_the_entire_attached_edge() {
     let mut renderer = renderer();
     let mut resources = RenderResources::default();
     let material = material_program_for_corners(&mut resources, &mut renderer, CornerShape::Circular).unwrap();
-    for edge in [ferese_config::panel::Edge::Top, ferese_config::panel::Edge::Bottom] {
-        let radii = ferese_config::panel::CornerRadii([14., 8., 12., 20.])
-            .at_edge(edge, true)
-            .0;
+    for edge in [ferese_panel::Edge::Top, ferese_panel::Edge::Bottom] {
+        let radii = ferese_panel::CornerRadii([14., 8., 12., 20.]).at_edge(edge, true).0;
         let pixels = rasterize(
             &mut renderer,
             &material.0,
@@ -428,7 +525,7 @@ fn docked_panel_fill_covers_the_entire_attached_edge() {
                 Uniform::new("shadow_values", [8.0f32, 1.0]),
             ],
         );
-        let (attached_row, free_row) = if edge == ferese_config::panel::Edge::Top {
+        let (attached_row, free_row) = if edge == ferese_panel::Edge::Top {
             (0, 35)
         } else {
             (35, 0)

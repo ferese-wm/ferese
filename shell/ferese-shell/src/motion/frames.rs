@@ -3,6 +3,23 @@
 use super::*;
 use std::time::Instant;
 
+pub(crate) struct ContentMeasurement<'a, M> {
+    pub content: Element<'a, M>,
+    pub width: f32,
+    pub measured: Box<dyn Fn(Size) + 'a>,
+}
+
+pub(crate) fn geometry_driven<'a, M: 'a>(
+    revision: Option<Instant>,
+    build: impl Fn(Instant) -> Element<'a, M> + 'a,
+    active: impl Fn(Instant) -> bool + 'a,
+    after_frame: impl Fn(Instant) + 'a,
+    completion: impl Fn(Instant) -> Option<M> + 'a,
+    measurement: Option<ContentMeasurement<'a, M>>,
+) -> Element<'a, M> {
+    driven(revision, build, active, after_frame, completion, true, measurement)
+}
+
 pub(crate) fn frame_driven<'a, M: 'a>(
     revision: Option<Instant>,
     build: impl Fn(Instant) -> Element<'a, M> + 'a,
@@ -10,11 +27,26 @@ pub(crate) fn frame_driven<'a, M: 'a>(
     after_frame: impl Fn(Instant) + 'a,
     completion: impl Fn(Instant) -> Option<M> + 'a,
 ) -> Element<'a, M> {
+    driven(revision, build, active, after_frame, completion, false, None)
+}
+
+fn driven<'a, M: 'a>(
+    revision: Option<Instant>,
+    build: impl Fn(Instant) -> Element<'a, M> + 'a,
+    active: impl Fn(Instant) -> bool + 'a,
+    after_frame: impl Fn(Instant) + 'a,
+    completion: impl Fn(Instant) -> Option<M> + 'a,
+    geometry_changes: bool,
+    measurement: Option<ContentMeasurement<'a, M>>,
+) -> Element<'a, M> {
     let now = Instant::now();
     let content = build(now);
     let content_active = active(now);
     Element::new(FrameDriven {
         content,
+        measurement,
+        measured: false,
+        geometry_changes,
         content_active,
         revision,
         build: Box::new(build),
@@ -29,6 +61,8 @@ struct FrameState {
     revision: Option<Instant>,
     last_frame: Option<Instant>,
     completed: bool,
+    pending: bool,
+    limits: Option<layout::Limits>,
 }
 
 impl FrameState {
@@ -42,6 +76,7 @@ impl FrameState {
             return false;
         }
         self.last_frame = Some(at);
+        self.pending = true;
         true
     }
 
@@ -56,7 +91,10 @@ impl FrameState {
 
 struct FrameDriven<'a, M> {
     content: Element<'a, M>,
+    measurement: Option<ContentMeasurement<'a, M>>,
+    measured: bool,
     content_active: bool,
+    geometry_changes: bool,
     revision: Option<Instant>,
     build: Box<dyn Fn(Instant) -> Element<'a, M> + 'a>,
     active: Box<dyn Fn(Instant) -> bool + 'a>,
@@ -72,10 +110,20 @@ impl<'a, M: 'a> Widget<M, Theme, cosmic::Renderer> for FrameDriven<'a, M> {
         widget::tree::State::new(FrameState::default())
     }
     fn children(&self) -> Vec<widget::Tree> {
-        vec![widget::Tree::new(&self.content)]
+        std::iter::once(widget::Tree::new(&self.content))
+            .chain(self.measurement.iter().map(|m| widget::Tree::new(&m.content)))
+            .collect()
     }
     fn diff(&mut self, tree: &mut widget::Tree) {
-        tree.diff_children(std::slice::from_mut(&mut self.content));
+        tree.children.truncate(1 + usize::from(self.measurement.is_some()));
+        tree.children[0].diff(&mut self.content);
+        if let Some(measurement) = &mut self.measurement {
+            if tree.children.len() == 1 {
+                tree.children.push(widget::Tree::new(&measurement.content));
+            } else {
+                tree.children[1].diff(&mut measurement.content);
+            }
+        }
     }
     fn size(&self) -> Size<Length> {
         self.content.as_widget().size()
@@ -86,6 +134,23 @@ impl<'a, M: 'a> Widget<M, Theme, cosmic::Renderer> for FrameDriven<'a, M> {
         renderer: &cosmic::Renderer,
         limits: &layout::Limits,
     ) -> layout::Node {
+        tree.state.downcast_mut::<FrameState>().limits = Some(*limits);
+        if !self.measured {
+            if let Some(measurement) = &mut self.measurement {
+                // Measure at the final width once, so spring overshoot never changes wrapping or its target.
+                let probe_limits = layout::Limits::new(Size::ZERO, Size::new(measurement.width, f32::INFINITY));
+                let node = measurement
+                    .content
+                    .as_widget_mut()
+                    .layout(&mut tree.children[1], renderer, &probe_limits);
+                (measurement.measured)(node.size());
+                let now = Instant::now();
+                self.content = (self.build)(now);
+                self.content_active = (self.active)(now);
+                tree.children[0].diff(&mut self.content);
+            }
+            self.measured = true;
+        }
         self.content
             .as_widget_mut()
             .layout(&mut tree.children[0], renderer, limits)
@@ -117,39 +182,57 @@ impl<'a, M: 'a> Widget<M, Theme, cosmic::Renderer> for FrameDriven<'a, M> {
         } else {
             None
         };
+        let mut updated_geometry = false;
+        let mut fresh_layout = None;
         if let Some(at) = redraw {
-            // Only paint parameters depend on time. Preserve the child tree's
-            // focus/hover/scroll state and its existing layout.
+            // Preserve focus and scroll state while sampling the current frame.
             let active = (self.active)(at);
             // Include the final settled sample, then reuse the tree on hover
             // and other redraws. Application updates build fresh content.
             if active || self.content_active {
                 self.content = (self.build)(at);
                 tree.children[0].diff(&mut self.content);
+                if self.geometry_changes {
+                    self.content_active = (self.active)(at);
+                    let limits = tree
+                        .state
+                        .downcast_ref::<FrameState>()
+                        .limits
+                        .expect("laid-out animation");
+                    fresh_layout = Some(
+                        self.content
+                            .as_widget_mut()
+                            .layout(&mut tree.children[0], renderer, &limits)
+                            .move_to(layout.position()),
+                    );
+                    updated_geometry = true;
+                }
             }
-            self.content_active = active;
+            self.content_active = (self.active)(at);
         }
+        // Iced revalidates the base layout without replaying the event. Publish
+        // the measured shape and run the child against this frame's layout now.
         self.content.as_widget_mut().update(
             &mut tree.children[0],
             event,
-            layout,
+            fresh_layout.as_ref().map_or(layout, Layout::new),
             cursor,
             renderer,
             clipboard,
             shell,
             viewport,
         );
+        if updated_geometry {
+            shell.invalidate_layout();
+        }
         if let Event::Window(cosmic::iced::window::Event::RedrawRequested(at)) = event {
             let active = (self.active)(*at);
             if active {
                 shell.request_redraw();
             }
-            // Iced can replay the same redraw after a child invalidates layout.
-            // Keep its NextFrame request, but sample/publish only once.
-            if redraw.is_some() {
+            // Complete only after a valid layout, including the replay of this frame.
+            if std::mem::take(&mut tree.state.downcast_mut::<FrameState>().pending) {
                 (self.after_frame)(*at);
-            }
-            if redraw.is_some() {
                 let completion = (self.completion)(*at);
                 if tree.state.downcast_mut::<FrameState>().complete(completion.is_none())
                     && let Some(message) = completion

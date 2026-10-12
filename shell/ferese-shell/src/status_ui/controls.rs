@@ -4,9 +4,10 @@ use cosmic::widget::{button, column, container, row, slider};
 use cosmic::{Element, theme};
 
 use crate::status::Action;
-use crate::{Message, ShellTheme, accented_icon, color, color_with_opacity, motion, shell_font, text};
+use crate::{Message, ShellTheme, accented_icon, color, color_with_opacity, motion};
 
 pub(super) fn status_summary<'a>(
+    render: crate::rendering::Rendering,
     source: &'static [u8],
     title: &'a str,
     subtitle: &'a str,
@@ -34,13 +35,14 @@ pub(super) fn status_summary<'a>(
             })),
             border: Border {
                 shape: BorderShape::Continuous,
-                radius: motion::radius(16.0).into(),
+                radius: render.radius(16.0).into(),
                 ..Default::default()
             },
             ..Default::default()
         }));
     let badge: Element<'_, cosmic::Action<Message>> = if let Some((_, action)) = toggle {
         motion::button(
+            render,
             button::custom(badge)
                 .padding(0)
                 .name(if enabled { "Turn off" } else { "Turn on" })
@@ -55,8 +57,8 @@ pub(super) fn status_summary<'a>(
     let summary = row![
         badge,
         column![
-            text(title).size(14),
-            text(subtitle).size(12).class(theme::Text::Color(muted)),
+            render.text(title).size(14),
+            render.text(subtitle).size(12).class(theme::Text::Color(muted)),
         ]
         .spacing(4)
         .width(Length::Fill)
@@ -66,9 +68,14 @@ pub(super) fn status_summary<'a>(
     summary.into()
 }
 
-pub(super) fn level_meter(value: u8, foreground: Color, opacity: f32) -> Element<'static, cosmic::Action<Message>> {
+pub(super) fn level_meter(
+    render: crate::rendering::Rendering,
+    value: u8,
+    foreground: Color,
+    opacity: f32,
+) -> Element<'static, cosmic::Action<Message>> {
     let segment = move |amount: u16, filled: bool| {
-        container(text(""))
+        container(render.text(""))
             .width(Length::FillPortion(amount))
             .height(5)
             .class(theme::Container::custom(move |_| container::Style {
@@ -82,7 +89,7 @@ pub(super) fn level_meter(value: u8, foreground: Color, opacity: f32) -> Element
                 })),
                 border: Border {
                     shape: BorderShape::Continuous,
-                    radius: motion::radius(2.5).into(),
+                    radius: render.radius(2.5).into(),
                     ..Default::default()
                 },
                 ..Default::default()
@@ -100,21 +107,24 @@ pub(super) fn level_meter(value: u8, foreground: Color, opacity: f32) -> Element
 }
 
 pub(super) fn control_card<'a>(
+    render: crate::rendering::Rendering,
     content: Element<'a, cosmic::Action<Message>>,
     foreground: Color,
     opacity: f32,
 ) -> Element<'a, cosmic::Action<Message>> {
-    ferese_theme::menus::section(content, foreground, opacity, motion::radius(22.))
+    ferese_theme::menus::section(content, foreground, opacity, render.radius(22.))
 }
 
 pub(super) fn menu_button<'a>(
+    render: crate::rendering::Rendering,
     label: &'a str,
     message: Message,
     foreground: Color,
     opacity: f32,
 ) -> Element<'a, cosmic::Action<Message>> {
     motion::button(
-        ferese_theme::menus::button(label, cosmic::Action::App(message), shell_font()),
+        render,
+        ferese_theme::menus::button(label, cosmic::Action::App(message), render.font),
         foreground,
         false,
         opacity,
@@ -122,6 +132,7 @@ pub(super) fn menu_button<'a>(
 }
 
 pub(super) fn shell_switch<'a>(
+    render: crate::rendering::Rendering,
     label: &str,
     enabled: bool,
     action: Action,
@@ -130,6 +141,7 @@ pub(super) fn shell_switch<'a>(
 ) -> Element<'a, cosmic::Action<Message>> {
     let toggle = ferese_theme::menus::switch(enabled, palette.palette(), opacity);
     motion::button(
+        render,
         button::custom(toggle)
             .padding(4)
             .name(format!("{label}: {}", if enabled { "on" } else { "off" }))
@@ -141,16 +153,22 @@ pub(super) fn shell_switch<'a>(
 }
 
 pub(super) fn toggle_row<'a>(
+    render: crate::rendering::Rendering,
     label: &'a str,
     on: bool,
     action: Action,
     palette: ShellTheme,
     opacity: f32,
 ) -> Element<'a, cosmic::Action<Message>> {
-    ferese_theme::menus::row(label, shell_switch(label, on, action, palette, opacity), shell_font())
+    ferese_theme::menus::row(
+        label,
+        shell_switch(render, label, on, action, palette, opacity),
+        render.font,
+    )
 }
 
 pub(super) fn slider_row(
+    render: crate::rendering::Rendering,
     source: &'static [u8],
     value: u8,
     brightness: bool,
@@ -171,7 +189,7 @@ pub(super) fn slider_row(
     row![
         accented_icon(source, 18, foreground, icon_accent),
         control,
-        text(format!("{value}%")).size(12).width(36)
+        render.text(format!("{value}%")).size(12).width(36)
     ]
     .spacing(8)
     .align_y(Alignment::Center)

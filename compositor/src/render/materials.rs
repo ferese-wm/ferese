@@ -46,6 +46,7 @@ pub(super) fn append_material_surface(
                 output,
                 surface,
                 MaterialSurface {
+                    shape_origin: content_origin,
                     geometry: *rect,
                     corners: *corners,
                     index,
@@ -148,6 +149,7 @@ fn framebuffer_corner_radii(radii: [f32; 4], transform: Transform) -> [f32; 4] {
 }
 
 pub(super) struct MaterialSurface {
+    pub shape_origin: Point<i32, Logical>,
     pub geometry: Rectangle<i32, Logical>,
     pub corners: RoundedRect,
     pub index: usize,
@@ -177,6 +179,7 @@ fn resolve_surface_material(
     role: crate::effects::SemanticRole,
     settings: crate::config::ThemeSettings,
     panel_opacity: Option<f32>,
+    panel_style: ferese_panel::PanelStyle,
 ) -> crate::effects::ResolvedMaterial {
     let mut material = crate::effects::resolve_material(role, settings.material_style, settings.shell_opacity as f32);
     if role == crate::effects::SemanticRole::Panel {
@@ -185,6 +188,9 @@ fn resolve_surface_material(
             panel_opacity,
             settings.reduce_transparency,
         );
+        if panel_style == ferese_panel::PanelStyle::Morph {
+            material.shadow = [0.; 3];
+        }
     }
     material
 }
@@ -198,13 +204,19 @@ pub(super) fn material_element_with_role(
     (role, generation, opacity): (crate::effects::SemanticRole, u64, f32),
 ) -> Option<(AnimatedWindowRenderElement, AnimatedWindowRenderElement)> {
     let MaterialSurface {
+        shape_origin,
         geometry,
         corners,
         index,
         capture_geometry,
         alpha,
     } = surface_geometry;
-    let material = resolve_surface_material(role, state.theme_settings, state.panel_background_opacity);
+    let material = resolve_surface_material(
+        role,
+        state.theme_settings,
+        state.panel_background_opacity,
+        state.panel_style,
+    );
     let presentation_alpha = opacity * alpha;
     let mode = output.current_mode()?;
     let scale = output.current_scale().fractional_scale();
@@ -213,6 +225,12 @@ pub(super) fn material_element_with_role(
         state.theme_settings.bar_background_color
     } else {
         state.theme_settings.surface_base_color
+    };
+    let morph = role == crate::effects::SemanticRole::Panel && state.panel_style == ferese_panel::PanelStyle::Morph;
+    let background = if morph {
+        state.theme_settings.surface_raised_color
+    } else {
+        background
     };
     let [red, green, blue, _] = background.0;
     let logical_radii = if role == crate::effects::SemanticRole::Panel {
@@ -234,9 +252,9 @@ pub(super) fn material_element_with_role(
     let touches_top = role == crate::effects::SemanticRole::Panel && geometry.loc.y == 0;
     let touches_bottom =
         role == crate::effects::SemanticRole::Panel && geometry.loc.y + geometry.size.h >= output_size.h;
-    let radii = ferese_config::panel::CornerRadii(radii)
+    let radii = ferese_panel::CornerRadii(radii)
         .at_top_edge(touches_top)
-        .at_edge(ferese_config::panel::Edge::Bottom, touches_bottom)
+        .at_edge(ferese_panel::Edge::Bottom, touches_bottom)
         .0;
     let radius = radii.into_iter().fold(0., f32::max);
     let corner_radii = framebuffer_corner_radii(radii, transform);
@@ -264,7 +282,13 @@ pub(super) fn material_element_with_role(
     let blur = material_blur_radius(material.style, material.opacity, state.theme_settings.backdrop_blur);
     let sample_geometry = expanded_blur_region(capture_geometry, blur.ceil() as i32, output_size);
     let sample_physical = sample_geometry.to_physical_precise_round(scale);
+    let panel = (role == crate::effects::SemanticRole::Panel)
+        .then(|| crate::effects::surface_panel_presentation(surface))
+        .flatten()
+        .map(|presentation| panel_matrices(&presentation, shape_origin, scale, mode.size, transform));
+    let opaque = panel.is_none() && material.opacity == 1.0 && presentation_alpha == 1.0 && radius == 0.0;
     let mut parameters = MaterialParameters {
+        panel,
         corner_radii,
         presentation_alpha,
         background_opacity,
@@ -278,7 +302,7 @@ pub(super) fn material_element_with_role(
         geometry,
         tint: [red, green, blue, material.opacity * presentation_alpha],
         generation,
-        opaque: material.opacity == 1.0 && presentation_alpha == 1.0 && radius == 0.0,
+        opaque,
         visible_framebuffer: framebuffer_clip_rect(corners.rect, mode.size, transform),
     };
     let context = renderer.context_id().erased();
@@ -377,6 +401,7 @@ pub(super) fn material_element_with_role(
             || cached.parameters.shadow_bounds != parameters.shadow_bounds
             || cached.parameters.corner_radii != parameters.corner_radii
             || cached.parameters.visible_framebuffer != parameters.visible_framebuffer
+            || cached.parameters.panel != parameters.panel
         {
             cached.shadow.resize(parameters.shadow_bounds, None);
             cached.shadow.update_uniforms(decoration_uniforms(&parameters, 2.0));
@@ -437,8 +462,8 @@ pub(super) fn blur_program(resources: &mut RenderResources, renderer: &mut GlesR
     }
 }
 
-pub(super) fn blur_uniform_names() -> [UniformName<'static>; 8] {
-    [
+pub(super) fn blur_uniform_names() -> Vec<UniformName<'static>> {
+    let mut names = vec![
         UniformName::new("visible_rect", UniformType::_4f),
         UniformName::new("material_radii", UniformType::_4f),
         UniformName::new("texture_size", UniformType::_2f),
@@ -447,11 +472,13 @@ pub(super) fn blur_uniform_names() -> [UniformName<'static>; 8] {
         UniformName::new("presentation_alpha", UniformType::_1f),
         UniformName::new("background_opacity", UniformType::_1f),
         UniformName::new("tint", UniformType::_4f),
-    ]
+    ];
+    names.extend(panel_uniform_names());
+    names
 }
 
 pub(super) fn blur_uniforms(p: &MaterialParameters) -> Vec<Uniform<'static>> {
-    vec![
+    let mut uniforms = vec![
         Uniform::new("visible_rect", p.visible_framebuffer),
         Uniform::new("material_radii", p.corner_radii),
         Uniform::new("texture_size", [p.sample_framebuffer[2], p.sample_framebuffer[3]]),
@@ -460,7 +487,9 @@ pub(super) fn blur_uniforms(p: &MaterialParameters) -> Vec<Uniform<'static>> {
         Uniform::new("presentation_alpha", p.presentation_alpha),
         Uniform::new("background_opacity", p.background_opacity),
         Uniform::new("tint", p.tint),
-    ]
+    ];
+    uniforms.extend(panel_uniforms(p));
+    uniforms
 }
 
 pub(super) fn framebuffer_capture_rect(rect: [f32; 4]) -> [i32; 4] {
@@ -502,7 +531,7 @@ pub(super) fn material_program_for_corners(
         return Some(program.clone());
     }
 
-    let uniforms = [
+    let mut uniforms = vec![
         UniformName::new("visible_rect", UniformType::_4f),
         UniformName::new("material_radii", UniformType::_4f),
         UniformName::new("tint", UniformType::_4f),
@@ -510,6 +539,7 @@ pub(super) fn material_program_for_corners(
         UniformName::new("shadow_rect", UniformType::_4f),
         UniformName::new("shadow_values", UniformType::_2f),
     ];
+    uniforms.extend(panel_uniform_names());
     match renderer.compile_custom_pixel_shader(corner_shader_for(MATERIAL_SHADER, shape), &uniforms) {
         Ok(program) => {
             let program = MaterialProgram(program);
@@ -532,14 +562,108 @@ pub(super) fn material_uniforms(parameters: &MaterialParameters) -> Vec<Uniform<
 }
 
 pub(super) fn decoration_uniforms(parameters: &MaterialParameters, paint_mode: f32) -> Vec<Uniform<'static>> {
-    vec![
+    let mut uniforms = vec![
         Uniform::new("paint_mode", paint_mode),
         Uniform::new("shadow_rect", parameters.shadow_rect),
         Uniform::new("shadow_values", parameters.shadow_values),
         Uniform::new("visible_rect", parameters.visible_framebuffer),
         Uniform::new("material_radii", parameters.corner_radii),
         Uniform::new("tint", parameters.tint),
+    ];
+    uniforms.extend(panel_uniforms(parameters));
+    uniforms
+}
+
+fn panel_uniform_names() -> [UniformName<'static>; 3] {
+    [
+        UniformName::new("panel_count", UniformType::_1f),
+        UniformName::new("panel_fusion", UniformType::_1f),
+        UniformName::new("panel_shapes[0]", UniformType::Matrix3x3),
     ]
+}
+
+fn panel_uniforms(parameters: &MaterialParameters) -> Vec<Uniform<'static>> {
+    use smithay::backend::renderer::gles::UniformValue;
+    let mut uniforms = vec![
+        Uniform::new(
+            "panel_count",
+            parameters.panel.as_ref().map_or(0., |p| p.shapes.len() as f32),
+        ),
+        Uniform::new("panel_fusion", parameters.panel.as_ref().map_or(0., |p| p.fusion)),
+    ];
+    if let Some(panel) = &parameters.panel
+        && !panel.shapes.is_empty()
+    {
+        uniforms.push(Uniform::new(
+            "panel_shapes[0]",
+            UniformValue::Matrix3x3 {
+                matrices: panel.shapes.clone(),
+                transpose: false,
+            },
+        ));
+    }
+    uniforms
+}
+
+fn panel_matrices(
+    presentation: &crate::effects::PanelPresentation,
+    origin: Point<i32, Logical>,
+    scale: f64,
+    size: Size<i32, Physical>,
+    transform: Transform,
+) -> PanelMatrices {
+    let permutation = framebuffer_corner_radii([0., 1., 2., 3.], transform);
+    let shapes = presentation
+        .shapes
+        .iter()
+        .map(|primitive| {
+            let b = primitive.bounds;
+            let left = ((b.x + f64::from(origin.x)) * scale).round() as i32;
+            let top = ((b.y + f64::from(origin.y)) * scale).round() as i32;
+            let right = ((b.x + b.width + f64::from(origin.x)) * scale).round() as i32;
+            let bottom = ((b.y + b.height + f64::from(origin.y)) * scale).round() as i32;
+            let physical = Rectangle::new((left, top).into(), (right - left, bottom - top).into());
+            let rect = framebuffer_clip_rect(physical, size, transform);
+            let radii = primitive.radii.0.map(|r| (f64::from(r) * scale) as f32);
+            let radii = framebuffer_corner_radii(
+                ferese_panel::CornerRadii(radii)
+                    .normalized(physical.size.w as f32, physical.size.h as f32)
+                    .0,
+                transform,
+            );
+            let operation = if primitive.operation >= 2 {
+                let old_corner = match primitive.operation {
+                    2 => 3,
+                    3 => 2,
+                    4 => 1,
+                    _ => 0,
+                };
+                match permutation.iter().position(|i| *i == old_corner as f32).unwrap() {
+                    0 => 5,
+                    1 => 4,
+                    2 => 3,
+                    _ => 2,
+                }
+            } else {
+                primitive.operation
+            };
+            [
+                rect[0],
+                rect[1],
+                rect[2],
+                rect[3],
+                radii[0],
+                radii[1],
+                radii[2],
+                radii[3],
+                f32::from(operation * 4 + primitive.blend_zone),
+            ]
+        })
+        .collect();
+    PanelMatrices {
+        shapes,
+        fusion: (presentation.fusion * scale) as f32,
+    }
 }
 
 pub(super) fn blur_damage(
@@ -562,17 +686,18 @@ mod region_geometry_tests {
     #[test]
     fn reduce_transparency_wins_over_continuous_and_island_panel_materials() {
         use crate::effects::SemanticRole;
-        for surface in ["solid", "none"] {
+        for surface in ["flat", "floating", "morph"] {
             for opacity in [0., 0.4, 1.] {
                 for reduce in [false, true] {
                     let source = format!(
-                        "theme {{ material {{ style translucent; opacity 0.7; }}; accessibility {{ reduce-transparency #{reduce}; }}; }}; panel main {{ surface {surface}; group-surface island; background-opacity {opacity}; }}"
+                        "theme {{ material {{ style translucent; opacity 0.7; }}; accessibility {{ reduce-transparency #{reduce}; }}; }}; panel main {{ style {surface}; background-opacity {opacity}; }}"
                     );
                     let (_, runtime, candidate) = crate::theme::prepare(&source, std::path::Path::new("/tmp")).unwrap();
                     let material = resolve_surface_material(
                         SemanticRole::Panel,
                         runtime.theme_settings,
                         runtime.panel_background_opacity,
+                        runtime.panel_style,
                     );
                     assert_eq!(material.opacity, if reduce { 1. } else { opacity });
                     assert_eq!(material.opacity, candidate.theme.panel_opacity(Some(opacity)));
@@ -587,10 +712,40 @@ mod region_geometry_tests {
                     if reduce {
                         assert_eq!(runtime.theme_settings.backdrop_blur, 0.);
                     }
-                    let popover = resolve_surface_material(SemanticRole::Popover, runtime.theme_settings, Some(0.));
+                    let popover = resolve_surface_material(
+                        SemanticRole::Popover,
+                        runtime.theme_settings,
+                        Some(0.),
+                        runtime.panel_style,
+                    );
                     assert!((popover.opacity - if reduce { 1. } else { 0.7 }).abs() < 0.001);
                 }
             }
+        }
+    }
+
+    #[test]
+    fn morph_inherits_translucency_and_blur_without_adding_a_shadow() {
+        use crate::effects::SemanticRole;
+        for reduce in [false, true] {
+            let source = format!(
+                "theme {{ material {{ style translucent; opacity 0.6; blur-radius 20; }}; accessibility {{ reduce-transparency #{reduce}; }}; }}; panel main {{ style morph; }}"
+            );
+            let (_, runtime, candidate) = crate::theme::prepare(&source, std::path::Path::new("/tmp")).unwrap();
+            let material =
+                resolve_surface_material(SemanticRole::Panel, runtime.theme_settings, None, runtime.panel_style);
+            assert_eq!(material.shadow, [0.; 3]);
+            assert_eq!(material.opacity, candidate.theme.panel_opacity(None));
+            assert_eq!(
+                material.style,
+                if reduce {
+                    crate::config::MaterialStyle::Solid
+                } else {
+                    crate::config::MaterialStyle::Translucent
+                }
+            );
+            let blur = material_blur_radius(material.style, material.opacity, runtime.theme_settings.backdrop_blur);
+            assert_eq!(blur > 0., !reduce);
         }
     }
 

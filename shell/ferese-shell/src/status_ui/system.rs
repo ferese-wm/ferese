@@ -6,9 +6,14 @@ use super::bar::status_icon;
 use super::controls::control_card;
 use super::{Menu, MenuRows, MenuStyle, audio, battery, notification_controls};
 use crate::status::{self, Action};
-use crate::{FereseShell, Message, ShellTheme, accented_icon, color, color_with_opacity, motion, shell_font, text};
+use crate::{FereseShell, Message, accented_icon, color, color_with_opacity, motion};
 
-pub(super) fn view<'a>(shell: &'a FereseShell, mut rows: MenuRows<'a>, style: MenuStyle) -> MenuRows<'a> {
+pub(super) fn view<'a>(
+    shell: &'a FereseShell,
+    mut rows: MenuRows<'a>,
+    style: MenuStyle,
+    show_settings_link: bool,
+) -> MenuRows<'a> {
     let MenuStyle {
         theme,
         primary,
@@ -19,7 +24,8 @@ pub(super) fn view<'a>(shell: &'a FereseShell, mut rows: MenuRows<'a>, style: Me
     let mut modes = row([]).spacing(6);
     for (mode, label) in [(Mode::Light, "☀ Light"), (Mode::Dark, "☾ Dark"), (Mode::Auto, "◐ Auto")] {
         modes = modes.push(motion::button(
-            button::custom(text(label).font(shell_font()).size(13))
+            shell.render,
+            button::custom(shell.render.text(label).font(shell.render.font).size(13))
                 .width(Length::Fill)
                 .padding(9)
                 .on_press(cosmic::Action::App(Message::ThemeMode(mode))),
@@ -28,23 +34,54 @@ pub(super) fn view<'a>(shell: &'a FereseShell, mut rows: MenuRows<'a>, style: Me
             p,
         ));
     }
-    rows = rows.push(modes);
+    if show_settings_link
+        && shell
+            .config
+            .status
+            .settings_command
+            .as_ref()
+            .is_some_and(|command| !command.is_empty())
+    {
+        let settings = motion::button(
+            shell.render,
+            button::custom(
+                ferese_theme::icons::tinted(ferese_theme::icons::SETTINGS, 18, color(theme.text_primary)).opacity(p),
+            )
+            .name("Open Ferese Settings")
+            .width(30)
+            .height(28)
+            .padding([5, 3])
+            .on_press(cosmic::Action::App(Message::Control(Action::Settings))),
+            primary,
+            false,
+            p,
+        );
+        modes = modes.push(cosmic::widget::tooltip(
+            settings,
+            shell.render.text("Open Ferese Settings").size(12),
+            cosmic::widget::tooltip::Position::Left,
+        ));
+    }
+    rows = rows.push(modes.align_y(Alignment::Center));
     if shell.config.theme_mode == Mode::Auto {
         rows = rows.push(
-            text(if theme.appearance == Appearance::Light {
-                "Auto · currently light"
-            } else {
-                "Auto · currently dark"
-            })
-            .font(shell_font())
-            .size(12)
-            .class(cosmic::theme::Text::Color(muted)),
+            shell
+                .render
+                .text(if theme.appearance == Appearance::Light {
+                    "Auto · currently light"
+                } else {
+                    "Auto · currently dark"
+                })
+                .font(shell.render.font)
+                .size(12)
+                .class(cosmic::theme::Text::Color(muted)),
         );
     }
     let mut connections = row::with_capacity(3).spacing(8).width(Length::Fill);
 
     if let Some(n) = &shell.status.network {
         connections = connections.push(connection_control(
+            shell.render,
             "Wi-Fi",
             if n.enabled {
                 n.connection.as_deref().unwrap_or("Not connected")
@@ -54,13 +91,13 @@ pub(super) fn view<'a>(shell: &'a FereseShell, mut rows: MenuRows<'a>, style: Me
             status_icon(Menu::Network, &shell.status).0,
             n.enabled,
             Some(Action::Wifi(!n.enabled)),
-            theme,
-            p,
+            style,
         ));
     }
 
     if let Some(b) = &shell.status.bluetooth {
         connections = connections.push(connection_control(
+            shell.render,
             "Bluetooth",
             if b.enabled {
                 b.devices.first().map(String::as_str).unwrap_or("On")
@@ -70,25 +107,24 @@ pub(super) fn view<'a>(shell: &'a FereseShell, mut rows: MenuRows<'a>, style: Me
             status_icon(Menu::Bluetooth, &shell.status).0,
             b.enabled,
             Some(Action::Bluetooth(!b.enabled)),
-            theme,
-            p,
+            style,
         ));
     }
 
     if let Some(b) = &shell.status.battery {
         connections = connections.push(connection_control(
+            shell.render,
             "Battery",
             &format!("{}%", b.percent),
             status_icon(Menu::Battery, &shell.status).0,
             b.status == "Charging",
             None,
-            theme,
-            p,
+            style,
         ));
     }
 
     if shell.status.network.is_some() || shell.status.bluetooth.is_some() || shell.status.battery.is_some() {
-        rows = rows.push(control_card(connections.into(), primary, p));
+        rows = rows.push(control_card(shell.render, connections.into(), primary, p));
     }
     rows = audio::view(shell, rows, style, true);
     rows = battery::brightness(shell, rows, style);
@@ -109,14 +145,19 @@ fn connection_caption(detail: &str) -> String {
 }
 
 fn connection_control<'a>(
+    render: crate::rendering::Rendering,
     label: &'static str,
     detail: &str,
     source: &'static [u8],
     enabled: bool,
     action: Option<Action>,
-    palette: ShellTheme,
-    opacity: f32,
+    style: MenuStyle,
 ) -> Element<'a, cosmic::Action<Message>> {
+    let MenuStyle {
+        theme: palette,
+        opacity,
+        ..
+    } = style;
     let selected = enabled && action.is_some();
     let (fill, on_accent) = ferese_theme::accent_pair(
         ferese_theme::composite(color(palette.accent), color(palette.surface_base)),
@@ -143,7 +184,8 @@ fn connection_control<'a>(
         .align_y(alignment::Vertical::Center);
     let content = column![icon].spacing(2).width(Length::Fill).align_x(Alignment::Center);
     let content = content.push(
-        text(connection_caption(detail))
+        render
+            .text(connection_caption(detail))
             .size(11)
             .width(Length::Fill)
             .height(16)
@@ -167,12 +209,12 @@ fn connection_control<'a>(
             .class(ferese_theme::controls::filled_button(
                 fill,
                 foreground,
-                motion::radius(14.),
+                render.radius(14.),
                 opacity,
             ))
             .into()
     } else {
-        motion::button(button, foreground, false, opacity)
+        motion::button(render, button, foreground, false, opacity)
     };
     container(tile).width(Length::FillPortion(1)).into()
 }
@@ -197,6 +239,7 @@ pub(super) fn heading<'a>(
         .is_some_and(|program| status::available(program))
     {
         heading = heading.push(motion::button(
+            shell.render,
             button::custom(accented_icon(
                 ferese_theme::icons::SETTINGS,
                 20,

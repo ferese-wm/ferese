@@ -1,4 +1,3 @@
-//! Input estimation and destination selection; all post-release motion uses springs.
 use std::{collections::VecDeque, time::Duration};
 
 #[derive(Default, Debug)]

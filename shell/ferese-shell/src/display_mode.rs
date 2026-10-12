@@ -390,7 +390,7 @@ impl FereseShell {
         let focus_visible = self.system_modal.as_ref().is_some_and(|modal| modal.focus_visible);
         let pending = model.pending();
         let mut header = row![
-            text("Display mode").size(17),
+            self.render.text("Display mode").size(17),
             cosmic::iced::widget::Space::new().width(Length::Fill)
         ]
         .align_y(cosmic::iced::Alignment::Center)
@@ -401,7 +401,8 @@ impl FereseShell {
             .and_then(|inventory| inventory.profile.as_deref())
         {
             header = header.push(
-                text(format!("{profile} profile"))
+                self.render
+                    .text(format!("{profile} profile"))
                     .size(12)
                     .class(theme::Text::Color(palette.muted)),
             );
@@ -417,10 +418,12 @@ impl FereseShell {
                     .is_some_and(|inventory| inventory.available(mode));
             let card = cosmic::widget::column![
                 ferese_theme::icons::tinted(mode.icon(), 40, palette.text),
-                text(mode.label())
+                self.render
+                    .text(mode.label())
                     .size(13)
                     .wrapping(cosmic::iced::widget::text::Wrapping::None),
-                text((index + 1).to_string())
+                self.render
+                    .text((index + 1).to_string())
                     .size(11)
                     .class(theme::Text::Color(palette.muted)),
             ]
@@ -449,7 +452,10 @@ impl FereseShell {
                 displays = displays.push(
                     row![
                         ferese_theme::icons::tinted(ferese_theme::icons::DISPLAY, 16, palette.muted),
-                        text(&display.label).size(12).class(theme::Text::Color(palette.muted))
+                        self.render
+                            .text(&display.label)
+                            .size(12)
+                            .class(theme::Text::Color(palette.muted))
                     ]
                     .spacing(8)
                     .align_y(cosmic::iced::Alignment::Center),
@@ -460,7 +466,7 @@ impl FereseShell {
         }
 
         if let Some(error) = &model.error {
-            rows = rows.push(text(error).size(12));
+            rows = rows.push(self.render.text(error).size(12));
         }
 
         let hint = if model.busy {
@@ -491,14 +497,14 @@ impl FereseShell {
                     .inventory
                     .as_ref()
                     .is_some_and(|inventory| inventory.available(model.selected)));
-        rows.push(text(hint).size(12).class(theme::Text::Color(palette.muted)))
+        rows.push(self.render.text(hint).size(12).class(theme::Text::Color(palette.muted)))
             .push(
                 container(
                     row![
                         cosmic::iced::widget::Space::new().width(Length::Fill),
                         ferese_theme::controls::text_button(
                             if pending { "Revert" } else { "Cancel" },
-                            shell_font(),
+                            self.render.font,
                             palette,
                             false
                         )
@@ -512,7 +518,7 @@ impl FereseShell {
                         .on_press_maybe((!model.busy).then_some(cosmic::Action::App(cancel))),
                         ferese_theme::controls::text_button(
                             if pending { "Keep" } else { "Apply" },
-                            shell_font(),
+                            self.render.font,
                             palette,
                             true
                         )

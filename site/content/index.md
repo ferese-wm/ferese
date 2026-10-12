@@ -39,13 +39,15 @@ group windows, resize them and move between workspaces.
 
 ## Desktop guides
 
+- [Panel configuration](panel-configuration.md): choose a style, arrange controls, and configure Morph.
 - [Lock screen](locking.md): appearance, automatic locking, and display sleep.
 - [Screen sharing and recording](screen-sharing.md): share an app or display, or save a video.
 - [Desktop portals](portals.md): integration with applications.
 - [Animation model](animation-model.md): spring motion, geometry ownership, and resize presentation.
 
-Configure the desktop in Settings or edit `~/.config/ferese/config.kdl` directly.
-Changes apply live. Invalid edits leave the last working configuration in place.
+Configure the desktop in Settings or edit `~/.config/ferese/config.kdl` directly;
+changes apply live, and an invalid edit leaves the last working configuration in
+place.
 
 ## Troubleshooting
 

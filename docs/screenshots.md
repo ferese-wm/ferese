@@ -34,7 +34,8 @@ Six themes, each with paired light and dark colours.
 
 ## Panel & Shell
 
-Panel composition, position and surface settings.
+The composition preview and panel controls in Settings. See the
+[panel configuration guide](panel-configuration.md) for the current styles and options.
 
 [![Panel and Shell settings with a composition preview and island surfaces.](images/screenshots/ferese-panel-settings.webp)](images/screenshots/ferese-panel-settings.webp)
 

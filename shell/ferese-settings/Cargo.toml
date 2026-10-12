@@ -6,6 +6,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+ferese-panel = { path = "../../crates/ferese-panel" }
 ferese-theme-client = { path = "../../crates/ferese-theme-client" }
 ferese-theme = { path = "../../crates/ferese-theme" }
 ferese-config = { path = "../../crates/ferese-config" }

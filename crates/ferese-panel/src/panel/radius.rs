@@ -48,6 +48,25 @@ impl CornerRadii {
         let limit = width.min(height).max(0.) / 2.;
         Self(self.0.map(|value| value.min(limit)))
     }
+
+    /// Scale all corners together when their sums exceed an adjacent edge.
+    /// Unlike the symmetric round-box clamp, this permits a large free-side
+    /// corner when the corner on the anchored side is square.
+    pub fn normalized(self, width: f32, height: f32) -> Self {
+        let [tl, tr, br, bl] = self.0;
+        let mut factor = 1.0_f64;
+        for (length, sum) in [
+            (width, f64::from(tl) + f64::from(tr)),
+            (width, f64::from(bl) + f64::from(br)),
+            (height, f64::from(tl) + f64::from(bl)),
+            (height, f64::from(tr) + f64::from(br)),
+        ] {
+            if sum > 0. {
+                factor = factor.min(f64::from(length.max(0.)) / sum);
+            }
+        }
+        Self(self.0.map(|radius| (f64::from(radius) * factor) as f32))
+    }
 }
 
 impl std::str::FromStr for CornerRadii {

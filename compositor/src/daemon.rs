@@ -1,4 +1,3 @@
-//! Session-owned services. Never grant shell/effects privileges to daemons.
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::process::Child;

@@ -6,7 +6,7 @@ use super::bar::status_icon;
 use super::controls::{control_card, level_meter, slider_row};
 use super::{Menu, MenuRows, MenuStyle};
 use crate::status::Action;
-use crate::{FereseShell, Message, ShellTheme, accented_icon, bar_icon, color_with_opacity, motion, shell_font, text};
+use crate::{FereseShell, Message, ShellTheme, accented_icon, bar_icon, color_with_opacity, motion};
 
 pub(super) fn view<'a>(shell: &'a FereseShell, mut rows: MenuRows<'a>, style: MenuStyle) -> MenuRows<'a> {
     let MenuStyle {
@@ -27,7 +27,11 @@ pub(super) fn view<'a>(shell: &'a FereseShell, mut rows: MenuRows<'a>, style: Me
         rows = rows.push(
             container(
                 row![
-                    text(format!("{}%", b.percent)).size(24).width(Length::Fill),
+                    shell
+                        .render
+                        .text(format!("{}%", b.percent))
+                        .size(24)
+                        .width(Length::Fill),
                     accented_icon(
                         status_icon(Menu::Battery, &shell.status).0,
                         24,
@@ -44,19 +48,25 @@ pub(super) fn view<'a>(shell: &'a FereseShell, mut rows: MenuRows<'a>, style: Me
                 ..Default::default()
             })),
         );
-        rows = rows.push(level_meter(b.percent, battery_color, p));
+        rows = rows.push(level_meter(shell.render, b.percent, battery_color, p));
         rows = rows.push(
-            text(match b.status.as_str() {
-                "Charging" => "Connected to power",
-                "Discharging" => "Running on battery power",
-                "Full" => "Battery fully charged",
-                _ => "Battery status reported by the system",
-            })
-            .size(12)
-            .class(theme::Text::Color(muted)),
+            shell
+                .render
+                .text(match b.status.as_str() {
+                    "Charging" => "Connected to power",
+                    "Discharging" => "Running on battery power",
+                    "Full" => "Battery fully charged",
+                    _ => "Battery status reported by the system",
+                })
+                .size(12)
+                .class(theme::Text::Color(muted)),
         );
     }
-    rows = rows.push(ferese_theme::menus::section_label("Power mode", shell_font(), muted));
+    rows = rows.push(ferese_theme::menus::section_label(
+        "Power mode",
+        shell.render.font,
+        muted,
+    ));
     if let Some(profiles) = &shell.status.power_profiles {
         let mut modes = row::with_capacity(3).spacing(6).width(Length::Fill);
         for (index, (label, icon, profile)) in [
@@ -68,13 +78,23 @@ pub(super) fn view<'a>(shell: &'a FereseShell, mut rows: MenuRows<'a>, style: Me
         .enumerate()
         {
             if profiles.available[index] {
-                modes = modes.push(power_tile(label, icon, profile, profiles.active == profile, theme, p));
+                modes = modes.push(power_tile(
+                    shell.render,
+                    label,
+                    icon,
+                    profile,
+                    profiles.active == profile,
+                    theme,
+                    p,
+                ));
             }
         }
         rows = rows.push(modes);
     } else {
         rows = rows.push(
-            text("Power Profiles service unavailable")
+            shell
+                .render
+                .text("Power Profiles service unavailable")
                 .size(12)
                 .class(theme::Text::Color(muted)),
         );
@@ -102,12 +122,12 @@ pub(super) fn view<'a>(shell: &'a FereseShell, mut rows: MenuRows<'a>, style: Me
         ),
     ] {
         if enabled {
-            power = power.push(power_tile_action(label, icon, action, theme, p));
+            power = power.push(power_tile_action(shell.render, label, icon, action, theme, p));
         }
     }
 
     if shell.status.reboot || shell.status.poweroff || shell.status.suspend {
-        rows = rows.push(ferese_theme::menus::section_label("Power", shell_font(), muted));
+        rows = rows.push(ferese_theme::menus::section_label("Power", shell.render.font, muted));
         rows = rows.push(power);
     }
     rows
@@ -122,8 +142,9 @@ pub(super) fn brightness<'a>(shell: &'a FereseShell, mut rows: MenuRows<'a>, sty
     } = style;
     if let Some(value) = shell.status.brightness {
         let brightness = column![
-            text("Brightness").size(13),
+            shell.render.text("Brightness").size(13),
             slider_row(
+                shell.render,
                 ferese_theme::icons::BRIGHTNESS,
                 value,
                 true,
@@ -133,12 +154,13 @@ pub(super) fn brightness<'a>(shell: &'a FereseShell, mut rows: MenuRows<'a>, sty
             )
         ]
         .spacing(6);
-        rows = rows.push(control_card(brightness.into(), primary, p));
+        rows = rows.push(control_card(shell.render, brightness.into(), primary, p));
     }
     rows
 }
 
 fn power_tile<'a>(
+    render: crate::rendering::Rendering,
     label: &'static str,
     icon: &'static [u8],
     profile: &'static str,
@@ -148,7 +170,7 @@ fn power_tile<'a>(
 ) -> Element<'a, cosmic::Action<Message>> {
     let foreground = color_with_opacity(if selected { theme.accent } else { theme.text_primary }, opacity);
     let tile = container(
-        column![bar_icon(icon, 19, foreground), text(label).size(11)]
+        column![bar_icon(icon, 19, foreground), render.text(label).size(11)]
             .spacing(3)
             .align_x(Alignment::Center),
     )
@@ -159,10 +181,11 @@ fn power_tile<'a>(
         .padding([8, 2])
         .on_press(cosmic::Action::App(Message::Control(Action::PowerProfile(profile))));
 
-    motion::button(btn, foreground, selected, opacity)
+    motion::button(render, btn, foreground, selected, opacity)
 }
 
 fn power_tile_action<'a>(
+    render: crate::rendering::Rendering,
     label: &'static str,
     icon: &'static [u8],
     action: Action,
@@ -171,7 +194,7 @@ fn power_tile_action<'a>(
 ) -> Element<'a, cosmic::Action<Message>> {
     let foreground = color_with_opacity(theme.text_primary, opacity);
     let tile = container(
-        column![bar_icon(icon, 19, foreground), text(label).size(11)]
+        column![bar_icon(icon, 19, foreground), render.text(label).size(11)]
             .spacing(3)
             .align_x(Alignment::Center),
     )
@@ -182,5 +205,5 @@ fn power_tile_action<'a>(
         .padding([8, 2])
         .on_press(cosmic::Action::App(Message::ConfirmPower(action)));
 
-    motion::button(btn, foreground, false, opacity)
+    motion::button(render, btn, foreground, false, opacity)
 }
