@@ -384,8 +384,12 @@ pub fn derive(
                             operation,
                             blend_zone: 0,
                         });
-                        scene.damage.push(patch);
                     }
+                    // One material capture owns the body and both shoulders. Separate
+                    // captures overlap after logical rounding at fractional scales,
+                    // painting translucent joins twice as the spring settles.
+                    scene.damage =
+                        vec![grid.rect(Rect::new(bounds.x - r, bounds.y, bounds.width + 2. * r, bounds.height))?];
                 }
             }
         }

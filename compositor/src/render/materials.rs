@@ -613,15 +613,20 @@ fn panel_matrices(
     transform: Transform,
 ) -> PanelMatrices {
     let permutation = framebuffer_corner_radii([0., 1., 2., 3.], transform);
+    // The shell snaps its path in surface-local pixels. Translate that path by
+    // the same physical origin as its Wayland content, rather than rounding
+    // origin + local coordinates together. At fractional scales the latter
+    // can separate shared edges after the f32 protocol round trip.
+    let origin: Point<i32, Physical> = origin.to_physical_precise_round(scale);
     let shapes = presentation
         .shapes
         .iter()
         .map(|primitive| {
             let b = primitive.bounds;
-            let left = ((b.x + f64::from(origin.x)) * scale).round() as i32;
-            let top = ((b.y + f64::from(origin.y)) * scale).round() as i32;
-            let right = ((b.x + b.width + f64::from(origin.x)) * scale).round() as i32;
-            let bottom = ((b.y + b.height + f64::from(origin.y)) * scale).round() as i32;
+            let left = (b.x * scale).round() as i32 + origin.x;
+            let top = (b.y * scale).round() as i32 + origin.y;
+            let right = ((b.x + b.width) * scale).round() as i32 + origin.x;
+            let bottom = ((b.y + b.height) * scale).round() as i32 + origin.y;
             let physical = Rectangle::new((left, top).into(), (right - left, bottom - top).into());
             let rect = framebuffer_clip_rect(physical, size, transform);
             let radii = primitive.radii.0.map(|r| (f64::from(r) * scale) as f32);
@@ -765,6 +770,144 @@ mod region_geometry_tests {
             (Transform::Flipped270, [3., 2., 1., 4.]),
         ] {
             assert_eq!(framebuffer_corner_radii(radii, transform), expected);
+        }
+    }
+
+    #[test]
+    fn attached_morph_masks_keep_shared_edges_after_wire_rounding() {
+        use ferese_panel::scene::{Parameters, Primitive, derive};
+        use ferese_panel::shape::PixelGrid;
+        for scale in [1., 1.25, 1.5, 2.] {
+            for origin in [-3, 0, 1, 3, 101] {
+                for width in [149.99, 150., 150.01, 199.99, 200., 200.01, 259.99, 260., 260.01] {
+                    let scene = derive(
+                        Parameters {
+                            style: ferese_panel::PanelStyle::Morph,
+                            attached: true,
+                            fillet: 12.,
+                            ..Default::default()
+                        },
+                        ferese_layout::Rect::new((320. - width) / 2., 0., width, 44.),
+                        &[],
+                        PixelGrid::new(scale).unwrap(),
+                    )
+                    .unwrap();
+                    let presentation = crate::effects::PanelPresentation {
+                        shapes: scene
+                            .packets()
+                            .into_iter()
+                            .map(|p| Primitive::from_packet(p).unwrap())
+                            .collect::<Vec<_>>()
+                            .into(),
+                        fusion: 0.,
+                    };
+                    let shapes = panel_matrices(
+                        &presentation,
+                        (origin, 0).into(),
+                        scale,
+                        (1000, 1000).into(),
+                        Transform::Normal,
+                    )
+                    .shapes;
+                    let [body, left, right] = shapes.as_slice() else {
+                        panic!("expected body and shoulders")
+                    };
+                    let client_left = (scene.paint[0].bounds.x * scale).round() + (f64::from(origin) * scale).round();
+                    assert_eq!(
+                        body[0], client_left as f32,
+                        "native fill must align with the shell outline"
+                    );
+                    assert_eq!(
+                        left[0] + left[2],
+                        body[0],
+                        "left join: scale {scale}, origin {origin}, width {width}"
+                    );
+                    assert_eq!(
+                        body[0] + body[2],
+                        right[0],
+                        "right join: scale {scale}, origin {origin}, width {width}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn attached_morph_material_covers_each_join_once_through_settlement() {
+        use ferese_panel::morph::{Hub, Mode, Profile};
+        use ferese_panel::scene::{Parameters, derive};
+        use ferese_panel::shape::{AnchoredRadii, PixelGrid};
+        for scale in [1., 1.25, 1.5, 2.] {
+            for edge in [ferese_panel::Edge::Top, ferese_panel::Edge::Bottom] {
+                let mut hub = Hub::new(Profile::default(), 34.).unwrap();
+                for mode in [Mode::Peek, Mode::Idle] {
+                    hub.retarget(mode, [400., 300.]).unwrap();
+                    for frame in 0..160 {
+                        hub.advance(std::time::Duration::from_millis(8), false);
+                        let sample = hub.sample();
+                        let body = sample.geometry.bounds;
+                        let bounds = ferese_layout::Rect::new(
+                            (320. - body.width) / 2.,
+                            if edge == ferese_panel::Edge::Top {
+                                0.
+                            } else {
+                                64. - body.height
+                            },
+                            body.width,
+                            body.height,
+                        );
+                        let scene = derive(
+                            Parameters {
+                                style: ferese_panel::PanelStyle::Morph,
+                                attached: true,
+                                edge,
+                                fillet: 12.,
+                                radius: Some(AnchoredRadii(sample.geometry.radii.map(|r| r as f32))),
+                                ..Default::default()
+                            },
+                            bounds,
+                            &[],
+                            PixelGrid::new(scale).unwrap(),
+                        )
+                        .unwrap();
+                        // Reproduce the f32 transport and logical capture bounds used by native materials.
+                        let regions: Vec<_> = scene
+                            .damage
+                            .iter()
+                            .map(|r| {
+                                material_region_geometry(
+                                    [r.x, r.y, r.width, r.height, 0.].map(|n| f64::from(n as f32)),
+                                    Rectangle::from_size((320, 64).into()),
+                                    (0, 0).into(),
+                                    scale,
+                                )
+                                .unwrap()
+                                .0
+                                .to_physical_precise_round(scale)
+                            })
+                            .collect();
+                        let body = scene.paint[0].bounds;
+                        let y = if edge == ferese_panel::Edge::Top {
+                            2.
+                        } else {
+                            64. * scale - 3.
+                        };
+                        for join in [body.x, body.x + body.width] {
+                            for side in [-1., 0.] {
+                                let point = Point::<i32, Physical>::from((
+                                    (join * scale).round() as i32 + side as i32,
+                                    y as i32,
+                                ));
+                                let coverage = regions.iter().filter(|r| r.contains(point)).count();
+                                assert_eq!(
+                                    coverage, 1,
+                                    "join painted {coverage} times: {scale}, {edge:?}, {mode:?}, frame {frame}, {point:?}"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
