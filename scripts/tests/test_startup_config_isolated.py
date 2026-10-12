@@ -113,6 +113,9 @@ class StartupConfigTest(unittest.TestCase):
                     path.write_text(valid)
                     control("reload-config")
                     accepted = wait_for(lambda: (value := theme()) and value["error"] is None and value)
+                    self.assertEqual(accepted["theme"]["requested_accent"], "#83AA5F")
+                    self.assertNotEqual(accepted["theme"]["tokens"]["colors"]["accent"],
+                                        snapshot["theme"]["tokens"]["colors"]["accent"])
                     self.assertEqual(path.read_text(), valid)
                     self.assertEqual(log_path.read_text().count("ferese-shell: configuration warning:"), 1)
 

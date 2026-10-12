@@ -171,10 +171,12 @@ class ShellMotionTest(unittest.TestCase):
                         max(y + height for x, y, width, height in rectangles)
                         - min(y for x, y, width, height in rectangles))
 
-            def bar_shape_settled():
+            def bar_motion_settled(surface):
                 updates = log_path.read_text().count('.set_panel_presentation(')
+                before = commits(surface)
                 time.sleep(.25)
-                return log_path.read_text().count('.set_panel_presentation(') == updates
+                return (log_path.read_text().count('.set_panel_presentation(') == updates
+                        and commits(surface) - before <= 2)
 
 
             with log_path.open("w") as log:
@@ -348,8 +350,9 @@ class ShellMotionTest(unittest.TestCase):
                         dbus("CloseNotification", notice)
                         wait_for(lambda: (size := bar_input_size(bar)) and 0 < size[0] < 320 and size[1] == 34)
                         self.assertEqual(bar_size(bar), allocation, "closing Morph resized its retained backing surface")
-                        # Height can reach its target before width and corners settle.
-                        wait_for(bar_shape_settled)
+                        # Rounded protocol geometry can stop changing while subpixel
+                        # spring motion or the content fade still needs frames.
+                        wait_for(lambda: bar_motion_settled(bar))
                         before = commits(bar)
                         trace_start = len(log_path.read_text())
                         time.sleep(.5)
