@@ -25,6 +25,7 @@
 - [Outputs](configuration/outputs.md).
 - [Panels](configuration/panel.md).
 - [Panel options and examples](panel-configuration.md).
+- [Activities](configuration/activities.md).
 - [Status controls](configuration/status.md).
 - [Startup, locking and logout](configuration/startup-and-locking.md).
 - [Idle inhibition](configuration/idle-inhibition.md).

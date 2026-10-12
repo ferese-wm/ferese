@@ -144,6 +144,22 @@ class WikiTests(unittest.TestCase):
             self.assertIn('## Binding modes', output['Configuration-Bindings.md'])
             self.assertIn(wiki.WIKI + '/Configuration-Bindings', output['Input-and-Bindings.md'])
 
+    def test_activity_settings_have_separate_configuration_page(self):
+        with mock.patch.object(wiki, 'ROOT', ROOT):
+            output = wiki.render('deadbeef')
+            settings = output['Configuration-Activities.md']
+            usage = output['Live-Activities.md']
+            sidebar_configuration = output['_Sidebar.md'].split('## Configuration', 1)[1].split('## Development', 1)[0]
+            self.assertIn(wiki.WIKI + '/Configuration-Activities)', sidebar_configuration)
+            self.assertIn('shell-hook #true', settings)
+            self.assertIn('rule "cargo"', settings)
+            self.assertIn('## Command rules', settings)
+            self.assertNotIn('rule "cargo"', usage)
+            self.assertIn('## Configure Activities', usage)
+            self.assertIn(wiki.WIKI + '/Configuration-Activities#command-rules', usage)
+            self.assertIn('## Start using it', usage)
+            self.assertIn('## Publisher ownership and lifecycle', usage)
+
     def test_legacy_configuration_anchors_point_to_published_topics(self):
         with mock.patch.object(wiki, 'ROOT', ROOT):
             output = wiki.render('deadbeef')
