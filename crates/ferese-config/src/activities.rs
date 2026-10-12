@@ -11,6 +11,7 @@ use crate::Error;
 #[serde(default, deny_unknown_fields)]
 pub struct Settings {
     pub max_visible: usize,
+    pub show_badge: bool,
     pub max_total: usize,
     pub owner_ceiling: u8,
     pub start_delay_ms: u64,
@@ -22,6 +23,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             max_visible: 2,
+            show_badge: true,
             max_total: 128,
             owner_ceiling: 160,
             start_delay_ms: 300,
@@ -151,6 +153,7 @@ impl Settings {
     pub fn limits(&self) -> ferese_activities::Limits {
         ferese_activities::Limits {
             max_visible: self.max_visible,
+            show_badge: self.show_badge,
             max_total: self.max_total,
             owner_ceiling: self.owner_ceiling,
             start_delay_ms: self.start_delay_ms,
@@ -252,7 +255,13 @@ pub(crate) fn parse(node: &KdlNode) -> Result<Value, Error> {
         } else {
             if !matches!(
                 key,
-                "max-visible" | "max-total" | "owner-ceiling" | "start-delay-ms" | "result-flash-ms" | "sources"
+                "max-visible"
+                    | "show-badge"
+                    | "max-total"
+                    | "owner-ceiling"
+                    | "start-delay-ms"
+                    | "result-flash-ms"
+                    | "sources"
             ) {
                 return Err(diagnostic(child, "unknown activity node"));
             }
@@ -356,6 +365,7 @@ mod tests {
         for invalid in [
             "activities { unknown 1; }",
             "activities { max-visible 3; }",
+            "activities { show-badge 1; }",
             "activities { rule x { match \"[\"; title X; }; }",
             "activities { rule x { match \"(a)\"; title \"{2}\"; }; }",
             "activities { sources { typo #true; }; }",

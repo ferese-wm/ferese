@@ -162,6 +162,7 @@ fn text(value: &str) -> Result<(), &'static str> {
 #[serde(default, deny_unknown_fields)]
 pub struct Limits {
     pub max_visible: usize,
+    pub show_badge: bool,
     pub max_total: usize,
     pub owner_ceiling: u8,
     pub start_delay_ms: u64,
@@ -172,6 +173,7 @@ impl Default for Limits {
     fn default() -> Self {
         Self {
             max_visible: 2,
+            show_badge: true,
             max_total: 128,
             owner_ceiling: 160,
             start_delay_ms: 300,
@@ -471,7 +473,7 @@ pub struct Selection {
     pinned: Option<Vec<Id>>,
     pub visible: Vec<Id>,
     pub hidden: usize,
-    policy: Option<(bool, usize)>,
+    policy: Option<(bool, usize, usize)>,
 }
 
 impl Selection {
@@ -485,7 +487,7 @@ impl Selection {
         self.pinned = None;
     }
     pub fn select(&mut self, ranked: &[&Activity], limits: Limits, dnd: bool, protected_slots: usize) {
-        let policy = (dnd, protected_slots);
+        let policy = (dnd, protected_slots, limits.max_visible);
         if self.policy != Some(policy) {
             self.override_pin();
             self.policy = Some(policy);
@@ -526,7 +528,7 @@ impl Selection {
             }
             None => ids.iter().take(count).cloned().collect(),
         };
-        self.hidden = if dnd {
+        self.hidden = if dnd || !limits.show_badge {
             0
         } else {
             eligible.len().saturating_sub(self.visible.len())

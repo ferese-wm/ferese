@@ -198,7 +198,45 @@ impl App {
                                 .into(),
                             ),
                         );
+                    let maximum = self.draft.number("activities.max_visible", 2.) as u64;
+                    let choices = widget::row([1_u64, 2].into_iter().map(|count| {
+                        widget::button::custom(self.label(count.to_string(), 12.))
+                            .name(format!("Show up to {count} activities"))
+                            .padding([8, 10])
+                            .width(cosmic::iced::Length::Fill)
+                            .class(crate::visuals::panel_button(palette, count == maximum))
+                            .on_press_maybe(
+                                (count != maximum)
+                                    .then(|| Message::Change(store::set("activities.max_visible", count))),
+                            )
+                            .into()
+                    }))
+                    .spacing(2);
+                    appearance = appearance.push(self.panel_divider()).push(
+                        self.panel_appearance_row(
+                            "Visible activities",
+                            "Maximum activities in the collapsed and peek island.",
+                            widget::container(choices)
+                                .padding(3)
+                                .class(crate::visuals::surface(palette.sidebar, 9.))
+                                .into(),
+                        ),
+                    );
                 }
+                let show_badge = self.draft.boolean("activities.show_badge", true);
+                appearance = appearance.push(self.panel_divider()).push(
+                    self.panel_appearance_row(
+                        "Show activity count",
+                        "Show +n for additional activities.",
+                        widget::container(
+                            ferese_theme::controls::switch(show_badge, palette)
+                                .name("Show activity count")
+                                .on_press(Message::Change(store::set("activities.show_badge", !show_badge))),
+                        )
+                        .align_right(cosmic::iced::Length::Fill)
+                        .into(),
+                    ),
+                );
                 rows = rows.push(
                     widget::container(appearance)
                         .id("panel-appearance-settings")

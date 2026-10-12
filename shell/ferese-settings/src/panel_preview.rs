@@ -382,7 +382,13 @@ impl App {
         let label = match (item.kind, representation) {
             (ItemKind::Workspaces { .. }, _) => "1  2  3",
             (ItemKind::FocusedWindow, _) => "Settings",
-            (ItemKind::Activities, Representation::Wide) => "Build · 62%  +1",
+            (ItemKind::Activities, Representation::Wide) => {
+                if self.draft.boolean("activities.show_badge", true) {
+                    "Build · 62%  +1"
+                } else {
+                    "Build · 62%"
+                }
+            }
             (ItemKind::Activities, Representation::Compact) => "Build",
             (ItemKind::Media, Representation::Wide) => "Song title · Artist  ▷",
             (ItemKind::Media, Representation::Compact) => "Song title",

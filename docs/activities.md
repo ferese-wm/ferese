@@ -105,9 +105,14 @@ notice becomes an activity rather than a duplicate toast. It is off by default.
 
 ## Rules and opt-in detection
 
+In Settings → Panel & Shell → Appearance, **Visible activities** sets the Morph
+limit to one or two. **Show activity count** toggles the `+n` badge. Clicking the
+activity strip opens the full list even when the badge is hidden.
+
 ```kdl
 activities {
     max-visible 2
+    show-badge #true
     start-delay-ms 300
     result-flash-ms 1500
     sources {

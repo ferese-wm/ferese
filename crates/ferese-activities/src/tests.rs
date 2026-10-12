@@ -31,6 +31,34 @@ fn start(store: &mut Store, local: &str, now: Time, priority: u8) -> Id {
 }
 
 #[test]
+fn badge_visibility_and_visible_limit_reload_while_hovered() {
+    let mut store = Store::new(1);
+    for name in ["a", "b", "c"] {
+        start(&mut store, name, 0, 100);
+    }
+    let entries = ranked(store.entries(), 500, store.limits, "one", false);
+    let mut limits = store.limits;
+    limits.max_visible = 1;
+    let mut selection = Selection::default();
+    selection.select(&entries, limits, false, 0);
+    assert_eq!(selection.visible.len(), 1);
+    assert_eq!(selection.hidden, 2);
+    selection.enter();
+    limits.show_badge = false;
+    selection.select(&entries, limits, false, 0);
+    assert_eq!(selection.visible.len(), 1);
+    assert_eq!(selection.hidden, 0);
+    assert_eq!(entries.len(), 3, "hiding the badge must keep the full list");
+    limits.max_visible = 2;
+    selection.select(&entries, limits, false, 0);
+    assert_eq!(selection.visible.len(), 2);
+    assert_eq!(selection.hidden, 0);
+    limits.show_badge = true;
+    selection.select(&entries, limits, false, 0);
+    assert_eq!(selection.hidden, 1);
+}
+
+#[test]
 fn boundaries_and_updates_do_not_restart_delay_or_boost() {
     let mut store = Store::new(1);
     let id = start(&mut store, "a", 10, 255);

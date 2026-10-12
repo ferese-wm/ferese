@@ -569,7 +569,7 @@ impl FereseShell {
             );
         }
         let hidden = presentation.selection.hidden + presentation.selection.visible.len().saturating_sub(1);
-        if hidden > 0 && !self.notifications.dnd {
+        if hidden > 0 && !self.notifications.dnd && self.activities.snapshot.limits.show_badge {
             content = content.push(self.render.text(format!("+{hidden}")).size(11));
         }
         let panel = self.panel_for_bar(id).id.clone();

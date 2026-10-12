@@ -1612,6 +1612,15 @@ mod tests {
             app.outputs[0].runtime.hub.as_ref().unwrap().borrow().hub.target_size()[0],
             widths[2]
         );
+        std::sync::Arc::make_mut(&mut app.activities.snapshot).limits.show_badge = false;
+        drop(app.sync_hub_activity());
+        assert_eq!(
+            app.outputs[0].runtime.hub.as_ref().unwrap().borrow().hub.target_size()[0],
+            widths[1],
+            "hiding the badge must remove its reserved width"
+        );
+        std::sync::Arc::make_mut(&mut app.activities.snapshot).limits.show_badge = true;
+        drop(app.sync_hub_activity());
         for activity in &mut std::sync::Arc::make_mut(&mut app.activities.snapshot).activities {
             activity.data.title = "A very long title which must be capped in the compact strip".into();
         }
