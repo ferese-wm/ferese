@@ -45,6 +45,16 @@ impl FereseShell {
                 .into();
         }
         let panel = self.panel_for_bar(id);
+        if let Some(name) = &self.snapshot.binding_mode {
+            let shell_theme = self.config.theme.for_bar();
+            return container(self.render.text(format!("Mode: {name}  ·  Esc to exit")))
+                .center_x(Length::Fill)
+                .center_y(Length::Fill)
+                .class(cosmic::theme::Container::custom(move |_| {
+                    bar_style(shell_theme, false, false)
+                }))
+                .into();
+        }
         if panel.style == ferese_panel::PanelStyle::Morph {
             return self.view_hub(id);
         }
@@ -702,6 +712,9 @@ pub(super) fn bar_hidden(snapshot: &ShellSnapshot) -> bool {
 }
 
 pub(super) fn output_bar_hidden(snapshot: &ShellSnapshot, output: Option<u64>) -> bool {
+    if snapshot.binding_mode.is_some() {
+        return false;
+    }
     let active_workspace = snapshot
         .outputs
         .iter()
@@ -737,7 +750,6 @@ pub(super) fn workspace_active_on_bar(workspace: u64, output: Option<&control::O
     output.is_some_and(|output| output.active_workspace == workspace)
 }
 
-#[cfg(test)]
 pub(super) fn bar_style(theme: ShellTheme, compositor_material: bool, islands: bool) -> container::Style {
     let mut style = if islands {
         container::Style::default()
@@ -828,6 +840,17 @@ pub(super) fn bar_group_style(theme: ShellTheme) -> container::Style {
 #[cfg(test)]
 mod island_tests {
     use super::*;
+
+    #[test]
+    fn mode_indicator_stays_visible_on_fullscreen_outputs() {
+        let mut snapshot = super::super::tests::snapshot_with_fullscreen_window(7);
+        assert!(output_bar_hidden(&snapshot, Some(1)));
+        snapshot.binding_mode = Some("resize".into());
+        assert!(!output_bar_hidden(&snapshot, Some(1)));
+        snapshot.binding_mode = None;
+        assert!(output_bar_hidden(&snapshot, Some(1)));
+    }
+
     use crate::panel::{ItemId, Panel};
     use cosmic::iced::advanced::{Layout, layout, renderer::Headless, widget};
     use cosmic::iced::{Font, Pixels, Rectangle, Size};

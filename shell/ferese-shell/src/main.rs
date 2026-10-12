@@ -1463,8 +1463,9 @@ mod tests {
         assert_eq!(focused_bar_title(&snapshot, None), "");
     }
 
-    fn snapshot_with_fullscreen_window(workspace: u64) -> ShellSnapshot {
+    pub(super) fn snapshot_with_fullscreen_window(workspace: u64) -> ShellSnapshot {
         ShellSnapshot {
+            binding_mode: None,
             outputs: vec![OutputSnapshot {
                 id: 1,
                 name: "eDP-1".to_owned(),

@@ -461,6 +461,9 @@ pub struct Ferese {
     gap_config: GapConfig,
     pub(crate) input_settings: InputSettings,
     pub(crate) bindings: BindingSet,
+    pub(crate) binding_modes: crate::config::BindingModes,
+    pub(crate) binding_mode_pressed: HashSet<Keycode>,
+    pub(crate) binding_mode_repeats: HashMap<Keycode, crate::config::BindingAction>,
     workspace_auto_back_and_forth: bool,
     pub(crate) window_rules: Vec<WindowRule>,
     pub(crate) theme_settings: ThemeSettings,
@@ -557,6 +560,7 @@ pub struct RuntimeConfig {
     pub gap_config: GapConfig,
     pub input_settings: InputSettings,
     pub bindings: Vec<Binding>,
+    pub(crate) binding_modes: crate::config::BindingModes,
     pub workspace_auto_back_and_forth: bool,
     pub window_rules: Vec<WindowRule>,
     pub theme_settings: ThemeSettings,
@@ -745,6 +749,9 @@ impl Ferese {
             gap_config: config.gap_config,
             input_settings: config.input_settings,
             bindings: config.bindings.into(),
+            binding_modes: config.binding_modes,
+            binding_mode_pressed: HashSet::new(),
+            binding_mode_repeats: HashMap::new(),
             workspace_auto_back_and_forth: config.workspace_auto_back_and_forth,
             window_rules: config.window_rules,
             theme_settings: config.theme_settings,
@@ -852,7 +859,7 @@ impl Ferese {
         self.xwayland_config = config.xwayland.clone();
 
         let layout_changed = changed(&["layout", "scrolling", "workspaces"]);
-        let bindings_changed = changed(&["bindings", "commands"]);
+        let bindings_changed = changed(&["bindings", "binding_modes", "commands"]);
         let input_changed = changed(&["input"]);
         let daemons_changed = changed(&["autostart"]);
         let lock_changed = changed(&["lock_screen"]);
@@ -936,8 +943,11 @@ impl Ferese {
         }
         self.gap_config = config.gap_config;
         self.input_settings = config.input_settings;
-        if bindings_changed {
+        if bindings_changed || input_changed {
+            self.binding_mode_repeats.clear();
             self.bindings = config.bindings.into();
+            self.binding_modes = config.binding_modes;
+            self.send_shell_snapshots();
         }
         self.workspace_auto_back_and_forth = config.workspace_auto_back_and_forth;
         if bindings_changed || input_changed {

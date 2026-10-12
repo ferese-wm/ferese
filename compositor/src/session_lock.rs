@@ -434,6 +434,7 @@ impl SessionLockHandler for Ferese {
         // Replacing an orphan never passes through Unlocked. Existing protected
         // presentation facts remain valid, but old surfaces must not own input.
         self.session_lock.lifecycle = Lifecycle::Acquiring(confirmation);
+        self.set_binding_mode("default");
         self.capture_epoch = self.capture_epoch.wrapping_add(1);
         self.session_lock.surfaces.clear();
         self.cancel_logout_confirmation();
@@ -472,7 +473,6 @@ impl SessionLockHandler for Ferese {
         let keyboard = self.seat.get_keyboard().unwrap();
         keyboard.unset_grab(self);
         keyboard.set_focus(self, None, serial);
-        self.intercepted_keys.clear();
         self.lock_input_activity();
         self.confirm_lock_if_ready();
         crate::backends::direct::render_all(self);

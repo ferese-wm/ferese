@@ -2,6 +2,7 @@ use super::*;
 
 /// Immutable bindings and their keyboard index are replaced together on reload.
 /// The ordered slice remains available for gestures and the shortcut guide.
+#[derive(Clone)]
 pub(crate) struct BindingSet {
     ordered: Vec<Binding>,
     keyboard: HashMap<BindingIdentity, usize>,

@@ -3,10 +3,13 @@ use std::sync::Arc;
 use super::*;
 
 mod index;
+mod modes;
 pub(crate) use index::BindingSet;
+pub(super) use modes::BindingModeConfig;
+pub(crate) use modes::BindingModes;
 
 impl Config {
-    pub fn bindings(&self, input: &InputSettings) -> Result<Vec<Binding>, ConfigError> {
+    fn binding_commands(&self) -> HashMap<String, Vec<String>> {
         let mut commands = HashMap::from([
             ("terminal".to_owned(), vec!["foot".to_owned()]),
             ("screenshot".to_owned(), vec!["ferese-screenshot".to_owned()]),
@@ -16,6 +19,11 @@ impl Config {
             ),
         ]);
         commands.extend(self.commands.clone());
+        commands
+    }
+
+    pub fn bindings(&self, input: &InputSettings) -> Result<Vec<Binding>, ConfigError> {
+        let commands = self.binding_commands();
         validate_commands(&commands)?;
 
         let keymap = physical_keymap(input)?;
@@ -260,6 +268,7 @@ pub(super) fn parse_action(
         || argument.ok_or_else(|| ConfigError::Binding(format!("action {action:?} requires an argument")));
 
     match action {
+        "binding-mode" => Ok(BindingAction::BindingMode(required_argument()?.to_owned())),
         "none" => {
             no_argument()?;
             Ok(BindingAction::None)
@@ -467,6 +476,7 @@ pub(super) struct BindingModifiers {
 #[derive(Clone, Debug, PartialEq)]
 pub enum BindingAction {
     None,
+    BindingMode(String),
     Spawn(Arc<[String]>),
     Close,
     Exit,
@@ -558,6 +568,7 @@ impl Binding {
 
     pub(crate) fn guide_entry(&self, keymap: Option<&xkb::Keymap>) -> Option<serde_json::Value> {
         let description = match &self.action {
+            BindingAction::BindingMode(name) => format!("Switch to binding mode {name}"),
             BindingAction::None => return None,
             BindingAction::Spawn(argv) if argv.first().is_some_and(|program| program == "ferese-screenshot") => {
                 if argv.iter().any(|arg| arg == "--full") {

@@ -345,6 +345,31 @@ fn request(wire: &mut UnixStream, object: u32, opcode: u32, args: &[u32]) {
 }
 
 #[test]
+fn locking_exits_binding_modes_and_retains_consumed_release_ownership() {
+    let Some(mut fixture) =
+        Fixture::new("session_lock::tests::locking_exits_binding_modes_and_retains_consumed_release_ownership")
+    else {
+        return;
+    };
+    fixture
+        .state
+        .reload_config_source("binding-mode resize { binding h resize left; }".into())
+        .unwrap();
+    fixture.state.set_binding_mode("resize");
+    crate::input::binding_mode_tests::key(&mut fixture.state, 43, true);
+    let code = smithay::input::keyboard::Keycode::new(43);
+    assert!(fixture.state.intercepted_keys.contains(&code));
+    let mut locker = fixture.acquire();
+    locker.expect_locked();
+    assert_eq!(fixture.state.binding_modes.active(), None);
+    assert!(fixture.state.intercepted_keys.contains(&code));
+    crate::input::binding_mode_tests::key(&mut fixture.state, 43, false);
+    assert!(!fixture.state.intercepted_keys.contains(&code));
+    fixture.state.unlock();
+    assert_eq!(fixture.state.binding_modes.active(), None);
+}
+
+#[test]
 fn lock_confirms_without_outputs() {
     let Some(mut fixture) = Fixture::new("session_lock::tests::lock_confirms_without_outputs") else {
         return;

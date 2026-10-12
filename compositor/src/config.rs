@@ -15,6 +15,7 @@ pub(crate) use self::loading::{prepare, prepare_document, read_source, startup};
 pub(crate) use self::xwayland::{XwaylandConfig, XwaylandStartup};
 use appearance::*;
 pub use appearance::{BorderGradient, FocusEffectSettings, MaterialStyle, ThemeSettings};
+pub(crate) use bindings::BindingModes;
 use bindings::*;
 pub use bindings::{Binding, BindingAction};
 pub(crate) use bindings::{BindingSet, physical_keymap};
@@ -59,6 +60,8 @@ pub struct Config {
     commands: HashMap<String, Vec<String>>,
     #[serde(default)]
     bindings: Vec<BindingConfig>,
+    #[serde(default)]
+    binding_modes: Vec<BindingModeConfig>,
     #[serde(default)]
     window_rules: Vec<WindowRuleConfig>,
     #[serde(default)]
@@ -127,6 +130,7 @@ impl Config {
         }
         let input_settings = self.input_settings()?;
         let bindings = self.bindings(&input_settings)?;
+        let binding_modes = self.binding_modes(&input_settings, &bindings)?;
         Ok(crate::RuntimeConfig {
             lock_idle: self.lock_screen.validate()?,
             idle_inhibit: self.idle_inhibit,
@@ -136,6 +140,7 @@ impl Config {
             gap_config: self.gap_config()?,
             input_settings,
             bindings,
+            binding_modes,
             window_rules: self.window_rules()?,
             theme_settings: self.theme_settings()?,
             panel_style: self

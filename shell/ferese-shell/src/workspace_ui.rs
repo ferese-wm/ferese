@@ -472,6 +472,7 @@ mod tests {
 
     fn snapshot(active: u64) -> ShellSnapshot {
         ShellSnapshot {
+            binding_mode: None,
             outputs: vec![OutputSnapshot {
                 id: 4,
                 name: "test".into(),

@@ -25,6 +25,9 @@ use crate::process::spawn_client;
 const BTN_LEFT: u32 = 0x110;
 const BTN_RIGHT: u32 = 0x111;
 
+#[cfg(test)]
+pub(crate) mod binding_mode_tests;
+
 pub(crate) struct LockedPointerHint {
     pub(crate) surface: WlSurface,
     pub(crate) local: Point<f64, Logical>,
@@ -110,6 +113,9 @@ impl Ferese {
     }
 
     pub fn process_input_event<I: InputBackend>(&mut self, event: InputEvent<I>) {
+        if self.input_capture.active() {
+            self.set_binding_mode("default");
+        }
         let seat = self.seat.clone();
         self.idle_notifier_state.notify_activity(&seat);
         if !matches!(
@@ -286,15 +292,53 @@ impl Ferese {
                             }
                         }
                         if state == KeyState::Released {
+                            data.binding_mode_pressed.remove(&keycode);
+                            data.binding_mode_repeats.remove(&keycode);
                             data.portal_shortcuts.release(keycode, Event::time(&event));
                             if data.intercepted_keys.remove(&keycode) {
                                 return FilterResult::Intercept(());
                             }
+                            if data.input_capture.captures(1) {
+                                data.input_capture.push(serde_json::json!({"type":"key", "key":keycode.raw().saturating_sub(8), "pressed":false}));
+                            }
+                            // Ownership comes from the press, never from the
+                            // current mode or modifiers at release time.
+                            return FilterResult::Forward;
+                        } else if !data.binding_mode_pressed.insert(keycode) {
+                            // A held key belongs to the recipient of its first
+                            // press, even when a mode or configuration changes.
+                            return if data.intercepted_keys.contains(&keycode) {
+                                if !data.session_lock.active() && !data.input_capture.active()
+                                    && !data.seat.keyboard_shortcuts_inhibited()
+                                    && let Some(action) = data.binding_mode_repeats.get(&keycode).cloned()
+                                {
+                                    if let BindingAction::FocusMru(reverse) = action {
+                                        data.cycle_focus(reverse, modifiers.alt);
+                                    } else {
+                                        data.execute_binding(action);
+                                    }
+                                }
+                                FilterResult::Intercept(())
+                            } else {
+                                FilterResult::Forward
+                            };
                         }
                         if data.session_lock.active() {
                             return FilterResult::Forward;
                         }
                         let symbol = keysym.modified_sym().raw();
+                        if data.binding_modes.active().is_some() && symbol == keysyms::KEY_Escape {
+                            if state == KeyState::Pressed {
+                                data.intercepted_keys.insert(keycode);
+                                if emergency_shortcut_escape(symbol, modifiers.ctrl, modifiers.alt)
+                                    && let Some(inhibitor) = data.active_shortcuts_inhibitor.take()
+                                {
+                                    inhibitor.inactivate();
+                                }
+                                data.set_binding_mode("default");
+                            }
+                            return FilterResult::Intercept(());
+                        }
                         if data.focus_cycle.is_some() && symbol == keysyms::KEY_Escape {
                             if state == KeyState::Pressed {
                                 data.intercepted_keys.insert(keycode);
@@ -367,7 +411,7 @@ impl Ferese {
                             .into_iter()
                             .map(|symbol| symbol.raw())
                             .collect::<Vec<_>>();
-                        let action = data.bindings.action_for_key(
+                        let action = data.binding_modes.bindings(&data.bindings).action_for_key(
                             keycode,
                             &raw_symbols,
                             modifiers.logo,
@@ -389,6 +433,7 @@ impl Ferese {
                         }
                         let Some(action) = action else {
                             if state == KeyState::Pressed
+                                && data.binding_modes.active().is_none()
                                 && data.portal_shortcuts.press(
                                     keycode,
                                     &raw_symbols,
@@ -405,6 +450,9 @@ impl Ferese {
                         if state == KeyState::Pressed {
                             data.intercepted_keys.insert(keycode);
                             let action = action.clone();
+                            if !matches!(action, BindingAction::BindingMode(_)) {
+                                data.binding_mode_repeats.insert(keycode, action.clone());
+                            }
 
                             if let BindingAction::FocusMru(reverse) = action {
                                 data.cycle_focus(reverse, modifiers.alt);
@@ -1083,6 +1131,7 @@ impl Ferese {
     fn execute_binding(&mut self, action: BindingAction) {
         match action {
             BindingAction::None => {}
+            BindingAction::BindingMode(name) => self.set_binding_mode(&name),
             BindingAction::Spawn(argv) => {
                 if let Some(child) =
                     spawn_client(self, argv.iter(), crate::private_client::ClientCapabilities::default())
@@ -1126,6 +1175,20 @@ impl Ferese {
             BindingAction::ToggleKeybindingGuide => {
                 self.toggle_keybinding_guide();
             }
+        }
+    }
+
+    pub(crate) fn set_binding_mode(&mut self, name: &str) {
+        if name != "default" && (self.session_lock.active() || self.input_capture.active()) {
+            return;
+        }
+        if name == "default" {
+            self.binding_mode_repeats.clear();
+        }
+        if self.binding_modes.set(name) {
+            self.binding_mode_repeats.clear();
+            self.cancel_focus_cycle();
+            self.send_shell_snapshots();
         }
     }
 }

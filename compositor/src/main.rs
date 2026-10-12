@@ -201,6 +201,9 @@ fn after_dispatch_with_redraw(state: &mut Ferese, mut redraw: impl FnMut(&mut Fe
     state.process_pending_dmabuf_imports();
     state.update_named_cursor(std::time::Instant::now());
     state.poll_theme();
+    if state.session_lock.active() || state.input_capture.active() {
+        state.set_binding_mode("default");
+    }
     // The decoder wakes the loop after publishing its result, including
     // when no output has a pending frame.
     let wallpaper_changed = state.wallpaper.poll();
