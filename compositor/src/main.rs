@@ -79,7 +79,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let launch =
         LaunchConfig::from_environment().map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
     let config_path = config::config_path();
-    let startup = theme::startup(config_path.as_deref())?;
+    let startup = config::startup(config_path.as_deref())?;
     if let Some(error) = &startup.error {
         warn!(%error, "configuration could not be loaded at startup; using defaults");
     }
@@ -177,8 +177,8 @@ fn init_logging() {
 }
 
 fn check_config(path: &std::path::Path) -> Result<(), String> {
-    let source = theme::read_source(path)?;
-    theme::prepare(&source, path.parent().unwrap_or(std::path::Path::new(".")))?;
+    let source = config::read_source(path)?;
+    config::prepare(&source, path.parent().unwrap_or(std::path::Path::new(".")))?;
     Ok(())
 }
 
