@@ -381,15 +381,17 @@ impl FereseShell {
             }
             // Compact ranking changes must not replay the expanded panel's
             // crossfade: its live rows update in place, preserving focus/scroll.
-            if before != runtime.activities.selection.visible
-                && matches!(
-                    runtime.hub.mode(),
-                    ferese_panel::morph::Mode::Idle | ferese_panel::morph::Mode::Peek
-                )
-            {
-                runtime.hub.replace_content();
+            if self.snapshot.binding_mode.is_none() {
+                if before != runtime.activities.selection.visible
+                    && matches!(
+                        runtime.hub.mode(),
+                        ferese_panel::morph::Mode::Idle | ferese_panel::morph::Mode::Peek
+                    )
+                {
+                    runtime.hub.replace_content();
+                }
+                runtime.refresh_activity_size();
             }
-            runtime.refresh_activity_size();
         }
     }
     pub fn activity_tick_subscription(&self) -> Subscription<()> {

@@ -581,6 +581,8 @@ shell through its existing snapshot protocol.
 Entering a mode closes panel popovers and workspace tooltips. An expanded Morph
 panel collapses and releases keyboard focus. Hover, activity updates, and queued
 menu requests cannot reopen it while the mode indicator is displayed.
+Live Activities continue updating their data, but leave the hidden Morph panel's
+geometry unchanged until the mode exits.
 
 Mode bindings replace the default keyboard map while active. Unmatched keys
 reach the focused application; default compositor bindings and portal shortcuts

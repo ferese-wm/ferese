@@ -1888,6 +1888,43 @@ mod tests {
     }
 
     #[test]
+    fn activity_updates_keep_the_binding_indicator_as_the_only_geometry_owner() {
+        let mut app = shell();
+        let bar = app.outputs[0].bar;
+        app.snapshot.binding_mode = Some("resize".into());
+        drop(app.binding_mode_transition(false));
+        let (allocation, target) = {
+            let runtime = app.outputs[0].runtime.hub.as_ref().unwrap().borrow();
+            (runtime.allocation, runtime.hub.target_size())
+        };
+        seed_activities(&mut app, 3);
+        drop(app.sync_hub_activity());
+        {
+            let runtime = app.outputs[0].runtime.hub.as_ref().unwrap().borrow();
+            assert_eq!(
+                runtime.activities.selection.visible.len(),
+                2,
+                "activity data must still update"
+            );
+            assert_eq!(
+                runtime.hub.target_size(),
+                target,
+                "hidden activity content cannot retarget the hub"
+            );
+            assert_eq!(runtime.allocation, allocation);
+            assert!(!runtime.hub.active());
+        }
+        app.snapshot.binding_mode = None;
+        drop(app.binding_mode_transition(true));
+        assert_ne!(
+            app.outputs[0].runtime.hub.as_ref().unwrap().borrow().hub.target_size(),
+            target
+        );
+        drop(app.open_hub(bar, status_ui::Menu::Activities));
+        assert_eq!(app.hub_mode(bar), Some(Mode::Expanded(Content::Activities)));
+    }
+
+    #[test]
     fn progress_updates_do_not_start_a_second_hub_animation() {
         let mut app = shell();
         let bar = app.outputs[0].bar;
