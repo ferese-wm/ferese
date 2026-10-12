@@ -619,19 +619,23 @@ impl cosmic::Application for FereseShell {
             }
             Message::NotificationTick => {
                 self.notifications.tick();
-                Task::batch([self.sync_hub_notices(), self.sync_notification_surface()])
+                Task::batch([
+                    self.sync_hub_activity(),
+                    self.sync_hub_notices(),
+                    self.sync_notification_surface(),
+                ])
             }
             Message::DismissNotification(id) => {
                 self.notifications.close(id, 2);
-                self.sync_notification_surface()
+                Task::batch([self.sync_hub_activity(), self.sync_notification_surface()])
             }
             Message::RemoveNotification(id) => {
                 self.notifications.dismiss(id);
-                self.sync_notification_surface()
+                Task::batch([self.sync_hub_activity(), self.sync_notification_surface()])
             }
             Message::InvokeNotification(id, action) => {
                 self.notifications.invoke(id, action);
-                self.sync_notification_surface()
+                Task::batch([self.sync_hub_activity(), self.sync_notification_surface()])
             }
             Message::HoverNotification(id, hovered) => {
                 self.notifications.hover(id, hovered);
@@ -644,11 +648,11 @@ impl cosmic::Application for FereseShell {
             }
             Message::RemoveNotificationGroup(app) => {
                 self.notifications.dismiss_group(&app);
-                self.sync_notification_surface()
+                Task::batch([self.sync_hub_activity(), self.sync_notification_surface()])
             }
             Message::ClearNotifications => {
                 self.notifications.clear();
-                self.sync_notification_surface()
+                Task::batch([self.sync_hub_activity(), self.sync_notification_surface()])
             }
             Message::AnimateMenu => self.animate_menu(),
             Message::PanelAction(message) => {

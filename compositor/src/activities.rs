@@ -55,6 +55,41 @@ impl Default for Engine {
     }
 }
 impl Engine {
+    pub fn detect_process(
+        &mut self,
+        owner: Owner,
+        matched: ferese_config::activities::Matched,
+        output: Option<String>,
+    ) {
+        // A dispatched detection is not an admission acknowledgement. Retry
+        // starts after rejection, and refresh existing records without restarting
+        // their eligibility delay or recency boost.
+        if self.resolve(owner, "process", None).is_ok() {
+            let _ = self.publish(
+                owner,
+                Publish::Update {
+                    local: "process".into(),
+                    handle: None,
+                    value: None,
+                    lease_ms: Some(5_000),
+                },
+                None,
+                None,
+            );
+        } else {
+            let _ = self.publish(
+                owner,
+                Publish::Hook {
+                    local: "process".into(),
+                    command: String::new(),
+                    cwd: String::new(),
+                },
+                Some(matched),
+                output,
+            );
+        }
+    }
+
     pub fn configure(
         &mut self,
         settings: &ferese_config::activities::Settings,
@@ -423,6 +458,27 @@ mod tests {
             template: Template::Progress,
         }
     }
+    #[test]
+    fn rejected_process_detection_is_retried_without_restarting_admitted_records() {
+        let mut engine = Engine::default();
+        let settings = ferese_config::activities::Settings::default();
+        let matched = ferese_config::activities::Matcher::new(&settings)
+            .unwrap()
+            .matches("cargo test", "/tmp/test", &[])
+            .unwrap();
+        engine.store.limits.max_total = 0;
+        engine.detect_process(owner(), matched.clone(), None);
+        assert_eq!(engine.store.entries().count(), 0);
+        engine.store.limits.max_total = 128;
+        engine.detect_process(owner(), matched.clone(), None);
+        let admitted = engine.store.entries().next().unwrap().clone();
+        engine.detect_process(owner(), matched, None);
+        let refreshed = engine.store.entries().next().unwrap();
+        assert_eq!(refreshed.id, admitted.id);
+        assert_eq!(refreshed.eligible_at, admitted.eligible_at);
+        assert_eq!(engine.store.entries().count(), 1);
+    }
+
     #[test]
     fn terminal_matching_uses_nearest_unique_ancestor_and_never_guesses() {
         let ancestry = [400, 300, 200, 100];

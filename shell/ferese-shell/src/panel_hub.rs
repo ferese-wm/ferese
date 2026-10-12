@@ -258,6 +258,7 @@ impl FereseShell {
             if let Some(status) = &mut self.status.notifications {
                 status.count = 0;
             }
+            self.sync_activity_presentations();
         }
         if kind == status_ui::Menu::Calendar {
             self.calendar_offset = 0;
@@ -1532,6 +1533,56 @@ mod tests {
             .operate(&mut tree, Layout::new(&node), &renderer, &mut labels);
         assert!(labels.0.iter().any(|text| text == "1 · Code"), "{labels:?}");
         assert!(!labels.0.iter().any(|text| text.contains("Cargo test")));
+    }
+
+    #[test]
+    fn dnd_list_keeps_result_rows_reachable_and_preserves_focus_on_update() {
+        use cosmic::iced::keyboard::key::Named;
+        let mut app = shell();
+        let bar = app.outputs[0].bar;
+        seed_activities(&mut app, 3);
+        let activity = &mut std::sync::Arc::make_mut(&mut app.activities.snapshot).activities[0];
+        activity.state = ferese_activities::State::Done;
+        activity.result_deadline = Some(ferese_ipc::activities::now_ms() + 10_000);
+        let completed = activity.id.clone();
+        app.notifications.dnd = true;
+        drop(app.sync_hub_activity());
+        drop(app.open_hub(bar, status_ui::Menu::Activities));
+        let expected: Vec<_> = ferese_activities::ranked(
+            app.activities.snapshot.activities.iter(),
+            ferese_ipc::activities::now_ms(),
+            app.activities.snapshot.limits,
+            app.output_for_bar(bar).unwrap().name.as_str(),
+            false,
+        )
+        .iter()
+        .map(|entry| entry.id.clone())
+        .collect();
+        let runtime = app.outputs[0].runtime.hub.as_ref().unwrap();
+        assert!(expected.contains(&completed));
+        assert!(!runtime.borrow().activities.selection.visible.contains(&completed));
+        for (index, id) in expected.iter().enumerate() {
+            let key = if index == 0 { Named::Home } else { Named::ArrowDown };
+            drop(app.activity_navigation(bar, None, Some(key)));
+            assert_eq!(
+                app.outputs[0]
+                    .runtime
+                    .hub
+                    .as_ref()
+                    .unwrap()
+                    .borrow()
+                    .activities
+                    .focus
+                    .as_ref(),
+                Some(id)
+            );
+        }
+        drop(app.activity_navigation(bar, Some(completed.clone()), None));
+        drop(app.sync_hub_activity());
+        assert_eq!(
+            app.outputs[0].runtime.hub.as_ref().unwrap().borrow().activities.focus,
+            Some(completed)
+        );
     }
 
     #[test]

@@ -15,6 +15,18 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
+// Expanded lists retain result rows under DND. Compact selection applies DND
+// separately, so rendered rows and keyboard focus always share this projection.
+fn list_entries<'a>(snapshot: &'a Snapshot, native: &'a [Activity], now: u64, output: &str) -> Vec<&'a Activity> {
+    ranked(
+        snapshot.activities.iter().chain(native.iter()),
+        now,
+        snapshot.limits,
+        output,
+        false,
+    )
+}
+
 pub(crate) struct Model {
     pub snapshot: Arc<Snapshot>,
     native: Vec<Activity>,
@@ -288,21 +300,11 @@ impl FereseShell {
                     .map(|output| output.name.as_str())
                     .unwrap_or("")
                     .to_owned();
-                let entries = ranked(
-                    self.activities
-                        .snapshot
-                        .activities
-                        .iter()
-                        .chain(self.activities.native.iter()),
-                    now,
-                    self.activities.snapshot.limits,
-                    &name,
-                    dnd,
-                );
+                let entries = list_entries(&self.activities.snapshot, &self.activities.native, now, &name);
                 let compact: Vec<_> = entries
                     .iter()
                     .copied()
-                    .filter(|entry| entry.data.source != ferese_activities::Source::Media)
+                    .filter(|entry| entry.eligible(now, dnd) && entry.data.source != ferese_activities::Source::Media)
                     .collect();
                 let presentation = self.activities.flat.entry(output.bar).or_default();
                 presentation
@@ -318,17 +320,7 @@ impl FereseShell {
                 .output_for_bar(output.bar)
                 .map(|output| output.name.as_str())
                 .unwrap_or("");
-            let entries = ranked(
-                self.activities
-                    .snapshot
-                    .activities
-                    .iter()
-                    .chain(self.activities.native.iter()),
-                now,
-                self.activities.snapshot.limits,
-                name,
-                dnd,
-            );
+            let entries = list_entries(&self.activities.snapshot, &self.activities.native, now, name);
             let workspace_width = self.hub_workspace_width(output.bar) as f32;
             let panel = self.panel_for_bar(output.bar);
             let available = output.size.map_or(1280., |size| size.0 as f32)
@@ -345,7 +337,7 @@ impl FereseShell {
             let compact: Vec<_> = entries
                 .iter()
                 .copied()
-                .filter(|entry| entry.data.source != ferese_activities::Source::Media)
+                .filter(|entry| entry.eligible(now, dnd) && entry.data.source != ferese_activities::Source::Media)
                 .collect();
             let compact = if self.activities_configured(output.bar) {
                 compact
@@ -966,17 +958,7 @@ impl FereseShell {
     pub fn activity_list(&self, id: window::Id, opacity: f32) -> Element<'_, cosmic::Action<Message>> {
         let palette = self.config.theme.palette();
         let name = self.output_for_bar(id).map(|output| output.name.as_str()).unwrap_or("");
-        let entries = ranked(
-            self.activities
-                .snapshot
-                .activities
-                .iter()
-                .chain(self.activities.native.iter()),
-            now_ms(),
-            self.activities.snapshot.limits,
-            name,
-            false,
-        );
+        let entries = list_entries(&self.activities.snapshot, &self.activities.native, now_ms(), name);
         let focus = self
             .outputs
             .iter()

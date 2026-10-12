@@ -27,12 +27,12 @@ impl Watcher {
         std::thread::Builder::new()
             .name("ferese-activity-processes".into())
             .spawn(move || {
-                let mut observed = BTreeMap::<Owner, std::os::fd::OwnedFd>::new();
+                let mut observed = BTreeMap::<Owner, (std::os::fd::OwnedFd, ferese_config::activities::Matched)>::new();
                 while !worker_stop.load(Ordering::Acquire) {
                     let rules = rules.read().expect("activity rules").clone();
                     let dead: Vec<_> = observed
                         .iter()
-                        .filter_map(|(owner, fd)| crate::ipc::activity_owner::exited(fd).then_some(*owner))
+                        .filter_map(|(owner, (fd, _))| crate::ipc::activity_owner::exited(fd).then_some(*owner))
                         .collect();
                     for owner in dead {
                         observed.remove(&owner);
@@ -40,8 +40,9 @@ impl Watcher {
                             return;
                         }
                     }
-                    for owner in observed.keys() {
-                        let _ = sender.try_send(IpcEvent::ActivityProcessRefresh(*owner));
+                    // Reconcile every detection: admission may have failed or its lease expired.
+                    for (owner, (_, matched)) in &observed {
+                        let _ = sender.try_send(IpcEvent::ActivityDetected(*owner, Box::new(matched.clone())));
                     }
                     if let Ok(processes) = std::fs::read_dir("/proc") {
                         for process in processes.take(4_096).flatten() {
@@ -78,10 +79,10 @@ impl Watcher {
                             };
                             // No raw command, cwd or environment crosses the dispatcher.
                             if sender
-                                .try_send(IpcEvent::ActivityDetected(owner, Box::new(matched)))
+                                .try_send(IpcEvent::ActivityDetected(owner, Box::new(matched.clone())))
                                 .is_ok()
                             {
-                                observed.insert(owner, fd);
+                                observed.insert(owner, (fd, matched));
                             }
                         }
                     }

@@ -1,3 +1,5 @@
+mod output;
+mod progress;
 use clap::{Subcommand, ValueEnum};
 use ferese_activities::{Data, Id, Source, State, Template, Value};
 use ferese_ipc::activities::{OwnerScope, Publish, Request, VERSION};
@@ -103,6 +105,14 @@ fn value(
         }))
 }
 fn publish(socket: &Path, owner: OwnerScope, publish: Publish) -> Result<serde_json::Value, Box<dyn Error>> {
+    publish_with_timeout(socket, owner, publish, std::time::Duration::from_secs(2))
+}
+fn publish_with_timeout(
+    socket: &Path,
+    owner: OwnerScope,
+    publish: Publish,
+    timeout: std::time::Duration,
+) -> Result<serde_json::Value, Box<dyn Error>> {
     // Bound the whole exchange, including a full listen backlog or a broken
     // broker that trickles a frame. Detached I/O never delays command execution
     // or exit indefinitely; all requests still use the existing framing.
@@ -113,8 +123,8 @@ fn publish(socket: &Path, owner: OwnerScope, publish: Publish) -> Result<serde_j
         .spawn(move || {
             let result = (|| -> Result<_, Box<dyn Error>> {
                 let mut stream = std::os::unix::net::UnixStream::connect(socket)?;
-                stream.set_read_timeout(Some(std::time::Duration::from_secs(2)))?;
-                stream.set_write_timeout(Some(std::time::Duration::from_secs(2)))?;
+                stream.set_read_timeout(Some(timeout))?;
+                stream.set_write_timeout(Some(timeout))?;
                 super::request(
                     &mut stream,
                     "activity-publish",
@@ -128,9 +138,7 @@ fn publish(socket: &Path, owner: OwnerScope, publish: Publish) -> Result<serde_j
             .map_err(|error| error.to_string());
             let _ = send.try_send(result);
         })?;
-    receive
-        .recv_timeout(std::time::Duration::from_secs(2))?
-        .map_err(Into::into)
+    receive.recv_timeout(timeout)?.map_err(Into::into)
 }
 pub fn command(action: &Action, socket: &Path, json_output: bool) -> Result<(), Box<dyn Error>> {
     let request = match action {
@@ -329,12 +337,16 @@ pub fn run(
         }
     };
     CHILD.store(child.id() as i32, std::sync::atomic::Ordering::Relaxed);
+    let publisher = socket
+        .zip(token)
+        .map(|(socket, handle)| progress::Publisher::new(socket.to_owned(), local, handle));
+    let drain_deadline = output::Deadline::default();
     let reader = child.stdout.take().map(|stdout| {
-        let socket = socket.map(Path::to_owned);
-        let local = local.clone();
-        let token = token.clone();
+        let deadline = drain_deadline.clone();
+        let updates = publisher.as_ref().map(|publisher| publisher.updates.clone());
+        let (done, finished) = std::sync::mpsc::sync_channel(1);
         std::thread::spawn(move || {
-            let mut input = io::BufReader::new(stdout);
+            let mut input = io::BufReader::new(output::Output { pipe: stdout, deadline });
             let mut stdout = io::stdout().lock();
             let mut units = 0_u64;
             let mut last = std::time::Instant::now();
@@ -361,17 +373,8 @@ pub fn run(
                         let _ = stdout.write_all(&bytes);
                     }
                     if last.elapsed() >= std::time::Duration::from_millis(200) {
-                        if let (Some(socket), Some(handle)) = (&socket, &token) {
-                            let _ = publish(
-                                socket,
-                                OwnerScope::Publisher,
-                                Publish::Update {
-                                    local: local.clone(),
-                                    handle: Some(handle.clone()),
-                                    value: Some(Value::Text(format!("{units} units compiled"))),
-                                    lease_ms: None,
-                                },
-                            );
+                        if let Some(updates) = &updates {
+                            updates.progress(units);
                         }
                         last = std::time::Instant::now();
                     }
@@ -381,14 +384,20 @@ pub fn run(
                     break;
                 }
             }
-        })
+            let _ = stdout.flush();
+            let _ = done.send(());
+        });
+        finished
     });
     let status = child.wait()?;
     CHILD.store(0, std::sync::atomic::Ordering::Relaxed);
+    *drain_deadline.lock().unwrap() = Some(std::time::Instant::now() + std::time::Duration::from_millis(250));
     if let Some(reader) = reader {
-        let _ = reader.join();
+        // Descendants may inherit the pipe after the direct child exits. Drain
+        // buffered output briefly, but never wait for those descendants' EOF.
+        let _ = reader.recv_timeout(std::time::Duration::from_millis(350));
     }
-    if let (Some(socket), Some(handle)) = (socket, token) {
+    if let Some(publisher) = publisher {
         let result = if matches!(status.signal(), Some(libc::SIGINT | libc::SIGTERM | libc::SIGQUIT)) {
             State::Cancelled
         } else if status.success() {
@@ -396,16 +405,7 @@ pub fn run(
         } else {
             State::Failed
         };
-        let _ = publish(
-            socket,
-            OwnerScope::Publisher,
-            Publish::End {
-                local,
-                handle: Some(handle),
-                result,
-                message: None,
-            },
-        );
+        publisher.finish(result);
     }
     if let Some(signal) = status.signal() {
         // Preserve signal termination as well as the conventional shell status.

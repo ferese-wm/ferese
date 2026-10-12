@@ -336,3 +336,136 @@ fn a_silent_broker_cannot_prevent_or_change_command_execution() {
     assert!(began.elapsed() < std::time::Duration::from_secs(3));
     worker.join().unwrap();
 }
+
+fn fake_cargo(dir: &Path, script: &str) -> String {
+    use std::os::unix::fs::PermissionsExt;
+    let path = dir.join("cargo");
+    std::fs::write(&path, script).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    format!("{}:{}", dir.display(), std::env::var("PATH").unwrap_or_default())
+}
+
+#[test]
+fn cargo_adapter_completion_does_not_wait_for_descendant_stdout() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = fake_cargo(
+        dir.path(),
+        "#!/bin/sh\nsleep 5 &\necho $! > descendant\nprintf captured\nexit 23\n",
+    );
+    let output = dir.path().join("output");
+    let mut child = ctl(&[
+        "--socket",
+        "/missing/activity.sock",
+        "run",
+        "--cargo-json",
+        "--",
+        "cargo",
+        "build",
+    ])
+    .env("PATH", path)
+    .current_dir(dir.path())
+    .stdout(std::fs::File::create(&output).unwrap())
+    .stderr(std::process::Stdio::null())
+    .spawn()
+    .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break Some(status);
+        }
+        if std::time::Instant::now() >= deadline {
+            child.kill().unwrap();
+            child.wait().unwrap();
+            break None;
+        }
+        thread::sleep(std::time::Duration::from_millis(10));
+    };
+    let descendant: i32 = std::fs::read_to_string(dir.path().join("descendant"))
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    unsafe {
+        libc::kill(descendant, libc::SIGTERM);
+    }
+    assert_eq!(
+        status.and_then(|status| status.code()),
+        Some(23),
+        "waited for descendant EOF"
+    );
+    assert_eq!(std::fs::read(&output).unwrap(), b"captured");
+}
+
+#[test]
+fn stalled_progress_acknowledgements_do_not_block_cargo_stdout() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = fake_cargo(
+        dir.path(),
+        r##"#!/usr/bin/env python3
+import json, time, sys
+start = time.monotonic()
+time.sleep(.3)
+for _ in range(20000):
+    print('{"reason":"compiler-artifact"}')
+sys.stdout.flush()
+with open('elapsed', 'w') as f:
+    f.write(str(time.monotonic() - start))
+print('child output')
+print(json.dumps({'reason': 'compiler-message', 'message': {'rendered': 'diagnostic\n'}}))
+sys.exit(19)
+"##,
+    );
+    let socket = dir.path().join("broker.sock");
+    let listener = UnixListener::bind(&socket).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let server = thread::spawn(move || {
+        let mut stalled = Vec::new();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while std::time::Instant::now() < deadline {
+            let Ok((mut stream, _)) = listener.accept() else {
+                thread::sleep(std::time::Duration::from_millis(5));
+                continue;
+            };
+            stream
+                .set_read_timeout(Some(std::time::Duration::from_secs(1)))
+                .unwrap();
+            let request: Request = read_frame(&mut stream).unwrap();
+            match request.args["publish"]["action"].as_str().unwrap() {
+                "run" => {
+                    let handle = ferese_activities::Id {
+                        owner: ferese_activities::Owner { pid: 1, birth: 1 },
+                        local: request.args["publish"]["local"].as_str().unwrap().into(),
+                        session: 1,
+                        generation: 1,
+                    };
+                    write_frame(
+                        &mut stream,
+                        &Response::success(request.id, json!({"handle":handle,"progress":"cargo-json"})),
+                    )
+                    .unwrap();
+                }
+                "update" => stalled.push(stream), // Accept the update but never acknowledge it.
+                "end" => {
+                    assert_eq!(request.args["publish"]["result"], "failed");
+                    write_frame(&mut stream, &Response::success(request.id, json!({}))).unwrap();
+                    return stalled.len();
+                }
+                _ => panic!("unexpected publication"),
+            }
+        }
+        panic!("completion was not published");
+    });
+    let output = ctl(&["--socket", socket.to_str().unwrap(), "run", "--", "cargo", "build"])
+        .env("PATH", path)
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(19));
+    assert_eq!(output.stdout, b"child output\ndiagnostic\n");
+    assert!(server.join().unwrap() > 0, "probe must exercise progress publishing");
+    let elapsed: f64 = std::fs::read_to_string(dir.path().join("elapsed"))
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert!(elapsed < 1.5, "stdout reader stalled the child for {elapsed}s");
+}

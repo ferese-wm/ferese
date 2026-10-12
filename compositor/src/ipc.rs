@@ -60,7 +60,6 @@ pub(crate) enum IpcEvent {
     Closed(u64),
     ActivityOwnerExited(ferese_activities::Owner),
     ActivityDetected(ferese_activities::Owner, Box<ferese_config::activities::Matched>),
-    ActivityProcessRefresh(ferese_activities::Owner),
 }
 
 struct IpcConnection {
@@ -159,20 +158,6 @@ pub(crate) fn init(
         if let channel::Event::Msg(event) = event {
             let call = match event {
                 IpcEvent::Call(call) => *call,
-                IpcEvent::ActivityProcessRefresh(owner) => {
-                    let _ = state.activities.publish(
-                        owner,
-                        ferese_ipc::activities::Publish::Update {
-                            local: "process".into(),
-                            handle: None,
-                            value: None,
-                            lease_ms: Some(5_000),
-                        },
-                        None,
-                        None,
-                    );
-                    return;
-                }
                 IpcEvent::ActivityDetected(owner, matched) => {
                     let output = state
                         .outputs_json()
@@ -185,16 +170,7 @@ pub(crate) fn init(
                         })
                         .and_then(|output| output["name"].as_str())
                         .map(str::to_owned);
-                    let _ = state.activities.publish(
-                        owner,
-                        ferese_ipc::activities::Publish::Hook {
-                            local: "process".into(),
-                            command: String::new(),
-                            cwd: String::new(),
-                        },
-                        Some(*matched),
-                        output,
-                    );
+                    state.activities.detect_process(owner, *matched, output);
                     return;
                 }
                 IpcEvent::ActivityOwnerExited(owner) => {
