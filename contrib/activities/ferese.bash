@@ -30,7 +30,7 @@ _ferese_finish() {
     return "$saved"
 }
 _ferese_arm() { local saved=$?; __ferese_phase=armed; return "$saved"; }
-if declare -p preexec_functions >/dev/null 2>&1; then
+if [[ -n ${bash_preexec_imported:-} ]] || declare -p preexec_functions >/dev/null 2>&1; then
     preexec_functions+=(_ferese_preexec)
 else
     # Bash DEBUG has a single owner and is not inherited reliably by sourced

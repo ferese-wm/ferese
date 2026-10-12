@@ -19,6 +19,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     if matches!(cli.command, Command::Autostart) {
         return autostart::run();
     }
+    if let Command::Activity {
+        action: activities::Action::Setup { config },
+    } = &cli.command
+    {
+        return activities::setup::configure(config);
+    }
     for alias in env::args().skip(1).filter(|arg| {
         matches!(
             arg.as_str(),

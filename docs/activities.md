@@ -154,12 +154,18 @@ including failure, never flashes. Eligible results last 1500 ms by default;
 before application; an invalid reload preserves the last valid configuration.
 Diagnostics include source offsets for activity configuration errors.
 
-Source the matching file in `contrib/activities/` explicitly. zsh uses
+`scripts/install.sh` detects your login shell and installs its hook during user
+setup. On first setup it enables shell activities and adds the Activities item
+without replacing your panel layout. Existing `shell-hook #false` settings are
+preserved, and later installs leave your activity settings and panel items alone.
+Use `--no-activities` to skip this setup. Open a new terminal after installing.
+
+For manual setup, source the matching file in `contrib/activities/`. zsh uses
 `add-zsh-hook`, fish uses named pre/postexec events, and Bash composes with
 [bash-preexec](https://github.com/rcaloras/bash-preexec)'s hook arrays. Load
 bash-preexec before the Bash hook; the hook does not replace an existing DEBUG
 trap. Hook files never execute captured command text and preserve command status.
-Hooks and process watching are off by default. The optional process watcher is
+Without installer setup, hooks and process watching are off by default. The optional process watcher is
 an alternative when hooks are unavailable; it performs bounded sampling on one
 worker, and disappearance means expiry, never inferred success/failure.
 

@@ -5,6 +5,26 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
+/// Enable installation defaults without overriding an explicit user opt-out.
+pub fn setup_shell_hook(document: &mut crate::Document) -> Result<bool, crate::Error> {
+    let explicit = document
+        .doc
+        .get("activities")
+        .and_then(kdl::KdlNode::children)
+        .and_then(|sources| sources.get("sources"))
+        .and_then(kdl::KdlNode::children)
+        .and_then(|sources| sources.get("shell-hook"))
+        .and_then(|node| node.get(0))
+        .and_then(kdl::KdlValue::as_bool);
+    if explicit == Some(false) {
+        return Ok(false);
+    }
+    if explicit.is_none() {
+        document.set("activities.sources.shell_hook", json!(true))?;
+    }
+    Ok(true)
+}
+
 use crate::Error;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

@@ -1,5 +1,6 @@
 mod output;
 mod progress;
+pub(super) mod setup;
 mod transport;
 use clap::{Subcommand, ValueEnum};
 use ferese_activities::{Data, Id, Source, State, Template, Value};
@@ -13,6 +14,11 @@ use std::process::{Command, Stdio};
 
 #[derive(Debug, Subcommand)]
 pub enum Action {
+    /// Enable shell activities and add the panel item if not already configured.
+    Setup {
+        #[arg(long)]
+        config: std::path::PathBuf,
+    },
     Start {
         local: String,
         #[arg(long, default_value = "ferese")]
@@ -128,6 +134,7 @@ fn publish_with_timeout(
 
 pub fn command(action: &Action, socket: &Path, json_output: bool) -> Result<(), Box<dyn Error>> {
     let request = match action {
+        Action::Setup { .. } => unreachable!("setup is an offline command"),
         Action::Start {
             local,
             icon,
