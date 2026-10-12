@@ -1,4 +1,5 @@
 //! Shared Activities item and Morph presentation. Publishers provide data only.
+mod compact;
 mod ring;
 pub(crate) mod subscription;
 use crate::{FereseShell, Message, status_ui};
@@ -30,6 +31,7 @@ impl Default for Model {
 }
 #[derive(Default)]
 pub(crate) struct Presentation {
+    compact: compact::Compact,
     pub selection: Selection,
     pub focus: Option<Id>,
     rows: Vec<Id>,
@@ -316,6 +318,16 @@ impl FereseShell {
                 name,
                 dnd,
             );
+            let workspace_width = self.hub_workspace_width(output.bar) as f32;
+            let panel = self.panel_for_bar(output.bar);
+            let available = output.size.map_or(1280., |size| size.0 as f32)
+                - 2. * panel.resolved_geometry().side_margins as f32
+                - if panel.morph.attached { 24. } else { 0. }
+                - if workspace_width > 0. {
+                    workspace_width + 10.
+                } else {
+                    0.
+                };
             let mut runtime = runtime.borrow_mut();
             let before = runtime.activities.selection.visible.clone();
             let presentation = &mut runtime.activities;
@@ -371,13 +383,12 @@ impl FereseShell {
                 .divider
                 .get_or_insert_with(|| AnimatedValue::new(0.))
                 .retarget_preserving_motion(target);
-            // Values never influence this fixed compact text budget.
+            presentation
+                .compact
+                .update(&entries, &presentation.selection, self.render.font, available);
+            let compact_width = presentation.compact.width;
             if !presentation.selection.visible.is_empty() {
-                runtime.idle_content_width = Some(if presentation.selection.visible.len() == 2 {
-                    330.
-                } else {
-                    220.
-                });
+                runtime.idle_content_width = Some(f64::from(compact_width));
             } else {
                 runtime.idle_content_width = None;
             }
@@ -757,7 +768,9 @@ impl FereseShell {
             .expect("activity hub")
             .borrow();
         let presentation = &runtime.activities;
-        let mut strip = row::with_capacity(5).spacing(8).align_y(Alignment::Center);
+        let mut strip = row::with_capacity(5)
+            .spacing(compact::ITEM_GAP)
+            .align_y(Alignment::Center);
         for (index, identity) in presentation.selection.visible.iter().enumerate() {
             let Some(activity) = self
                 .activities
@@ -805,6 +818,7 @@ impl FereseShell {
                 .render
                 .text(activity.data.title.clone())
                 .size(12)
+                .width(Length::Fill)
                 .line_height(cosmic::iced::widget::text::LineHeight::Relative(1.1))
                 .class(theme::Text::Color(palette.text.scale_alpha(opacity)))
                 .ellipsize(cosmic::iced::widget::text::Ellipsize::End(
@@ -815,17 +829,22 @@ impl FereseShell {
                 self.render
                     .text(label(activity))
                     .size(10)
+                    .width(Length::Fill)
+                    .ellipsize(cosmic::iced::widget::text::Ellipsize::End(
+                        cosmic::iced::advanced::text::EllipsizeHeightLimit::Lines(1)
+                    ))
                     .line_height(cosmic::iced::widget::text::LineHeight::Relative(1.1))
                     .class(theme::Text::Color(palette.text.scale_alpha(opacity * 0.7)))
             ]
-            .spacing(0);
+            .spacing(0)
+            .width(presentation.compact.text_width(identity));
             let item = row![
                 self.activity_icon(activity, tint.scale_alpha(opacity), !intrinsic),
                 text
             ]
-            .spacing(6)
+            .spacing(compact::TEXT_GAP)
             .align_y(Alignment::Center)
-            .width(if intrinsic { Length::Fixed(132.) } else { Length::Fill });
+            .width(Length::Shrink);
             strip = strip.push(item);
         }
         if presentation.selection.hidden > 0 {
@@ -859,17 +878,14 @@ impl FereseShell {
                 })
                 .on_press(cosmic::Action::App(Message::HubOpen(id, status_ui::Menu::Activities))),
         );
-        let budget = if presentation.selection.visible.len() == 2 {
-            330.
-        } else {
-            220.
-        } + if self.hub_workspace_width(id) > 0. {
-            self.hub_workspace_width(id) as f32 + 10.
-        } else {
-            0.
-        };
+        let budget = presentation.compact.width
+            + if self.hub_workspace_width(id) > 0. {
+                self.hub_workspace_width(id) as f32 + 10.
+            } else {
+                0.
+            };
         container(controls)
-            .padding([0, 14])
+            .padding([0., compact::PADDING])
             .height(Length::Fill)
             .width(if intrinsic { Length::Fixed(budget) } else { Length::Fill })
             .into()

@@ -422,13 +422,7 @@ impl FereseShell {
         } else {
             0.
         };
-        (if runtime.activities.selection.visible.is_empty() {
-            runtime.idle_width + artwork_width
-        } else if runtime.activities.selection.visible.len() == 2 {
-            330.
-        } else {
-            220.
-        } + runtime.workspace_width)
+        (runtime.idle_width + artwork_width + runtime.workspace_width)
             .min(runtime.available[0])
             .min(f64::from(runtime.allocation[0].saturating_sub(runtime.fillet_space)) / 1.1) as f32
     }
@@ -1547,6 +1541,102 @@ mod tests {
             app.outputs[0].runtime.hub.as_ref().unwrap().borrow().activities.focus,
             Some(ids[2].clone()),
             "Tab focuses row two, so Down must focus row three"
+        );
+    }
+
+    #[test]
+    fn compact_activities_fit_titles_and_keep_the_badge_adjacent() {
+        use cosmic::iced::advanced::renderer::Headless;
+        #[derive(Default)]
+        struct TextBounds(Vec<(String, Rectangle)>);
+        impl widget::Operation for TextBounds {
+            fn traverse(&mut self, visit: &mut dyn FnMut(&mut dyn widget::Operation)) {
+                visit(self);
+            }
+            fn text(&mut self, _: Option<&widget::Id>, bounds: Rectangle, text: &str) {
+                self.0.push((text.into(), bounds));
+            }
+        }
+        let renderer = cosmic::iced::futures::executor::block_on(cosmic::Renderer::new(
+            cosmic::iced::Font::default(),
+            cosmic::iced::Pixels(14.),
+            Some("tiny-skia"),
+        ))
+        .unwrap();
+        let mut app = shell();
+        let id = app.outputs[0].bar;
+        let mut widths = Vec::new();
+        for count in [1, 2, 3] {
+            seed_activities(&mut app, count);
+            for activity in &mut std::sync::Arc::make_mut(&mut app.activities.snapshot).activities {
+                activity.data.title = "Build".into();
+            }
+            drop(app.sync_hub_activity());
+            let width = app.outputs[0].runtime.hub.as_ref().unwrap().borrow().hub.target_size()[0];
+            widths.push(width);
+            drop(app.hub_hover(id, true));
+            assert_eq!(
+                app.outputs[0].runtime.hub.as_ref().unwrap().borrow().hub.target_size()[0],
+                width
+            );
+            let mut view = app.activity_compact(id, 1., false);
+            let mut tree = widget::Tree::new(&view);
+            let node = view.as_widget_mut().layout(
+                &mut tree,
+                &renderer,
+                &layout::Limits::new(Size::ZERO, Size::new(width as f32, 44.)),
+            );
+            let mut labels = TextBounds::default();
+            view.as_widget_mut()
+                .operate(&mut tree, Layout::new(&node), &renderer, &mut labels);
+            if count == 3 {
+                let title = labels.0.iter().rfind(|(text, _)| text == "Build").unwrap().1;
+                let badge = labels.0.iter().find(|(text, _)| text == "+1").unwrap().1;
+                assert!((badge.x - title.x - title.width - 8.).abs() < 1., "{:#?}", labels.0);
+                assert!(
+                    (width as f32 - badge.x - badge.width - 14.).abs() < 1.,
+                    "{:#?}",
+                    labels.0
+                );
+            }
+            drop(view);
+            drop(app.hub_hover(id, false));
+        }
+        assert!(widths[0] < 180., "short single activity should shrink: {widths:?}");
+        assert!(widths[0] < widths[1] && widths[1] < widths[2], "{widths:?}");
+        for activity in &mut std::sync::Arc::make_mut(&mut app.activities.snapshot).activities {
+            activity.data.value = ferese_activities::Value::Text("A much longer changing phase".into());
+        }
+        drop(app.sync_hub_activity());
+        assert_eq!(
+            app.outputs[0].runtime.hub.as_ref().unwrap().borrow().hub.target_size()[0],
+            widths[2]
+        );
+        for activity in &mut std::sync::Arc::make_mut(&mut app.activities.snapshot).activities {
+            activity.data.title = "A very long title which must be capped in the compact strip".into();
+        }
+        drop(app.sync_hub_activity());
+        let wider = app.outputs[0].runtime.hub.as_ref().unwrap().borrow().hub.target_size()[0];
+        assert!(wider > widths[2] && wider < 450., "{wider}");
+        app.outputs[0].size = Some((240, 800));
+        drop(app.sync_hub_activity());
+        let width = app.outputs[0].runtime.hub.as_ref().unwrap().borrow().hub.target_size()[0] as f32;
+        assert!(width <= 240.);
+        let mut view = app.activity_compact(id, 1., false);
+        let mut tree = widget::Tree::new(&view);
+        let node = view.as_widget_mut().layout(
+            &mut tree,
+            &renderer,
+            &layout::Limits::new(Size::ZERO, Size::new(width, 44.)),
+        );
+        let mut labels = TextBounds::default();
+        view.as_widget_mut()
+            .operate(&mut tree, Layout::new(&node), &renderer, &mut labels);
+        let badge = labels.0.iter().find(|(text, _)| text == "+1").unwrap().1;
+        assert!(
+            (width - badge.x - badge.width - 14.).abs() < 1.,
+            "badge must fit a narrow output: {:#?}",
+            labels.0
         );
     }
 

@@ -51,8 +51,9 @@ impl FereseShell {
                 .find(|entry| entry.bar == id)
                 .and_then(|entry| entry.runtime.hub.as_ref())
                 .and_then(|runtime| runtime.borrow().idle_content_width)
-                .unwrap_or(220.);
-            return (Peek::Date, width + self.hub_workspace_width(id));
+                .unwrap_or(self.panel_for_bar(id).morph.idle_width);
+            let workspaces = self.hub_workspace_width(id);
+            return (Peek::Date, width + if workspaces > 0. { workspaces + 10. } else { 0. });
         }
         let player = self.media.snapshot.selected.as_ref().filter(|player| {
             matches!(
