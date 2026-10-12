@@ -18,6 +18,28 @@ use crate::panel_layout::Placement;
 mod binding_mode_tests;
 
 impl FereseShell {
+    pub(super) fn binding_mode_transition(&mut self, was_active: bool) -> cosmic::app::Task<Message> {
+        match (was_active, self.snapshot.binding_mode.is_some()) {
+            (false, true) => {
+                let mut tasks = vec![self.destroy_menu(), self.dismiss_workspace_tooltip()];
+                let hubs: Vec<_> = self
+                    .outputs
+                    .iter()
+                    .filter(|entry| entry.runtime.hub.is_some())
+                    .map(|entry| entry.bar)
+                    .collect();
+                for id in hubs {
+                    // Release keyboard ownership and return to the collapsed
+                    // backing allocation before displaying the mode indicator.
+                    tasks.push(self.suspend_hub(id));
+                }
+                cosmic::app::Task::batch(tasks)
+            }
+            (true, false) => self.sync_hub_activity(),
+            _ => cosmic::app::Task::none(),
+        }
+    }
+
     pub(super) fn output_for_bar(&self, id: window::Id) -> Option<&control::OutputSnapshot> {
         let name = self.outputs.iter().find(|entry| entry.bar == id)?.name.as_deref()?;
         self.snapshot.outputs.iter().find(|output| output.name == name)

@@ -790,10 +790,13 @@ impl cosmic::Application for FereseShell {
                     }
 
                     if let Some(snapshot) = poll.snapshot {
+                        let mode_was_active = self.snapshot.binding_mode.is_some();
                         self.snapshot = snapshot;
+                        let mode = self.binding_mode_transition(mode_was_active);
                         let feedback = self.sync_hub_workspace_feedback(overview_was_active || self.overview_active);
                         let mut tasks = vec![
                             reload_task,
+                            mode,
                             self.update_workspace_ui(),
                             feedback,
                             self.refresh_adaptive_panels(),

@@ -576,6 +576,10 @@ hint, including over fullscreen windows, and restores its ordinary contents on
 exit. Long names truncate to keep the exit hint visible. Mode changes reach the
 shell through its existing snapshot protocol.
 
+Entering a mode closes panel popovers and workspace tooltips. An expanded Morph
+panel collapses and releases keyboard focus. Hover, activity updates, and queued
+menu requests cannot reopen it while the mode indicator is displayed.
+
 Mode bindings replace the default keyboard map while active. Unmatched keys
 reach the focused application; default compositor bindings and portal shortcuts
 do not run as fallbacks. Gestures keep the default configuration. Normal shortcut
@@ -586,16 +590,18 @@ exited; launching an application does not implicitly leave it.
 Each mode must have a unique name of 1–48 ASCII letters, digits, underscores, or
 hyphens. `default` is reserved. Mode bindings accept the same actions and physical
 key matching as ordinary bindings; swipes, disabled records, duplicate chords,
-and Escape bindings are rejected. References to undefined modes reject the
-configuration before it is applied.
+and Escape bindings are rejected, including physical keys remapped to Escape.
+References to undefined modes reject the configuration before it is applied.
 
 An accepted change to bindings, modes, commands, or input settings returns to
-default. Unrelated reloads preserve the mode; rejected reloads keep the previous
-configuration and mode. Locking, input capture, and session suspension also exit.
+default and closes any focus preview. Unrelated reloads preserve the mode;
+rejected reloads keep the previous configuration and mode. Locking, input capture,
+and session suspension also exit.
 The first press owns its matching release across these transitions. Held keys
 are never reinterpreted by a new mode; consumed releases stay consumed. Repeated
-presses retain their original action until a mode/configuration transition stops
-that action's repeats. `feresectl keybindings` lists the active keyboard map.
+presses retain their original action and repeat only while its chord still
+matches. A mode/configuration transition stops that action's repeats.
+`feresectl keybindings` lists the active keyboard map.
 
 Defaults: Super+Enter terminal; Super+Q close; Super+H/J/K/L focus;
 Super+Shift+H/J/K/L move; Super+Ctrl+H/J/K/L resize; Super+1–9 workspace;

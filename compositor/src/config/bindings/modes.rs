@@ -77,7 +77,14 @@ impl Config {
                     || !identities.insert(identity.clone())
                     || (identity.match_mode == BindingMatch::Keysym && identity.key == keysyms::KEY_Escape)
                     || (identity.match_mode == BindingMatch::Physical
-                        && keymap.key_by_name("ESC").is_some_and(|code| code.raw() == identity.key))
+                        && (0..keymap.num_layouts_for_key(Keycode::new(identity.key))).any(|layout| {
+                            (0..keymap.num_levels_for_key(Keycode::new(identity.key), layout)).any(|level| {
+                                keymap
+                                    .key_get_syms_by_level(Keycode::new(identity.key), layout, level)
+                                    .iter()
+                                    .any(|symbol| symbol.raw() == keysyms::KEY_Escape)
+                            })
+                        }))
                 {
                     return Err(ConfigError::Binding(format!(
                         "invalid, duplicate or reserved mode binding {:?}",
@@ -168,6 +175,7 @@ mod tests {
             "binding-mode resize { binding Escape none; }",
             "binding-mode resize { binding Super+Escape none; }",
             "binding-mode resize { binding ESC none match=\"physical\"; }",
+            "input { xkb-options \"caps:escape\"; }\nbinding-mode resize { binding CAPS none match=\"physical\"; }",
             "binding-mode resize { binding Swipe3Left none; }",
             "binding-mode resize { binding x disabled=#true; }",
             "binding-mode resize fallback=#true {}",

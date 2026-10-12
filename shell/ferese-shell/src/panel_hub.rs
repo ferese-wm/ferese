@@ -200,7 +200,7 @@ impl FereseShell {
     }
 
     pub(super) fn open_hub(&mut self, id: window::Id, kind: status_ui::Menu) -> Task<Message> {
-        if self.bar_hidden(id) || self.hub_mode(id).is_none() {
+        if self.snapshot.binding_mode.is_some() || self.bar_hidden(id) || self.hub_mode(id).is_none() {
             return Task::none();
         }
         if kind == status_ui::Menu::Notifications {
@@ -244,7 +244,8 @@ impl FereseShell {
         let Some(id) = self.active_bar() else {
             return Task::none();
         };
-        if self.bar_hidden(id)
+        if self.snapshot.binding_mode.is_some()
+            || self.bar_hidden(id)
             || self.hub_priority().is_some()
             || !matches!(self.hub_mode(id), Some(Mode::Idle | Mode::Peek | Mode::Toast))
             || !self
@@ -309,6 +310,9 @@ impl FereseShell {
     }
 
     fn transition_hub(&mut self, id: window::Id, event: Event) -> Task<Message> {
+        if self.snapshot.binding_mode.is_some() && !matches!(event, Event::Close | Event::Resize) {
+            return Task::none();
+        }
         let workspace_width = self.hub_workspace_width(id);
         let panel = self.panel_for_bar(id);
         let geometry = panel.resolved_geometry();

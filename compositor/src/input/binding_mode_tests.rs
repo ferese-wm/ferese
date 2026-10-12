@@ -175,6 +175,34 @@ fn reload_transitions_cancel_modes_without_losing_key_ownership() {
 }
 
 #[test]
+fn escape_exits_with_every_modifier_combination() {
+    if !crate::startup_tests::private_runtime("input::binding_mode_tests::escape_exits_with_every_modifier_combination")
+    {
+        return;
+    }
+    let mut events = EventLoop::try_new().unwrap();
+    let mut state = state(&mut events);
+    let modifiers = [133, 37, 64, 50]; // Super, Ctrl, Alt, Shift.
+    for bits in 0..16 {
+        state.set_binding_mode("resize");
+        for (bit, code) in modifiers.iter().enumerate() {
+            if bits & (1 << bit) != 0 {
+                key(&mut state, *code, true);
+            }
+        }
+        tap(&mut state, 9);
+        assert_eq!(state.binding_modes.active(), None, "modifiers={bits:04b}");
+        for (bit, code) in modifiers.iter().enumerate() {
+            if bits & (1 << bit) != 0 {
+                key(&mut state, *code, false);
+            }
+        }
+        assert!(state.intercepted_keys.is_empty());
+        assert!(state.binding_mode_pressed.is_empty());
+    }
+}
+
+#[test]
 fn input_capture_exits_modes_and_prevents_reentry() {
     if !crate::startup_tests::private_runtime(
         "input::binding_mode_tests::input_capture_exits_modes_and_prevents_reentry",

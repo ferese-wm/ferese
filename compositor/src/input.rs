@@ -304,14 +304,20 @@ impl Ferese {
                             // Ownership comes from the press, never from the
                             // current mode or modifiers at release time.
                             return FilterResult::Forward;
-                        } else if !data.binding_mode_pressed.insert(keycode) {
+                        }
+                        let raw_symbols = keysym.raw_syms().into_iter().map(|symbol| symbol.raw()).collect::<Vec<_>>();
+                        if !data.binding_mode_pressed.insert(keycode) {
                             // A held key belongs to the recipient of its first
                             // press, even when a mode or configuration changes.
                             return if data.intercepted_keys.contains(&keycode) {
                                 if !data.session_lock.active() && !data.input_capture.active()
                                     && !data.seat.keyboard_shortcuts_inhibited()
-                                    && let Some(action) = data.binding_mode_repeats.get(&keycode).cloned()
+                                    && let Some(binding) = data.binding_mode_repeats.get(&keycode)
+                                        .filter(|binding| binding.matches(keycode, &raw_symbols,
+                                            modifiers.logo, modifiers.ctrl, modifiers.alt, modifiers.shift))
+                                        .cloned()
                                 {
+                                    let action = binding.action;
                                     if let BindingAction::FocusMru(reverse) = action {
                                         data.cycle_focus(reverse, modifiers.alt);
                                     } else {
@@ -406,12 +412,7 @@ impl Ferese {
                             return FilterResult::Intercept(());
                         }
 
-                        let raw_symbols = keysym
-                            .raw_syms()
-                            .into_iter()
-                            .map(|symbol| symbol.raw())
-                            .collect::<Vec<_>>();
-                        let action = data.binding_modes.bindings(&data.bindings).action_for_key(
+                        let binding = data.binding_modes.bindings(&data.bindings).binding_for_key(
                             keycode,
                             &raw_symbols,
                             modifiers.logo,
@@ -421,7 +422,7 @@ impl Ferese {
                         );
                         if data.focus_cycle.is_some()
                             && state == KeyState::Pressed
-                            && !matches!(action, Some(BindingAction::FocusMru(_)))
+                            && !matches!(binding.map(|binding| &binding.action), Some(BindingAction::FocusMru(_)))
                             && !matches!(symbol,
                                 keysyms::KEY_Alt_L | keysyms::KEY_Alt_R
                                 | keysyms::KEY_Shift_L | keysyms::KEY_Shift_R
@@ -431,7 +432,7 @@ impl Ferese {
                             data.intercepted_keys.insert(keycode);
                             return FilterResult::Intercept(());
                         }
-                        let Some(action) = action else {
+                        let Some(binding) = binding else {
                             if state == KeyState::Pressed
                                 && data.binding_modes.active().is_none()
                                 && data.portal_shortcuts.press(
@@ -449,9 +450,9 @@ impl Ferese {
 
                         if state == KeyState::Pressed {
                             data.intercepted_keys.insert(keycode);
-                            let action = action.clone();
+                            let action = binding.action.clone();
                             if !matches!(action, BindingAction::BindingMode(_)) {
-                                data.binding_mode_repeats.insert(keycode, action.clone());
+                                data.binding_mode_repeats.insert(keycode, binding.clone());
                             }
 
                             if let BindingAction::FocusMru(reverse) = action {

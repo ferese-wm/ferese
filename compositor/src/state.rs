@@ -463,7 +463,7 @@ pub struct Ferese {
     pub(crate) bindings: BindingSet,
     pub(crate) binding_modes: crate::config::BindingModes,
     pub(crate) binding_mode_pressed: HashSet<Keycode>,
-    pub(crate) binding_mode_repeats: HashMap<Keycode, crate::config::BindingAction>,
+    pub(crate) binding_mode_repeats: HashMap<Keycode, crate::config::Binding>,
     workspace_auto_back_and_forth: bool,
     pub(crate) window_rules: Vec<WindowRule>,
     pub(crate) theme_settings: ThemeSettings,
@@ -947,6 +947,7 @@ impl Ferese {
             self.binding_mode_repeats.clear();
             self.bindings = config.bindings.into();
             self.binding_modes = config.binding_modes;
+            self.cancel_focus_cycle();
             self.send_shell_snapshots();
         }
         self.workspace_auto_back_and_forth = config.workspace_auto_back_and_forth;

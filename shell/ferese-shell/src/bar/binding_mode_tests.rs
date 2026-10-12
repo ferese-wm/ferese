@@ -15,6 +15,81 @@ impl widget::Operation for TextBounds {
 }
 
 #[test]
+fn a_binding_mode_owns_the_panel_instead_of_hidden_morph_hover_or_menus() {
+    let mut shell = crate::tests::shell_with_measured_panel();
+    shell.config.panels[0].style = ferese_panel::PanelStyle::Morph;
+    shell.outputs[0]
+        .runtime
+        .reset(&shell.config.panels[0], &shell.snapshot, Some("test"));
+    let id = shell.outputs[0].bar;
+    shell.snapshot.binding_mode = Some("resize".into());
+    let allocation = shell.outputs[0].runtime.hub.as_ref().unwrap().borrow().allocation;
+    drop(shell.hub_hover(id, true));
+    assert_eq!(shell.hub_mode(id), Some(ferese_panel::morph::Mode::Idle));
+    drop(shell.open_hub(id, status_ui::Menu::Calendar));
+    assert_eq!(shell.hub_mode(id), Some(ferese_panel::morph::Mode::Idle));
+    assert_eq!(
+        shell.outputs[0].runtime.hub.as_ref().unwrap().borrow().allocation,
+        allocation
+    );
+}
+
+#[test]
+fn mode_entry_dismisses_existing_popovers_and_collapses_expanded_morph_content() {
+    for style in [ferese_panel::PanelStyle::Flat, ferese_panel::PanelStyle::Morph] {
+        let mut shell = crate::tests::shell_with_measured_panel();
+        shell.config.panels[0].style = style;
+        shell.outputs[0]
+            .runtime
+            .reset(&shell.config.panels[0], &shell.snapshot, Some("test"));
+        let id = shell.outputs[0].bar;
+        let collapsed = shell.outputs[0].runtime.hub.as_ref().map(|hub| hub.borrow().allocation);
+        if collapsed.is_some() {
+            drop(shell.open_hub(id, status_ui::Menu::Calendar));
+            assert!(shell.hub_mode(id).unwrap().expanded());
+        }
+        let anchor = status_ui::PopoverAnchor {
+            parent: id,
+            panel: shell.config.panels[0].id.clone(),
+            item: Some(crate::panel::ItemId("clock".into())),
+            rectangle: Default::default(),
+        };
+        shell.menu = Some(status_ui::OpenMenu {
+            id: window::Id::unique(),
+            anchor: anchor.clone(),
+            kind: status_ui::Menu::Calendar,
+            motion: crate::motion::PopupMotion::new(Default::default()),
+            effects: None,
+            regions: Default::default(),
+        });
+        shell.workspace_ui.tooltip = Some(window::Id::unique());
+        shell.snapshot.binding_mode = Some("resize".into());
+        drop(shell.binding_mode_transition(false));
+        assert!(shell.menu.is_none());
+        assert!(shell.workspace_ui.tooltip.is_none());
+        drop(shell.open_menu(status_ui::Menu::Calendar, anchor));
+        assert!(
+            shell.menu.is_none(),
+            "a queued click on a displaced control must not reopen its popup"
+        );
+        if let Some(collapsed) = collapsed {
+            assert_eq!(shell.hub_mode(id), Some(ferese_panel::morph::Mode::Idle));
+            let hub = shell.outputs[0].runtime.hub.as_ref().unwrap().borrow();
+            assert_eq!(hub.allocation, collapsed);
+            assert!(!hub.hub.active());
+        }
+        // Another snapshot while the mode is active does not restart the handoff.
+        drop(shell.binding_mode_transition(true));
+        shell.snapshot.binding_mode = None;
+        drop(shell.binding_mode_transition(true));
+        if collapsed.is_some() {
+            drop(shell.open_hub(id, status_ui::Menu::Calendar));
+            assert!(shell.hub_mode(id).unwrap().expanded());
+        }
+    }
+}
+
+#[test]
 fn mode_name_and_escape_hint_fit_the_published_shape_in_every_panel_style() {
     use cosmic::iced::advanced::renderer::Headless;
     let mut renderer = cosmic::iced::futures::executor::block_on(cosmic::Renderer::new(

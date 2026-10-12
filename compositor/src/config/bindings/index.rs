@@ -33,7 +33,7 @@ impl std::ops::Deref for BindingSet {
 }
 
 impl BindingSet {
-    pub(crate) fn action_for_key(
+    pub(crate) fn binding_for_key(
         &self,
         keycode: Keycode,
         symbols: &[u32],
@@ -41,7 +41,7 @@ impl BindingSet {
         ctrl: bool,
         alt: bool,
         shift: bool,
-    ) -> Option<&BindingAction> {
+    ) -> Option<&Binding> {
         let modifiers = BindingModifiers { logo, ctrl, alt, shift };
         let physical = self.keyboard.get(&BindingIdentity {
             modifiers,
@@ -61,7 +61,21 @@ impl BindingSet {
             .into_iter()
             .chain(symbolic)
             .min()
-            .map(|&index| &self.ordered[index].action)
+            .map(|&index| &self.ordered[index])
+    }
+
+    #[cfg(test)]
+    pub(crate) fn action_for_key(
+        &self,
+        keycode: Keycode,
+        symbols: &[u32],
+        logo: bool,
+        ctrl: bool,
+        alt: bool,
+        shift: bool,
+    ) -> Option<&BindingAction> {
+        self.binding_for_key(keycode, symbols, logo, ctrl, alt, shift)
+            .map(|binding| &binding.action)
     }
 }
 
