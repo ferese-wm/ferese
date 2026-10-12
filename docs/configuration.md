@@ -583,7 +583,7 @@ Configure the scrolling indicator under `scrolling.tab-indicator`:
 scrolling {
     tab-indicator {
         width 4
-        segment-height 18
+        segment-height 24
         segment-gap 4
         hit-width 12
         gap-threshold 8
@@ -591,18 +591,25 @@ scrolling {
         row-height 28
         padding 4
         font-size 12
+        outline-width 0.5
         flash-duration-ms 1000
     }
 }
 ```
 
-Sizes are logical pixels. `flash-duration-ms 0` disables keyboard feedback.
-Optional `active-color`, `inactive-color`, `background-color`, and `text-color`
+Sizes are logical pixels. The hover list fits its longest title, up to
+`list-width`, with an 80px minimum. Its width stays fixed while open.
+`outline-width 0` hides the outline; positive widths draw at least one physical
+pixel. `flash-duration-ms 0` disables keyboard feedback.
+Optional `active-color`, `inactive-color`, `background-color`, `text-color`, and `outline-color`
 accept the same color syntax as theme colors. When omitted, they follow the
-current theme's accent, border, base surface, and primary text respectively.
-The rail has fully rounded ends; the title list follows the shell corner radius.
-Both use flat fills, without blur or shadows. Changes apply on configuration
-reload.
+current theme's accent, border, raised surface, primary text, and border respectively.
+The selected row uses the control center’s faint text-color fill. The rail has
+fully rounded ends; the title list follows the shell corner radius.
+The hover list and keyboard feedback pill follow the shell material opacity.
+Solid material or Reduce transparency makes their backgrounds opaque. Text and
+rail markers retain their own opacity. These controls use flat fills without
+blur or shadows. Changes apply on configuration reload.
 
 To make future scrolling columns tabbed by default:
 

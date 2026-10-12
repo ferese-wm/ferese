@@ -14,12 +14,20 @@ fn text_element(
 ) -> Option<AnimatedWindowRenderElement> {
     let settings = state.tab_indicator_settings;
     let color = settings.text_color.unwrap_or(state.theme_settings.text_primary_color.0);
-    let limit = ((rect.width - 16.0) / (settings.font_size * 0.65)).floor().max(1.0) as usize;
-    let mut chars = text.chars().filter(|c| !c.is_control());
-    let mut title = chars.by_ref().take(limit).collect::<String>();
-    if chars.next().is_some() {
-        title.pop();
-        title.push('…');
+    let available = (rect.width - 16.0).max(0.0);
+    let mut title: String = text.chars().filter(|c| !c.is_control()).take(1024).collect();
+    if state.indicator_text_width(&title, settings.font_size) > available || text.chars().count() > 1024 {
+        let mut boundaries: Vec<_> = title.char_indices().map(|(index, _)| index).collect();
+        boundaries.push(title.len());
+        let fits = boundaries.partition_point(|&end| {
+            state.indicator_text_width(&format!("{}…", &title[..end]), settings.font_size) <= available
+        });
+        if fits == 0 {
+            title.clear();
+        } else {
+            title.truncate(boundaries[fits - 1]);
+            title.push('…');
+        }
     }
     let (buffer, size) = state.indicator_label(&title, scale, color, settings.font_size)?;
     let x = if centered {
@@ -93,9 +101,20 @@ pub(super) fn elements(
     let anchor = bar.group.windows[0];
     let accent = settings.active_color.unwrap_or(state.theme_settings.accent_color.0);
     let inactive = settings.inactive_color.unwrap_or(state.theme_settings.border_color.0);
-    let background = settings
+    let mut background = settings
         .background_color
-        .unwrap_or(state.theme_settings.surface_base_color.0);
+        .unwrap_or(state.theme_settings.surface_raised_color.0);
+    let material = crate::effects::resolve_material(
+        crate::effects::SemanticRole::Popover,
+        state.theme_settings.material_style,
+        state.theme_settings.shell_opacity as f32,
+    );
+    background[3] = if state.theme_settings.reduce_transparency || material.style == crate::config::MaterialStyle::Solid
+    {
+        1.0
+    } else {
+        background[3] * material.opacity
+    };
     let radius = state.theme_settings.material_radius;
     let hover = state
         .tab_indicator
@@ -132,11 +151,10 @@ pub(super) fn elements(
                 elements.push(element);
             }
             if id == bar.group.active {
-                let mut fill = background;
-                for i in 0..3 {
-                    fill[i] += (accent[i] - fill[i]) * 0.2;
-                }
-                fill[3] = alpha * hover;
+                // Match the control center's selected shell buttons: a quiet
+                // foreground tint, with accent reserved for the active rail.
+                let mut fill = settings.text_color.unwrap_or(state.theme_settings.text_primary_color.0);
+                fill[3] = 0.14 * alpha * hover;
                 if let Some(element) = overview_chrome_element(
                     state,
                     renderer,
@@ -147,10 +165,27 @@ pub(super) fn elements(
                     rect,
                     fill,
                     0.0,
-                    (radius - g.padding).max(0.0).min(rect.height * 0.5),
+                    (radius - g.padding).clamp(0.0, 14.0).min(rect.height * 0.5),
                 ) {
                     elements.push(element.into());
                 }
+            }
+        }
+        if settings.outline_width > 0.0 {
+            let color = settings.outline_color.unwrap_or(state.theme_settings.border_color.0);
+            if let Some(element) = overview_chrome_element(
+                state,
+                renderer,
+                output,
+                output_geometry,
+                scale,
+                (anchor.0, OverviewChromePart::TabListOutline),
+                g.list,
+                color_with_alpha(color, alpha * hover),
+                settings.outline_width.max(1.0 / scale),
+                radius.min(g.list.height * 0.5),
+            ) {
+                elements.push(element.into());
             }
         }
         if let Some(element) = overview_chrome_element(
@@ -180,7 +215,8 @@ pub(super) fn elements(
             bar.group.windows.len(),
             title(state, bar.group.active, capture)
         );
-        let width = (label.chars().count() as f64 * settings.font_size * 0.65 + 24.0).min(g.list.width);
+        let width = (state.indicator_text_width(&label, settings.font_size) + 24.0)
+            .min(settings.list_width.min(f64::from(output_geometry.size.w)));
         let bounds = Rect::new(
             output_geometry.loc.x as f64,
             output_geometry.loc.y as f64,

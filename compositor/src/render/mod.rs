@@ -335,6 +335,7 @@ pub(crate) enum OverviewChromePart {
     TabActive,
     TabRail,
     TabList,
+    TabListOutline,
     TabRow,
     TabFlash,
 }

@@ -77,6 +77,7 @@ impl RenderResources {
                         OverviewChromePart::Tab
                             | OverviewChromePart::TabActive
                             | OverviewChromePart::TabRail
+                            | OverviewChromePart::TabListOutline
                             | OverviewChromePart::TabList
                             | OverviewChromePart::TabRow
                             | OverviewChromePart::TabFlash

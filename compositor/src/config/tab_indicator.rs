@@ -12,6 +12,8 @@ pub(super) struct TabIndicatorConfig {
     row_height: f64,
     padding: f64,
     font_size: f64,
+    outline_width: f64,
+    outline_color: Option<String>,
     flash_duration_ms: u64,
     active_color: Option<String>,
     inactive_color: Option<String>,
@@ -23,7 +25,7 @@ impl Default for TabIndicatorConfig {
     fn default() -> Self {
         Self {
             width: 4.0,
-            segment_height: 18.0,
+            segment_height: 24.0,
             segment_gap: 4.0,
             hit_width: 12.0,
             gap_threshold: 8.0,
@@ -31,6 +33,8 @@ impl Default for TabIndicatorConfig {
             row_height: 28.0,
             padding: 4.0,
             font_size: 12.0,
+            outline_width: 0.5,
+            outline_color: None,
             flash_duration_ms: 1000,
             active_color: None,
             inactive_color: None,
@@ -51,6 +55,8 @@ pub(crate) struct TabIndicatorSettings {
     pub row_height: f64,
     pub padding: f64,
     pub font_size: f64,
+    pub outline_width: f64,
+    pub outline_color: Option<[f32; 4]>,
     pub flash_duration: std::time::Duration,
     pub active_color: Option<[f32; 4]>,
     pub inactive_color: Option<[f32; 4]>,
@@ -77,6 +83,8 @@ impl Config {
             width,
             hit_width,
             font_size,
+            outline_width: range(c.outline_width, 0.0, 8.0, "tab_indicator.outline_width")?,
+            outline_color: color(&c.outline_color, "tab_indicator.outline_color")?,
             segment_height: range(c.segment_height, width, 128.0, "tab_indicator.segment_height")?,
             segment_gap: range(c.segment_gap, 0.0, 64.0, "tab_indicator.segment_gap")?,
             gap_threshold: range(c.gap_threshold, width, 128.0, "tab_indicator.gap_threshold")?,
@@ -106,7 +114,7 @@ mod tests {
         let c = Config::parse_source("").unwrap().tab_indicator_settings().unwrap();
         assert_eq!(
             (c.width, c.segment_height, c.segment_gap, c.hit_width, c.gap_threshold),
-            (4., 18., 4., 12., 8.)
+            (4., 24., 4., 12., 8.)
         );
         assert_eq!(c.flash_duration.as_millis(), 1000);
         assert!(c.active_color.is_none());

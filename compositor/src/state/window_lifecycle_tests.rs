@@ -1103,6 +1103,13 @@ fn tab_indicator_hover_switch_and_flash_preserve_window_geometry() {
     state.update_tab_indicator_hover(point);
     assert_eq!(state.tab_indicator.hover.as_ref().unwrap().opacity.current, 1.);
     assert_eq!(state.windows.geometry(&b).unwrap().logical, before);
+    let g = state
+        .tab_indicator_geometry(&bar, state.presented_window_rect(b).unwrap())
+        .unwrap();
+    assert!(
+        g.list.width < state.tab_indicator_settings.list_width,
+        "short titles should not fill the width cap"
+    );
     let row = g.row(0);
     let point = (row.x + row.width * 0.5, row.y + row.height * 0.5).into();
     state.update_tab_indicator_hover(point);

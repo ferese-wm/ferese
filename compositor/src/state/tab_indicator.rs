@@ -16,6 +16,7 @@ pub(crate) struct TabIndicatorState {
     pub hover: Option<Overlay>,
     pub flash: Option<Overlay>,
     pub first_row: usize,
+    pub hover_width: f64,
     timer: Option<RegistrationToken>,
 }
 
@@ -197,13 +198,16 @@ impl Ferese {
                 boundary = boundary.max(rect.x + rect.width);
             }
         }
-        IndicatorGeometry::new(
-            content,
-            bounds,
-            boundary,
-            bar.group.windows.len(),
-            self.tab_indicator_settings,
-        )
+        let mut settings = self.tab_indicator_settings;
+        if self
+            .tab_indicator
+            .hover
+            .as_ref()
+            .is_some_and(|h| bar.group.windows.first() == Some(&h.anchor))
+        {
+            settings.list_width = self.tab_indicator.hover_width;
+        }
+        IndicatorGeometry::new(content, bounds, boundary, bar.group.windows.len(), settings)
     }
 
     fn tab_indicator_can_hit(&self, active: WindowId, p: Point<f64, Logical>) -> bool {
@@ -325,6 +329,27 @@ impl Ferese {
                     })
                     .unwrap_or(0);
                 self.tab_indicator.first_row = selected;
+                let settings = self.tab_indicator_settings;
+                let text_width = self
+                    .scrolling_tab_bar(anchor)
+                    .into_iter()
+                    .flat_map(|bar| &bar.group.windows)
+                    .filter_map(|id| self.windows.record(*id))
+                    .map(|record| {
+                        let title = if !record.title.trim().is_empty() {
+                            record.title.as_str()
+                        } else if !record.app_id.is_empty() {
+                            record.app_id.as_str()
+                        } else {
+                            "Window"
+                        };
+                        self.indicator_text_width(title, settings.font_size)
+                    })
+                    .fold(0.0_f64, f64::max);
+                // Fix the width for this hover session, so metadata updates do
+                // not move rows or their click targets under the pointer.
+                self.tab_indicator.hover_width =
+                    (text_width + 16.0 + 2.0 * settings.padding).clamp(80.0, settings.list_width);
                 self.tab_indicator.hover = Some(Overlay {
                     anchor,
                     opacity: AnimatedValue::new(0.0),
@@ -501,9 +526,9 @@ mod tests {
             let g = IndicatorGeometry::new(content, output, content.x - gap, 3, c).unwrap();
             assert_eq!(
                 (g.rail.width, g.rail.height, g.segment_height, g.pitch),
-                (4., 62., 18., 22.)
+                (4., 80., 24., 28.)
             );
-            assert_eq!(g.rail.y, content.y + (content.height - 62.) * 0.5);
+            assert_eq!(g.rail.y, content.y + (content.height - 80.) * 0.5);
             assert_eq!(g.hit.width, 12.);
             if gap >= 8. {
                 assert!(g.rail.x >= content.x - gap && g.rail.x + g.rail.width <= content.x);

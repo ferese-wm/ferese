@@ -576,6 +576,20 @@ impl Ferese {
         Some(buffer)
     }
 
+    pub(crate) fn indicator_text_width(&self, text: &str, size: f64) -> f64 {
+        let chars = text.chars().filter(|c| !c.is_control());
+        if let Some(font) = self.overview.font.as_ref() {
+            let scaled = font.as_scaled(size as f32);
+            chars
+                .map(|c| f64::from(scaled.h_advance(font.glyph_id(c))))
+                .sum::<f64>()
+                .ceil()
+                + 4.0
+        } else {
+            chars.count() as f64 * size * 0.65 + 4.0
+        }
+    }
+
     pub(crate) fn indicator_label(
         &mut self,
         text: &str,
