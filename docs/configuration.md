@@ -573,7 +573,8 @@ Modifiers keep their usual exact matching semantics; entering a mode never
 changes the application's modifier state. Escape exits with any modifiers held
 and cannot be overridden inside a mode. The bar shows the active name and Escape
 hint, including over fullscreen windows, and restores its ordinary contents on
-exit. Mode changes reach the shell through its existing snapshot protocol.
+exit. Long names truncate to keep the exit hint visible. Mode changes reach the
+shell through its existing snapshot protocol.
 
 Mode bindings replace the default keyboard map while active. Unmatched keys
 reach the focused application; default compositor bindings and portal shortcuts

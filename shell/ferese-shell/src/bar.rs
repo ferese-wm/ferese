@@ -14,6 +14,9 @@ pub(super) mod presentation;
 use crate::panel::Representation;
 use crate::panel_layout::Placement;
 
+#[cfg(test)]
+mod binding_mode_tests;
+
 impl FereseShell {
     pub(super) fn output_for_bar(&self, id: window::Id) -> Option<&control::OutputSnapshot> {
         let name = self.outputs.iter().find(|entry| entry.bar == id)?.name.as_deref()?;
@@ -46,14 +49,7 @@ impl FereseShell {
         }
         let panel = self.panel_for_bar(id);
         if let Some(name) = &self.snapshot.binding_mode {
-            let shell_theme = self.config.theme.for_bar();
-            return container(self.render.text(format!("Mode: {name}  ·  Esc to exit")))
-                .center_x(Length::Fill)
-                .center_y(Length::Fill)
-                .class(cosmic::theme::Container::custom(move |_| {
-                    bar_style(shell_theme, false, false)
-                }))
-                .into();
+            return self.view_binding_mode(id, name);
         }
         if panel.style == ferese_panel::PanelStyle::Morph {
             return self.view_hub(id);
@@ -257,6 +253,72 @@ impl FereseShell {
             })),
         );
         self.with_workspace_hover(id, content)
+    }
+
+    fn view_binding_mode<'a>(&'a self, id: window::Id, name: &'a str) -> Element<'a, cosmic::Action<Message>> {
+        let panel = self.panel_for_bar(id);
+        let output = self.outputs.iter().find(|entry| entry.bar == id).expect("panel output");
+        let effects = output.effects.as_ref();
+        let width = output
+            .runtime
+            .hub
+            .as_ref()
+            .map(|hub| hub.borrow().allocation[0])
+            .unwrap_or_else(|| output.size.map_or(320, |size| size.0 as u32))
+            .min(320);
+        let badge_id = cosmic::iced::advanced::widget::Id::new("ferese-binding-mode");
+        let title = self
+            .render
+            .text(format!("Mode: {name}"))
+            .size(14)
+            .width(Length::Fill)
+            .ellipsize(cosmic::iced::widget::text::Ellipsize::End(
+                cosmic::iced::advanced::text::EllipsizeHeightLimit::Lines(1),
+            ));
+        let badge = container(
+            row![title, self.render.text("Esc to exit").size(12)]
+                .spacing(12)
+                .align_y(cosmic::iced::Alignment::Center),
+        )
+        .id(badge_id.clone())
+        .padding([0, 12])
+        .width(width as f32)
+        .height(panel.resolved_geometry().height)
+        .align_y(alignment::Vertical::Center);
+        let content = container(badge).center_x(Length::Fill).center_y(Length::Fill);
+        let palette = self.config.theme.for_bar();
+        let mut background = color(palette.bar_background);
+        background.a = palette.panel_opacity(panel.background_opacity);
+        // Replace the native paint/input scene as well as the text. Retaining
+        // the previous bar or Morph scene can clip a newly displayed mode.
+        ferese_theme::panel_surface::frame(
+            content.into(),
+            ferese_theme::panel_surface::Options {
+                parameters: panel.shape_parameters(),
+                bounds: Some(badge_id.clone()),
+                groups: vec![(badge_id, ferese_panel::shape::ZonePosition::Center)],
+                scale: output.scale,
+                high_contrast: palette.high_contrast,
+                background,
+                border: if panel.border {
+                    color(palette.border)
+                } else {
+                    Color::TRANSPARENT
+                },
+                divider: Color::TRANSPARENT,
+                native: effects.is_some(),
+            },
+            move |scene| {
+                if let Some(effects) = effects
+                    && let Err(error) = effects.set_panel_presentation(scene)
+                {
+                    eprintln!("ferese-shell: could not update binding mode material: {error}");
+                }
+            },
+            Some(Box::new(move |scene| {
+                cosmic::Action::App(Message::PanelSurfaceChanged(id, Box::new(scene.clone())))
+            })),
+        )
     }
 
     pub(super) fn with_workspace_hover<'a>(
@@ -750,6 +812,7 @@ pub(super) fn workspace_active_on_bar(workspace: u64, output: Option<&control::O
     output.is_some_and(|output| output.active_workspace == workspace)
 }
 
+#[cfg(test)]
 pub(super) fn bar_style(theme: ShellTheme, compositor_material: bool, islands: bool) -> container::Style {
     let mut style = if islands {
         container::Style::default()
