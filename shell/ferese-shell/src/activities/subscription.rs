@@ -13,7 +13,7 @@ pub(crate) fn subscription() -> Subscription<Arc<Snapshot>> {
 fn stream() -> impl cosmic::iced::futures::Stream<Item = Arc<Snapshot>> {
     cosmic::iced::stream::channel(1, async |mut output| {
         loop {
-            let connection = tokio::task::spawn_blocking(ferese_ipc::theme::Connection::connect).await;
+            let connection = tokio::task::spawn_blocking(ferese_ipc::Connection::connect).await;
             let Ok(Ok(mut connection)) = connection else {
                 tokio::time::sleep(Duration::from_secs(5)).await;
                 continue;

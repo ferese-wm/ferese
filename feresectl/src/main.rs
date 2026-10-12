@@ -63,7 +63,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 }
 
-fn request(stream: &mut UnixStream, command: &str, args: Value) -> Result<Value, Box<dyn Error>> {
+fn request(stream: &mut (impl io::Read + io::Write), command: &str, args: Value) -> Result<Value, Box<dyn Error>> {
     write_frame(
         stream,
         &Request {
@@ -85,7 +85,7 @@ fn request(stream: &mut UnixStream, command: &str, args: Value) -> Result<Value,
 }
 
 fn theme_command(action: &ThemeAction, socket: &Path, json_output: bool) -> Result<(), Box<dyn Error>> {
-    let mut connection = ferese_ipc::theme::Connection::connect_to(socket)?;
+    let mut connection = ferese_ipc::Connection::connect_to(socket)?;
     let result = match action {
         ThemeAction::Get => serde_json::to_value(connection.get(ferese_config::families::builtins)?)?,
         ThemeAction::Subscribe => {

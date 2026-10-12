@@ -260,7 +260,7 @@ fn run_preserves_arguments_cwd_environment_output_and_exit_when_publishing_fails
 }
 
 #[test]
-fn run_reports_child_exit_after_build_finished_and_retains_signal_status() {
+fn run_preserves_child_exit_and_signal_status() {
     use std::os::unix::process::ExitStatusExt;
     let output = ctl(&[
         "run",
@@ -410,6 +410,7 @@ for _ in range(20000):
 sys.stdout.flush()
 with open('elapsed', 'w') as f:
     f.write(str(time.monotonic() - start))
+print('{"reason":"build-finished","success":true}')
 print('child output')
 print(json.dumps({'reason': 'compiler-message', 'message': {'rendered': 'diagnostic\n'}}))
 sys.exit(19)

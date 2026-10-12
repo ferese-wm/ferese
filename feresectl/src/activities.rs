@@ -1,5 +1,6 @@
 mod output;
 mod progress;
+mod transport;
 use clap::{Subcommand, ValueEnum};
 use ferese_activities::{Data, Id, Source, State, Template, Value};
 use ferese_ipc::activities::{OwnerScope, Publish, Request, VERSION};
@@ -113,33 +114,18 @@ fn publish_with_timeout(
     publish: Publish,
     timeout: std::time::Duration,
 ) -> Result<serde_json::Value, Box<dyn Error>> {
-    // Bound the whole exchange, including a full listen backlog or a broken
-    // broker that trickles a frame. Detached I/O never delays command execution
-    // or exit indefinitely; all requests still use the existing framing.
-    let socket = socket.to_owned();
-    let (send, receive) = std::sync::mpsc::sync_channel(1);
-    std::thread::Builder::new()
-        .name("feresectl-activity".into())
-        .spawn(move || {
-            let result = (|| -> Result<_, Box<dyn Error>> {
-                let mut stream = std::os::unix::net::UnixStream::connect(socket)?;
-                stream.set_read_timeout(Some(timeout))?;
-                stream.set_write_timeout(Some(timeout))?;
-                super::request(
-                    &mut stream,
-                    "activity-publish",
-                    json!(Request {
-                        version: VERSION,
-                        owner,
-                        publish
-                    }),
-                )
-            })()
-            .map_err(|error| error.to_string());
-            let _ = send.try_send(result);
-        })?;
-    receive.recv_timeout(timeout)?.map_err(Into::into)
+    let mut stream = transport::connect(socket, timeout)?;
+    super::request(
+        &mut stream,
+        "activity-publish",
+        json!(Request {
+            version: VERSION,
+            owner,
+            publish
+        }),
+    )
 }
+
 pub fn command(action: &Action, socket: &Path, json_output: bool) -> Result<(), Box<dyn Error>> {
     let request = match action {
         Action::Start {

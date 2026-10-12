@@ -1856,28 +1856,29 @@ mod tests {
         }
     }
     #[test]
-    fn activity_motion_preserves_velocity_and_stops_after_settlement_or_reduced_motion() {
-        let mut presentation = crate::activities::Presentation::default();
-        let mut value = ferese_animation::AnimatedValue::new(0.);
-        value.set_target(0.6);
-        let id = ferese_activities::Id {
-            owner: ferese_activities::Owner { pid: 1, birth: 1 },
-            local: "test".into(),
-            generation: 1,
-            session: 1,
-        };
-        presentation.test_progress(id.clone(), value);
-        presentation.advance(Duration::from_millis(50), false);
-        let velocity = presentation.test_velocity(&id);
-        presentation.test_target(&id, 0.9);
-        assert_eq!(presentation.test_velocity(&id), velocity);
-        for _ in 0..200 {
-            presentation.advance(Duration::from_millis(16), false);
-        }
-        assert!(!presentation.active());
-        presentation.test_target(&id, 0.2);
-        presentation.advance(Duration::ZERO, true);
-        assert!(!presentation.active());
+    fn progress_updates_do_not_start_a_second_hub_animation() {
+        let mut app = shell();
+        let bar = app.outputs[0].bar;
+        seed_activities(&mut app, 1);
+        drop(app.sync_hub_activity());
+        let runtime = app.outputs[0].runtime.hub.as_ref().unwrap();
+        runtime.borrow_mut().activities.advance(Duration::ZERO, true);
+        assert!(!runtime.borrow().activities.active());
+        std::sync::Arc::make_mut(&mut app.activities.snapshot).activities[0]
+            .data
+            .value = ferese_activities::Value::Progress(0.75);
+        drop(app.sync_hub_activity());
+        assert!(
+            !app.outputs[0]
+                .runtime
+                .hub
+                .as_ref()
+                .unwrap()
+                .borrow()
+                .activities
+                .active()
+        );
+        assert!(app.activity_available(bar));
     }
     #[test]
     fn shell_rendering_configuration_is_instance_owned() {

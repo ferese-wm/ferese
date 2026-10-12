@@ -517,7 +517,7 @@ impl cosmic::Application for FereseShell {
             }
             Message::ThemeMode(mode) => cosmic::task::future(async move {
                 let result = tokio::task::spawn_blocking(move || {
-                    let mut connection = ferese_ipc::theme::Connection::connect().map_err(|e| e.to_string())?;
+                    let mut connection = ferese_ipc::Connection::connect().map_err(|e| e.to_string())?;
                     connection
                         .call("theme-set-mode", serde_json::json!({"mode": mode}))
                         .map(|_| ())

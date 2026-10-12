@@ -43,7 +43,7 @@ pub struct Display {
 }
 
 pub fn load() -> Result<Vec<Display>, String> {
-    let mut connection = ferese_ipc::theme::Connection::connect().map_err(|error| error.to_string())?;
+    let mut connection = ferese_ipc::Connection::connect().map_err(|error| error.to_string())?;
     let value = connection.call("get-outputs", json!({}))?;
     let values = value.as_array().ok_or("Invalid display response")?;
     Ok(values

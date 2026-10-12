@@ -1,5 +1,6 @@
 //! Session broker: verified process identities, one-shot policy deadlines and
 //! bounded long-poll subscribers. Process inspection runs on IPC workers.
+mod publication;
 use ferese_activities::{Data, Id, Owner, Source, State, Store, Template, Value};
 use ferese_ipc::{
     Response,
@@ -27,6 +28,8 @@ pub(crate) struct Engine {
     process_watcher: Option<crate::activities_process::Watcher>,
     pub timer: Option<crate::ipc::DeadlineTimer<crate::Ferese>>,
     revision: u64,
+    cached_snapshot: Option<Arc<Snapshot>>,
+    publisher: Option<publication::Publisher>,
     watchers: BTreeMap<u64, (u64, SyncSender<Response>)>,
     rates: BTreeMap<Owner, (u64, u16)>,
     windows: BTreeMap<Id, u64>,
@@ -47,6 +50,10 @@ impl Default for Engine {
             process_watcher: None,
             timer: None,
             revision: 1,
+            cached_snapshot: None,
+            publisher: publication::Publisher::new()
+                .map_err(|error| tracing::warn!(%error, "activity snapshot worker unavailable"))
+                .ok(),
             watchers: BTreeMap::new(),
             rates: BTreeMap::new(),
             results: BTreeMap::new(),
@@ -60,7 +67,11 @@ impl Engine {
         owner: Owner,
         matched: ferese_config::activities::Matched,
         output: Option<String>,
+        fd: &std::os::fd::OwnedFd,
     ) {
+        if crate::ipc::activity_owner::exited(fd) {
+            return;
+        }
         // A dispatched detection is not an admission acknowledgement. Retry
         // starts after rejection, and refresh existing records without restarting
         // their eligibility delay or recency boost.
@@ -123,8 +134,11 @@ impl Engine {
             }
         }
     }
-    pub fn snapshot(&self) -> Snapshot {
-        Snapshot {
+    pub fn snapshot(&mut self) -> Arc<Snapshot> {
+        if let Some(snapshot) = &self.cached_snapshot {
+            return snapshot.clone();
+        }
+        let snapshot = Arc::new(Snapshot {
             version: ferese_ipc::activities::VERSION,
             revision: self.revision,
             now_ms: ferese_ipc::activities::now_ms(),
@@ -138,14 +152,30 @@ impl Engine {
                     window: *window,
                 })
                 .collect(),
-        }
+        });
+        self.cached_snapshot = Some(snapshot.clone());
+        snapshot
     }
     pub fn remove_connection(&mut self, owner: u64) {
         self.watchers.remove(&owner);
     }
+    fn deliver(&mut self, recipients: Vec<(u64, SyncSender<Response>)>) {
+        if recipients.is_empty() {
+            return;
+        }
+        let snapshot = self.snapshot();
+        if let Some(publisher) = &self.publisher {
+            publisher.send(snapshot, recipients);
+        } else {
+            publication::unavailable(recipients);
+        }
+    }
+    pub fn get(&mut self, request: u64, sender: SyncSender<Response>) {
+        self.deliver(vec![(request, sender)]);
+    }
     pub fn watch(&mut self, connection: u64, request: u64, since: u64, sender: SyncSender<Response>) {
         if since != self.revision {
-            let _ = sender.try_send(Response::success(request, json!(self.snapshot())));
+            self.get(request, sender);
         } else if self.watchers.len() < 32 {
             self.watchers.insert(connection, (request, sender));
         } else {
@@ -163,14 +193,13 @@ impl Engine {
     }
     pub fn changed(&mut self) {
         self.revision = self.revision.saturating_add(1);
+        self.cached_snapshot = None;
         self.results
             .retain(|id, _| self.store.entries().any(|entry| &entry.id == id));
         self.windows
             .retain(|id, _| self.store.entries().any(|entry| &entry.id == id));
-        let snapshot = json!(self.snapshot());
-        for (_, (id, sender)) in std::mem::take(&mut self.watchers) {
-            let _ = sender.try_send(Response::success(id, snapshot.clone()));
-        }
+        let recipients = std::mem::take(&mut self.watchers).into_values().collect();
+        self.deliver(recipients);
         self.schedule();
     }
     pub fn tick(&mut self) {
@@ -267,6 +296,11 @@ impl Engine {
             return Err("publication rate exceeded");
         }
         rate.1 = rate.1.saturating_add(1);
+        // Expiration is a change even when the following publication is rejected.
+        // Notify subscribers before a store mutation can silently sweep leases.
+        if self.store.advance(now) {
+            self.changed();
+        }
         let result = match publish {
             Publish::Start {
                 local,
@@ -459,20 +493,120 @@ mod tests {
         }
     }
     #[test]
+    fn rejected_updates_do_not_leave_a_snapshot_from_before_lease_expiry() {
+        let mut engine = Engine::default();
+        let id = engine
+            .store
+            .start(
+                owner(),
+                "expired".into(),
+                data(),
+                ferese_ipc::activities::now_ms().saturating_sub(5_000),
+                0,
+                Some(1_000),
+                true,
+                true,
+                None,
+            )
+            .unwrap();
+        let before = engine.snapshot();
+        assert_eq!(before.activities.len(), 1);
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        engine.watch(1, 11, before.revision, sender);
+        assert!(
+            engine
+                .publish(
+                    owner(),
+                    Publish::Update {
+                        local: "expired".into(),
+                        handle: Some(id),
+                        value: None,
+                        lease_ms: None,
+                    },
+                    None,
+                    None
+                )
+                .is_err()
+        );
+        assert!(engine.snapshot().activities.is_empty());
+        let response = receiver.recv_timeout(Duration::from_secs(2)).unwrap();
+        let snapshot: Snapshot = serde_json::from_value(response.result.unwrap()).unwrap();
+        assert!(snapshot.activities.is_empty());
+        assert!(snapshot.revision > before.revision);
+        assert_eq!(before.activities.len(), 1);
+    }
+
+    #[test]
+    fn snapshots_are_lazy_shared_and_immutable_across_publications() {
+        let mut engine = Engine::default();
+        engine.changed();
+        assert!(engine.cached_snapshot.is_none(), "no subscriber needs a snapshot");
+        let before = engine.snapshot();
+        assert!(Arc::ptr_eq(&before, &engine.snapshot()));
+        let (first, first_reply) = std::sync::mpsc::sync_channel(1);
+        let (second, second_reply) = std::sync::mpsc::sync_channel(1);
+        engine.watch(1, 11, before.revision, first);
+        engine.watch(2, 22, before.revision, second);
+        engine
+            .publish(
+                owner(),
+                Publish::Start {
+                    local: "build".into(),
+                    data: data(),
+                    lease_ms: None,
+                },
+                None,
+                None,
+            )
+            .unwrap();
+        let after = engine.snapshot();
+        assert!(!Arc::ptr_eq(&before, &after));
+        assert!(before.activities.is_empty());
+        assert_eq!(after.activities.len(), 1);
+        for (id, reply) in [(11, first_reply), (22, second_reply)] {
+            let reply = reply.recv_timeout(Duration::from_secs(2)).unwrap();
+            assert_eq!(reply.id, id);
+            let snapshot: Snapshot = serde_json::from_value(reply.result.unwrap()).unwrap();
+            assert_eq!(snapshot.revision, after.revision);
+            assert_eq!(snapshot.activities[0].id, after.activities[0].id);
+        }
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        engine.watch(3, 33, before.revision, sender);
+        assert_eq!(receiver.recv_timeout(Duration::from_secs(2)).unwrap().id, 33);
+        assert!(Arc::ptr_eq(&after, &engine.snapshot()));
+    }
+
+    #[test]
+    fn process_that_exits_before_detection_dispatch_is_not_published() {
+        let mut child = std::process::Command::new("sleep").arg("30").spawn().unwrap();
+        let (owner, fd, _) = crate::ipc::activity_owner::inspect(child.id()).unwrap();
+        let matched = ferese_config::activities::Matcher::new(&Default::default())
+            .unwrap()
+            .matches("cargo test", "/tmp", &[])
+            .unwrap();
+        child.kill().unwrap();
+        child.wait().unwrap();
+        let mut engine = Engine::default();
+        engine.detect_process(owner, matched, None, &fd);
+        assert_eq!(engine.store.entries().count(), 0);
+    }
+
+    #[test]
     fn rejected_process_detection_is_retried_without_restarting_admitted_records() {
         let mut engine = Engine::default();
+        let (owner, fd, _) = crate::ipc::activity_owner::inspect(std::process::id()).unwrap();
         let settings = ferese_config::activities::Settings::default();
         let matched = ferese_config::activities::Matcher::new(&settings)
             .unwrap()
             .matches("cargo test", "/tmp/test", &[])
             .unwrap();
         engine.store.limits.max_total = 0;
-        engine.detect_process(owner(), matched.clone(), None);
+        engine.detect_process(owner, matched.clone(), None, &fd);
         assert_eq!(engine.store.entries().count(), 0);
         engine.store.limits.max_total = 128;
-        engine.detect_process(owner(), matched.clone(), None);
+        engine.detect_process(owner, matched.clone(), None, &fd);
         let admitted = engine.store.entries().next().unwrap().clone();
-        engine.detect_process(owner(), matched, None);
+        engine.detect_process(owner, matched, None, &fd);
         let refreshed = engine.store.entries().next().unwrap();
         assert_eq!(refreshed.id, admitted.id);
         assert_eq!(refreshed.eligible_at, admitted.eligible_at);
@@ -631,7 +765,7 @@ mod tests {
         let after = engine.store.entries().next().unwrap();
         assert_eq!(after.data.title, "cargo test");
         assert_eq!(after.eligible_at, before.eligible_at);
-        let serialized = serde_json::to_string(&engine.snapshot()).unwrap();
+        let serialized = serde_json::to_string(engine.snapshot().as_ref()).unwrap();
         assert!(!serialized.contains("secret"));
     }
 }

@@ -800,7 +800,7 @@ impl cosmic::Application for App {
                             suffix += 1;
                         }
                         snapshot.edit(&set(&format!("theme.custom_themes.{id}.file"), path.as_str()))?;
-                        let mut connection = ferese_ipc::theme::Connection::connect().map_err(|e| e.to_string())?;
+                        let mut connection = ferese_ipc::Connection::connect().map_err(|e| e.to_string())?;
                         let value = connection.call(
                             "theme-preview",
                             serde_json::json!({"source": snapshot.source, "directory": directory}),

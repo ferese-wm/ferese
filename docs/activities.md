@@ -19,9 +19,9 @@ panel "main" {
 }
 ```
 
-The item has no content when no ordinary task is eligible. Known progress draws
-a thin ring around its bundled icon. Unknown work uses a restrained rotating arc,
-without a percentage. Hidden items and measurement widgets do not animate.
+The item has no content when no ordinary task is eligible. Known progress shows
+the percentage inside a ring; indeterminate work shows a rotating arc around its
+icon, without a percentage. Hidden items and measurement widgets do not animate.
 Reduced motion snaps progress and uses a static track. Morph preserves recording
 and low-battery priority, including their combined presentation. DND limits ordinary
 running activities to one, hides the count, and suppresses terminal flashes.

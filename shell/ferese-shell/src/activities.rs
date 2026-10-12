@@ -47,7 +47,6 @@ pub(crate) struct Presentation {
     pub selection: Selection,
     pub focus: Option<Id>,
     rows: Vec<Id>,
-    progress: BTreeMap<Id, AnimatedValue>,
     divider: Option<AnimatedValue>,
     tints: BTreeMap<Id, AnimatedValue>,
 }
@@ -60,12 +59,7 @@ impl Presentation {
             velocity_tolerance: 0.002,
             ..Default::default()
         };
-        for value in self
-            .progress
-            .values_mut()
-            .chain(self.divider.iter_mut())
-            .chain(self.tints.values_mut())
-        {
+        for value in self.divider.iter_mut().chain(self.tints.values_mut()) {
             if reduced {
                 value.snap();
             } else {
@@ -73,22 +67,9 @@ impl Presentation {
             }
         }
     }
-    #[cfg(test)]
-    pub(crate) fn test_progress(&mut self, id: Id, value: AnimatedValue) {
-        self.progress.insert(id, value);
-    }
-    #[cfg(test)]
-    pub(crate) fn test_velocity(&self, id: &Id) -> f64 {
-        self.progress[id].velocity
-    }
-    #[cfg(test)]
-    pub(crate) fn test_target(&mut self, id: &Id, target: f64) {
-        self.progress.get_mut(id).unwrap().retarget_preserving_motion(target);
-    }
     pub fn active(&self) -> bool {
-        self.progress
-            .values()
-            .chain(self.divider.iter())
+        self.divider
+            .iter()
             .chain(self.tints.values())
             .any(AnimatedValue::is_animating)
     }
@@ -179,6 +160,17 @@ fn label(activity: &Activity) -> String {
         }
     }
 }
+fn native_text(text: &str) -> String {
+    let mut bounded = String::new();
+    for character in text.chars().filter(|character| !character.is_control()) {
+        if bounded.len() + character.len_utf8() > ferese_activities::MAX_TEXT {
+            break;
+        }
+        bounded.push(character);
+    }
+    bounded
+}
+
 impl FereseShell {
     fn refresh_native_activities(&mut self) {
         use ferese_activities::{Data, Owner, Source};
@@ -209,10 +201,10 @@ impl FereseShell {
                     output: focused.clone(),
                     priority: 60,
                     icon: "media".into(),
-                    title: player.label().chars().take(128).collect(),
+                    title: native_text(player.label()),
                     value: Value::Indeterminate,
                     template: Template::Media {
-                        artist: player.artist.chars().take(128).collect(),
+                        artist: native_text(&player.artist),
                         playing: player.status == ferese_ipc::media::Playback::Playing,
                     },
                 },
@@ -237,8 +229,8 @@ impl FereseShell {
                         output: focused.clone(),
                         priority: 0,
                         icon: "notification".into(),
-                        title: notice.title.chars().filter(|c| !c.is_control()).take(128).collect(),
-                        value: Value::Text(notice.app.chars().filter(|c| !c.is_control()).take(128).collect()),
+                        title: native_text(&notice.title),
+                        value: Value::Text(native_text(&notice.app)),
                         template: Template::Progress,
                     },
                 ));
@@ -353,9 +345,6 @@ impl FereseShell {
             presentation
                 .tints
                 .retain(|id, _| presentation.selection.visible.contains(id));
-            presentation
-                .progress
-                .retain(|id, _| presentation.selection.visible.contains(id));
             for entry in entries
                 .iter()
                 .filter(|entry| presentation.selection.visible.contains(&entry.id))
@@ -372,13 +361,6 @@ impl FereseShell {
                         value.set_target(0.);
                         value
                     });
-                }
-                if let Value::Progress(value) = entry.data.value {
-                    presentation
-                        .progress
-                        .entry(entry.id.clone())
-                        .or_insert_with(|| AnimatedValue::new(f64::from(value)))
-                        .retarget_preserving_motion(f64::from(value));
                 }
             }
             let target = f64::from(presentation.selection.visible.len() == 2);

@@ -27,7 +27,8 @@ impl Watcher {
         std::thread::Builder::new()
             .name("ferese-activity-processes".into())
             .spawn(move || {
-                let mut observed = BTreeMap::<Owner, (std::os::fd::OwnedFd, ferese_config::activities::Matched)>::new();
+                let mut observed =
+                    BTreeMap::<Owner, (Arc<std::os::fd::OwnedFd>, ferese_config::activities::Matched)>::new();
                 while !worker_stop.load(Ordering::Acquire) {
                     let rules = rules.read().expect("activity rules").clone();
                     let dead: Vec<_> = observed
@@ -41,8 +42,12 @@ impl Watcher {
                         }
                     }
                     // Reconcile every detection: admission may have failed or its lease expired.
-                    for (owner, (_, matched)) in &observed {
-                        let _ = sender.try_send(IpcEvent::ActivityDetected(*owner, Box::new(matched.clone())));
+                    for (owner, (fd, matched)) in &observed {
+                        let _ = sender.try_send(IpcEvent::ActivityDetected(
+                            *owner,
+                            Box::new(matched.clone()),
+                            fd.clone(),
+                        ));
                     }
                     if let Ok(processes) = std::fs::read_dir("/proc") {
                         for process in processes.take(4_096).flatten() {
@@ -77,9 +82,11 @@ impl Watcher {
                             let Some(matched) = rules.matcher.matches(&command, &cwd, &parents) else {
                                 continue;
                             };
+                            let fd = Arc::new(fd);
+                            // Keep the inspected process identity alive through dispatch.
                             // No raw command, cwd or environment crosses the dispatcher.
                             if sender
-                                .try_send(IpcEvent::ActivityDetected(owner, Box::new(matched.clone())))
+                                .try_send(IpcEvent::ActivityDetected(owner, Box::new(matched.clone()), fd.clone()))
                                 .is_ok()
                             {
                                 observed.insert(owner, (fd, matched));

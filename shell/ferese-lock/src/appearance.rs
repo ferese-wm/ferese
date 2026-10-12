@@ -34,7 +34,7 @@ impl Appearance {
         let mut theme = ferese_theme_client::service::current().presented;
         if let Some(path) = path.filter(|path| ferese_config::config_path().as_deref() != Some(*path))
             && let Some(document) = &doc
-            && let Ok(mut connection) = ferese_ipc::theme::Connection::connect()
+            && let Ok(mut connection) = ferese_ipc::Connection::connect()
         {
             let args = serde_json::json!({
                 "source": document.to_string(),

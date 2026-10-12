@@ -106,7 +106,7 @@ impl Model {
         self.error = None;
         cosmic::task::future(async move {
             let result = tokio::task::spawn_blocking(move || {
-                let mut connection = ferese_ipc::theme::Connection::connect().map_err(|e| e.to_string())?;
+                let mut connection = ferese_ipc::Connection::connect().map_err(|e| e.to_string())?;
                 connection.call("media-action", args).map(|_| ())
             })
             .await

@@ -59,7 +59,11 @@ pub(crate) enum IpcEvent {
     Call(Box<IpcCall>),
     Closed(u64),
     ActivityOwnerExited(ferese_activities::Owner),
-    ActivityDetected(ferese_activities::Owner, Box<ferese_config::activities::Matched>),
+    ActivityDetected(
+        ferese_activities::Owner,
+        Box<ferese_config::activities::Matched>,
+        Arc<std::os::fd::OwnedFd>,
+    ),
 }
 
 struct IpcConnection {
@@ -158,7 +162,7 @@ pub(crate) fn init(
         if let channel::Event::Msg(event) = event {
             let call = match event {
                 IpcEvent::Call(call) => *call,
-                IpcEvent::ActivityDetected(owner, matched) => {
+                IpcEvent::ActivityDetected(owner, matched, fd) => {
                     let output = state
                         .outputs_json()
                         .as_array()
@@ -170,7 +174,7 @@ pub(crate) fn init(
                         })
                         .and_then(|output| output["name"].as_str())
                         .map(str::to_owned);
-                    state.activities.detect_process(owner, *matched, output);
+                    state.activities.detect_process(owner, *matched, output, &fd);
                     return;
                 }
                 IpcEvent::ActivityOwnerExited(owner) => {
@@ -228,6 +232,20 @@ pub(crate) fn init(
                     Err(error) => Response::error(call.request.id, "activity_rejected", error),
                 };
                 let _ = call.response.try_send(response);
+            } else if call.request.command == "activity-get" {
+                if state.session_lock.active() {
+                    let _ = call.response.try_send(Response::error(
+                        call.request.id,
+                        "session_locked",
+                        "IPC unavailable while session is locked",
+                    ));
+                } else if let Err(error) = validate_request(&call.request) {
+                    let _ = call
+                        .response
+                        .try_send(Response::error(call.request.id, error.code, error.message));
+                } else {
+                    state.activities.get(call.request.id, call.response);
+                }
             } else if call.request.command == "activity-watch" {
                 if let Err(error) = validate_request(&call.request) {
                     let _ = call
@@ -845,7 +863,6 @@ impl Ferese {
 
     fn dispatch_ipc_command(&mut self, owner: u64, command: &str, args: &Value) -> Result<Value, CommandError> {
         match command {
-            "activity-get" => return Ok(json!(self.activities.snapshot())),
             "theme-get" | "theme-status" => return Ok(self.theme_engine.value()),
             "theme-set-mode" => {
                 let mode = serde_json::from_value(args["mode"].clone())

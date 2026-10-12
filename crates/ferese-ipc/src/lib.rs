@@ -1,4 +1,6 @@
 pub mod activities;
+mod connection;
+pub use connection::{Cancellation, Connection, socket_path};
 use std::error::Error;
 use std::io::{Read, Write};
 use std::{fmt, io};

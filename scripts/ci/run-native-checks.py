@@ -61,6 +61,7 @@ def main():
                     ("shell-flat", "shell_motion", {"FERESE_TEST_SHELL_MOTION": "1", "FERESE_TEST_BAR_LAYOUT": "flat"}),
                     ("shell-floating", "shell_motion", {"FERESE_TEST_SHELL_MOTION": "1", "FERESE_TEST_BAR_LAYOUT": "floating"}),
                     ("invalid-config", "startup_config", {"FERESE_TEST_STARTUP_CONFIG": "1"}),
+                    ("activities", "activities", {"FERESE_TEST_ACTIVITIES": "1"}),
                 ]
                 if args.suite == "desktop":
                     cases.insert(0, ("lock", "lock", {"FERESE_TEST_LOCK": "1", "FERESE_TEST_BIN_DIR": "target/debug"}))

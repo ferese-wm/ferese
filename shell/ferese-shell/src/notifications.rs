@@ -718,7 +718,10 @@ mod tests {
         app.config.activities.sources.notification_bridge = true;
         app.notifications.configure_activity_bridge(true);
         let bar = app.outputs[0].bar;
-        drop(app.update(crate::Message::NotificationEvent(Event::Notice(notice(1)))));
+        let mut multilingual = notice(1);
+        multilingual.title = "通知🛠️".repeat(100);
+        multilingual.app = "アプリ".repeat(100);
+        drop(app.update(crate::Message::NotificationEvent(Event::Notice(multilingual))));
         assert!(app.activity_available(bar));
         assert!(app.notifications.toasts.is_empty());
         app.notifications.entries[0].received_at = Instant::now() - Duration::from_secs(7);
