@@ -1,0 +1,57 @@
+name: Publish documentation to GitHub Wiki
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/**'
+      - 'site/README.md'
+      - 'site/content/*.md'
+      - 'crates/ferese-theme/README.md'
+      - 'scripts/build-wiki.py'
+      - 'scripts/tests/test_wiki.py'
+      - 'site/requirements.txt'
+      - '.github/workflows/wiki.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: wiki
+  cancel-in-progress: false
+jobs:
+  publish:
+    if: github.repository == 'ferese-wm/ferese' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Install Markdown parser and validate publisher
+        run: |
+          python3 -m venv .site-venv
+          .site-venv/bin/pip install -r site/requirements.txt
+          .site-venv/bin/python -m unittest discover -s scripts/tests -p test_wiki.py -v
+          .site-venv/bin/python scripts/build-wiki.py
+      - name: Publish changed wiki pages
+        env:
+          WIKI_DEPLOY_KEY: ${{ secrets.WIKI_DEPLOY_KEY }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          test -n "$WIKI_DEPLOY_KEY" || { echo 'WIKI_DEPLOY_KEY is not configured' >&2; exit 1; }
+          wiki_key="$RUNNER_TEMP/wiki-key"
+          wiki_hosts="$RUNNER_TEMP/wiki-hosts"
+          trap 'rm -f "$wiki_key" "$wiki_hosts"' EXIT
+          umask 077
+          printf '%s\n' "$WIKI_DEPLOY_KEY" > "$wiki_key"
+          gh api meta --jq '.ssh_keys[]' | sed 's/^/github.com /' > "$wiki_hosts"
+          export GIT_SSH_COMMAND="ssh -i $wiki_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$wiki_hosts"
+          git clone --depth 1 git@github.com:ferese-wm/ferese.wiki.git build/wiki-checkout
+          .site-venv/bin/python scripts/build-wiki.py --output build/wiki-checkout
+          git -C build/wiki-checkout add -- '*.md' .ferese-pages.json
+          if git -C build/wiki-checkout diff --cached --quiet; then
+            echo 'Wiki is already current'
+            exit 0
+          fi
+          git -C build/wiki-checkout -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m "Publish documentation from $(git rev-parse --short HEAD)"
+          git -C build/wiki-checkout push origin HEAD

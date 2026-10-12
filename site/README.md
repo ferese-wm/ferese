@@ -1,7 +1,7 @@
-# Ferese website and handbook
+# Ferese website
 
-The website's handbook is built from the project's Markdown guides, so the website
-and repository share the same documentation.
+The website links to the [GitHub Wiki](https://github.com/ferese-wm/ferese/wiki)
+for documentation. Former handbook URLs redirect to the matching wiki pages.
 
 ## Local preview
 
@@ -12,18 +12,16 @@ python3 -m venv .site-venv
 python3 -m http.server 8080 --bind 127.0.0.1 --directory build/site
 ```
 
-Open http://localhost:8080 for the homepage or http://localhost:8080/docs/ for the
-handbook. Rebuild and refresh the browser after changing the site sources or guides.
+Open http://localhost:8080 for the homepage. Rebuild and refresh the browser
+after changing the site sources.
 
 - `site/index.html` and `site/home.css`: homepage and desktop screenshots.
 - `site/styles.css`: shared dark appearance, typography and navigation.
-- `site/handbook.css`: handbook layout, search and reference tables.
-- `site/content/index.md`: handbook introduction.
-- `docs/*.md`: guides; published pages are listed in `scripts/build-site.py`.
-- `scripts/build-site.py`: renders Markdown, resolves links, generates section
-  navigation, previous/next links, and the search index.
-- `site/app.js`: handbook search and code copying. Reading and navigation work
-  without JavaScript. Search is local to the browser, with no third-party service.
+- `docs/*.md`: guide sources published to the wiki.
+- `scripts/build-site.py`: copies homepage assets and writes handbook redirects.
+- `scripts/build-wiki.py`: validates and generates wiki pages.
+
+See [Wiki publishing](../docs/wiki-publishing.md) for the documentation workflow.
 
 ## GitHub Pages
 
@@ -32,8 +30,8 @@ open **Actions → Deploy website to GitHub Pages → Run workflow** and choose 
 branch to publish. Deployment runs manually, and the expected address is
 https://ferese-wm.github.io/ferese/.
 
-The site uses relative links, including for handbook search, so it also works under the
-`/ferese/` project path. Each build copies screenshots from `docs/images` into
+The homepage uses relative asset links, so it also works under the `/ferese/`
+project path. Each build copies screenshots from `docs/images` into
 `build/site`, which is ignored by Git.
 
 For deployment setup, follow [GitHub’s custom workflow

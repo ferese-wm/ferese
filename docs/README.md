@@ -2,6 +2,7 @@
 
 ## Get started
 
+- [Getting started](../site/content/index.md): a desktop introduction and common controls.
 - [Installation](installation.md): install dependencies, log in, preview changes, update and recover a session.
 - [Configuration](configuration.md): configure layouts, input, shortcuts and displays in KDL.
 - [Panel configuration](panel-configuration.md): choose a panel style, arrange groups and items, and configure the Morph hub.
@@ -21,6 +22,11 @@
 
 - [Packages and releases](packaging.md): build Fedora and Arch packages and publish a tagged release.
 - [Development](development.md): build Ferese, run tests and check portal contracts.
+- [Animation model](animation-model.md): geometry, spring motion, gestures and prediction.
+- [Desktop reconciliation](desktop-reconciliation.md): topology publication and presentation ownership.
+- [Output management tests](output-management-testing.md): profiles, hotplug and DRM failures.
 - [Nested resize checks](nested-resize-testing.md).
 - [Client soak testing](native-soak-testing.md).
 - [Website development](../site/README.md).
+- [Theme components](../crates/ferese-theme/README.md): shared native UI styles.
+- [Wiki publishing](wiki-publishing.md): updating guides and publishing them from main.

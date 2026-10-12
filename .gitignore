@@ -7,5 +7,6 @@
 
 # Generated GitHub Pages site
 /build/site/
+/build/wiki/
 /.site-venv/
 __pycache__/

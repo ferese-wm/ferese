@@ -5,33 +5,33 @@
 <p align="center"><strong>A configurable Wayland desktop</strong></p>
 
 <p align="center">
-  <a href="docs/installation.md">Install</a> ·
-  <a href="docs/configuration.md">Configure</a> ·
-  <a href="docs/screenshots.md">Screenshots</a> ·
-  <a href="docs/README.md">Documentation</a>
+  <a href="https://github.com/ferese-wm/ferese/wiki/Installation">Install</a> ·
+  <a href="https://github.com/ferese-wm/ferese/wiki/Configuration">Configure</a> ·
+  <a href="https://github.com/ferese-wm/ferese/wiki/Screenshots">Screenshots</a> ·
+  <a href="https://github.com/ferese-wm/ferese/wiki">Documentation</a>
 </p>
 
 Ferese combines a window manager and desktop shell with one configuration.
 
 ![Ferese desktop with Morph's music view open over a sunset wallpaper](docs/images/screenshots/ferese-morph.webp)
 
-[View more screenshots](docs/screenshots.md)
+[View more screenshots](https://github.com/ferese-wm/ferese/wiki/Screenshots)
 
 ## Features
 
 - Scrolling columns, window groups, tree tiling and floating windows with saved size and position
 - Integrated shell with notifications, media controls, Settings and Control Center
-- [Custom panels](docs/panel-configuration.md) with seven styles, editable groups and items, and top or bottom placement
-- [Live Activities](docs/activities.md) for build status, running commands and progress from connected apps
+- [Custom panels](https://github.com/ferese-wm/ferese/wiki/Panel-Configuration) with seven styles, editable groups and items, and top or bottom placement
+- [Live Activities](https://github.com/ferese-wm/ferese/wiki/Live-Activities) for build status, running commands and progress from connected apps
 - Workspace overview and recent-window switching
-- [Continuum animations](docs/configuration.md#animations): interruptible springs, gesture momentum and shared motion controls
+- [Continuum animations](https://github.com/ferese-wm/ferese/wiki/Configuration#animations): interruptible springs, gesture momentum and shared motion controls
 - Live wallpapers and blur, custom KDL themes, and Light/Dark/Auto modes
 - Multiple monitors, fractional scaling and lower refresh rates on low battery
 - Wi-Fi, Bluetooth and audio controls
 - Custom keyboard shortcuts and touchpad gestures
 - Screenshot annotation, screen sharing and recording
 - Lock screen and authentication dialogs
-- [Keep awake](docs/configuration.md#idle-inhibition) during fullscreen media playback or for selected apps
+- [Keep awake](https://github.com/ferese-wm/ferese/wiki/Configuration#idle-inhibition) during fullscreen media playback or for selected apps
 - Continuous corners for windows and shell
 
 ## How Ferese compares
@@ -44,7 +44,7 @@ compares current upstream features and names separate tools where they are neede
 | Tiling layouts | Scrolling columns and tree tiling; switch per workspace | [Scrolling, dwindle, master and monocle; per-workspace layouts](https://github.com/hyprwm/Hyprland#features) | Scrolling columns |
 | Floating windows | Built in | Built in | Built in |
 | Workspace overview | Built in | Plugins such as [HyprExpo](https://github.com/sandwichfarm/hyprexpo) | Built in |
-| Animations | [Continuum](docs/animation-model.md): interruptible springs, gesture momentum; speed and reduced-motion settings shared by the compositor and shell | Bézier and spring curves | [Spring and easing animations; custom shaders](https://niri-wm.github.io/niri/Configuration:-Animations.html) |
+| Animations | [Continuum](https://github.com/ferese-wm/ferese/wiki/Animation-Model): interruptible springs, gesture momentum; speed and reduced-motion settings shared by the compositor and shell | Bézier and spring curves | [Spring and easing animations; custom shaders](https://niri-wm.github.io/niri/Configuration:-Animations.html) |
 | Corner shapes | Continuous corners across windows and shell | [Rounded corners and squircles](https://wiki.hypr.land/configuring/core/config-options/#decoration) | [Rounded corners with optional clipping](https://niri-wm.github.io/niri/Configuration:-Window-Rules.html#geometry-corner-radius) |
 | Live configuration reload | Yes | Yes | Yes |
 | Monitor mirroring | Built in | [Built in](https://wiki.hypr.land/configuring/core/monitors/) | Separate tool, such as [wl-mirror](https://niri-wm.github.io/niri/Screencasting.html#screen-mirroring) |
@@ -59,9 +59,9 @@ also include desktop controls; their features depend on the shell and tools you 
 
 ## Install
 
-Fedora and Arch package builds are covered in [Packages and releases](docs/packaging.md).
+Fedora and Arch package builds are covered in [Packages and releases](https://github.com/ferese-wm/ferese/wiki/Packages-and-Releases).
 
-Start with the [dependencies](docs/installation.md#requirements), then clone Ferese and
+Start with the [dependencies](https://github.com/ferese-wm/ferese/wiki/Installation#requirements), then clone Ferese and
 build it as your normal user:
 
 ```sh
@@ -72,7 +72,7 @@ cd ferese
 
 Once it’s installed, log out and choose **Ferese** at your login screen, or run
 `ferese-session` from a TTY or a greeter that accepts a command. The [installation
-guide](docs/installation.md) also walks you through previews, updates and recovery.
+guide](https://github.com/ferese-wm/ferese/wiki/Installation) also walks you through previews, updates and recovery.
 
 ## Configure
 
@@ -80,7 +80,7 @@ Configure Ferese through **Control Center → Settings** or `~/.config/ferese/co
 Changes apply live, and if an edit is invalid, the last working configuration stays
 in place.
 
-The [configuration reference](docs/configuration.md) and [example
+The [configuration reference](https://github.com/ferese-wm/ferese/wiki/Configuration) and [example
 config](packaging/config.kdl) cover appearance, window layouts,
 displays and startup apps.
 
@@ -111,12 +111,12 @@ Shortcuts** whenever you want to change a shortcut or gesture.
 | Three-finger swipe up / down | Next / previous workspace |
 | Three-finger swipe left / right | Focus the window to the right / left |
 
-See [all shortcuts and mouse actions](docs/shortcuts.md) for window and workspace controls.
+See [all shortcuts and mouse actions](https://github.com/ferese-wm/ferese/wiki/Shortcuts-and-Gestures) for window and workspace controls.
 
 ## Documentation
 
-The [documentation index](docs/README.md) lists the desktop guides.
-[Development instructions](docs/development.md) cover building, testing and contributing.
+The [documentation index](https://github.com/ferese-wm/ferese/wiki) lists the desktop guides.
+[Development instructions](https://github.com/ferese-wm/ferese/wiki/Development) cover building, testing and contributing.
 
 Ferese is written in Rust using Smithay. Development happens [on
 GitHub](https://github.com/ferese-wm/ferese). If something goes wrong, [open an

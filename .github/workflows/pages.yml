@@ -12,7 +12,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: actions/configure-pages@v5
-      - name: Build website and handbook
+      - name: Build homepage and documentation redirects
         run: |
           python3 -m venv .site-venv
           .site-venv/bin/pip install -r site/requirements.txt
