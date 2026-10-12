@@ -444,7 +444,17 @@ impl FereseShell {
             Value::Progress(progress) => Some(progress),
             _ => None,
         };
-        let ring = ring::view(progress, animate && activity.state == State::Running, reduced, color);
+        let ring_color = if activity.state == State::Running {
+            self.config.theme.palette().accent.scale_alpha(color.a)
+        } else {
+            color
+        };
+        let ring = ring::view(
+            progress,
+            animate && activity.state == State::Running,
+            reduced,
+            ring_color,
+        );
         cosmic::iced::widget::stack![
             ring,
             container(icons::tinted(icon(&activity.data.icon), 14, color))
