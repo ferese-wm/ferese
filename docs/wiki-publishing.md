@@ -36,15 +36,16 @@ page names have links to the current references.
 
 ## Publisher access
 
-The workflow uses a dedicated repository deploy key stored in the
-`WIKI_DEPLOY_KEY` Actions secret. The normal `GITHUB_TOKEN` is used only to read
-GitHub's SSH host keys. It is not used to push to the wiki.
+The workflow uses a dedicated token stored in the `WIKI_TOKEN` Actions secret.
+It must be able to push to `ferese-wm/ferese.wiki.git`. The workflow fails with a
+setup message if the secret is absent. The current repository policy disables
+deploy keys, so the publisher cannot use that route.
 
-To replace the key, generate a new SSH key, add its public key under the
-repository's **Settings → Deploy keys** with write access, and store its private
-key in `WIKI_DEPLOY_KEY`. Remove the previous deploy key after confirming a
-successful publication. Do not reuse a personal SSH key or store the private key
-in the source repository.
+Create a dedicated publishing token with access to the wiki, then add it under
+**Settings → Secrets and variables → Actions → New repository secret** as
+`WIKI_TOKEN`. Do not store the token in the source repository or reuse a personal
+SSH key. To rotate it, replace the secret and confirm a successful workflow run
+before revoking the previous token.
 
 ## Publish locally
 

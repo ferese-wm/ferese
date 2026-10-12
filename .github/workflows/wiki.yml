@@ -34,19 +34,12 @@ jobs:
           .site-venv/bin/python scripts/build-wiki.py
       - name: Publish changed wiki pages
         env:
-          WIKI_DEPLOY_KEY: ${{ secrets.WIKI_DEPLOY_KEY }}
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.WIKI_TOKEN }}
         run: |
           set -eu
-          test -n "$WIKI_DEPLOY_KEY" || { echo 'WIKI_DEPLOY_KEY is not configured' >&2; exit 1; }
-          wiki_key="$RUNNER_TEMP/wiki-key"
-          wiki_hosts="$RUNNER_TEMP/wiki-hosts"
-          trap 'rm -f "$wiki_key" "$wiki_hosts"' EXIT
-          umask 077
-          printf '%s\n' "$WIKI_DEPLOY_KEY" > "$wiki_key"
-          gh api meta --jq '.ssh_keys[]' | sed 's/^/github.com /' > "$wiki_hosts"
-          export GIT_SSH_COMMAND="ssh -i $wiki_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$wiki_hosts"
-          git clone --depth 1 git@github.com:ferese-wm/ferese.wiki.git build/wiki-checkout
+          test -n "$GH_TOKEN" || { echo 'Set the WIKI_TOKEN Actions secret before enabling automatic publishing' >&2; exit 1; }
+          gh auth setup-git --hostname github.com
+          git clone --depth 1 https://github.com/ferese-wm/ferese.wiki.git build/wiki-checkout
           .site-venv/bin/python scripts/build-wiki.py --output build/wiki-checkout
           git -C build/wiki-checkout add -- '*.md' .ferese-pages.json
           if git -C build/wiki-checkout diff --cached --quiet; then
