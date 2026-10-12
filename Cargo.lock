@@ -1740,6 +1740,7 @@ dependencies = [
  "ab_glyph",
  "async-channel",
  "calloop 0.14.4",
+ "ferese-activities",
  "ferese-animation",
  "ferese-config",
  "ferese-core",
@@ -1766,6 +1767,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "ferese-activities"
+version = "0.1.0-beta"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "ferese-animation"
 version = "0.1.0-beta"
 dependencies = [
@@ -1777,10 +1785,12 @@ dependencies = [
 name = "ferese-config"
 version = "0.1.0-beta"
 dependencies = [
+ "ferese-activities",
  "ferese-panel",
  "ferese-theme-model",
  "jiff",
  "kdl",
+ "regex",
  "serde",
  "serde_json",
  "tempfile",
@@ -1798,6 +1808,7 @@ dependencies = [
 name = "ferese-ipc"
 version = "0.1.0-beta"
 dependencies = [
+ "ferese-activities",
  "ferese-theme-model",
  "libc",
  "serde",
@@ -1900,6 +1911,7 @@ name = "ferese-shell"
 version = "0.1.0-beta"
 dependencies = [
  "base64",
+ "ferese-activities",
  "ferese-animation",
  "ferese-config",
  "ferese-ipc",
@@ -1965,6 +1977,7 @@ name = "feresectl"
 version = "0.1.0-beta"
 dependencies = [
  "clap",
+ "ferese-activities",
  "ferese-config",
  "ferese-ipc",
  "libc",

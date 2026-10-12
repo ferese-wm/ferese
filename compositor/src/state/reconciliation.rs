@@ -166,6 +166,12 @@ impl Ferese {
 
     pub(crate) fn finish_desktop_transition(&mut self, mut changes: DesktopChanges) {
         self.desktop_transition.as_mut().unwrap().publishing = true;
+        let activity_output = self.space.outputs().next().map(|output| output.name());
+        if let Some(output) = activity_output
+            && self.activities.store.attach_output(&output)
+        {
+            self.activities.changed();
+        }
         if changes.layout {
             self.relayout_desktop();
         }

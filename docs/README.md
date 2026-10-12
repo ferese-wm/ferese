@@ -23,3 +23,5 @@
 - [Nested resize checks](nested-resize-testing.md).
 - [Client soak testing](native-soak-testing.md).
 - [Website development](../site/README.md).
+
+- [Live Activities](activities.md): configurable item, local publishers, rules and hooks.

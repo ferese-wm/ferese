@@ -1,3 +1,4 @@
+mod activities;
 mod autostart;
 mod cli;
 mod output;
@@ -35,9 +36,19 @@ fn main() -> Result<(), Box<dyn Error>> {
             alias.trim_start_matches("get-")
         );
     }
+    if let Command::Run {
+        title,
+        command,
+        cargo_json,
+    } = &cli.command
+    {
+        let socket = ferese_ipc::socket::resolve(cli.socket.as_deref()).ok();
+        return activities::run(title.as_deref(), command, socket.as_deref(), *cargo_json);
+    }
     let socket = ferese_ipc::socket::resolve(cli.socket.as_deref())?;
     match &cli.command {
         Command::Theme { action } => theme_command(action, &socket, cli.json),
+        Command::Activity { action } => activities::command(action, &socket, cli.json),
         Command::EventStream => event_stream(&socket),
         command => {
             let (command, args) = command.ipc().expect("IPC command");

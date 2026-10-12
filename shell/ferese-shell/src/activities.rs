@@ -1,0 +1,877 @@
+//! Shared Activities item and Morph presentation. Publishers provide data only.
+mod ring;
+pub(crate) mod subscription;
+use crate::{FereseShell, Message, status_ui};
+use cosmic::app::Task;
+use cosmic::iced::{Alignment, Length, Subscription, window};
+use cosmic::widget::{button, column, container, row};
+use cosmic::{Element, theme};
+use ferese_activities::{Activity, Id, Selection, State, Template, Value, ranked, reconcile_focus};
+use ferese_animation::{AnimatedValue, SpringConfig};
+use ferese_ipc::activities::{Snapshot, now_ms};
+use ferese_theme::icons;
+use std::collections::BTreeMap;
+use std::sync::Arc;
+use std::time::Duration;
+
+type RowKey = (u64, u64, u32, u64);
+type ActivityRow<'a> = (RowKey, Element<'a, cosmic::Action<Message>>);
+
+pub(crate) struct Model {
+    pub snapshot: Arc<Snapshot>,
+    native: Vec<Activity>,
+    flat: std::collections::HashMap<window::Id, Presentation>,
+}
+impl Default for Model {
+    fn default() -> Self {
+        Self {
+            snapshot: Arc::new(Snapshot::default()),
+            native: vec![],
+            flat: Default::default(),
+        }
+    }
+}
+#[derive(Default)]
+pub(crate) struct Presentation {
+    pub selection: Selection,
+    pub focus: Option<Id>,
+    rows: Vec<Id>,
+    progress: BTreeMap<Id, AnimatedValue>,
+    divider: Option<AnimatedValue>,
+    tints: BTreeMap<Id, AnimatedValue>,
+}
+impl Presentation {
+    pub fn advance(&mut self, elapsed: Duration, reduced: bool) {
+        let spring = SpringConfig {
+            stiffness: 700.,
+            damping: 45.,
+            position_tolerance: 0.002,
+            velocity_tolerance: 0.002,
+            ..Default::default()
+        };
+        for value in self
+            .progress
+            .values_mut()
+            .chain(self.divider.iter_mut())
+            .chain(self.tints.values_mut())
+        {
+            if reduced {
+                value.snap();
+            } else {
+                value.advance(elapsed, spring);
+            }
+        }
+    }
+    #[cfg(test)]
+    pub(crate) fn test_progress(&mut self, id: Id, value: AnimatedValue) {
+        self.progress.insert(id, value);
+    }
+    #[cfg(test)]
+    pub(crate) fn test_velocity(&self, id: &Id) -> f64 {
+        self.progress[id].velocity
+    }
+    #[cfg(test)]
+    pub(crate) fn test_target(&mut self, id: &Id, target: f64) {
+        self.progress.get_mut(id).unwrap().retarget_preserving_motion(target);
+    }
+    pub fn active(&self) -> bool {
+        self.progress
+            .values()
+            .chain(self.divider.iter())
+            .chain(self.tints.values())
+            .any(AnimatedValue::is_animating)
+    }
+}
+fn activity_widget_id(id: &Id) -> cosmic::iced::advanced::widget::Id {
+    cosmic::iced::advanced::widget::Id::new(format!(
+        "activity-{}-{}-{}-{}",
+        id.session, id.generation, id.owner.pid, id.owner.birth
+    ))
+}
+fn icon(name: &str) -> &'static [u8] {
+    match name {
+        "timer" => icons::ACTIVITY_TIMER,
+        "media" => icons::MEDIA,
+        "microphone" => icons::MIC,
+        "camera" | "capture" => icons::RECORD,
+        "notification" => icons::NOTIFICATIONS,
+        "hammer" => icons::ACTIVITY_HAMMER,
+        "download" => icons::ACTIVITY_DOWNLOAD,
+        _ => icons::FERESE,
+    }
+}
+fn label(activity: &Activity) -> String {
+    if activity.state != State::Running {
+        return activity.result_message.clone().unwrap_or_else(|| {
+            if activity.state == State::Done {
+                "Finished".into()
+            } else {
+                "Failed".into()
+            }
+        });
+    }
+    match &activity.data.value {
+        Value::Text(text) => text.clone(),
+        Value::Progress(progress) => format!("{}%", (progress * 100.).round() as u32),
+        Value::Countdown { .. } => {
+            let seconds = activity.data.value.remaining_ms(now_ms()).unwrap_or(0).div_ceil(1_000);
+            format!("{}:{:02}", seconds / 60, seconds % 60)
+        }
+        Value::Indeterminate => {
+            if activity.state == State::Running {
+                "In progress".into()
+            } else if activity.state == State::Done {
+                "Finished".into()
+            } else {
+                "Failed".into()
+            }
+        }
+    }
+}
+impl FereseShell {
+    fn refresh_native_activities(&mut self) {
+        use ferese_activities::{Data, Owner, Source};
+        let now = now_ms();
+        let focused = self
+            .snapshot
+            .outputs
+            .iter()
+            .find(|output| output.focused)
+            .or_else(|| self.snapshot.outputs.first())
+            .map(|output| output.name.clone());
+        let owner = Owner {
+            pid: std::process::id(),
+            birth: 0,
+        };
+        let mut observed = Vec::new();
+        if let Some(player) = &self.media.snapshot.selected
+            && matches!(
+                player.status,
+                ferese_ipc::media::Playback::Playing | ferese_ipc::media::Playback::Paused
+            )
+        {
+            observed.push((
+                format!("media:{}", player.owner),
+                0,
+                Data {
+                    source: Source::Media,
+                    output: focused.clone(),
+                    priority: 60,
+                    icon: "media".into(),
+                    title: player.label().chars().take(128).collect(),
+                    value: Value::Indeterminate,
+                    template: Template::Media {
+                        artist: player.artist.chars().take(128).collect(),
+                        playing: player.status == ferese_ipc::media::Playback::Playing,
+                    },
+                },
+            ));
+        }
+        if self.config.activities.sources.notification_bridge
+            && self.config.notifications.show_popups
+            && !self.notifications.dnd
+        {
+            for notice in self
+                .notifications
+                .entries
+                .iter()
+                .filter(|notice| notice.live && notice.unread)
+                .take(16)
+            {
+                observed.push((
+                    format!("notification:{}", notice.id),
+                    u64::from(notice.id),
+                    Data {
+                        source: Source::Notification,
+                        output: focused.clone(),
+                        priority: 0,
+                        icon: "notification".into(),
+                        title: notice.title.chars().filter(|c| !c.is_control()).take(128).collect(),
+                        value: Value::Text(notice.app.chars().filter(|c| !c.is_control()).take(128).collect()),
+                        template: Template::Progress,
+                    },
+                ));
+            }
+        }
+        let mut previous = std::mem::take(&mut self.activities.native);
+        for (local, generation, mut data) in observed {
+            let id = Id {
+                owner,
+                local,
+                generation,
+                session: 0,
+            };
+            if let Some(index) = previous.iter().position(|entry| entry.id == id) {
+                let mut entry = previous.remove(index);
+                // Keep source identities anchored to their creation output.
+                if self
+                    .snapshot
+                    .outputs
+                    .iter()
+                    .any(|output| Some(&output.name) == entry.data.output.as_ref())
+                {
+                    data.output = entry.data.output.clone();
+                }
+                if data.validate(now).is_ok() {
+                    entry.data = data;
+                    self.activities.native.push(entry);
+                }
+            } else if data.validate(now).is_ok() {
+                self.activities.native.push(Activity {
+                    id,
+                    data,
+                    state: State::Running,
+                    created_at: now,
+                    eligible_at: now,
+                    refreshed_at: now,
+                    lease_deadline: None,
+                    result_deadline: None,
+                    result_message: None,
+                    flash_on_fail: false,
+                    result_flash_ms: 0,
+                    group: None,
+                });
+            }
+        }
+    }
+    pub fn sync_activity_presentations(&mut self) {
+        self.activities
+            .flat
+            .retain(|bar, _| self.outputs.iter().any(|output| output.bar == *bar));
+        self.refresh_native_activities();
+        let now = now_ms();
+        let protected = self.protected_activity_slots();
+        let dnd = self.notifications.dnd;
+        for output in &self.outputs {
+            if output.runtime.hub.is_none() {
+                let name = self
+                    .output_for_bar(output.bar)
+                    .map(|output| output.name.as_str())
+                    .unwrap_or("")
+                    .to_owned();
+                let entries = ranked(
+                    self.activities
+                        .snapshot
+                        .activities
+                        .iter()
+                        .chain(self.activities.native.iter()),
+                    now,
+                    self.activities.snapshot.limits,
+                    &name,
+                    dnd,
+                );
+                let compact: Vec<_> = entries
+                    .iter()
+                    .copied()
+                    .filter(|entry| entry.data.source != ferese_activities::Source::Media)
+                    .collect();
+                let presentation = self.activities.flat.entry(output.bar).or_default();
+                presentation
+                    .selection
+                    .select(&compact, self.activities.snapshot.limits, dnd, 0);
+                let rows = entries.iter().map(|entry| entry.id.clone()).collect::<Vec<_>>();
+                reconcile_focus(&mut presentation.focus, &presentation.rows, &rows);
+                presentation.rows = rows;
+                continue;
+            }
+            let runtime = output.runtime.hub.as_ref().unwrap();
+            let name = self
+                .output_for_bar(output.bar)
+                .map(|output| output.name.as_str())
+                .unwrap_or("");
+            let entries = ranked(
+                self.activities
+                    .snapshot
+                    .activities
+                    .iter()
+                    .chain(self.activities.native.iter()),
+                now,
+                self.activities.snapshot.limits,
+                name,
+                dnd,
+            );
+            let mut runtime = runtime.borrow_mut();
+            let before = runtime.activities.selection.visible.clone();
+            let presentation = &mut runtime.activities;
+            let compact: Vec<_> = entries
+                .iter()
+                .copied()
+                .filter(|entry| entry.data.source != ferese_activities::Source::Media)
+                .collect();
+            let compact = if self.activities_configured(output.bar) {
+                compact
+            } else {
+                Vec::new()
+            };
+            presentation
+                .selection
+                .select(&compact, self.activities.snapshot.limits, dnd, protected);
+            let rows: Vec<_> = entries.iter().map(|entry| entry.id.clone()).collect();
+            reconcile_focus(&mut presentation.focus, &presentation.rows, &rows);
+            presentation.rows = rows;
+            presentation
+                .tints
+                .retain(|id, _| presentation.selection.visible.contains(id));
+            presentation
+                .progress
+                .retain(|id, _| presentation.selection.visible.contains(id));
+            for entry in entries
+                .iter()
+                .filter(|entry| presentation.selection.visible.contains(&entry.id))
+            {
+                if entry.state != State::Running {
+                    let age = now.saturating_sub(
+                        entry
+                            .result_deadline
+                            .unwrap_or(now)
+                            .saturating_sub(entry.result_flash_ms),
+                    );
+                    presentation.tints.entry(entry.id.clone()).or_insert_with(|| {
+                        let mut value = AnimatedValue::new(if age < 400 { 1. } else { 0. });
+                        value.set_target(0.);
+                        value
+                    });
+                }
+                if let Value::Progress(value) = entry.data.value {
+                    presentation
+                        .progress
+                        .entry(entry.id.clone())
+                        .or_insert_with(|| AnimatedValue::new(f64::from(value)))
+                        .retarget_preserving_motion(f64::from(value));
+                }
+            }
+            let target = f64::from(presentation.selection.visible.len() == 2);
+            presentation
+                .divider
+                .get_or_insert_with(|| AnimatedValue::new(0.))
+                .retarget_preserving_motion(target);
+            // Values never influence this fixed compact text budget.
+            if !presentation.selection.visible.is_empty() {
+                runtime.idle_content_width = Some(if presentation.selection.visible.len() == 2 {
+                    330.
+                } else {
+                    220.
+                });
+            } else {
+                runtime.idle_content_width = None;
+            }
+            if before != runtime.activities.selection.visible {
+                runtime.hub.replace_content();
+            }
+            runtime.refresh_activity_size();
+        }
+    }
+    pub fn activity_tick_subscription(&self) -> Subscription<()> {
+        let visible = self.activities.snapshot.activities.iter().any(|activity| {
+            if !matches!(activity.data.value, Value::Countdown { .. })
+                || activity.state != State::Running
+                || activity.data.value.remaining_ms(now_ms()) == Some(0)
+                || !activity.eligible(now_ms(), self.notifications.dnd)
+            {
+                return false;
+            }
+            self.outputs.iter().filter(|output| !output.hidden).any(|output| {
+                let list = self
+                    .menu
+                    .as_ref()
+                    .is_some_and(|menu| menu.kind == status_ui::Menu::Activities && menu.anchor.parent == output.bar);
+                let routed = self
+                    .output_for_bar(output.bar)
+                    .is_some_and(|output| activity.data.output.as_deref() == Some(&output.name));
+                if let Some(runtime) = &output.runtime.hub {
+                    let runtime = runtime.borrow();
+                    routed
+                        && (runtime.activities.selection.visible.contains(&activity.id)
+                            || runtime.hub.mode()
+                                == ferese_panel::morph::Mode::Expanded(ferese_panel::morph::Content::Activities))
+                } else {
+                    routed
+                        && (list
+                            || self.activities.flat.get(&output.bar).is_some_and(|presentation| {
+                                self.activities_configured(output.bar)
+                                    && presentation.selection.visible.contains(&activity.id)
+                            }))
+                }
+            })
+        });
+        if visible {
+            cosmic::iced::time::every(Duration::from_secs(1)).map(|_| ())
+        } else {
+            Subscription::none()
+        }
+    }
+    fn activity_icon(
+        &self,
+        activity: &Activity,
+        color: cosmic::iced::Color,
+        animate: bool,
+    ) -> Element<'_, cosmic::Action<Message>> {
+        let reduced = !self.render.motion.motion_enabled();
+        let progress = match activity.data.value {
+            Value::Progress(progress) => Some(progress),
+            _ => None,
+        };
+        let ring = ring::view(progress, animate && activity.state == State::Running, reduced, color);
+        cosmic::iced::widget::stack![
+            ring,
+            container(icons::tinted(icon(&activity.data.icon), 14, color))
+                .center_x(26)
+                .center_y(26)
+        ]
+        .into()
+    }
+    pub fn activity_available(&self, id: window::Id) -> bool {
+        let name = self.output_for_bar(id).map(|output| output.name.as_str()).unwrap_or("");
+        ranked(
+            self.activities
+                .snapshot
+                .activities
+                .iter()
+                .chain(self.activities.native.iter()),
+            now_ms(),
+            self.activities.snapshot.limits,
+            name,
+            self.notifications.dnd,
+        )
+        .iter()
+        .any(|entry| entry.data.source != ferese_activities::Source::Media)
+    }
+    pub fn activities_configured(&self, id: window::Id) -> bool {
+        let panel = self.panel_for_bar(id);
+        [&panel.start, &panel.center, &panel.end]
+            .into_iter()
+            .flat_map(|zone| &zone.groups)
+            .flat_map(|group| &group.items)
+            .any(|item| {
+                item.visible
+                    && item.kind == ferese_panel::ItemKind::Activities
+                    && item.overflow != ferese_panel::OverflowPolicy::Always
+            })
+    }
+    pub fn activity_hover(&mut self, id: window::Id, entered: bool) {
+        if let Some(presentation) = self.activities.flat.get_mut(&id) {
+            if entered {
+                presentation.selection.enter();
+            } else {
+                presentation.selection.leave();
+            }
+        }
+    }
+    pub fn view_activity_item(
+        &self,
+        id: window::Id,
+        item: &ferese_panel::Item,
+        representation: ferese_panel::Representation,
+        selected: bool,
+        width: Option<f32>,
+        height: f32,
+    ) -> (Element<'_, cosmic::Action<Message>>, bool) {
+        use ferese_panel::Representation;
+        let Some(presentation) = self.activities.flat.get(&id) else {
+            return (container(self.render.text("")).width(0).into(), false);
+        };
+        let Some(activity) = presentation.selection.visible.first().and_then(|id| {
+            self.activities
+                .snapshot
+                .activities
+                .iter()
+                .chain(self.activities.native.iter())
+                .find(|entry| &entry.id == id)
+        }) else {
+            return (container(self.render.text("")).width(0).into(), false);
+        };
+        let palette = self.config.theme.palette();
+        let result_age = activity
+            .result_deadline
+            .map(|deadline| now_ms().saturating_sub(deadline.saturating_sub(activity.result_flash_ms)));
+        let foreground = if result_age.is_some_and(|age| age < 400) && activity.state == State::Failed {
+            palette.error
+        } else if result_age.is_some_and(|age| age < 400) && activity.state == State::Done {
+            palette.accent
+        } else {
+            palette.text
+        };
+        let mut content = row![self.activity_icon(activity, foreground, width.is_some())]
+            .spacing(6)
+            .align_y(Alignment::Center);
+        let budget = if representation == Representation::Wide {
+            190.
+        } else {
+            112.
+        };
+        if representation != Representation::Icon {
+            content = content.push(
+                self.render
+                    .text(if representation == Representation::Wide {
+                        format!("{} · {}", activity.data.title, label(activity))
+                    } else {
+                        activity.data.title.clone()
+                    })
+                    .size(13)
+                    .width(Length::Fill)
+                    .ellipsize(cosmic::iced::widget::text::Ellipsize::End(
+                        cosmic::iced::advanced::text::EllipsizeHeightLimit::Lines(1),
+                    )),
+            );
+        }
+        let hidden = presentation.selection.hidden + presentation.selection.visible.len().saturating_sub(1);
+        if hidden > 0 && !self.notifications.dnd {
+            content = content.push(self.render.text(format!("+{hidden}")).size(11));
+        }
+        let panel = self.panel_for_bar(id).id.clone();
+        let item = item.id.clone();
+        let button = button::custom(content)
+            .name(format!("Activities: {}. Open list", activity.data.title))
+            .selected(selected)
+            .height(height)
+            .padding([0, 5])
+            .width(width.map_or(
+                if representation == Representation::Icon {
+                    Length::Shrink
+                } else {
+                    Length::Fixed(budget)
+                },
+                Length::Fixed,
+            ))
+            .on_press_with_rectangle(move |offset, bounds| {
+                cosmic::Action::App(Message::OpenPopover(
+                    status_ui::Menu::Activities,
+                    status_ui::PopoverAnchor {
+                        parent: id,
+                        panel: panel.clone(),
+                        item: Some(item.clone()),
+                        rectangle: cosmic::iced::Rectangle {
+                            x: (bounds.x - offset.x).round() as i32,
+                            y: (bounds.y - offset.y).round() as i32,
+                            width: bounds.width.round() as i32,
+                            height: bounds.height.round() as i32,
+                        },
+                    },
+                ))
+            });
+        (
+            cosmic::iced::widget::mouse_area(crate::motion::button(self.render, button, palette.text, selected, 1.))
+                .on_enter(cosmic::Action::App(Message::ActivityHover(id, true)))
+                .on_exit(cosmic::Action::App(Message::ActivityHover(id, false)))
+                .into(),
+            true,
+        )
+    }
+    pub fn has_compact_activities(&self, id: window::Id) -> bool {
+        if !self.activities_configured(id) {
+            return false;
+        }
+        self.outputs
+            .iter()
+            .find(|entry| entry.bar == id)
+            .and_then(|entry| entry.runtime.hub.as_ref())
+            .is_some_and(|runtime| !runtime.borrow().activities.selection.visible.is_empty())
+    }
+    pub fn focus_activity(&mut self, id: window::Id, activity: Id) {
+        if let Some(runtime) = self
+            .outputs
+            .iter()
+            .find(|entry| entry.bar == id)
+            .and_then(|entry| entry.runtime.hub.as_ref())
+        {
+            runtime.borrow_mut().activities.focus = Some(activity);
+        } else if let Some(presentation) = self.activities.flat.get_mut(&id) {
+            presentation.focus = Some(activity);
+        }
+    }
+    pub fn activity_key(&mut self, id: window::Id, key: cosmic::iced::keyboard::key::Named) -> Option<Task<Message>> {
+        let bar = self
+            .menu
+            .as_ref()
+            .filter(|menu| menu.id == id && menu.kind == status_ui::Menu::Activities)
+            .map(|menu| menu.anchor.parent)
+            .unwrap_or(id);
+        let is_popup = self
+            .menu
+            .as_ref()
+            .is_some_and(|menu| menu.id == id && menu.kind == status_ui::Menu::Activities);
+        if !is_popup
+            && self.hub_mode(bar)
+                != Some(ferese_panel::morph::Mode::Expanded(
+                    ferese_panel::morph::Content::Activities,
+                ))
+        {
+            return None;
+        }
+        let hub = self.outputs.iter().find(|entry| entry.bar == bar)?.runtime.hub.as_ref();
+        let mut runtime = hub.map(|hub| hub.borrow_mut());
+        let presentation = if let Some(runtime) = &mut runtime {
+            &mut runtime.activities
+        } else {
+            self.activities.flat.get_mut(&bar)?
+        };
+        use cosmic::iced::keyboard::key::Named;
+        if !matches!(key, Named::ArrowUp | Named::ArrowDown | Named::Home | Named::End) {
+            return None;
+        }
+        let index = presentation
+            .focus
+            .as_ref()
+            .and_then(|id| presentation.rows.iter().position(|row| row == id))
+            .unwrap_or(0);
+        let next = match key {
+            Named::ArrowUp => index.saturating_sub(1),
+            Named::ArrowDown => (index + 1).min(presentation.rows.len().saturating_sub(1)),
+            Named::Home => 0,
+            _ => presentation.rows.len().saturating_sub(1),
+        };
+        presentation.focus = presentation.rows.get(next).cloned();
+        Some(presentation.focus.as_ref().map_or_else(Task::none, |focus| {
+            cosmic::widget::button::focus(activity_widget_id(focus))
+        }))
+    }
+    pub fn activity_result_tint(&self, id: window::Id) -> Option<(cosmic::iced::Color, f32)> {
+        let runtime = self
+            .outputs
+            .iter()
+            .find(|output| output.bar == id)?
+            .runtime
+            .hub
+            .as_ref()?
+            .borrow();
+        let palette = self.config.theme.palette();
+        runtime.activities.selection.visible.iter().find_map(|identity| {
+            let entry = self
+                .activities
+                .snapshot
+                .activities
+                .iter()
+                .find(|entry| &entry.id == identity)?;
+            let alpha = runtime.activities.tints.get(identity)?.current as f32;
+            (alpha > 0.).then_some((
+                if entry.state == State::Failed {
+                    palette.error
+                } else {
+                    palette.accent
+                },
+                alpha.clamp(0., 1.) * 0.4,
+            ))
+        })
+    }
+    pub fn activity_compact(
+        &self,
+        id: window::Id,
+        opacity: f32,
+        intrinsic: bool,
+    ) -> Element<'_, cosmic::Action<Message>> {
+        let palette = self.config.theme.palette();
+        let runtime = self
+            .outputs
+            .iter()
+            .find(|entry| entry.bar == id)
+            .and_then(|entry| entry.runtime.hub.as_ref())
+            .expect("activity hub")
+            .borrow();
+        let presentation = &runtime.activities;
+        let mut strip = row::with_capacity(5).spacing(8).align_y(Alignment::Center);
+        for (index, identity) in presentation.selection.visible.iter().enumerate() {
+            let Some(activity) = self
+                .activities
+                .snapshot
+                .activities
+                .iter()
+                .chain(self.activities.native.iter())
+                .find(|entry| &entry.id == identity)
+            else {
+                continue;
+            };
+            if index == 1 {
+                let alpha = presentation
+                    .divider
+                    .as_ref()
+                    .map_or(1., |value| value.current as f32)
+                    .clamp(0., 1.);
+                let divider_color = palette.text.scale_alpha(opacity * alpha * 0.25);
+                strip = strip.push(container(cosmic::iced::widget::Space::new().width(1).height(18)).class(
+                    theme::Container::custom(move |_| container::Style {
+                        background: Some(divider_color.into()),
+                        ..Default::default()
+                    }),
+                ));
+            }
+            let semantic = if activity.state == State::Failed {
+                palette.error
+            } else if activity.state == State::Done {
+                palette.accent
+            } else {
+                palette.text
+            };
+            let blend = presentation
+                .tints
+                .get(identity)
+                .map_or(0., |value| value.current as f32)
+                .clamp(0., 1.);
+            let tint = cosmic::iced::Color::from_rgba(
+                palette.text.r + (semantic.r - palette.text.r) * blend,
+                palette.text.g + (semantic.g - palette.text.g) * blend,
+                palette.text.b + (semantic.b - palette.text.b) * blend,
+                palette.text.a,
+            );
+            let title = self
+                .render
+                .text(activity.data.title.clone())
+                .size(12)
+                .class(theme::Text::Color(palette.text.scale_alpha(opacity)))
+                .ellipsize(cosmic::iced::widget::text::Ellipsize::End(
+                    cosmic::iced::advanced::text::EllipsizeHeightLimit::Lines(1),
+                ));
+            let text = column![
+                title,
+                self.render
+                    .text(label(activity))
+                    .size(10)
+                    .class(theme::Text::Color(palette.text.scale_alpha(opacity * 0.7)))
+            ]
+            .spacing(1);
+            let item = row![
+                self.activity_icon(activity, tint.scale_alpha(opacity), !intrinsic),
+                text
+            ]
+            .spacing(6)
+            .align_y(Alignment::Center)
+            .width(if intrinsic { Length::Fixed(132.) } else { Length::Fill });
+            strip = strip.push(item);
+        }
+        if presentation.selection.hidden > 0 {
+            strip = strip.push(
+                self.render
+                    .text(format!("+{}", presentation.selection.hidden))
+                    .size(11)
+                    .class(theme::Text::Color(palette.text.scale_alpha(opacity))),
+            );
+        }
+        let mut controls = row::with_capacity(2).spacing(10).align_y(Alignment::Center);
+        if self.hub_workspace_width(id) > 0. {
+            controls = controls.push(self.hub_workspaces(id, opacity));
+        }
+        controls = controls.push(crate::motion::button(
+            self.render,
+            button::custom(container(strip).height(Length::Fill))
+                .name("Activities. Open the activity list")
+                .padding(0)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .on_press(cosmic::Action::App(Message::HubOpen(id, status_ui::Menu::Activities))),
+            palette.text,
+            false,
+            opacity,
+        ));
+        let budget = if presentation.selection.visible.len() == 2 {
+            330.
+        } else {
+            220.
+        } + if self.hub_workspace_width(id) > 0. {
+            self.hub_workspace_width(id) as f32 + 10.
+        } else {
+            0.
+        };
+        container(controls)
+            .padding([0, 14])
+            .height(Length::Fill)
+            .width(if intrinsic { Length::Fixed(budget) } else { Length::Fill })
+            .into()
+    }
+    pub fn activity_list(&self, id: window::Id, opacity: f32) -> Element<'_, cosmic::Action<Message>> {
+        let palette = self.config.theme.palette();
+        let name = self.output_for_bar(id).map(|output| output.name.as_str()).unwrap_or("");
+        let entries = ranked(
+            self.activities
+                .snapshot
+                .activities
+                .iter()
+                .chain(self.activities.native.iter()),
+            now_ms(),
+            self.activities.snapshot.limits,
+            name,
+            false,
+        );
+        let focus = self
+            .outputs
+            .iter()
+            .find(|entry| entry.bar == id)
+            .and_then(|entry| entry.runtime.hub.as_ref())
+            .and_then(|runtime| runtime.borrow().activities.focus.clone())
+            .or_else(|| {
+                self.activities
+                    .flat
+                    .get(&id)
+                    .and_then(|presentation| presentation.focus.clone())
+            });
+        let mut rows: Vec<ActivityRow<'_>> = Vec::with_capacity(entries.len());
+        if entries.is_empty() {
+            return self.render.text("No active tasks").size(13).into();
+        }
+        for activity in entries {
+            let mut body = column![
+                row![
+                    self.activity_icon(activity, palette.text.scale_alpha(opacity), false),
+                    self.render
+                        .text(activity.data.title.clone())
+                        .size(13)
+                        .width(Length::Fill)
+                        .ellipsize(cosmic::iced::widget::text::Ellipsize::End(
+                            cosmic::iced::advanced::text::EllipsizeHeightLimit::Lines(1)
+                        ))
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center),
+                self.render
+                    .text(label(activity))
+                    .size(12)
+                    .class(theme::Text::Color(palette.text.scale_alpha(opacity)))
+            ]
+            .spacing(6)
+            .width(Length::Fill);
+            match &activity.data.template {
+                Template::Media { artist, playing } => {
+                    body = body.push(
+                        self.render
+                            .text(format!("{artist} · {}", if *playing { "Playing" } else { "Paused" }))
+                            .size(12),
+                    );
+                }
+                Template::List { rows } => {
+                    for text in rows {
+                        body = body.push(self.render.text(text.clone()).size(12));
+                    }
+                }
+                _ => {}
+            }
+            if activity.data.source == ferese_activities::Source::Media && activity.id.session == 0 {
+                body = body.push(
+                    button::custom(icons::tinted(icons::MEDIA_PLAY, 16, palette.text))
+                        .name("Play or pause")
+                        .on_press(cosmic::Action::App(Message::MediaAction(
+                            self.media.action("play-pause"),
+                        ))),
+                );
+            }
+            let selected = focus.as_ref() == Some(&activity.id);
+            let key = (
+                activity.id.session,
+                activity.id.generation,
+                activity.id.owner.pid,
+                activity.id.owner.birth,
+            );
+            rows.push((
+                key,
+                button::custom(container(body).padding(10))
+                    .id(activity_widget_id(&activity.id))
+                    .name(format!("{}, {}", activity.data.title, label(activity)))
+                    .selected(selected)
+                    .on_press(cosmic::Action::App(Message::ActivityFocus(id, activity.id.clone())))
+                    .width(Length::Fill)
+                    .into(),
+            ));
+        }
+        cosmic::iced::widget::keyed_column(rows)
+            .spacing(8)
+            .width(Length::Fill)
+            .into()
+    }
+}

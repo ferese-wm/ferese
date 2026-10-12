@@ -1,3 +1,5 @@
+mod activities;
+mod activities_process;
 mod backends;
 mod config;
 mod cursor;

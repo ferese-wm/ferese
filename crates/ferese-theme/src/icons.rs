@@ -3,6 +3,9 @@ use cosmic::iced::{Color, ContentFit, Length};
 use cosmic::theme;
 use cosmic::widget::icon;
 
+pub const ACTIVITY_HAMMER: &[u8] = include_bytes!("../assets/icons/status/activity-hammer.svg");
+pub const ACTIVITY_TIMER: &[u8] = include_bytes!("../assets/icons/status/activity-timer.svg");
+pub const ACTIVITY_DOWNLOAD: &[u8] = include_bytes!("../assets/icons/status/activity-download.svg");
 pub const ARROW: &[u8] = include_bytes!("../assets/icons/arrow.svg");
 pub const BATTERY: &[u8] = include_bytes!("../assets/icons/battery.svg");
 pub const CHECK: &[u8] = include_bytes!("../assets/icons/check.svg");

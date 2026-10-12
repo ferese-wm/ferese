@@ -265,6 +265,17 @@ impl FereseShell {
         }) = &event
             && !modifiers.control()
             && !modifiers.alt()
+            && let Some(task) = self.activity_key(id, *key)
+        {
+            return task;
+        }
+        if let Event::Keyboard(cosmic::iced::keyboard::Event::KeyPressed {
+            key: cosmic::iced::keyboard::Key::Named(key),
+            modifiers,
+            ..
+        }) = &event
+            && !modifiers.control()
+            && !modifiers.alt()
             && self.hub_mode(id)
                 == Some(ferese_panel::morph::Mode::Expanded(
                     ferese_panel::morph::Content::Workspaces,

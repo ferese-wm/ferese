@@ -6,6 +6,8 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+ferese-activities = { path = "../ferese-activities" }
+regex = "1.12"
 ferese-panel = { path = "../ferese-panel" }
 ferese-theme-model = { path = "../ferese-theme-model" }
 jiff.workspace = true

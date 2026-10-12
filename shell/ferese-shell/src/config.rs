@@ -7,6 +7,7 @@ const DEFAULT_BACKGROUND: [u8; 3] = [11, 15, 20];
 
 #[derive(Clone, Debug)]
 pub(crate) struct ShellConfig {
+    pub(crate) activities: ferese_config::activities::Settings,
     pub(crate) notifications: ferese_config::notifications::NotificationConfig,
     pub(crate) animations: crate::motion::Settings,
     pub(crate) font_family: Option<String>,
@@ -21,6 +22,7 @@ impl Default for ShellConfig {
     fn default() -> Self {
         let status = StatusConfig::default();
         Self {
+            activities: Default::default(),
             notifications: Default::default(),
             animations: Default::default(),
             font_family: None,
@@ -182,6 +184,8 @@ pub(crate) enum WallpaperMode {
 
 #[derive(Debug, Default, Deserialize)]
 struct FereseConfig {
+    #[serde(default)]
+    activities: ferese_config::activities::Settings,
     #[serde(default)]
     panels: Option<Vec<crate::panel::Panel>>,
     #[serde(default)]
@@ -388,6 +392,7 @@ fn parse_document(
             theme.bar_radius = theme.material_radius;
 
             Ok(ShellConfig {
+                activities: config.activities,
                 notifications: config.notifications,
                 animations: config.animations,
                 font_family: config.theme.typography.font_family,

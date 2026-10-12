@@ -1,3 +1,4 @@
+mod activities;
 mod bar;
 mod surfaces;
 
@@ -155,6 +156,7 @@ struct FereseShell {
     status: status::Snapshot,
     recorder: recording::Recorder,
     media: media::Model,
+    activities: activities::Model,
     calendar_offset: i32,
     status_error: Option<status::ActionError>,
     theme_error: Option<String>,
@@ -212,6 +214,10 @@ enum Message {
     MediaAction(serde_json::Value),
     MediaCompleted(Result<(), String>),
     MediaTick,
+    ActivitiesUpdated(std::sync::Arc<ferese_ipc::activities::Snapshot>),
+    ActivityTick,
+    ActivityHover(window::Id, bool),
+    ActivityFocus(window::Id, ferese_activities::Id),
     MediaChoose,
     MediaSeek(u64),
     MediaSeekCommit,
@@ -281,14 +287,17 @@ impl cosmic::Application for FereseShell {
     }
 
     fn init(core: Core, (config, wallpaper): Self::Flags) -> (Self, Task<Self::Message>) {
+        let mut notification_center = notifications::Center::new(config.notifications.clone(), config.animations);
+        notification_center.activity_bridge = config.activities.sources.notification_bridge;
         let app = Self {
             core,
-            notifications: notifications::Center::new(config.notifications.clone(), config.animations),
+            notifications: notification_center,
             notification_surface: None,
             status_service: status::Service::start(config.status.settings_command.clone()),
             status: status::Snapshot::default(),
             recorder: recording::Recorder::default(),
             media: media::Model::default(),
+            activities: activities::Model::default(),
             calendar_offset: 0,
             status_error: None,
             theme_error: None,
@@ -356,6 +365,8 @@ impl cosmic::Application for FereseShell {
                 _ => None,
             }),
             clock::subscription(self.outputs.iter().any(|output| !output.hidden)).map(Message::ClockChanged),
+            activities::subscription::subscription().map(Message::ActivitiesUpdated),
+            self.activity_tick_subscription().map(|_| Message::ActivityTick),
             self.media.subscription().map(Message::MediaUpdated),
             self.media_tick_subscription().map(|_| Message::MediaTick),
             self.media.art.subscription().map(Message::MediaArt),
@@ -427,6 +438,19 @@ impl cosmic::Application for FereseShell {
                 )
             }
 
+            Message::ActivitiesUpdated(snapshot) => {
+                self.activities.snapshot = snapshot;
+                self.sync_hub_activity()
+            }
+            Message::ActivityTick => self.sync_hub_activity(),
+            Message::ActivityHover(id, entered) => {
+                self.activity_hover(id, entered);
+                self.sync_hub_activity()
+            }
+            Message::ActivityFocus(id, activity) => {
+                self.focus_activity(id, activity);
+                Task::none()
+            }
             Message::MediaUpdated(snapshot) => {
                 self.media.receive(snapshot);
                 self.refresh_media_art(
@@ -570,8 +594,15 @@ impl cosmic::Application for FereseShell {
                         dnd: self.notifications.dnd,
                     });
                 }
-                let hub = notice.map_or_else(Task::none, |notice| self.hub_notice(notice));
-                Task::batch([hub, self.sync_hub_notices(), self.sync_notification_surface()])
+                let hub = notice
+                    .filter(|_| !self.config.activities.sources.notification_bridge)
+                    .map_or_else(Task::none, |notice| self.hub_notice(notice));
+                Task::batch([
+                    hub,
+                    self.sync_hub_activity(),
+                    self.sync_hub_notices(),
+                    self.sync_notification_surface(),
+                ])
             }
             Message::NotificationTick => {
                 self.notifications.tick();
@@ -935,6 +966,8 @@ impl FereseShell {
         let geometry = config.panels[0].resolved_geometry();
         let geometry_changed = edge_changed || old_geometry != geometry;
         self.notifications.configure(config.notifications.clone());
+        self.notifications
+            .configure_activity_bridge(config.activities.sources.notification_bridge);
         self.config = config;
         if composition_changed || geometry_changed {
             for entry in &mut self.outputs {
@@ -1077,6 +1110,7 @@ mod tests {
             status: Default::default(),
             recorder: Default::default(),
             media: Default::default(),
+            activities: Default::default(),
             calendar_offset: 0,
             status_error: None,
             theme_error: None,

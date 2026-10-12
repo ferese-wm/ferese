@@ -65,12 +65,13 @@ pub(super) struct Runtime {
     workspace_selected: Option<u64>,
     workspace_selection_pending: Option<u64>,
     hovered: bool,
-    idle_content_width: Option<f64>,
+    pub(crate) idle_content_width: Option<f64>,
     available: [f64; 2],
     peek_width: f64,
     idle_width: f64,
     workspace_width: f64,
     workspace_scroll: workspaces::Scroll,
+    pub(super) activities: crate::activities::Presentation,
 }
 
 impl Runtime {
@@ -116,17 +117,41 @@ impl Runtime {
             idle_width: panel.morph.idle_width,
             workspace_width: 0.,
             workspace_scroll: Default::default(),
+            activities: Default::default(),
         }
     }
 
     fn sample(&mut self, now: Instant) -> Sample {
         let policy = self.motion;
+        self.activities
+            .advance(now.saturating_duration_since(self.sampled), !policy.motion_enabled());
         self.hub.advance(
             now.saturating_duration_since(self.sampled).mul_f64(policy.speed),
             !policy.motion_enabled(),
         );
         self.sampled = self.sampled.max(now);
         self.hub.sample()
+    }
+
+    pub(crate) fn refresh_activity_size(&mut self) {
+        if self.hub.mode() == Mode::Idle {
+            let width = self
+                .idle_content_width
+                .map_or(self.idle_width + self.workspace_width, |width| {
+                    width + self.workspace_width
+                })
+                .clamp(24., 1024.);
+            let _ = self.hub.retarget_idle(width, self.available);
+        } else if self.hub.mode() == Mode::Peek
+            && self.peek != Peek::Workspaces
+            && self.priority.is_none()
+            && let Some(width) = self.idle_content_width
+        {
+            self.peek_width = width + self.workspace_width;
+            let _ = self
+                .hub
+                .retarget_peek(self.peek_width.clamp(24., 1024.), self.available);
+        }
     }
 
     fn retarget(&mut self, mode: Mode, available: [f64; 2], menu: Option<status_ui::Menu>) {
@@ -138,6 +163,13 @@ impl Runtime {
         if mode == Mode::Idle {
             self.hub.retarget_idle(
                 self.idle_content_width
+                    .map(|width| {
+                        if self.activities.selection.visible.is_empty() {
+                            width
+                        } else {
+                            width + self.workspace_width
+                        }
+                    })
                     .unwrap_or(self.idle_width + self.workspace_width)
                     .clamp(24., 1024.),
                 shape_available,
@@ -165,6 +197,7 @@ pub(super) fn new(panel: &Panel) -> Option<RefCell<Runtime>> {
 
 fn content(kind: status_ui::Menu) -> Content {
     match kind {
+        status_ui::Menu::Activities => Content::Activities,
         status_ui::Menu::Workspaces => Content::Workspaces,
         status_ui::Menu::Media => Content::Media,
         status_ui::Menu::Calendar => Content::Calendar,
@@ -188,6 +221,20 @@ impl FereseShell {
         if self.bar_hidden(id) {
             return Task::none();
         }
+        if let Some(runtime) = self
+            .outputs
+            .iter()
+            .find(|entry| entry.bar == id)
+            .and_then(|entry| entry.runtime.hub.as_ref())
+        {
+            let mut runtime = runtime.borrow_mut();
+            if entered {
+                runtime.activities.selection.enter();
+            } else {
+                runtime.activities.selection.leave();
+            }
+        }
+        self.sync_activity_presentations();
         self.transition_hub(
             id,
             Event::Hover {
@@ -359,6 +406,9 @@ impl FereseShell {
             .and_then(|entry| entry.runtime.hub.as_ref())
             .expect("Morph runtime");
         let runtime = runtime.borrow();
+        if !runtime.activities.selection.visible.is_empty() && self.activities_configured(id) {
+            return runtime.hub.target_size()[0].min(runtime.available[0]) as f32;
+        }
         let artwork_width = if self.hub_priority().is_some() {
             64.
         } else if self
@@ -372,7 +422,13 @@ impl FereseShell {
         } else {
             0.
         };
-        (runtime.idle_width + runtime.workspace_width + artwork_width)
+        (if runtime.activities.selection.visible.is_empty() {
+            runtime.idle_width + artwork_width
+        } else if runtime.activities.selection.visible.len() == 2 {
+            330.
+        } else {
+            220.
+        } + runtime.workspace_width)
             .min(runtime.available[0])
             .min(f64::from(runtime.allocation[0].saturating_sub(runtime.fillet_space)) / 1.1) as f32
     }
@@ -384,7 +440,7 @@ impl FereseShell {
         let revision = runtime.borrow().revision;
         let mode = runtime.borrow().hub.mode();
         let workspace_feedback = mode == Mode::Peek && runtime.borrow().peek == Peek::Workspaces;
-        let measurement = if mode == Mode::Idle || workspace_feedback {
+        let measurement = if (mode == Mode::Idle && !self.has_compact_activities(id)) || workspace_feedback {
             let cap = if workspace_feedback {
                 let runtime = runtime.borrow();
                 260_f64
@@ -447,7 +503,10 @@ impl FereseShell {
                 };
                 self.view_hub_at(id, sample, menu, previous_menu)
             },
-            move |_| runtime.borrow().hub.active(),
+            move |_| {
+                let runtime = runtime.borrow();
+                runtime.hub.active() || runtime.activities.active()
+            },
             |_| {},
             |_| None,
             measurement,
@@ -512,7 +571,12 @@ impl FereseShell {
         let mut background = palette.surface_raised.map(|value| f32::from(value) / 255.);
         background[3] = palette.panel_opacity(panel.background_opacity);
         let background = cosmic::iced::Color::from_rgba(background[0], background[1], background[2], background[3]);
-        let border = crate::color(palette.border);
+        let mut border = crate::color(palette.border);
+        if let Some((tint, alpha)) = self.activity_result_tint(id) {
+            border.r += (tint.r - border.r) * alpha;
+            border.g += (tint.g - border.g) * alpha;
+            border.b += (tint.b - border.b) * alpha;
+        }
         ferese_theme::panel_surface::frame(
             self.with_workspace_hover(id, root.into()),
             ferese_theme::panel_surface::Options {
@@ -586,6 +650,9 @@ impl FereseShell {
                             runtime.peek
                         }
                     });
+                if mode != Mode::Toast && self.has_compact_activities(id) && self.hub_priority().is_none() {
+                    return self.activity_compact(id, opacity, intrinsic);
+                }
                 let priority = self.hub_priority();
                 let activity = if mode == Mode::Idle {
                     priority
@@ -791,12 +858,16 @@ impl FereseShell {
                     .align_y(Alignment::Center);
                 let shortcuts = self.hub_shortcuts(id);
                 for (kind, label, icon) in [
+                    (status_ui::Menu::Activities, "Activities", icons::FERESE),
                     (status_ui::Menu::Workspaces, "Workspaces", icons::OVERVIEW),
                     (status_ui::Menu::Media, "Music", icons::MEDIA),
                     (status_ui::Menu::Calendar, "Calendar", icons::CALENDAR),
                     (status_ui::Menu::Notifications, "Notifications", icons::NOTIFICATIONS),
                     (status_ui::Menu::Overflow, "Controls", icons::CONTROL_CENTER),
                 ] {
+                    if kind == status_ui::Menu::Activities && !self.activities_configured(id) {
+                        continue;
+                    }
                     let active = if selected == Content::Controls {
                         menu.unwrap_or(status_ui::Menu::Overflow) == kind
                     } else {
@@ -855,13 +926,16 @@ impl FereseShell {
                     opacity,
                 ));
                 let kind = match selected {
+                    Content::Activities => status_ui::Menu::Activities,
                     Content::Workspaces => status_ui::Menu::Workspaces,
                     Content::Media => status_ui::Menu::Media,
                     Content::Calendar => status_ui::Menu::Calendar,
                     Content::Notifications => status_ui::Menu::Notifications,
                     Content::Controls => menu.unwrap_or(status_ui::Menu::Overflow),
                 };
-                let body = if kind == status_ui::Menu::Workspaces {
+                let body = if kind == status_ui::Menu::Activities {
+                    self.activity_list(id, opacity)
+                } else if kind == status_ui::Menu::Workspaces {
                     self.hub_workspace_grid(id, opacity)
                 } else if kind == status_ui::Menu::Overflow {
                     self.hub_controls(id, opacity)
@@ -958,6 +1032,7 @@ impl FereseShell {
     fn hub_control_action(&self, id: window::Id, kind: ItemKind) -> Option<ControlAction> {
         let (icon, menu) = match kind {
             ItemKind::Overview => (icons::OVERVIEW, None),
+            ItemKind::Activities => (icons::FERESE, Some(status_ui::Menu::Activities)),
             ItemKind::QuickSettings => (icons::SETTINGS, Some(status_ui::Menu::System)),
             ItemKind::Network => (icons::WIFI, Some(status_ui::Menu::Network)),
             ItemKind::Recording => (
@@ -1015,7 +1090,8 @@ impl FereseShell {
             });
         let width = panel.morph.expanded_width.min(available);
         // Five tabs and Close keep their space through the morph.
-        let capacity = ((width - 28. - 6. * 32. - 8.).max(0.) / 32.).floor() as usize;
+        let tabs = if self.activities_configured(id) { 7. } else { 6. };
+        let capacity = ((width - 28. - tabs * 32. - 8.).max(0.) / 32.).floor() as usize;
         let mut shortcuts = Vec::new();
         for item in [&panel.start, &panel.center, &panel.end]
             .into_iter()
@@ -1129,6 +1205,188 @@ mod tests {
         shell
     }
 
+    fn seed_activities(shell: &mut FereseShell, count: usize) {
+        use ferese_activities::{Data, Owner, Source, Store, Template, Value};
+        let now = ferese_ipc::activities::now_ms();
+        if !shell.config.panels[0]
+            .end
+            .groups
+            .iter()
+            .flat_map(|group| &group.items)
+            .any(|item| item.kind == ItemKind::Activities)
+        {
+            shell.config.panels[0].end.groups[0]
+                .items
+                .push(ferese_panel::Item::new("test-activities", ItemKind::Activities));
+        }
+        if shell.snapshot.outputs.is_empty() {
+            shell.snapshot.outputs.push(crate::control::OutputSnapshot {
+                id: 4,
+                name: "test".into(),
+                active_workspace: 1,
+                focused: true,
+            });
+        }
+        let mut store = Store::new(7);
+        for index in 0..count {
+            store
+                .start(
+                    Owner { pid: 40, birth: 1 },
+                    format!("task-{index}"),
+                    Data {
+                        source: Source::Publisher,
+                        output: shell
+                            .output_for_bar(shell.outputs[0].bar)
+                            .map(|output| output.name.clone()),
+                        priority: 100 + index as u8,
+                        icon: if index == 0 { "hammer" } else { "download" }.into(),
+                        title: if index == 2 {
+                            "Installing update"
+                        } else if index == 0 {
+                            "Cargo test: a deliberately long title which must leave all neighboring controls accessible"
+                        } else {
+                            "Downloading update"
+                        }
+                        .into(),
+                        value: if index == 0 {
+                            Value::Indeterminate
+                        } else {
+                            Value::Progress(0.62)
+                        },
+                        template: Template::Progress,
+                    },
+                    now.saturating_sub(500),
+                    0,
+                    None,
+                    true,
+                    true,
+                    None,
+                )
+                .unwrap();
+        }
+        shell.activities.snapshot = std::sync::Arc::new(ferese_ipc::activities::Snapshot {
+            activities: store.entries().cloned().collect(),
+            now_ms: now,
+            revision: 1,
+            ..Default::default()
+        });
+    }
+    #[test]
+    fn activity_values_do_not_resize_and_hover_pins_survivors_and_dnd_overrides() {
+        let mut shell = shell();
+        let id = shell.outputs[0].bar;
+        seed_activities(&mut shell, 3);
+        drop(shell.sync_hub_activity());
+        let runtime = shell.outputs[0].runtime.hub.as_ref().unwrap();
+        let width = runtime.borrow().hub.target_size()[0];
+        let first = runtime.borrow().activities.selection.visible.clone();
+        drop(shell.hub_hover(id, true));
+        std::sync::Arc::make_mut(&mut shell.activities.snapshot).activities[0]
+            .data
+            .priority = 255;
+        std::sync::Arc::make_mut(&mut shell.activities.snapshot).activities[2]
+            .data
+            .value = ferese_activities::Value::Text("A changed phase".into());
+        drop(shell.sync_hub_activity());
+        let runtime = shell.outputs[0].runtime.hub.as_ref().unwrap();
+        assert_eq!(runtime.borrow().activities.selection.visible, first);
+        assert_eq!(runtime.borrow().hub.target_size()[0], width);
+        std::sync::Arc::make_mut(&mut shell.activities.snapshot)
+            .activities
+            .retain(|entry| entry.id != first[0]);
+        drop(shell.sync_hub_activity());
+        assert_eq!(
+            shell.outputs[0]
+                .runtime
+                .hub
+                .as_ref()
+                .unwrap()
+                .borrow()
+                .activities
+                .selection
+                .visible,
+            vec![first[1].clone()]
+        );
+        shell.notifications.dnd = true;
+        drop(shell.sync_hub_activity());
+        let runtime = shell.outputs[0].runtime.hub.as_ref().unwrap();
+        assert_eq!(runtime.borrow().activities.selection.visible.len(), 1);
+        assert_eq!(runtime.borrow().activities.selection.hidden, 0);
+        drop(shell.hub_hover(id, false));
+        drop(shell.open_hub(id, status_ui::Menu::Activities));
+        assert_eq!(shell.hub_mode(id), Some(Mode::Expanded(Content::Activities)));
+    }
+    #[test]
+    fn shared_activity_item_and_popup_work_in_flat_floating_and_adaptive_panels() {
+        for style in [PanelStyle::Flat, PanelStyle::Floating, PanelStyle::Adaptive] {
+            let mut shell = shell();
+            let id = shell.outputs[0].bar;
+            seed_activities(&mut shell, 2);
+            shell.config.panels[0].style = style;
+            shell.outputs[0]
+                .runtime
+                .reset(&shell.config.panels[0], &shell.snapshot, Some("test"));
+            drop(shell.sync_hub_activity());
+            assert!(shell.activity_available(id));
+            assert!(shell.outputs[0].runtime.hub.is_none());
+            let item = shell.config.panels[0]
+                .item(&ferese_panel::ItemId("test-activities".into()))
+                .unwrap();
+            assert!(
+                shell
+                    .view_activity_item(id, item, ferese_panel::Representation::Compact, false, Some(160.), 28.)
+                    .1
+            );
+            let anchor = crate::status_ui::PopoverAnchor {
+                parent: id,
+                panel: shell.config.panels[0].id.clone(),
+                item: Some(item.id.clone()),
+                rectangle: cosmic::iced::Rectangle {
+                    x: 20,
+                    y: 0,
+                    width: 160,
+                    height: 28,
+                },
+            };
+            drop(shell.open_menu(status_ui::Menu::Activities, anchor));
+            assert_eq!(shell.menu.as_ref().unwrap().kind, status_ui::Menu::Activities);
+            assert!(
+                shell
+                    .activity_key(
+                        shell.menu.as_ref().unwrap().id,
+                        cosmic::iced::keyboard::key::Named::ArrowDown
+                    )
+                    .is_some()
+            );
+            shell.activities.snapshot = std::sync::Arc::new(Default::default());
+            drop(shell.sync_hub_activity());
+            assert!(!shell.activity_available(id));
+        }
+    }
+    #[test]
+    fn activity_motion_preserves_velocity_and_stops_after_settlement_or_reduced_motion() {
+        let mut presentation = crate::activities::Presentation::default();
+        let mut value = ferese_animation::AnimatedValue::new(0.);
+        value.set_target(0.6);
+        let id = ferese_activities::Id {
+            owner: ferese_activities::Owner { pid: 1, birth: 1 },
+            local: "test".into(),
+            generation: 1,
+            session: 1,
+        };
+        presentation.test_progress(id.clone(), value);
+        presentation.advance(Duration::from_millis(50), false);
+        let velocity = presentation.test_velocity(&id);
+        presentation.test_target(&id, 0.9);
+        assert_eq!(presentation.test_velocity(&id), velocity);
+        for _ in 0..200 {
+            presentation.advance(Duration::from_millis(16), false);
+        }
+        assert!(!presentation.active());
+        presentation.test_target(&id, 0.2);
+        presentation.advance(Duration::ZERO, true);
+        assert!(!presentation.active());
+    }
     #[test]
     fn shell_rendering_configuration_is_instance_owned() {
         let mut animated = shell();
@@ -2035,11 +2293,20 @@ mod tests {
             })
             .collect();
         drop(shell.update_workspace_ui());
-        let theme = shell.config.theme.palette().native_theme();
         for scale in [1., 1.25, 1.5] {
             shell.outputs[0].scale = scale;
             let mut date_pixels = None;
             for (name, mode, menu) in [
+                ("activities-light", Mode::Idle, None),
+                ("activities-narrow", Mode::Idle, None),
+                ("activities-single", Mode::Idle, None),
+                ("activities-split", Mode::Idle, None),
+                ("activities-translucent", Mode::Idle, None),
+                (
+                    "activities-list",
+                    Mode::Expanded(Content::Activities),
+                    Some(status_ui::Menu::Activities),
+                ),
                 ("idle", Mode::Idle, None),
                 ("idle-attached", Mode::Idle, None),
                 ("idle-attached-bottom", Mode::Idle, None),
@@ -2172,6 +2439,20 @@ mod tests {
                     percent: 12,
                     status: "Discharging".into(),
                 });
+                let document = ferese_config::Document::parse(if name == "activities-light" {
+                    "theme { mode light; }"
+                } else {
+                    "theme { mode dark; }"
+                })
+                .unwrap();
+                let candidate = ferese_config::theme::resolve(
+                    &document,
+                    std::path::Path::new("/tmp"),
+                    jiff::Timestamp::now(),
+                    |_| Err("unexpected theme read".into()),
+                )
+                .unwrap();
+                shell.config.apply_theme(&candidate.theme);
                 shell.config.theme.bar_background[3] = if name.ends_with("translucent") { 128 } else { 255 };
                 let panel = &mut shell.config.panels[0];
                 panel.morph.attached = name.contains("attached");
@@ -2192,9 +2473,10 @@ mod tests {
                         signal: 80,
                     });
                 }
+                shell.outputs[0].size = Some((if name == "activities-narrow" { 240 } else { 1200 }, 800));
                 let workspace_width = shell.hub_workspace_width(id);
                 let hub = shell.outputs[0].runtime.hub.as_ref().unwrap();
-                let (mut sample, allocation) = {
+                let (mut sample, mut allocation) = {
                     let mut hub = hub.borrow_mut();
                     let animation_time = name.strip_prefix("spring-").map(|ms| ms.parse::<u64>().unwrap());
                     *hub = Runtime::new(&shell.config.panels[0]);
@@ -2216,13 +2498,29 @@ mod tests {
                     } else {
                         200.
                     };
-                    hub.retarget(mode, [1200., 800.], menu);
+                    hub.retarget(
+                        mode,
+                        [if name == "activities-narrow" { 240. } else { 1200. }, 800.],
+                        menu,
+                    );
                     hub.hub.advance(
                         Duration::from_millis(animation_time.unwrap_or(0)),
                         animation_time.is_none(),
                     );
                     (hub.hub.sample(), hub.allocation)
                 };
+                if name.starts_with("activities") {
+                    seed_activities(&mut shell, if name == "activities-single" { 1 } else { 3 });
+                    drop(shell.sync_hub_activity());
+                    let mut hub = shell.outputs[0].runtime.hub.as_ref().unwrap().borrow_mut();
+                    hub.hub.advance(Duration::from_secs(2), true);
+                    hub.activities.advance(Duration::ZERO, true);
+                    sample = hub.hub.sample();
+                    allocation = hub.allocation;
+                } else {
+                    shell.activities.snapshot = std::sync::Arc::new(Default::default());
+                }
+                let hub = shell.outputs[0].runtime.hub.as_ref().unwrap();
                 if mode == Mode::Idle || mode == Mode::Expanded(Content::Controls) || name == "peek-workspaces" {
                     let mut measured = shell.view_hub(id);
                     let mut measured_tree = widget::Tree::new(&measured);
@@ -2370,6 +2668,7 @@ mod tests {
                 } else {
                     mouse::Cursor::Unavailable
                 };
+                let theme = shell.config.theme.palette().native_theme();
                 renderer.reset(viewport);
                 view.as_widget().draw(
                     &tree,

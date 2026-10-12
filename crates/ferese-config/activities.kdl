@@ -1,0 +1,60 @@
+// Built-in rules. A same-named user rule replaces the complete definition.
+activities {
+    sources { shell-hook #false; process-watch #false; notification-bridge #false; }
+    rule cargo {
+        match #"^cargo (build|check|test|run|clippy)\b"#
+        title "cargo {1}"
+        icon hammer
+        priority 100
+        progress indeterminate
+        min-duration-ms 1500
+        ignore-parents rust-analyzer
+        dedupe-by cwd
+        flash-on-fail #true
+        result ok=Finished fail="Command failed"
+    }
+    rule npm {
+        match #"^(npm|pnpm) (install|build|test|run)\b"#
+        title "{1} {2}"
+        icon hammer
+        priority 100
+        progress indeterminate
+        min-duration-ms 1500
+        dedupe-by cwd
+        flash-on-fail #true
+        result ok=Finished fail="Command failed"
+    }
+    rule make {
+        match #"^make(?:\s|$)"#
+        title Make
+        icon hammer
+        priority 100
+        progress indeterminate
+        min-duration-ms 300
+        dedupe-by cwd
+        flash-on-fail #true
+        result ok=Built fail="Command failed"
+    }
+    rule git-push {
+        match #"^git push(?:\s|$)"#
+        title "Git push"
+        icon hammer
+        priority 100
+        progress indeterminate
+        min-duration-ms 300
+        dedupe-by cwd
+        flash-on-fail #true
+        result ok=Pushed fail="Command failed"
+    }
+    rule docker-build {
+        match #"^docker build(?:\s|$)"#
+        title "Docker build"
+        icon hammer
+        priority 100
+        progress indeterminate
+        min-duration-ms 1500
+        dedupe-by cwd
+        flash-on-fail #true
+        result ok="Image built" fail="Command failed"
+    }
+}

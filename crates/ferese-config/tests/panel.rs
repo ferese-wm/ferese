@@ -238,3 +238,27 @@ fn item_options_are_strict_and_metadata_is_explicit() {
             .is_err()
     );
 }
+
+#[test]
+fn activities_are_first_class_items_in_every_zone_and_keep_overflow_settings() {
+    for style in ["flat", "floating", "morph", "adaptive"] {
+        for zone in ["start", "center", "end"] {
+            let source = format!(
+                "panel main {{ style {style}; {zone} {{ group tasks {{ item builds kind=activities priority=20 overflow=always; }}; }}; }}"
+            );
+            let mut doc = ferese_config::Document::parse(&source).unwrap();
+            let panels: Vec<Panel> = serde_json::from_value(doc.get("panels").unwrap().clone()).unwrap();
+            ferese_panel::validate(&panels).unwrap();
+            let parsed = match zone {
+                "start" => &panels[0].start,
+                "center" => &panels[0].center,
+                _ => &panels[0].end,
+            };
+            assert_eq!(parsed.groups[0].items[0].kind, ferese_panel::ItemKind::Activities);
+            assert_eq!(parsed.groups[0].items[0].overflow, ferese_panel::OverflowPolicy::Always);
+            doc.set("panels", serde_json::to_value(&panels).unwrap()).unwrap();
+            let restored = ferese_config::Document::parse(&doc.to_string()).unwrap();
+            assert_eq!(restored.get("panels"), doc.get("panels"));
+        }
+    }
+}

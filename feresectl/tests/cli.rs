@@ -189,3 +189,150 @@ fn event_stream_uses_the_selected_socket_and_prints_complete_json_lines() {
     stop.send(()).unwrap();
     worker.join().unwrap();
 }
+
+#[test]
+fn activity_start_uses_versioned_framing_and_parent_scope() {
+    let dir = tempfile::tempdir().unwrap();
+    let socket = dir.path().join("activity.sock");
+    let listener = UnixListener::bind(&socket).unwrap();
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let request: Request = read_frame(&mut stream).unwrap();
+        assert_eq!(request.version, ferese_ipc::VERSION);
+        assert_eq!(request.command, "activity-publish");
+        let wire: ferese_ipc::activities::Request = serde_json::from_value(request.args).unwrap();
+        assert!(matches!(wire.owner, ferese_ipc::activities::OwnerScope::Parent));
+        match wire.publish {
+            ferese_ipc::activities::Publish::Start { local, data, .. } => {
+                assert_eq!(local, "build");
+                assert_eq!(data.value, ferese_activities::Value::Indeterminate);
+            }
+            _ => panic!("wrong activity action"),
+        }
+        write_frame(
+            &mut stream,
+            &Response::success(request.id, json!({"handle":{"generation":1}})),
+        )
+        .unwrap();
+    });
+    success(
+        ctl(&[
+            "--socket",
+            socket.to_str().unwrap(),
+            "activity",
+            "start",
+            "build",
+            "--title",
+            "Build",
+        ])
+        .output()
+        .unwrap(),
+    );
+    server.join().unwrap();
+}
+
+#[test]
+fn run_preserves_arguments_cwd_environment_output_and_exit_when_publishing_fails() {
+    let dir = tempfile::tempdir().unwrap();
+    let output = ctl(&[
+        "--socket",
+        "/missing/ferese.sock",
+        "run",
+        "--title",
+        "Test",
+        "--",
+        "sh",
+        "-c",
+        "printf '%s|%s|%s' \"$1\" \"$ACTIVITY_TEST_VALUE\" \"$PWD\"; printf stderr >&2; exit 17",
+        "sh",
+        "argument with spaces;$literal",
+    ])
+    .env("ACTIVITY_TEST_VALUE", "preserved")
+    .current_dir(dir.path())
+    .output()
+    .unwrap();
+    assert_eq!(output.status.code(), Some(17));
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        format!("argument with spaces;$literal|preserved|{}", dir.path().display())
+    );
+    assert_eq!(output.stderr, b"stderr");
+}
+
+#[test]
+fn run_reports_child_exit_after_build_finished_and_retains_signal_status() {
+    use std::os::unix::process::ExitStatusExt;
+    let output = ctl(&[
+        "run",
+        "--",
+        "sh",
+        "-c",
+        "printf '{\"reason\":\"build-finished\",\"success\":true}\\n'; exit 19",
+    ])
+    .output()
+    .unwrap();
+    assert_eq!(output.status.code(), Some(19));
+    let output = ctl(&["run", "--", "sh", "-c", "kill -TERM $$"]).output().unwrap();
+    assert_eq!(output.status.signal(), Some(libc::SIGTERM));
+}
+
+#[test]
+fn wrapper_forwards_termination_and_preserves_job_control_group() {
+    use std::os::unix::process::{CommandExt, ExitStatusExt};
+    let mut command = ctl(&["run", "--", "sh", "-c", "kill -STOP $$; sleep 30"]);
+    unsafe {
+        command.pre_exec(|| {
+            libc::setpgid(0, 0);
+            Ok(())
+        });
+    }
+    let mut child = command.spawn().unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(150));
+    let pid = child.id() as i32;
+    assert_eq!(unsafe { libc::kill(-pid, libc::SIGCONT) }, 0);
+    assert_eq!(unsafe { libc::kill(pid, libc::SIGTERM) }, 0);
+    assert_eq!(child.wait().unwrap().signal(), Some(libc::SIGTERM));
+}
+
+#[test]
+fn terminal_ctrl_c_reaches_child_and_wrapper_returns_sigint() {
+    use std::os::unix::process::{CommandExt, ExitStatusExt};
+    let mut command = ctl(&["run", "--", "sleep", "30"]);
+    unsafe {
+        command.pre_exec(|| {
+            libc::setpgid(0, 0);
+            Ok(())
+        });
+    }
+    let mut child = command.spawn().unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(150));
+    assert_eq!(unsafe { libc::kill(-(child.id() as i32), libc::SIGINT) }, 0);
+    assert_eq!(child.wait().unwrap().signal(), Some(libc::SIGINT));
+}
+
+#[test]
+fn a_silent_broker_cannot_prevent_or_change_command_execution() {
+    let directory = tempfile::tempdir().unwrap();
+    let socket = directory.path().join("blocked.sock");
+    let listener = UnixListener::bind(&socket).unwrap();
+    let worker = thread::spawn(move || {
+        let (_stream, _) = listener.accept().unwrap();
+        std::thread::sleep(std::time::Duration::from_secs(3));
+    });
+    let began = std::time::Instant::now();
+    let result = ctl(&[
+        "--socket",
+        socket.to_str().unwrap(),
+        "run",
+        "--",
+        "sh",
+        "-c",
+        "printf executed; exit 23",
+    ])
+    .output()
+    .unwrap();
+    assert_eq!(result.stdout, b"executed");
+    assert_eq!(result.status.code(), Some(23));
+    assert!(began.elapsed() < std::time::Duration::from_secs(3));
+    worker.join().unwrap();
+}

@@ -32,6 +32,7 @@ struct MenuStyle {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Menu {
+    Activities,
     Workspaces,
     Network,
     Bluetooth,
@@ -75,6 +76,7 @@ impl Menu {
 
     fn title(self) -> &'static str {
         match self {
+            Self::Activities => "Activities",
             Self::Workspaces => "Workspaces",
             Self::System => "Control Center",
             Self::Overflow => "Panel items",
@@ -97,7 +99,7 @@ impl Menu {
             Self::Battery => status.battery.is_some(),
             Self::Calendar | Self::Recording | Self::Media => true,
             Self::Notifications => status.notifications.is_some(),
-            Self::System | Self::Overflow | Self::Workspaces => true,
+            Self::System | Self::Overflow | Self::Workspaces | Self::Activities => true,
         }
     }
 }
@@ -281,7 +283,7 @@ impl FereseShell {
                 style.primary,
                 opacity,
             )),
-            Menu::Overflow | Menu::Workspaces => rows,
+            Menu::Activities | Menu::Overflow | Menu::Workspaces => rows,
         };
         if !kind.available(&self.status) {
             rows = rows.push(
@@ -389,6 +391,7 @@ impl FereseShell {
             Menu::Battery => battery::view(self, rows, style),
             Menu::Calendar => rows.push(calendar::view(self.render, self.calendar_offset, theme, p)),
             Menu::Notifications => notification_controls(self, rows, style, false),
+            Menu::Activities => rows.push(self.activity_list(menu.anchor.parent, p)),
             Menu::Recording | Menu::Workspaces => rows,
             Menu::Overflow => self.view_panel_overflow(rows),
             Menu::Media => media::view(self, rows, style),

@@ -7,6 +7,7 @@ use ferese_theme::panel::{Sample, Spacing, frame};
 use crate::{App, Element, Message, panel_controls, visuals};
 
 const SAMPLE_AVAILABILITY: Availability = Availability {
+    activities: true,
     media: true,
     network: true,
     audio: true,
@@ -367,6 +368,7 @@ impl App {
             ItemKind::Workspaces { .. } => icons::OVERVIEW,
             ItemKind::FocusedWindow => icons::DISPLAY,
             ItemKind::Media => icons::MEDIA,
+            ItemKind::Activities => icons::FERESE,
             ItemKind::QuickSettings => icons::CONTROL_CENTER,
             ItemKind::Network => icons::WIFI_FULL,
             ItemKind::Audio => icons::VOLUME_HIGH,
@@ -380,6 +382,8 @@ impl App {
         let label = match (item.kind, representation) {
             (ItemKind::Workspaces { .. }, _) => "1  2  3",
             (ItemKind::FocusedWindow, _) => "Settings",
+            (ItemKind::Activities, Representation::Wide) => "Build · 62%  +1",
+            (ItemKind::Activities, Representation::Compact) => "Build",
             (ItemKind::Media, Representation::Wide) => "Song title · Artist  ▷",
             (ItemKind::Media, Representation::Compact) => "Song title",
             (ItemKind::Battery { percentage: true }, Representation::Wide) => "75%",

@@ -269,6 +269,7 @@ struct Toast {
 }
 
 pub struct Center {
+    pub activity_bridge: bool,
     config: ferese_config::notifications::NotificationConfig,
     service: Service,
     pub ready: bool,
@@ -285,6 +286,7 @@ pub struct Center {
 impl Center {
     pub fn new(config: ferese_config::notifications::NotificationConfig, motion: super::motion::Settings) -> Self {
         Self {
+            activity_bridge: false,
             service: Service::start(&config),
             ready: false,
             dnd: config.do_not_disturb,
@@ -306,6 +308,12 @@ impl Center {
             .try_send(Command::Local(title.into(), body.into()));
     }
 
+    pub fn configure_activity_bridge(&mut self, enabled: bool) {
+        self.activity_bridge = enabled;
+        if enabled {
+            self.toasts.clear();
+        }
+    }
     pub fn configure(&mut self, config: ferese_config::notifications::NotificationConfig) {
         if self.config.do_not_disturb != config.do_not_disturb {
             self.dnd = config.do_not_disturb;
@@ -516,7 +524,7 @@ impl Center {
             }
         }
         notice.unread = !self.history_open;
-        let show = self.config.show_popups && (!self.dnd || notice.critical);
+        let show = !self.activity_bridge && self.config.show_popups && (!self.dnd || notice.critical);
         if show {
             self.toasts.push_back(Toast {
                 id: notice.id,
@@ -643,6 +651,7 @@ mod tests {
         let (_, events) = tokio::sync::mpsc::channel(256);
         let (commands, receiver) = mpsc::sync_channel(256);
         let center = Center {
+            activity_bridge: false,
             config: NotificationConfig::default(),
             motion: Default::default(),
             service: Service {

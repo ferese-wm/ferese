@@ -8,6 +8,9 @@ use super::{Event, Peek};
 use crate::{FereseShell, Message, recording, status_ui};
 
 impl FereseShell {
+    pub(crate) fn protected_activity_slots(&self) -> usize {
+        usize::from(self.hub_priority().is_some()) * 2
+    }
     pub(super) fn hub_low_battery(&self) -> Option<u8> {
         self.status
             .battery
@@ -41,6 +44,16 @@ impl FereseShell {
                 },
             );
         }
+        if self.has_compact_activities(id) {
+            let width = self
+                .outputs
+                .iter()
+                .find(|entry| entry.bar == id)
+                .and_then(|entry| entry.runtime.hub.as_ref())
+                .and_then(|runtime| runtime.borrow().idle_content_width)
+                .unwrap_or(220.);
+            return (Peek::Date, width + self.hub_workspace_width(id));
+        }
         let player = self.media.snapshot.selected.as_ref().filter(|player| {
             matches!(
                 player.status,
@@ -65,6 +78,7 @@ impl FereseShell {
     }
 
     pub(crate) fn sync_hub_activity(&mut self) -> Task<Message> {
+        self.sync_activity_presentations();
         let priority = self.hub_priority();
         let changes: Vec<_> = self
             .outputs
@@ -72,11 +86,12 @@ impl FereseShell {
             .filter(|entry| entry.runtime.hub.is_some())
             .map(|entry| (entry.bar, self.hub_peek_content(entry.bar)))
             .collect();
-        Task::batch(
-            changes
-                .into_iter()
-                .map(|(id, peek)| self.transition_hub(id, Event::Activity { priority, peek })),
-        )
+        Task::batch(changes.into_iter().map(|(id, peek)| {
+            Task::batch([
+                self.transition_hub(id, Event::Activity { priority, peek }),
+                self.transition_hub(id, Event::Resize),
+            ])
+        }))
     }
 
     pub(super) fn hub_activity_strip(
