@@ -374,7 +374,9 @@ impl FereseShell {
             let compact_width = presentation.compact.width;
             if !presentation.selection.visible.is_empty() {
                 runtime.idle_content_width = Some(f64::from(compact_width));
-            } else {
+            } else if !before.is_empty() {
+                // Ordinary idle layout owns this measurement. Invalidate it only
+                // when leaving activity content, not on every background refresh.
                 runtime.idle_content_width = None;
             }
             // Compact ranking changes must not replay the expanded panel's

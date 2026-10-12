@@ -135,6 +135,9 @@ impl Runtime {
     }
 
     pub(crate) fn refresh_activity_size(&mut self) {
+        if self.activities.selection.visible.is_empty() {
+            return;
+        }
         if self.hub.mode() == Mode::Idle {
             let width = self
                 .idle_content_width
@@ -1855,6 +1858,28 @@ mod tests {
             assert!(!shell.activity_available(id));
         }
     }
+    #[test]
+    fn empty_activity_updates_preserve_the_measured_idle_width() {
+        let mut app = shell();
+        seed_activities(&mut app, 0);
+        drop(app.sync_hub_activity());
+        {
+            let mut runtime = app.outputs[0].runtime.hub.as_ref().unwrap().borrow_mut();
+            let available = runtime.available;
+            // Layout measures the whole ordinary idle row, including workspace dots.
+            runtime.idle_content_width = Some(224.);
+            runtime.hub.retarget_idle(224., available).unwrap();
+            runtime.hub.advance(Duration::ZERO, true);
+        }
+        for _ in 0..3 {
+            drop(app.sync_hub_activity());
+            let runtime = app.outputs[0].runtime.hub.as_ref().unwrap().borrow();
+            assert_eq!(runtime.idle_content_width, Some(224.));
+            assert_eq!(runtime.hub.target_size()[0], 224.);
+            assert!(!runtime.hub.active(), "status refresh restarted the idle morph");
+        }
+    }
+
     #[test]
     fn progress_updates_do_not_start_a_second_hub_animation() {
         let mut app = shell();
