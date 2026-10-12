@@ -40,7 +40,7 @@ pub(super) fn tab_elements(
         .material_radius
         .min(shell.height * 0.5)
         .min(shell.width * 0.5);
-    let inset = 3.0_f64.min(shell.height * 0.25).min(width * 0.25);
+    let inset = 2.0_f64.min(shell.height * 0.25).min(width * 0.25);
     let material = crate::effects::resolve_material(
         crate::effects::SemanticRole::Panel,
         state.theme_settings.material_style,
@@ -68,7 +68,7 @@ pub(super) fn tab_elements(
         if !protected
             && width > 20.0
             && rect.height >= 16.0
-            && let Some((buffer, size)) = state.overview_window_label(id, scale, width)
+            && let Some((buffer, size)) = state.window_title_label(id, scale, width, 12.0)
         {
             let location = Point::<i32, Physical>::from((
                 ((rect.x - f64::from(output_geometry.loc.x)

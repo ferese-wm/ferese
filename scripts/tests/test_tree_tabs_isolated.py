@@ -120,7 +120,7 @@ class TabGroupsTest(unittest.TestCase):
                         for index in range(3):
                             left = active["x"] + active["width"] * index / 3 + 4
                             right = active["x"] + active["width"] * (index + 1) / 3 - 4
-                            box = (round(left * scale), round((active["y"] - 25) * scale),
+                            box = (round(left * scale), round((active["y"] - 20) * scale),
                                    round(right * scale), round((active["y"] - 5) * scale))
                             pixels = image.crop(box).tobytes()
                             if not any(min(pixels[i:i + 3]) > 130 for i in range(0, len(pixels), 3)):

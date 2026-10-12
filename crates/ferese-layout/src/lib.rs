@@ -6,7 +6,7 @@ mod scrolling;
 
 pub use scrolling::{Column, ColumnDisplay, ColumnWidth, ScrollingLayout, ViewportFocusStrategy, ViewportTarget};
 
-pub const TAB_BAR_HEIGHT: f64 = 30.0;
+pub const TAB_BAR_HEIGHT: f64 = 24.0;
 
 const MIN_SPLIT_RATIO: f64 = 0.05;
 const MAX_SPLIT_RATIO: f64 = 0.95;
