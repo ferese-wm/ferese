@@ -218,6 +218,11 @@ enum Message {
     ActivityTick,
     ActivityHover(window::Id, bool),
     ActivityFocus(window::Id, ferese_activities::Id),
+    ActivityNavigation(
+        window::Id,
+        Option<ferese_activities::Id>,
+        Option<cosmic::iced::keyboard::key::Named>,
+    ),
     MediaChoose,
     MediaSeek(u64),
     MediaSeekCommit,
@@ -450,6 +455,9 @@ impl cosmic::Application for FereseShell {
             Message::ActivityFocus(id, activity) => {
                 self.focus_activity(id, activity);
                 Task::none()
+            }
+            Message::ActivityNavigation(id, focused, key) => {
+                self.activity_navigation(id, focused, key).unwrap_or_else(Task::none)
             }
             Message::MediaUpdated(snapshot) => {
                 self.media.receive(snapshot);

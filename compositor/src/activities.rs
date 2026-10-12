@@ -150,6 +150,26 @@ impl Engine {
             );
         }
     }
+    pub fn publish_verified(
+        &mut self,
+        verified: crate::ipc::activity_owner::VerifiedOwner,
+        publish: Publish,
+        matched: Option<ferese_config::activities::Matched>,
+        output: Option<String>,
+    ) -> Result<serde_json::Value, String> {
+        // Admission and publication run in one compositor dispatch. A queued
+        // request owns its pidfd, but is not yet subject to monitor pruning.
+        let owner = self
+            .monitor
+            .as_ref()
+            .ok_or("Activity owner monitor unavailable")?
+            .register(verified)
+            .map_err(|error| error.to_string())?;
+        let result = self.publish(owner, publish, matched, output).map_err(str::to_owned);
+        self.schedule();
+        result
+    }
+
     pub fn publish(
         &mut self,
         owner: Owner,

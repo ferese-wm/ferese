@@ -44,7 +44,7 @@ const SWEEP_INTERVAL: Duration = crate::handlers::screenshot_worker::SWEEP_INTER
 pub(crate) struct IpcCall {
     native_portal: bool,
     activity: Option<(
-        ferese_activities::Owner,
+        activity_owner::VerifiedOwner,
         ferese_ipc::activities::Publish,
         Option<ferese_config::activities::Matched>,
     )>,
@@ -241,10 +241,7 @@ pub(crate) fn init(
                             })
                             .and_then(|output| output["name"].as_str())
                             .map(str::to_owned);
-                        state
-                            .activities
-                            .publish(owner, publish, matched, output)
-                            .map_err(str::to_owned)
+                        state.activities.publish_verified(owner, publish, matched, output)
                     });
                 state.activities.schedule();
                 let response = match result {

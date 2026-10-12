@@ -14,9 +14,6 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-type RowKey = (u64, u64, u32, u64);
-type ActivityRow<'a> = (RowKey, Element<'a, cosmic::Action<Message>>);
-
 pub(crate) struct Model {
     pub snapshot: Arc<Snapshot>,
     native: Vec<Activity>,
@@ -82,12 +79,41 @@ impl Presentation {
             .any(AnimatedValue::is_animating)
     }
 }
-fn activity_widget_id(id: &Id) -> cosmic::iced::advanced::widget::Id {
+fn activity_widget_id(bar: window::Id, id: &Id) -> cosmic::iced::advanced::widget::Id {
     cosmic::iced::advanced::widget::Id::new(format!(
-        "activity-{}-{}-{}-{}",
+        "activity-{bar:?}-{}-{}-{}-{}",
         id.session, id.generation, id.owner.pid, id.owner.birth
     ))
 }
+struct FocusedActivity {
+    bar: window::Id,
+    rows: Vec<Id>,
+    focused: Option<Id>,
+}
+impl cosmic::iced::advanced::widget::Operation<Option<Id>> for FocusedActivity {
+    fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn cosmic::iced::advanced::widget::Operation<Option<Id>>)) {
+        operate(self);
+    }
+    fn focusable(
+        &mut self,
+        id: Option<&cosmic::iced::advanced::widget::Id>,
+        _: cosmic::iced::Rectangle,
+        state: &mut dyn cosmic::iced::advanced::widget::operation::Focusable,
+    ) {
+        if state.is_focused()
+            && let Some(row) = self
+                .rows
+                .iter()
+                .find(|row| Some(&activity_widget_id(self.bar, row)) == id)
+        {
+            self.focused = Some(row.clone());
+        }
+    }
+    fn finish(&self) -> cosmic::iced::advanced::widget::operation::Outcome<Option<Id>> {
+        cosmic::iced::advanced::widget::operation::Outcome::Some(self.focused.clone())
+    }
+}
+
 fn icon(name: &str) -> &'static [u8] {
     match name {
         "timer" => icons::ACTIVITY_TIMER,
@@ -579,7 +605,7 @@ impl FereseShell {
             presentation.focus = Some(activity);
         }
     }
-    pub fn activity_key(&mut self, id: window::Id, key: cosmic::iced::keyboard::key::Named) -> Option<Task<Message>> {
+    fn activity_list_bar(&self, id: window::Id) -> Option<window::Id> {
         let bar = self
             .menu
             .as_ref()
@@ -598,6 +624,49 @@ impl FereseShell {
         {
             return None;
         }
+        Some(bar)
+    }
+    pub(crate) fn activity_focus_query(
+        &self,
+        id: window::Id,
+    ) -> Option<impl cosmic::iced::advanced::widget::Operation<Option<Id>> + use<>> {
+        let bar = self.activity_list_bar(id)?;
+        let hub = self.outputs.iter().find(|entry| entry.bar == bar)?.runtime.hub.as_ref();
+        let rows = if let Some(hub) = hub {
+            hub.borrow().activities.rows.clone()
+        } else {
+            self.activities.flat.get(&bar)?.rows.clone()
+        };
+        Some(FocusedActivity {
+            bar,
+            rows,
+            focused: None,
+        })
+    }
+    pub fn query_activity_focus(
+        &self,
+        id: window::Id,
+        key: Option<cosmic::iced::keyboard::key::Named>,
+    ) -> Option<Task<Message>> {
+        Some(
+            cosmic::iced::advanced::widget::operate(self.activity_focus_query(id)?)
+                .map(move |focused| cosmic::Action::App(Message::ActivityNavigation(id, focused, key))),
+        )
+    }
+    pub fn activity_key(&self, id: window::Id, key: cosmic::iced::keyboard::key::Named) -> Option<Task<Message>> {
+        use cosmic::iced::keyboard::key::Named;
+        if !matches!(key, Named::ArrowUp | Named::ArrowDown | Named::Home | Named::End) {
+            return None;
+        }
+        self.query_activity_focus(id, Some(key))
+    }
+    pub fn activity_navigation(
+        &mut self,
+        id: window::Id,
+        focused: Option<Id>,
+        key: Option<cosmic::iced::keyboard::key::Named>,
+    ) -> Option<Task<Message>> {
+        let bar = self.activity_list_bar(id)?;
         let hub = self.outputs.iter().find(|entry| entry.bar == bar)?.runtime.hub.as_ref();
         let mut runtime = hub.map(|hub| hub.borrow_mut());
         let presentation = if let Some(runtime) = &mut runtime {
@@ -605,10 +674,13 @@ impl FereseShell {
         } else {
             self.activities.flat.get_mut(&bar)?
         };
+        presentation.focus = focused
+            .filter(|id| presentation.rows.contains(id))
+            .or_else(|| presentation.focus.clone());
+        let Some(key) = key else {
+            return Some(Task::none());
+        };
         use cosmic::iced::keyboard::key::Named;
-        if !matches!(key, Named::ArrowUp | Named::ArrowDown | Named::Home | Named::End) {
-            return None;
-        }
         let index = presentation
             .focus
             .as_ref()
@@ -622,7 +694,7 @@ impl FereseShell {
         };
         presentation.focus = presentation.rows.get(next).cloned();
         Some(presentation.focus.as_ref().map_or_else(Task::none, |focus| {
-            cosmic::widget::button::focus(activity_widget_id(focus))
+            cosmic::widget::button::focus(activity_widget_id(bar, focus))
         }))
     }
     pub fn activity_result_tint(&self, id: window::Id) -> Option<(cosmic::iced::Color, f32)> {
@@ -802,7 +874,7 @@ impl FereseShell {
                     .get(&id)
                     .and_then(|presentation| presentation.focus.clone())
             });
-        let mut rows: Vec<ActivityRow<'_>> = Vec::with_capacity(entries.len());
+        let mut rows = Vec::with_capacity(entries.len());
         if entries.is_empty() {
             return self.render.text("No active tasks").size(13).into();
         }
@@ -852,26 +924,18 @@ impl FereseShell {
                 );
             }
             let selected = focus.as_ref() == Some(&activity.id);
-            let key = (
-                activity.id.session,
-                activity.id.generation,
-                activity.id.owner.pid,
-                activity.id.owner.birth,
-            );
-            rows.push((
-                key,
+            rows.push(
                 button::custom(container(body).padding(10))
-                    .id(activity_widget_id(&activity.id))
+                    .id(activity_widget_id(id, &activity.id))
                     .name(format!("{}, {}", activity.data.title, label(activity)))
                     .selected(selected)
                     .on_press(cosmic::Action::App(Message::ActivityFocus(id, activity.id.clone())))
                     .width(Length::Fill)
                     .into(),
-            ));
+            );
         }
-        cosmic::iced::widget::keyed_column(rows)
-            .spacing(8)
-            .width(Length::Fill)
-            .into()
+        // Named button IDs preserve row state across reordering. The toolkit's
+        // keyed column bypasses the named-state restoration during UI rebuilds.
+        column::with_children(rows).spacing(8).width(Length::Fill).into()
     }
 }

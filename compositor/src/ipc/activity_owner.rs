@@ -9,6 +9,14 @@ use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::net::UnixStream;
 use std::sync::{Arc, Condvar, Mutex};
 
+/// Carries the kernel identity through the IPC queue. Monitoring begins only
+/// when the compositor admits the request, so pruning cannot race a pending start.
+#[derive(Debug)]
+pub(crate) struct VerifiedOwner {
+    pub owner: Owner,
+    fd: OwnedFd,
+}
+
 #[derive(Clone)]
 pub(crate) struct Monitor(Arc<(Mutex<BTreeMap<Owner, OwnedFd>>, Condvar)>);
 impl Monitor {
@@ -58,7 +66,7 @@ impl Monitor {
             .expect("activity owners")
             .retain(|owner, _| owners.contains(owner));
     }
-    pub fn verify(&self, stream: &UnixStream, parent: bool) -> io::Result<(Owner, Vec<String>)> {
+    pub fn verify(&self, stream: &UnixStream, parent: bool) -> io::Result<(VerifiedOwner, Vec<String>)> {
         let peer = credentials(stream)?;
         let peer_pid = u32::try_from(peer.pid).map_err(|_| io::Error::other("invalid peer PID"))?;
         let peer_identity = identity(peer_pid)?;
@@ -78,14 +86,6 @@ impl Monitor {
             return Err(io::Error::other("owner user differs from peer"));
         }
         let owner = Owner { pid, birth };
-        let (lock, ready) = &*self.0;
-        let mut owners = lock.lock().expect("activity owners");
-        if owners.len() >= 128 && !owners.contains_key(&owner) {
-            return Err(io::Error::other("owner monitor quota"));
-        }
-        owners.entry(owner).or_insert(fd);
-        ready.notify_one();
-        drop(owners);
         let mut parents = Vec::new();
         let mut next = pid;
         for _ in 0..16 {
@@ -100,7 +100,22 @@ impl Monitor {
             }
             next = parent;
         }
-        Ok((owner, parents))
+        Ok((VerifiedOwner { owner, fd }, parents))
+    }
+    pub fn register(&self, verified: VerifiedOwner) -> io::Result<Owner> {
+        let VerifiedOwner { owner, fd } = verified;
+        if exited(&fd) {
+            return Err(io::Error::other("activity owner exited before admission"));
+        }
+        let (lock, ready) = &*self.0;
+        let mut owners = lock.lock().expect("activity owners");
+        if owners.len() >= 128 && !owners.contains_key(&owner) {
+            return Err(io::Error::other("owner monitor quota"));
+        }
+        owners.entry(owner).or_insert(fd);
+        ready.notify_one();
+        drop(owners);
+        Ok(owner)
     }
 }
 pub(crate) fn exited(fd: &OwnedFd) -> bool {
@@ -213,6 +228,58 @@ pub(crate) fn inspect(pid: u32) -> io::Result<(Owner, OwnedFd, Vec<String>)> {
 mod tests {
     use super::*;
     #[test]
+    fn pending_start_survives_monitor_pruning() {
+        use ferese_activities::{Data, Source, Template, Value};
+        let (sender, _receiver) = channel::sync_channel(16);
+        let monitor = Monitor::new(sender);
+        let mut engine = crate::activities::Engine::default();
+        engine.monitor = Some(monitor.clone());
+        let (peer, _other) = UnixStream::pair().unwrap();
+        let (verified, _) = monitor.verify(&peer, false).unwrap();
+        let owner = verified.owner;
+        // A policy timer or a different queued publication runs after verification,
+        // before this worker's Start reaches the compositor dispatcher.
+        engine.schedule();
+        engine
+            .publish_verified(
+                verified,
+                ferese_ipc::activities::Publish::Start {
+                    local: "pending-start".into(),
+                    data: Data {
+                        source: Source::Publisher,
+                        output: None,
+                        priority: 100,
+                        icon: "hammer".into(),
+                        title: "Build".into(),
+                        value: Value::Indeterminate,
+                        template: Template::Progress,
+                    },
+                    lease_ms: None,
+                },
+                None,
+                Some("test".into()),
+            )
+            .unwrap();
+        assert_eq!(engine.store.entries().count(), 1);
+        assert!(
+            monitor.0.0.lock().unwrap().contains_key(&owner),
+            "accepted lease-free activity has lost its owner monitor"
+        );
+    }
+
+    #[test]
+    fn owner_that_exits_in_the_dispatch_queue_is_rejected() {
+        let (sender, _receiver) = channel::sync_channel(16);
+        let monitor = Monitor::new(sender);
+        let mut child = std::process::Command::new("sleep").arg("30").spawn().unwrap();
+        let (owner, fd, _) = inspect(child.id()).unwrap();
+        child.kill().unwrap();
+        child.wait().unwrap();
+        assert!(monitor.register(VerifiedOwner { owner, fd }).is_err());
+        assert!(monitor.0.0.lock().unwrap().is_empty());
+    }
+
+    #[test]
     fn process_names_with_spaces_or_parentheses_do_not_shift_birth_field() {
         let fields = (0..20)
             .map(|i| if i == 0 { "S".into() } else { i.to_string() })
@@ -229,9 +296,9 @@ mod tests {
         let monitor = Monitor::new(sender);
         let (left, _) = UnixStream::pair().unwrap();
         let (peer, _) = monitor.verify(&left, false).unwrap();
-        assert_eq!(peer.pid, std::process::id());
+        assert_eq!(peer.owner.pid, std::process::id());
         let (parent, _) = monitor.verify(&left, true).unwrap();
-        assert_eq!(parent.pid, unsafe { libc::getppid() } as u32);
+        assert_eq!(parent.owner.pid, unsafe { libc::getppid() } as u32);
         let mut child = std::process::Command::new("sleep").arg("0.05").spawn().unwrap();
         let fd = pidfd(child.id()).unwrap();
         assert!(!exited(&fd));

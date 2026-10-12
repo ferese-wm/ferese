@@ -417,7 +417,7 @@ impl FereseShell {
         }
 
         let compositor_material = menu.effects.is_some();
-        let body: Element<'_, cosmic::Action<Message>> = if kind == Menu::Overflow {
+        let body: Element<'_, cosmic::Action<Message>> = if matches!(kind, Menu::Overflow | Menu::Activities) {
             cosmic::widget::scrollable(rows).height(Length::Shrink).into()
         } else {
             rows.into()
@@ -512,6 +512,131 @@ fn notification_controls<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn activity_popups_scroll_to_the_last_row_in_regular_panels() {
+        use cosmic::iced::advanced::{Layout, Shell, clipboard, layout, renderer::Headless, widget};
+        use cosmic::iced::{Event, Rectangle, Size, Vector, mouse};
+        use ferese_activities::{Data, Owner, Source, Store, Template, Value};
+        #[derive(Default)]
+        struct ScrollBounds(Option<(Rectangle, Rectangle, Vector)>);
+        impl widget::Operation for ScrollBounds {
+            fn traverse(&mut self, visit: &mut dyn FnMut(&mut dyn widget::Operation)) {
+                visit(self);
+            }
+            fn scrollable(
+                &mut self,
+                _: Option<&widget::Id>,
+                bounds: Rectangle,
+                content: Rectangle,
+                translation: Vector,
+                _: &mut dyn widget::operation::Scrollable,
+            ) {
+                self.0 = Some((bounds, content, translation));
+            }
+        }
+        let renderer = cosmic::iced::futures::executor::block_on(cosmic::Renderer::new(
+            cosmic::iced::Font::default(),
+            cosmic::iced::Pixels(14.),
+            Some("tiny-skia"),
+        ))
+        .unwrap();
+        for style in [
+            ferese_panel::PanelStyle::Flat,
+            ferese_panel::PanelStyle::Floating,
+            ferese_panel::PanelStyle::Adaptive,
+        ] {
+            let mut app = crate::tests::shell_with_measured_panel();
+            let bar = app.outputs[0].bar;
+            app.config.panels[0].style = style;
+            app.snapshot.outputs = vec![crate::control::OutputSnapshot {
+                id: 1,
+                name: "test".into(),
+                active_workspace: 1,
+                focused: true,
+            }];
+            app.outputs[0]
+                .runtime
+                .reset(&app.config.panels[0], &app.snapshot, Some("test"));
+            let mut store = Store::new(1);
+            for n in 0..24 {
+                store
+                    .start(
+                        Owner { pid: n + 1, birth: 1 },
+                        n.to_string(),
+                        Data {
+                            source: Source::Publisher,
+                            output: Some("test".into()),
+                            priority: 100,
+                            icon: "hammer".into(),
+                            title: format!("Task {n}"),
+                            value: Value::Indeterminate,
+                            template: Template::Progress,
+                        },
+                        0,
+                        0,
+                        None,
+                        true,
+                        true,
+                        None,
+                    )
+                    .unwrap();
+            }
+            app.activities.snapshot = std::sync::Arc::new(ferese_ipc::activities::Snapshot {
+                activities: store.entries().cloned().collect(),
+                ..Default::default()
+            });
+            app.sync_activity_presentations();
+            drop(app.open_menu(
+                Menu::Activities,
+                PopoverAnchor {
+                    parent: bar,
+                    panel: app.config.panels[0].id.clone(),
+                    item: None,
+                    rectangle: Rectangle {
+                        x: 0,
+                        y: 0,
+                        width: 100,
+                        height: 28,
+                    },
+                },
+            ));
+            let mut view = app.view_status_menu_at(Instant::now() + Duration::from_secs(1));
+            let mut tree = widget::Tree::new(&view);
+            let node = view.as_widget_mut().layout(
+                &mut tree,
+                &renderer,
+                &layout::Limits::new(Size::ZERO, Size::new(300., 500.)),
+            );
+            let mut before = ScrollBounds::default();
+            view.as_widget_mut()
+                .operate(&mut tree, Layout::new(&node), &renderer, &mut before);
+            let (viewport, content, _) = before.0.expect("activity popup must be scrollable");
+            assert!(content.height > viewport.height);
+            let mut messages = Vec::new();
+            view.as_widget_mut().update(
+                &mut tree,
+                &Event::Mouse(mouse::Event::WheelScrolled {
+                    delta: mouse::ScrollDelta::Lines { x: 0., y: -1000. },
+                }),
+                Layout::new(&node),
+                mouse::Cursor::Available(viewport.center()),
+                &renderer,
+                &mut clipboard::Null,
+                &mut Shell::new(&mut messages),
+                &node.bounds(),
+            );
+            let mut after = ScrollBounds::default();
+            view.as_widget_mut()
+                .operate(&mut tree, Layout::new(&node), &renderer, &mut after);
+            let (viewport, content, translation) = after.0.unwrap();
+            assert!(translation.y > 0., "{style:?} did not scroll");
+            assert!(
+                (translation.y - (content.height - viewport.height)).abs() < 1.,
+                "last row must be reachable"
+            );
+        }
+    }
 
     #[test]
     fn failed_controls_only_show_errors_in_related_popups() {

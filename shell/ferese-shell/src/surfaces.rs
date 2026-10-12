@@ -312,6 +312,8 @@ impl FereseShell {
                     ferese_panel::morph::Content::Workspaces,
                 )) {
                 task.chain(self.query_hub_workspace_focus(id, None))
+            } else if let Some(query) = self.query_activity_focus(id, None) {
+                task.chain(query)
             } else {
                 task
             };
