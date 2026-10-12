@@ -162,6 +162,20 @@ class ShellMotionTest(unittest.TestCase):
                                    or other == rectangle and other_index < index
                                    for other_index, other in enumerate(rectangles))]
 
+            def bar_input_size(surface):
+                rectangles = bar_input_rectangles(surface)
+                if not rectangles:
+                    return None
+                return (max(x + width for x, y, width, height in rectangles)
+                        - min(x for x, y, width, height in rectangles),
+                        max(y + height for x, y, width, height in rectangles)
+                        - min(y for x, y, width, height in rectangles))
+
+            def bar_shape_settled():
+                updates = log_path.read_text().count('.set_panel_presentation(')
+                time.sleep(.25)
+                return log_path.read_text().count('.set_panel_presentation(') == updates
+
 
             with log_path.open("w") as log:
                 try:
@@ -317,16 +331,25 @@ class ShellMotionTest(unittest.TestCase):
                             subprocess.run([str(ctl), "reload-config"], env=ipc_environment(env), check=True, capture_output=True, timeout=5)
                             wait_for(lambda: bar_region_count(bar) == regions)
                             self.assertTrue(bar_input_rectangles(bar), style + " lost its native input")
-                        config_file.write_text('animations { speed 0.5; }\nstatus { keybinding-guide #false; }\nnotifications { timeout-ms 1200; }\n' + panel_config("morph"))
+                        config_file.write_text('animations { speed 0.5; }\nstatus { keybinding-guide #false; }\nnotifications { timeout-ms 1200; }\n'
+                                               + panel_config("morph").replace('style "morph"', 'style "morph"\n    morph { peek-on-hover #false; }'))
                         subprocess.run([str(ctl), "reload-config"], env=ipc_environment(env), check=True, capture_output=True, timeout=5)
-                        wait_for(lambda: bar_size(bar) == (150, 34) and bar_region_count(bar) == 1)
+                        # The visible hub follows its measured content; its larger
+                        # backing surface remains allocated to avoid resize flashes.
+                        wait_for(lambda: (size := bar_input_size(bar)) and 0 < size[0] < 320
+                                 and size[1] == 34 and bar_region_count(bar) == 1)
                         reply = dbus("Notify", "Morph test", "0", "", "Hub notification", "Bounded native surface", "[]", "{}", "0").stdout
                         notice = re.search(r'uint32 (\d+)', reply).group(1)
-                        wait_for(lambda: bar_size(bar) == (320, 48))
+                        wait_for(lambda: bar_input_size(bar) == (320, 48))
+                        allocation = bar_size(bar)
+                        self.assertGreaterEqual(allocation[0], 320)
+                        self.assertGreaterEqual(allocation[1], 48)
                         # Removing a notice must collapse its hub immediately; an old timeout cannot reopen it.
                         dbus("CloseNotification", notice)
-                        wait_for(lambda: bar_size(bar) == (150, 34))
-                        time.sleep(.25)
+                        wait_for(lambda: (size := bar_input_size(bar)) and 0 < size[0] < 320 and size[1] == 34)
+                        self.assertEqual(bar_size(bar), allocation, "closing Morph resized its retained backing surface")
+                        # Height can reach its target before width and corners settle.
+                        wait_for(bar_shape_settled)
                         before = commits(bar)
                         trace_start = len(log_path.read_text())
                         time.sleep(.5)
