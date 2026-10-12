@@ -58,8 +58,8 @@ def main():
                         raise RuntimeError((logs / "weston.log").read_text())
                     time.sleep(.05)
                 cases = [
-                    ("shell-continuous", "shell_motion", {"FERESE_TEST_SHELL_MOTION": "1", "FERESE_TEST_BAR_LAYOUT": "continuous"}),
-                    ("shell-islands", "shell_motion", {"FERESE_TEST_SHELL_MOTION": "1", "FERESE_TEST_BAR_LAYOUT": "islands"}),
+                    ("shell-flat", "shell_motion", {"FERESE_TEST_SHELL_MOTION": "1", "FERESE_TEST_BAR_LAYOUT": "flat"}),
+                    ("shell-floating", "shell_motion", {"FERESE_TEST_SHELL_MOTION": "1", "FERESE_TEST_BAR_LAYOUT": "floating"}),
                 ]
                 if args.suite == "desktop":
                     cases.insert(0, ("lock", "lock", {"FERESE_TEST_LOCK": "1", "FERESE_TEST_BIN_DIR": "target/debug"}))
