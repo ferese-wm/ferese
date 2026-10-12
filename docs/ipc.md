@@ -57,7 +57,7 @@ these actions.
 Use `feresectl run --title "Tests" -- cargo test` to publish a command's lifetime,
 or `feresectl activity start`, `update`, `end` and `cancel` to publish status from
 an integration. The [Live Activities guide](activities.md) covers setup and
-examples; the [publisher reference](activities-reference.md) explains ownership,
+examples; its [publisher section](activities.md#publisher-ownership-and-lifecycle) explains ownership,
 leases and the `activity-publish`, `activity-get` and `activity-watch` commands.
 
 `feresectl activity setup --config PATH` updates a local config for shell

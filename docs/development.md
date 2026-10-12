@@ -27,12 +27,36 @@ host. Hardware checks remain separate.
 
 ## Test guides
 
-- [Live Activities checks](activities-reference.md#validation): core, CLI, shell hooks, installer setup and native rendering.
+- [Live Activities checks](#live-activities-checks): core, CLI, shell hooks, installer setup and native rendering.
 - [Desktop reconciliation](desktop-reconciliation.md): topology publication, hardware failure and presentation ownership.
 
 - [Output management tests](output-management-testing.md): profiles, hotplug, mirroring, lid handling and failed DRM commits.
 - [Nested resize checks](nested-resize-testing.md): wallpaper and bar responsiveness.
 - [Client soak testing](native-soak-testing.md): repeated client lifecycle and resource growth.
+
+## Live Activities checks
+
+See [Live Activities](activities.md) for setup, configuration and the publisher
+protocol.
+
+Hidden items and measurement widgets do not animate. Reduced motion snaps
+progress and uses a static track. Workspace buttons retain their own actions;
+activity selection does not replace workspace navigation.
+
+```sh
+cargo test --locked -p ferese-activities -p ferese-config -p ferese-ipc -p feresectl
+cargo test --locked -p ferese-shell
+python3 scripts/tests/test_activity_hooks.py -v
+python3 -m unittest discover -s scripts/tests -p 'test_portal_install.py' -v
+FERESE_TEST_ACTIVITIES=1 python3 scripts/tests/test_activities_isolated.py -v
+FERESE_REVIEW_BACKEND=tiny-skia cargo test --locked -p ferese-shell \
+    render_hub_review_states -- --ignored --nocapture
+```
+
+The isolated check starts a private Weston host and broker. Render captures live
+in `/tmp/ferese-hub-review`; they include single/split/list content, long titles,
+translucency and 1×/1.25×/1.5× scales. Direct DRM, physical multi-monitor hotplug,
+suspend and live capture hardware still need hardware validation.
 
 ## Portal checks
 

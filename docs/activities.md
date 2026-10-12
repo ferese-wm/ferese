@@ -80,6 +80,51 @@ island and adds an Activities tab. Changing a group's position doesn't create
 another Morph island. See [Panel configuration](panel-configuration.md) for item
 placement and overflow controls.
 
+For manual panel configuration, add an `activities` item to an existing group.
+This complete panel example places it at the end of a floating panel; don't add
+a second `panel` block if your config already has one:
+
+```kdl
+panel "main" {
+    style "floating"
+    end {
+        group "tasks" {
+            item "activities" kind="activities" priority=20
+        }
+    }
+}
+```
+
+### Manual shell setup
+
+Without installer setup, hooks and process watching are off by default. Add an
+Activities item to the panel and enable `activities.sources.shell-hook` before
+loading a hook. From a checkout, source `contrib/activities/ferese.fish` in Fish,
+`contrib/activities/ferese.zsh` in Zsh, or the following in Bash:
+
+```sh
+source contrib/activities/bash-preexec/bash-preexec.sh
+source contrib/activities/ferese.bash
+```
+
+Use absolute paths when adding these lines to shell startup files. Zsh uses
+`add-zsh-hook`, Fish uses named pre/postexec events, and Bash composes with
+[bash-preexec](https://github.com/rcaloras/bash-preexec)'s hook arrays. Load
+bash-preexec before the Bash hook; the hook does not replace an existing DEBUG
+trap. Hook files never execute captured command text and preserve command status.
+
+The installer copies hooks into `$XDG_CONFIG_HOME/ferese/activities`, defaulting
+to `~/.config/ferese/activities`. Fish loads through its `conf.d` directory; Bash
+and Zsh get a marked block in `.bashrc` or `.zshrc`. Zsh setup honors an exported
+`ZDOTDIR`. Bash shells started in login mode must also load `.bashrc` from their
+login profile for the installed hook to run.
+
+Process watching is an opt-in alternative when hooks are unavailable. It performs
+bounded sampling on one worker, and disappearance means expiry, never inferred
+success or failure. Shell hooks observe interactive commands; they do not
+automatically wrap them or parse their output. The
+[Cargo adapter](#cargo-progress) requires `feresectl run`.
+
 ## Run a command explicitly
 
 Use `feresectl run` for commands outside the built-in rules, unsupported shells,
@@ -91,8 +136,8 @@ feresectl run --title "Tests" -- npm test
 ```
 
 Arguments after `--` are passed to the command. It keeps its terminal input,
-output, working directory and exit status, and still runs if activity publishing
-fails. Completion follows the command's exit. A background descendant holding
+output, working directory, environment, terminal process group and exit/signal
+status, and still runs if activity publishing fails. Completion follows the command's exit. A background descendant holding
 stdout open does not keep the wrapper alive indefinitely.
 
 ### Cargo progress
@@ -109,7 +154,10 @@ The adapter reads Cargo's JSON output while keeping diagnostics readable in the
 terminal. It reports completed units as text because Cargo doesn't supply a
 reliable total for a percentage. Setting `progress "cargo-json"` in a rule enables
 this adapter for matching `feresectl run` commands; it does not wrap plain
-`cargo build` automatically.
+`cargo build` automatically. A `build-finished` message never completes the
+activity; completion follows the actual child exit. The adapter also preserves
+non-JSON output. See the
+[Cargo JSON contract](https://doc.rust-lang.org/cargo/reference/external-tools.html).
 
 ## Use the activity list
 
@@ -176,7 +224,7 @@ publishes them. Microphone or camera use alone does not create a call activity.
 Changes reload live. Invalid edits leave the last valid configuration in use;
 check an edit with `ferese --check-config ~/.config/ferese/config.kdl`.
 For command patterns, custom titles, per-rule delays and completion messages,
-see [Command rules](activities-reference.md#command-rules).
+see [Command rules](#command-rules).
 
 ### Turn off automatic command detection
 
@@ -187,6 +235,48 @@ and direct publishers.
 To skip shell and Activities setup during installation, pass
 `./scripts/install.sh --no-activities`. This skips setup for that installation;
 it doesn't remove an existing hook or disable an already configured source.
+
+### Command rules
+
+```kdl
+activities {
+    max-visible 2
+    show-badge #true
+    start-delay-ms 300
+    result-flash-ms 1500
+    sources {
+        shell-hook #true
+        process-watch #false
+        notification-bridge #false
+    }
+    rule "cargo" {
+        match #"^cargo (build|check|test|run|clippy)\b"#
+        title "cargo {1}"
+        icon "hammer"
+        priority 100
+        progress "indeterminate"
+        min-duration-ms 1500
+        ignore-parents "rust-analyzer"
+        dedupe-by "cwd"
+        flash-on-fail #true
+        result ok="Finished" fail="Command failed"
+    }
+}
+```
+
+User rules run in declaration order, then unreplaced built-ins in Cargo,
+npm/pnpm, make, git-push, docker-build order. A user rule replaces the entire
+built-in with the same name. One command selects one rule, pinned for its lifetime.
+`ignore-parents` accepts multiple names. Regex input/pattern/program sizes are
+bounded. Command and cwd metadata are used only during matching; nonmatches are
+discarded and never logged. Grouping hashes cwd within owner/rule. Invocations
+retain independent lifetimes and progress is never averaged.
+
+The global/rule visibility delay is their maximum. Completion before that delay,
+including failure, never flashes. Eligible results last 1500 ms by default;
+`flash-on-fail #false` removes failures directly. Configuration is validated
+before application; an invalid reload preserves the last valid configuration.
+Diagnostics include source offsets for activity configuration errors.
 
 ## If nothing appears
 
@@ -224,8 +314,8 @@ feresectl activity cancel diagnostic
 ```
 
 The lease removes this diagnostic after ten seconds if you omit the cancel.
-Ownership verification needs Linux 6.5 or newer. See the
-[publisher reference](activities-reference.md#publisher-ownership-and-lifecycle)
+Ownership verification needs Linux 6.5 or newer. See
+[Publisher ownership and lifecycle](#publisher-ownership-and-lifecycle)
 for ownership, limits and expiry behavior.
 
 ## Publish your own status
@@ -242,6 +332,75 @@ feresectl activity end download --result ok --message "Downloaded"
 ```
 
 This example publishes status only; it doesn't perform a download. Your program
-supplies real progress and completion results. For custom integrations, see the
-[Live Activities reference](activities-reference.md), which covers IDs, leases,
-fixed view templates and the local IPC protocol.
+supplies real progress and completion results.
+
+## Publisher ownership and lifecycle
+
+Use the same socket selection as every other control command: `--socket`, then
+`FERESE_SOCKET`, then the session runtime default. Separate nested sessions keep
+separate brokers. One-shot commands use their verified immediate parent (normally
+the shell), not the CLI connection, as lifetime owner. IDs are local to that owner.
+A direct publisher and `run` use the publishing process itself. The host obtains
+kernel peer credentials and a socket-bound pidfd, checks the parent relationship,
+process birth and UID, and monitors owner exit. This requires Linux 6.5 or newer;
+an unverifiable owner is rejected instead of trusting a JSON PID.
+
+```sh
+feresectl activity start build --icon hammer --title "Build"
+feresectl activity update build --progress 0.6
+feresectl activity end build --result ok --message "Built"
+feresectl activity start tea --icon timer --title "Tea" --remaining-ms 180000
+feresectl run --title "cargo test" -- cargo test
+```
+
+`start` prints a JSON handle containing owner, session and generation. The
+`--handle` option on update/end/cancel checks that exact invocation. Omitting it
+resolves the local ID only within the same verified owner. Duplicate starts are
+rejected. Repeated identical accepted results keep the original result deadline;
+a removed or superseded generation is stale. Register again after broker restart.
+
+The compositor assigns a terminal window at activity creation using the
+publisher's process ancestry. List selection follows the activity ID across
+reordering. Recording and low battery keep their protected priority, including
+the combined recording/low-battery presentation.
+
+Each owner may hold three records, including delayed and terminal entries. The
+session defaults to 128 records, a priority ceiling of 160 and two compact slots.
+New publications are limited to ten per owner per second. Replaceable updates
+are limited to 30 per owner per second; rejected updates get
+an explicit error. The bar coalesces snapshots through a bounded latest-value
+subscription while the broker retains accepted results. Terminal/cancel dispatch waits for bounded dispatcher capacity
+on the socket worker. A CLI disconnect does not remove an owner's records.
+Running owner death and expired leases remove entries without assigning a result.
+Results survive owner exit until their original deadline. Leases are positive and
+at most five minutes; valid refreshes renew only the lease.
+
+Activities stay on their creation output, initially the focused output. On output
+removal they move to the first surviving output, or become unpresented until an
+output is available. Host timestamps use `CLOCK_BOOTTIME`, including suspend.
+Countdown wire timestamps are ignored and replaced with host sample time.
+
+## Extensions and templates
+
+The version-1 activity schema is carried inside the existing versioned,
+length-prefixed JSON `activity-publish` command. `activity-get` and long-poll
+`activity-watch` provide snapshots. See `ferese_ipc::activities` and
+`ferese_activities::Data`; there is no second socket or JSON-lines protocol.
+
+Extensions publish typed Progress, Timer, Media, or List data. The bar controls
+rendering. Values are indeterminate, finite progress in `[0,1]`, bounded text, or
+countdown durations. Titles/text are limited to 256 UTF-8 bytes; lists to eight
+rows. Icons are symbolic names; unknown names use the Ferese symbol, and paths
+are rejected. No extension widgets, markup, colors, shaders or drawing programs
+are accepted.
+
+Use `--template` with a typed JSON template, e.g.
+`'{"kind":"list","data":{"rows":["Indexing files","Waiting for server"]}}'`.
+Capture/call integrations use `--source capture` and describe the state they
+actually observe. Process names, microphone use, or camera use do not infer calls
+or downloads. Existing MPRIS state supplies Media rows and transport controls;
+recording/battery reuse the shell's existing protected state and watchers.
+
+The optional notification bridge uses existing notification state, ranks below
+all other ordinary sources, and respects DND and popup privacy. When enabled, a
+notice becomes an activity rather than a duplicate toast. It is off by default.

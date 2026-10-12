@@ -879,6 +879,9 @@ impl FereseShell {
                     (status_ui::Menu::Overflow, "Controls", icons::morph::CONTROLS),
                     (status_ui::Menu::Activities, "Activities", icons::morph::ACTIVITIES),
                 ] {
+                    if kind == status_ui::Menu::Media && self.media.snapshot.selected.is_none() {
+                        continue;
+                    }
                     if kind == status_ui::Menu::Activities {
                         // Activities follows both the main tabs and optional shortcuts.
                         for shortcut in shortcuts.iter().copied().filter(|kind| *kind != ItemKind::Overview) {
@@ -1110,7 +1113,7 @@ impl FereseShell {
             });
         let width = panel.morph.expanded_width.min(available);
         // Built-in tabs, battery and Close keep their space through the morph.
-        let tabs = if self.activities_configured(id) { 7. } else { 6. };
+        let tabs = 5. + f64::from(self.media.snapshot.selected.is_some()) + f64::from(self.activities_configured(id));
         let battery = if self.status.battery.is_some() {
             battery::WIDTH + 2.
         } else {
@@ -2595,15 +2598,26 @@ mod tests {
     fn header_shortcuts_fit_the_settled_width_and_respect_item_visibility() {
         let mut shell = shell();
         let id = shell.outputs[0].bar;
-        for (width, count) in [(240., 0), (340., 2), (400., 2)] {
-            shell.config.panels[0].morph.expanded_width = width;
-            let shortcuts = shell.hub_shortcuts(id);
-            assert_eq!(shortcuts.len(), count);
-            assert!(!shortcuts.contains(&ItemKind::Network));
-            assert_eq!(shortcuts.contains(&ItemKind::Recording), count > 0);
-            assert!(!shortcuts.contains(&ItemKind::DisplayMode));
-            assert!(!shortcuts.contains(&ItemKind::Audio));
-            assert!(!shortcuts.iter().any(|kind| matches!(kind, ItemKind::Battery { .. })));
+        for (playback, counts) in [
+            (None, [1, 2, 2]),
+            (Some(ferese_ipc::media::Playback::Playing), [0, 2, 2]),
+            (Some(ferese_ipc::media::Playback::Paused), [0, 2, 2]),
+        ] {
+            std::sync::Arc::make_mut(&mut shell.media.snapshot).selected =
+                playback.map(|status| ferese_ipc::media::Player {
+                    status,
+                    ..Default::default()
+                });
+            for (width, count) in [240., 340., 400.].into_iter().zip(counts) {
+                shell.config.panels[0].morph.expanded_width = width;
+                let shortcuts = shell.hub_shortcuts(id);
+                assert_eq!(shortcuts.len(), count);
+                assert!(!shortcuts.contains(&ItemKind::Network));
+                assert_eq!(shortcuts.contains(&ItemKind::Recording), count > 1);
+                assert!(!shortcuts.contains(&ItemKind::DisplayMode));
+                assert!(!shortcuts.contains(&ItemKind::Audio));
+                assert!(!shortcuts.iter().any(|kind| matches!(kind, ItemKind::Battery { .. })));
+            }
         }
         let before = shell.hub_shortcuts(id);
         drop(shell.open_hub(id, status_ui::Menu::Calendar));

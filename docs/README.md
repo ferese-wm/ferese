@@ -19,7 +19,6 @@
 
 ## Develop Ferese
 
-- [Live Activities reference](activities-reference.md): command rules, publisher ownership, templates and IPC.
 - [Packages and releases](packaging.md): build Fedora and Arch packages and publish a tagged release.
 - [Development](development.md): build Ferese, run tests and check portal contracts.
 - [Nested resize checks](nested-resize-testing.md).

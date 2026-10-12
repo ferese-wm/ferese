@@ -810,3 +810,110 @@ fn corner_heavy_shader_timing_sample() {
         }
     }
 }
+
+#[test]
+#[ignore = "requires an EGL rendering device"]
+fn window_tint_does_not_inherit_panel_geometry() {
+    use smithay::backend::renderer::gles::UniformValue;
+    use smithay::output::{Mode, PhysicalProperties, Subpixel};
+    fn paint(renderer: &mut GlesRenderer, element: &impl RenderElement<GlesRenderer>) -> Vec<u8> {
+        let mut texture: GlesTexture = renderer.create_buffer(Fourcc::Abgr8888, (96, 96).into()).unwrap();
+        let mut target = renderer.bind(&mut texture).unwrap();
+        let rect = Rectangle::from_size((96, 96).into());
+        let mut frame = renderer
+            .render(&mut target, (96, 96).into(), Transform::Normal)
+            .unwrap();
+        frame.clear([1.0, 1.0, 1.0, 1.0].into(), &[rect]).unwrap();
+        let geometry = element.geometry(1.0.into());
+        element
+            .draw(
+                &mut frame,
+                element.src(),
+                geometry,
+                &[Rectangle::from_size(geometry.size)],
+                &[],
+            )
+            .unwrap();
+        let _ = frame.finish().unwrap();
+        let mapping = renderer
+            .copy_framebuffer(&target, Rectangle::from_size((96, 96).into()), Fourcc::Abgr8888)
+            .unwrap();
+        renderer.map_texture(&mapping).unwrap().to_vec()
+    }
+    let mut renderer = renderer();
+    let mut resources = RenderResources::default();
+    let output = Output::new(
+        "tint-test".into(),
+        PhysicalProperties {
+            size: (0, 0).into(),
+            subpixel: Subpixel::Unknown,
+            make: "test".into(),
+            model: "test".into(),
+        },
+    );
+    output.change_current_state(
+        Some(Mode {
+            size: (96, 96).into(),
+            refresh: 60_000,
+        }),
+        Some(Transform::Normal),
+        None,
+        Some((0, 0).into()),
+    );
+    let geometry = Rectangle::new((6, 6).into(), (80, 80).into());
+    let corners = RoundedRect::from_logical(geometry, 1.0, 12.0).with_shape(CornerShape::Continuous);
+    for resize_fill in [false, true] {
+        let tint = window_tint_element(
+            &mut resources,
+            &mut renderer,
+            ferese_layout::WindowId(1),
+            geometry,
+            corners,
+            [0.0, 0.0, 0.0, 0.44],
+            resize_fill,
+            &output,
+        )
+        .unwrap();
+        let baseline = paint(&mut renderer, &tint);
+        let program = material_program(&mut resources, &mut renderer).unwrap();
+        let panel = SharedPixelShaderElement::new(
+            program.0,
+            Rectangle::from_size((96, 24).into()),
+            None,
+            1.0,
+            vec![
+                Uniform::new("visible_rect", [0.0_f32, 72.0, 96.0, 24.0]),
+                Uniform::new("material_radii", [12.0_f32; 4]),
+                Uniform::new("tint", [0.2_f32, 0.2, 0.2, 1.0]),
+                Uniform::new("paint_mode", 0.0_f32),
+                Uniform::new("shadow_rect", [0.0_f32; 4]),
+                Uniform::new("shadow_values", [0.0_f32; 2]),
+                Uniform::new("panel_count", 1.0_f32),
+                Uniform::new("panel_fusion", 0.0_f32),
+                Uniform::new(
+                    "panel_shapes[0]",
+                    UniformValue::Matrix3x3 {
+                        matrices: vec![[0.0, 72.0, 96.0, 24.0, 12.0, 12.0, 12.0, 12.0, 0.0]],
+                        transpose: false,
+                    },
+                ),
+            ],
+            RenderElementKind::Unspecified,
+        );
+        paint(&mut renderer, &panel);
+        let after_panel = paint(&mut renderer, &tint);
+        let changed = baseline
+            .chunks_exact(4)
+            .zip(after_panel.chunks_exact(4))
+            .filter(|(a, b)| a != b)
+            .count();
+        assert_eq!(
+            changed, 0,
+            "a panel draw changed {changed} window pixels (resize_fill={resize_fill})"
+        );
+        assert!(
+            baseline.chunks_exact(4).any(|p| p[0] < 200),
+            "fixture must draw the tint"
+        );
+    }
+}
