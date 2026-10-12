@@ -13,7 +13,7 @@
 
 Ferese combines a window manager and desktop shell with one configuration.
 
-![Ferese desktop with a translucent Now Playing popup showing Spotify artwork and playback controls](docs/images/screenshots/ferese-media.webp)
+![Ferese desktop with Morph's music view open over a sunset wallpaper](docs/images/screenshots/ferese-morph.webp)
 
 [View more screenshots](docs/screenshots.md)
 
