@@ -123,15 +123,20 @@ pub fn handle_commit(state: &mut Ferese, surface: &WlSurface) {
         .cloned()
         .collect::<Vec<_>>();
 
+    let policy = layer.cached_state();
     let current = LayoutState::current(&layer);
     let previous = layer
         .user_data()
-        .get_or_insert_threadsafe(|| std::sync::Mutex::new(None::<LayoutState>));
-    let changed = {
+        .get_or_insert_threadsafe(|| std::sync::Mutex::new(None::<(LayoutState, KeyboardInteractivity)>));
+    let (changed, requested_focus) = {
         let mut previous = previous.lock().unwrap();
-        let changed = previous.as_ref() != Some(&current);
-        *previous = Some(current);
-        changed
+        let changed = previous.as_ref().map(|(layout, _)| layout) != Some(&current);
+        let requested_focus = policy.keyboard_interactivity == KeyboardInteractivity::OnDemand
+            && previous
+                .as_ref()
+                .is_some_and(|(_, keyboard)| *keyboard == KeyboardInteractivity::None);
+        *previous = Some((current, policy.keyboard_interactivity));
+        (changed, requested_focus)
     };
 
     if changed {
@@ -140,10 +145,23 @@ pub fn handle_commit(state: &mut Ferese, surface: &WlSurface) {
     // Configure acknowledgement and keyboard policy are independent of layout.
     layer.layer_surface().send_pending_configure();
 
-    let policy = layer.cached_state();
+    // A click can enable keyboard interaction after its button event was
+    // delivered. Give that layer focus without requiring a second click.
+    let pointer_on_layer = requested_focus
+        && !state.seat.get_keyboard().is_some_and(|keyboard| keyboard.is_grabbed())
+        && state
+            .seat
+            .get_pointer()
+            .and_then(|pointer| pointer.current_focus())
+            .is_some_and(|surface| {
+                state
+                    .space
+                    .layer_for_surface(&surface, WindowSurfaceType::ALL)
+                    .is_some_and(|focused| focused == layer)
+            });
     if !state.session_lock.active()
         && !state.input_capture.captures(1)
-        && policy.keyboard_interactivity == KeyboardInteractivity::Exclusive
+        && (policy.keyboard_interactivity == KeyboardInteractivity::Exclusive || pointer_on_layer)
         && matches!(policy.layer, Layer::Top | Layer::Overlay)
         && !layer_has_keyboard_focus(state, &layer)
     {

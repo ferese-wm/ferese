@@ -27,6 +27,8 @@ const BTN_RIGHT: u32 = 0x111;
 
 #[cfg(test)]
 pub(crate) mod binding_mode_tests;
+#[cfg(test)]
+mod layer_focus_tests;
 
 pub(crate) struct LockedPointerHint {
     pub(crate) surface: WlSurface,
@@ -938,6 +940,16 @@ impl Ferese {
         if let Some((layer, _, _)) = self.layer_under(position) {
             if layer.can_receive_keyboard_focus() {
                 keyboard.set_focus(self, Some(layer.wl_surface().clone()), serial);
+            } else if raise
+                && keyboard.current_focus().is_some_and(|surface| {
+                    self.space
+                        .layer_for_surface(&surface, smithay::desktop::WindowSurfaceType::ALL)
+                        .is_some()
+                })
+            {
+                // Clicking a noninteractive layer (such as wallpaper) must
+                // release an expanded panel's focus too.
+                self.restore_keyboard_focus();
             }
             return;
         }
@@ -1047,6 +1059,20 @@ impl Ferese {
             return;
         }
         if self.layer_under(position).is_some() {
+            return;
+        }
+        // An on-demand layer owns keyboard interaction until the next click.
+        // Moving the pointer away must not dismiss its expanded content.
+        if self
+            .seat
+            .get_keyboard()
+            .and_then(|keyboard| keyboard.current_focus())
+            .is_some_and(|surface| {
+                self.space
+                    .layer_for_surface(&surface, smithay::desktop::WindowSurfaceType::ALL)
+                    .is_some()
+            })
+        {
             return;
         }
 

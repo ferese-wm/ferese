@@ -2829,6 +2829,39 @@ mod tests {
     }
 
     #[test]
+    fn losing_layer_focus_collapses_only_the_expanded_hub_on_that_output() {
+        use cosmic::iced::event::{PlatformSpecific, wayland};
+        use wayland_client::Proxy;
+        let mut shell = shell();
+        let id = shell.outputs[0].bar;
+        let (socket, peer) = std::os::unix::net::UnixStream::pair().unwrap();
+        let connection = wayland_client::Connection::from_socket(socket).unwrap();
+        let surface = wayland_client::protocol::wl_surface::WlSurface::inert(connection.backend().downgrade());
+        drop(peer);
+        let unfocused = |id| {
+            cosmic::iced::Event::PlatformSpecific(PlatformSpecific::Wayland(wayland::Event::Layer(
+                wayland::LayerEvent::Unfocused,
+                surface.clone(),
+                id,
+            )))
+        };
+        drop(shell.open_hub(id, status_ui::Menu::Calendar));
+        let other = window::Id::unique();
+        drop(shell.handle_event(unfocused(other), other));
+        assert_eq!(shell.hub_mode(id), Some(Mode::Expanded(Content::Calendar)));
+        drop(shell.handle_event(unfocused(id), id));
+        assert_eq!(shell.hub_mode(id), Some(Mode::Idle));
+        assert_eq!(shell.outputs[0].runtime.hub.as_ref().unwrap().borrow().menu, None);
+        drop(shell.hub_hover(id, true));
+        drop(shell.handle_event(unfocused(id), id));
+        assert_eq!(
+            shell.hub_mode(id),
+            Some(Mode::Peek),
+            "focus changes must not interrupt hover peeks"
+        );
+    }
+
+    #[test]
     fn cursor_leave_closes_peek_and_escape_closes_expanded_content() {
         use cosmic::iced::keyboard::{Event as KeyEvent, Key, Location, Modifiers, key};
         let mut shell = shell();
