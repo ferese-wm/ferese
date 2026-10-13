@@ -2818,7 +2818,7 @@ mod tests {
         let mut shell = shell();
         let id = shell.outputs[0].bar;
         for (playback, counts) in [
-            (None, [1, 2, 2]),
+            (None, [0, 2, 2]),
             (Some(ferese_ipc::media::Playback::Playing), [0, 2, 2]),
             (Some(ferese_ipc::media::Playback::Paused), [0, 2, 2]),
         ] {
@@ -2831,6 +2831,7 @@ mod tests {
                 shell.config.panels[0].morph.expanded_width = width;
                 let shortcuts = shell.hub_shortcuts(id);
                 assert_eq!(shortcuts.len(), count);
+                assert!(!shortcuts.contains(&ItemKind::NightLight));
                 assert!(!shortcuts.contains(&ItemKind::Network));
                 assert_eq!(shortcuts.contains(&ItemKind::Recording), count > 1);
                 assert!(!shortcuts.contains(&ItemKind::DisplayMode));

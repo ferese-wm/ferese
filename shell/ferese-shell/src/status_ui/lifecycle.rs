@@ -421,9 +421,11 @@ mod tests {
             },
         };
         assert!(anchor.belongs_to(&panel));
-        panel.end.groups[0].items[2].visible = false;
+        let items = &mut panel.end.groups[0].items;
+        let network = items.iter().position(|item| item.id.0 == "network").unwrap();
+        items[network].visible = false;
         assert!(!anchor.belongs_to(&panel));
-        panel.end.groups[0].items.remove(2);
+        panel.end.groups[0].items.remove(network);
         assert!(!anchor.belongs_to(&panel));
         panel.id = crate::panel::PanelId("other".into());
         let fallback = PopoverAnchor {
