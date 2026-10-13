@@ -7,7 +7,7 @@ h1 { font-size: clamp(45px, 6.1vw, 80px); font-weight: 590; letter-spacing: -.05
 .down { transform: rotate(90deg); }
 .desktop-stage { min-width: 0; max-width: 100%; margin-top: 47px; scroll-margin-top: 100px; }
 .desktop-capture { min-width: 0; max-width: 100%; border: 1px solid var(--line); border-radius: 24px; overflow: hidden; background: var(--soft); box-shadow: 0 28px 60px -38px #000000a0; }
-.desktop-capture img { display: block; width: 100%; height: auto; aspect-ratio: 8/5; }
+.desktop-capture video { display: block; width: 100%; height: auto; aspect-ratio: 8/5; }
 .layout-section { padding-block: 132px 115px; }
 .section-heading { display: flex; align-items: center; justify-content: space-between; gap: 55px; margin-bottom: 39px; }
 h2 { font-size: 48px; line-height: 1.12; font-weight: 560; letter-spacing: -2px; margin: 0; text-wrap: balance; }

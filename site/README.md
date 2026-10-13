@@ -15,7 +15,7 @@ python3 -m http.server 8080 --bind 127.0.0.1 --directory build/site
 Open http://localhost:8080 for the homepage. Rebuild and refresh the browser
 after changing the site sources.
 
-- `site/index.html` and `site/home.css`: homepage and desktop screenshots.
+- `site/index.html`, `site/home.css` and `site/home.js`: homepage and desktop video.
 - `site/styles.css`: shared dark appearance, typography and navigation.
 - `docs/*.md` and its configuration/development topic directories: guide sources published to the wiki.
 - `scripts/build-site.py`: copies homepage assets and writes handbook redirects.
@@ -61,3 +61,8 @@ the current wallpaper preview.
 Screenshots live in `docs/images/screenshots` and are shared by the README and
 website. Full captures retain their original 2880×1800 resolution, while the
 homepage uses smaller WebP versions for narrower screens.
+
+The hero recording is `site/assets/videos/ferese-demo-2x.mp4`, with its poster
+beside it. Playback is encoded at twice the recorded speed. The player starts
+muted, has standard playback controls, and waits for a click when reduced motion
+is enabled. The site build copies both files without re-encoding them.

@@ -13,7 +13,9 @@
 
 Ferese combines a window manager and desktop shell with one configuration.
 
-![Ferese desktop with Morph's music view open over a sunset wallpaper](docs/images/screenshots/ferese-morph.webp)
+https://github.com/user-attachments/assets/681f0748-8813-4e2d-b3cc-28a3dc5b3c64
+
+[Watch the full demo at 2× speed](https://ferese-wm.github.io/ferese/#desktop-preview)
 
 [View more screenshots](https://github.com/ferese-wm/ferese/wiki/Screenshots)
 

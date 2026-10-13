@@ -8,7 +8,7 @@
   <meta property="og:title" content="Ferese — A little more room.">
   <meta property="og:description" content="A configurable Wayland desktop for Linux that brings your windows and everyday controls together.">
   <meta property="og:type" content="website">
-  <meta property="og:image" content="https://ferese-wm.github.io/ferese/assets/screenshots/ferese-media.webp">
+  <meta property="og:image" content="https://ferese-wm.github.io/ferese/assets/videos/ferese-demo-poster.webp">
   <meta property="og:image:width" content="2880">
   <meta property="og:image:height" content="1800">
   <meta name="twitter:card" content="summary_large_image">
@@ -18,6 +18,7 @@
   <link rel="icon" href="assets/favicon-32.png" type="image/png" sizes="32x32">
   <link rel="stylesheet" href="styles.css">
   <link rel="stylesheet" href="home.css">
+  <script src="home.js" defer></script>
 </head>
 <body>
   <svg class="icon-definitions" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><defs>
@@ -39,7 +40,10 @@
       <div class="hero-actions"><a class="primary-button" href="https://github.com/ferese-wm/ferese/wiki/Installation">Get Ferese <svg class="icon"><use href="#i-arrow"/></svg></a><a class="inline-link" href="#desktop-preview">Take a look <svg class="icon down"><use href="#i-arrow"/></svg></a></div>
       <div class="desktop-stage" id="desktop-preview">
         <div class="desktop-capture" id="desktop-capture">
-          <img id="desktop-capture-image" src="assets/screenshots/ferese-media.webp" srcset="assets/screenshots/ferese-media-960.webp 960w, assets/screenshots/ferese-media-1440.webp 1440w, assets/screenshots/ferese-media.webp 2880w" sizes="(max-width: 700px) calc(100vw - 40px), (max-width: 1200px) calc(100vw - 80px), 1120px" width="2880" height="1800" alt="The Ferese desktop with a translucent Now Playing popup showing Spotify artwork and playback controls over the blue and violet city wallpaper." fetchpriority="high">
+          <video id="desktop-demo" width="2880" height="1800" controls muted loop playsinline preload="metadata" poster="assets/videos/ferese-demo-poster.webp" aria-label="Ferese desktop demonstration at twice the recorded speed">
+            <source src="assets/videos/ferese-demo-2x.mp4" type="video/mp4">
+            <a href="assets/videos/ferese-demo-2x.mp4">Watch the Ferese desktop demo at 2× speed</a>.
+          </video>
         </div>
       </div>
     </section>
