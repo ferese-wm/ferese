@@ -403,6 +403,9 @@ fn scaled_animation_duration(duration: Duration, enabled: bool, speed: f64) -> D
 }
 
 pub struct Ferese {
+    pub(crate) gamma_dirty: bool,
+    pub(crate) gamma_timer_pending: bool,
+    pub(crate) night_light: ferese_config::night_light::Settings,
     pub(crate) session_lock_state: SessionLockManagerState,
     pub(crate) session_lock: Lock,
     pub(crate) lock_idle: IdleSettings,
@@ -562,6 +565,7 @@ pub struct Ferese {
 
 #[derive(Clone)]
 pub struct RuntimeConfig {
+    pub(crate) night_light: ferese_config::night_light::Settings,
     pub(crate) activity_settings: ferese_config::activities::Settings,
     pub(crate) activity_matcher: ferese_config::activities::Matcher,
     pub(crate) lock_idle: IdleSettings,
@@ -620,6 +624,7 @@ impl Ferese {
         let display_handle = display.handle();
 
         crate::handlers::screencopy::init_global(&display_handle, &event_loop.handle());
+        crate::handlers::gamma_control::init_global(&display_handle);
         crate::effects::init_global(&display_handle);
         crate::shell_control::init_global(&display_handle);
 
@@ -698,6 +703,9 @@ impl Ferese {
             session_lock: crate::session_lock::Lock::default(),
             ipc_events: crate::ipc_events::Subscribers::default(),
             lock_idle: config.lock_idle,
+            night_light: config.night_light,
+            gamma_dirty: true,
+            gamma_timer_pending: false,
             config_source: None,
             config_sections: None,
             config_worker: None,
@@ -959,6 +967,8 @@ impl Ferese {
             self.lock_idle = config.lock_idle;
             self.refresh_lock_idle_policy();
         }
+        self.gamma_dirty |= self.night_light != config.night_light;
+        self.night_light = config.night_light;
         if scene_changed {
             self.advance_animations(Instant::now());
         }

@@ -174,6 +174,13 @@ fn status_label(kind: Menu, s: &Snapshot) -> String {
             |b| format!("Battery: {}%, {}", b.percent, b.status),
         ),
         Menu::System => "Control Center".into(),
+        Menu::NightLight => {
+            if s.night_light.as_ref().is_some_and(|s| s.enabled) {
+                "Night light: on".into()
+            } else {
+                "Night light: off".into()
+            }
+        }
     }
 }
 
@@ -191,6 +198,10 @@ pub(super) fn audio_icon(volume: u8, muted: bool) -> &'static [u8] {
 
 pub(super) fn status_icon(kind: Menu, s: &Snapshot) -> (&'static [u8], bool) {
     match kind {
+        Menu::NightLight => (
+            ferese_theme::icons::MOON,
+            s.night_light.as_ref().is_some_and(|s| s.enabled),
+        ),
         Menu::Network => {
             let Some(n) = &s.network else {
                 return (ferese_theme::icons::WIFI_OFF, false);

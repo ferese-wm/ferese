@@ -199,6 +199,7 @@ disappears when that output has no window title to show.
 | Media | `media` | Full, Compact and Icon representations |
 | Activities | `activities` | Full, Compact and Icon representations; see [Activities configuration](configuration/activities.md) |
 | Quick Settings | `quick-settings` | Opens Control Center |
+| Night light | `night-light` | On/off switch and color-temperature slider |
 | Network | `network` | Opens Wi-Fi controls |
 | Audio | `audio` | Opens audio controls |
 | Recording | `recording` | Opens recording controls or stops the active recording |

@@ -10,6 +10,7 @@ use serde_json::Value;
 
 pub mod events;
 pub mod media;
+pub mod night_light;
 pub mod socket;
 pub mod theme;
 pub mod xwayland;

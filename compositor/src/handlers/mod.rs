@@ -1,5 +1,6 @@
 pub(crate) mod activation;
 mod compositor;
+pub(crate) mod gamma_control;
 mod input_method;
 mod layer_shell;
 pub(crate) mod screencopy;

@@ -429,6 +429,7 @@ impl FereseShell {
             }
             ItemKind::Media => self.view_media_item(representation, selected, width),
             ItemKind::QuickSettings => self.view_status_item(status_ui::Menu::System, false, selected),
+            ItemKind::NightLight => self.view_status_item(status_ui::Menu::NightLight, false, selected),
             ItemKind::Network => self.view_status_item(status_ui::Menu::Network, false, selected),
             ItemKind::Audio => self.view_status_item(status_ui::Menu::Audio, false, selected),
             ItemKind::Recording => self.view_status_item(status_ui::Menu::Recording, false, selected),

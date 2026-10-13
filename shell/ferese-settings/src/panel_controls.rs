@@ -34,7 +34,7 @@ impl std::fmt::Display for StyleChoice {
     }
 }
 
-const CATALOG: [CatalogItem; 13] = [
+const CATALOG: [CatalogItem; 14] = [
     CatalogItem(ItemKind::Overview),
     CatalogItem(ItemKind::Workspaces {
         style: ferese_panel::WorkspaceStyle::Dots,
@@ -43,6 +43,7 @@ const CATALOG: [CatalogItem; 13] = [
     CatalogItem(ItemKind::Media),
     CatalogItem(ItemKind::Activities),
     CatalogItem(ItemKind::QuickSettings),
+    CatalogItem(ItemKind::NightLight),
     CatalogItem(ItemKind::Network),
     CatalogItem(ItemKind::Audio),
     CatalogItem(ItemKind::Recording),
@@ -862,6 +863,7 @@ pub(super) fn item_icon(kind: ItemKind, tint: cosmic::iced::Color) -> widget::ic
         ItemKind::Media => icons::MEDIA,
         ItemKind::Activities => icons::FERESE,
         ItemKind::QuickSettings => icons::CONTROL_CENTER,
+        ItemKind::NightLight => icons::MOON,
         ItemKind::Network => icons::WIFI_FULL,
         ItemKind::Audio => icons::VOLUME_HIGH,
         ItemKind::Recording => icons::RECORD,

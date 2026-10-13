@@ -10,6 +10,7 @@ mod effects;
 mod floating;
 mod focus_effect;
 mod frame_scheduler;
+mod gamma;
 mod gestures;
 mod grabs;
 mod handlers;
@@ -49,6 +50,7 @@ mod winit;
 mod xwayland;
 
 pub(crate) use session_environment::{SessionEnvironment, SessionPolicy, X11Environment};
+pub use state::{Ferese, RuntimeConfig};
 
 use std::error::Error;
 use std::io;
@@ -199,6 +201,7 @@ fn after_dispatch(state: &mut Ferese) {
 }
 
 fn after_dispatch_with_redraw(state: &mut Ferese, mut redraw: impl FnMut(&mut Ferese, RedrawRequest<'_>)) {
+    crate::backends::direct::gamma::sync_night_light(state);
     state.process_pending_dmabuf_imports();
     state.update_named_cursor(std::time::Instant::now());
     state.poll_theme();

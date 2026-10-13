@@ -181,6 +181,7 @@ panel "main" {
             padding 2 3
             item "media" kind="media"
             item "quick-settings" kind="quick-settings"
+            item "night-light" kind="night-light"
             item "network" kind="network"
             item "audio" kind="audio"
             item "recording" kind="recording"

@@ -1,6 +1,7 @@
 pub mod activities;
 pub mod families;
 pub mod file;
+pub mod night_light;
 pub mod notifications;
 pub use ferese_panel::panel;
 pub mod presets;

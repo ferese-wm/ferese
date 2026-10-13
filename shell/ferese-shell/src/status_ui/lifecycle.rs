@@ -149,6 +149,7 @@ impl FereseShell {
     }
 
     pub fn destroy_menu(&mut self) -> Task<Message> {
+        self.night_light_temperature = None;
         let tooltip = self.dismiss_workspace_tooltip();
         crate::EFFECT_FRAME_PENDING.store(false, std::sync::atomic::Ordering::Relaxed);
         let Some(menu) = self.menu.take() else {
@@ -167,6 +168,7 @@ impl FereseShell {
     }
 
     pub fn close_menu(&mut self) -> Task<Message> {
+        self.night_light_temperature = None;
         self.refresh_media_art(false);
         let Some(menu) = &mut self.menu else {
             return Task::none();
@@ -210,6 +212,16 @@ impl FereseShell {
                 }
             }
             Action::Brightness(v) => self.status.brightness = Some(*v),
+            Action::NightLight(enabled) => {
+                if let Some(status) = &mut self.status.night_light {
+                    status.enabled = *enabled;
+                }
+            }
+            Action::NightLightTemperature(temperature) => {
+                if let Some(status) = &mut self.status.night_light {
+                    status.temperature = *temperature;
+                }
+            }
             Action::Wifi(v) => {
                 if let Some(n) = &mut self.status.network {
                     n.enabled = *v;

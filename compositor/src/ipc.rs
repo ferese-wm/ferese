@@ -877,6 +877,9 @@ impl Ferese {
                     .set_theme_mode(mode)
                     .map_err(|error| CommandError::new("invalid_config", error));
             }
+            "night-light" => {
+                return Ok(json!(crate::backends::direct::gamma::night_light_status(self)));
+            }
             "portal-inhibit" => {
                 let inhibition = serde_json::from_value(args.clone())
                     .map_err(|error| CommandError::new("invalid_argument", error.to_string()))?;

@@ -18,6 +18,11 @@ use 8-pixel margins unless your configuration overrides them. The packaged
 configuration includes its own geometry overrides. For the complete options and
 examples, see the [panel configuration guide](../panel-configuration.md).
 
+Add a **Night light** item in the panel editor for an on/off switch and warmth
+slider. In Morph, the button stays beside the tabs when the panel is expanded,
+even if you remove the item. See [color temperature](outputs.md#color-temperature)
+for the saved settings and display requirements.
+
 ```kdl
 panel "main" {
     edge "top"
