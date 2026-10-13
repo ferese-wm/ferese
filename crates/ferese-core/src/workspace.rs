@@ -10,7 +10,7 @@ use ferese_layout::{
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct WorkspaceId(pub u64);
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Workspace {
     pub id: WorkspaceId,
     pub layout: WorkspaceLayout,
@@ -382,7 +382,7 @@ impl From<LayoutError> for WorkspaceError {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct WorkspaceSet {
     active: WorkspaceId,
     workspaces: HashMap<WorkspaceId, Workspace>,

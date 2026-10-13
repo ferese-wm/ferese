@@ -1934,6 +1934,7 @@ dependencies = [
  "ureq",
  "url",
  "wayland-client",
+ "wayland-server",
  "zbus",
 ]
 

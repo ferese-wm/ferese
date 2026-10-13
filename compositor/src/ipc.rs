@@ -247,7 +247,13 @@ pub(crate) fn init(
                     state.activities.get(call.request.id, call.response);
                 }
             } else if call.request.command == "activity-watch" {
-                if let Err(error) = validate_request(&call.request) {
+                if state.session_lock.active() {
+                    let _ = call.response.try_send(Response::error(
+                        call.request.id,
+                        "session_locked",
+                        "IPC unavailable while session is locked",
+                    ));
+                } else if let Err(error) = validate_request(&call.request) {
                     let _ = call
                         .response
                         .try_send(Response::error(call.request.id, error.code, error.message));

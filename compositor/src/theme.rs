@@ -425,7 +425,10 @@ impl Ferese {
         if let Err(error) = self.theme_engine.arm_clock(candidate.next_transition) {
             tracing::warn!(%error, "cannot arm appearance schedule");
         }
-        if candidate.theme == self.theme_engine.live.theme && self.theme_engine.pending.is_none() {
+        if candidate.theme == self.theme_engine.live.theme
+            && self.theme_engine.pending.is_none()
+            && self.wallpaper.configuration() == &wallpaper
+        {
             let changed = self.theme_engine.live.mode != candidate.policy.mode
                 || self.theme_engine.live.warnings != candidate.warnings
                 || self.theme_engine.live.error.is_some()

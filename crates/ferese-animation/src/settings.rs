@@ -29,12 +29,19 @@ impl MotionSettings {
     }
 
     pub fn validate(self) -> Result<(), String> {
-        if !self.speed.is_finite() || self.speed <= 0.0 {
-            return Err("animation speed must be finite and positive".into());
-        }
+        self.validate_speed()?;
         self.spring_config()?;
         self.viewport_config()?;
         Ok(())
+    }
+
+    /// Bound both duration division and elapsed-time multiplication.
+    pub fn validate_speed(self) -> Result<f64, String> {
+        if self.speed.is_finite() && (0.01..=100.0).contains(&self.speed) {
+            Ok(self.speed)
+        } else {
+            Err("animation speed must be between 0.01 and 100 (inclusive)".into())
+        }
     }
 
     pub fn spring_config(self) -> Result<SpringConfig, String> {
@@ -107,6 +114,28 @@ impl SpringSettings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn speed_validation_rejects_extremes_and_accepts_safe_boundaries() {
+        for speed in [f64::NAN, f64::INFINITY, 0.0, -1.0, 1e-100, 1e100, 0.009, 101.0] {
+            let settings = MotionSettings {
+                speed,
+                ..Default::default()
+            };
+            assert!(settings.validate_speed().is_err());
+            assert!(settings.validate().is_err());
+        }
+        for speed in [0.01, 0.5, 1.0, 100.0] {
+            let settings = MotionSettings {
+                speed,
+                ..Default::default()
+            };
+            assert_eq!(settings.validate_speed().unwrap(), speed);
+            assert!(settings.validate().is_ok());
+            assert!(!settings.duration(120.0).is_zero());
+            assert!(!std::time::Duration::from_secs(60).mul_f64(speed).is_zero());
+        }
+    }
 
     #[test]
     fn defaults_are_critical_with_distinct_spatial_and_viewport_responses() {

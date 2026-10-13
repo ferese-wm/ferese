@@ -290,7 +290,7 @@ impl FereseShell {
             return;
         };
         if entry.primary && entry.effects.is_none() {
-            match EffectsBinding::attach_role(surface, None, 0.0) {
+            match EffectsBinding::attach_role(&mut self.effects_context, surface, None, 0.0) {
                 Ok(effects) => entry.effects = Some(effects),
                 Err(error) => eprintln!("ferese-shell: system modal material unavailable: {error}"),
             }

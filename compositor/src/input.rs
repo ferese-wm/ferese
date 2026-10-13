@@ -1308,7 +1308,7 @@ fn virtual_terminal(symbol: u32, ctrl: bool, alt: bool, direct: bool) -> Option<
     }
 
     (ctrl && alt && (keysyms::KEY_F1..=keysyms::KEY_F12).contains(&symbol))
-        .then_some((symbol - keysyms::KEY_F1 + 1) as i32)
+        .then(|| (symbol - keysyms::KEY_F1 + 1) as i32)
 }
 
 fn emergency_shortcut_escape(symbol: u32, ctrl: bool, alt: bool) -> bool {
@@ -1392,6 +1392,17 @@ mod tests {
         assert_eq!(virtual_terminal(keysyms::KEY_F7, true, true, true), Some(7));
         assert_eq!(virtual_terminal(keysyms::KEY_F7, true, false, true), None);
         assert_eq!(virtual_terminal(keysyms::KEY_F7, false, true, true), None);
+    }
+
+    #[test]
+    fn ordinary_keys_never_evaluate_virtual_terminal_arithmetic() {
+        for symbol in [0, keysyms::KEY_a, keysyms::KEY_Escape, keysyms::KEY_F12 + 1] {
+            for ctrl in [false, true] {
+                for alt in [false, true] {
+                    assert_eq!(virtual_terminal(symbol, ctrl, alt, true), None);
+                }
+            }
+        }
     }
 
     #[test]

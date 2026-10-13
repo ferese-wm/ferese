@@ -878,15 +878,7 @@ impl Ferese {
                 .as_ref()
                 .is_none_or(|previous| keys.iter().any(|key| previous.get(*key) != sections.get(*key)))
         };
-        // Desired configuration: reloads update it while endpoints stay
-        // session-scoped, so a difference from the running service is reported
-        // as `restart_required` rather than applied behind the user's back.
-        self.xwayland_config = config.xwayland.clone();
-        if changed(&["activities"]) {
-            self.activities
-                .configure(&config.activity_settings, config.activity_matcher.clone());
-        }
-
+        let activities_changed = changed(&["activities"]);
         let layout_changed = changed(&["layout", "scrolling", "workspaces"]);
         let bindings_changed = changed(&["bindings", "binding_modes", "commands"]);
         let input_changed = changed(&["input"]);
@@ -900,6 +892,39 @@ impl Ferese {
         if self.output_profiles != config.output_profiles {
             crate::backends::direct::validate_live_outputs(self, &config.output_profiles)?;
         }
+
+        // Stage layout changes before replacing the keymap: both can fail.
+        // Everything below the successful keymap replacement must be infallible.
+        let workspaces = if layout_changed {
+            let mut workspaces = self.workspaces.clone();
+            let bounds = self
+                .workspaces
+                .iter()
+                .map(|workspace| {
+                    let output = self.output_workspaces.output_for_workspace(workspace.id);
+                    let rect = self
+                        .output_ids
+                        .iter()
+                        .find(|(_, id)| Some(**id) == output)
+                        .and_then(|(output, _)| self.output_bounds_for(output))
+                        .or_else(|| self.output_bounds())
+                        .unwrap_or(Rect::new(0., 0., 1920., 1080.));
+                    (workspace.id, rect)
+                })
+                .collect();
+
+            workspaces
+                .reconfigure_live(
+                    config.layout_mode,
+                    config.default_column_width,
+                    config.scrolling_focus_strategy,
+                    &bounds,
+                )
+                .map_err(|error| error.to_string())?;
+            Some(workspaces)
+        } else {
+            None
+        };
 
         let keyboard_changed = self.input_settings.xkb_layout != config.input_settings.xkb_layout
             || self.input_settings.xkb_variant != config.input_settings.xkb_variant
@@ -940,32 +965,18 @@ impl Ferese {
 
         let touchpad_changed = self.input_settings.touchpad != config.input_settings.touchpad;
         let outputs_changed = self.output_profiles != config.output_profiles;
-        if layout_changed {
-            let bounds = self
-                .workspaces
-                .iter()
-                .map(|workspace| {
-                    let output = self.output_workspaces.output_for_workspace(workspace.id);
-                    let rect = self
-                        .output_ids
-                        .iter()
-                        .find(|(_, id)| Some(**id) == output)
-                        .and_then(|(output, _)| self.output_bounds_for(output))
-                        .or_else(|| self.output_bounds())
-                        .unwrap_or(Rect::new(0., 0., 1920., 1080.));
-                    (workspace.id, rect)
-                })
-                .collect();
-
-            self.workspaces
-                .reconfigure_live(
-                    config.layout_mode,
-                    config.default_column_width,
-                    config.scrolling_focus_strategy,
-                    &bounds,
-                )
-                .map_err(|error| error.to_string())?;
+        if let Some(workspaces) = workspaces {
+            self.workspaces = workspaces;
         }
+        // Desired configuration: reloads update it while endpoints stay
+        // session-scoped, so a difference from the running service is reported
+        // as `restart_required` rather than applied behind the user's back.
+        self.xwayland_config = config.xwayland.clone();
+        if activities_changed {
+            self.activities
+                .configure(&config.activity_settings, config.activity_matcher.clone());
+        }
+
         if layout_changed || self.gap_config != config.gap_config || panel_layout_changed {
             // Hidden layouts are resolved independently of presented geometry.
             self.workspace_preview_revision = self.workspace_preview_revision.wrapping_add(1);

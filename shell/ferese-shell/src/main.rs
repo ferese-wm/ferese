@@ -159,6 +159,7 @@ struct FereseShell {
     overview_active: bool,
     clock: String,
     outputs: Vec<OutputSurfaces>,
+    effects_context: Option<std::rc::Rc<EffectsContext>>,
     notifications: notifications::Center,
     notification_surface: Option<notification_ui::NotificationSurface>,
     status_service: status::Service,
@@ -348,6 +349,7 @@ impl cosmic::Application for FereseShell {
             overview_active: false,
             clock: clock::current_time(),
             outputs: Vec::new(),
+            effects_context: None,
         };
         let wallpaper_task = match wallpaper {
             Some(receiver) => cosmic::task::future(async move {
@@ -564,7 +566,7 @@ impl cosmic::Application for FereseShell {
                             && entry.id == id
                             && entry.effects.is_none()
                         {
-                            match EffectsBinding::attach_role(&surface, None, 1.0) {
+                            match EffectsBinding::attach_role(&mut self.effects_context, &surface, None, 1.0) {
                                 Ok(binding) => entry.effects = Some(binding),
                                 Err(error) => eprintln!("ferese-shell: notification effects unavailable: {error}"),
                             }
@@ -573,7 +575,7 @@ impl cosmic::Application for FereseShell {
                         if let Some(menu) = &mut self.menu
                             && menu.id == id
                         {
-                            menu.prepare_surface(&surface);
+                            menu.prepare_surface(&mut self.effects_context, &surface);
                         }
                     }
                     Err(error) => eprintln!("ferese-shell: native surface unavailable: {error}"),
@@ -779,7 +781,7 @@ impl cosmic::Application for FereseShell {
                                 count: self.notifications.unread(),
                                 dnd: value,
                             });
-                            return Task::none();
+                            return self.sync_hub_activity();
                         }
                         status::Action::Notifications => {
                             return Task::batch([self.close_menu(), self.toggle_notification_history()]);
@@ -1194,6 +1196,7 @@ mod tests {
                 bar_margin_horizontal: 0,
                 hidden: false,
             }],
+            effects_context: None,
         }
     }
 
@@ -1208,6 +1211,76 @@ mod tests {
             assert_eq!(anchor, Anchor::BOTTOM);
             assert_eq!((margin.top, margin.right, margin.bottom, margin.left), (0, 32, gap, 32));
         }
+    }
+
+    #[test]
+    fn dnd_refreshes_activity_selection_without_waiting_for_another_event() {
+        use cosmic::Application;
+        use ferese_activities::{Data, Owner, Source, Store, Template, Value};
+        let mut shell = shell_with_measured_panel();
+        shell.config.panels[0].style = ferese_panel::PanelStyle::Morph;
+        shell.config.panels[0].center.groups[0]
+            .items
+            .push(ferese_panel::Item::new(
+                "test-activities",
+                ferese_panel::ItemKind::Activities,
+            ));
+        shell.outputs[0]
+            .runtime
+            .reset(&shell.config.panels[0], &shell.snapshot, Some("test"));
+        shell.snapshot.outputs.push(OutputSnapshot {
+            id: 1,
+            name: "test".into(),
+            active_workspace: 1,
+            focused: true,
+        });
+        shell.notifications.ready = true;
+        let mut store = Store::new(1);
+        for n in 1..=2 {
+            store
+                .start(
+                    Owner { pid: n, birth: 1 },
+                    n.to_string(),
+                    Data {
+                        source: Source::Publisher,
+                        output: Some("test".into()),
+                        priority: 100,
+                        icon: "hammer".into(),
+                        title: format!("Task {n}"),
+                        value: Value::Indeterminate,
+                        template: Template::Progress,
+                    },
+                    0,
+                    0,
+                    None,
+                    true,
+                    true,
+                    None,
+                )
+                .unwrap();
+        }
+        shell.activities.snapshot = std::sync::Arc::new(ferese_ipc::activities::Snapshot {
+            activities: store.entries().cloned().collect(),
+            ..Default::default()
+        });
+        shell.sync_activity_presentations();
+        let selected = |shell: &FereseShell| {
+            shell.outputs[0]
+                .runtime
+                .hub
+                .as_ref()
+                .unwrap()
+                .borrow()
+                .activities
+                .selection
+                .visible
+                .len()
+        };
+        assert_eq!(selected(&shell), 2);
+        drop(shell.update(Message::Control(status::Action::Dnd(true))));
+        assert_eq!(selected(&shell), 1);
+        drop(shell.update(Message::Control(status::Action::Dnd(false))));
+        assert_eq!(selected(&shell), 2);
     }
 
     #[test]

@@ -137,9 +137,13 @@ impl PopoverAnchor {
 }
 
 impl OpenMenu {
-    pub(super) fn prepare_surface(&mut self, surface: &wl_surface::WlSurface) {
+    pub(super) fn prepare_surface(
+        &mut self,
+        context: &mut Option<std::rc::Rc<EffectsContext>>,
+        surface: &wl_surface::WlSurface,
+    ) {
         if self.effects.is_none() {
-            match EffectsBinding::attach_role(surface, None, 0.0) {
+            match EffectsBinding::attach_role(context, surface, None, 0.0) {
                 Ok(binding) => self.effects = Some(binding),
                 Err(error) => eprintln!("ferese-shell: popover material unavailable: {error}"),
             }

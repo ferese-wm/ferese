@@ -375,6 +375,23 @@ impl<M> Motion<'_, M> {
 }
 
 impl<M> Widget<M, Theme, cosmic::Renderer> for Motion<'_, M> {
+    fn a11y_nodes(
+        &self,
+        layout: Layout<'_>,
+        tree: &widget::Tree,
+        cursor: mouse::Cursor,
+    ) -> iced_accessibility::A11yTree {
+        let mut nodes = self.content.as_widget().a11y_nodes(layout, tree, self.cursor(cursor));
+        let offset = self.translation();
+        for node in nodes.root_mut() {
+            translate_accessible_node(node, offset);
+        }
+        for node in nodes.children_mut() {
+            translate_accessible_node(node, offset);
+        }
+        nodes
+    }
+
     fn tag(&self) -> widget::tree::Tag {
         self.content.as_widget().tag()
     }
@@ -479,6 +496,30 @@ impl<M> Widget<M, Theme, cosmic::Renderer> for Motion<'_, M> {
     ) {
         self.content.as_widget_mut().operate(tree, layout, renderer, operation);
     }
+
+    fn overlay<'a>(
+        &'a mut self,
+        tree: &'a mut widget::Tree,
+        layout: Layout<'a>,
+        renderer: &cosmic::Renderer,
+        viewport: &Rectangle,
+        translation: Vector,
+    ) -> Option<cosmic::iced::advanced::overlay::Element<'a, M, Theme, cosmic::Renderer>> {
+        let translation = translation + self.translation();
+        self.content
+            .as_widget_mut()
+            .overlay(tree, layout, renderer, viewport, translation)
+    }
+}
+
+fn translate_accessible_node(node: &mut iced_accessibility::A11yNode, offset: Vector) {
+    if let Some(mut bounds) = node.node().bounds() {
+        bounds.x0 += f64::from(offset.x);
+        bounds.x1 += f64::from(offset.x);
+        bounds.y0 += f64::from(offset.y);
+        bounds.y1 += f64::from(offset.y);
+        node.node_mut().set_bounds(bounds);
+    }
 }
 
 struct CollectRegions(Vec<Rectangle>);
@@ -527,6 +568,139 @@ impl widget::Operation for CollectRegions {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn motion_preserves_accessible_controls_and_translates_tooltip_overlays() {
+        use super::*;
+        use cosmic::iced::advanced::{clipboard, renderer::Headless};
+        use cosmic::iced::{Font, Pixels, Point};
+        let renderer = cosmic::iced::futures::executor::block_on(cosmic::Renderer::new(
+            Font::default(),
+            Pixels(14.),
+            Some("tiny-skia"),
+        ))
+        .unwrap();
+        let viewport = Rectangle::with_size(Size::new(400., 300.));
+        for edge in [ferese_panel::Edge::Top, ferese_panel::Edge::Bottom] {
+            let make_content = || {
+                // The toolkit tooltip itself does not expose an accessibility
+                // tree. A sibling button verifies our wrapper's forwarding.
+                cosmic::widget::row::with_capacity(2)
+                    .push(cosmic::widget::tooltip(
+                        cosmic::widget::Space::new().width(100).height(40),
+                        cosmic::widget::text("Tooltip"),
+                        cosmic::widget::tooltip::Position::Bottom,
+                    ))
+                    .push(
+                        cosmic::widget::button::custom(cosmic::widget::text("Action"))
+                            .name("Accessible action")
+                            .on_press(())
+                            .width(100)
+                            .height(40),
+                    )
+            };
+            let mut plain: Element<'_, ()> = make_content().into();
+            let mut plain_tree = widget::Tree::new(&plain);
+            let plain_node = plain.as_widget_mut().layout(
+                &mut plain_tree,
+                &renderer,
+                &layout::Limits::new(Size::ZERO, viewport.size()),
+            );
+            let plain_a11y =
+                plain
+                    .as_widget()
+                    .a11y_nodes(Layout::new(&plain_node), &plain_tree, mouse::Cursor::Unavailable);
+            assert!(!plain_a11y.root().is_empty());
+            let mut wrapped = animated_from_edge(make_content().into(), 0.5, Default::default(), 10., edge);
+            let mut tree = widget::Tree::new(&wrapped);
+            let node =
+                wrapped
+                    .as_widget_mut()
+                    .layout(&mut tree, &renderer, &layout::Limits::new(Size::ZERO, viewport.size()));
+            let offset = if edge == ferese_panel::Edge::Top { -2. } else { 2. };
+            let accessible = wrapped
+                .as_widget()
+                .a11y_nodes(Layout::new(&node), &tree, mouse::Cursor::Unavailable);
+            assert_eq!(accessible.root().len(), plain_a11y.root().len());
+            for (actual, expected) in accessible
+                .root()
+                .iter()
+                .chain(accessible.children())
+                .zip(plain_a11y.root().iter().chain(plain_a11y.children()))
+            {
+                assert_eq!(actual.node().label(), expected.node().label());
+                if let Some(bounds) = expected.node().bounds() {
+                    let actual = actual.node().bounds().unwrap();
+                    assert_eq!(actual.x0, bounds.x0);
+                    assert_eq!(actual.y0, bounds.y0 + offset);
+                }
+            }
+            let cursor = mouse::Cursor::Available(Point::new(50., 20.));
+            let event = Event::Mouse(mouse::Event::CursorMoved {
+                position: Point::new(50., 20.),
+            });
+            let mut messages = Vec::new();
+            plain.as_widget_mut().update(
+                &mut plain_tree,
+                &event,
+                Layout::new(&plain_node),
+                cursor,
+                &renderer,
+                &mut clipboard::Null,
+                &mut Shell::new(&mut messages),
+                &viewport,
+            );
+            wrapped.as_widget_mut().update(
+                &mut tree,
+                &event,
+                Layout::new(&node),
+                cursor,
+                &renderer,
+                &mut clipboard::Null,
+                &mut Shell::new(&mut messages),
+                &viewport,
+            );
+            let mut plain_overlay = plain
+                .as_widget_mut()
+                .overlay(
+                    &mut plain_tree,
+                    Layout::new(&plain_node),
+                    &renderer,
+                    &viewport,
+                    Vector::new(40., 80.),
+                )
+                .expect("tooltip opens");
+            let mut overlay = wrapped
+                .as_widget_mut()
+                .overlay(
+                    &mut tree,
+                    Layout::new(&node),
+                    &renderer,
+                    &viewport,
+                    Vector::new(40., 80.),
+                )
+                .expect("motion forwards tooltip");
+            let plain_layout = plain_overlay.as_overlay_mut().layout(&renderer, viewport.size());
+            let overlay_layout = overlay.as_overlay_mut().layout(&renderer, viewport.size());
+            fn tooltip_bounds(node: &layout::Node) -> Rectangle {
+                // Tooltip and row each return an overlay group; descend past
+                // full-viewport group nodes to the positioned tooltip root.
+                let mut node = node;
+                while let [child] = node.children() {
+                    if node.bounds().position() != cosmic::iced::Point::ORIGIN {
+                        break;
+                    }
+                    node = child;
+                }
+                node.bounds()
+            }
+            let plain_bounds = tooltip_bounds(&plain_layout);
+            let bounds = tooltip_bounds(&overlay_layout);
+            assert!(plain_bounds.y > 0.);
+            assert_eq!(bounds.x, plain_bounds.x);
+            assert_eq!(bounds.y, plain_bounds.y + offset as f32);
+        }
+    }
+
     #[test]
     fn duration_bounce_spring_finishes_popup_close() {
         let settings = super::Settings {

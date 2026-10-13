@@ -48,10 +48,20 @@ pub(crate) struct Engine {
     snapshot: Snapshot,
     value: Value,
     waiters: HashMap<u64, (u64, mpsc::SyncSender<Response>)>,
+    locked: bool,
     commands: Option<async_channel::Sender<Command>>,
 }
 
 impl Engine {
+    pub(crate) fn set_locked(&mut self, locked: bool) {
+        self.locked = locked;
+        if locked {
+            for (_, (id, response)) in self.waiters.drain() {
+                let _ = response.try_send(Response::error(id, "session_locked", "Session is locked"));
+            }
+        }
+    }
+
     pub(crate) fn value(&self) -> Value {
         if self.value.is_null() {
             serde_json::to_value(&self.snapshot).expect("serializable media snapshot")
@@ -75,7 +85,9 @@ impl Engine {
     }
 
     pub(crate) fn watch(&mut self, owner: u64, id: u64, since: u64, response: mpsc::SyncSender<Response>) {
-        if since != self.snapshot.revision {
+        if self.locked {
+            let _ = response.try_send(Response::error(id, "session_locked", "Session is locked"));
+        } else if since != self.snapshot.revision {
             let _ = response.try_send(Response::success(id, self.value()));
         } else {
             self.waiters.insert(owner, (id, response));

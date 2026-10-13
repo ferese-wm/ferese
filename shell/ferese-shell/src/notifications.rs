@@ -704,6 +704,32 @@ mod tests {
     }
 
     #[test]
+    fn dnd_immediately_removes_and_restores_a_persistent_bridged_notice() {
+        use cosmic::Application;
+        let mut app = crate::tests::shell_with_measured_panel();
+        app.snapshot.outputs.push(crate::control::OutputSnapshot {
+            id: 4,
+            name: "test".into(),
+            active_workspace: 1,
+            focused: true,
+        });
+        let (center, _commands) = fixture();
+        app.notifications = center;
+        app.config.activities.sources.notification_bridge = true;
+        app.notifications.configure_activity_bridge(true);
+        let bar = app.outputs[0].bar;
+        let mut persistent = notice(1);
+        persistent.timeout = None;
+        drop(app.update(crate::Message::NotificationEvent(Event::Notice(persistent))));
+        assert!(app.activity_available(bar));
+        drop(app.update(crate::Message::Control(crate::status::Action::Dnd(true))));
+        assert!(!app.activity_available(bar));
+        assert!(app.notifications.entries[0].live, "DND must not dismiss the notice");
+        drop(app.update(crate::Message::Control(crate::status::Action::Dnd(false))));
+        assert!(app.activity_available(bar));
+    }
+
+    #[test]
     fn bridge_creates_an_activity_and_removes_it_on_expiry_and_dismissal() {
         use cosmic::Application;
         let mut app = crate::tests::shell_with_measured_panel();

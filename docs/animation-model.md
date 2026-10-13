@@ -68,7 +68,7 @@ The main spring responds more quickly than the viewport spring, allowing a windo
 | Focus emphasis response | 0.8 × main spring response time |
 | Shadow response | 1.2 × main spring response time |
 
-Bounce must be strictly between −1 and 1. Negative values produce overdamping; positive values require `overshoot #true` so the crossing policy permits the requested bounce. Duration and speed must be finite and positive, and the resolved stiffness and damping must remain finite and positive too. If the configuration fails these checks, Ferese keeps the last accepted settings.
+Bounce must be strictly between −1 and 1. Negative values produce overdamping; positive values require `overshoot #true` so the crossing policy permits the requested bounce. Speed must be between 0.01 and 100, inclusive. Duration and the resolved stiffness and damping must be finite and positive. If the configuration fails these checks, Ferese keeps the last accepted settings.
 
 The [Morph panel](panel-configuration.md#morph) uses the same spring solver,
 with its own response and the shared speed and reduced-motion settings. Content

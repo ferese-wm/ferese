@@ -20,7 +20,7 @@ fn write_plain(writer: &mut impl Write, value: &Value, indent: usize) -> io::Res
             let mut fields = fields.iter().collect::<Vec<_>>();
             fields.sort_unstable_by_key(|(key, _)| *key);
             for (key, value) in fields {
-                write!(writer, "{:indent$}{key}:", "")?;
+                write!(writer, "{:indent$}{}:", "", terminal_text(key))?;
                 if value.is_object() || value.is_array() {
                     writeln!(writer)?;
                     write_plain(writer, value, indent + 2)?;
@@ -45,9 +45,21 @@ fn write_plain(writer: &mut impl Write, value: &Value, indent: usize) -> io::Res
 fn scalar(value: &Value) -> String {
     match value {
         Value::Null => "none".into(),
-        Value::String(text) => text.clone(),
+        Value::String(text) => terminal_text(text),
         value => value.to_string(),
     }
+}
+
+fn terminal_text(text: &str) -> String {
+    let mut escaped = String::with_capacity(text.len());
+    for character in text.chars() {
+        if character.is_control() {
+            escaped.extend(character.escape_default());
+        } else {
+            escaped.push(character);
+        }
+    }
+    escaped
 }
 
 /// Return false when a downstream consumer closes stdout.
@@ -67,6 +79,20 @@ pub fn write_json_line(writer: &mut impl Write, value: &impl serde::Serialize) -
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn plain_output_escapes_terminal_controls_in_keys_and_values() {
+        let mut bytes = Vec::new();
+        write_plain(
+            &mut bytes,
+            &serde_json::json!({"title\nspoof": "Terminal\u{1b}[2J\r\n\t\u{7}\u{9b} · 日本語"}),
+            0,
+        )
+        .unwrap();
+        assert_eq!(
+            String::from_utf8(bytes).unwrap(),
+            "title\\nspoof: Terminal\\u{1b}[2J\\r\\n\\t\\u{7}\\u{9b} · 日本語\n"
+        );
+    }
     #[test]
     fn plain_output_has_readable_fields_without_json_quotes() {
         let mut bytes = Vec::new();

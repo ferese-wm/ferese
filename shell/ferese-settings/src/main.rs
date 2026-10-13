@@ -330,6 +330,7 @@ impl cosmic::Application for App {
 
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
+            Message::DragWindow => return self.core.drag(None),
             Message::ReadRenderScale(id) => {
                 return cosmic::iced::window::scale_factor(id)
                     .map(|scale| cosmic::Action::App(Message::RenderScale(scale)));
@@ -1085,6 +1086,15 @@ mod tests {
             ),
         )
         .0
+    }
+
+    #[test]
+    fn header_drag_targets_the_main_window_and_handles_a_missing_window() {
+        let mut app = app();
+        app.core.set_main_window_id(None);
+        assert_eq!(app.update(Message::DragWindow).units(), 0);
+        app.core.set_main_window_id(Some(cosmic::iced::window::Id::unique()));
+        assert_eq!(app.update(Message::DragWindow).units(), 1);
     }
 
     fn shortcuts(count: usize) -> App {

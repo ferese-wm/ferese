@@ -33,3 +33,7 @@ image-codec = { package = "image", version = "0.25.10", default-features = false
 url = "2.5.8"
 base64 = "0.22.1"
 ureq = { version = "2.12.1", default-features = false, features = ["tls"] }
+
+[dev-dependencies]
+wayland-server.workspace = true
+ferese-protocols = { path = "../../crates/ferese-protocols", features = ["server"] }

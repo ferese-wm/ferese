@@ -370,6 +370,30 @@ fn locking_exits_binding_modes_and_retains_consumed_release_ownership() {
 }
 
 #[test]
+fn acquiring_lock_revokes_activity_and_media_subscriptions() {
+    let Some(mut fixture) =
+        Fixture::new("session_lock::tests::acquiring_lock_revokes_activity_and_media_subscriptions")
+    else {
+        return;
+    };
+    fixture.output("pending");
+    let revision = fixture.state.activities.snapshot().revision;
+    let (activities, activity_reply) = std::sync::mpsc::sync_channel(1);
+    let (media, media_reply) = std::sync::mpsc::sync_channel(1);
+    fixture.state.activities.watch(1, 11, revision, activities);
+    let media_revision = fixture.state.media_engine.value()["revision"].as_u64().unwrap();
+    fixture.state.media_engine.watch(2, 22, media_revision, media);
+    let _locker = fixture.acquire();
+    assert!(matches!(fixture.state.session_lock.lifecycle, Lifecycle::Acquiring(_)));
+    for (id, receiver) in [(11, activity_reply), (22, media_reply)] {
+        let response = receiver.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert_eq!(response.id, id);
+        assert!(response.result.is_none());
+        assert_eq!(response.error.unwrap().code, "session_locked");
+    }
+}
+
+#[test]
 fn lock_confirms_without_outputs() {
     let Some(mut fixture) = Fixture::new("session_lock::tests::lock_confirms_without_outputs") else {
         return;

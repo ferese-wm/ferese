@@ -400,7 +400,7 @@ pub(super) fn layer_elements(
     let Some(mode) = output.current_mode() else {
         return Vec::new();
     };
-    let output_crop = Rectangle::<i32, Physical>::from_size(mode.size);
+    let output_crop = layer_output_crop(mode.size, output.current_transform());
     let layers = {
         let map = layer_map_for_output(output);
 
@@ -455,6 +455,10 @@ pub(super) fn layer_elements(
     }
 
     elements
+}
+
+fn layer_output_crop(size: Size<i32, Physical>, transform: Transform) -> Rectangle<i32, Physical> {
+    Rectangle::from_size(transform.transform_size(size))
 }
 
 pub(super) fn cursor_elements(
@@ -525,5 +529,40 @@ pub(super) fn cursor_elements(
                 .unwrap_or_default()
         }
         CursorImageStatus::Hidden => Vec::new(),
+    }
+}
+
+#[cfg(test)]
+mod layer_crop_tests {
+    use super::*;
+
+    #[test]
+    fn layer_crop_keeps_bottom_edge_content_in_every_output_transform() {
+        use smithay::backend::renderer::element::solid::SolidColorRenderElement;
+
+        let mode = Size::<i32, Physical>::from((1920, 1080));
+        for transform in [
+            Transform::Normal,
+            Transform::_90,
+            Transform::_180,
+            Transform::_270,
+            Transform::Flipped,
+            Transform::Flipped90,
+            Transform::Flipped180,
+            Transform::Flipped270,
+        ] {
+            let size = transform.transform_size(mode);
+            let geometry = Rectangle::new((0, size.h - 36).into(), (size.w, 36).into());
+            let panel = SolidColorRenderElement::new(
+                Id::new(),
+                geometry,
+                CommitCounter::default(),
+                [1.0; 4],
+                RenderElementKind::Unspecified,
+            );
+            let crop = CropRenderElement::from_element(panel, 1.0, layer_output_crop(mode, transform))
+                .expect("bottom panel must remain visible");
+            assert_eq!(crop.geometry(1.0.into()), geometry, "{transform:?}");
+        }
     }
 }

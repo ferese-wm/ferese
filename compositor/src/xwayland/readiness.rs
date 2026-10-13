@@ -273,40 +273,6 @@ mod tests {
         }
     }
 
-    /// Send `payload` with `MSG_TRUNC`, which makes the kernel deliver a short
-    /// datagram and set `MSG_TRUNC` on the receiver.
-    fn send_truncated_from_child(path: &Path, payload: &[u8]) {
-        // SAFETY: the child performs only sendmsg and _exit, both
-        // async-signal-safe, on freshly created descriptors.
-        unsafe {
-            let pid = libc::fork();
-            assert!(pid >= 0, "fork must succeed");
-            if pid == 0 {
-                let fd = connect_datagram(path);
-                if fd < 0 {
-                    libc::_exit(70);
-                }
-                let mut iov = libc::iovec {
-                    iov_base: payload.as_ptr().cast_mut().cast(),
-                    iov_len: payload.len(),
-                };
-                let mut message: libc::msghdr = std::mem::zeroed();
-                message.msg_iov = std::ptr::from_mut(&mut iov);
-                message.msg_iovlen = 1;
-                // The kernel truncates the payload and reports MSG_TRUNC.
-                message.msg_flags = libc::MSG_TRUNC;
-                let sent = libc::sendmsg(fd, std::ptr::from_ref(&message), libc::MSG_NOSIGNAL);
-                libc::_exit(if sent >= 0 { 0 } else { 71 });
-            }
-            let mut status = 0;
-            libc::waitpid(pid, std::ptr::from_mut(&mut status), 0);
-            assert!(
-                libc::WIFEXITED(status) && libc::WEXITSTATUS(status) == 0,
-                "child must send a truncated datagram"
-            );
-        }
-    }
-
     /// Send `READY=1` from a child that also passes a descriptor.
     ///
     /// The child stays alive so the receiver can name its PID, and the extra
@@ -377,13 +343,23 @@ mod tests {
     fn a_truncated_notification_is_rejected_even_with_valid_credentials() {
         let runtime = private_runtime_dir("truncated");
         let socket = ReadinessSocket::create(&runtime, 21).unwrap();
-        let path = socket.path().to_owned();
-
-        send_truncated_from_child(&path, b"READY=1");
-        // Any PID is fine here: the point is the flag, not the credential.
+        let sender = UnixDatagram::unbound().unwrap();
+        sender.connect(socket.path()).unwrap();
+        let mut payload = b"READY=1\nSTATUS=".to_vec();
+        payload.resize(1024, b'x');
+        // Both the whole message and its received prefix would otherwise pass
+        // the parser. The kernel truncates it to the 512-byte receive buffer.
+        assert_eq!(exact_line(&payload, b"READY=1"), Some(true));
+        assert_eq!(exact_line(&payload[..512], b"READY=1"), Some(true));
+        sender.send(&payload).unwrap();
         assert!(
-            !recv_within(&socket, u32::MAX),
-            "MSG_TRUNC must never satisfy readiness"
+            !recv_within(&socket, std::process::id()),
+            "an oversized message from the expected PID must be rejected"
+        );
+        sender.send(b"READY=1").unwrap();
+        assert!(
+            recv_within(&socket, std::process::id()),
+            "valid credentials must still be accepted"
         );
     }
 

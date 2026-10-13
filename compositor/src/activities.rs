@@ -31,6 +31,7 @@ pub(crate) struct Engine {
     cached_snapshot: Option<Arc<Snapshot>>,
     publisher: Option<publication::Publisher>,
     watchers: BTreeMap<u64, (u64, SyncSender<Response>)>,
+    locked: bool,
     rates: BTreeMap<Owner, (u64, u16)>,
     windows: BTreeMap<Id, u64>,
     results: BTreeMap<Id, ferese_config::activities::ResultText>,
@@ -55,6 +56,7 @@ impl Default for Engine {
                 .map_err(|error| tracing::warn!(%error, "activity snapshot worker unavailable"))
                 .ok(),
             watchers: BTreeMap::new(),
+            locked: false,
             rates: BTreeMap::new(),
             results: BTreeMap::new(),
             windows: BTreeMap::new(),
@@ -159,7 +161,20 @@ impl Engine {
     pub fn remove_connection(&mut self, owner: u64) {
         self.watchers.remove(&owner);
     }
+    pub fn set_locked(&mut self, locked: bool) {
+        self.locked = locked;
+        if locked {
+            if let Some(publisher) = &self.publisher {
+                publisher.revoke();
+            }
+            publication::locked(std::mem::take(&mut self.watchers).into_values().collect());
+        }
+    }
     fn deliver(&mut self, recipients: Vec<(u64, SyncSender<Response>)>) {
+        if self.locked {
+            publication::locked(recipients);
+            return;
+        }
         if recipients.is_empty() {
             return;
         }
@@ -174,7 +189,7 @@ impl Engine {
         self.deliver(vec![(request, sender)]);
     }
     pub fn watch(&mut self, connection: u64, request: u64, since: u64, sender: SyncSender<Response>) {
-        if since != self.revision {
+        if self.locked || since != self.revision {
             self.get(request, sender);
         } else if self.watchers.len() < 32 {
             self.watchers.insert(connection, (request, sender));
@@ -492,6 +507,32 @@ mod tests {
             template: Template::Progress,
         }
     }
+    #[test]
+    fn session_lock_cancels_pending_and_rejects_new_activity_reads() {
+        let mut engine = Engine::default();
+        let revision = engine.snapshot().revision;
+        let (send, receive) = std::sync::mpsc::sync_channel(1);
+        engine.watch(1, 42, revision, send);
+        engine.set_locked(true);
+        let reply = receive.recv().unwrap();
+        assert_eq!(reply.id, 42);
+        assert_eq!(reply.error.unwrap().code, "session_locked");
+        assert!(reply.result.is_none());
+        engine.changed();
+        for since in [revision, engine.revision] {
+            let (send, receive) = std::sync::mpsc::sync_channel(1);
+            engine.watch(2, 43, since, send);
+            assert_eq!(receive.recv().unwrap().error.unwrap().code, "session_locked");
+        }
+        let (send, receive) = std::sync::mpsc::sync_channel(1);
+        engine.get(44, send);
+        assert_eq!(receive.recv().unwrap().error.unwrap().code, "session_locked");
+        engine.set_locked(false);
+        let (send, receive) = std::sync::mpsc::sync_channel(1);
+        engine.watch(3, 45, revision, send);
+        assert!(receive.recv_timeout(Duration::from_secs(2)).unwrap().result.is_some());
+    }
+
     #[test]
     fn rejected_updates_do_not_leave_a_snapshot_from_before_lease_expiry() {
         let mut engine = Engine::default();

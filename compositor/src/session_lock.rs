@@ -434,6 +434,8 @@ impl SessionLockHandler for Ferese {
         // Replacing an orphan never passes through Unlocked. Existing protected
         // presentation facts remain valid, but old surfaces must not own input.
         self.session_lock.lifecycle = Lifecycle::Acquiring(confirmation);
+        self.activities.set_locked(true);
+        self.media_engine.set_locked(true);
         self.set_binding_mode("default");
         self.capture_epoch = self.capture_epoch.wrapping_add(1);
         self.session_lock.surfaces.clear();
@@ -484,6 +486,8 @@ impl SessionLockHandler for Ferese {
         }
         let sleeping = self.session_lock.sleeping;
         self.session_lock = Lock::default();
+        self.activities.set_locked(false);
+        self.media_engine.set_locked(false);
         self.refresh_idle_inhibition();
         if sleeping {
             crate::backends::direct::wake_locked_outputs(self);

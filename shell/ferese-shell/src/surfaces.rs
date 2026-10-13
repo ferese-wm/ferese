@@ -7,6 +7,9 @@ use super::{
     wayland, window, wl_output, wl_registry, wl_surface,
 };
 
+#[cfg(test)]
+mod tests;
+
 pub(super) fn panel_placement(edge: ferese_panel::Edge, margin: i32, side: i32) -> (Anchor, IcedMargin) {
     let (anchor, top, bottom) = match edge {
         ferese_panel::Edge::Top => (Anchor::TOP, margin, 0),
@@ -410,7 +413,7 @@ impl FereseShell {
                             return self.sync_notification_surface();
                         }
                         wayland::PopupEvent::Configured { .. } => {
-                            menu.prepare_surface(&surface);
+                            menu.prepare_surface(&mut self.effects_context, &surface);
                         }
                         _ => {}
                     }
@@ -438,7 +441,7 @@ impl FereseShell {
                 if let Some(menu) = &mut self.menu
                     && menu.effects.is_none()
                 {
-                    menu.prepare_surface(&surface);
+                    menu.prepare_surface(&mut self.effects_context, &surface);
                 }
                 Task::none()
             }
@@ -457,7 +460,7 @@ impl FereseShell {
                 let entry = self.notification_surface.as_mut().unwrap();
 
                 if entry.effects.is_none() {
-                    match EffectsBinding::attach_role(&surface, None, 1.0) {
+                    match EffectsBinding::attach_role(&mut self.effects_context, &surface, None, 1.0) {
                         Ok(binding) => entry.effects = Some(binding),
                         Err(error) => {
                             eprintln!("ferese-shell: notification effects unavailable: {error}")
@@ -493,9 +496,9 @@ impl FereseShell {
 
         let binding = if islands {
             // Wait for measured island bounds rather than briefly painting the full bar.
-            EffectsBinding::attach_role(surface, None, 1.0)
+            EffectsBinding::attach_role(&mut self.effects_context, surface, None, 1.0)
         } else {
-            EffectsBinding::attach(surface, !hidden)
+            EffectsBinding::attach(&mut self.effects_context, surface, !hidden)
         };
 
         match binding {
@@ -585,11 +588,28 @@ fn validate_region_counts(regions: usize, opacities: usize) -> Result<(), std::i
 
 type EffectPresentation = (Vec<[f32; 5]>, u32, Vec<u32>, ferese_surface_effects_v1::Role);
 
+// Keep one registry on the shell connection: wl_registry has no destructor on
+// the protocol versions we support, so creating one per popup leaks objects.
+pub(super) struct EffectsContext {
+    connection: Connection,
+    manager: Option<FereseEffectsManagerV1>,
+    _globals: wayland_client::globals::GlobalList,
+    queue: EventQueue<EffectsState>,
+}
+
+impl Drop for EffectsContext {
+    fn drop(&mut self) {
+        if let Some(manager) = &self.manager {
+            manager.destroy();
+        }
+        let _ = self.connection.flush();
+    }
+}
+
 pub(super) struct EffectsBinding {
     connection: Connection,
-    _manager: FereseEffectsManagerV1,
+    _context: std::rc::Rc<EffectsContext>,
     pub(super) surface: FereseSurfaceEffectsV1,
-    _queue: EventQueue<EffectsState>,
     regions: std::cell::RefCell<Option<Vec<[f32; 5]>>>,
     opacity: std::cell::Cell<Option<u32>>,
     presentation: std::cell::RefCell<Option<EffectPresentation>>,
@@ -597,8 +617,13 @@ pub(super) struct EffectsBinding {
 }
 
 impl EffectsBinding {
-    pub(super) fn attach(surface: &wl_surface::WlSurface, visible: bool) -> Result<Self, Box<dyn std::error::Error>> {
+    pub(super) fn attach(
+        context: &mut Option<std::rc::Rc<EffectsContext>>,
+        surface: &wl_surface::WlSurface,
+        visible: bool,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         Self::attach_role(
+            context,
             surface,
             visible.then_some(ferese_surface_effects_v1::Role::Panel),
             if visible { 1.0 } else { 0.0 },
@@ -606,6 +631,7 @@ impl EffectsBinding {
     }
 
     pub(super) fn attach_role(
+        context: &mut Option<std::rc::Rc<EffectsContext>>,
         surface: &wl_surface::WlSurface,
         role: Option<ferese_surface_effects_v1::Role>,
         opacity: f32,
@@ -615,30 +641,50 @@ impl EffectsBinding {
             .upgrade()
             .ok_or("libcosmic Wayland connection is no longer alive")?;
         let connection = Connection::from_backend(backend);
-        let (globals, queue) = registry_queue_init::<EffectsState>(&connection)?;
-        let qh = queue.handle();
-        let manager = globals.bind::<FereseEffectsManagerV1, _, _>(&qh, 6..=6, ())?;
-        let effects = manager.get_surface_effects(surface, &qh, ());
+        // Native handles can create distinct borrowed Backend wrappers around
+        // the same wl_display. Backend equality compares wrappers, not displays.
+        if context
+            .as_ref()
+            .is_none_or(|context| context.connection.backend().display_ptr() != connection.backend().display_ptr())
+        {
+            let (globals, queue) = registry_queue_init::<EffectsState>(&connection)?;
+            // Cache the registry even when this compositor lacks our extension.
+            let manager = globals
+                .bind::<FereseEffectsManagerV1, _, _>(&queue.handle(), 6..=6, ())
+                .ok();
+            *context = Some(std::rc::Rc::new(EffectsContext {
+                connection: connection.clone(),
+                manager,
+                _globals: globals,
+                queue,
+            }));
+        }
+        let context = context.as_ref().unwrap().clone();
+        let effects = context
+            .manager
+            .as_ref()
+            .ok_or("Ferese effects protocol unavailable")?
+            .get_surface_effects(surface, &context.queue.handle(), ());
 
         let opacity = (opacity.clamp(0.0, 1.0) * 1000.0).round() as u32;
-        effects.set_opacity(opacity);
-        if let Some(role) = role {
-            effects.set_role(role);
-        } else {
-            effects.clear_role();
-        }
-        connection.flush()?;
-
-        Ok(Self {
+        // Own the protocol object before any fallible operation, including flush.
+        let binding = Self {
             connection,
-            _manager: manager,
+            _context: context,
             surface: effects,
-            _queue: queue,
             regions: Default::default(),
             opacity: std::cell::Cell::new(Some(opacity)),
             presentation: Default::default(),
             panel_presentation: Default::default(),
-        })
+        };
+        binding.surface.set_opacity(opacity);
+        if let Some(role) = role {
+            binding.surface.set_role(role);
+        } else {
+            binding.surface.clear_role();
+        }
+        binding.connection.flush()?;
+        Ok(binding)
     }
 
     pub(super) fn set_panel_presentation(
@@ -741,6 +787,13 @@ impl EffectsBinding {
             self.opacity.set(Some(opacity));
         }
         Ok(())
+    }
+}
+
+impl Drop for EffectsBinding {
+    fn drop(&mut self) {
+        self.surface.destroy();
+        let _ = self.connection.flush();
     }
 }
 

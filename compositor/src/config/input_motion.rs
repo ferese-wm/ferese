@@ -48,7 +48,12 @@ impl Config {
     }
 
     pub fn animation_speed(&self) -> Result<f64, ConfigError> {
-        positive_animation_value(self.animations.speed, "speed")
+        self.animations
+            .validate_speed()
+            .map_err(|_| ConfigError::AnimationValue {
+                field: "speed",
+                value: self.animations.speed,
+            })
     }
 
     pub fn spring_config(&self) -> Result<SpringConfig, ConfigError> {
@@ -57,14 +62,6 @@ impl Config {
 
     pub fn viewport_spring_config(&self) -> Result<SpringConfig, ConfigError> {
         self.animations.viewport_config().map_err(ConfigError::Binding)
-    }
-}
-
-pub(super) fn positive_animation_value(value: f64, field: &'static str) -> Result<f64, ConfigError> {
-    if value.is_finite() && value > 0.0 {
-        Ok(value)
-    } else {
-        Err(ConfigError::AnimationValue { field, value })
     }
 }
 
@@ -151,3 +148,16 @@ impl Default for TouchpadConfig {
 }
 
 pub(super) type AnimationsConfig = ferese_animation::MotionSettings;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compositor_speed_uses_shared_motion_bounds() {
+        for speed in [1e-100, 0.009, 101.0, 1e100] {
+            let config = Config::parse_source(&format!("animations {{ speed {speed:e}; }}")).unwrap();
+            assert!(config.animation_speed().is_err());
+        }
+    }
+}

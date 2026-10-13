@@ -275,6 +275,74 @@ mod tests {
     }
 
     #[test]
+    fn wallpaper_only_reload_applies_path_and_mode_changes() {
+        if !crate::startup_tests::private_runtime("reload::tests::wallpaper_only_reload_applies_path_and_mode_changes")
+        {
+            return;
+        }
+        let mut events = calloop::EventLoop::try_new().unwrap();
+        let mut state = crate::startup_tests::state(&mut events);
+        let directory = tempfile::tempdir().unwrap();
+        let image_path = directory.path().join("wallpaper.png");
+        image::RgbaImage::new(2, 2).save(&image_path).unwrap();
+        for mode in ["fit", "fill"] {
+            let source = format!("wallpaper {{ path \"{}\"; mode \"{mode}\"; }}", image_path.display());
+            let (_, runtime, candidate) = crate::config::prepare(&source, directory.path()).unwrap();
+            // Model a settled theme; changing only the wallpaper must still apply.
+            state.theme_engine.live.theme = candidate.theme.clone();
+            state.theme_engine.live.presented = candidate.theme;
+            state.reload_config_source(source.clone()).unwrap();
+            assert_eq!(state.wallpaper.configuration(), &runtime.wallpaper);
+            let revision = state.ipc_events.config_revision;
+            state.reload_config_source(source).unwrap();
+            assert_eq!(state.ipc_events.config_revision, revision);
+        }
+        let candidate = crate::config::prepare("", directory.path()).unwrap().2;
+        state.theme_engine.live.theme = candidate.theme.clone();
+        state.theme_engine.live.presented = candidate.theme.clone();
+        let wallpaper = crate::wallpaper::WallpaperConfig {
+            path: None,
+            ..state.wallpaper.configuration().clone()
+        };
+        state.accept_theme(candidate, wallpaper.clone());
+        assert_eq!(state.wallpaper.configuration(), &wallpaper);
+    }
+
+    #[test]
+    fn rejected_keymap_reload_preserves_other_configuration() {
+        if !crate::startup_tests::private_runtime("reload::tests::rejected_keymap_reload_preserves_other_configuration")
+        {
+            return;
+        }
+        let mut events = calloop::EventLoop::try_new().unwrap();
+        let mut state = crate::startup_tests::state(&mut events);
+        let before_xwayland = state.xwayland_config.enabled;
+        let before_activities = state.activities.snapshot().revision;
+        let before_layout = state.workspaces.active().layout.mode();
+        let before_input = state.input_settings.clone();
+        let mut runtime = crate::config::Config::default().runtime_config().unwrap();
+        runtime.xwayland.enabled = !before_xwayland;
+        runtime.layout_mode = ferese_core::LayoutMode::Tree;
+        // Exercise application failure after preparation, for example when an
+        // XKB file disappears before the compositor installs the new keymap.
+        runtime.input_settings.xkb_layout = "ferese_missing_keymap_for_reload_test".into();
+        let error = state.apply_runtime_config(runtime, &serde_json::json!({})).unwrap_err();
+        assert!(error.contains("keymap reload failed"), "{error}");
+        assert_eq!(state.xwayland_config.enabled, before_xwayland);
+        assert_eq!(state.activities.snapshot().revision, before_activities);
+        assert_eq!(state.workspaces.active().layout.mode(), before_layout);
+        assert_eq!(state.input_settings, before_input);
+
+        let mut runtime = crate::config::Config::default().runtime_config().unwrap();
+        runtime.xwayland.enabled = !before_xwayland;
+        runtime.layout_mode = ferese_core::LayoutMode::Tree;
+        state.apply_runtime_config(runtime, &serde_json::json!({})).unwrap();
+        assert_eq!(state.xwayland_config.enabled, !before_xwayland);
+        assert_eq!(state.workspaces.active().layout.mode(), ferese_core::LayoutMode::Tree);
+        assert!(state.activities.snapshot().revision > before_activities);
+    }
+
+    #[test]
     fn worker_reload_applies_once_and_rejects_invalid_configuration() {
         const CHILD: &str = "FERESE_WORKER_RELOAD_TEST_CHILD";
         if std::env::var_os(CHILD).is_none() {

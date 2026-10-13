@@ -114,3 +114,28 @@ fn metadata_and_position_updates_do_not_recompute_idle_policy() {
     ));
     assert!(inhibition_changed(std::slice::from_ref(&before), &[]));
 }
+
+#[test]
+fn session_lock_cancels_pending_and_rejects_new_media_watches() {
+    let mut engine = Engine::default();
+    let (send, receive) = mpsc::sync_channel(1);
+    engine.watch(1, 42, 0, send);
+    engine.set_locked(true);
+    let reply = receive.recv().unwrap();
+    assert_eq!(reply.id, 42);
+    assert!(reply.result.is_none());
+    assert_eq!(reply.error.unwrap().code, "session_locked");
+    engine.update(Snapshot {
+        selected: Some(player("private", Playback::Playing).view),
+        ..Default::default()
+    });
+    for since in [0, engine.snapshot.revision] {
+        let (send, receive) = mpsc::sync_channel(1);
+        engine.watch(2, 43, since, send);
+        assert_eq!(receive.recv().unwrap().error.unwrap().code, "session_locked");
+    }
+    engine.set_locked(false);
+    let (send, receive) = mpsc::sync_channel(1);
+    engine.watch(3, 44, 0, send);
+    assert!(receive.recv().unwrap().result.is_some());
+}

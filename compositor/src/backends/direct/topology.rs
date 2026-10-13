@@ -4,21 +4,21 @@ use std::path::PathBuf;
 use super::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Availability {
-    Ready(DrmNode),
-    Degraded(DrmNode),
+pub(super) enum Availability<Node = DrmNode> {
+    Ready(Node),
+    Degraded(Node),
     Missing,
     Unavailable,
 }
 
-pub(super) struct DeviceState {
-    pub availability: Availability,
+pub(super) struct DeviceState<Node = DrmNode> {
+    pub availability: Availability<Node>,
     identity: Option<PathBuf>,
     failures: u32,
     retry_at: Option<Instant>,
 }
 
-impl Default for DeviceState {
+impl<Node> Default for DeviceState<Node> {
     fn default() -> Self {
         Self {
             availability: Availability::Missing,
@@ -29,19 +29,12 @@ impl Default for DeviceState {
     }
 }
 
-fn device_identity(path: &Path) -> Option<PathBuf> {
+pub(super) fn device_identity(path: &Path) -> Option<PathBuf> {
     // The parent hardware identity survives cardN renumbering after unplug.
     std::fs::canonicalize(Path::new("/sys/class/drm").join(path.file_name()?).join("device")).ok()
 }
 
-impl DeviceState {
-    pub fn known(path: &Path) -> Self {
-        Self {
-            identity: device_identity(path),
-            ..Self::default()
-        }
-    }
-
+impl<Node> DeviceState<Node> {
     fn current_path<'a>(&self, original: &Path, observed: &'a [(PathBuf, Option<PathBuf>)]) -> Option<&'a Path> {
         observed
             .iter()
@@ -58,7 +51,7 @@ impl DeviceState {
         self.retry_at = Some(now + Duration::from_secs(1u64 << self.failures.saturating_sub(1).min(5)));
     }
 
-    pub fn ready(&mut self, node: DrmNode) {
+    pub fn ready(&mut self, node: Node) {
         self.availability = Availability::Ready(node);
         self.failures = 0;
         self.retry_at = None;
@@ -69,12 +62,18 @@ impl DeviceState {
         self.failures = 0;
         self.retry_at = None;
     }
+
+    fn degraded(&mut self, node: Node, now: Instant) {
+        self.failed(now);
+        self.availability = Availability::Degraded(node);
+    }
 }
 
-#[derive(Default)]
-pub(super) struct Topology {
-    pub devices: HashMap<PathBuf, DeviceState>,
-    pub invalidated: HashSet<DrmNode>,
+pub(super) struct Topology<Node = DrmNode> {
+    // Hardware paths are stable keys; use the card path only when sysfs identity
+    // is unavailable. A reused card number must not replace another GPU's slot.
+    pub devices: HashMap<PathBuf, DeviceState<Node>>,
+    pub invalidated: HashSet<Node>,
     pub reconciling: bool,
     pub dirty: bool,
     pub layout_dirty: bool,
@@ -84,7 +83,61 @@ pub(super) struct Topology {
     pub coalescer: crate::output_policy::Debouncer,
 }
 
-impl Topology {
+impl<Node> Default for Topology<Node> {
+    fn default() -> Self {
+        Self {
+            devices: HashMap::new(),
+            invalidated: HashSet::new(),
+            reconciling: false,
+            dirty: false,
+            layout_dirty: false,
+            remember_applied: false,
+            retry_timer: None,
+            settle_timer: None,
+            coalescer: Default::default(),
+        }
+    }
+}
+
+// Node identity is opaque to reconciliation; tests use integers without opening
+// DRM devices or depending on which nodes happen to exist in the host's sysfs.
+impl<Node: Copy + Eq + std::hash::Hash> Topology<Node> {
+    pub fn observe_devices(&mut self, observed: &[(PathBuf, Option<PathBuf>)]) {
+        for (path, identity) in observed {
+            let key = identity.as_ref().unwrap_or(path);
+            let fallback = if identity.is_some() {
+                self.devices.remove(path)
+            } else {
+                None
+            };
+            if self.devices.contains_key(key) {
+                continue;
+            }
+            // Preserve a slot first discovered before its sysfs identity was
+            // available, including its live DRM resources and retry state.
+            let mut slot = fallback.unwrap_or_default();
+            slot.identity = identity.clone();
+            self.devices.insert(key.clone(), slot);
+        }
+    }
+
+    fn retire_changed_devices(
+        &mut self,
+        observed: &[(PathBuf, Option<PathBuf>)],
+        node_for_path: impl Fn(&Path) -> Option<Node>,
+    ) -> HashSet<Node> {
+        let mut retired = HashSet::new();
+        for (key, slot) in &mut self.devices {
+            if let Availability::Ready(previous) | Availability::Degraded(previous) = slot.availability
+                && slot.current_path(key, observed).and_then(&node_for_path) != Some(previous)
+            {
+                retired.insert(previous);
+                slot.missing();
+            }
+        }
+        retired
+    }
+
     pub fn request(&mut self, active: bool) -> bool {
         self.dirty = true;
         active && !self.reconciling
@@ -133,8 +186,7 @@ pub(super) fn reconcile_outputs(state: &mut Ferese, reactivate: bool) {
     if let Some(token) = backend.topology.retry_timer.take() {
         state.loop_handle.remove(token);
     }
-    let mut paths = backend.topology.devices.keys().cloned().collect::<Vec<_>>();
-    let invalidated = std::mem::take(&mut backend.topology.invalidated);
+    let mut invalidated = std::mem::take(&mut backend.topology.invalidated);
     let observed = all_gpus(backend.session.seat()).map(|paths| {
         paths
             .into_iter()
@@ -152,19 +204,16 @@ pub(super) fn reconcile_outputs(state: &mut Ferese, reactivate: bool) {
         automatic && super::super::power::low_power(backend.low_power, super::super::power::battery_percent());
 
     if let Ok(observed) = &observed {
-        for (path, identity) in observed {
-            if !backend
+        backend.topology.observe_devices(observed);
+        // Retire every obsolete node before opening any replacement. Otherwise
+        // a later missing slot could remove a new GPU that reused its dev_t.
+        invalidated.extend(
+            backend
                 .topology
-                .devices
-                .values()
-                .any(|slot| slot.identity == *identity && identity.is_some())
-                && !backend.topology.devices.contains_key(path)
-            {
-                backend.topology.devices.insert(path.clone(), DeviceState::known(path));
-                paths.push(path.clone());
-            }
-        }
+                .retire_changed_devices(observed, |path| DrmNode::from_path(path).ok()),
+        );
     }
+    let mut paths = backend.topology.devices.keys().cloned().collect::<Vec<_>>();
     paths.sort();
     let mut ready = Vec::new();
     state.begin_desktop_transition();
@@ -290,8 +339,8 @@ pub(super) fn reconcile_outputs(state: &mut Ferese, reactivate: bool) {
     }) {
         tracing::warn!(%error, "monitor policy validation failed; retaining applied outputs");
         state.direct_backend.as_mut().unwrap().output_error = Some(error);
-        for (path, _) in &ready {
-            slot_mut(state, path).failed(Instant::now());
+        for (path, node) in &ready {
+            slot_mut(state, path).degraded(*node, Instant::now());
         }
     } else {
         // Activate destinations before disabling former owners, including across GPUs.
@@ -314,8 +363,7 @@ pub(super) fn reconcile_outputs(state: &mut Ferese, reactivate: bool) {
                 entry.ready(*node);
                 succeeded.push(*node);
             } else {
-                entry.failed(Instant::now());
-                entry.availability = Availability::Degraded(*node);
+                entry.degraded(*node, Instant::now());
                 // Device boundaries are not cross-GPU atomic. Compensate already
                 // applied devices using their last actual hardware settings.
                 if !known_good.outputs.is_empty() {
@@ -483,8 +531,130 @@ mod tests {
     use super::*;
 
     #[test]
+    fn replacement_gpu_at_the_same_card_path_gets_its_own_slot() {
+        let card = PathBuf::from("/dev/dri/card0");
+        let a = PathBuf::from("/sys/devices/gpu-a");
+        let b = PathBuf::from("/sys/devices/gpu-b");
+        let node = 1;
+        let mut topology = Topology::<u64>::default();
+        topology.observe_devices(&[(card.clone(), Some(a.clone()))]);
+        topology.devices.get_mut(&a).unwrap().ready(node);
+        // A policy failure keeps the device open, so it must retain ownership
+        // of its node until replacement retirement runs.
+        topology.devices.get_mut(&a).unwrap().degraded(node, Instant::now());
+        let observed = [(card.clone(), Some(b.clone()))];
+        topology.observe_devices(&observed);
+        assert_eq!(
+            topology.retire_changed_devices(&observed, |_| Some(node)),
+            HashSet::from([node])
+        );
+        assert_eq!(topology.devices[&a].availability, Availability::Missing);
+        assert_eq!(topology.devices[&a].current_path(&a, &observed), None);
+        assert_eq!(topology.devices[&b].current_path(&b, &observed), Some(card.as_path()));
+        topology.devices.get_mut(&b).unwrap().ready(node);
+        assert!(topology.retire_changed_devices(&observed, |_| Some(node)).is_empty());
+    }
+
+    #[test]
+    fn renumbered_and_returning_gpus_keep_independent_slots() {
+        let a = PathBuf::from("/sys/devices/gpu-a");
+        let b = PathBuf::from("/sys/devices/gpu-b");
+        let card0 = PathBuf::from("/dev/dri/card0");
+        let card2 = PathBuf::from("/dev/dri/card2");
+        let node0 = 1;
+        let node2 = 2;
+        let mut topology = Topology::<u64>::default();
+        topology.observe_devices(&[(card0.clone(), Some(a.clone()))]);
+        topology.devices.get_mut(&a).unwrap().ready(node0);
+        let observed = [(card0.clone(), Some(b.clone())), (card2.clone(), Some(a.clone()))];
+        for _ in 0..2 {
+            topology.observe_devices(&observed);
+        }
+        assert_eq!(topology.devices.len(), 2);
+        assert_eq!(topology.devices[&a].current_path(&a, &observed), Some(card2.as_path()));
+        assert_eq!(topology.devices[&b].current_path(&b, &observed), Some(card0.as_path()));
+        assert_eq!(
+            topology.retire_changed_devices(&observed, |path| Some(if path == card0 { node0 } else { node2 })),
+            HashSet::from([node0])
+        );
+    }
+
+    #[test]
+    fn discovering_sysfs_identity_preserves_the_existing_slot() {
+        let card = PathBuf::from("/dev/dri/card0");
+        let identity = PathBuf::from("/sys/devices/gpu");
+        let node = 1;
+        let mut topology = Topology::<u64>::default();
+        topology.observe_devices(&[(card.clone(), None)]);
+        topology.devices.get_mut(&card).unwrap().ready(node);
+        topology.observe_devices(&[(card.clone(), Some(identity.clone()))]);
+        assert_eq!(topology.devices.len(), 1);
+        assert_eq!(topology.devices[&identity].availability, Availability::Ready(node));
+    }
+
+    #[test]
+    fn temporary_identity_loss_reconciles_through_the_card_path() {
+        let card = PathBuf::from("/dev/dri/card0");
+        let identity = PathBuf::from("/sys/devices/gpu");
+        let known = [(card.clone(), Some(identity.clone()))];
+        let unknown = [(card.clone(), None)];
+        let mut topology = Topology::<u64>::default();
+        topology.observe_devices(&known);
+        topology.devices.get_mut(&identity).unwrap().ready(1);
+
+        topology.observe_devices(&unknown);
+        assert_eq!(
+            topology.retire_changed_devices(&unknown, |_| Some(1)),
+            HashSet::from([1])
+        );
+        assert_eq!(topology.devices[&identity].availability, Availability::Missing);
+        assert_eq!(
+            topology.devices[&card].current_path(&card, &unknown),
+            Some(card.as_path())
+        );
+        // Reconciliation reopens the node using its card-path fallback.
+        topology.devices.get_mut(&card).unwrap().ready(1);
+
+        topology.observe_devices(&known);
+        assert_eq!(topology.devices.len(), 1);
+        assert!(!topology.devices.contains_key(&card));
+        assert_eq!(
+            topology.devices[&identity].current_path(&identity, &known),
+            Some(card.as_path())
+        );
+        // The reopened node is still valid and can be reused for this identity.
+        assert!(topology.retire_changed_devices(&known, |_| Some(1)).is_empty());
+        topology.devices.get_mut(&identity).unwrap().ready(1);
+        assert!(topology.retire_changed_devices(&known, |_| Some(1)).is_empty());
+    }
+
+    #[test]
+    fn swapping_device_numbers_retires_both_before_reopening_either() {
+        let a = PathBuf::from("/sys/devices/gpu-a");
+        let b = PathBuf::from("/sys/devices/gpu-b");
+        let card0 = PathBuf::from("/dev/dri/card0");
+        let card1 = PathBuf::from("/dev/dri/card1");
+        let mut topology = Topology::<u64>::default();
+        topology.observe_devices(&[(card0.clone(), Some(a.clone())), (card1.clone(), Some(b.clone()))]);
+        topology.devices.get_mut(&a).unwrap().ready(0);
+        topology.devices.get_mut(&b).unwrap().ready(1);
+        let swapped = [(card0.clone(), Some(b.clone())), (card1.clone(), Some(a.clone()))];
+        let node_for_path = |path: &Path| Some(u64::from(path == card1));
+        topology.observe_devices(&swapped);
+        assert_eq!(
+            topology.retire_changed_devices(&swapped, node_for_path),
+            HashSet::from([0, 1])
+        );
+        assert_eq!(topology.devices[&a].availability, Availability::Missing);
+        assert_eq!(topology.devices[&b].availability, Availability::Missing);
+        topology.devices.get_mut(&a).unwrap().ready(1);
+        topology.devices.get_mut(&b).unwrap().ready(0);
+        assert!(topology.retire_changed_devices(&swapped, node_for_path).is_empty());
+    }
+
+    #[test]
     fn inactive_changes_coalesce_and_reconciliation_cannot_reenter() {
-        let mut topology = Topology::default();
+        let mut topology = Topology::<u64>::default();
         assert!(!topology.request(false));
         assert!(!topology.request(false));
         assert!(topology.dirty);
@@ -497,7 +667,7 @@ mod tests {
     fn replug_matches_hardware_even_when_card_numbers_change() {
         let original = Path::new("/dev/dri/card0");
         let identity = PathBuf::from("/sys/devices/pci0000:00/0000:00:02.0");
-        let mut slot = DeviceState {
+        let mut slot = DeviceState::<u64> {
             identity: Some(identity.clone()),
             ..DeviceState::default()
         };
@@ -521,9 +691,9 @@ mod tests {
     #[test]
     fn unavailable_devices_retry_independently_with_capped_backoff() {
         let now = Instant::now();
-        let mut topology = Topology::default();
+        let mut topology = Topology::<u64>::default();
         topology.devices.insert("/dev/dri/card0".into(), DeviceState::default());
-        let healthy = DrmNode::from_dev_id(libc::makedev(226, 1)).unwrap();
+        let healthy = 1;
         let mut second = DeviceState::default();
         second.ready(healthy);
         topology.devices.insert("/dev/dri/card1".into(), second);

@@ -350,8 +350,7 @@ pub fn init(event_loop: &mut EventLoop<Ferese>, state: &mut Ferese) -> Result<()
         .as_mut()
         .unwrap()
         .topology
-        .devices
-        .insert(primary_path.clone(), topology::DeviceState::known(&primary_path));
+        .observe_devices(&[(primary_path.clone(), topology::device_identity(&primary_path))]);
     lid::request_refresh(state, false);
 
     event_loop
