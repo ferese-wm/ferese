@@ -1,5 +1,6 @@
 mod activities;
 mod bar;
+mod battery_indicator;
 mod surfaces;
 
 use bar::*;

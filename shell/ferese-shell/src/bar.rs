@@ -452,21 +452,23 @@ impl FereseShell {
                     content = content.push(
                         self.render
                             .text(date)
-                            .size(12)
+                            .size(bar.text_size)
+                            .line_height(cosmic::iced::widget::text::LineHeight::Absolute(20.into()))
                             .wrapping(cosmic::iced::widget::text::Wrapping::None)
                             .class(theme::Text::Color(foreground)),
                     );
                 }
                 let content = content.push(
                     self.render
-                        .text(time)
+                        .text(time.to_ascii_uppercase())
                         .size(bar.text_size)
+                        .line_height(cosmic::iced::widget::text::LineHeight::Absolute(20.into()))
                         .wrapping(cosmic::iced::widget::text::Wrapping::None)
                         .class(theme::Text::Color(foreground)),
                 );
                 motion::button(
                     self.render,
-                    button::custom(container(content).center_y(bar.group_item_height))
+                    button::custom(bar_content(content, bar.group_item_height))
                         .padding([0, 4])
                         .height(bar.group_item_height)
                         .name("Open calendar")
@@ -751,14 +753,7 @@ pub(super) fn bar_content<'a>(
     content: impl Into<Element<'a, cosmic::Action<Message>>>,
     height: f32,
 ) -> cosmic::widget::Container<'a, cosmic::Action<Message>, cosmic::Theme, cosmic::Renderer> {
-    // A one-pixel optical offset below the geometric center. Compact bars
-    // reduce the offset so the 20 px icons keep their full size.
-    container(content)
-        .padding(cosmic::iced::Padding {
-            top: (height - 20.0).clamp(0.0, 2.0),
-            ..Default::default()
-        })
-        .center_y(height)
+    container(content).center_y(height)
 }
 
 pub(super) fn overview_control(bar: BarMetrics, foreground: Color) -> Element<'static, cosmic::Action<Message>> {

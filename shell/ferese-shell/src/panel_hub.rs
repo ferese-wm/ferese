@@ -3465,7 +3465,7 @@ mod tests {
                     // Exercise the nested battery button as well as its recording parent.
                     if name == "peek-recording-low-battery" {
                         for (label, expected) in [
-                            ("12%", status_ui::Menu::Battery),
+                            ("12", status_ui::Menu::Battery),
                             ("Recording", status_ui::Menu::Overflow),
                         ] {
                             let rect = bounds.0.iter().find(|(text, _)| text == label).unwrap().1;

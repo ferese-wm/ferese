@@ -57,14 +57,12 @@ impl FereseShell {
         } else {
             theme.text_muted
         });
-        let mut content = row![accented_icon(
-            source,
-            metrics.icon_size,
-            foreground,
-            color(theme.accent)
-        )]
-        .spacing(4)
-        .align_y(Alignment::Center);
+        let indicator = if kind == Menu::Battery {
+            self.battery_indicator(theme, 1.0, battery_percentage)
+        } else {
+            accented_icon(source, metrics.icon_size, foreground, color(theme.accent)).into()
+        };
+        let mut content = row![indicator].spacing(4).align_y(Alignment::Center);
 
         if kind == Menu::Recording
             && let Some(elapsed) = self.recorder.elapsed()
@@ -77,17 +75,6 @@ impl FereseShell {
             );
         }
 
-        if kind == Menu::Battery
-            && battery_percentage
-            && let Some(battery) = &self.status.battery
-        {
-            content = content.push(
-                self.render
-                    .text(format!("{}%", battery.percent))
-                    .size(metrics.text_size)
-                    .class(theme::Text::Color(foreground)),
-            );
-        }
         if kind == Menu::Notifications
             && self
                 .status

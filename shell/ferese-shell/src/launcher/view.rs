@@ -1,6 +1,6 @@
 use super::*;
 use cosmic::iced::border::Shape;
-use cosmic::iced::widget::{Space, rich_text, span, stack};
+use cosmic::iced::widget::{Space, mouse_area, opaque, rich_text, span, stack};
 use cosmic::widget::{column, text_input};
 
 type Ui<'a> = Element<'a, cosmic::Action<super::super::Message>>;
@@ -515,8 +515,8 @@ impl FereseShell {
                 },
                 ..Default::default()
             }));
-        container(motion::scaled(
-            panel.into(),
+        let panel = container(motion::scaled(
+            opaque(panel),
             0.97 + 0.03 * opacity,
             launcher.regions.clone(),
         ))
@@ -525,7 +525,12 @@ impl FereseShell {
         .padding(cosmic::iced::Padding {
             top,
             ..Default::default()
-        })
-        .into()
+        });
+        let dismiss = message(Message::Dismiss(id));
+        let backdrop = mouse_area(Space::new().width(Length::Fill).height(Length::Fill))
+            .on_press(dismiss.clone())
+            .on_right_press(dismiss.clone())
+            .on_middle_press(dismiss);
+        stack![backdrop, panel].into()
     }
 }

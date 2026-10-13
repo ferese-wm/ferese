@@ -115,23 +115,10 @@ impl FereseShell {
             Length::Fill
         };
         if priority == Peek::Battery {
-            let percent = self
-                .hub_low_battery()
-                .or_else(|| self.status.battery.as_ref().map(|b| b.percent));
-            let label = percent.map_or_else(
-                || "Battery".into(),
-                |percent| {
-                    if expanded {
-                        format!("Low battery · {percent}%")
-                    } else {
-                        format!("{percent}% battery")
-                    }
-                },
-            );
             return row![
-                icons::tinted(icons::BATTERY_25, 18, warning),
+                self.battery_indicator(self.config.theme, opacity, true),
                 self.render
-                    .text(label)
+                    .text("Low battery")
                     .size(13)
                     .class(theme::Text::Color(foreground))
                     .width(width)
@@ -191,15 +178,7 @@ impl FereseShell {
             };
             strip = strip.push(
                 button::custom(
-                    row![
-                        icons::tinted(icons::BATTERY_25, 16, warning),
-                        self.render
-                            .text(format!("{percent}%"))
-                            .size(12)
-                            .class(theme::Text::Color(warning))
-                    ]
-                    .spacing(4)
-                    .align_y(Alignment::Center),
+                    crate::bar_content(self.battery_indicator(self.config.theme, opacity, true), 28.)
                 )
                 .name(format!("Low battery, {percent} percent. Open battery controls"))
                 .padding(0)

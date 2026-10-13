@@ -17,6 +17,7 @@ use std::sync::Arc;
 
 #[derive(Clone, Debug)]
 pub(super) enum Message {
+    Dismiss(window::Id),
     Input(window::Id, String),
     Browse(window::Id, Category),
     ActivateRow(window::Id, sources::ResultId),
@@ -368,6 +369,7 @@ impl FereseShell {
             return Task::none();
         };
         match message {
+            Message::Dismiss(id) if id == launcher.id => self.close_launcher(),
             Message::AppsScrolled(id, first) if id == launcher.id && launcher.apps_browse() => {
                 launcher.apps_first_row = first.min(launcher.rows.len().div_ceil(4).saturating_sub(1));
                 Task::none()

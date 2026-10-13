@@ -1,54 +1,21 @@
-use cosmic::iced::{Alignment, Color, Length};
+use cosmic::iced::{Alignment, Length};
 use cosmic::widget::{button, column, container, row};
 use cosmic::{Element, theme};
 
-use super::bar::status_icon;
-use super::controls::{control_card, level_meter, slider_row};
-use super::{Menu, MenuRows, MenuStyle};
+use super::controls::{control_card, slider_row};
+use super::{MenuRows, MenuStyle};
 use crate::status::Action;
-use crate::{FereseShell, Message, ShellTheme, accented_icon, bar_icon, color_with_opacity, motion};
+use crate::{FereseShell, Message, ShellTheme, bar_icon, color_with_opacity, motion};
 
 pub(super) fn view<'a>(shell: &'a FereseShell, mut rows: MenuRows<'a>, style: MenuStyle) -> MenuRows<'a> {
     let MenuStyle {
         theme,
-        primary,
+        primary: _,
         muted,
         opacity: p,
     } = style;
     if let Some(b) = &shell.status.battery {
-        let battery_color = if b.percent < shell.config.status.low_battery_threshold && b.status != "Charging" {
-            Color {
-                a: p,
-                ..Color::from_rgb8(230, 172, 90)
-            }
-        } else {
-            primary
-        };
-        rows = rows.push(
-            container(
-                row![
-                    shell
-                        .render
-                        .text(format!("{}%", b.percent))
-                        .size(24)
-                        .width(Length::Fill),
-                    accented_icon(
-                        status_icon(Menu::Battery, &shell.status).0,
-                        24,
-                        battery_color,
-                        color_with_opacity(theme.accent, p),
-                    ),
-                ]
-                .align_y(Alignment::Center),
-            )
-            .padding([2, 0])
-            .class(theme::Container::custom(move |_| container::Style {
-                text_color: Some(battery_color),
-                icon_color: Some(battery_color),
-                ..Default::default()
-            })),
-        );
-        rows = rows.push(level_meter(shell.render, b.percent, battery_color, p));
+        rows = rows.push(container(shell.battery_indicator(theme, p, true)).padding([2, 0]));
         rows = rows.push(
             shell
                 .render

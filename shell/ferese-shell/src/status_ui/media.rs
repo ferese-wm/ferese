@@ -81,7 +81,8 @@ pub(super) fn bar<'a>(
         return shell.render.text("").into();
     };
     let foreground = color(if selected { palette.accent } else { palette.text_primary });
-    let height = (metrics.group_item_height - 4.0).max(0.0);
+    let vertical_padding = ((metrics.group_item_height - f32::from(metrics.icon_size)) * 0.5).clamp(0.0, 2.0);
+    let height = metrics.group_item_height - 2.0 * vertical_padding;
     let side = height.min(24.0);
     let cover: Element<'_, cosmic::Action<Message>> =
         match shell.media.artwork.as_ref().and_then(|art| art.handle.as_ref()) {
@@ -178,8 +179,9 @@ pub(super) fn bar<'a>(
         .spacing(2)
         .align_y(Alignment::Center),
     )
-    .padding(2)
+    .padding([vertical_padding, 2.0])
     .height(metrics.group_item_height)
+    .align_y(cosmic::iced::alignment::Vertical::Center)
     .class(theme::Container::custom(move |_| bar_style));
 
     let mut area = mouse_area(controls);

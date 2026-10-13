@@ -576,7 +576,7 @@ impl FereseShell {
         }
         let panel = self.panel_for_bar(id).id.clone();
         let item = item.id.clone();
-        let button = button::custom(content)
+        let button = button::custom(crate::bar_content(content, height))
             .name(format!(
                 "Activities: {}, {}. Open list",
                 activity.data.title,

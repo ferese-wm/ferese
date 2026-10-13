@@ -111,16 +111,24 @@ pub(super) fn view<'a>(
         ));
     }
 
-    if let Some(b) = &shell.status.battery {
-        connections = connections.push(connection_control(
-            shell.render,
-            "Battery",
-            &format!("{}%", b.percent),
-            status_icon(Menu::Battery, &shell.status).0,
-            b.status == "Charging",
-            None,
-            style,
-        ));
+    if shell.status.battery.is_some() {
+        connections = connections.push(
+            container(
+                column![
+                    container(shell.battery_indicator(theme, p, true))
+                        .center_x(Length::Fill)
+                        .center_y(28),
+                    shell.render.text("Battery").size(11)
+                        .width(Length::Fill).height(16)
+                        .align_x(alignment::Horizontal::Center)
+                        .class(theme::Text::Color(muted)),
+                ]
+                .spacing(2)
+                .align_x(Alignment::Center),
+            )
+            .width(Length::FillPortion(1))
+            .padding(4),
+        );
     }
 
     if shell.status.network.is_some() || shell.status.bluetooth.is_some() || shell.status.battery.is_some() {

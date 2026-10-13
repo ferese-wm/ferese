@@ -365,7 +365,9 @@ impl FereseShell {
         let kind = menu.kind;
         let primary = color_with_opacity(theme.text_primary, p);
         let muted = color_with_opacity(theme.text_muted, p);
-        let badge = ferese_theme::menus::badge(
+        let heading_icon = if kind == Menu::Battery {
+            self.battery_indicator(theme, p, false)
+        } else {
             accented_icon(
                 status_icon(kind, &self.status).0,
                 22,
@@ -373,7 +375,10 @@ impl FereseShell {
                 color_with_opacity(theme.accent, p),
             )
             .width(Length::Fixed(22.))
-            .into(),
+            .into()
+        };
+        let badge = ferese_theme::menus::badge(
+            heading_icon,
             color(theme.accent),
             p,
             self.render.radius(20.),
