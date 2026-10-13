@@ -84,7 +84,14 @@ impl FereseShell {
             } else {
                 Task::none()
             };
+            let hub = if resized {
+                self.sync_activity_presentations();
+                self.resize_hub(bar)
+            } else {
+                Task::none()
+            };
             return Task::batch([
+                hub,
                 margin,
                 popup,
                 tooltip,

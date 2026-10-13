@@ -73,8 +73,6 @@ struct BarMetrics {
     icon_size: u16,
     overview_icon_size: u16,
     control_height: f32,
-    #[cfg(test)]
-    group_height: f32,
     group_item_height: f32,
 }
 
@@ -94,8 +92,6 @@ impl From<panel::PanelGeometry> for BarMetrics {
             icon_size: 20,
             overview_icon_size: 20,
             control_height,
-            #[cfg(test)]
-            group_height,
             group_item_height: (group_height - 4.0).max(0.0),
         }
     }
@@ -820,7 +816,7 @@ impl cosmic::Application for FereseShell {
                 {
                     entry.scale = f64::from(scale);
                 }
-                self.sync_hub_workspaces()
+                Task::batch([self.sync_hub_workspaces(), self.resize_hub(id)])
             }
             Message::AdaptiveDeadline(id, ticket) => self.adaptive_deadline(id, ticket),
             Message::ControlReady => {
@@ -1502,8 +1498,9 @@ mod tests {
             text_muted: [255, 255, 255, 255],
             ..theme
         };
-        let before = bar_group_style(theme);
-        let after = bar_group_style(contrasted);
+        let before = ferese_theme::panel::group_border(color(theme.border), theme.material_radius.min(16.), true);
+        let after =
+            ferese_theme::panel::group_border(color(contrasted.border), contrasted.material_radius.min(16.), true);
         assert_eq!(before.border, after.border);
         assert_eq!(before.background, after.background);
         assert_eq!(before.border.color, color(theme.border));
@@ -1526,32 +1523,10 @@ mod tests {
     fn startup_surface_clear_is_transparent_and_bar_fallback_is_dark() {
         let theme = ShellTheme::default();
         assert_eq!(shell_surface_style(theme).background_color, Color::TRANSPARENT);
-        let Some(Background::Color(background)) = bar_style(theme.for_bar(), false, false).background else {
-            panic!("first frame needs a fallback fill before material attachment");
-        };
+        let background = color(theme.for_bar().bar_background);
         assert!(background.r < 0.15 && background.g < 0.15 && background.b < 0.20);
         assert!(background.a > 0.9);
         assert!(theme.bar_text_primary[..3].iter().all(|channel| *channel > 220));
-    }
-
-    #[test]
-    fn bar_fallback_uses_the_matching_dark_palette_and_geometry() {
-        let theme = ShellTheme::default().for_bar();
-        let style = bar_style(theme, false, false);
-        assert_eq!(style.background, Some(Background::Color(color(theme.bar_background))));
-        assert_eq!(style.text_color, Some(color(theme.bar_text_primary)));
-        assert_eq!(style.border.radius, theme.bar_radius.into());
-        assert_eq!(style.shadow, cosmic::iced::Shadow::default());
-    }
-
-    #[test]
-    fn bar_does_not_cover_the_selected_compositor_material() {
-        let theme = ShellTheme::default().for_bar();
-        let style = bar_style(theme, true, false);
-        assert_eq!(style.background, None);
-        assert_eq!(style.text_color, Some(color(theme.bar_text_primary)));
-        assert_eq!(style.border.radius, theme.bar_radius.into());
-        assert_eq!(style.shadow, cosmic::iced::Shadow::default());
     }
 
     #[test]

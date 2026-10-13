@@ -1,8 +1,6 @@
-#[cfg(test)]
-use super::Background;
 use super::{
-    BarMetrics, Color, Element, FereseShell, Length, Message, ShellSnapshot, ShellTheme, alignment, bar_icon, button,
-    color, container, control, motion, row, status_ui, theme, window,
+    BarMetrics, Color, Element, FereseShell, Length, Message, ShellSnapshot, alignment, bar_icon, button, color,
+    container, control, motion, row, status_ui, theme, window,
 };
 use crate::panel::{Availability, Item, ItemKind, Panel, Zone};
 #[cfg(test)]
@@ -113,12 +111,7 @@ impl FereseShell {
                         samples.push(adaptive::Sample {
                             id: item.id.clone(),
                             representation,
-                            minimum: match item.kind {
-                                ItemKind::FocusedWindow => Some(48.0),
-                                ItemKind::Workspaces { .. } => Some(24.0),
-                                ItemKind::Media => Some(112.0),
-                                _ => None,
-                            },
+                            minimum: item.kind.minimum_width(),
                             view,
                         });
                     }
@@ -176,8 +169,6 @@ impl FereseShell {
                         panel,
                         zone,
                         availability,
-                        shell_theme,
-                        compositor_material,
                         |item| matches!(resolution.items.get(&item.id), Some(Placement::Visible { width, .. }) if *width > 0.0),
                         |item, surface| {
                             let Some(Placement::Visible { representation, width }) = resolution.items.get(&item.id)
@@ -207,8 +198,6 @@ impl FereseShell {
                             spacing: 0.0,
                         },
                         availability,
-                        shell_theme,
-                        compositor_material,
                         |_| true,
                         |item, surface| {
                             self.view_panel_item(
@@ -705,8 +694,6 @@ fn view_zone<'a>(
     panel: &Panel,
     zone: &Zone,
     availability: Availability,
-    _shell_theme: ShellTheme,
-    _compositor_material: bool,
     visible: impl Fn(&Item) -> bool,
     render: impl Fn(&Item, GroupSurface) -> (Element<'a, cosmic::Action<Message>>, bool),
 ) -> Element<'a, cosmic::Action<Message>> {
@@ -728,11 +715,6 @@ fn view_zone<'a>(
                     controls.push(cosmic::iced::widget::Space::new().width(item.gap_before.unwrap_or(group.spacing)));
             }
             let (element, _) = render(item, surface);
-            let element: Element<'_, cosmic::Action<Message>> = if matches!(item.kind, ItemKind::FocusedWindow) {
-                element
-            } else {
-                container(element).id(presentation::input_id()).into()
-            };
             controls = controls.push(container(element).id(format!("panel:{}:item:{}", panel.id.0, item.id.0)));
             count += 1;
         }
@@ -838,63 +820,6 @@ pub(super) fn workspace_active_on_bar(workspace: u64, output: Option<&control::O
     output.is_some_and(|output| output.active_workspace == workspace)
 }
 
-#[cfg(test)]
-pub(super) fn bar_style(theme: ShellTheme, compositor_material: bool, islands: bool) -> container::Style {
-    let mut style = if islands {
-        container::Style::default()
-    } else {
-        ferese_theme::controls::surface_appearance(color(theme.bar_background), theme.bar_radius)
-    };
-    if compositor_material {
-        style.background = None;
-    }
-    style.text_color = Some(color(theme.text_primary));
-    style.icon_color = style.text_color;
-    style.snap = true;
-    style
-}
-
-#[cfg(test)]
-pub(super) fn island<'a>(
-    content: Element<'a, cosmic::Action<Message>>,
-    theme: ShellTheme,
-    geometry: crate::panel::PanelGeometry,
-    horizontal_padding: f32,
-    islands: bool,
-    compositor_material: bool,
-    material: Option<(cosmic::iced::advanced::widget::Id, f32, [f32; 4])>,
-) -> Element<'a, cosmic::Action<Message>> {
-    if !islands {
-        return content;
-    }
-
-    let bar = BarMetrics::from(geometry);
-    let fallback = ferese_panel::CornerRadii::uniform(theme.bar_radius)
-        .at_top_edge(geometry.edge_margin == 0)
-        .0;
-    let (id, opacity, corners) =
-        material.unwrap_or((presentation::island_id(), color(theme.bar_background).a, fallback));
-    container(content)
-        .id(id)
-        .padding(cosmic::iced::Padding {
-            top: (bar.height - bar.group_height) * 0.5,
-            bottom: (bar.height - bar.group_height) * 0.5,
-            left: horizontal_padding,
-            right: horizontal_padding,
-        })
-        .height(bar.height)
-        .align_y(alignment::Vertical::Center)
-        .class(cosmic::theme::Container::custom(move |_| {
-            let mut style = bar_style(theme, compositor_material, false);
-            style.border.radius = corners.into();
-            if let Some(Background::Color(fill)) = style.background {
-                style.background = Some(Background::Color(Color { a: opacity, ..fill }));
-            }
-            style
-        }))
-        .into()
-}
-
 pub(super) fn input_region(
     mode: PanelSurface,
     hidden: bool,
@@ -919,11 +844,6 @@ pub(super) fn input_region(
             })
             .collect(),
     )
-}
-
-#[cfg(test)]
-pub(super) fn bar_group_style(theme: ShellTheme) -> container::Style {
-    ferese_theme::panel::group_border(color(theme.border), theme.material_radius.min(16.), true)
 }
 
 #[cfg(test)]
@@ -963,7 +883,7 @@ mod island_tests {
             if self.group_ids.iter().any(|target| Some(target) == id) {
                 self.groups.push(bounds);
             }
-            if id == Some(&presentation::island_id()) || self.material_ids.iter().any(|target| Some(target) == id) {
+            if self.material_ids.iter().any(|target| Some(target) == id) {
                 self.islands.push(bounds);
             }
             if let Some((_, name)) = self.targets.iter().find(|(target, _)| Some(target) == id) {
@@ -1094,16 +1014,6 @@ mod island_tests {
     }
 
     fn measure_zone(panel: &Panel, zone: &Zone, availability: Availability, title_content: bool) -> Bounds {
-        measure_zone_with_theme(panel, zone, availability, title_content, ShellTheme::default())
-    }
-
-    fn measure_zone_with_theme(
-        panel: &Panel,
-        zone: &Zone,
-        availability: Availability,
-        title_content: bool,
-        theme: ShellTheme,
-    ) -> Bounds {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -1119,8 +1029,6 @@ mod island_tests {
             panel,
             zone,
             availability,
-            theme,
-            true,
             |item| title_content || !matches!(item.kind, ItemKind::FocusedWindow),
             |item, _| {
                 let width = match item.kind {
@@ -1184,12 +1092,11 @@ mod island_tests {
     fn islands_cover_the_full_panel_height_independently_of_group_decoration() {
         let mut panel = Panel::from_preset(PanelStyle::Floating);
         for margin in [0, 6] {
-            let theme = ShellTheme::default();
             panel.geometry.height = Some(36.);
             panel.geometry.edge_margin = Some(margin);
             for border in [false, true] {
                 panel.border = border;
-                let bounds = measure_zone_with_theme(&panel, &panel.start, Availability::default(), true, theme);
+                let bounds = measure_zone(&panel, &panel.start, Availability::default(), true);
                 assert_eq!(bounds.islands[0].y, 0.);
                 assert_eq!(bounds.islands[0].height, 36.);
                 assert_eq!(
@@ -1315,41 +1222,6 @@ mod island_tests {
         assert_eq!(input_region(PanelSurface::Solid, true, &regions), Some(Vec::new()));
     }
 
-    #[test]
-    fn default_groups_have_no_fill_or_outline_in_either_arrangement() {
-        let theme = ShellTheme::default();
-        for background in [PanelStyle::Flat, PanelStyle::Floating] {
-            let panel = Panel::from_preset(background);
-            let group = ferese_theme::panel::group_border(color(theme.border), theme.bar_radius, panel.border);
-            assert!(group.background.is_none());
-            assert_eq!(group.border.width, 0.);
-            let background_style = bar_style(theme, false, false);
-            assert_eq!(
-                background_style.background,
-                Some(Background::Color(color(theme.bar_background)))
-            );
-            assert_eq!(background_style.border.width, 0.);
-        }
-    }
-
-    #[test]
-    fn outlined_groups_leave_the_bar_as_the_only_background_owner() {
-        let theme = ShellTheme {
-            bar_background: [12, 24, 36, 153],
-            ..Default::default()
-        };
-        let frame = bar_style(theme, false, true);
-        assert!(frame.background.is_none());
-        assert_eq!(frame.border.width, 0.);
-        assert_eq!(frame.shadow.color.a, 0.);
-        let outer = bar_style(theme, false, false);
-        assert_eq!(outer.background, Some(Background::Color(color(theme.bar_background))));
-        assert_eq!(outer.border.radius, theme.bar_radius.into());
-        assert!(bar_style(theme, true, false).background.is_none());
-        let inner = bar_group_style(theme);
-        assert!(inner.background.is_none());
-        assert_eq!(inner.border.width, 1.);
-    }
     #[test]
     fn panel_surface_policy_applies_to_every_occupied_group() {
         let mut panel = Panel::from_preset(PanelStyle::Floating);

@@ -157,11 +157,7 @@ impl App {
                     samples.push(Sample {
                         id: item.id.clone(),
                         representation,
-                        minimum: match item.kind {
-                            ItemKind::Workspaces { .. } => Some(24.),
-                            ItemKind::Media => Some(112.),
-                            _ => None,
-                        },
+                        minimum: item.kind.minimum_width(),
                         view: self.preview_control(item, representation, None),
                     });
                 }
@@ -731,7 +727,15 @@ mod tests {
                     .expect("sample title remains visible")
                     .1;
                 assert!((center.center_x() - width / 2.).abs() < 0.1, "{center:?} at {width}");
-                assert!((center.width - natural).abs() < 0.1, "sample title must not be clipped");
+                // Match the shell: titles yield space down to their shared minimum.
+                assert!(center.width >= title.kind.minimum_width().unwrap().min(natural) - 0.1);
+                assert!(center.width <= natural + 0.1);
+                if width == 1200. {
+                    assert!(
+                        (center.width - natural).abs() < 0.1,
+                        "restore the title when space permits"
+                    );
+                }
                 for (id, side) in &bounds.items {
                     if id == &title.id {
                         continue;

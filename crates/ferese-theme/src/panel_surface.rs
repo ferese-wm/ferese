@@ -350,6 +350,105 @@ mod tests {
     use ferese_panel::shape::Style;
 
     #[test]
+    fn shared_surface_publishes_layout_changes_and_leaves_native_fill_to_the_compositor() {
+        use cosmic::iced::advanced::clipboard;
+        use std::cell::RefCell;
+        let mut renderer = cosmic::iced::futures::executor::block_on(<cosmic::Renderer as Headless>::new(
+            Font::default(),
+            Pixels(14.),
+            Some("tiny-skia"),
+        ))
+        .unwrap();
+        let ids = [widget::Id::unique(), widget::Id::unique()];
+        let mut tree = None;
+        let viewport = Rectangle::with_size(Size::new(200., 32.));
+        for (style, width, native) in [
+            (Style::Floating, 40., false),
+            (Style::Floating, 40., true),
+            (Style::Floating, 60., true),
+            (Style::Flat, 60., true),
+        ] {
+            let content = cosmic::widget::row::with_children([
+                cosmic::widget::container(cosmic::widget::Space::new().width(width).height(32))
+                    .id(ids[0].clone())
+                    .into(),
+                cosmic::widget::container(cosmic::widget::Space::new().width(40).height(32))
+                    .id(ids[1].clone())
+                    .into(),
+            ])
+            .spacing(20);
+            let published = RefCell::new(Vec::new());
+            let mut view = frame(
+                cosmic::widget::container(content).width(200).height(32).into(),
+                Options {
+                    parameters: Parameters {
+                        style,
+                        height: 32.,
+                        ..Default::default()
+                    },
+                    bounds: None,
+                    groups: vec![
+                        (ids[0].clone(), ZonePosition::Start),
+                        (ids[1].clone(), ZonePosition::End),
+                    ],
+                    scale: 1.25,
+                    high_contrast: false,
+                    background: Color::WHITE,
+                    border: Color::TRANSPARENT,
+                    divider: Color::TRANSPARENT,
+                    native,
+                },
+                |scene| published.borrow_mut().push(scene.clone()),
+                Some(Box::new(Clone::clone)),
+            );
+            let tree = tree.get_or_insert_with(|| widget::Tree::new(&view));
+            tree.diff(&mut view);
+            let node = view
+                .as_widget_mut()
+                .layout(tree, &renderer, &layout::Limits::new(Size::ZERO, viewport.size()));
+            let mut messages = Vec::new();
+            for _ in 0..3 {
+                view.as_widget_mut().update(
+                    tree,
+                    &Event::Window(cosmic::iced::window::Event::RedrawRequested(std::time::Instant::now())),
+                    Layout::new(&node),
+                    mouse::Cursor::Unavailable,
+                    &renderer,
+                    &mut clipboard::Null,
+                    &mut Shell::new(&mut messages),
+                    &viewport,
+                );
+            }
+            assert_eq!(published.borrow().len(), 3);
+            assert_eq!(
+                messages.len(),
+                usize::from(!(style == Style::Floating && width == 40. && native))
+            );
+            let scene = published.borrow()[0].clone();
+            assert_eq!(scene.input.len(), if style == Style::Floating { 2 } else { 1 });
+            if style == Style::Floating {
+                assert!(scene.distance([width as f64 + 10., 16.]) > 0., "the gap stays empty");
+            }
+            renderer.reset(viewport);
+            view.as_widget().draw(
+                tree,
+                &mut renderer,
+                &Theme::default(),
+                &renderer::Style {
+                    text_color: Color::WHITE,
+                    icon_color: Color::WHITE,
+                    scale_factor: 1.25,
+                },
+                Layout::new(&node),
+                mouse::Cursor::Unavailable,
+                &viewport,
+            );
+            let pixels = renderer.screenshot(Size::new(250, 40), 1.25, Color::TRANSPARENT);
+            assert_eq!(pixels.chunks_exact(4).any(|pixel| pixel[3] > 0), !native);
+        }
+    }
+
+    #[test]
     fn border_coverage_tracks_physical_scale_and_high_contrast() {
         let mut renderer = cosmic::iced::futures::executor::block_on(<cosmic::Renderer as Headless>::new(
             Font::default(),

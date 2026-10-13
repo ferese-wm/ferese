@@ -315,9 +315,7 @@ impl FereseShell {
             let entries = list_entries(&self.activities.snapshot, &self.activities.native, now, name);
             let workspace_width = self.hub_workspace_width(output.bar) as f32;
             let panel = self.panel_for_bar(output.bar);
-            let available = output.size.map_or(1280., |size| size.0 as f32)
-                - 2. * panel.resolved_geometry().side_margins as f32
-                - if panel.morph.attached { 24. } else { 0. }
+            let available = super::panel_hub::content_width(panel, output.size) as f32
                 - if workspace_width > 0. {
                     workspace_width + 10.
                 } else {
@@ -331,7 +329,7 @@ impl FereseShell {
                 .copied()
                 .filter(|entry| entry.eligible(now, dnd) && entry.data.source != ferese_activities::Source::Media)
                 .collect();
-            let compact = if self.activities_configured(output.bar) {
+            let compact = if self.compact_activities_configured(output.bar) {
                 compact
             } else {
                 Vec::new()
@@ -421,7 +419,7 @@ impl FereseShell {
                     routed
                         && (list
                             || self.activities.flat.get(&output.bar).is_some_and(|presentation| {
-                                self.activities_configured(output.bar)
+                                self.compact_activities_configured(output.bar)
                                     && presentation.selection.visible.contains(&activity.id)
                             }))
                 }
@@ -484,6 +482,14 @@ impl FereseShell {
         .any(|entry| entry.data.source != ferese_activities::Source::Media)
     }
     pub fn activities_configured(&self, id: window::Id) -> bool {
+        self.has_activities_item(id, false)
+    }
+
+    pub fn compact_activities_configured(&self, id: window::Id) -> bool {
+        self.has_activities_item(id, true)
+    }
+
+    fn has_activities_item(&self, id: window::Id, compact: bool) -> bool {
         let panel = self.panel_for_bar(id);
         [&panel.start, &panel.center, &panel.end]
             .into_iter()
@@ -492,7 +498,7 @@ impl FereseShell {
             .any(|item| {
                 item.visible
                     && item.kind == ferese_panel::ItemKind::Activities
-                    && item.overflow != ferese_panel::OverflowPolicy::Always
+                    && (!compact || item.overflow != ferese_panel::OverflowPolicy::Always)
             })
     }
     pub fn activity_hover(&mut self, id: window::Id, entered: bool) {
@@ -612,7 +618,7 @@ impl FereseShell {
         )
     }
     pub fn has_compact_activities(&self, id: window::Id) -> bool {
-        if !self.activities_configured(id) {
+        if !self.compact_activities_configured(id) {
             return false;
         }
         self.outputs

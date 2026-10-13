@@ -222,6 +222,41 @@ pub fn resolve_with_gap(
             }
         }
     }
+    // Removing the larger side may make an earlier eviction unnecessary. Give
+    // mandatory items first refusal, then restore by descending priority.
+    for mandatory in [true, false] {
+        for (_, item) in candidates.iter().rev() {
+            if item.overflow == OverflowPolicy::Always
+                || (item.overflow == OverflowPolicy::Never) != mandatory
+                || !matches!(result.items.get(&item.id), Some(Placement::Overflow))
+            {
+                continue;
+            }
+            let Some(measured) = measurements.get(&item.id) else {
+                continue;
+            };
+            let Some(&(representation, width)) = measured.alternatives.iter().min_by(|a, b| a.1.total_cmp(&b.1)) else {
+                continue;
+            };
+            result.items.insert(
+                item.id.clone(),
+                Placement::Visible {
+                    representation,
+                    width: measured.minimum.map_or(width, |minimum| minimum.min(width)),
+                },
+            );
+            result.overflow.retain(|id| id != &item.id);
+            result.update_widths(panel, overflow_width);
+            if !fits(&result) {
+                result.items.insert(item.id.clone(), Placement::Overflow);
+                result.overflow.push(item.id.clone());
+                result.update_widths(panel, overflow_width);
+            }
+        }
+    }
+    result.forced_overflow = ordered.iter().any(|item| {
+        item.overflow == OverflowPolicy::Never && matches!(result.items.get(&item.id), Some(Placement::Overflow))
+    });
     // A reduction on the shorter side can leave unused room after the other
     // side shrinks. Restore preferred representations before expanding titles.
     for (_, item) in candidates.iter().rev() {
@@ -293,6 +328,46 @@ pub fn resolve_with_gap(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn asymmetric_overflow_restores_items_that_fit_after_the_larger_side_yields() {
+        use super::super::{Group, Item, ItemKind};
+        for mirrored in [false, true] {
+            for policy in [OverflowPolicy::Auto, OverflowPolicy::Never, OverflowPolicy::Always] {
+                let group = |id: &str, priority, overflow| {
+                    let mut item = Item::new(id, ItemKind::Clock);
+                    item.priority = priority;
+                    item.overflow = overflow;
+                    let mut group = Group::new(id, vec![item], [0, 0], 0.);
+                    group.island_padding = 0.;
+                    group
+                };
+                let mut panel = Panel::default();
+                panel.start.groups = vec![group("small", 0, policy)];
+                panel.center.groups = vec![group("center", 100, OverflowPolicy::Never)];
+                panel.end.groups = vec![group("large", 50, policy)];
+                if mirrored {
+                    std::mem::swap(&mut panel.start, &mut panel.end);
+                }
+                let measurements: Vec<_> = [("small", 40.), ("center", 40.), ("large", 200.)]
+                    .into_iter()
+                    .map(|(id, width)| Measurement {
+                        id: ItemId(id.into()),
+                        alternatives: vec![(Representation::Wide, width)],
+                        minimum: None,
+                    })
+                    .collect();
+                let resolution = resolve(&panel, &measurements, 300., 32.);
+                assert!(resolution.fits(300.));
+                assert_eq!(
+                    matches!(resolution.items[&ItemId("small".into())], Placement::Visible { .. }),
+                    policy != OverflowPolicy::Always
+                );
+                assert!(resolution.overflow.contains(&ItemId("large".into())));
+                assert_eq!(resolution.forced_overflow, policy == OverflowPolicy::Never);
+            }
+        }
+    }
 
     #[test]
     fn zone_width_ignores_empty_groups_and_gaps_before_hidden_items() {

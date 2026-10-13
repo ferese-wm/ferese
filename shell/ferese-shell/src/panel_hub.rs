@@ -23,6 +23,20 @@ use ferese_theme::icons;
 
 use crate::{FereseShell, Message, color_with_opacity, motion, status_ui};
 
+/// Morph owns its inset; regular-panel side margins and padding stay saved for
+/// the other styles without reducing the hub's output budget.
+fn available_size(panel: &Panel, size: Option<(i32, i32)>) -> [f64; 2] {
+    let (width, height) = size.unwrap_or((1280, 720));
+    [
+        f64::from(width).max(24.),
+        (f64::from(height) - f64::from(panel.resolved_geometry().edge_margin)).max(24.),
+    ]
+}
+
+pub(super) fn content_width(panel: &Panel, size: Option<(i32, i32)>) -> f64 {
+    (available_size(panel, size)[0] - if panel.morph.attached { 24. } else { 0. }).max(24.)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Peek {
     Recording,
@@ -190,7 +204,12 @@ impl Runtime {
             .min(available[0].ceil() as u32);
         // Retain the backing surface between opens; resizing after settlement moves its origin.
         self.minimum_allocation = std::array::from_fn(|i| self.minimum_allocation[i].min(available[i].ceil() as u32));
-        self.allocation = std::array::from_fn(|i| self.allocation[i].max(target[i]).max(self.minimum_allocation[i]));
+        self.allocation = std::array::from_fn(|i| {
+            self.allocation[i]
+                .max(target[i])
+                .max(self.minimum_allocation[i])
+                .min(available[i].ceil() as u32)
+        });
         self.revision = now;
     }
 }
@@ -361,24 +380,23 @@ impl FereseShell {
         self.transition_hub(id, Event::Present(mode, menu))
     }
 
+    pub(super) fn resize_hub(&mut self, id: window::Id) -> Task<Message> {
+        self.transition_hub(id, Event::Resize)
+    }
+
     fn transition_hub(&mut self, id: window::Id, event: Event) -> Task<Message> {
         if self.snapshot.binding_mode.is_some() && !matches!(event, Event::Close | Event::Resize) {
             return Task::none();
         }
         let workspace_width = self.hub_workspace_width(id);
         let panel = self.panel_for_bar(id);
-        let geometry = panel.resolved_geometry();
         let Some(entry) = self.outputs.iter().find(|entry| entry.bar == id) else {
             return Task::none();
         };
         let Some(hub) = &entry.runtime.hub else {
             return Task::none();
         };
-        let (width, height) = entry.size.unwrap_or((1280, 720));
-        let available = [
-            (f64::from(width) - 2. * f64::from(geometry.side_margins)).max(24.),
-            (f64::from(height) - f64::from(geometry.edge_margin)).max(24.),
-        ];
+        let available = available_size(panel, entry.size);
         let (resize, mode) = {
             let mut hub = hub.borrow_mut();
             hub.motion = self.render.motion;
@@ -415,7 +433,7 @@ impl FereseShell {
             .and_then(|entry| entry.runtime.hub.as_ref())
             .expect("Morph runtime");
         let runtime = runtime.borrow();
-        if !runtime.activities.selection.visible.is_empty() && self.activities_configured(id) {
+        if !runtime.activities.selection.visible.is_empty() && self.compact_activities_configured(id) {
             return runtime.hub.target_size()[0].min(runtime.available[0]) as f32;
         }
         let artwork_width = if self.hub_priority().is_some() {
@@ -1107,14 +1125,13 @@ impl FereseShell {
 
     fn hub_shortcuts(&self, id: window::Id) -> Vec<ItemKind> {
         let panel = self.panel_for_bar(id);
-        let available = self
-            .outputs
-            .iter()
-            .find(|entry| entry.bar == id)
-            .and_then(|entry| entry.size)
-            .map_or(panel.morph.expanded_width, |(width, _)| {
-                (f64::from(width) - 2. * f64::from(panel.resolved_geometry().side_margins)).max(0.)
-            });
+        let available = content_width(
+            panel,
+            self.outputs
+                .iter()
+                .find(|entry| entry.bar == id)
+                .and_then(|entry| entry.size),
+        );
         let width = panel.morph.expanded_width.min(available);
         // Built-in tabs, battery and Close keep their space through the morph.
         let tabs = 5. + f64::from(self.media.snapshot.selected.is_some()) + f64::from(self.activities_configured(id));
@@ -1235,6 +1252,146 @@ mod tests {
             .reset(&shell.config.panels[0], &shell.snapshot, Some("test"));
         shell.clock = "11 oct, 10:09 am".into();
         shell
+    }
+
+    #[test]
+    fn saved_regular_margins_do_not_constrain_morph() {
+        let mut app = shell();
+        let bar = app.outputs[0].bar;
+        app.outputs[0].size = Some((1280, 720));
+        let baseline = content_width(&app.config.panels[0], app.outputs[0].size);
+        let mut config = app.config.clone();
+        config.panels[0].style = PanelStyle::Flat;
+        config.panels[0].geometry.side_margins = Some(640);
+        drop(app.apply_config(config.clone()));
+        config.panels[0].style = PanelStyle::Morph;
+        drop(app.apply_config(config.clone()));
+        assert_eq!(content_width(&app.config.panels[0], app.outputs[0].size), baseline);
+        drop(app.open_hub(bar, status_ui::Menu::Calendar));
+        assert!(app.outputs[0].runtime.hub.as_ref().unwrap().borrow().hub.target_size()[0] > 300.);
+        config.panels[0].style = PanelStyle::Flat;
+        drop(app.apply_config(config));
+        assert_eq!(app.config.panels[0].geometry.side_margins, Some(640));
+    }
+
+    #[test]
+    fn large_radius_pins_survive_startup_reload_and_style_switches() {
+        for radius in [129., 4096., f32::MAX] {
+            let mut app = shell();
+            let mut config = app.config.clone();
+            config.panels[0].corner_radius = Some(ferese_panel::CornerRadii::uniform(radius));
+            ferese_panel::validate(&config.panels).unwrap();
+            let mut startup = Runtime::new(&config.panels[0]);
+            for _ in 0..60 {
+                startup.hub.advance(Duration::from_millis(8), false);
+                assert!(
+                    startup
+                        .hub
+                        .sample()
+                        .geometry
+                        .radii
+                        .iter()
+                        .all(|r| (*r as f32).is_finite())
+                );
+            }
+            drop(app.apply_config(config.clone()));
+            config.panels[0].style = PanelStyle::Flat;
+            drop(app.apply_config(config.clone()));
+            config.panels[0].style = PanelStyle::Morph;
+            drop(app.apply_config(config));
+            assert!(app.outputs[0].runtime.hub.is_some());
+        }
+    }
+
+    #[test]
+    fn activity_destination_remains_available_for_every_overflow_policy() {
+        let mut app = shell();
+        seed_activities(&mut app, 1);
+        let bar = app.outputs[0].bar;
+        for policy in [
+            ferese_panel::OverflowPolicy::Auto,
+            ferese_panel::OverflowPolicy::Always,
+            ferese_panel::OverflowPolicy::Never,
+            ferese_panel::OverflowPolicy::Always,
+        ] {
+            let mut config = app.config.clone();
+            let panel = &mut config.panels[0];
+            for item in [&mut panel.start, &mut panel.center, &mut panel.end]
+                .into_iter()
+                .flat_map(|zone| &mut zone.groups)
+                .flat_map(|group| &mut group.items)
+            {
+                if item.kind == ItemKind::Activities {
+                    item.overflow = policy;
+                }
+            }
+            drop(app.apply_config(config));
+            assert!(app.activities_configured(bar));
+            assert_eq!(
+                app.compact_activities_configured(bar),
+                policy != ferese_panel::OverflowPolicy::Always
+            );
+            drop(app.open_hub(bar, status_ui::Menu::Activities));
+            assert_eq!(app.hub_mode(bar), Some(Mode::Expanded(Content::Activities)));
+            if policy == ferese_panel::OverflowPolicy::Always {
+                assert!(
+                    app.outputs[0]
+                        .runtime
+                        .hub
+                        .as_ref()
+                        .unwrap()
+                        .borrow()
+                        .activities
+                        .selection
+                        .visible
+                        .is_empty()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn output_resize_refits_every_mode_and_caps_the_retained_surface() {
+        for edge in [Edge::Top, Edge::Bottom] {
+            for attached in [false, true] {
+                for mode in [Mode::Idle, Mode::Peek, Mode::Expanded(Content::Calendar)] {
+                    for settled in [false, true] {
+                        let mut app = shell();
+                        let panel = &mut app.config.panels[0];
+                        panel.edge = edge;
+                        panel.morph.attached = attached;
+                        app.outputs[0].runtime.reset(panel, &app.snapshot, Some("test"));
+                        let bar = app.outputs[0].bar;
+                        drop(app.transition_hub(
+                            bar,
+                            transition::Event::Present(mode, mode.expanded().then_some(status_ui::Menu::Calendar)),
+                        ));
+                        app.outputs[0]
+                            .runtime
+                            .hub
+                            .as_ref()
+                            .unwrap()
+                            .borrow_mut()
+                            .hub
+                            .advance(Duration::from_millis(16), settled);
+                        let mut info = cosmic::cctk::sctk::output::OutputData::new(1).with_output_info(Clone::clone);
+                        info.logical_size = Some((220, 170));
+                        let output = app.outputs[0].output.clone();
+                        drop(app.output_event(cosmic::iced::event::wayland::OutputEvent::InfoUpdate(info), output));
+                        let runtime = app.outputs[0].runtime.hub.as_ref().unwrap().borrow();
+                        let available = available_size(&app.config.panels[0], app.outputs[0].size);
+                        assert_eq!(runtime.hub.mode(), mode);
+                        for (i, limit) in available.into_iter().enumerate() {
+                            assert!(f64::from(runtime.allocation[i]) <= limit.ceil());
+                            assert!(runtime.hub.target_size()[i] <= limit);
+                        }
+                        assert!(
+                            runtime.hub.target_size()[0] <= content_width(&app.config.panels[0], app.outputs[0].size)
+                        );
+                    }
+                }
+            }
+        }
     }
 
     fn seed_activities(shell: &mut FereseShell, count: usize) {

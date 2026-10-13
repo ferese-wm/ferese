@@ -136,6 +136,16 @@ pub enum ItemKind {
 }
 
 impl ItemKind {
+    /// Smallest useful allocation before a flexible control moves into overflow.
+    pub fn minimum_width(self) -> Option<f32> {
+        match self {
+            Self::FocusedWindow => Some(48.),
+            Self::Workspaces { .. } => Some(24.),
+            Self::Media => Some(112.),
+            _ => None,
+        }
+    }
+
     pub fn label(self) -> &'static str {
         match self {
             Self::Overview => "Overview",

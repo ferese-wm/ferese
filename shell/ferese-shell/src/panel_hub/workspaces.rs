@@ -119,14 +119,13 @@ impl FereseShell {
                 hidden: 0,
             };
         };
-        let available = self
-            .outputs
-            .iter()
-            .find(|entry| entry.bar == id)
-            .and_then(|entry| entry.size)
-            .map_or(panel.morph.expanded_width, |(width, _)| {
-                (f64::from(width) - 2. * f64::from(panel.resolved_geometry().side_margins)).max(0.)
-            });
+        let available = super::content_width(
+            panel,
+            self.outputs
+                .iter()
+                .find(|entry| entry.bar == id)
+                .and_then(|entry| entry.size),
+        );
         select(
             self.snapshot.workspaces_for_output(Some(output.id)).collect(),
             output.active_workspace,

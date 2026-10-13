@@ -3,7 +3,7 @@ use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
-use std::sync::{Arc, mpsc};
+use std::sync::{Arc, OnceLock, mpsc};
 use std::time::Duration;
 
 use glib::gobject_ffi;
@@ -22,8 +22,6 @@ enum SessionEvent {
 type Object = *mut c_void;
 
 struct Api {
-    _agent: Library,
-    _polkit: Library,
     user_new: unsafe extern "C" fn(c_int) -> Object,
     session_new: unsafe extern "C" fn(Object, *const c_char) -> Object,
     initiate: unsafe extern "C" fn(Object),
@@ -34,8 +32,17 @@ struct Api {
 impl Api {
     fn load() -> Result<Self, String> {
         unsafe {
-            let agent = Library::new("libpolkit-agent-1.so.0").map_err(|e| e.to_string())?;
-            let polkit = Library::new("libpolkit-gobject-1.so.0").map_err(|e| e.to_string())?;
+            // GLib keeps registered types and their function pointers for the
+            // lifetime of the process, including between authentication sessions.
+            static LIBRARIES: OnceLock<Result<(Library, Library), String>> = OnceLock::new();
+            let (agent, polkit) = LIBRARIES
+                .get_or_init(|| {
+                    let agent = Library::new("libpolkit-agent-1.so.0").map_err(|e| e.to_string())?;
+                    let polkit = Library::new("libpolkit-gobject-1.so.0").map_err(|e| e.to_string())?;
+                    Ok((agent, polkit))
+                })
+                .as_ref()
+                .map_err(Clone::clone)?;
             let user_new = *polkit.get(b"polkit_unix_user_new\0").map_err(|e| e.to_string())?;
             let session_new = *agent.get(b"polkit_agent_session_new\0").map_err(|e| e.to_string())?;
             let initiate = *agent
@@ -47,8 +54,6 @@ impl Api {
             let cancel = *agent.get(b"polkit_agent_session_cancel\0").map_err(|e| e.to_string())?;
 
             Ok(Self {
-                _agent: agent,
-                _polkit: polkit,
                 user_new,
                 session_new,
                 initiate,
@@ -457,6 +462,20 @@ mod tests {
         RESPONSES.fetch_add(1, Ordering::SeqCst);
         unsafe {
             gobject_ffi::g_signal_emit_by_name(session.cast(), c"completed".as_ptr(), 1 as c_int);
+        }
+    }
+
+    #[test]
+    fn registered_identity_types_survive_between_api_loads() {
+        for _ in 0..3 {
+            let api = Api::load().unwrap();
+            // SAFETY: the identity constructor accepts the current uid and
+            // returns an owned GObject reference.
+            unsafe {
+                let identity = (api.user_new)(libc::getuid() as c_int);
+                assert!(!identity.is_null());
+                gobject_ffi::g_object_unref(identity.cast());
+            }
         }
     }
 

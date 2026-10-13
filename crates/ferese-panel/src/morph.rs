@@ -178,9 +178,9 @@ impl Hub {
     pub fn pin_radii(&mut self, pins: Option<[f64; 4]>) -> Result<(), &'static str> {
         if pins.is_some_and(|pins| {
             pins.iter()
-                .any(|value| !value.is_finite() || !(0. ..=128.).contains(value))
+                .any(|value| !value.is_finite() || !(0. ..=f64::from(f32::MAX)).contains(value))
         }) {
-            return Err("hub radius pins must be finite values between 0 and 128");
+            return Err("hub radius pins must be finite, nonnegative pixel values representable as f32");
         }
         self.pins = pins;
         let mut target = self.motion.target();
@@ -307,7 +307,7 @@ impl Hub {
         let mut geometry = self.motion.current();
         geometry.bounds.width = geometry.bounds.width.clamp(0., self.available[0]);
         geometry.bounds.height = geometry.bounds.height.clamp(0., self.available[1]);
-        geometry.radii = geometry.radii.map(|radius| radius.max(0.));
+        geometry.radii = geometry.radii.map(|radius| radius.clamp(0., f64::from(f32::MAX)));
         Sample {
             geometry,
             previous: self.previous,
