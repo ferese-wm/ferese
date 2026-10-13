@@ -6,13 +6,15 @@ __ferese_installed=1
 __ferese_sequence=0
 __ferese_phase=prompt
 _ferese_preexec() {
-    local saved=$? command=${1:-$BASH_COMMAND}
-    [[ $__ferese_phase == armed && $command != _ferese_* ]] || return "$saved"
+    local command=${1:-$BASH_COMMAND}
+    [[ $__ferese_phase == armed && $command != _ferese_* ]] || return 0
     __ferese_phase=running
     ((__ferese_sequence+=1))
     __ferese_local="bash-$$-$__ferese_sequence"
     feresectl activity hook "$__ferese_local" --command "${command:0:4096}" --cwd "${PWD:0:1024}" >/dev/null 2>&1
-    return "$saved"
+    # bash-preexec restores the command status. A nonzero preexec return would
+    # instead skip the user command when Bash extdebug is enabled.
+    return 0
 }
 _ferese_finish() {
     local saved=$?
@@ -32,16 +34,13 @@ _ferese_finish() {
 _ferese_arm() { local saved=$?; __ferese_phase=armed; return "$saved"; }
 if [[ -n ${bash_preexec_imported:-} ]] || declare -p preexec_functions >/dev/null 2>&1; then
     preexec_functions+=(_ferese_preexec)
+    # bash-preexec restores the user status before each precmd callback, even
+    # when its delayed installer rewrites PROMPT_COMMAND.
+    precmd_functions+=(_ferese_finish _ferese_arm)
 else
     # Bash DEBUG has a single owner and is not inherited reliably by sourced
     # files. The established bash-preexec arrays compose without replacing it.
     printf '%s\n' 'Ferese: load bash-preexec before this hook to preserve existing DEBUG integrations.' >&2
     unset __ferese_installed
     return
-
-fi
-if [[ $(declare -p PROMPT_COMMAND 2>/dev/null) == 'declare -a'* ]]; then
-    PROMPT_COMMAND=(_ferese_finish "${PROMPT_COMMAND[@]}" _ferese_arm)
-else
-    PROMPT_COMMAND=(_ferese_finish "${PROMPT_COMMAND:-:}" _ferese_arm)
 fi
