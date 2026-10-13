@@ -3,8 +3,13 @@
 Ferese runs on Linux as its own Wayland session alongside your existing desktop.
 Launch it from a login manager, a command-based greeter or a local TTY.
 
-For Fedora and Arch packages, see [Packages and releases](packaging.md). The
-steps below build and install from source.
+The [0.1.0-beta release](https://github.com/ferese-wm/ferese/releases/tag/v0.1.0-beta)
+has packages for Fedora 44 and Arch Linux on x86_64. Follow
+[package installation](packaging.md#install-a-release-package) to use those builds.
+
+The steps below build the development version from `main`. It includes tabbed
+window groups, binding modes, Live Activities, new panel styles, and audio and
+region recording added since the beta. The wiki describes this development version.
 
 ## Requirements
 

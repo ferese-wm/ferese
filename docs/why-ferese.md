@@ -2,7 +2,7 @@
 
 Alongside a window manager, you need Wi-Fi, audio and display controls, notifications and a lock screen. You can choose these components separately, but keeping their settings and behaviour consistent takes extra work.
 
-Ferese includes a Wayland compositor, desktop shell, Settings, Control Center and a lock screen with shared configuration and theming. It keeps window management configurable while defining how a desktop change applies across those components.
+Ferese includes a Wayland compositor, desktop shell, Settings, Control Center and a lock screen with shared configuration and theming. You can choose a window layout per workspace and change desktop settings through the GUI or a KDL file.
 
 ## Settings that apply beyond one component
 
@@ -32,6 +32,6 @@ Continuum, Ferese’s shared motion system, keeps a moving value’s current pos
 
 A window’s content, clipping and border need to follow the same presented bounds. When the application closes, its live surface may disappear before the visual exit finishes, so Ferese retains an image for that transition. Shell content and its compositor-drawn material also need to leave together, or the text can disappear while its background or blur remains.
 
-## Testing the whole interaction
+## Testing on hardware
 
-Resize coordination, output timing and interrupted transitions need testing and measurements on the hardware where the desktop runs.
+Resize coordination, output timing and interrupted transitions need testing and measurements on the hardware where the desktop runs. The [output management checks](output-management-testing.md) cover hotplug and display changes. Use the [nested resize checks](nested-resize-testing.md) for window resizing and the [client soak tests](native-soak-testing.md) for repeated window creation and cleanup.

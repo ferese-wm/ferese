@@ -1,6 +1,8 @@
 .hero { text-align: center; padding-top: 64px; }
 h1 { font-size: clamp(45px, 6.1vw, 80px); font-weight: 590; letter-spacing: -.055em; line-height: 1.08; margin: 0; text-wrap: balance; }
 .hero-description { font-size: 18px; line-height: 1.6; max-width: 555px; margin: 22px auto 0; color: var(--muted); text-wrap: balance; }
+.release-note { max-width: 555px; margin: 16px auto 0; color: var(--muted); font-size: 13px; line-height: 1.65; text-wrap: balance; }
+.release-note a { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; }
 .hero-actions { display: flex; align-items: center; justify-content: center; gap: 28px; margin-top: 27px; }
 .primary-button { display: inline-flex; align-items: center; gap: 16px; background: var(--button); color: #fff; padding: 13px 22px; border-radius: 30px; font-size: 13px; font-weight: 500; transition: background .2s; }
 .primary-button .icon { width: 17px; height: 17px; }
