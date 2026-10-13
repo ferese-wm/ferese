@@ -152,9 +152,13 @@ impl FereseShell {
         self.night_light_temperature = None;
         let tooltip = self.dismiss_workspace_tooltip();
         crate::EFFECT_FRAME_PENDING.store(false, std::sync::atomic::Ordering::Relaxed);
-        let Some(menu) = self.menu.take() else {
+        let Some(mut menu) = self.menu.take() else {
             return tooltip;
         };
+        // Keep opacity applied until Iced has destroyed the popup's Wayland surface.
+        if let Some(effects) = menu.effects.take() {
+            self.closing_menu_effects.insert(menu.id, effects);
+        }
         self.refresh_media_art(false);
         if menu.kind == Menu::Notifications {
             self.notifications.history_open = false;
