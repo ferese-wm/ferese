@@ -6,6 +6,18 @@ guide. Your saved bindings can override these defaults.
 The [example config](../packaging/config.kdl) adds the app, media and arrow-key
 shortcuts listed below.
 
+## Launcher
+
+**Super + Space** opens the launcher. Type to search, press **Tab** to accept
+completion, or **Enter** to open the selected match. **Down** shows alternatives.
+The **Apps**, **Files** and **Windows** tiles browse each source separately.
+
+**Escape** clears the query, returns from a browse view, then closes the launcher,
+one step per press. In Windows, **Alt + Enter** moves the selected window to the
+current workspace. Power off, restart and logout also require **Alt + Enter**.
+
+Run `feresectl launcher toggle` to open or close it from a script.
+
 ## Move and resize with the mouse
 
 | Action | Result |

@@ -348,18 +348,31 @@ pub fn animated_from_edge<'a, M: 'a>(
     Element::new(Motion {
         content,
         progress,
-        regions,
+        regions: Some(regions),
         radius,
+        scale: 1.,
         direction: if edge == ferese_panel::Edge::Top { -1. } else { 1. },
+    })
+}
+
+pub fn scaled<'a, M: 'a>(content: Element<'a, M>, scale: f32, regions: Regions) -> Element<'a, M> {
+    Element::new(Motion {
+        content,
+        progress: 1.,
+        regions: Some(regions),
+        radius: 28.,
+        direction: 0.,
+        scale,
     })
 }
 
 struct Motion<'a, M> {
     content: Element<'a, M>,
     progress: f32,
-    regions: Regions,
+    regions: Option<Regions>,
     radius: f32,
     direction: f32,
+    scale: f32,
 }
 
 impl<M> Motion<'_, M> {
@@ -367,9 +380,11 @@ impl<M> Motion<'_, M> {
         Vector::new(0.0, self.direction * 4.0 * (1.0 - self.progress))
     }
 
-    fn cursor(&self, cursor: mouse::Cursor) -> mouse::Cursor {
+    fn cursor(&self, layout: Layout<'_>, cursor: mouse::Cursor) -> mouse::Cursor {
         cursor.position().map_or(mouse::Cursor::Unavailable, |p| {
-            mouse::Cursor::Available(p - self.translation())
+            mouse::Cursor::Available(
+                layout.bounds().center() + (p - layout.bounds().center() - self.translation()) / self.scale,
+            )
         })
     }
 }
@@ -381,13 +396,16 @@ impl<M> Widget<M, Theme, cosmic::Renderer> for Motion<'_, M> {
         tree: &widget::Tree,
         cursor: mouse::Cursor,
     ) -> iced_accessibility::A11yTree {
-        let mut nodes = self.content.as_widget().a11y_nodes(layout, tree, self.cursor(cursor));
+        let mut nodes = self
+            .content
+            .as_widget()
+            .a11y_nodes(layout, tree, self.cursor(layout, cursor));
         let offset = self.translation();
         for node in nodes.root_mut() {
-            translate_accessible_node(node, offset);
+            transform_accessible_node(node, offset, layout.bounds().center(), self.scale);
         }
         for node in nodes.children_mut() {
-            translate_accessible_node(node, offset);
+            transform_accessible_node(node, offset, layout.bounds().center(), self.scale);
         }
         nodes
     }
@@ -432,19 +450,27 @@ impl<M> Widget<M, Theme, cosmic::Renderer> for Motion<'_, M> {
         shell: &mut Shell<'_, M>,
         viewport: &Rectangle,
     ) {
-        let mut collector = CollectRegions(Vec::new());
-        self.content
-            .as_widget_mut()
-            .operate(tree, layout, renderer, &mut collector);
-        if collector.0.is_empty() {
-            // A single-content popover (e.g. battery) has one inner card, not
-            // a full-surface rectangle including the outer transparent padding.
-            if let Some(content) = layout.children().next() {
-                collector.0.push(content.bounds());
+        if let Some(regions) = &self.regions {
+            let mut collected = regions.lock().unwrap();
+            collected.clear();
+            self.content
+                .as_widget_mut()
+                .operate(tree, layout, renderer, &mut ReuseRegions(&mut collected));
+            if collected.is_empty()
+                && let Some(content) = layout.children().next()
+            {
+                let bounds = content.bounds();
+                collected.push([bounds.x, bounds.y, bounds.width, bounds.height, 0.]);
             }
+            transform_regions(
+                &mut collected,
+                layout.bounds().center(),
+                self.scale,
+                self.translation(),
+                self.radius,
+            );
         }
-        *self.regions.lock().unwrap() = collector.into_regions(self.translation(), self.radius);
-        let cursor = self.cursor(cursor);
+        let cursor = self.cursor(layout, cursor);
         self.content
             .as_widget_mut()
             .update(tree, event, layout, cursor, renderer, clipboard, shell, viewport);
@@ -461,16 +487,25 @@ impl<M> Widget<M, Theme, cosmic::Renderer> for Motion<'_, M> {
         viewport: &Rectangle,
     ) {
         let v = self.translation();
-        let transform = Transformation::translate(v.x, v.y);
+        let center = layout.bounds().center();
+        let transform = Transformation::translate(center.x + v.x, center.y + v.y)
+            * Transformation::scale(self.scale)
+            * Transformation::translate(-center.x, -center.y);
         // Layout/region collection still run before the surface starts opening.
         // No child may paint an opaque control before the presentation begins.
         if self.progress <= 0.0 {
             return;
         }
         renderer.with_transformation(transform, |renderer| {
-            self.content
-                .as_widget()
-                .draw(tree, renderer, theme, style, layout, self.cursor(cursor), viewport)
+            self.content.as_widget().draw(
+                tree,
+                renderer,
+                theme,
+                style,
+                layout,
+                self.cursor(layout, cursor),
+                viewport,
+            )
         });
     }
 
@@ -484,7 +519,7 @@ impl<M> Widget<M, Theme, cosmic::Renderer> for Motion<'_, M> {
     ) -> mouse::Interaction {
         self.content
             .as_widget()
-            .mouse_interaction(tree, layout, self.cursor(cursor), viewport, renderer)
+            .mouse_interaction(tree, layout, self.cursor(layout, cursor), viewport, renderer)
     }
 
     fn operate(
@@ -512,56 +547,55 @@ impl<M> Widget<M, Theme, cosmic::Renderer> for Motion<'_, M> {
     }
 }
 
-fn translate_accessible_node(node: &mut iced_accessibility::A11yNode, offset: Vector) {
+fn transform_accessible_node(
+    node: &mut iced_accessibility::A11yNode,
+    offset: Vector,
+    center: cosmic::iced::Point,
+    scale: f32,
+) {
     if let Some(mut bounds) = node.node().bounds() {
-        bounds.x0 += f64::from(offset.x);
-        bounds.x1 += f64::from(offset.x);
-        bounds.y0 += f64::from(offset.y);
-        bounds.y1 += f64::from(offset.y);
+        let x = f64::from(center.x);
+        let y = f64::from(center.y);
+        bounds.x0 = x + (bounds.x0 - x) * f64::from(scale) + f64::from(offset.x);
+        bounds.x1 = x + (bounds.x1 - x) * f64::from(scale) + f64::from(offset.x);
+        bounds.y0 = y + (bounds.y0 - y) * f64::from(scale) + f64::from(offset.y);
+        bounds.y1 = y + (bounds.y1 - y) * f64::from(scale) + f64::from(offset.y);
         node.node_mut().set_bounds(bounds);
     }
 }
 
-struct CollectRegions(Vec<Rectangle>);
-
-impl CollectRegions {
-    fn into_regions(self, translation: Vector, radius: f32) -> Vec<[f32; 5]> {
-        self.0
-            .into_iter()
-            .take(32)
-            .filter(|r| r.width > 0.0 && r.height > 0.0)
-            .map(|r| {
-                [
-                    r.x + translation.x,
-                    r.y + translation.y,
-                    r.width,
-                    r.height,
-                    radius.max(0.0),
-                ]
-            })
-            .collect()
+fn transform_regions(regions: &mut [[f32; 5]], center: cosmic::iced::Point, scale: f32, offset: Vector, radius: f32) {
+    for region in regions {
+        region[0] = center.x + (region[0] - center.x) * scale + offset.x;
+        region[1] = center.y + (region[1] - center.y) * scale + offset.y;
+        region[2] *= scale;
+        region[3] *= scale;
+        region[4] = radius.max(0.) * scale;
     }
 }
 
-impl widget::Operation for CollectRegions {
+struct ReuseRegions<'a>(&'a mut Vec<[f32; 5]>);
+impl widget::Operation for ReuseRegions<'_> {
     fn traverse(&mut self, children: &mut dyn FnMut(&mut dyn widget::Operation)) {
         children(self);
     }
-
     fn container(&mut self, id: Option<&widget::Id>, bounds: Rectangle) {
-        if id == Some(&widget::Id::new("ferese-blur-card")) {
-            let contains = |outer: &Rectangle, inner: &Rectangle| {
-                outer.x <= inner.x
-                    && outer.y <= inner.y
-                    && outer.x + outer.width >= inner.x + inner.width
-                    && outer.y + outer.height >= inner.y + inner.height
-            };
-            // Nested controls belong to their enclosing card's single blur pass.
-            if self.0.iter().any(|outer| contains(outer, &bounds)) {
-                return;
-            }
-            self.0.retain(|inner| !contains(&bounds, inner));
-            self.0.push(bounds);
+        if id != Some(&widget::Id::new("ferese-blur-card")) || bounds.width <= 0. || bounds.height <= 0. {
+            return;
+        }
+        let r = [bounds.x, bounds.y, bounds.width, bounds.height, 0.];
+        let contains = |outer: &[f32; 5], inner: &[f32; 5]| {
+            outer[0] <= inner[0]
+                && outer[1] <= inner[1]
+                && outer[0] + outer[2] >= inner[0] + inner[2]
+                && outer[1] + outer[3] >= inner[1] + inner[3]
+        };
+        if self.0.iter().any(|outer| contains(outer, &r)) {
+            return;
+        }
+        self.0.retain(|inner| !contains(&r, inner));
+        if self.0.len() < 32 {
+            self.0.push(r);
         }
     }
 }
@@ -728,22 +762,31 @@ mod tests {
 
     #[test]
     fn material_regions_preserve_fractional_layout_and_translation() {
-        let collector = CollectRegions(vec![Rectangle::new((0.25, 2.5).into(), (100.25, 40.5).into())]);
-        assert_eq!(
-            collector.into_regions(Vector::new(0.125, -0.25), 13.5),
-            vec![[0.375, 2.25, 100.25, 40.5, 13.5]]
+        let mut regions = vec![[0.25, 2.5, 100.25, 40.5, 0.]];
+        transform_regions(
+            &mut regions,
+            cosmic::iced::Point::ORIGIN,
+            1.,
+            Vector::new(0.125, -0.25),
+            13.5,
         );
+        assert_eq!(regions, vec![[0.375, 2.25, 100.25, 40.5, 13.5]]);
     }
 
     #[test]
     fn centered_modal_material_tracks_surface_position_and_animation() {
-        let mut collector = CollectRegions(Vec::new());
+        let mut regions = Vec::new();
+        let mut collector = ReuseRegions(&mut regions);
         let card = Rectangle::new((380.0, 420.0).into(), (440.0, 220.0).into());
         widget::Operation::container(&mut collector, Some(&widget::Id::new("ferese-blur-card")), card);
-        assert_eq!(
-            collector.into_regions(Vector::new(0.0, -2.0), 14.0),
-            vec![[380., 418., 440., 220., 14.]]
+        transform_regions(
+            &mut regions,
+            cosmic::iced::Point::ORIGIN,
+            1.,
+            Vector::new(0.0, -2.0),
+            14.0,
         );
+        assert_eq!(regions, vec![[380., 418., 440., 220., 14.]]);
     }
 
     #[test]
@@ -901,7 +944,8 @@ mod tests {
 
     #[test]
     fn material_regions_include_cards_but_not_the_parent_or_gaps() {
-        let mut collector = CollectRegions(Vec::new());
+        let mut regions = Vec::new();
+        let mut collector = ReuseRegions(&mut regions);
         let id = widget::Id::new("ferese-blur-card");
         widget::Operation::container(
             &mut collector,
@@ -912,12 +956,18 @@ mod tests {
         let second = Rectangle::new((160.0, 12.0).into(), (140.0, 80.0).into());
         widget::Operation::container(&mut collector, Some(&id), first);
         widget::Operation::container(&mut collector, Some(&id), second);
-        assert_eq!(collector.0, vec![first, second]);
+        assert_eq!(
+            *collector.0,
+            vec![[12., 12., 140., 80., 0.], [160., 12., 140., 80., 0.]]
+        );
         widget::Operation::container(
             &mut collector,
             Some(&id),
             Rectangle::new((20.0, 20.0).into(), (40.0, 40.0).into()),
         );
-        assert_eq!(collector.0, vec![first, second]);
+        assert_eq!(
+            *collector.0,
+            vec![[12., 12., 140., 80., 0.], [160., 12., 140., 80., 0.]]
+        );
     }
 }

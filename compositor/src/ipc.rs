@@ -1083,6 +1083,14 @@ impl Ferese {
             "toggle-display-mode" => {
                 self.toggle_display_mode();
             }
+            "toggle-launcher" => {
+                if !self.toggle_launcher() {
+                    return Err(CommandError::new(
+                        "unavailable",
+                        "Launcher requires an unlocked session and an updated Ferese shell",
+                    ));
+                }
+            }
             "toggle-keybinding-guide" => {
                 if !self.toggle_keybinding_guide() {
                     return Err(CommandError::new(

@@ -23,7 +23,7 @@ BuildRequires:  mesa-dri-drivers mesa-vulkan-drivers
 BuildRequires:  pipewire-devel gstreamer1-devel dbus-daemon desktop-file-utils polkit-libs pam
 BuildRequires:  xorg-x11-xauth
 Requires:       pam polkit polkit-libs foot pipewire wireplumber python3 bash util-linux dbus-daemon dbus-tools systemd
-Requires:       xdg-desktop-portal xdg-desktop-portal-gtk
+Requires:       xdg-desktop-portal xdg-desktop-portal-gtk glib2
 # Loaded at runtime, so ELF dependency detection does not find these libraries.
 Requires:       libEGL.so.1()(64bit) fontconfig freetype
 Recommends:     brightnessctl slurp wl-clipboard satty

@@ -52,6 +52,7 @@ pkgbase = ferese-git
 	depends = gstreamer
 	depends = xdg-desktop-portal
 	depends = xdg-desktop-portal-gtk
+	depends = glib2
 	optdepends = brightnessctl: brightness controls
 	optdepends = slurp: screenshot region selection
 	optdepends = satty: screenshot editing

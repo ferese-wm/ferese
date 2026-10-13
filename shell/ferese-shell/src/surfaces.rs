@@ -37,7 +37,17 @@ impl FereseShell {
                 } else {
                     Task::none()
                 };
+                let launcher = if self
+                    .launcher
+                    .as_ref()
+                    .is_some_and(|l| Some(&l.output) == entry.name.as_ref())
+                {
+                    self.destroy_launcher()
+                } else {
+                    Task::none()
+                };
                 let mut tasks = vec![
+                    launcher,
                     self.dismiss_workspace_tooltip(),
                     menu.chain(destroy_layer_surface(entry.bar)),
                     self.rebuild_system_modal(),
@@ -211,6 +221,7 @@ impl FereseShell {
         self.outputs
             .iter()
             .any(|entry| entry.bar == id || entry.wallpaper == Some(id))
+            || self.launcher.as_ref().is_some_and(|launcher| launcher.id == id)
             || self.menu.as_ref().is_some_and(|menu| menu.id == id)
             || self.system_modal.as_ref().is_some_and(|modal| modal.contains(id))
             || self
@@ -221,6 +232,9 @@ impl FereseShell {
     }
 
     pub(super) fn handle_event(&mut self, event: Event, id: window::Id) -> Task<Message> {
+        if let Some(task) = self.launcher_event(&event, id) {
+            return task;
+        }
         if matches!(event, Event::Mouse(cosmic::iced::mouse::Event::CursorEntered)) {
             return self.hub_hover(id, true);
         }
@@ -736,16 +750,29 @@ impl EffectsBinding {
             .map(|value| (value.clamp(0.0, 1.0) * 1000.0).round() as u32)
             .collect();
         validate_region_counts(regions.len(), values.len())?;
-        let next = (regions.to_vec(), opacity, values, role);
-        if self.presentation.borrow().as_ref() != Some(&next) {
-            self.surface.set_presentation(
-                role,
-                encode_regions(regions),
-                opacity,
-                next.2.iter().flat_map(|value| value.to_ne_bytes()).collect(),
-            );
-            self.connection.flush()?;
-            *self.presentation.borrow_mut() = Some(next);
+        let mut previous = self.presentation.borrow_mut();
+        if previous
+            .as_ref()
+            .is_some_and(|old| old.0 == regions && old.1 == opacity && old.2 == values && old.3 == role)
+        {
+            return Ok(());
+        }
+        self.surface.set_presentation(
+            role,
+            encode_regions(regions),
+            opacity,
+            values.iter().flat_map(|value| value.to_ne_bytes()).collect(),
+        );
+        self.connection.flush()?;
+        if let Some(old) = previous.as_mut() {
+            old.0.clear();
+            old.0.extend_from_slice(regions);
+            old.1 = opacity;
+            old.2.clear();
+            old.2.extend_from_slice(&values);
+            old.3 = role;
+        } else {
+            *previous = Some((regions.to_vec(), opacity, values, role));
         }
         Ok(())
     }

@@ -223,6 +223,23 @@ class ShellMotionTest(unittest.TestCase):
                                        "notification materials did not follow their fade")
                     print(f"Toast: {opening_frames} opening callback requests, {idle_frames / 2:g} settled commits/s; destroyed", flush=True)
 
+                    subprocess.run([str(ctl), "launcher", "toggle"], env=ipc_environment(env), check=True, capture_output=True, timeout=5)
+                    launcher = wait_for(lambda: layer_surface("ferese-launcher"))
+                    wait_for(lambda: frames(launcher) >= 4)
+                    time.sleep(1.5)
+                    if capture_path := os.environ.get("FERESE_TEST_LAUNCHER_IMAGE"):
+                        with open(capture_path, "wb") as capture:
+                            subprocess.run([str(ctl), "screenshot"], env=ipc_environment(env), stdout=capture,
+                                           stderr=subprocess.PIPE, check=True, timeout=10)
+                    before = commits(launcher)
+                    time.sleep(1)
+                    self.assertLessEqual(commits(launcher) - before, 10, "settled launcher kept animating")
+                    before_close = frames(launcher)
+                    subprocess.run([str(ctl), "launcher", "toggle"], env=ipc_environment(env), check=True, capture_output=True, timeout=5)
+                    wait_for(lambda: destroyed(launcher), timeout=5)
+                    self.assertGreater(frames(launcher), before_close, "launcher did not animate its close")
+                    print("Launcher: animated open and close, idle timer stopped, surface destroyed", flush=True)
+
                     subprocess.run([str(ctl), "toggle-keybinding-guide"], env=ipc_environment(env), check=True, capture_output=True, timeout=5)
                     modal = wait_for(lambda: layer_surface("ferese-system-modal"))
                     wait_for(lambda: frames(modal) >= 4)

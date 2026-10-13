@@ -19,6 +19,11 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
+    /// Show or hide the application launcher.
+    Launcher {
+        #[command(subcommand)]
+        action: LauncherAction,
+    },
     /// Publish bounded activity data owned by the invoking shell.
     Activity {
         #[command(subcommand)]
@@ -235,10 +240,18 @@ fn value_name(value: &impl ValueEnum) -> String {
         .to_owned()
 }
 
+#[derive(Debug, Subcommand)]
+pub enum LauncherAction {
+    Toggle,
+}
+
 impl Command {
     pub fn ipc(&self) -> Option<(&'static str, Value)> {
         let (command, args) = match self {
             Self::Activity { .. } | Self::Run { .. } => return None,
+            Self::Launcher {
+                action: LauncherAction::Toggle,
+            } => ("toggle-launcher", json!({})),
             Self::FocusedWindow => ("get-focused-window", json!({})),
             Self::Windows => ("get-windows", json!({})),
             Self::IdleInhibition => ("get-idle-inhibition", json!({})),

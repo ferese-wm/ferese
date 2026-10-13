@@ -1178,3 +1178,42 @@ fn tab_indicator_yields_to_a_floating_window_and_disappears_with_one_tab() {
     assert!(state.scrolling_tab_bar(a).is_none());
     assert!(state.tab_indicator.hover.is_none());
 }
+
+#[test]
+fn shell_can_move_a_window_to_the_current_workspace_on_another_output() {
+    if !crate::startup_tests::private_runtime(
+        "state::window_lifecycle_tests::shell_can_move_a_window_to_the_current_workspace_on_another_output",
+    ) {
+        return;
+    }
+    let (mut events, mut state, _) = fixture();
+    let (window, _wire) = window(&mut state, &mut events, 0xff112233);
+    let id = state.windows.ids()[&window];
+    let source = state.workspaces.workspace_for_window(id).unwrap();
+    let second = Output::new(
+        "second".into(),
+        smithay::output::PhysicalProperties {
+            size: (0, 0).into(),
+            subpixel: smithay::output::Subpixel::Unknown,
+            make: "test".into(),
+            model: "test".into(),
+        },
+    );
+    second.change_current_state(
+        Some(smithay::output::Mode {
+            size: (800, 600).into(),
+            refresh: 60_000,
+        }),
+        None,
+        None,
+        None,
+    );
+    state.space.map_output(&second, (800, 0));
+    state.register_output(&second, "second".into());
+    let output = state.output_ids[&second];
+    let destination = state.output_workspaces.active_workspace(output).unwrap();
+    assert_ne!(source, destination);
+    assert!(state.move_managed_window_to_workspace(id, destination));
+    assert_eq!(state.workspaces.workspace_for_window(id), Some(destination));
+    assert!(state.move_managed_window_to_workspace(id, destination));
+}

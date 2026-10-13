@@ -1267,6 +1267,9 @@ impl Ferese {
             BindingAction::ToggleDisplayMode => {
                 self.toggle_display_mode();
             }
+            BindingAction::ToggleLauncher => {
+                self.toggle_launcher();
+            }
             BindingAction::ToggleKeybindingGuide => {
                 self.toggle_keybinding_guide();
             }

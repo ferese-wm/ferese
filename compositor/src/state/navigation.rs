@@ -647,9 +647,6 @@ impl Ferese {
         let Some(output_id) = self.output_workspaces.output_for_workspace(destination) else {
             return false;
         };
-        if self.output_workspaces.output_for_workspace(source) != Some(output_id) {
-            return false;
-        }
         if source == destination {
             return true;
         }

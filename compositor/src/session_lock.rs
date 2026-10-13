@@ -427,6 +427,7 @@ impl SessionLockHandler for Ferese {
     }
 
     fn lock(&mut self, confirmation: SessionLocker) {
+        self.dismiss_launcher();
         if !self.session_lock.lifecycle.can_acquire() {
             return;
         }

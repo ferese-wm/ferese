@@ -22,7 +22,7 @@
     DEALINGS IN THE SOFTWARE.
   </copyright>
 
-  <interface name="ferese_shell_manager_v1" version="9">
+  <interface name="ferese_shell_manager_v1" version="10">
     <description summary="create a capability-scoped Ferese shell controller">
       This private global is visible only to clients granted the shell-control
       capability. It does not assign a Wayland surface role.
@@ -35,7 +35,7 @@
     <request name="destroy" type="destructor"/>
   </interface>
 
-  <interface name="ferese_shell_v1" version="9">
+  <interface name="ferese_shell_v1" version="10">
     <description summary="managed-window metadata and shell control">
       Window, workspace, and output identifiers are unsigned 64-bit values
       encoded as high and low 32-bit words. Each snapshot atomically replaces
@@ -212,6 +212,37 @@
         hint until the next snapshot replaces them.
       </description>
       <arg name="name" type="string"/>
+    </event>
+    <event name="toggle_launcher" since="10">
+      <description summary="toggle the launcher on the focused output"/>
+      <arg name="output_name" type="string"/>
+    </event>
+    <request name="thumbnail" since="10">
+      <description summary="request a bounded window thumbnail">
+        Only available on the private shell connection. Returns straight RGBA8
+        pixels in an anonymous file, at most 320 by 168 pixels. Protected
+        surfaces and locked sessions are never captured. The token identifies
+        the invocation; the shell must discard replies from closed invocations.
+      </description>
+      <arg name="token" type="uint"/>
+      <arg name="window_hi" type="uint"/>
+      <arg name="window_lo" type="uint"/>
+    </request>
+    <event name="thumbnail" since="10">
+      <arg name="token" type="uint"/>
+      <arg name="window_hi" type="uint"/>
+      <arg name="window_lo" type="uint"/>
+      <arg name="width" type="uint"/>
+      <arg name="height" type="uint"/>
+      <arg name="pixels" type="fd"/>
+    </event>
+    <event name="thumbnail_unavailable" since="10">
+      <arg name="token" type="uint"/>
+      <arg name="window_hi" type="uint"/>
+      <arg name="window_lo" type="uint"/>
+    </event>
+    <event name="dismiss_launcher" since="10">
+      <description summary="discard launcher state before locking"/>
     </event>
   </interface>
 </protocol>

@@ -12,6 +12,7 @@ mod control;
 mod display_mode;
 mod ipc_subscription;
 mod keybinding_guide;
+mod launcher;
 mod media;
 mod motion;
 mod notification_ui;
@@ -170,6 +171,8 @@ struct FereseShell {
     pending_config_error: Option<String>,
     menu: Option<status_ui::OpenMenu>,
     system_modal: Option<system_modal::SystemModal>,
+    launcher: Option<launcher::Launcher>,
+    launcher_files: launcher::files::Files,
     display_mode: display_mode::Model,
     guide_shown: bool,
     guide_load: keybinding_guide::LoadState,
@@ -194,6 +197,8 @@ struct OutputSurfaces {
 
 #[derive(Clone, Debug)]
 enum Message {
+    Launcher(launcher::Message),
+    LauncherEnter(window::Id, bool),
     NightLightTemperature(u16),
     CommitNightLightTemperature,
     HubOpen(window::Id, status_ui::Menu),
@@ -335,6 +340,8 @@ impl cosmic::Application for FereseShell {
             pending_config_error,
             menu: None,
             system_modal: None,
+            launcher: None,
+            launcher_files: Default::default(),
             display_mode: display_mode::Model::default(),
             guide_shown: false,
             guide_load: Default::default(),
@@ -365,6 +372,7 @@ impl cosmic::Application for FereseShell {
 
     fn subscription(&self) -> Subscription<Self::Message> {
         Subscription::batch([
+            self.launcher_subscription(),
             self.control.as_ref().map_or_else(Subscription::none, |control| {
                 control.subscription().map(|_| Message::ControlReady)
             }),
@@ -376,8 +384,11 @@ impl cosmic::Application for FereseShell {
             event::listen_with(|event, status, id| match &event {
                 Event::Keyboard(cosmic::iced::keyboard::Event::KeyPressed {
                     key: cosmic::iced::keyboard::Key::Named(cosmic::iced::keyboard::key::Named::Enter),
+                    modifiers,
                     ..
-                }) if status == cosmic::iced::event::Status::Captured => None,
+                }) if status == cosmic::iced::event::Status::Captured => {
+                    Some(Message::LauncherEnter(id, modifiers.alt()))
+                }
                 Event::PlatformSpecific(PlatformSpecific::Wayland(wayland::Event::Frame(..))) => EFFECT_FRAME_PENDING
                     .load(Ordering::Relaxed)
                     .then_some(Message::Event(event, id)),
@@ -407,6 +418,14 @@ impl cosmic::Application for FereseShell {
 
     fn update(&mut self, message: Self::Message) -> Task<Self::Message> {
         let task = match message {
+            Message::Launcher(message) => self.update_launcher(message),
+            Message::LauncherEnter(id, alt) => {
+                if self.launcher.as_ref().is_some_and(|l| l.id == id) {
+                    self.update_launcher(launcher::Message::Accept(alt))
+                } else {
+                    Task::none()
+                }
+            }
             Message::HubOpen(id, kind) => self.open_hub(id, kind),
             Message::HubClose(id) => self.close_hub(id),
             Message::HubWorkspaceScroll(id, delta) => self.scroll_hub_workspaces(id, delta),
@@ -562,6 +581,7 @@ impl cosmic::Application for FereseShell {
                     }
                     Ok((_connection, surface)) => {
                         self.attach_power_material(id, &surface);
+                        self.attach_launcher_effects(id, &surface);
                         if let Some(entry) = &mut self.notification_surface
                             && entry.id == id
                             && entry.effects.is_none()
@@ -857,6 +877,7 @@ impl cosmic::Application for FereseShell {
                     if let Some(snapshot) = poll.snapshot {
                         let mode_was_active = self.snapshot.binding_mode.is_some();
                         self.snapshot = snapshot;
+                        reload_task = Task::batch([reload_task, self.refresh_launcher()]);
                         let mode = self.binding_mode_transition(mode_was_active);
                         let feedback = self.sync_hub_workspace_feedback(overview_was_active || self.overview_active);
                         let mut tasks = vec![
@@ -919,6 +940,12 @@ impl cosmic::Application for FereseShell {
                     }
                     for command in poll.commands {
                         let task = match command {
+                            control::ControlCommand::DismissLauncher => self.destroy_launcher(),
+                            control::ControlCommand::Thumbnail(token, window, image) => {
+                                self.launcher_thumbnail(token, window, image);
+                                Task::none()
+                            }
+                            control::ControlCommand::ToggleLauncher(output) => self.toggle_launcher(output),
                             control::ControlCommand::ToggleDisplays(output) => self.open_display_modal(Some(&output)),
                             control::ControlCommand::MonitorsChanged => self.load_display_inventory(),
                             control::ControlCommand::ToggleGuide(output) => self.toggle_guide(output),
@@ -1177,6 +1204,8 @@ mod tests {
             pending_config_error: None,
             menu: None,
             system_modal: None,
+            launcher: None,
+            launcher_files: Default::default(),
             display_mode: Default::default(),
             guide_shown: false,
             guide_load: Default::default(),

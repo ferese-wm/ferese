@@ -85,6 +85,9 @@ pub(crate) enum ControlCommand {
     Logout(u32, String),
     CancelLogout(u32),
     ToggleGuide(String),
+    ToggleLauncher(String),
+    DismissLauncher,
+    Thumbnail(u32, u64, Option<cosmic::widget::image::Handle>),
     ToggleDisplays(String),
     MonitorsChanged,
 }
@@ -128,6 +131,9 @@ enum ControlUpdate {
     Logout(u32, String),
     LogoutCancelled(u32),
     ToggleGuide(String),
+    ToggleLauncher(String),
+    DismissLauncher,
+    Thumbnail(u32, u64, Option<cosmic::widget::image::Handle>),
     ToggleDisplays(String),
     MonitorsChanged,
 }
@@ -137,7 +143,7 @@ impl ShellControl {
         let connection = control_connection()?;
         let (globals, mut queue) = registry_queue_init::<ControlState>(&connection)?;
         let qh = queue.handle();
-        let manager = globals.bind::<FereseShellManagerV1, _, _>(&qh, 7..=9, ())?;
+        let manager = globals.bind::<FereseShellManagerV1, _, _>(&qh, 7..=10, ())?;
         let shell = manager.get_shell(&qh, ());
         let (sender, updates) = mpsc::channel();
         let wake = Wake(Arc::new(tokio::sync::Notify::new()));
@@ -181,6 +187,11 @@ impl ShellControl {
                 Ok(ControlUpdate::Logout(serial, output)) => poll.commands.push(ControlCommand::Logout(serial, output)),
                 Ok(ControlUpdate::ToggleDisplays(output)) => poll.commands.push(ControlCommand::ToggleDisplays(output)),
                 Ok(ControlUpdate::MonitorsChanged) => poll.commands.push(ControlCommand::MonitorsChanged),
+                Ok(ControlUpdate::DismissLauncher) => poll.commands.push(ControlCommand::DismissLauncher),
+                Ok(ControlUpdate::Thumbnail(token, window, image)) => {
+                    poll.commands.push(ControlCommand::Thumbnail(token, window, image))
+                }
+                Ok(ControlUpdate::ToggleLauncher(output)) => poll.commands.push(ControlCommand::ToggleLauncher(output)),
                 Ok(ControlUpdate::ToggleGuide(output)) => poll.commands.push(ControlCommand::ToggleGuide(output)),
                 Ok(ControlUpdate::LogoutCancelled(serial)) => poll.commands.push(ControlCommand::CancelLogout(serial)),
                 Ok(ControlUpdate::Config(source)) => poll.config = Some(source),
@@ -193,6 +204,15 @@ impl ShellControl {
                 Err(TryRecvError::Empty) => return poll,
             }
         }
+    }
+
+    pub(crate) fn thumbnail(&self, token: u32, window: u64) {
+        if self.shell.version() < 10 {
+            return;
+        }
+        let (hi, lo) = split_id(window);
+        self.shell.thumbnail(token, hi, lo);
+        let _ = self.connection.flush();
     }
 
     pub(crate) fn move_window_to_workspace(&self, window: u64, workspace: u64) {
@@ -318,6 +338,47 @@ impl Dispatch<FereseShellV1, ()> for ControlState {
         _qh: &QueueHandle<Self>,
     ) {
         match event {
+            ferese_shell_v1::Event::DismissLauncher => {
+                let _ = state.sender.send(ControlUpdate::DismissLauncher);
+            }
+            ferese_shell_v1::Event::ThumbnailUnavailable {
+                token,
+                window_hi,
+                window_lo,
+            } => {
+                let _ = state
+                    .sender
+                    .send(ControlUpdate::Thumbnail(token, join_id(window_hi, window_lo), None));
+            }
+            ferese_shell_v1::Event::Thumbnail {
+                token,
+                window_hi,
+                window_lo,
+                width,
+                height,
+                pixels,
+            } => {
+                use std::io::Read;
+                let image = (|| {
+                    if width == 0 || width > 320 || height == 0 || height > 168 {
+                        return None;
+                    }
+                    let mut file = std::fs::File::from(pixels);
+                    let size = (width * height * 4) as usize;
+                    if file.metadata().ok()?.len() != size as u64 {
+                        return None;
+                    }
+                    let mut bytes = vec![0; size];
+                    file.read_exact(&mut bytes).ok()?;
+                    Some(cosmic::widget::image::Handle::from_rgba(width, height, bytes))
+                })();
+                let _ = state
+                    .sender
+                    .send(ControlUpdate::Thumbnail(token, join_id(window_hi, window_lo), image));
+            }
+            ferese_shell_v1::Event::ToggleLauncher { output_name } => {
+                let _ = state.sender.send(ControlUpdate::ToggleLauncher(output_name));
+            }
             ferese_shell_v1::Event::ConfigBegin => state.config = Some(String::new()),
             ferese_shell_v1::Event::ConfigChunk { source } => {
                 append_config_chunk(&mut state.config, &source);

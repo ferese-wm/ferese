@@ -181,6 +181,7 @@ impl FereseShell {
             })
             .unwrap_or(0);
         let mut tasks = vec![
+            self.destroy_launcher(),
             self.destroy_system_modal(true),
             self.destroy_menu(),
             self.close_notification_history(),

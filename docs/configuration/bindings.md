@@ -30,7 +30,7 @@ invalid. A disabled binding must omit `action` and `argument`.
 | `focus-floating` | None; focus the last focused window in the opposite tiled/floating layer on this workspace |
 | `focus-mru-next`, `focus-mru-previous` | None; cycle windows in focus order |
 | `none` | None; ignore this trigger |
-| `close`, `exit`, `toggle-maximized`, `toggle-fullscreen`, `toggle-layout`, `cycle-column-width`, `center-column`, `consume`, `expel`, `toggle-column-tabbed`, `leave-tab`, `next-tab`, `previous-tab`, `toggle-floating`, `toggle-overview` | None |
+| `close`, `exit`, `toggle-maximized`, `toggle-fullscreen`, `toggle-layout`, `cycle-column-width`, `center-column`, `consume`, `expel`, `toggle-column-tabbed`, `leave-tab`, `next-tab`, `previous-tab`, `toggle-floating`, `toggle-overview`, `toggle-launcher` | None |
 
 ```kdl
 commands {

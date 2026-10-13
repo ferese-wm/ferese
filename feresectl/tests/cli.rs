@@ -38,6 +38,7 @@ fn help_exits_successfully_without_a_session_and_has_hidden_legacy_aliases() {
     for args in [
         &["--help"][..],
         &["theme", "--help"],
+        &["launcher", "--help"],
         &["media", "--help"],
         &["xwayland", "--help"],
         &["screenshot", "--help"],
@@ -469,4 +470,18 @@ sys.exit(19)
         .parse()
         .unwrap();
     assert!(elapsed < 1.5, "stdout reader stalled the child for {elapsed}s");
+}
+
+#[test]
+fn launcher_toggle_uses_the_shell_command() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("ipc.sock");
+    let server = serve(&path, "toggle-launcher", json!({}));
+    success(
+        ctl(&["launcher", "toggle"])
+            .env("FERESE_SOCKET", &path)
+            .output()
+            .unwrap(),
+    );
+    server.join().unwrap();
 }

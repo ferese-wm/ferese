@@ -378,6 +378,10 @@ pub(super) fn parse_action(
             no_argument()?;
             Ok(BindingAction::ToggleDisplayMode)
         }
+        "toggle-launcher" => {
+            no_argument()?;
+            Ok(BindingAction::ToggleLauncher)
+        }
         "toggle-keybinding-guide" => {
             no_argument()?;
             Ok(BindingAction::ToggleKeybindingGuide)
@@ -405,6 +409,7 @@ pub(super) fn parse_workspace(argument: &str) -> Result<u8, ConfigError> {
 
 pub(super) fn default_bindings() -> Vec<BindingConfig> {
     let mut bindings = vec![
+        binding("Super+Space", "toggle-launcher", None),
         binding("Super+Enter", "spawn", Some("terminal")),
         binding("Super+Shift+S", "spawn", Some("screenshot")),
         binding("Print", "spawn", Some("screenshot-full")),
@@ -524,6 +529,7 @@ pub enum BindingAction {
     ToggleFloating,
     ToggleOverview,
     ToggleKeybindingGuide,
+    ToggleLauncher,
     ToggleDisplayMode,
     Media(&'static str),
 }
@@ -648,6 +654,7 @@ impl Binding {
             .into(),
             BindingAction::ToggleOverview => "Open or close overview".into(),
             BindingAction::ToggleDisplayMode => "Open display mode chooser".into(),
+            BindingAction::ToggleLauncher => "Open or close launcher".into(),
             BindingAction::ToggleKeybindingGuide => "Open or close shortcut hint".into(),
         };
         let mut parts = Vec::new();

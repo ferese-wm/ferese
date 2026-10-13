@@ -1214,7 +1214,7 @@ mod tests {
         let input = config.input_settings().unwrap();
         let bindings = config.bindings(&input).unwrap();
 
-        assert_eq!(bindings.len(), 62);
+        assert_eq!(bindings.len(), 63);
         for (shift, action) in [
             (false, BindingAction::ToggleMaximized),
             (true, BindingAction::ToggleFullscreen),
@@ -1225,6 +1225,10 @@ mod tests {
                 && binding.action == action));
         }
         assert!(bindings.iter().any(|binding| binding.action == BindingAction::Exit));
+        assert!(bindings.iter().any(|binding| binding.modifiers.logo
+            && !binding.modifiers.shift
+            && binding.trigger == BindingTrigger::Keysym(keysyms::KEY_space)
+            && binding.action == BindingAction::ToggleLauncher));
         assert!(bindings.iter().any(|binding| binding.modifiers.logo
             && binding.modifiers.shift
             && binding.trigger == BindingTrigger::Keysym(keysyms::KEY_t)
@@ -1262,7 +1266,7 @@ mod tests {
 
         let input = replaced.input_settings().unwrap();
         let bindings = replaced.bindings(&input).unwrap();
-        assert_eq!(bindings.len(), 62);
+        assert_eq!(bindings.len(), 63);
         assert!(bindings.iter().any(|binding| {
             binding.action
                 == BindingAction::Spawn(vec!["foot".to_owned(), "--app-id".to_owned(), "work".to_owned()].into())
@@ -1270,7 +1274,7 @@ mod tests {
 
         let input = unbound.input_settings().unwrap();
         let bindings = unbound.bindings(&input).unwrap();
-        assert_eq!(bindings.len(), 61);
+        assert_eq!(bindings.len(), 62);
         assert!(!bindings.iter().any(|binding| binding.action == BindingAction::Close));
     }
 

@@ -330,7 +330,7 @@ impl Ferese {
             )
         } else {
             let mut backend = self.direct_backend.take()?;
-            let result = backend.capture_window_frame(self, &window, &output, cursor);
+            let result = backend.capture_window_frame(self, &window, &output, cursor, scale);
             self.direct_backend = Some(backend);
             result
         };

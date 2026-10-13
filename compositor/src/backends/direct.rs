@@ -184,6 +184,7 @@ impl DirectBackendState {
         window: &smithay::desktop::Window,
         output: &Output,
         cursor: Option<smithay::utils::Rectangle<i32, smithay::utils::Logical>>,
+        scale: f64,
     ) -> Result<crate::handlers::screenshot::CaptureBuffer, String> {
         let device = self
             .devices
@@ -194,7 +195,7 @@ impl DirectBackendState {
             &mut device.renderer,
             window,
             window.geometry(),
-            output.current_scale().fractional_scale(),
+            scale,
             cursor.map(|rect| (state, rect)),
         )
     }
