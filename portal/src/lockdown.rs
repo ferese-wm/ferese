@@ -1,5 +1,7 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
+use std::io::Read;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -195,27 +197,34 @@ fn values(document: &ferese_config::Document) -> Option<[bool; 7]> {
 }
 
 fn load() -> Option<[bool; 7]> {
-    let path = ferese_config::config_path()?;
-    let source = match std::fs::read_to_string(path) {
-        Ok(source) if source.len() <= 1024 * 1024 => source,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
-        _ => return None,
-    };
+    load_path(&ferese_config::config_path()?)
+}
+
+fn load_path(path: &Path) -> Option<[bool; 7]> {
+    let mut source = String::new();
+    match std::fs::File::open(path) {
+        Ok(file) => {
+            file.take((ferese_config::file::LIMIT + 1) as u64)
+                .read_to_string(&mut source)
+                .ok()?;
+            if source.len() > ferese_config::file::LIMIT {
+                return None;
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(_) => return None,
+    }
     values(&ferese_config::Document::parse(&source).ok()?)
 }
 
 fn store(index: usize, value: bool) -> Result<(), String> {
-    let _transaction = crate::backend::CONFIG_TRANSACTION
-        .lock()
-        .map_err(|_| "Configuration transaction failed")?;
     let path = ferese_config::config_path().ok_or("Missing config directory")?;
-    let source = match std::fs::read_to_string(&path) {
-        Ok(source) if source.len() <= 1024 * 1024 => source,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(error) => return Err(error.to_string()),
-        _ => return Err("Configuration is too large".into()),
-    };
-    let mut document = ferese_config::Document::parse(&source).map_err(|error| error.to_string())?;
+    store_path(&path, index, value)
+}
+
+fn store_path(path: &Path, index: usize, value: bool) -> Result<(), String> {
+    let file = ferese_config::file::ConfigFile::open(path)?;
+    let mut document = ferese_config::Document::parse(file.source()).map_err(|error| error.to_string())?;
     if values(&document).is_none() {
         return Err("Invalid lockdown policy".into());
     }
@@ -225,21 +234,52 @@ fn store(index: usize, value: bool) -> Result<(), String> {
             value.into(),
         )
         .map_err(|error| error.to_string())?;
-    let directory = path.parent().ok_or("Invalid config path")?;
-    std::fs::create_dir_all(directory).map_err(|error| error.to_string())?;
-    let mut file = tempfile::NamedTempFile::new_in(directory).map_err(|error| error.to_string())?;
-    std::io::Write::write_all(&mut file, document.to_string().as_bytes()).map_err(|error| error.to_string())?;
-    file.as_file().sync_all().map_err(|error| error.to_string())?;
-    if std::fs::read_to_string(&path).unwrap_or_default() != source {
-        return Err("Configuration changed; please try again".into());
-    }
-    file.persist(path).map_err(|error| error.to_string())?;
-    Ok(())
+    file.replace(&document.to_string(), None, |_| Ok(()))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn policy_save_respects_other_config_writers_and_preserves_their_changes() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("config.kdl");
+        let settings = ferese_config::file::ConfigFile::open(&path).unwrap();
+        assert!(store_path(&path, 4, true).unwrap_err().contains("another app"));
+        assert!(!path.exists());
+        settings.replace("theme \"light\"\n", None, |_| Ok(())).unwrap();
+
+        store_path(&path, 4, true).unwrap();
+        let source = std::fs::read_to_string(&path).unwrap();
+        let document = ferese_config::Document::parse(&source).unwrap();
+        assert_eq!(document.get("theme").and_then(|value| value.as_str()), Some("light"));
+        assert!(load_path(&path).unwrap()[4]);
+    }
+
+    #[test]
+    fn oversized_policy_files_and_saves_leave_config_untouched() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("config.kdl");
+        for size in [ferese_config::file::LIMIT, ferese_config::file::LIMIT + 1] {
+            let source = format!("//{}\n", "x".repeat(size - 3));
+            std::fs::write(&path, &source).unwrap();
+            assert_eq!(load_path(&path).is_some(), size == ferese_config::file::LIMIT);
+            assert!(store_path(&path, 4, true).unwrap_err().contains("60 KiB"));
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), source);
+        }
+    }
+
+    #[test]
+    fn invalid_policy_is_not_overwritten() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("config.kdl");
+        let source = "portals { lockdown { disable-camera \"yes\"; }; }";
+        std::fs::write(&path, source).unwrap();
+        assert_eq!(store_path(&path, 4, true).unwrap_err(), "Invalid lockdown policy");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), source);
+        assert!(ferese_config::file::ConfigFile::open(&path).is_ok());
+    }
 
     #[test]
     fn default_policy_is_unrestricted_and_wrong_types_are_rejected() {

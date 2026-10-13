@@ -3,6 +3,8 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::UnixStream;
 use tokio::sync::RwLock;
 use zbus::Connection;
 use zbus::message::Header;
@@ -10,7 +12,7 @@ use zbus::object_server::SignalEmitter;
 use zbus::zvariant::{OwnedObjectPath, OwnedValue, Value};
 
 use crate::backend::{Options, authorize};
-use crate::desktop::{Requests, consent, ipc, reply};
+use crate::desktop::{Requests, consent, reply};
 
 const PATH: &str = "/org/freedesktop/portal/desktop";
 
@@ -127,18 +129,115 @@ impl Background {
     pub(crate) async fn watch(self, connection: Connection) {
         let emitter = SignalEmitter::new(&connection, PATH).unwrap();
         loop {
-            if let Ok(windows) = ipc("get-windows", serde_json::json!({})).await {
-                let next = app_states(&windows);
-                let mut previous = self.states.write().await;
-                if *previous != next {
-                    *previous = next;
-                    drop(previous);
-                    let _ = Self::running_applications_changed(&emitter).await;
+            let result = async {
+                let path = ferese_ipc::socket::resolve(None).map_err(|error| error.to_string())?;
+                let stream = UnixStream::connect(path).await.map_err(|error| error.to_string())?;
+                let mut events = BackgroundEvents::subscribe(stream).await?;
+                loop {
+                    let next = match events.next().await {
+                        Ok(next) => next,
+                        Err(error) => break Err::<(), String>(error),
+                    };
+                    if let Some(next) = next {
+                        let mut previous = self.states.write().await;
+                        if *previous != next {
+                            *previous = next;
+                            drop(previous);
+                            let _ = Self::running_applications_changed(&emitter).await;
+                        }
+                    }
                 }
+            }
+            .await;
+            if let Err(error) = result {
+                eprintln!("ferese portal: background event stream: {error}");
             }
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
     }
+}
+
+// Tokio owns the socket so cancelling the watch task also closes an idle stream.
+struct BackgroundEvents {
+    stream: UnixStream,
+    windows: serde_json::Value,
+    changed: bool,
+}
+
+impl BackgroundEvents {
+    async fn subscribe(mut stream: UnixStream) -> Result<Self, String> {
+        let request = ferese_ipc::Request {
+            version: ferese_ipc::VERSION,
+            id: 1,
+            kind: "command".into(),
+            command: "event-stream".into(),
+            args: serde_json::json!({"version": ferese_ipc::events::VERSION}),
+        };
+        let mut bytes = Vec::new();
+        ferese_ipc::write_frame(&mut bytes, &request).map_err(|error| error.to_string())?;
+        tokio::time::timeout(Duration::from_secs(2), async {
+            stream.write_all(&bytes).await.map_err(|error| error.to_string())?;
+            let response: ferese_ipc::Response = read_event_frame(&mut stream).await?;
+            if response.version != ferese_ipc::VERSION || response.id != request.id {
+                return Err("Unexpected event subscription response".into());
+            }
+            if let Some(error) = response.error {
+                return Err(error.message);
+            }
+            if response.result.as_ref().and_then(|value| value["version"].as_u64())
+                != Some(u64::from(ferese_ipc::events::VERSION))
+            {
+                return Err("Unsupported event stream version".into());
+            }
+            Ok(())
+        })
+        .await
+        .map_err(|_| "Event subscription timed out".to_owned())??;
+        Ok(Self {
+            stream,
+            windows: serde_json::json!([]),
+            changed: false,
+        })
+    }
+
+    async fn next(&mut self) -> Result<Option<HashMap<String, u32>>, String> {
+        use ferese_ipc::events::{Change, Event};
+        let event: Event = read_event_frame(&mut self.stream).await?;
+        event.validate()?;
+        match event.change {
+            Change::Snapshot { desktop } => {
+                self.windows = desktop.windows;
+                self.changed = true;
+            }
+            Change::WindowsChanged { windows } => {
+                self.windows = windows;
+                self.changed = true;
+            }
+            Change::FocusChanged { focus } => {
+                for window in self.windows.as_array_mut().into_iter().flatten() {
+                    window["focused"] =
+                        serde_json::json!(focus["window"].is_number() && window["id"] == focus["window"]);
+                }
+                self.changed = true;
+            }
+            _ => {}
+        }
+        if event.last && std::mem::take(&mut self.changed) {
+            Ok(Some(app_states(&self.windows)))
+        } else {
+            Ok(None)
+        }
+    }
+}
+
+async fn read_event_frame<T: serde::de::DeserializeOwned>(stream: &mut UnixStream) -> Result<T, String> {
+    let size = stream.read_u32().await.map_err(|error| error.to_string())? as usize;
+    if size > ferese_ipc::MAX_PAYLOAD_SIZE {
+        return Err("Oversized IPC event frame".into());
+    }
+    let mut bytes = vec![0; size];
+    stream.read_exact(&mut bytes).await.map_err(|error| error.to_string())?;
+    serde_json::from_slice(&bytes).map_err(|error| error.to_string())
 }
 
 #[zbus::interface(name = "org.freedesktop.impl.portal.Background")]
@@ -322,6 +421,126 @@ fn desktop_argument(argument: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    async fn send_frame(peer: &mut UnixStream, value: &impl serde::Serialize) {
+        let mut bytes = Vec::new();
+        ferese_ipc::write_frame(&mut bytes, value).unwrap();
+        peer.write_all(&bytes).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn background_events_apply_complete_generations_and_close_on_drop() {
+        use ferese_ipc::events::{Change, Event};
+        let (client, mut peer) = UnixStream::pair().unwrap();
+        let server = tokio::spawn(async move {
+            let request: ferese_ipc::Request = read_event_frame(&mut peer).await.unwrap();
+            assert_eq!(request.command, "event-stream");
+            assert_eq!(
+                request.args,
+                serde_json::json!({"version": ferese_ipc::events::VERSION})
+            );
+            send_frame(&mut peer, &ferese_ipc::Response::success(request.id, request.args)).await;
+            peer
+        });
+        let mut events = BackgroundEvents::subscribe(client).await.unwrap();
+        let mut peer = server.await.unwrap();
+        send_frame(
+            &mut peer,
+            &Event {
+                version: ferese_ipc::events::VERSION,
+                generation: 0,
+                last: true,
+                change: Change::Snapshot {
+                    desktop: Box::new(ferese_ipc::events::Snapshot {
+                        outputs: serde_json::json!([]),
+                        workspaces: serde_json::json!([]),
+                        windows: serde_json::json!([{"id":1,"app_id":"one.desktop","focused":true}]),
+                        focus: serde_json::json!({"window":1}),
+                        config: Default::default(),
+                        theme: serde_json::Value::Null,
+                        lock: ferese_ipc::events::LockState {
+                            phase: "unlocked".into(),
+                            sleeping: false,
+                        },
+                    }),
+                },
+            },
+        )
+        .await;
+        assert_eq!(
+            events.next().await.unwrap().unwrap(),
+            HashMap::from([("one".into(), 2)])
+        );
+        let windows = serde_json::json!([
+            {"id":1,"app_id":"one.desktop","focused":true},
+            {"id":2,"app_id":"two","focused":false}
+        ]);
+        send_frame(
+            &mut peer,
+            &Event {
+                version: ferese_ipc::events::VERSION,
+                generation: 1,
+                last: false,
+                change: Change::WindowsChanged { windows },
+            },
+        )
+        .await;
+        assert!(events.next().await.unwrap().is_none());
+        send_frame(
+            &mut peer,
+            &Event {
+                version: ferese_ipc::events::VERSION,
+                generation: 1,
+                last: true,
+                change: Change::FocusChanged {
+                    focus: serde_json::json!({"window":2}),
+                },
+            },
+        )
+        .await;
+        assert_eq!(
+            events.next().await.unwrap().unwrap(),
+            HashMap::from([("one".into(), 1), ("two".into(), 2)])
+        );
+        // No command is sent while waiting for a change on an idle desktop.
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), peer.read_u32())
+                .await
+                .is_err()
+        );
+        send_frame(
+            &mut peer,
+            &Event {
+                version: ferese_ipc::events::VERSION,
+                generation: 2,
+                last: true,
+                change: Change::WindowsChanged {
+                    windows: serde_json::json!([]),
+                },
+            },
+        )
+        .await;
+        assert!(events.next().await.unwrap().unwrap().is_empty());
+        drop(events);
+        assert_eq!(
+            peer.read_u8().await.unwrap_err().kind(),
+            std::io::ErrorKind::UnexpectedEof
+        );
+    }
+
+    #[tokio::test]
+    async fn background_events_reject_oversized_frames_and_disconnects() {
+        let (stream, mut peer) = UnixStream::pair().unwrap();
+        let mut events = BackgroundEvents {
+            stream,
+            windows: serde_json::json!([]),
+            changed: false,
+        };
+        peer.write_u32((ferese_ipc::MAX_PAYLOAD_SIZE + 1) as u32).await.unwrap();
+        assert!(events.next().await.unwrap_err().contains("Oversized"));
+        drop(peer);
+        assert!(events.next().await.is_err());
+    }
 
     #[test]
     fn application_state_groups_windows_and_keeps_inactive_workspaces_running() {

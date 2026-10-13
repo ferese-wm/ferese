@@ -341,14 +341,14 @@ impl Default for SoftShadowConfig {
     }
 }
 
-pub(crate) fn load() -> Result<ShellConfig, String> {
+pub(crate) fn load(snapshot: &ferese_ipc::theme::Snapshot) -> Result<ShellConfig, String> {
     let Some(path) = config_path() else {
         return Ok(ShellConfig::default());
     };
-    load_path(&path)
+    load_path(&path, snapshot)
 }
 
-fn load_path(path: &std::path::Path) -> Result<ShellConfig, String> {
+fn load_path(path: &std::path::Path, snapshot: &ferese_ipc::theme::Snapshot) -> Result<ShellConfig, String> {
     match fs::symlink_metadata(path) {
         Ok(_) => {}
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(ShellConfig::default()),
@@ -364,13 +364,15 @@ fn load_path(path: &std::path::Path) -> Result<ShellConfig, String> {
     if source.len() > ferese_config::file::LIMIT {
         return Err(format!("{} exceeds 60 KiB", path.display()));
     }
-    parse_source(&source).map_err(|error| format!("invalid configuration in {}: {error}", path.display()))
+    parse_source(&source, snapshot).map_err(|error| format!("invalid configuration in {}: {error}", path.display()))
 }
 
-pub(crate) fn parse_source(source: &str) -> Result<ShellConfig, ferese_config::Error> {
+pub(crate) fn parse_source(
+    source: &str,
+    snapshot: &ferese_ipc::theme::Snapshot,
+) -> Result<ShellConfig, ferese_config::Error> {
     let document = ferese_config::Document::parse(source)?;
     ferese_config::theme::validate_overrides(&document).map_err(ferese_config::Error::from)?;
-    let snapshot = ferese_theme_client::service::current();
     let mut config = parse_document(
         &document.with_theme(&snapshot.presented),
         snapshot.presented.appearance,
@@ -616,10 +618,13 @@ mod tests {
                     format!("{section} {{ geometry {{ {key} 8; }}; }}")
                 };
                 assert!(
-                    parse_source(&format!("theme {{ {layer}; }}"))
-                        .unwrap_err()
-                        .to_string()
-                        .contains(&key.replace('-', "_"))
+                    parse_source(
+                        &format!("theme {{ {layer}; }}"),
+                        &ferese_theme_client::service::fallback()
+                    )
+                    .unwrap_err()
+                    .to_string()
+                    .contains(&key.replace('-', "_"))
                 );
             }
         }
@@ -669,7 +674,7 @@ mod tests {
     #[test]
     fn removed_desktop_widgets_allow_startup_and_reload() {
         let source = "desktop-widgets { clock { enabled #true; }; }";
-        parse_source(source).unwrap();
+        parse_source(source, &ferese_theme_client::service::fallback()).unwrap();
         parse_test_source(source).unwrap();
     }
 
@@ -802,28 +807,38 @@ theme {
         let source =
             "notifications { do-not-disturb #true; }\nstatus { bar-layout islands; battery-percentage #false; }";
         std::fs::write(&path, source).unwrap();
-        let error = super::load_path(&path).unwrap_err();
+        let error = super::load_path(&path, &ferese_theme_client::service::fallback()).unwrap_err();
         assert!(error.contains("bar_layout"), "{error}");
         assert!(error.contains(path.to_str().unwrap()), "{error}");
         assert_eq!(std::fs::read_to_string(&path).unwrap(), source);
         std::fs::write(&path, "panel main {").unwrap();
-        assert!(super::load_path(&path).is_err());
+        assert!(super::load_path(&path, &ferese_theme_client::service::fallback()).is_err());
         let oversized = " ".repeat(ferese_config::file::LIMIT + 1);
         std::fs::write(&path, &oversized).unwrap();
-        assert!(super::load_path(&path).unwrap_err().contains("60 KiB"));
+        assert!(
+            super::load_path(&path, &ferese_theme_client::service::fallback())
+                .unwrap_err()
+                .contains("60 KiB")
+        );
         assert_eq!(std::fs::read_to_string(&path).unwrap(), oversized);
     }
 
     #[test]
     fn startup_distinguishes_absent_configuration_from_read_errors() {
         let directory = tempfile::tempdir().unwrap();
-        assert!(super::load_path(&directory.path().join("missing.kdl")).is_ok());
-        let error = super::load_path(directory.path()).unwrap_err();
+        assert!(
+            super::load_path(
+                &directory.path().join("missing.kdl"),
+                &ferese_theme_client::service::fallback()
+            )
+            .is_ok()
+        );
+        let error = super::load_path(directory.path(), &ferese_theme_client::service::fallback()).unwrap_err();
         assert!(error.contains("cannot read"), "{error}");
         let path = directory.path().join("config.kdl");
         std::os::unix::fs::symlink(directory.path().join("missing-target"), &path).unwrap();
         assert!(
-            super::load_path(&path).is_err(),
+            super::load_path(&path, &ferese_theme_client::service::fallback()).is_err(),
             "a broken config symlink is a read error"
         );
     }

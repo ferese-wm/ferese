@@ -216,7 +216,7 @@ async fn listen(
     let mut signals = proxy.receive_signal("PrepareForSleep").await?;
     // AddMatch succeeds even when logind is absent. Only call the listener
     // recovered once the service is present, and retry if its owner changes.
-    connection
+    let owner = connection
         .call_method(
             Some("org.freedesktop.DBus"),
             "/org/freedesktop/DBus",
@@ -236,7 +236,7 @@ async fn listen(
 
     future::race(
         async {
-            owners.next().await;
+            owner_changed_after(&mut owners, owner.recv_position()).await;
             Ok(MonitorExit::Reconnect)
         },
         async {
@@ -251,6 +251,17 @@ async fn listen(
         },
     )
     .await
+}
+
+// Owner changes queued during subscription setup are already reflected in the
+// GetNameOwner reply. Only a later change interrupts this recovered listener.
+async fn owner_changed_after(owners: &mut zbus::proxy::OwnerChangedStream<'_>, baseline: zbus::message::Sequence) {
+    use zbus::export::ordered_stream::OrderedStreamExt;
+    while let Some((sequence, _)) = owners.next_before(None).await.into_tuple() {
+        if sequence > baseline {
+            break;
+        }
+    }
 }
 
 #[cfg(test)]

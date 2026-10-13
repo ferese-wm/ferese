@@ -247,3 +247,56 @@ fn shutdown_interrupts_connection_authentication() {
     };
     stop_and_join(monitor);
 }
+
+#[test]
+fn ownership_acquired_before_subscription_baseline_is_not_a_second_outage() {
+    if !crate::startup_tests::private_runtime(
+        "resume::tests::ownership_acquired_before_subscription_baseline_is_not_a_second_outage",
+    ) {
+        return;
+    }
+    let bus = Bus::new();
+    let (connection, mut owners, manager, baseline) = future::block_on(async {
+        let connection = zbus::connection::Builder::address(bus.address.as_str())
+            .unwrap()
+            .build()
+            .await
+            .unwrap();
+        let proxy = zbus::Proxy::new(
+            &connection,
+            "org.freedesktop.login1",
+            "/org/freedesktop/login1",
+            "org.freedesktop.login1.Manager",
+        )
+        .await
+        .unwrap();
+        let owners = proxy.receive_owner_changed().await.unwrap();
+        // Force acquisition after AddMatch but before the listener's baseline.
+        let manager = bus.manager();
+        let reply = connection
+            .call_method(
+                Some("org.freedesktop.DBus"),
+                "/org/freedesktop/DBus",
+                Some("org.freedesktop.DBus"),
+                "GetNameOwner",
+                &("org.freedesktop.login1",),
+            )
+            .await
+            .unwrap();
+        (connection, owners, manager, reply.recv_position())
+    });
+    let (sender, events) = mpsc::channel();
+    let worker = std::thread::spawn(move || {
+        // Keep the same connection alive so receive sequences remain comparable.
+        let _connection = connection;
+        future::block_on(owner_changed_after(&mut owners, baseline));
+        sender.send(()).unwrap();
+    });
+    assert!(
+        events.recv_timeout(Duration::from_millis(100)).is_err(),
+        "queued acquisition must not interrupt the recovered listener"
+    );
+    manager.release_name("org.freedesktop.login1").unwrap();
+    events.recv_timeout(Duration::from_secs(2)).unwrap();
+    worker.join().unwrap();
+}

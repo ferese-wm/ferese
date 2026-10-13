@@ -149,6 +149,22 @@ pub(crate) struct Engine {
 }
 
 impl Engine {
+    fn files_changed(&mut self, now: Instant) -> bool {
+        if self
+            .events
+            .as_ref()
+            .is_some_and(|events| events.try_iter().next().is_some())
+        {
+            self.dirty = Some(now + DEBOUNCE);
+        }
+        if self.dirty.is_some_and(|deadline| now >= deadline) {
+            self.dirty = None;
+            true
+        } else {
+            false
+        }
+    }
+
     pub(crate) fn matches_files(&self, files: &[PathBuf]) -> bool {
         self.active_files == files
     }
@@ -357,21 +373,7 @@ pub(crate) fn init(
                 let _ = monitor.wait();
             }
         })?;
-    let watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
-        if let Ok(event) = event
-            && !event.kind.is_access()
-            && event.paths.iter().any(|path| {
-                paths
-                    .lock()
-                    .unwrap()
-                    .iter()
-                    .any(|target| target == path || target.starts_with(path))
-            })
-        {
-            let _ = sender.try_send(());
-            wakeup.wakeup();
-        }
-    })?;
+    let watcher = file_watcher(paths, sender, wakeup)?;
     state.theme_engine.watcher = Some(watcher);
     state.theme_engine.events = Some(events);
     state.theme_engine.active_files = candidate.files.clone();
@@ -385,6 +387,28 @@ pub(crate) fn init(
     state.theme_engine.live.warnings = candidate.warnings;
     state.theme_engine.publish();
     Ok(())
+}
+
+fn file_watcher(
+    paths: Arc<Mutex<HashSet<PathBuf>>>,
+    sender: mpsc::SyncSender<()>,
+    wakeup: calloop::LoopSignal,
+) -> notify::Result<RecommendedWatcher> {
+    notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
+        if let Ok(event) = event
+            && !event.kind.is_access()
+            && event.paths.iter().any(|path| {
+                paths
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .any(|target| target == path || target.starts_with(path))
+            })
+        {
+            let _ = sender.try_send(());
+            wakeup.wakeup();
+        }
+    })
 }
 
 impl Ferese {
@@ -477,16 +501,7 @@ impl Ferese {
 
     pub(crate) fn poll_theme(&mut self) {
         let now = Instant::now();
-        if self
-            .theme_engine
-            .events
-            .as_ref()
-            .is_some_and(|events| events.try_iter().next().is_some())
-        {
-            self.theme_engine.dirty = Some(now + DEBOUNCE);
-        }
-        if self.theme_engine.dirty.is_some_and(|deadline| now >= deadline) {
-            self.theme_engine.dirty = None;
+        if self.theme_engine.files_changed(now) {
             self.refresh_theme();
         }
         let mut start = false;
@@ -617,6 +632,55 @@ impl Ferese {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn directory_watch_detects_repeated_atomic_saves() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("config.kdl");
+        std::fs::write(&path, "// initial").unwrap();
+        let event_loop = calloop::EventLoop::<()>::try_new().unwrap();
+        let (sender, events) = mpsc::sync_channel(1);
+        let mut engine = Engine {
+            events: Some(events),
+            ..Engine::default()
+        };
+        engine.watcher = Some(file_watcher(engine.paths.clone(), sender, event_loop.get_signal()).unwrap());
+        engine.watch_files(std::slice::from_ref(&path));
+        for source in ["// first save", "// second save"] {
+            let temporary = path.with_extension("new");
+            std::fs::write(&temporary, source).unwrap();
+            std::fs::rename(&temporary, &path).unwrap();
+            let deadline = Instant::now() + Duration::from_secs(3);
+            while !engine.files_changed(Instant::now()) {
+                assert!(Instant::now() < deadline, "atomic save notification never settled");
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            assert_eq!(crate::config::read_source(&path).unwrap(), source);
+        }
+        assert!(!engine.files_changed(Instant::now() + Duration::from_secs(1)));
+    }
+
+    #[test]
+    fn file_events_debounce_from_the_last_edit_and_stay_idle_without_events() {
+        let (sender, events) = mpsc::sync_channel(1);
+        let mut engine = Engine {
+            events: Some(events),
+            ..Engine::default()
+        };
+        let now = Instant::now();
+        assert!(!engine.files_changed(now));
+        assert!(engine.dirty.is_none());
+        sender.send(()).unwrap();
+        assert!(!engine.files_changed(now));
+        assert_eq!(engine.dirty, Some(now + DEBOUNCE));
+        let second = now + Duration::from_millis(100);
+        sender.send(()).unwrap();
+        assert!(!engine.files_changed(second));
+        assert!(!engine.files_changed(now + DEBOUNCE));
+        assert!(engine.files_changed(second + DEBOUNCE));
+        assert!(engine.dirty.is_none());
+        assert!(!engine.files_changed(second + Duration::from_secs(1)));
+    }
 
     #[test]
     fn startup_warning_survives_repeated_rejection_without_duplicate_publication() {

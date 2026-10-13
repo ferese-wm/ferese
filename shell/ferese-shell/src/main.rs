@@ -10,6 +10,7 @@ mod compositor_ipc;
 mod config;
 mod control;
 mod display_mode;
+mod ipc_subscription;
 mod keybinding_guide;
 mod media;
 mod motion;
@@ -101,7 +102,8 @@ impl From<panel::PanelGeometry> for BarMetrics {
 }
 
 fn main() -> cosmic::iced::Result {
-    let (mut config, startup_error) = match config::load() {
+    let theme_snapshot = ferese_theme_client::service::current();
+    let (mut config, startup_error) = match config::load(&theme_snapshot) {
         Ok(config) => (config, None),
         Err(error) => {
             eprintln!("ferese-shell: {error}; starting with defaults");
@@ -140,7 +142,7 @@ fn main() -> cosmic::iced::Result {
         .default_font(shell_font)
         .theme(config.theme.palette().native_theme());
 
-    cosmic::app::run::<FereseShell>(settings, (config, wallpaper, startup_error))
+    cosmic::app::run::<FereseShell>(settings, (config, wallpaper, startup_error, theme_snapshot))
 }
 
 type WallpaperLoad = cosmic::iced::futures::channel::oneshot::Receiver<Result<image::Handle, String>>;
@@ -148,6 +150,7 @@ type WallpaperLoad = cosmic::iced::futures::channel::oneshot::Receiver<Result<im
 struct FereseShell {
     core: Core,
     config: ShellConfig,
+    theme_snapshot: ferese_ipc::theme::Snapshot,
     render: rendering::Rendering,
     wallpaper: Option<image::Handle>,
     control: Option<ShellControl>,
@@ -285,7 +288,12 @@ enum Message {
 
 impl cosmic::Application for FereseShell {
     type Executor = cosmic::executor::Default;
-    type Flags = (ShellConfig, Option<WallpaperLoad>, Option<String>);
+    type Flags = (
+        ShellConfig,
+        Option<WallpaperLoad>,
+        Option<String>,
+        ferese_ipc::theme::Snapshot,
+    );
     type Message = Message;
 
     const APP_ID: &'static str = APP_ID;
@@ -298,7 +306,10 @@ impl cosmic::Application for FereseShell {
         &mut self.core
     }
 
-    fn init(core: Core, (config, wallpaper, startup_error): Self::Flags) -> (Self, Task<Self::Message>) {
+    fn init(
+        core: Core,
+        (config, wallpaper, startup_error, theme_snapshot): Self::Flags,
+    ) -> (Self, Task<Self::Message>) {
         let control = ShellControl::connect()
             .map_err(|error| eprintln!("ferese-shell: shell control unavailable: {error}"))
             .ok();
@@ -309,6 +320,7 @@ impl cosmic::Application for FereseShell {
         notification_center.activity_bridge = config.activities.sources.notification_bridge;
         let app = Self {
             core,
+            theme_snapshot,
             notifications: notification_center,
             notification_surface: None,
             status_service: status::Service::start(config.status.settings_command.clone()),
@@ -511,8 +523,9 @@ impl cosmic::Application for FereseShell {
                 config.theme_mode = snapshot.mode;
                 if snapshot.error != self.theme_error {
                     self.pending_config_error = snapshot.error.clone();
-                    self.theme_error = snapshot.error;
+                    self.theme_error = snapshot.error.clone();
                 }
+                self.theme_snapshot = *snapshot;
                 self.apply_config(config)
             }
             Message::ThemeMode(mode) => cosmic::task::future(async move {
@@ -959,7 +972,7 @@ impl FereseShell {
     }
 
     fn reload_config(&mut self, source: String) -> Task<Message> {
-        let config = match config::parse_source(&source) {
+        let config = match config::parse_source(&source, &self.theme_snapshot) {
             Ok(config) => config,
             Err(error) => {
                 eprintln!("ferese-shell: reload rejected; keeping current config: {error}");
@@ -1137,6 +1150,7 @@ mod tests {
         let output = wl_output::WlOutput::inert(connection.backend().downgrade());
         FereseShell {
             core: Core::default(),
+            theme_snapshot: ferese_theme_client::service::fallback(),
             notifications: notifications::Center::new(config.notifications.clone(), config.animations),
             notification_surface: None,
             status_service: status::Service::start(None),
@@ -1197,6 +1211,29 @@ mod tests {
     }
 
     #[test]
+    fn reload_preserves_the_last_presented_theme_without_a_control_connection() {
+        use cosmic::Application;
+
+        let mut shell = shell_with_measured_panel();
+        let mut snapshot = ferese_theme_client::service::fallback();
+        snapshot.mode = ferese_config::theme::Mode::Light;
+        snapshot.presented.appearance = ferese_config::theme::Appearance::Light;
+        snapshot.presented.tokens.geometry.shell_radius = 23.;
+        snapshot.presented.tokens.typography.font_family = "Reload test font".into();
+        drop(shell.update(Message::ThemeChanged(Box::new(snapshot.clone()))));
+
+        drop(shell.reload_config("status { low-battery-threshold 35; }".into()));
+
+        assert!(shell.control.is_none());
+        assert_eq!(shell.config.status.low_battery_threshold, 35);
+        assert_eq!(shell.config.theme_mode, snapshot.mode);
+        assert_eq!(shell.config.theme.appearance, snapshot.presented.appearance);
+        assert_eq!(shell.config.theme.material_radius, 23.);
+        assert_eq!(shell.config.font_family.as_deref(), Some("Reload test font"));
+        assert_eq!(shell.theme_snapshot, snapshot);
+    }
+
+    #[test]
     fn cosmetic_reloads_preserve_measured_margins_and_the_open_popover() {
         let mut shell = shell_with_measured_panel();
         shell.config.panels[0].style = ferese_panel::PanelStyle::Floating;
@@ -1230,7 +1267,7 @@ mod tests {
                 .unwrap();
             document.set(&format!("panels.0.{field}"), value).unwrap();
             let source = document.to_string();
-            let mut config = config::parse_source(&source).unwrap();
+            let mut config = config::parse_source(&source, &shell.theme_snapshot).unwrap();
             config.theme = shell.config.theme;
             drop(shell.apply_config(config));
             assert_eq!(shell.outputs[0].panel_resolution, resolution, "{edit}");
