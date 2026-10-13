@@ -51,22 +51,27 @@ impl Ferese {
             let presented = self.presented_window_rect(*id)?;
             let (scale_x, scale_y) = self.visual_scale_for_window(window)?;
             let point = local.to_f64() + hint - geometry.loc.to_f64();
+
             return Some(Point::from((
                 presented.x + point.x * scale_x,
                 presented.y + point.y * scale_y,
             )));
         }
+
         for output in self.space.outputs() {
             let output_geometry = self.space.output_geometry(output)?;
             let layers = smithay::desktop::layer_map_for_output(output);
+
             for layer in layers.layers() {
                 let Some(local) = surface_tree_position(layer.wl_surface(), surface, (0, 0).into()) else {
                     continue;
                 };
                 let geometry = layers.layer_geometry(layer)?;
+
                 return Some((output_geometry.loc + geometry.loc + local).to_f64() + hint);
             }
         }
+
         None
     }
 
@@ -77,6 +82,7 @@ impl Ferese {
         if !hint.surface.is_alive() || self.session_lock.active() || self.input_capture.active() {
             return;
         }
+
         let Some(pointer) = self.seat.get_pointer() else {
             return;
         };
@@ -85,10 +91,12 @@ impl Ferese {
                 constraint.is_active() && matches!(&*constraint, PointerConstraint::Locked(_))
             })
         });
+
         if locked {
             self.locked_pointer_hint = Some(hint);
             return;
         }
+
         if pointer.current_focus().is_some_and(|surface| {
             with_pointer_constraint(&surface, &pointer, |constraint| {
                 constraint.is_some_and(|constraint| constraint.is_active())
@@ -96,11 +104,13 @@ impl Ferese {
         }) {
             return;
         }
+
         let Some(global) = self.pointer_hint_position(&hint.surface, hint.local) else {
             return;
         };
         let location = self.clamp_pointer_position(global);
         let focus = self.surface_under(location);
+
         pointer.motion(
             self,
             focus,
@@ -111,6 +121,7 @@ impl Ferese {
             },
         );
         pointer.frame(self);
+
         self.cursor_redraw_pending = true;
     }
 
@@ -118,8 +129,10 @@ impl Ferese {
         if self.input_capture.active() {
             self.set_binding_mode("default");
         }
+
         let seat = self.seat.clone();
         self.idle_notifier_state.notify_activity(&seat);
+
         if !matches!(
             &event,
             InputEvent::DeviceAdded { .. } | InputEvent::DeviceRemoved { .. } | InputEvent::SwitchToggle { .. }
@@ -166,7 +179,9 @@ impl Ferese {
                             .any(|binding| binding.swipe_fingers(event.fingers())),
                     self.input_settings.touchpad.swipe_threshold,
                 );
+
                 self.swipe.start_time(std::time::Duration::from_micros(event.time()));
+
                 if self.swipe.active() {
                     self.focus_output_at(pointer.current_location());
                 } else {
@@ -187,6 +202,7 @@ impl Ferese {
                         event.delta_y(),
                         std::time::Duration::from_micros(event.time()),
                     );
+
                     if self.swipe_navigation_blocked() {
                         self.finish_workspace_swipe(None);
                         self.finish_focus_swipe(None);
@@ -274,6 +290,7 @@ impl Ferese {
                         keyboard.set_focus(self, None, SERIAL_COUNTER.next_serial());
                     }
                 }
+
                 let serial = SERIAL_COUNTER.next_serial();
                 let interaction_focus = keyboard.current_focus();
                 let client_grab = keyboard
@@ -293,6 +310,7 @@ impl Ferese {
                                 data.finish_focus_cycle();
                             }
                         }
+
                         if state == KeyState::Released {
                             data.binding_mode_pressed.remove(&keycode);
                             data.binding_mode_repeats.remove(&keycode);
@@ -308,7 +326,31 @@ impl Ferese {
                             return FilterResult::Forward;
                         }
                         let raw_symbols = keysym.raw_syms().into_iter().map(|symbol| symbol.raw()).collect::<Vec<_>>();
-                        if !data.binding_mode_pressed.insert(keycode) {
+                        let first_press = data.binding_mode_pressed.insert(keycode);
+                        if data.session_lock.active() {
+                            // Preserve ownership of keys held across the lock transition.
+                            if !first_press && !data.intercepted_keys.contains(&keycode) {
+                                return FilterResult::Forward;
+                            }
+                            if let Some(step) = locked_brightness_step(keysym.modified_sym().raw()) {
+                                data.intercepted_keys.insert(keycode);
+                                // Never execute configurable commands while locked.
+                                if let Some(child) = spawn_client(
+                                    data,
+                                    ["brightnessctl", "set", step],
+                                    crate::private_client::ClientCapabilities::default(),
+                                ) {
+                                    crate::process::watch_client_exit(&data.loop_handle, child);
+                                }
+                                return FilterResult::Intercept(());
+                            }
+                            return if data.intercepted_keys.contains(&keycode) {
+                                FilterResult::Intercept(())
+                            } else {
+                                FilterResult::Forward
+                            };
+                        }
+                        if !first_press {
                             // A held key belongs to the recipient of its first
                             // press, even when a mode or configuration changes.
                             return if data.intercepted_keys.contains(&keycode) {
@@ -330,9 +372,6 @@ impl Ferese {
                             } else {
                                 FilterResult::Forward
                             };
-                        }
-                        if data.session_lock.active() {
-                            return FilterResult::Forward;
                         }
                         let symbol = keysym.modified_sym().raw();
                         if data.binding_modes.active().is_some() && symbol == keysyms::KEY_Escape {
@@ -1296,6 +1335,14 @@ fn surface_tree_offset(root: &WlSurface, target: &WlSurface) -> Option<Point<i32
         |_, _, _| found.get().is_none(),
     );
     found.get()
+}
+
+fn locked_brightness_step(symbol: u32) -> Option<&'static str> {
+    match symbol {
+        keysyms::KEY_XF86MonBrightnessUp => Some("2%+"),
+        keysyms::KEY_XF86MonBrightnessDown => Some("2%-"),
+        _ => None,
+    }
 }
 
 fn virtual_terminal(symbol: u32, ctrl: bool, alt: bool, direct: bool) -> Option<i32> {

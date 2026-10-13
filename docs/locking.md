@@ -19,6 +19,10 @@ Press Escape to clear the password. The authentication status also shows whether
 Caps Lock is on. A failed attempt displays an error and delays the next retry.
 Authentication uses the system's PAM policy; both password and account validation must succeed.
 
+The screen brightness keys work while locked, including when brightness is zero.
+They require `brightnessctl` and adjust brightness in 2% steps. While locked,
+these keys use the compositor's brightness control instead of custom bindings.
+
 ## Automatic locking
 
 Install `swayidle`, then add this to `~/.config/ferese/config.kdl` to lock after

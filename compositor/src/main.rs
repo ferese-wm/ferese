@@ -57,7 +57,6 @@ use calloop::signals::{Signal, Signals};
 use process::{spawn_client, terminate_child, watch_client_exit};
 use smithay::reexports::calloop::EventLoop;
 use smithay::reexports::wayland_server::Display;
-pub use state::{Ferese, RuntimeConfig};
 use tracing::{info, warn};
 
 use crate::backends::LaunchConfig;
