@@ -1,5 +1,46 @@
 # Displays
 
+## Color temperature
+
+Night light warms the display using its hardware gamma ramp. It is off by default.
+Set its state and temperature in `config.kdl`:
+
+```kdl
+night-light {
+    enabled #false
+    temperature 4500
+}
+```
+
+The temperature range is 1000–6500 K. Lower values are warmer. At 6500 K, the
+display keeps its neutral color.
+The panel's **Night light** item opens an on/off switch and temperature slider.
+In Morph, the button stays beside the tabs when you expand the panel, even if
+you remove the Night light item from your panel layout. Quick Settings has the
+same controls. The toggle saves immediately. Releasing the slider saves its
+temperature in the config.
+
+Night light applies to all supported connected displays, including mirror targets.
+It requires a DRM session. A nested session cannot change the host display's colors.
+There is no automatic schedule yet.
+
+### External gamma-control clients
+
+Ferese supports `wlr-gamma-control-unstable-v1` on DRM outputs with hardware
+gamma ramps. A gamma-control client can adjust the display's color temperature.
+Only one client can control each output at a time. While that client remains
+connected, Ferese reapplies its gamma table after display sleep or a session
+switch. Closing the client restores the previous table.
+
+Nested outputs and hardware without gamma-ramp support report that gamma control
+is unavailable. This protocol does not provide ICC profiles or HDR color management.
+
+When you turn on night light, Ferese takes control of the gamma tables and sends
+external controllers `failed`. These clients must request gamma control again
+after you turn it off. New requests are rejected while night light is on.
+
+## Output profiles
+
 Each `output-profile` needs a unique, nonempty `name` and at least one `output`
 entry. A profile matches when every required monitor is connected and its
 optional `lid-closed` condition matches. The profile with the most required

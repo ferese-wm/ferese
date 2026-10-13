@@ -429,6 +429,7 @@ impl FereseShell {
             }
             ItemKind::Media => self.view_media_item(representation, selected, width),
             ItemKind::QuickSettings => self.view_status_item(status_ui::Menu::System, false, selected),
+            ItemKind::NightLight => self.view_status_item(status_ui::Menu::NightLight, false, selected),
             ItemKind::Network => self.view_status_item(status_ui::Menu::Network, false, selected),
             ItemKind::Audio => self.view_status_item(status_ui::Menu::Audio, false, selected),
             ItemKind::Recording => self.view_status_item(status_ui::Menu::Recording, false, selected),
@@ -1139,16 +1140,17 @@ mod island_tests {
                 let end = measure_zone(&panel, &panel.end, Availability::default(), true);
                 assert_eq!(
                     end.items.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(),
-                    ["quick-settings", "recording", "clock"]
+                    ["quick-settings", "night-light", "recording", "clock"]
                 );
                 assert_eq!(end.items[1].1.x - end.items[0].1.x, 21.);
-                assert_eq!(end.items[2].1.x - end.items[1].1.x, if islands { 21. } else { 34. });
+                assert_eq!(end.items[2].1.x - end.items[1].1.x, 21.);
+                assert_eq!(end.items[3].1.x - end.items[2].1.x, if islands { 21. } else { 34. });
                 if islands {
                     assert_eq!(
                         end.islands[0],
                         Rectangle::new(
                             (0., 0.).into(),
-                            (108. + 2. * padding, panel.resolved_geometry().height).into()
+                            (129. + 2. * padding, panel.resolved_geometry().height).into()
                         )
                     );
                 }

@@ -368,6 +368,7 @@ impl App {
             ItemKind::Media => icons::MEDIA,
             ItemKind::Activities => icons::FERESE,
             ItemKind::QuickSettings => icons::CONTROL_CENTER,
+            ItemKind::NightLight => icons::MOON,
             ItemKind::Network => icons::WIFI_FULL,
             ItemKind::Audio => icons::VOLUME_HIGH,
             ItemKind::Recording => icons::RECORD,

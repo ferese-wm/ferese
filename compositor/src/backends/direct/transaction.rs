@@ -208,6 +208,7 @@ fn prepare(
 
 /// Retire a logical output only after its hardware is unavailable or confirmed disabled.
 fn retire(state: &mut Ferese, output: &mut DirectOutput, node: DrmNode, crtc: crtc::Handle) {
+    output.gamma = Default::default();
     cancel_output_timers(&state.loop_handle, output);
     if let Some(global) = output.global.take() {
         state.display_handle.disable_global::<Ferese>(global);

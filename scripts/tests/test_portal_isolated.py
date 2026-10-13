@@ -14,7 +14,7 @@ import subprocess
 import tempfile
 import time
 import unittest
-from session_socket import ipc_environment
+from session_socket import ipc_environment, ipc_socket
 
 
 @unittest.skipUnless(os.environ.get("FERESE_TEST_PORTAL") == "1", "nested portal test is opt-in")
@@ -95,6 +95,7 @@ class PortalTest(unittest.TestCase):
                 launch("compositor", [str(compositor_binary), "--backend", "nested"])
                 sockets = lambda: [p for p in runtime.glob("wayland-*") if not p.name.endswith(".lock")]
                 until(sockets)
+                until(lambda: ipc_socket(runtime).is_socket())
                 env["WAYLAND_DISPLAY"] = str(sockets()[0])
                 env = ipc_environment(env)
                 # Private bus, including the real portal frontend and permission store.

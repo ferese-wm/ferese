@@ -165,6 +165,7 @@ struct FereseShell {
     activities: activities::Model,
     calendar_offset: i32,
     status_error: Option<status::ActionError>,
+    night_light_temperature: Option<u16>,
     theme_error: Option<String>,
     pending_config_error: Option<String>,
     menu: Option<status_ui::OpenMenu>,
@@ -193,6 +194,8 @@ struct OutputSurfaces {
 
 #[derive(Clone, Debug)]
 enum Message {
+    NightLightTemperature(u16),
+    CommitNightLightTemperature,
     HubOpen(window::Id, status_ui::Menu),
     HubClose(window::Id),
     HubWorkspaceScroll(window::Id, cosmic::iced::mouse::ScrollDelta),
@@ -327,6 +330,7 @@ impl cosmic::Application for FereseShell {
             activities: activities::Model::default(),
             calendar_offset: 0,
             status_error: None,
+            night_light_temperature: None,
             theme_error: None,
             pending_config_error,
             menu: None,
@@ -754,6 +758,16 @@ impl cosmic::Application for FereseShell {
                 Task::none()
             }
             Message::CancelPower => self.close_system_modal(),
+            Message::NightLightTemperature(value) => {
+                self.night_light_temperature = Some(value);
+                Task::none()
+            }
+            Message::CommitNightLightTemperature => {
+                if let Some(value) = self.night_light_temperature.take() {
+                    return self.update(Message::Control(status::Action::NightLightTemperature(value)));
+                }
+                Task::none()
+            }
             Message::Control(action) => {
                 if let Some(action) = system_modal::PowerAction::from_status(action.clone()) {
                     return self.open_system_modal(action, None);
@@ -1158,6 +1172,7 @@ mod tests {
             activities: Default::default(),
             calendar_offset: 0,
             status_error: None,
+            night_light_temperature: None,
             theme_error: None,
             pending_config_error: None,
             menu: None,

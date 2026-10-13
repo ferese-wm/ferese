@@ -45,6 +45,8 @@ pub struct Config {
     #[serde(default)]
     lock_screen: crate::session_lock::IdleSettings,
     #[serde(default)]
+    night_light: ferese_config::night_light::Settings,
+    #[serde(default)]
     idle_inhibit: crate::idle_inhibition::Settings,
     #[serde(default)]
     pub(crate) autostart: Vec<DaemonConfig>,
@@ -141,6 +143,7 @@ impl Config {
             activity_matcher: ferese_config::activities::Matcher::new(&self.activities)
                 .map_err(ConfigError::Binding)?,
             lock_idle: self.lock_screen.validate()?,
+            night_light: self.night_light.validate().map_err(ConfigError::Binding)?,
             idle_inhibit: self.idle_inhibit,
             autostart: self.autostart.clone(),
             layout_mode: self.layout_mode(),

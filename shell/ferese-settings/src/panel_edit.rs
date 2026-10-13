@@ -631,7 +631,9 @@ animations { speed 0.8; }
         apply(&mut snapshot, Action::SetEdge(ferese_panel::Edge::Bottom));
         let before = snapshot.item("panels.0.start").unwrap().clone();
         assert_eq!(snapshot.string("panels.0.edge", ""), "bottom");
-        assert!(snapshot.boolean("panels.0.end.groups.0.items.6.percentage", false));
+        let panels: Vec<Panel> = serde_json::from_value(snapshot.item("panels").unwrap().clone()).unwrap();
+        let battery = panels[0].item(&ItemId("battery".into())).unwrap();
+        assert_eq!(battery.kind, ItemKind::Battery { percentage: true });
         apply(&mut snapshot, Action::SetEdge(ferese_panel::Edge::Top));
         assert_eq!(snapshot.string("panels.0.edge", ""), "top");
         assert_eq!(snapshot.item("panels.0.start"), Some(&before));
@@ -659,8 +661,10 @@ animations { speed 0.8; }
         for edit in edits {
             snapshot.edit(&edit).unwrap();
         }
-        assert!(!snapshot.boolean("panels.0.end.groups.0.items.6.visible", true));
-        assert!(snapshot.boolean("panels.0.end.groups.0.items.6.percentage", false));
+        let panels: Vec<Panel> = serde_json::from_value(snapshot.item("panels").unwrap().clone()).unwrap();
+        let battery = panels[0].item(&ItemId("battery".into())).unwrap();
+        assert_eq!(battery.kind, ItemKind::Battery { percentage: true });
+        assert!(!battery.visible);
         assert!(snapshot.source.contains("// preserved"));
         Snapshot::parse(snapshot.source).unwrap();
     }

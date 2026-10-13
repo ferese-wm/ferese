@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 
 pub(crate) mod capture;
 mod crtc_assignment;
+pub(crate) mod gamma;
 mod lid;
 mod mirror;
 mod output_power;
@@ -254,6 +255,7 @@ struct DirectDevice {
 }
 
 struct DirectOutput {
+    gamma: gamma::State,
     internal: bool,
     connector: connector::Handle,
     mode: DrmMode,
@@ -403,8 +405,8 @@ pub fn init(event_loop: &mut EventLoop<Ferese>, state: &mut Ferese) -> Result<()
                         .values_mut()
                         .for_each(PresentationClock::reset_timing);
                     backend.devices.values_mut().for_each(|device| {
-                        device.drm.pause();
                         device.outputs.values_mut().for_each(|output| {
+                            output.gamma.suspend();
                             cancel_output_timers(&handle, output);
                             output.surface.reset_buffers();
                             output.primary_commit = None;
@@ -412,6 +414,7 @@ pub fn init(event_loop: &mut EventLoop<Ferese>, state: &mut Ferese) -> Result<()
                             output.frame_pending = false;
                             output.power.suspended();
                         });
+                        device.drm.pause();
                     });
                 }
 
@@ -887,6 +890,10 @@ fn open_device(state: &mut Ferese, path: &Path) -> Result<DrmNode, Box<dyn Error
                     {
                         output.completion.retired();
                         output.frame_pending = false;
+                        if output.power.needs_wake() {
+                            output.gamma.retry_probe();
+                            state.gamma_dirty = true;
+                        }
                         output.power.presented();
                         if let DrmEventTime::Monotonic(timestamp) = metadata.time {
                             let now = monotonic_now();
@@ -2114,6 +2121,7 @@ fn create_direct_output(
 
     tracing::info!(?crtc, connector = %connector, "initialized DRM output");
     Ok(DirectOutput {
+        gamma: Default::default(),
         internal: internal_connector(connector.interface()),
         connector: connector.handle(),
         mode,

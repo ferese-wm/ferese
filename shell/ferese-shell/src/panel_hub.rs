@@ -372,6 +372,7 @@ impl FereseShell {
     }
 
     pub(super) fn close_hub(&mut self, id: window::Id) -> Task<Message> {
+        self.night_light_temperature = None;
         self.transition_hub(id, Event::Close)
     }
 
@@ -955,6 +956,7 @@ impl FereseShell {
                     .width(Length::Fill);
                 let tabs = row::with_capacity(2).spacing(2).align_y(Alignment::Center);
                 let mut tabs = tabs.push(navigation);
+                tabs = tabs.push(self.hub_shortcut_button(id, ItemKind::NightLight, menu, opacity));
                 if let Some(battery) = self.hub_battery(id, menu == Some(status_ui::Menu::Battery), opacity) {
                     tabs = tabs.push(battery);
                 }
@@ -1059,11 +1061,26 @@ impl FereseShell {
         opacity: f32,
     ) -> Element<'_, cosmic::Action<Message>> {
         let action = self.hub_control_action(id, kind).expect("shortcut action");
-        let primary = crate::color(self.config.theme.for_bar().text_primary);
+        let night_light_on =
+            kind == ItemKind::NightLight && self.status.night_light.as_ref().is_some_and(|status| status.enabled);
+        let palette = self.config.theme.for_bar();
+        let primary = crate::color(if night_light_on {
+            palette.accent
+        } else {
+            palette.text_primary
+        });
         motion::button(
             self.render,
             button::custom(icons::tinted(action.icon, 18, primary).opacity(opacity))
-                .name(action.label)
+                .name(if kind == ItemKind::NightLight {
+                    if night_light_on {
+                        "Night light: on"
+                    } else {
+                        "Night light: off"
+                    }
+                } else {
+                    action.label
+                })
                 .padding([5, 3])
                 .width(30)
                 .height(28)
@@ -1079,6 +1096,7 @@ impl FereseShell {
             ItemKind::Overview => (icons::morph::WORKSPACES, None),
             ItemKind::Activities => (icons::morph::ACTIVITIES, Some(status_ui::Menu::Activities)),
             ItemKind::QuickSettings => (icons::morph::SETTINGS, Some(status_ui::Menu::System)),
+            ItemKind::NightLight => (ferese_theme::icons::MOON, Some(status_ui::Menu::NightLight)),
             ItemKind::Network => (icons::WIFI, Some(status_ui::Menu::Network)),
             ItemKind::Recording => (
                 match self.recorder.state {
@@ -1134,7 +1152,7 @@ impl FereseShell {
         );
         let width = panel.morph.expanded_width.min(available);
         // Built-in tabs, battery and Close keep their space through the morph.
-        let tabs = 5. + f64::from(self.media.snapshot.selected.is_some()) + f64::from(self.activities_configured(id));
+        let tabs = 6. + f64::from(self.media.snapshot.selected.is_some()) + f64::from(self.activities_configured(id));
         let battery = if self.status.battery.is_some() {
             battery::WIDTH + 2.
         } else {
@@ -1151,7 +1169,10 @@ impl FereseShell {
             if shortcuts.len() == capacity {
                 break;
             }
-            if matches!(item.kind, ItemKind::Overview | ItemKind::Activities) {
+            if matches!(
+                item.kind,
+                ItemKind::Overview | ItemKind::Activities | ItemKind::NightLight
+            ) {
                 continue;
             }
             if matches!(
@@ -2797,7 +2818,7 @@ mod tests {
         let mut shell = shell();
         let id = shell.outputs[0].bar;
         for (playback, counts) in [
-            (None, [1, 2, 2]),
+            (None, [0, 2, 2]),
             (Some(ferese_ipc::media::Playback::Playing), [0, 2, 2]),
             (Some(ferese_ipc::media::Playback::Paused), [0, 2, 2]),
         ] {
@@ -2810,6 +2831,7 @@ mod tests {
                 shell.config.panels[0].morph.expanded_width = width;
                 let shortcuts = shell.hub_shortcuts(id);
                 assert_eq!(shortcuts.len(), count);
+                assert!(!shortcuts.contains(&ItemKind::NightLight));
                 assert!(!shortcuts.contains(&ItemKind::Network));
                 assert_eq!(shortcuts.contains(&ItemKind::Recording), count > 1);
                 assert!(!shortcuts.contains(&ItemKind::DisplayMode));

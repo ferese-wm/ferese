@@ -8,6 +8,7 @@ mod controls;
 mod lifecycle;
 mod media;
 mod network;
+mod night_light;
 mod system;
 
 use bar::status_icon;
@@ -32,6 +33,7 @@ struct MenuStyle {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Menu {
+    NightLight,
     Activities,
     Workspaces,
     Network,
@@ -51,7 +53,10 @@ impl Menu {
         let relevant = self == Self::System
             || matches!(
                 (self, &error.action),
-                (Self::Network, Action::Wifi(_))
+                (
+                    Self::NightLight,
+                    Action::NightLight(_) | Action::NightLightTemperature(_)
+                ) | (Self::Network, Action::Wifi(_))
                     | (Self::Bluetooth, Action::Bluetooth(_))
                     | (Self::Audio, Action::Volume(_) | Action::Mute(_))
                     | (Self::Battery, Action::Brightness(_) | Action::PowerProfile(_))
@@ -76,6 +81,7 @@ impl Menu {
 
     fn title(self) -> &'static str {
         match self {
+            Self::NightLight => "Night light",
             Self::Activities => "Activities",
             Self::Workspaces => "Workspaces",
             Self::System => "Control Center",
@@ -93,6 +99,7 @@ impl Menu {
 
     fn available(self, status: &Snapshot) -> bool {
         match self {
+            Self::NightLight => true,
             Self::Network => status.network.is_some(),
             Self::Bluetooth => status.bluetooth.is_some(),
             Self::Audio => status.audio.is_some(),
@@ -204,6 +211,7 @@ impl FereseShell {
         }
         let mut rows = match kind {
             Menu::System => system::view(self, rows, style, true),
+            Menu::NightLight => night_light::view(self, rows, style),
             Menu::Network => network::view(self, rows, style),
             Menu::Bluetooth => bluetooth::view(self, rows, style, true),
             Menu::Audio => audio::view(self, rows, style, false),
@@ -389,6 +397,7 @@ impl FereseShell {
         }
         rows = match kind {
             Menu::System => system::view(self, rows, style, false),
+            Menu::NightLight => night_light::view(self, rows, style),
             Menu::Network => network::view(self, rows, style),
             Menu::Bluetooth => bluetooth::view(self, rows, style, false),
             Menu::Audio => audio::view(self, rows, style, false),

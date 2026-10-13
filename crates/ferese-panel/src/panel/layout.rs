@@ -744,9 +744,16 @@ mod tests {
     #[test]
     fn always_overflow_is_reserved_and_unavailable_items_are_not_allocated() {
         let mut panel = Panel::default();
-        panel.end.groups[0].items[2].overflow = OverflowPolicy::Always;
+        panel
+            .end
+            .groups
+            .iter_mut()
+            .flat_map(|group| &mut group.items)
+            .find(|item| item.id.0 == "network")
+            .unwrap()
+            .overflow = OverflowPolicy::Always;
         let mut measured = measurements(&panel);
-        measured.remove(3);
+        measured.retain(|item| item.id.0 != "media");
         let resolution = resolve(&panel, &measured, 2000., 32.);
         assert!(!resolution.items.contains_key(&ItemId("media".into())));
         assert_eq!(resolution.overflow, [ItemId("network".into())]);

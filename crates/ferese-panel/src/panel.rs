@@ -122,6 +122,7 @@ pub enum ItemKind {
     Media,
     Activities,
     QuickSettings,
+    NightLight,
     Network,
     Audio,
     Recording,
@@ -154,6 +155,7 @@ impl ItemKind {
             Self::Media => "Media",
             Self::Activities => "Activities",
             Self::QuickSettings => "Quick Settings",
+            Self::NightLight => "Night light",
             Self::Network => "Network",
             Self::Audio => "Audio",
             Self::Recording => "Recording",
@@ -656,6 +658,7 @@ impl Panel {
         let controls = vec![
             item("media", Media),
             item("quick-settings", QuickSettings),
+            item("night-light", NightLight),
             item("network", Network),
             item("audio", Audio),
             item("recording", Recording),
@@ -765,6 +768,7 @@ mod tests {
             "focused-window",
             "media",
             "quick-settings",
+            "night-light",
             "network",
             "audio",
             "recording",
@@ -802,6 +806,7 @@ mod tests {
                 "workspaces",
                 "focused-window",
                 "quick-settings",
+                "night-light",
                 "recording",
                 "clock"
             ]
@@ -818,7 +823,7 @@ mod tests {
             }),
             all.iter().map(|item| item.id.0.as_str()).collect::<Vec<_>>()
         );
-        assert_eq!(items(&panel).len(), 12);
+        assert_eq!(items(&panel).len(), 13);
     }
 
     #[test]

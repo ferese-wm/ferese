@@ -4,6 +4,7 @@ mod bluetooth;
 mod dbus_cache;
 mod hardware;
 mod network;
+mod night_light;
 
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -20,6 +21,7 @@ pub struct Snapshot {
     pub battery: Option<Battery>,
     pub power_profiles: Option<PowerProfiles>,
     pub brightness: Option<u8>,
+    pub night_light: Option<ferese_ipc::night_light::Status>,
     pub notifications: Option<Notifications>,
     pub poweroff: bool,
     pub reboot: bool,
@@ -71,6 +73,8 @@ pub enum Action {
     Volume(u8),
     Mute(bool),
     Brightness(u8),
+    NightLight(bool),
+    NightLightTemperature(u16),
     Dnd(bool),
     Notifications,
     Settings,
@@ -167,9 +171,13 @@ impl Service {
             let mut login = dbus_cache::Cache::with_wake("org.freedesktop.login1", polling.clone());
             let mut audio = audio_cache::Cache::new(polling.clone());
             let mut hardware = hardware::Monitor::start(polling.clone()).ok();
+            let mut night_light_monitor = night_light::Monitor::start(polling.clone()).ok();
 
             while let Some(before) = wait_for_poll(&polling) {
                 let revision = polling.0.lock().unwrap().4;
+                if night_light_monitor.is_none() {
+                    night_light_monitor = night_light::Monitor::start(polling.clone()).ok();
+                }
                 if hardware.as_ref().is_none_or(|monitor| !monitor.alive()) {
                     hardware = hardware::Monitor::start(polling.clone()).ok();
                 }
@@ -190,6 +198,7 @@ impl Service {
                     battery: battery_cache.read(before, read_battery).or_else(battery),
                     power_profiles: primary_profiles.or(fallback_profiles),
                     brightness: brightness(),
+                    night_light: night_light::snapshot(),
                     poweroff: capabilities.0,
                     reboot: capabilities.1,
                     suspend: capabilities.2,
@@ -211,6 +220,9 @@ impl Service {
                         error: state.2.clone(),
                     }));
                     let retry = [
+                        night_light_monitor
+                            .is_none()
+                            .then(|| Instant::now() + Duration::from_secs(5)),
                         network.next_retry(),
                         bluetooth.next_retry(),
                         battery_cache.next_retry(),
@@ -610,6 +622,10 @@ fn execute(action: &Action, settings: Option<&[String]>) -> Result<(), String> {
             "brightnessctl",
             &["--class=backlight", "set", &format!("{}%", value.clamp(&1, &100))],
         ),
+        Action::NightLight(enabled) => return night_light::Change::Enabled(*enabled).save(),
+        Action::NightLightTemperature(temperature) => {
+            return night_light::Change::Temperature(*temperature).save();
+        }
         Action::Dnd(_) | Action::Notifications => return Err("Native notifications are unavailable".into()),
         Action::PowerProfile(profile) if matches!(*profile, "power-saver" | "balanced" | "performance") => {
             run("powerprofilesctl", &["set", profile])

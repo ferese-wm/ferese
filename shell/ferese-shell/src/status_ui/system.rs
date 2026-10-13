@@ -128,6 +128,7 @@ pub(super) fn view<'a>(
     }
     rows = audio::view(shell, rows, style, true);
     rows = battery::brightness(shell, rows, style);
+    rows = super::night_light::view(shell, rows, style);
     rows = notification_controls(shell, rows, style, true);
     rows
 }
