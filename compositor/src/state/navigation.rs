@@ -377,6 +377,9 @@ impl Ferese {
         let Some(window) = self.windows.window(id).cloned() else {
             return false;
         };
+        if !super::window_has_buffer(&window) {
+            return false;
+        }
         if !activate_window_workspace(&mut self.workspaces, &mut self.output_workspaces, id) {
             return false;
         }

@@ -629,23 +629,10 @@ impl Ferese {
 
                 if event.state() == ButtonState::Pressed
                     && !pointer.is_grabbed()
-                    && let Some(surface) = self.seat.get_keyboard().and_then(|keyboard| keyboard.current_focus())
-                    && self
-                        .space
-                        .layer_for_surface(&surface, smithay::desktop::WindowSurfaceType::ALL)
-                        .is_some_and(|layer| layer.namespace() == "ferese-launcher")
-                    && !self
-                        .layer_under(pointer.current_location())
-                        .is_some_and(|(layer, _, _)| layer.wl_surface() == &surface)
-                    && let Some(shell) = self
-                        .shell_resources
-                        .iter()
-                        .filter_map(|shell| shell.upgrade().ok())
-                        .find(|shell| shell.version() >= 10)
+                    && self.dismiss_launcher_outside(pointer.current_location())
                 {
                     // Consume both halves of the click before underlying windows or tabs see it.
                     self.consumed_pointer_buttons.insert(event.button_code());
-                    shell.toggle_launcher(String::new());
                     return;
                 }
 
@@ -823,6 +810,10 @@ impl Ferese {
                 let Some(location) = self.absolute_event_position(&event) else {
                     return;
                 };
+                if !self.consumed_touch_slots.is_empty() || self.dismiss_launcher_outside(location) {
+                    self.consumed_touch_slots.insert(event.slot());
+                    return;
+                }
                 self.focus_window_at(location, SERIAL_COUNTER.next_serial(), true);
                 let touch = self.seat.get_touch().expect("seat has touch capability");
                 let serial = SERIAL_COUNTER.next_serial();
@@ -843,6 +834,9 @@ impl Ferese {
                 );
             }
             InputEvent::TouchMotion { event, .. } => {
+                if self.consumed_touch_slots.contains(&event.slot()) {
+                    return;
+                }
                 let Some(location) = self.absolute_event_position(&event) else {
                     return;
                 };
@@ -859,6 +853,9 @@ impl Ferese {
                 );
             }
             InputEvent::TouchUp { event, .. } => {
+                if self.consumed_touch_slots.remove(&event.slot()) {
+                    return;
+                }
                 let touch = self.seat.get_touch().expect("seat has touch capability");
                 touch.up(
                     self,
@@ -870,6 +867,7 @@ impl Ferese {
                 );
             }
             InputEvent::TouchCancel { .. } => {
+                self.consumed_touch_slots.clear();
                 let touch = self.seat.get_touch().expect("seat has touch capability");
                 touch.cancel(self);
             }
@@ -879,6 +877,35 @@ impl Ferese {
             }
             _ => {}
         }
+    }
+
+    fn dismiss_launcher_outside(&self, location: Point<f64, Logical>) -> bool {
+        if self.session_lock.active() || self.input_capture.active() {
+            return false;
+        }
+        let Some(surface) = self.seat.get_keyboard().and_then(|keyboard| keyboard.current_focus()) else {
+            return false;
+        };
+        if !self
+            .space
+            .layer_for_surface(&surface, smithay::desktop::WindowSurfaceType::ALL)
+            .is_some_and(|layer| layer.namespace() == "ferese-launcher")
+            || self
+                .layer_under(location)
+                .is_some_and(|(layer, _, _)| layer.wl_surface() == &surface)
+        {
+            return false;
+        }
+        let Some(shell) = self
+            .shell_resources
+            .iter()
+            .filter_map(|shell| shell.upgrade().ok())
+            .find(|shell| shell.version() >= 10)
+        else {
+            return false;
+        };
+        shell.toggle_launcher(String::new());
+        true
     }
 
     fn start_floating_pointer_grab(&mut self, pointer: &PointerHandle<Self>, button: u32, serial: Serial) -> bool {

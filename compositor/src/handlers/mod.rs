@@ -6,6 +6,7 @@ mod layer_shell;
 pub(crate) mod screencopy;
 pub(crate) mod screenshot;
 pub(crate) mod screenshot_worker;
+pub(crate) mod security_context;
 pub(crate) mod window_capture;
 mod xdg_shell;
 

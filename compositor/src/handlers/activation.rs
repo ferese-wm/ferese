@@ -6,6 +6,7 @@ use smithay::reexports::wayland_server::{Resource, backend::ClientId};
 use smithay::utils::Serial;
 
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
+#[cfg(test)]
 use smithay::utils::SERIAL_COUNTER;
 use smithay::wayland::xdg_activation::{
     XdgActivationHandler, XdgActivationState, XdgActivationToken, XdgActivationTokenData,
@@ -110,34 +111,10 @@ impl XdgActivationHandler for Ferese {
             return;
         }
 
-        let Some(window) = self
-            .space
-            .elements()
-            .find(|window| {
-                window
-                    .toplevel()
-                    .is_some_and(|toplevel| toplevel.wl_surface() == &surface)
-            })
-            .cloned()
-        else {
+        let Some(id) = self.windows.id_for_surface(&surface) else {
             return;
         };
-
-        self.focused_window = self.windows.ids().get(&window).copied();
-        if let Some(focused) = self.focused_window
-            && let Err(error) = self.workspaces.focus_window(focused)
-        {
-            tracing::error!(%error, ?focused, "failed to update workspace focus");
-            return;
-        }
-        self.raise_window(&window, true);
-        let keyboard = self.seat.get_keyboard().expect("seat has a keyboard");
-        keyboard.set_focus(self, Some(surface), SERIAL_COUNTER.next_serial());
-        self.space.elements().for_each(|window| {
-            if let Some(toplevel) = window.toplevel() {
-                toplevel.send_pending_configure();
-            }
-        });
+        self.activate_managed_window(id);
     }
 }
 
@@ -252,8 +229,7 @@ mod tests {
         assert_ne!(approved.client_id, Some(recipient.id()));
         assert!(approved.user_data.get::<ApprovedInteraction>().unwrap().0.elapsed() < TOKEN_MAX_AGE);
 
-        // Exercise the production handler with a real recipient toplevel.
-        // Creating the window needs no GPU or client buffer.
+        // A valid handoff must not focus a recipient before its first buffer.
         use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_wm_base::XdgWmBase;
         use smithay::reexports::wayland_server::protocol::wl_compositor::WlCompositor;
         use smithay::wayland::shell::xdg::XdgWmBaseUserData;
@@ -279,7 +255,7 @@ mod tests {
             })
             .expect("recipient's toplevel");
         state.request_activation(token, approved, target.clone());
-        assert_eq!(state.seat.get_keyboard().unwrap().current_focus(), Some(target));
+        assert_eq!(state.seat.get_keyboard().unwrap().current_focus(), None);
     }
 
     #[test]

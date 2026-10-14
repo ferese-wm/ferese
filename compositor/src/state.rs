@@ -470,6 +470,7 @@ pub struct Ferese {
     pub(crate) tab_indicator_settings: crate::config::TabIndicatorSettings,
     pub(crate) tab_bars: HashMap<WorkspaceId, Vec<ferese_layout::TabBar>>,
     pub(crate) consumed_pointer_buttons: HashSet<u32>,
+    pub(crate) consumed_touch_slots: HashSet<smithay::backend::input::TouchSlot>,
     pub(crate) focus_history: ferese_core::FocusHistory,
     pub(crate) focus_cycle: Option<ferese_core::FocusCycle>,
     column_width_presets: Vec<ColumnWidth>,
@@ -553,6 +554,7 @@ pub struct Ferese {
     pub primary_selection_state: PrimarySelectionState,
     pub wlr_data_control_state: wlr_data_control::DataControlState,
     pub ext_data_control_state: ext_data_control::DataControlState,
+    pub security_context_state: smithay::wayland::security_context::SecurityContextState,
     pub relative_pointer_state: RelativePointerManagerState,
     pub seat_state: SeatState<Self>,
     pub shm_state: ShmState,
@@ -659,16 +661,22 @@ impl Ferese {
         let presentation_state = PresentationState::new::<Self>(&display_handle, libc::CLOCK_MONOTONIC as u32);
         let data_device_state = DataDeviceState::new::<Self>(&display_handle);
         let primary_selection_state = PrimarySelectionState::new::<Self>(&display_handle);
-        // Clipboard tools need direct selection access. Without data control,
-        // wl-copy maps a temporary window to obtain keyboard focus.
-        let wlr_data_control_state =
-            wlr_data_control::DataControlState::new::<Self, _>(&display_handle, Some(&primary_selection_state), |_| {
-                true
-            });
-        let ext_data_control_state =
-            ext_data_control::DataControlState::new::<Self, _>(&display_handle, Some(&primary_selection_state), |_| {
-                true
-            });
+        let security_context_state = smithay::wayland::security_context::SecurityContextState::new::<Self, _>(
+            &display_handle,
+            crate::handlers::security_context::unrestricted_client,
+        );
+        // Host clipboard tools retain direct access. Sandboxed clients use
+        // ordinary selection protocols, which follow keyboard focus.
+        let wlr_data_control_state = wlr_data_control::DataControlState::new::<Self, _>(
+            &display_handle,
+            Some(&primary_selection_state),
+            crate::handlers::security_context::unrestricted_client,
+        );
+        let ext_data_control_state = ext_data_control::DataControlState::new::<Self, _>(
+            &display_handle,
+            Some(&primary_selection_state),
+            crate::handlers::security_context::unrestricted_client,
+        );
 
         let relative_pointer_state = RelativePointerManagerState::new::<Self>(&display_handle);
         let viewporter_state = ViewporterState::new::<Self>(&display_handle);
@@ -777,6 +785,7 @@ impl Ferese {
             tab_indicator_settings: config.tab_indicator,
             tab_bars: HashMap::new(),
             consumed_pointer_buttons: HashSet::new(),
+            consumed_touch_slots: HashSet::new(),
             focus_history: Default::default(),
             focus_cycle: None,
             column_width_presets: config.column_width_presets,
@@ -855,6 +864,7 @@ impl Ferese {
             primary_selection_state,
             wlr_data_control_state,
             ext_data_control_state,
+            security_context_state,
             relative_pointer_state,
             seat_state,
             shm_state,
@@ -1264,6 +1274,7 @@ where
 #[derive(Default)]
 pub struct ClientState {
     pub compositor_state: CompositorClientState,
+    pub(crate) security_context: Option<smithay::wayland::security_context::SecurityContext>,
     pub(crate) capabilities: crate::private_client::ClientCapabilities,
 }
 

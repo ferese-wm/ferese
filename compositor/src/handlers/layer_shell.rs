@@ -195,11 +195,14 @@ pub fn handle_commit(state: &mut Ferese, surface: &WlSurface) {
 }
 
 impl Ferese {
+    pub(crate) fn layer_keyboard_eligible(&self, layer: &DesktopLayerSurface) -> bool {
+        layer.can_receive_keyboard_focus() && self.layer_mapped_and_visible(layer)
+    }
+
     /// Layer-map membership tracks the role and output, not buffer mapping.
     /// Use the renderer state updated by on_commit_buffer_handler, as for windows.
-    pub(crate) fn layer_keyboard_eligible(&self, layer: &DesktopLayerSurface) -> bool {
+    fn layer_mapped_and_visible(&self, layer: &DesktopLayerSurface) -> bool {
         layer.layer_surface().alive()
-            && layer.can_receive_keyboard_focus()
             && smithay::backend::renderer::utils::with_renderer_surface_state(layer.wl_surface(), |state| {
                 state.buffer().is_some()
             })
@@ -262,10 +265,16 @@ impl Ferese {
             return;
         }
         let keyboard = self.seat.get_keyboard().expect("seat has a keyboard");
-        if let Some(root) = self.keyboard_layer_root().filter(|_| {
-            !self
-                .keyboard_focused_layer()
-                .is_some_and(|layer| self.layer_keyboard_eligible(&layer))
+        if let Some(root) = self.keyboard_layer_root().filter(|root| {
+            !self.keyboard_focused_layer().is_some_and(|layer| {
+                // A popup owns its keyboard focus independently of the bar's
+                // interactivity policy, but still needs a visible, mapped parent.
+                if keyboard.current_focus().as_ref() != Some(root) {
+                    self.layer_mapped_and_visible(&layer)
+                } else {
+                    self.layer_keyboard_eligible(&layer)
+                }
+            })
         }) {
             // A popup grab cannot keep an ineligible layer alive as input owner.
             for (popup, _) in smithay::desktop::PopupManager::popups_for_surface(&root) {

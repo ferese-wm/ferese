@@ -510,7 +510,6 @@ impl FereseShell {
 
     pub(super) fn attach_effects(&mut self, id: window::Id, surface: &wl_surface::WlSurface) {
         let hidden = self.bar_hidden(id);
-        let islands = self.panel_for_bar(id).surface() == ferese_panel::PanelSurface::None;
         let Some(entry) = self.outputs.iter_mut().find(|entry| entry.bar == id) else {
             return;
         };
@@ -521,12 +520,15 @@ impl FereseShell {
 
         EFFECT_FRAME_PENDING.store(false, Ordering::Relaxed);
 
-        let binding = if islands {
-            // Wait for measured island bounds rather than briefly painting the full bar.
-            EffectsBinding::attach_role(&mut self.effects_context, surface, None, 1.0)
-        } else {
-            EffectsBinding::attach(&mut self.effects_context, surface, !hidden)
-        };
+        // The first panel presentation supplies the role and measured shape
+        // together with its buffer. Enabling the role here would paint the
+        // whole surface before those bounds arrive.
+        let binding = EffectsBinding::attach_role(
+            &mut self.effects_context,
+            surface,
+            None,
+            if hidden { 0.0 } else { 1.0 },
+        );
 
         match binding {
             Ok(binding) => entry.effects = Some(binding),
@@ -644,19 +646,6 @@ pub(super) struct EffectsBinding {
 }
 
 impl EffectsBinding {
-    pub(super) fn attach(
-        context: &mut Option<std::rc::Rc<EffectsContext>>,
-        surface: &wl_surface::WlSurface,
-        visible: bool,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
-        Self::attach_role(
-            context,
-            surface,
-            visible.then_some(ferese_surface_effects_v1::Role::Panel),
-            if visible { 1.0 } else { 0.0 },
-        )
-    }
-
     pub(super) fn attach_role(
         context: &mut Option<std::rc::Rc<EffectsContext>>,
         surface: &wl_surface::WlSurface,
