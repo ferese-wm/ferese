@@ -97,6 +97,8 @@ fn public_environment(command: &mut std::process::Command) {
     if let Some(display) = std::env::var_os("FERESE_PUBLIC_WAYLAND_DISPLAY") {
         command.env("WAYLAND_DISPLAY", display);
     }
+    command.env_remove("FERESE_PUBLIC_WAYLAND_DISPLAY");
+    crate::renderer::configure_app(command);
 }
 fn spawn(command: &mut std::process::Command) -> Result<(), String> {
     public_environment(command);
