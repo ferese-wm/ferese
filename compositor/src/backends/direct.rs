@@ -773,12 +773,7 @@ pub(crate) fn validate_live_outputs(state: &Ferese, profiles: &[OutputProfile]) 
         &backend.manual_outputs,
     );
     resolve_output_positions(backend, &mut desired)?;
-    let mut usable = 0;
-    for device in backend.devices.values() {
-        let scan = select_outputs(device, &backend.monitors, &desired, backend.low_power).map_err(|e| e.to_string())?;
-        transaction::validate_device(device, &scan).map_err(|error| error.to_string())?;
-        usable += scan.selections.len();
-    }
+    let usable = validate_output_configuration(backend, &desired)?;
     if usable == 0 {
         return Err("display configuration would leave no usable output".into());
     }
@@ -1564,10 +1559,59 @@ fn remember_applied_configuration(state: &mut Ferese) {
 
 fn validate_desired_outputs(state: &Ferese) -> Result<(), String> {
     let backend = state.direct_backend.as_ref().ok_or("direct backend unavailable")?;
-    for device in backend.devices.values() {
-        let scan = select_outputs(device, &backend.monitors, &backend.desired_outputs, backend.low_power)
-            .map_err(|error| error.to_string())?;
-        transaction::validate_device(device, &scan).map_err(|error| error.to_string())?;
+    validate_output_configuration(backend, &backend.desired_outputs).map(|_| ())
+}
+
+fn validate_output_configuration(
+    backend: &DirectBackendState,
+    desired: &DesiredOutputConfiguration,
+) -> Result<usize, String> {
+    let scans = backend
+        .devices
+        .values()
+        .map(|device| {
+            select_outputs(device, &backend.monitors, desired, backend.low_power)
+                .map(|scan| (device, scan))
+                .map_err(|error| error.to_string())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let selected = scans
+        .iter()
+        .flat_map(|(device, scan)| {
+            let device_key = drm_device_key(&device.drm);
+            scan.selections
+                .iter()
+                .map(move |selection| format!("{device_key}/{}", selection.connector))
+        })
+        .collect::<Vec<_>>();
+    validate_output_plan(desired, &selected, || {
+        for (device, scan) in &scans {
+            transaction::validate_device(device, scan).map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    })?;
+    Ok(selected.len())
+}
+
+/// Keep plan completeness separate from the hardware probe so a partial scan
+/// cannot be accepted merely because the driver accepts its selected subset.
+fn validate_output_plan(
+    desired: &DesiredOutputConfiguration,
+    selected: &[String],
+    test_hardware: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
+    validate_selected_outputs(&desired.outputs, selected)?;
+    test_hardware()
+}
+
+fn validate_selected_outputs<'a>(
+    outputs: impl IntoIterator<Item = &'a crate::output_policy::DesiredOutput>,
+    selected: &[String],
+) -> Result<(), String> {
+    for output in outputs.into_iter().filter(|output| output.settings.enabled) {
+        if !selected.contains(&output.key) {
+            return Err(format!("enabled output {} has no usable CRTC assignment", output.key));
+        }
     }
     Ok(())
 }
@@ -2064,6 +2108,19 @@ fn select_outputs(
         }
     }
 
+    let prefix = format!("{device_key}/");
+    let selected = selections
+        .iter()
+        .map(|selection| format!("{prefix}{}", selection.connector))
+        .collect::<Vec<_>>();
+    // Also guard the rescan immediately before applying a device transaction:
+    // hotplug can invalidate the earlier configuration-wide validation.
+    validate_selected_outputs(
+        desired.outputs.iter().filter(|output| output.key.starts_with(&prefix)),
+        &selected,
+    )
+    .map_err(io::Error::other)?;
+
     selections.sort_by_key(|selection| selection.settings.position.is_none());
     Ok(OutputScan {
         selections,
@@ -2484,6 +2541,170 @@ mod tests {
     use std::time::SystemTime;
 
     use super::*;
+
+    fn three_monitor_plan(layout: crate::config::OutputLayout) -> DesiredOutputConfiguration {
+        let monitors = ["A", "B", "C"].map(|key| Monitor {
+            key: key.into(),
+            connector: key.into(),
+            identity: key.into(),
+            aliases: vec![],
+            internal: key == "A",
+            usable: true,
+        });
+        let profile = OutputProfile {
+            name: "three".into(),
+            outputs: monitors
+                .iter()
+                .map(|monitor| crate::output_policy::defaults(monitor.key.clone()))
+                .collect(),
+            layout,
+            confirm_timeout: 15,
+            lid_policy: crate::config::LidPolicy::Ignore,
+            lid_closed: None,
+            mirror_source: None,
+        };
+        crate::output_policy::select_profile(&monitors, false, &[profile], &ManualOverride::default())
+    }
+
+    #[test]
+    fn complete_live_plan_still_requires_hardware_success() {
+        let desired = three_monitor_plan(crate::config::OutputLayout::Extend);
+        let selected = vec!["A".into(), "B".into(), "C".into()];
+        assert!(validate_output_plan(&desired, &selected, || Ok(())).is_ok());
+        assert_eq!(
+            validate_output_plan(&desired, &selected, || Err("atomic TEST_ONLY failed".into())),
+            Err("atomic TEST_ONLY failed".into())
+        );
+    }
+
+    #[test]
+    fn requiredness_does_not_allow_a_connected_enabled_output_to_be_omitted() {
+        let mut desired = three_monitor_plan(crate::config::OutputLayout::Extend);
+        desired.outputs[2].settings.required = false;
+        let error = validate_output_plan(&desired, &["A".into(), "B".into()], || Ok(())).unwrap_err();
+        assert!(error.contains("C"));
+        desired.outputs[2].settings.enabled = false;
+        assert!(validate_output_plan(&desired, &["A".into(), "B".into()], || Ok(())).is_ok());
+    }
+
+    #[test]
+    fn disconnected_monitors_affect_profile_matching_and_do_not_need_assignments() {
+        let connected = ["A", "B"].map(|key| Monitor {
+            key: key.into(),
+            connector: key.into(),
+            identity: key.into(),
+            aliases: vec![],
+            internal: key == "A",
+            usable: true,
+        });
+        let mut profile = OutputProfile {
+            name: "dock".into(),
+            outputs: ["A", "B", "C"]
+                .map(|key| crate::output_policy::defaults(key.into()))
+                .into(),
+            layout: crate::config::OutputLayout::Extend,
+            confirm_timeout: 15,
+            lid_policy: crate::config::LidPolicy::Ignore,
+            lid_closed: None,
+            mirror_source: None,
+        };
+        for required in [true, false] {
+            profile.outputs[2].required = required;
+            let desired =
+                crate::output_policy::select_profile(&connected, false, &[profile.clone()], &ManualOverride::default());
+            assert_eq!(desired.profile.as_deref(), if required { None } else { Some("dock") });
+            assert_eq!(desired.outputs.len(), 2);
+            assert!(validate_output_plan(&desired, &["A".into(), "B".into()], || Ok(())).is_ok());
+        }
+    }
+
+    #[test]
+    fn device_scans_cannot_satisfy_another_gpus_missing_output() {
+        let mut desired = three_monitor_plan(crate::config::OutputLayout::Extend);
+        desired.outputs[0].key = "gpu-one/A".into();
+        desired.outputs[1].key = "gpu-two/B".into();
+        desired.outputs[2].key = "gpu-two/C".into();
+        let selected = vec!["gpu-one/A".into(), "gpu-two/B".into(), "gpu-one/C".into()];
+        assert!(validate_output_plan(&desired, &selected, || Ok(())).is_err());
+        // A device-local rescan checks only its own enabled outputs.
+        assert!(
+            validate_selected_outputs(
+                desired
+                    .outputs
+                    .iter()
+                    .filter(|output| output.key.starts_with("gpu-one/")),
+                &selected
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn impossible_assignment_reaches_live_validation_as_an_error() {
+        let desired = three_monitor_plan(crate::config::OutputLayout::Extend);
+        let crtc = std::num::NonZeroU32::new(1).unwrap().into();
+        let requests = (0..3)
+            .map(|_| crtc_assignment::Candidates {
+                applied: None,
+                kernel: None,
+                compatible: vec![crtc],
+            })
+            .collect::<Vec<_>>();
+        let selected = desired
+            .outputs
+            .iter()
+            .zip(crtc_assignment::assign(&requests))
+            .filter(|(_, assignment)| assignment.is_some())
+            .map(|(output, _)| output.key.clone())
+            .collect::<Vec<_>>();
+        assert!(validate_output_plan(&desired, &selected, || Ok(())).is_err());
+    }
+
+    #[test]
+    fn feasible_three_monitor_assignment_passes_live_plan_validation() {
+        let desired = three_monitor_plan(crate::config::OutputLayout::Extend);
+        let requests = [&[1, 2][..], &[1, 3][..], &[1, 3][..]].map(|compatible| crtc_assignment::Candidates {
+            applied: None,
+            kernel: None,
+            compatible: compatible
+                .iter()
+                .map(|value| std::num::NonZeroU32::new(*value).unwrap().into())
+                .collect(),
+        });
+        let selected = desired
+            .outputs
+            .iter()
+            .zip(crtc_assignment::assign(&requests))
+            .filter(|(_, assignment)| assignment.is_some())
+            .map(|(output, _)| output.key.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(selected.len(), 3);
+        assert!(validate_output_plan(&desired, &selected, || Ok(())).is_ok());
+    }
+
+    #[test]
+    fn live_plan_rejects_partial_extend_and_mirror_before_hardware_validation() {
+        for layout in [crate::config::OutputLayout::Extend, crate::config::OutputLayout::Mirror] {
+            let desired = three_monitor_plan(layout);
+            for omitted in ["A", "B", "C"] {
+                let selected = ["A", "B", "C"]
+                    .into_iter()
+                    .filter(|key| *key != omitted)
+                    .map(String::from)
+                    .collect::<Vec<_>>();
+                let probed = std::cell::Cell::new(false);
+                let result = validate_output_plan(&desired, &selected, || {
+                    probed.set(true);
+                    Ok(()) // A driver can accept the incomplete two-output request.
+                });
+                assert!(
+                    result.is_err(),
+                    "accepted a partial {layout:?} configuration without {omitted}"
+                );
+                assert!(!probed.get());
+            }
+        }
+    }
 
     #[test]
     fn repeated_unconfirmed_changes_keep_original_rollback_and_manual_state() {
