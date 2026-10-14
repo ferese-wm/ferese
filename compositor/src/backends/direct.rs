@@ -17,6 +17,7 @@ mod planes;
 mod recovery;
 mod redraw;
 mod scheduling;
+mod session_device;
 mod topology;
 mod transaction;
 use diagnostics::{Diagnostics, PrimaryOutcome};
@@ -47,10 +48,9 @@ use smithay::reexports::drm::control::{
     Device as ControlDevice, Mode as DrmMode, ModeTypeFlags, connector, crtc, property,
 };
 use smithay::reexports::input::{Device as LibinputDevice, Libinput};
-use smithay::reexports::rustix::fs::OFlags;
 use smithay::reexports::wayland_protocols::wp::presentation_time::server::wp_presentation_feedback::Kind;
 use smithay::reexports::wayland_server::backend::GlobalId;
-use smithay::utils::{DeviceFd, Monotonic, Time, Transform};
+use smithay::utils::{Monotonic, Time, Transform};
 use smithay::wayland::dmabuf::DmabufFeedbackBuilder;
 use smithay::wayland::presentation::Refresh;
 use topology::{Topology, reconcile_outputs};
@@ -257,6 +257,8 @@ struct DirectDevice {
     renderer: GlesRenderer,
     render_node: DrmNode,
     outputs: HashMap<crtc::Handle, DirectOutput>,
+    // Last: release libseat's original FD after renderer/DRM resources.
+    _session_device: session_device::SessionDevice<LibSeatSession>,
 }
 
 struct DirectOutput {
@@ -788,15 +790,15 @@ pub(crate) fn validate_live_outputs(state: &Ferese, profiles: &[OutputProfile]) 
 }
 
 fn open_device(state: &mut Ferese, path: &Path) -> Result<DrmNode, Box<dyn Error>> {
-    let mut session = state
+    let session = state
         .direct_backend
         .as_ref()
         .expect("direct backend state is initialized before the DRM device")
         .session
         .clone();
     let node = DrmNode::from_path(path)?;
-    let fd = session.open(path, OFlags::RDWR | OFlags::CLOEXEC | OFlags::NOCTTY | OFlags::NONBLOCK)?;
-    let fd = DrmDeviceFd::new(DeviceFd::from(fd));
+    let session_device = session_device::SessionDevice::open(session, path)?;
+    let fd = DrmDeviceFd::new(session_device.device_fd()?);
     let (drm, notifier) = DrmDevice::new(fd.clone(), true)?;
     let gbm = GbmDevice::new(fd)?;
     // SAFETY: GBM owns a valid DRM descriptor for the lifetime of the EGL display.
@@ -984,6 +986,7 @@ fn open_device(state: &mut Ferese, path: &Path) -> Result<DrmNode, Box<dyn Error
         .insert(
             node,
             DirectDevice {
+                _session_device: session_device,
                 drm,
                 gbm,
                 renderer,

@@ -456,7 +456,10 @@ impl FereseShell {
     }
 
     pub(super) fn view_hub(&self, id: window::Id) -> Element<'_, cosmic::Action<Message>> {
-        let entry = self.outputs.iter().find(|entry| entry.bar == id).expect("panel output");
+        // The toolkit may request one last frame while output destruction is queued.
+        let Some(entry) = self.outputs.iter().find(|entry| entry.bar == id) else {
+            return cosmic::widget::Space::new().into();
+        };
         let runtime = entry.runtime.hub.as_ref().expect("Morph runtime");
         runtime.borrow_mut().motion = self.render.motion;
         let revision = runtime.borrow().revision;
@@ -542,8 +545,10 @@ impl FereseShell {
         menu: Option<status_ui::Menu>,
         previous_menu: Option<status_ui::Menu>,
     ) -> Element<'_, cosmic::Action<Message>> {
+        let Some(entry) = self.outputs.iter().find(|entry| entry.bar == id) else {
+            return cosmic::widget::Space::new().into();
+        };
         let panel = self.panel_for_bar(id);
-        let entry = self.outputs.iter().find(|entry| entry.bar == id).expect("panel output");
         let effects = entry.effects.as_ref();
         let bounds = sample.geometry.bounds;
         let (target_size, previous_size) = {
@@ -1273,6 +1278,16 @@ mod tests {
             .reset(&shell.config.panels[0], &shell.snapshot, Some("test"));
         shell.clock = "11 oct, 10:09 am".into();
         shell
+    }
+
+    #[test]
+    fn queued_hub_frame_after_output_removal_is_empty_instead_of_panicking() {
+        let mut app = shell();
+        let id = app.outputs[0].bar;
+        let sample = app.outputs[0].runtime.hub.as_ref().unwrap().borrow().hub.sample();
+        app.outputs.clear();
+        drop(app.view_hub(id));
+        drop(app.view_hub_at(id, sample, None, None));
     }
 
     #[test]

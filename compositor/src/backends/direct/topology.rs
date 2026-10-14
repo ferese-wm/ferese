@@ -260,7 +260,7 @@ pub(super) fn reconcile_outputs(state: &mut Ferese, reactivate: bool) {
             None => match open_device(state, current_path.unwrap()) {
                 Ok(node) => node,
                 Err(error) => {
-                    tracing::warn!(%error, ?path, "DRM device unavailable; will retry");
+                    tracing::warn!(%error, ?path, device_path = ?current_path, "DRM device unavailable; will retry");
                     slot_mut(state, &path).failed(Instant::now());
                     continue;
                 }
