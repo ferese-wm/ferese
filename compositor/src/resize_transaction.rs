@@ -25,6 +25,17 @@ impl ResizeTransaction {
         }
     }
 
+    pub(crate) fn deadline(self) -> Duration {
+        self.started + DEADLINE
+    }
+
+    // A replacement configure changes readiness, not the bound on an
+    // uninterrupted wait. Clearing the transaction starts a fresh interaction.
+    pub(crate) fn superseded_by(self, mut replacement: Self) -> Self {
+        replacement.started = self.started;
+        replacement
+    }
+
     pub(crate) fn serial(self) -> Serial {
         self.serial
     }
