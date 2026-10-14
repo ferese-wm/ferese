@@ -44,6 +44,7 @@ pub(crate) fn capture_output_elements(
 ) -> Vec<AnimatedWindowRenderElement> {
     // Blur textures and resize handoff snapshots must never be shared with
     // display rendering. Only the capture scene can populate these caches.
+    crate::backends::direct::capture::touch_cache(state);
     std::mem::swap(&mut state.render, &mut state.capture_render);
     let elements = scene_elements(state, renderer, output, include_cursor, frame, true);
     std::mem::swap(&mut state.render, &mut state.capture_render);

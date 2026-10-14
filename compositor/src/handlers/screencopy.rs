@@ -447,6 +447,15 @@ pub(crate) fn capture_region_for_geometry(
     transform: smithay::utils::Transform,
     requested: Option<Rectangle<i32, Logical>>,
 ) -> Option<Rectangle<i32, Buffer>> {
+    let buffer_bounds = Rectangle::from_size(Size::<i32, Buffer>::from((mode_size.w, mode_size.h)));
+    if mode_size.w <= 0 || mode_size.h <= 0 {
+        return None;
+    }
+    // Full-output captures must match the framebuffer exactly. Rounding the
+    // logical size and scaling it back can add a pixel at fractional scales.
+    if requested.is_none() {
+        return Some(buffer_bounds);
+    }
     let logical_size = output_logical_size(mode_size, scale, transform);
     let output_region = Rectangle::from_size(logical_size);
     let logical_region = requested.unwrap_or(output_region).intersection(output_region)?;
@@ -455,12 +464,11 @@ pub(crate) fn capture_region_for_geometry(
         return None;
     }
 
-    Some(
-        logical_region
-            .to_f64()
-            .to_buffer(scale, transform, &logical_size.to_f64())
-            .to_i32_round(),
-    )
+    logical_region
+        .to_f64()
+        .to_buffer(scale, transform, &logical_size.to_f64())
+        .to_i32_round()
+        .intersection(buffer_bounds)
 }
 
 pub(super) fn valid_shm_buffer(buffer: &WlBuffer, expected: Size<i32, Buffer>) -> bool {

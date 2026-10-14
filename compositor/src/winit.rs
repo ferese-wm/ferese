@@ -94,7 +94,6 @@ pub fn init(event_loop: &mut EventLoop<Ferese>, state: &mut Ferese) -> Result<()
             }
         })?;
 
-    let mut capture_texture = None;
     event_loop
         .handle()
         .insert_source(event_source, move |event, _, state| {
@@ -157,6 +156,7 @@ pub fn init(event_loop: &mut EventLoop<Ferese>, state: &mut Ferese) -> Result<()
                                         || state.has_pending_screencopy(&output, true)
                                     {
                                         let scene = state.sample_frame(&output, Duration::ZERO);
+                                        let mut capture_texture = state.nested_capture_texture.take();
                                         crate::backends::direct::capture::capture_output(
                                             state,
                                             renderer,
@@ -164,6 +164,7 @@ pub fn init(event_loop: &mut EventLoop<Ferese>, state: &mut Ferese) -> Result<()
                                             &output,
                                             &scene,
                                         );
+                                        state.nested_capture_texture = capture_texture;
                                         changed = true;
                                     }
 
