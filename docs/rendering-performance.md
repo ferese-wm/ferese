@@ -86,5 +86,4 @@ actual framebuffer recapture counts/cost, asynchronous capture encoding and
 window-capture readback separately. Current effect metrics are placeholders;
 `capture_us` covers monitor capture batches only. Exact cursor-only KMS updates
 and detailed scanout rejection causes require additional upstream observability.
-See [DMA-BUF feedback](dmabuf-feedback.md) for the current allocation hints.
 Broader primary-plane and overlay policies still need hardware validation.
