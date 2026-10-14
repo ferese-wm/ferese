@@ -41,7 +41,29 @@ fn tree_reflow_groups(
     inner_gap: f64,
     allow_overshoot: bool,
 ) -> HashMap<WindowId, usize> {
-    let motions = motions
+    let margin = inner_gap.max(0.0) / 2.0;
+    let axis_bounds =
+        |position: f64, size: f64, target_position: f64, target_size: f64, speed: f64, size_speed: f64| {
+            let distance = target_position - position;
+            let size_distance = target_size - size;
+            let moving = distance != 0.0 || size_distance != 0.0 || speed != 0.0 || size_speed != 0.0;
+            let reversing =
+                (speed != 0.0 && distance * speed <= 0.0) || (size_speed != 0.0 && size_distance * size_speed <= 0.0);
+            // Endpoint bounds cannot contain overshoot or motion away from the
+            // target. Widen only that axis, preserving separation on a fixed axis.
+            if reversing || (allow_overshoot && moving) {
+                return (f64::NEG_INFINITY, f64::INFINITY);
+            }
+            // Proportional component velocities preserve a shared edge. Otherwise
+            // bound position and size separately to include intermediate excursions.
+            let end = if (speed * size_distance - size_speed * distance).abs() < 1e-6 {
+                (position + size).max(target_position + target_size)
+            } else {
+                position.max(target_position) + size.max(target_size)
+            };
+            (position.min(target_position) - margin, end + margin)
+        };
+    let moving = motions
         .into_iter()
         .filter(|(_, source, target, velocity)| {
             source != target
@@ -49,60 +71,24 @@ fn tree_reflow_groups(
                     .into_iter()
                     .any(|speed| speed != 0.0)
         })
-        .collect::<Vec<_>>();
-    // Endpoint bounds cannot contain an overshooting spring or a retargeted
-    // component still moving away from its destination. Keep the moving tiles
-    // together until their trajectories can be bounded by their endpoints.
-    let reversing = motions.iter().any(|(_, source, target, velocity)| {
-        [
-            (target.x - source.x, velocity.x),
-            (target.y - source.y, velocity.y),
-            (target.width - source.width, velocity.width),
-            (target.height - source.height, velocity.height),
-        ]
-        .into_iter()
-        .any(|(distance, speed)| speed != 0.0 && distance * speed <= 0.0)
-    });
-    if allow_overshoot || reversing {
-        return motions.into_iter().map(|(id, ..)| (id, 0)).collect();
-    }
-    let margin = inner_gap.max(0.0) / 2.0;
-    let moving = motions
-        .into_iter()
-        .filter(|(_, source, target, _)| source != target)
         .map(|(id, source, target, velocity)| {
-            let left = source.x.min(target.x) - margin;
-            let top = source.y.min(target.y) - margin;
-            // Geometry uses one no-crossing spring for its components. With
-            // proportional velocities an edge shares their progress, including
-            // a fixed split boundary. Interrupted components can have different
-            // progress: bound each separately rather than miss an intermediate
-            // excursion of x+width or y+height beyond both endpoint rectangles.
-            let edge =
-                |position: f64, size: f64, target_position: f64, target_size: f64, speed: f64, size_speed: f64| {
-                    if (speed * (target_size - size) - size_speed * (target_position - position)).abs() < 1e-6 {
-                        (position + size).max(target_position + target_size)
-                    } else {
-                        position.max(target_position) + size.max(target_size)
-                    }
-                };
-            let right = edge(
+            let (left, right) = axis_bounds(
                 source.x,
                 source.width,
                 target.x,
                 target.width,
                 velocity.x,
                 velocity.width,
-            ) + margin;
-            let bottom = edge(
+            );
+            let (top, bottom) = axis_bounds(
                 source.y,
                 source.height,
                 target.y,
                 target.height,
                 velocity.y,
                 velocity.height,
-            ) + margin;
-            (id, Rect::new(left, top, right - left, bottom - top))
+            );
+            (id, [left, top, right, bottom])
         })
         .collect::<Vec<_>>();
     let mut groups = HashMap::new();
@@ -117,9 +103,8 @@ fn tree_reflow_groups(
             let bounds = moving.iter().find(|(window, _)| *window == id).unwrap().1;
             for (other, candidate) in &moving {
                 if !groups.contains_key(other)
-                    && bounds.x.max(candidate.x) + 0.001 < (bounds.x + bounds.width).min(candidate.x + candidate.width)
-                    && bounds.y.max(candidate.y) + 0.001
-                        < (bounds.y + bounds.height).min(candidate.y + candidate.height)
+                    && bounds[0].max(candidate[0]) + 0.001 < bounds[2].min(candidate[2])
+                    && bounds[1].max(candidate[1]) + 0.001 < bounds[3].min(candidate[3])
                 {
                     groups.insert(*other, group);
                     frontier.push(*other);
@@ -508,6 +493,41 @@ mod tests {
             inner_gap,
             false,
         )
+    }
+
+    #[test]
+    fn reversed_or_overshooting_vertical_motion_preserves_horizontal_separation() {
+        for allow_overshoot in [false, true] {
+            let groups = super::tree_reflow_groups(
+                [
+                    (
+                        WindowId(1),
+                        Rect::new(0.0, 0.0, 100.0, 100.0),
+                        Rect::new(0.0, 0.0, 100.0, 100.0),
+                        ferese_animation::RectVelocity {
+                            y: -20.0,
+                            ..Default::default()
+                        },
+                    ),
+                    (
+                        WindowId(2),
+                        Rect::new(0.0, 110.0, 100.0, 100.0),
+                        Rect::new(0.0, 130.0, 100.0, 100.0),
+                        Default::default(),
+                    ),
+                    (
+                        WindowId(3),
+                        Rect::new(110.0, 0.0, 100.0, 100.0),
+                        Rect::new(110.0, 20.0, 100.0, 100.0),
+                        Default::default(),
+                    ),
+                ],
+                10.0,
+                allow_overshoot,
+            );
+            assert_eq!(groups[&WindowId(1)], groups[&WindowId(2)]);
+            assert_ne!(groups[&WindowId(1)], groups[&WindowId(3)]);
+        }
     }
 
     #[test]
