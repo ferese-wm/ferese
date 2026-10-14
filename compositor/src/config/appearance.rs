@@ -5,6 +5,7 @@ impl Config {
         let effect = &self.appearance.focus_effect;
         Ok(FocusEffectSettings {
             enabled: effect.enabled,
+            blur: effect.blur,
             active_opacity: unit_theme_value(effect.active_opacity, "appearance.focus_effect.active_opacity")?,
             inactive_opacity: unit_theme_value(effect.inactive_opacity, "appearance.focus_effect.inactive_opacity")?,
             inactive_dim: unit_theme_value(effect.inactive_dim, "appearance.focus_effect.inactive_dim")?,
@@ -254,6 +255,7 @@ pub(super) struct AppearanceConfig {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct FocusEffectSettings {
     pub enabled: bool,
+    pub blur: bool,
     pub active_opacity: f64,
     pub inactive_opacity: f64,
     pub inactive_dim: f64,
@@ -264,6 +266,7 @@ pub struct FocusEffectSettings {
 #[serde(default, deny_unknown_fields)]
 pub(super) struct FocusEffectConfig {
     pub(super) enabled: bool,
+    pub(super) blur: bool,
     pub(super) active_opacity: f64,
     pub(super) inactive_opacity: f64,
     pub(super) inactive_dim: f64,
@@ -274,6 +277,7 @@ impl Default for FocusEffectConfig {
     fn default() -> Self {
         Self {
             enabled: true,
+            blur: true,
             active_opacity: 1.0,
             inactive_opacity: 1.0,
             inactive_dim: 0.0,

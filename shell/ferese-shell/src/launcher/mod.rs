@@ -33,7 +33,6 @@ pub(super) enum Message {
 pub(super) struct Launcher {
     pub id: window::Id,
     pub(super) output: String,
-    top: f32,
     input: cosmic::widget::Id,
     query: String,
     category: Option<Category>,
@@ -138,7 +137,13 @@ impl FereseShell {
         };
         let name = output.name.clone().unwrap_or(name);
         let wl_output = output.output.clone();
-        let top = output.size.map_or(240., |(_, h)| h as f32 * 0.3);
+        let (output_width, output_height) = output.size.unwrap_or((1920, 1080));
+        // Reserve the largest browse view once, avoiding buffer reallocations during springs.
+        let width = 720u32.min(output_width.max(1) as u32);
+        let height = 404u32.min((output_height - 32).max(1) as u32);
+        let top = ((output_height as f32 * 0.3) as i32)
+            .min(output_height - height as i32 - 16)
+            .max(0);
         let dismissed = Task::batch([self.destroy_menu(), self.destroy_system_modal(true)]);
         let id = window::Id::unique();
         let mut progress = AnimatedValue::new(0.);
@@ -151,7 +156,6 @@ impl FereseShell {
         self.launcher = Some(Launcher {
             id,
             output: name,
-            top,
             input: cosmic::widget::Id::unique(),
             query: String::new(),
             category: None,
@@ -191,11 +195,15 @@ impl FereseShell {
                 id,
                 layer: Layer::Overlay,
                 keyboard_interactivity: KeyboardInteractivity::Exclusive,
-                anchor: Anchor::TOP | Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT,
+                anchor: Anchor::TOP,
                 output: IcedOutput::Output(wl_output.clone()),
                 namespace: "ferese-launcher".into(),
                 exclusive_zone: -1,
-                size: Some((None, None)),
+                size: Some((Some(width), Some(height))),
+                margin: IcedMargin {
+                    top,
+                    ..Default::default()
+                },
                 ..Default::default()
             },
             Some(Box::new(move |app| app.view_launcher(id))),

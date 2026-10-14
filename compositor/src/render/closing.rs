@@ -195,6 +195,12 @@ pub(super) fn grouped_elements(
         {
             elements.push(material);
         }
+        if window.material.is_none()
+            && let Some(blur) =
+                super::window_blur::window_blur_element(state, renderer, output, window.presentation, corners)
+        {
+            elements.push(blur);
+        }
         let theme = &state.theme_settings;
         let (offset_factor, blur_factor, opacity_factor) = window.presentation.shadow_factors();
         if let Some(shadow) = window_shadow_element(

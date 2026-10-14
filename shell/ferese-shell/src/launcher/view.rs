@@ -484,15 +484,6 @@ impl FereseShell {
             }
             body = body.push(container(rows).padding([0, 12]));
         }
-        let available_height = self
-            .outputs
-            .iter()
-            .find(|o| o.name.as_deref() == Some(&launcher.output))
-            .and_then(|o| o.size)
-            .map(|(_, h)| h as f32);
-        let top = available_height.map_or(launcher.top, |h| {
-            (h * 0.3).min(h - launcher.height.current as f32 - 16.).max(16.)
-        });
         let mut background = color_with_opacity(self.config.theme.surface_popover, opacity);
         if self.config.theme.high_contrast || self.config.theme.reduce_transparency {
             background.a = opacity;
@@ -521,11 +512,7 @@ impl FereseShell {
             launcher.regions.clone(),
         ))
         .width(Length::Fill)
-        .align_x(cosmic::iced::Alignment::Center)
-        .padding(cosmic::iced::Padding {
-            top,
-            ..Default::default()
-        });
+        .align_x(cosmic::iced::Alignment::Center);
         let dismiss = message(Message::Dismiss(id));
         let backdrop = mouse_area(Space::new().width(Length::Fill).height(Length::Fill))
             .on_press(dismiss.clone())

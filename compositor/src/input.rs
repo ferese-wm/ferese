@@ -593,7 +593,8 @@ impl Ferese {
                     }
                     return;
                 }
-                if event.state() == ButtonState::Released && self.tab_buttons.remove(&event.button_code()) {
+                if event.state() == ButtonState::Released && self.consumed_pointer_buttons.remove(&event.button_code())
+                {
                     return;
                 }
                 let pointer = self.seat.get_pointer().expect("seat has a pointer");
@@ -628,9 +629,31 @@ impl Ferese {
 
                 if event.state() == ButtonState::Pressed
                     && !pointer.is_grabbed()
+                    && let Some(surface) = self.seat.get_keyboard().and_then(|keyboard| keyboard.current_focus())
+                    && self
+                        .space
+                        .layer_for_surface(&surface, smithay::desktop::WindowSurfaceType::ALL)
+                        .is_some_and(|layer| layer.namespace() == "ferese-launcher")
+                    && !self
+                        .layer_under(pointer.current_location())
+                        .is_some_and(|(layer, _, _)| layer.wl_surface() == &surface)
+                    && let Some(shell) = self
+                        .shell_resources
+                        .iter()
+                        .filter_map(|shell| shell.upgrade().ok())
+                        .find(|shell| shell.version() >= 10)
+                {
+                    // Consume both halves of the click before underlying windows or tabs see it.
+                    self.consumed_pointer_buttons.insert(event.button_code());
+                    shell.toggle_launcher(String::new());
+                    return;
+                }
+
+                if event.state() == ButtonState::Pressed
+                    && !pointer.is_grabbed()
                     && let Some(id) = self.tab_at(pointer.current_location())
                 {
-                    self.tab_buttons.insert(event.button_code());
+                    self.consumed_pointer_buttons.insert(event.button_code());
                     if event.button_code() == BTN_LEFT {
                         self.activate_managed_window(id);
                     }

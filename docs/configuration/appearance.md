@@ -29,6 +29,7 @@ one appearance.
 | `appearance.focus-effect.enabled` | boolean | `true` | Apply window opacity and dimming; disabling preserves the saved settings |
 | `appearance.focus-effect.active-opacity` | number 0–1 | `1` | Active application opacity, including fullscreen |
 | `appearance.focus-effect.inactive-opacity` | number 0–1 | `1` | Other application window opacity |
+| `appearance.focus-effect.blur` | boolean | `true` | Blur behind translucent application windows using the shared blur radius |
 | `appearance.focus-effect.inactive-dim` | number 0–1 | `0` | Darkening strength for inactive windows; 0 disables |
 | `appearance.focus-effect.duration-ms` | number ≥ 0 | `150` | Shared opacity and dimming transition; 0 snaps |
 | `theme.typography.font-family` | string | `"Inter"` | Shell, Settings and overview font |
@@ -46,6 +47,10 @@ menu does not change it. Overview selection changes the highlight, while window
 opacity still follows activation; dimming fades out as overview opens. Fullscreen
 windows use the same opacity settings. Opening and closing fades multiply window
 opacity. Reduced motion disables the focus transition.
+
+**Window blur** in Settings controls blur behind both active and inactive windows.
+It uses `theme.material.blur-radius` independently of the shell material style.
+Fully opaque or invisible windows skip blur. Reduced transparency disables it.
 
 Settings → Wallpaper shows the current image and both bundled defaults. Use
 **Apply to** to change both modes or just one. **Match appearance** restores the
@@ -105,10 +110,15 @@ the automatic gradient. Inactive window borders derive their gradient from the
 border color and keep its transparency.
 Automatic accent endpoints are adjusted for contrast against the theme's surfaces.
 
-In Settings → Appearance, choose **Gradient** or **Solid** for **Accent style**
-and **Inactive border style**. In KDL, `theme.focus-ring.style` and
+In Settings → Appearance, **Accent style** controls the gradient used by focus
+borders and selected shell controls. Settings → Windows contains **Inactive
+border style** and **Focus border**. Accent style and inactive border style
+offer **Gradient** or **Solid**. In KDL, `theme.focus-ring.style` and
 `theme.border.style` accept `"auto"` (default) or `"solid"`. Solid disables the
 gradient, including any explicit endpoints, without deleting them from the config.
+
+Shell surface style, opacity and corner radius are in Settings → Panel & Shell.
+**Background blur** in Appearance sets the blur radius for shell surfaces and windows.
 
 For custom endpoints, set `theme.focus-ring.gradient` or `theme.border.gradient`.
 Both require `from` and `to` colors; `angle` is optional and defaults to `0`.

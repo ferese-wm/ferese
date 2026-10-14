@@ -12,7 +12,7 @@ environment for screenshots to work.
 Text input is available by default; Ctrl+Alt+Escape releases an active shortcut
 inhibitor. Use `feresectl --help` for runtime control commands.
 
-Shell rounding is controlled in Settings → Appearance → Shell corner radius.
+Shell rounding is controlled in Settings → Panel & Shell → Shell corner radius.
 The shell and compositor use the same squircle profile for fills, borders, shadows
 and blur masks. Small controls cap the radius to fit their size; circles and pills
 keep circular outlines. The measured profile has small tangent and curvature

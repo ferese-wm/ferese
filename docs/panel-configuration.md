@@ -255,7 +255,7 @@ Notifications or Controls view. Escape or the close button collapses it.
 
 With an Activities item configured, running tasks can occupy the collapsed and
 peek states, and the hub gains an Activities tab. **Visible activities** and
-**Show activity count** in Appearance control its compact slots and `+n` badge;
+**Show activity count** in Panel & Shell control its compact slots and `+n` badge;
 see [Activities configuration](configuration/activities.md).
 
 The Workspaces view shows miniature window layouts. Click a tile to switch

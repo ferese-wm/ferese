@@ -100,6 +100,7 @@ mod tests {
     fn settings() -> FocusEffectSettings {
         FocusEffectSettings {
             enabled: true,
+            blur: true,
             active_opacity: 1.0,
             inactive_opacity: 0.8,
             inactive_dim: 0.2,

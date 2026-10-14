@@ -20,6 +20,7 @@ pub(super) struct WindowBuffers {
     pub borders: WindowBorderBuffers,
     pub dim: WindowBorderBuffers,
     pub resize_fill: WindowBorderBuffers,
+    pub blur: HashMap<(ErasedContextId, OutputId), super::window_blur::WindowBlur>,
     pub shadow: WindowShadowBuffers,
     corner_shape: Option<CornerShape>,
     thumbnail_shapes: HashMap<OutputId, CornerShape>,
@@ -48,6 +49,7 @@ impl RenderResources {
             buffers.dim.contexts.clear();
             buffers.resize_fill.contexts.clear();
             buffers.shadow.contexts.clear();
+            buffers.blur.clear();
 
             if let Some(snapshot) = &mut buffers.snapshot {
                 snapshot.commit.increment();
@@ -101,6 +103,7 @@ impl RenderResources {
 
         for window in self.windows.values_mut() {
             window.thumbnail_shapes.remove(&id);
+            window.blur.retain(|(_, output), _| *output != id);
         }
 
         for surface in self.surfaces.values_mut() {
@@ -167,6 +170,7 @@ impl RenderResources {
             window.dim.contexts.remove(context);
             window.resize_fill.contexts.remove(context);
             window.shadow.contexts.remove(context);
+            window.blur.retain(|(key, _), _| key != context);
 
             if window
                 .snapshot

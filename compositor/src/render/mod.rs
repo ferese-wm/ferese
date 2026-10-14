@@ -1,6 +1,7 @@
 mod backdrop;
 mod capture;
 mod closing;
+mod window_blur;
 mod window_content;
 pub(crate) use closing::ClosedWindow;
 #[cfg(test)]

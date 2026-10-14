@@ -388,6 +388,7 @@ mod tests {
         .unwrap();
         state.focus_effect = crate::config::FocusEffectSettings {
             enabled: true,
+            blur: true,
             active_opacity: 0.9,
             inactive_opacity: 0.6,
             inactive_dim: 0.2,

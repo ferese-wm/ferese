@@ -340,6 +340,12 @@ fn scene_elements(
             {
                 elements.push(background);
             }
+            if material_surface.is_none()
+                && let Some(blur) =
+                    super::window_blur::window_blur_element(state, renderer, output, sample.presentation, corners)
+            {
+                elements.push(blur);
+            }
             if let Some(shadow) = shadow {
                 elements.push(shadow.into());
             }

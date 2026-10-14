@@ -315,6 +315,20 @@ impl App {
                         .padding(12)
                         .class(crate::visuals::surface(palette.card, 14.)),
                 );
+                let mut shell = widget::column([])
+                    .spacing(4)
+                    .push(self.panel_heading("Shell appearance", 15.));
+                for field in crate::schema::fields(Page::Bar)
+                    .into_iter()
+                    .filter(|field| field.path.starts_with("theme."))
+                {
+                    shell = shell.push(self.field(field));
+                }
+                rows = rows.push(
+                    widget::container(shell)
+                        .padding(12)
+                        .class(crate::visuals::surface(palette.card, 14.)),
+                );
             }
             PanelPage::Arrange => return self.panel_workspace(),
         }
