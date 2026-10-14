@@ -84,6 +84,7 @@ impl CompositorHandler for Ferese {
     }
 
     fn destroyed(&mut self, surface: &WlSurface) {
+        self.dmabuf_feedback.destroyed(surface);
         if self.session_lock.active() {
             self.session_lock
                 .surfaces
@@ -110,6 +111,14 @@ impl BufferHandler for Ferese {
 impl DmabufHandler for Ferese {
     fn dmabuf_state(&mut self) -> &mut DmabufState {
         &mut self.dmabuf_state
+    }
+
+    fn new_surface_feedback(
+        &mut self,
+        surface: &WlSurface,
+        global: &DmabufGlobal,
+    ) -> Option<smithay::wayland::dmabuf::DmabufFeedback> {
+        self.dmabuf_feedback.new_surface(surface, *global)
     }
 
     fn dmabuf_imported(&mut self, global: &DmabufGlobal, dmabuf: Dmabuf, notifier: ImportNotifier) {

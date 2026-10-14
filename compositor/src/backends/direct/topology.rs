@@ -274,6 +274,7 @@ pub(super) fn reconcile_outputs(state: &mut Ferese, reactivate: bool) {
                 for (crtc, output) in &mut device.outputs {
                     cancel_output_timers(&state.loop_handle, output);
                     output.surface.reset_buffers();
+                    output.dmabuf_feedback.invalidate();
                     output.primary_commit = None;
                     output.capture_texture = None;
                     output.frame_pending = false;

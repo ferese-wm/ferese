@@ -512,6 +512,7 @@ pub struct Ferese {
     pub direct_backend: Option<DirectBackendState>,
     _ipc_socket: Option<IpcSocketGuard>,
     pub(crate) dmabuf_imports: crate::dmabuf_imports::ImportManager,
+    pub(crate) dmabuf_feedback: crate::dmabuf_feedback::FeedbackManager,
     pub(crate) activation_inputs: crate::handlers::activation::InputHistory,
     pub(crate) pending_screencopies: Vec<PendingScreencopy>,
     // Screenshot requests outlive the readback that filled them: the
@@ -814,6 +815,7 @@ impl Ferese {
             direct_backend: None,
             _ipc_socket: None,
             dmabuf_imports: crate::dmabuf_imports::ImportManager::default(),
+            dmabuf_feedback: Default::default(),
             activation_inputs: Default::default(),
             pending_screencopies: Vec::new(),
             screenshot: Coordinator::new(),
