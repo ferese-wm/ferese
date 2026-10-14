@@ -641,6 +641,7 @@ impl Ferese {
         self.sync_window_stacking();
         self.retarget_overview();
         self.reconcile_tab_indicator();
+        self.reconcile_layer_keyboard_focus();
         if !finalize {
             return;
         }

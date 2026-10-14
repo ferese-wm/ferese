@@ -246,10 +246,14 @@ fn on_demand_layer_focus_follows_opening_and_outside_clicks() {
 }
 
 fn fixture() -> (Ferese, EventLoop<'static, Ferese>, Output) {
+    fixture_with_animations(false)
+}
+
+fn fixture_with_animations(animations: bool) -> (Ferese, EventLoop<'static, Ferese>, Output) {
     let mut events = EventLoop::try_new().unwrap();
     let mut config = crate::config::Config::default().runtime_config().unwrap();
     config.wallpaper.path = None;
-    config.animations_enabled = false;
+    config.animations_enabled = animations;
     let mut state = Ferese::new(
         &mut events,
         smithay::reexports::wayland_server::Display::new().unwrap(),
@@ -464,5 +468,294 @@ fn layer_mapping_commits_do_not_override_session_lock() {
         keyboard.current_focus(),
         None,
         "layer destruction preserves lock-owned focus policy"
+    );
+}
+
+#[test]
+fn fullscreen_hidden_top_commits_cannot_steal_keyboard_focus() {
+    if !crate::startup_tests::private_runtime(
+        "input::layer_focus_tests::fullscreen_hidden_top_commits_cannot_steal_keyboard_focus",
+    ) {
+        return;
+    }
+    let (mut state, mut events, output) = fixture();
+    let (window, _window_wire) = window(&mut state, &mut events, 0xff112233);
+    let id = state.windows.ids()[&window];
+    assert!(state.activate_managed_window(id));
+    let fallback = Some(window.toplevel().unwrap().wl_surface().clone());
+    let keyboard = state.seat.get_keyboard().unwrap();
+    state.set_window_fullscreen(id, true);
+    let (top, mut top_wire) = layer_with_policy(&mut state, &mut events, &output, 1, 2);
+    assert!(state.output_has_fullscreen(&output));
+    assert!(
+        state.layer_under((20., 20.).into()).is_none(),
+        "Top is excluded from hit testing by fullscreen policy"
+    );
+    assert_eq!(
+        keyboard.current_focus(),
+        fallback,
+        "a hidden Top layer's map commit cannot steal keyboard focus"
+    );
+    commit_policy(&mut state, &mut events, &mut top_wire, 1);
+    assert_eq!(
+        keyboard.current_focus(),
+        fallback,
+        "hidden animation commits cannot steal focus"
+    );
+    state.set_window_fullscreen(id, false);
+    assert_eq!(
+        keyboard.current_focus(),
+        Some(top.wl_surface().clone()),
+        "fullscreen exit restores visible exclusive layers"
+    );
+    assert_eq!(state.layer_under((20., 20.).into()).unwrap().0, top);
+    state.set_window_fullscreen(id, true);
+    assert_eq!(
+        keyboard.current_focus(),
+        fallback,
+        "fullscreen entry revokes hidden Top focus immediately"
+    );
+    let (overlay, mut overlay_wire) = layer_with_policy(&mut state, &mut events, &output, 1, 3);
+    assert_eq!(
+        keyboard.current_focus(),
+        Some(overlay.wl_surface().clone()),
+        "Overlay remains eligible over fullscreen"
+    );
+    assert_eq!(state.layer_under((20., 20.).into()).unwrap().0, overlay);
+    request(&mut overlay_wire, 3, 7, &[], None);
+    dispatch(&mut events, &mut state);
+    assert_eq!(
+        keyboard.current_focus(),
+        fallback,
+        "destroying Overlay must not restore hidden Top"
+    );
+    request(&mut top_wire, 2, 1, &[0, 0, 0], None);
+    request(&mut top_wire, 2, 6, &[], None);
+    dispatch(&mut events, &mut state);
+    request(&mut top_wire, 3, 0, &[65, 48], None);
+    request(&mut top_wire, 2, 6, &[], None);
+    dispatch(&mut events, &mut state);
+    ack_latest_configure(&mut top_wire);
+    request(&mut top_wire, 2, 1, &[5, 0, 0], None);
+    request(&mut top_wire, 2, 6, &[], None);
+    dispatch(&mut events, &mut state);
+    assert_eq!(
+        keyboard.current_focus(),
+        fallback,
+        "hidden remapping cannot reclaim focus"
+    );
+    state.set_window_fullscreen(id, false);
+    commit_policy(&mut state, &mut events, &mut top_wire, 2);
+    state.focus_window_at((20., 20.).into(), SERIAL_COUNTER.next_serial(), true);
+    assert_eq!(keyboard.current_focus(), Some(top.wl_surface().clone()));
+    let pointer = state.seat.get_pointer().unwrap();
+    pointer.motion(
+        &mut state,
+        Some((top.wl_surface().clone(), (0., 0.).into())),
+        &MotionEvent {
+            location: (20., 20.).into(),
+            serial: SERIAL_COUNTER.next_serial(),
+            time: 0,
+        },
+    );
+    state.set_window_fullscreen(id, true);
+    assert_eq!(
+        keyboard.current_focus(),
+        fallback,
+        "fullscreen also revokes on-demand Top focus"
+    );
+    commit_policy(&mut state, &mut events, &mut top_wire, 0);
+    commit_policy(&mut state, &mut events, &mut top_wire, 2);
+    assert_eq!(
+        keyboard.current_focus(),
+        fallback,
+        "a stale pointer owner cannot activate a hidden panel"
+    );
+    state.set_window_fullscreen(id, false);
+    assert_eq!(
+        keyboard.current_focus(),
+        fallback,
+        "on-demand layers require interaction after fullscreen exit"
+    );
+    state.focus_window_at((20., 20.).into(), SERIAL_COUNTER.next_serial(), true);
+    assert_eq!(keyboard.current_focus(), Some(top.wl_surface().clone()));
+}
+
+#[test]
+fn valid_layer_popup_grab_survives_commits_but_not_parent_unmapping() {
+    use smithay::desktop::{PopupKeyboardGrab, PopupKind};
+    use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_wm_base::XdgWmBase;
+    use smithay::wayland::shell::xdg::{XdgShellHandler, XdgWmBaseUserData};
+    if !crate::startup_tests::private_runtime(
+        "input::layer_focus_tests::valid_layer_popup_grab_survives_commits_but_not_parent_unmapping",
+    ) {
+        return;
+    }
+    let (mut state, mut events, output) = fixture();
+    let (top, mut wire) = layer_with_policy(&mut state, &mut events, &output, 2, 2);
+    state.focus_window_at((20., 20.).into(), SERIAL_COUNTER.next_serial(), true);
+    let client = top.wl_surface().client().unwrap();
+    let compositor = client
+        .create_resource::<WlCompositor, (), Ferese>(&state.display_handle, 6, ())
+        .unwrap();
+    let shell = client
+        .create_resource::<XdgWmBase, XdgWmBaseUserData, Ferese>(&state.display_handle, 6, Default::default())
+        .unwrap();
+    request(&mut wire, shell.id().protocol_id(), 1, &[6], None); // Positioner.
+    request(&mut wire, 6, 1, &[32, 24], None);
+    request(&mut wire, 6, 2, &[0, 0, 32, 24], None);
+    request(&mut wire, compositor.id().protocol_id(), 0, &[7], None);
+    request(&mut wire, shell.id().protocol_id(), 2, &[8, 7], None);
+    request(&mut wire, 8, 2, &[9, 0, 6], None); // Popup with layer parent assigned next.
+    request(&mut wire, 3, 5, &[9], None);
+    dispatch(&mut events, &mut state);
+    let popup = state
+        .xdg_shell_state()
+        .popup_surfaces()
+        .iter()
+        .find(|popup| {
+            popup
+                .wl_surface()
+                .client()
+                .is_some_and(|owner| owner.id() == client.id())
+        })
+        .unwrap()
+        .clone();
+    let serial = SERIAL_COUNTER.next_serial();
+    let seat = state.seat.clone();
+    let grab = state
+        .popups
+        .grab_popup(top.wl_surface().clone(), PopupKind::Xdg(popup.clone()), &seat, serial)
+        .unwrap();
+    let keyboard = state.seat.get_keyboard().unwrap();
+    keyboard.set_grab(&mut state, PopupKeyboardGrab::new(&grab), serial);
+    keyboard.set_focus(&mut state, grab.current_grab(), serial);
+    let popup_focus = Some(popup.wl_surface().clone());
+    assert_eq!(keyboard.current_focus(), popup_focus);
+    commit_policy(&mut state, &mut events, &mut wire, 2);
+    assert!(keyboard.is_grabbed());
+    assert_eq!(
+        keyboard.current_focus(),
+        popup_focus,
+        "valid popup grabs survive parent commits"
+    );
+    let (_overlay, _overlay_wire) = layer_with_policy(&mut state, &mut events, &output, 1, 3);
+    assert_eq!(
+        keyboard.current_focus(),
+        popup_focus,
+        "new exclusive layers do not interrupt a valid popup grab"
+    );
+    request(&mut wire, 2, 1, &[0, 0, 0], None);
+    request(&mut wire, 2, 6, &[], None);
+    dispatch(&mut events, &mut state);
+    assert!(!keyboard.is_grabbed(), "unmapping revokes the parent popup grab");
+    assert_ne!(keyboard.current_focus(), popup_focus);
+    assert_ne!(keyboard.current_focus(), Some(top.wl_surface().clone()));
+}
+
+#[test]
+fn fullscreen_layer_eligibility_is_per_output_and_respects_overview() {
+    if !crate::startup_tests::private_runtime(
+        "input::layer_focus_tests::fullscreen_layer_eligibility_is_per_output_and_respects_overview",
+    ) {
+        return;
+    }
+    let (mut state, mut events, output) = fixture();
+    let (window, _window_wire) = window(&mut state, &mut events, 0xff112233);
+    let id = state.windows.ids()[&window];
+    assert!(state.activate_managed_window(id));
+    state.set_window_fullscreen(id, true);
+    let (top, _top_wire) = layer_with_policy(&mut state, &mut events, &output, 1, 2);
+    assert!(!state.layer_keyboard_eligible(&top));
+    assert!(!state.layer_visible_for_frame(&output, smithay::wayland::shell::wlr_layer::Layer::Top, false));
+    assert!(state.layer_visible_for_frame(&output, smithay::wayland::shell::wlr_layer::Layer::Top, true));
+    state.set_overview_active(true);
+    assert!(state.layer_keyboard_eligible(&top));
+    assert_eq!(
+        state.seat.get_keyboard().unwrap().current_focus(),
+        Some(top.wl_surface().clone())
+    );
+    state.set_overview_active(false);
+    assert!(!state.layer_keyboard_eligible(&top));
+    assert_eq!(
+        state.seat.get_keyboard().unwrap().current_focus(),
+        Some(window.toplevel().unwrap().wl_surface().clone())
+    );
+    let other = Output::new(
+        "other".into(),
+        PhysicalProperties {
+            size: (0, 0).into(),
+            subpixel: Subpixel::Unknown,
+            make: "test".into(),
+            model: "test".into(),
+        },
+    );
+    other.change_current_state(
+        Some(Mode {
+            size: (800, 600).into(),
+            refresh: 60_000,
+        }),
+        None,
+        None,
+        None,
+    );
+    state.space.map_output(&other, (800, 0));
+    state.register_output(&other, "other".into());
+    // Move the test role into the second output's map to isolate visibility
+    // policy from the separately tested output-selection policy.
+    let (other_top, mut wire) = layer_with_policy(&mut state, &mut events, &output, 0, 2);
+    layer_map_for_output(&output).unmap_layer(&other_top);
+    layer_map_for_output(&other).map_layer(&other_top).unwrap();
+    commit_policy(&mut state, &mut events, &mut wire, 1);
+    assert!(
+        state.layer_keyboard_eligible(&other_top),
+        "fullscreen on the first output does not hide Top on another"
+    );
+    assert_eq!(
+        state.seat.get_keyboard().unwrap().current_focus(),
+        Some(other_top.wl_surface().clone())
+    );
+    state.unregister_output(&other);
+    assert!(!state.layer_keyboard_eligible(&other_top));
+    assert_eq!(
+        state.seat.get_keyboard().unwrap().current_focus(),
+        Some(window.toplevel().unwrap().wl_surface().clone())
+    );
+}
+
+#[test]
+fn animated_overview_exit_revokes_top_focus_when_it_becomes_hidden() {
+    if !crate::startup_tests::private_runtime(
+        "input::layer_focus_tests::animated_overview_exit_revokes_top_focus_when_it_becomes_hidden",
+    ) {
+        return;
+    }
+    let (mut state, mut events, output) = fixture_with_animations(true);
+    let (window, _window_wire) = window(&mut state, &mut events, 0xff112233);
+    let id = state.windows.ids()[&window];
+    assert!(state.activate_managed_window(id));
+    state.set_window_fullscreen(id, true);
+    let (top, _wire) = layer_with_policy(&mut state, &mut events, &output, 1, 2);
+    let keyboard = state.seat.get_keyboard().unwrap();
+    state.set_overview_active(true);
+    assert!(state.layer_keyboard_eligible(&top));
+    assert_eq!(keyboard.current_focus(), Some(top.wl_surface().clone()));
+    let tick = std::time::Instant::now();
+    for step in 1..=300 {
+        state.advance_animations(tick + std::time::Duration::from_millis(16 * step));
+    }
+    state.set_overview_active(false);
+    assert!(
+        state.layer_keyboard_eligible(&top),
+        "Top remains visible during the overview exit animation"
+    );
+    for step in 1..=300 {
+        state.advance_animations(tick + std::time::Duration::from_millis(4800 + 16 * step));
+    }
+    assert!(!state.layer_keyboard_eligible(&top));
+    assert_eq!(
+        keyboard.current_focus(),
+        Some(window.toplevel().unwrap().wl_surface().clone()),
+        "completion of the visibility transition revokes focus without a client commit"
     );
 }

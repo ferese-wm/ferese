@@ -519,9 +519,13 @@ impl Ferese {
         if !self.overview.is_active() {
             self.retarget_overview();
         }
+        let overview_was_presenting = self.overview.is_presenting();
         active_animation |= self
             .overview
             .advance(delta, self.spring_config, self.animations_enabled);
+        if overview_was_presenting != self.overview.is_presenting() {
+            self.reconcile_layer_keyboard_focus();
+        }
         self.refresh_workspace_slide_offsets();
         self.sync_window_stacking();
 

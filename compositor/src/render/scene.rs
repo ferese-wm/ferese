@@ -125,7 +125,7 @@ fn scene_elements(
     } else {
         Vec::new()
     };
-    let upper_layers: &[Layer] = if state.output_has_fullscreen_for_frame(output, frame.overview.is_presenting()) {
+    let upper_layers: &[Layer] = if !state.layer_visible_for_frame(output, Layer::Top, frame.overview.is_presenting()) {
         &[Layer::Overlay]
     } else {
         &[Layer::Overlay, Layer::Top]
