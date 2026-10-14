@@ -34,4 +34,4 @@ A window’s content, clipping and border need to follow the same presented boun
 
 ## Testing on hardware
 
-Resize coordination, output timing and interrupted transitions need testing and measurements on the hardware where the desktop runs. The [output management checks](output-management-testing.md) cover hotplug and display changes. Use the [nested resize checks](nested-resize-testing.md) for window resizing and the [client soak tests](native-soak-testing.md) for repeated window creation and cleanup.
+Resize coordination, output timing and interrupted transitions need testing and measurements on the hardware where the desktop runs. The [output management checks](output-management-testing.md) cover hotplug and display changes. Use the [client soak tests](native-soak-testing.md) for repeated window creation and cleanup.
