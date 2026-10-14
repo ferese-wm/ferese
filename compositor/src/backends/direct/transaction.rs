@@ -262,6 +262,7 @@ impl crate::output_transaction::HardwareTransaction for DeviceTransaction<'_> {
             .surface
             .set_connectors(&[selection.connector.handle()])
             .map_err(|error| error.to_string())?;
+        output.dmabuf_feedback.invalidate();
         prepare(
             &mut output.surface,
             &mut self.device.renderer,
@@ -280,6 +281,7 @@ impl crate::output_transaction::HardwareTransaction for DeviceTransaction<'_> {
             let replacement = self.staged.remove(&crtc).unwrap();
             let previous = self.device.outputs.get_mut(&crtc).unwrap();
             previous.surface = replacement.surface;
+            previous.dmabuf_feedback = replacement.dmabuf_feedback;
             self.replaced.insert(crtc);
         }
         self.staged
@@ -345,11 +347,13 @@ impl crate::output_transaction::HardwareTransaction for DeviceTransaction<'_> {
             .map_err(|error| error.to_string())?;
             let previous = self.device.outputs.get_mut(&crtc).unwrap();
             previous.surface = replacement.surface;
+            previous.dmabuf_feedback = replacement.dmabuf_feedback;
             previous.surface.commit_frame().map_err(|error| error.to_string())?;
         }
         let Some(output) = self.device.outputs.get_mut(&crtc) else {
             return Ok(());
         };
+        output.dmabuf_feedback.invalidate();
         output.surface.reset_state().map_err(|error| error.to_string())?;
         let restored = output
             .surface

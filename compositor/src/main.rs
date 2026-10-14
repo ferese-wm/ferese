@@ -5,6 +5,7 @@ mod config;
 mod cursor;
 mod daemon;
 mod display_presentation;
+mod dmabuf_feedback;
 mod dmabuf_imports;
 mod effects;
 mod floating;
@@ -243,6 +244,7 @@ fn after_dispatch_with_redraw(state: &mut Ferese, mut redraw: impl FnMut(&mut Fe
         warn!(%error, "could not schedule wallpaper upload retry");
     }
 
+    crate::backends::direct::feedback::refresh(state);
     state.publish_ipc_events();
 
     // Clients need registry/sync/configure replies even when no frame is drawn.

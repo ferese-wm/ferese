@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 pub(crate) mod capture;
 mod crtc_assignment;
 mod diagnostics;
+pub(crate) mod feedback;
 pub(crate) mod gamma;
 mod lid;
 mod mirror;
@@ -22,14 +23,15 @@ use diagnostics::{Diagnostics, PrimaryOutcome};
 use output_power::{OutputPower, Power};
 use redraw::{AnimationFallback, SchedulingMetrics};
 use scheduling::*;
-use smithay::backend::allocator::Fourcc;
 use smithay::backend::allocator::gbm::{GbmAllocator, GbmBufferFlags, GbmDevice};
+use smithay::backend::allocator::{Buffer, Fourcc};
 use smithay::backend::drm::compositor::{DrmCompositor, FrameFlags, PrimaryPlaneElement};
 use smithay::backend::drm::exporter::gbm::GbmFramebufferExporter;
 use smithay::backend::drm::{DrmDevice, DrmDeviceFd, DrmEvent, DrmEventTime, DrmNode, NodeType};
 use smithay::backend::egl::{EGLContext, EGLDisplay};
 use smithay::backend::input::InputEvent;
 use smithay::backend::libinput::{LibinputInputBackend, LibinputSessionInterface};
+use smithay::backend::renderer::element::{RenderElement, UnderlyingStorage};
 use smithay::backend::renderer::gles::{GlesRenderer, GlesTexture};
 use smithay::backend::renderer::utils::CommitCounter;
 use smithay::backend::renderer::{ImportDma, ImportMemWl, Renderer};
@@ -277,6 +279,7 @@ struct DirectOutput {
     capture_texture: Option<GlesTexture>,
     render_metrics: RenderMetrics,
     diagnostics: Diagnostics,
+    dmabuf_feedback: feedback::OutputFeedback,
     frame_pending: bool,
     completion: recovery::Completion,
     completion_timer: Option<RegistrationToken>,
@@ -413,6 +416,7 @@ pub fn init(event_loop: &mut EventLoop<Ferese>, state: &mut Ferese) -> Result<()
                             output.gamma.suspend();
                             cancel_output_timers(&handle, output);
                             output.surface.reset_buffers();
+                            output.dmabuf_feedback.invalidate();
                             output.primary_commit = None;
                             output.capture_texture = None;
                             output.frame_pending = false;
@@ -971,6 +975,7 @@ fn open_device(state: &mut Ferese, path: &Path) -> Result<DrmNode, Box<dyn Error
         .dmabuf_state
         .create_global_with_default_feedback::<Ferese>(&display_handle, &feedback);
     state.dmabuf_imports.register(dmabuf_global);
+    state.dmabuf_feedback.register(dmabuf_global, feedback);
     state
         .direct_backend
         .as_mut()
@@ -1334,6 +1339,22 @@ fn render_output(
                 )
                 .inspect_err(|_| output.diagnostics.render_failed())?;
 
+            let primary_format = match &result.primary_element {
+                PrimaryPlaneElement::Swapchain(primary) => Some(primary.buffer().format()),
+                PrimaryPlaneElement::Element(element) => match element.underlying_storage(&mut device.renderer) {
+                    Some(UnderlyingStorage::Wayland(buffer)) => smithay::wayland::dmabuf::get_dmabuf(buffer)
+                        .ok()
+                        .map(|buffer| buffer.format()),
+                    _ => None,
+                },
+            };
+            let feedback_candidates = feedback::candidates(
+                &mut device.renderer,
+                &elements,
+                &output.output,
+                flags.contains(FrameFlags::ALLOW_PRIMARY_PLANE_SCANOUT),
+            );
+
             if result.needs_sync()
                 && let PrimaryPlaneElement::Swapchain(primary) = &result.primary_element
             {
@@ -1347,6 +1368,9 @@ fn render_output(
                         .into_iter()
                         .any(|cursor| state.has_pending_screencopy(&output.output, cursor))
                 });
+                output
+                    .dmabuf_feedback
+                    .observed_frame(primary_format, &result.states, feedback_candidates);
                 if output.mirror_source.is_some() {
                     capture::capture_mirror(state, &mut device.renderer, &scene_output, &frame, &mut output);
                 } else {
@@ -1420,6 +1444,9 @@ fn render_output(
                 flags.contains(FrameFlags::ALLOW_PRIMARY_PLANE_SCANOUT),
             );
             capture::after_queue(queued, || {
+                output
+                    .dmabuf_feedback
+                    .observed_frame(primary_format, &visibility, feedback_candidates);
                 if output.mirror_source.is_none() {
                     state.display_presentation.queued(&output.output, &visibility);
                 }
@@ -1663,6 +1690,7 @@ fn remove_device(state: &mut Ferese, node: DrmNode) {
 
     state.loop_handle.remove(device.notifier);
     state.dmabuf_imports.remove(device.dmabuf_global);
+    state.dmabuf_feedback.remove(device.dmabuf_global);
     state
         .dmabuf_state
         .disable_global::<Ferese>(&state.display_handle, &device.dmabuf_global);
@@ -2252,6 +2280,12 @@ fn create_direct_output(
     surface.set_output_mode_source((&output).into());
     let render_metrics = RenderMetrics::from_environment(output.name());
     let diagnostics = Diagnostics::from_environment(output.name());
+    let dmabuf_feedback = feedback::OutputFeedback::new(
+        render_node.dev_id(),
+        node.dev_id(),
+        renderer.dmabuf_formats(),
+        surface.surface().plane_info().formats.clone(),
+    );
 
     tracing::info!(?crtc, connector = %connector, "initialized DRM output");
     Ok(DirectOutput {
@@ -2274,6 +2308,7 @@ fn create_direct_output(
         capture_texture: None,
         render_metrics,
         diagnostics,
+        dmabuf_feedback,
         frame_pending: false,
         completion: Default::default(),
         completion_timer: None,

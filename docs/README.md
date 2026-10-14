@@ -46,6 +46,7 @@ and [guides at that tag](https://github.com/ferese-wm/ferese/tree/v0.1.0-beta/do
 - [Animation model](animation-model.md): geometry, spring motion, gestures and prediction.
 - [Desktop reconciliation](desktop-reconciliation.md): topology publication and presentation ownership.
 - [Rendering diagnostics](rendering-performance.md): outcome counters, capture cost and repeatable hardware baselines.
+- [DMA-BUF feedback](dmabuf-feedback.md): conservative allocation hints, fallback and hardware validation.
 - [Output management tests](output-management-testing.md): profiles, hotplug and DRM failures.
 - [Nested resize checks](nested-resize-testing.md).
 - [Client soak testing](native-soak-testing.md).
