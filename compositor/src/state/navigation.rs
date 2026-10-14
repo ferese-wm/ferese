@@ -713,10 +713,14 @@ impl Ferese {
             return;
         }
         let surface = self
-            .focused_window
-            .and_then(|focused| self.windows.window(focused))
-            .and_then(|window| window.toplevel())
-            .map(|toplevel| toplevel.wl_surface().clone());
+            .exclusive_keyboard_layer()
+            .map(|layer| layer.wl_surface().clone())
+            .or_else(|| {
+                self.focused_window
+                    .and_then(|focused| self.windows.window(focused))
+                    .and_then(|window| window.toplevel())
+                    .map(|toplevel| toplevel.wl_surface().clone())
+            });
 
         self.seat.get_keyboard().expect("seat has a keyboard").set_focus(
             self,
