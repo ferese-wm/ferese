@@ -637,6 +637,7 @@ impl Ferese {
             self.overview.exit(normal, self.animations_enabled());
         }
 
+        self.reconcile_layer_keyboard_focus();
         self.notify_overview_state();
         crate::backends::direct::render_all(self);
     }

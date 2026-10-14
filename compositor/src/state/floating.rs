@@ -173,6 +173,14 @@ impl Ferese {
                 .is_some_and(|workspace| workspace.fullscreen.is_some())
     }
 
+    pub(crate) fn layer_visible_on_output(&self, output: &Output, layer: Layer) -> bool {
+        layer != Layer::Top || !self.output_has_fullscreen(output)
+    }
+
+    pub(crate) fn layer_visible_for_frame(&self, output: &Output, layer: Layer, overview: bool) -> bool {
+        layer != Layer::Top || !self.output_has_fullscreen_for_frame(output, overview)
+    }
+
     pub fn set_window_fullscreen(&mut self, window: WindowId, enabled: bool) {
         match self.workspaces.set_fullscreen(window, enabled) {
             Ok(true) => self.relayout_window(window),
