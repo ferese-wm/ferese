@@ -1668,10 +1668,37 @@ fn animation_fallbacks(state: &mut Ferese) -> Vec<(DrmNode, crtc::Handle, Instan
     fallbacks
 }
 
+// Pending buffers are events with deadlines, not visual animations. Recompute
+// from current output identities and waits so commit, replacement and teardown
+// cancel stale wakeups, including mirrored and sleeping outputs.
+fn resize_deadlines(state: &Ferese) -> Vec<(Output, Instant)> {
+    let Some(backend) = state.direct_backend.as_ref().filter(|backend| backend.can_render()) else {
+        return Vec::new();
+    };
+    if state.session_lock.sleeping {
+        return Vec::new();
+    }
+    backend
+        .devices
+        .values()
+        .filter(|device| device.drm.is_active())
+        .flat_map(|device| device.outputs.values())
+        .filter(|output| output.power.can_render())
+        .filter_map(|output| {
+            let scene = backend.scene_output(state, &output.output);
+            Some((
+                output.output.clone(),
+                state.start_time + state.output_resize_deadline(&scene)?,
+            ))
+        })
+        .collect()
+}
+
 fn arm_animation_timer(state: &mut Ferese) {
     let deadline = animation_fallbacks(state)
         .iter()
         .map(|(_, _, deadline)| *deadline)
+        .chain(resize_deadlines(state).into_iter().map(|(_, deadline)| deadline))
         .min();
     let Some(backend) = state.direct_backend.as_mut() else {
         return;
@@ -1696,6 +1723,18 @@ fn arm_animation_timer(state: &mut Ferese) {
                 backend.animation_timer = None;
                 backend.animation_deadline = None;
                 backend.scheduling_metrics.fallback_wakes += 1;
+            }
+
+            let now = Instant::now();
+            let expired_outputs = resize_deadlines(state)
+                .into_iter()
+                .filter_map(|(output, deadline)| (deadline <= now).then_some(output))
+                .collect::<Vec<_>>();
+            if !expired_outputs.is_empty() {
+                // Retire waits before rearming, even if a DRM submission is
+                // in flight. redraw advances the shared clock and requests the
+                // released outputs plus any final animation frames elsewhere.
+                render_on(state, &expired_outputs);
             }
 
             // Revalidate identities, power state, activity and normal frame chains

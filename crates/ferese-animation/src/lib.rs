@@ -257,7 +257,7 @@ impl ClientGeometry {
         }
 
         self.last_configured_size = Some(size);
-        self.waiting_since = Some(now);
+        self.waiting_since.get_or_insert(now);
         true
     }
 
@@ -274,6 +274,11 @@ impl ClientGeometry {
 
     pub fn waiting_for_commit(&self) -> bool {
         self.waiting_since.is_some()
+    }
+
+    /// The hard bound for the current uninterrupted client-buffer wait.
+    pub fn commit_deadline(&self) -> Option<Duration> {
+        self.waiting_since.map(|started| started + CLIENT_COMMIT_TIMEOUT)
     }
 
     pub fn timed_out(&self, now: Duration) -> bool {
@@ -544,6 +549,29 @@ fn finite_or(value: f64, fallback: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn replacing_size_requests_does_not_extend_a_stalled_client_wait() {
+        let mut client = ClientGeometry::default();
+        for width in 1..=50 {
+            assert!(client.request_size(
+                ClientSize { width, height: 100 },
+                Duration::from_millis((width as u64 - 1) * 10)
+            ));
+        }
+        assert_eq!(client.commit_deadline(), Some(Duration::from_millis(500)));
+        assert!(!client.commit(ClientSize { width: 49, height: 100 }));
+        assert!(client.expire_wait(Duration::from_millis(499)).is_none());
+        assert_eq!(
+            client.expire_wait(Duration::from_millis(500)),
+            Some(ClientSize { width: 50, height: 100 })
+        );
+        assert_eq!(client.commit_deadline(), None);
+        assert!(client.request_size(ClientSize { width: 51, height: 100 }, Duration::from_millis(600)));
+        assert_eq!(client.commit_deadline(), Some(Duration::from_millis(1100)));
+        assert!(client.commit(ClientSize { width: 51, height: 100 }));
+        assert_eq!(client.commit_deadline(), None);
+    }
 
     #[test]
     fn returning_fullscreen_window_does_not_resume_hidden_zoom() {
