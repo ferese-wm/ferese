@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 
 pub(crate) mod capture;
 mod crtc_assignment;
+mod diagnostics;
 pub(crate) mod gamma;
 mod lid;
 mod mirror;
@@ -17,12 +18,13 @@ mod redraw;
 mod scheduling;
 mod topology;
 mod transaction;
+use diagnostics::{Diagnostics, PrimaryOutcome};
 use output_power::{OutputPower, Power};
 use redraw::{AnimationFallback, SchedulingMetrics};
 use scheduling::*;
 use smithay::backend::allocator::Fourcc;
 use smithay::backend::allocator::gbm::{GbmAllocator, GbmBufferFlags, GbmDevice};
-use smithay::backend::drm::compositor::{DrmCompositor, PrimaryPlaneElement};
+use smithay::backend::drm::compositor::{DrmCompositor, FrameFlags, PrimaryPlaneElement};
 use smithay::backend::drm::exporter::gbm::GbmFramebufferExporter;
 use smithay::backend::drm::{DrmDevice, DrmDeviceFd, DrmEvent, DrmEventTime, DrmNode, NodeType};
 use smithay::backend::egl::{EGLContext, EGLDisplay};
@@ -274,6 +276,7 @@ struct DirectOutput {
     primary_commit: Option<CommitCounter>,
     capture_texture: Option<GlesTexture>,
     render_metrics: RenderMetrics,
+    diagnostics: Diagnostics,
     frame_pending: bool,
     completion: recovery::Completion,
     completion_timer: Option<RegistrationToken>,
@@ -843,11 +846,15 @@ fn open_device(state: &mut Ferese, path: &Path) -> Result<DrmNode, Box<dyn Error
                             if output.frame_pending && recovery::inject("retirement") {
                                 tracing::warn!(?node, ?crtc, "injecting DRM retirement failure");
                                 retirement_failed = true;
+                                output.diagnostics.retirement(false, true);
+                                output.diagnostics.report_if_due();
                                 return None;
                             }
 
                             let (feedback, completed, error) = recovery::retirement(output.surface.frame_submitted());
                             retired = completed;
+                            output.diagnostics.retirement(completed, error.is_some());
+                            output.diagnostics.report_if_due();
                             if let Some(error) = error {
                                 tracing::error!(?node, ?crtc, %error, "failed to retire DRM frame");
                                 retirement_failed = true;
@@ -1314,29 +1321,37 @@ fn render_output(
                 sampled_output_elements(state, &mut device.renderer, &output.output, true, &frame)
             };
             let effects = frame_effect_metrics(&elements, output.output.current_scale().fractional_scale());
-            let flags = planes::frame_flags(
-                state.output_has_fullscreen_for_frame(&output.output, frame.overview.is_presenting()),
-                frame.animating,
-                state.session_lock.active(),
-            );
-            let result = output.surface.render_frame(
-                &mut device.renderer,
-                &elements,
-                if output.mirror_source.is_some() {
-                    [0.0, 0.0, 0.0, 1.0]
-                } else {
-                    [0.035, 0.04, 0.055, 1.0]
-                },
-                flags,
-            )?;
+            let fullscreen = state.output_has_fullscreen_for_frame(&output.output, frame.overview.is_presenting());
+            let locked = state.session_lock.active();
+            let flags = planes::frame_flags(fullscreen, frame.animating, locked);
+            output.diagnostics.attempt(fullscreen, frame.animating, locked);
+            let result = output
+                .surface
+                .render_frame(
+                    &mut device.renderer,
+                    &elements,
+                    if output.mirror_source.is_some() {
+                        [0.0, 0.0, 0.0, 1.0]
+                    } else {
+                        [0.035, 0.04, 0.055, 1.0]
+                    },
+                    flags,
+                )
+                .inspect_err(|_| output.diagnostics.render_failed())?;
 
             if result.needs_sync()
                 && let PrimaryPlaneElement::Swapchain(primary) = &result.primary_element
             {
-                primary.sync.wait()?;
+                primary.sync.wait().inspect_err(|_| output.diagnostics.sync_failed())?;
             }
 
             if result.is_empty {
+                output.diagnostics.no_damage();
+                let capture_started = output.diagnostics.capture_start(|| {
+                    [true, false]
+                        .into_iter()
+                        .any(|cursor| state.has_pending_screencopy(&output.output, cursor))
+                });
                 if output.mirror_source.is_some() {
                     capture::capture_mirror(state, &mut device.renderer, &scene_output, &frame, &mut output);
                 } else {
@@ -1349,6 +1364,7 @@ fn render_output(
                     );
                 }
 
+                output.diagnostics.capture_finished(capture_started);
                 output
                     .render_metrics
                     .record_no_damage(render_started.elapsed(), missed_deadlines);
@@ -1393,10 +1409,22 @@ fn render_output(
                     Kind::Vsync | Kind::HwClock | Kind::HwCompletion,
                 )
             };
+            let primary_outcome = PrimaryOutcome::classify(
+                matches!(result.primary_element, PrimaryPlaneElement::Element(_)),
+                !damage.is_empty(),
+            );
+            let cursor_plane = result.cursor_element.is_some();
             let visibility = result.states.clone();
             drop(result);
 
-            capture::after_queue(output.surface.queue_frame(presentation), || {
+            let queued = output.surface.queue_frame(presentation);
+            output.diagnostics.queue_result(
+                &queued,
+                primary_outcome,
+                cursor_plane,
+                flags.contains(FrameFlags::ALLOW_PRIMARY_PLANE_SCANOUT),
+            );
+            capture::after_queue(queued, || {
                 if output.mirror_source.is_none() {
                     state.display_presentation.queued(&output.output, &visibility);
                 }
@@ -1410,6 +1438,11 @@ fn render_output(
                 }
 
                 output.lock_frame_pending = state.session_lock.active();
+                let capture_started = output.diagnostics.capture_start(|| {
+                    [true, false]
+                        .into_iter()
+                        .any(|cursor| state.has_pending_screencopy(&output.output, cursor))
+                });
 
                 if output.mirror_source.is_some() {
                     capture::capture_mirror(state, &mut device.renderer, &scene_output, &frame, &mut output);
@@ -1422,11 +1455,14 @@ fn render_output(
                         &frame,
                     );
                 }
+                output.diagnostics.capture_finished(capture_started);
             })?;
 
             Ok(true)
         })()
     };
+
+    output.diagnostics.report_if_due();
 
     // Keep the footprint of the last successful scene, including queued
     // cursor planes. Requests do not read the pointer while a grab holds it.
@@ -2119,6 +2155,7 @@ fn create_direct_output(
     );
     surface.set_output_mode_source((&output).into());
     let render_metrics = RenderMetrics::from_environment(output.name());
+    let diagnostics = Diagnostics::from_environment(output.name());
 
     tracing::info!(?crtc, connector = %connector, "initialized DRM output");
     Ok(DirectOutput {
@@ -2140,6 +2177,7 @@ fn create_direct_output(
         primary_commit: None,
         capture_texture: None,
         render_metrics,
+        diagnostics,
         frame_pending: false,
         completion: Default::default(),
         completion_timer: None,
