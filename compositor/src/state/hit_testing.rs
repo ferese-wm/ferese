@@ -104,7 +104,7 @@ impl Ferese {
         let map = layer_map_for_output(output);
 
         for requested in layers {
-            if *requested == Layer::Top && self.output_has_fullscreen(output) {
+            if !self.layer_visible_on_output(output, *requested) {
                 continue;
             }
             for layer in map.layers_on(*requested).rev() {

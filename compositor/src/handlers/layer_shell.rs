@@ -205,9 +205,10 @@ impl Ferese {
             })
             .unwrap_or(false)
             && self.space.outputs().any(|output| {
-                layer_map_for_output(output)
-                    .layers()
-                    .any(|candidate| candidate == layer)
+                self.layer_visible_on_output(output, layer.layer())
+                    && layer_map_for_output(output)
+                        .layers()
+                        .any(|candidate| candidate == layer)
             })
     }
 
