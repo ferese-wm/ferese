@@ -40,6 +40,7 @@ and [guides at that tag](https://github.com/ferese-wm/ferese/tree/v0.1.0-beta/do
 
 ## Development
 
+- [0.1.0-beta.2 preparation](releases/0.1.0-beta.2.md): feature freeze, changes and validation gates.
 - [Packages and releases](packaging.md): build Fedora and Arch packages and publish a tagged release.
 - [Development](development.md): build Ferese, run tests and check portal contracts.
 - [Publishing activities](development/activities.md): IPC schema, ownership, limits and templates.

@@ -18,10 +18,10 @@ pub(super) fn run(target: Target, terminal: &[String]) -> Result<(), String> {
             } else {
                 open("gio", &[std::ffi::OsStr::new("launch"), desktop.as_os_str()])
             };
-            if result.is_ok() {
-                if let Err(error) = apps::record(&id) {
-                    eprintln!("Could not save launcher history: {error}");
-                }
+            if result.is_ok()
+                && let Err(error) = apps::record(&id)
+            {
+                eprintln!("Could not save launcher history: {error}");
             }
             return result;
         }

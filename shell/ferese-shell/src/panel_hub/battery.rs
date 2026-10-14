@@ -15,15 +15,18 @@ impl FereseShell {
         let foreground = color_with_opacity(self.config.theme.text_primary, opacity);
         Some(motion::button(
             self.render,
-            button::custom(crate::bar_content(self.battery_indicator(self.config.theme, opacity, true), 28.))
-                .name(format!(
-                    "Battery, {percent} percent, {}. Open battery controls",
-                    battery.status
-                ))
-                .padding([0, 3])
-                .width(WIDTH as f32)
-                .height(28)
-                .on_press(cosmic::Action::App(Message::HubOpen(id, status_ui::Menu::Battery))),
+            button::custom(crate::bar_content(
+                self.battery_indicator(self.config.theme, opacity, true),
+                28.,
+            ))
+            .name(format!(
+                "Battery, {percent} percent, {}. Open battery controls",
+                battery.status
+            ))
+            .padding([0, 3])
+            .width(WIDTH as f32)
+            .height(28)
+            .on_press(cosmic::Action::App(Message::HubOpen(id, status_ui::Menu::Battery))),
             foreground,
             active,
             opacity,

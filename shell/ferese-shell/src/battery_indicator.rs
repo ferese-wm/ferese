@@ -26,17 +26,20 @@ impl FereseShell {
         } else {
             foreground
         };
-        let fill = container(Space::new().width((BODY_WIDTH - 4.) * f32::from(percent) / 100.).height(10)).class(
-            theme::Container::custom(move |_| container::Style {
-                background: Some(Background::Color(outline.scale_alpha(0.16))),
-                border: Border {
-                    shape: cosmic::iced::border::Shape::Continuous,
-                    radius: 4.0.into(),
-                    ..Default::default()
-                },
+        let fill = container(
+            Space::new()
+                .width((BODY_WIDTH - 4.) * f32::from(percent) / 100.)
+                .height(10),
+        )
+        .class(theme::Container::custom(move |_| container::Style {
+            background: Some(Background::Color(outline.scale_alpha(0.16))),
+            border: Border {
+                shape: cosmic::iced::border::Shape::Continuous,
+                radius: 4.0.into(),
                 ..Default::default()
-            }),
-        );
+            },
+            ..Default::default()
+        }));
         let number = self
             .render
             .text(if show_percentage {
@@ -72,9 +75,6 @@ impl FereseShell {
                 },
                 ..Default::default()
             }));
-        row![body, terminal]
-            .spacing(1)
-            .align_y(Alignment::Center)
-            .into()
+        row![body, terminal].spacing(1).align_y(Alignment::Center).into()
     }
 }

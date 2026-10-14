@@ -461,7 +461,7 @@ impl FereseShell {
             Event::Window(window::Event::Closed) => {
                 self.closing_menu_effects.remove(&id);
                 Task::none()
-            },
+            }
             Event::PlatformSpecific(PlatformSpecific::Wayland(wayland::Event::Frame(_, surface, frame_id)))
                 if self.menu.as_ref().is_some_and(|menu| menu.id == frame_id) =>
             {
@@ -523,12 +523,8 @@ impl FereseShell {
         // The first panel presentation supplies the role and measured shape
         // together with its buffer. Enabling the role here would paint the
         // whole surface before those bounds arrive.
-        let binding = EffectsBinding::attach_role(
-            &mut self.effects_context,
-            surface,
-            None,
-            if hidden { 0.0 } else { 1.0 },
-        );
+        let binding =
+            EffectsBinding::attach_role(&mut self.effects_context, surface, None, if hidden { 0.0 } else { 1.0 });
 
         match binding {
             Ok(binding) => entry.effects = Some(binding),

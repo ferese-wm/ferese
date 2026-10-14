@@ -377,12 +377,7 @@ impl FereseShell {
             .width(Length::Fixed(22.))
             .into()
         };
-        let badge = ferese_theme::menus::badge(
-            heading_icon,
-            color(theme.accent),
-            p,
-            self.render.radius(20.),
-        );
+        let badge = ferese_theme::menus::badge(heading_icon, color(theme.accent), p, self.render.radius(20.));
         let mut heading = ferese_theme::menus::heading(badge, kind.title(), self.render.font);
         let style = MenuStyle {
             theme,

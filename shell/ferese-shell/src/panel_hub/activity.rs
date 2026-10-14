@@ -177,9 +177,10 @@ impl FereseShell {
                 ..Default::default()
             };
             strip = strip.push(
-                button::custom(
-                    crate::bar_content(self.battery_indicator(self.config.theme, opacity, true), 28.)
-                )
+                button::custom(crate::bar_content(
+                    self.battery_indicator(self.config.theme, opacity, true),
+                    28.,
+                ))
                 .name(format!("Low battery, {percent} percent. Open battery controls"))
                 .padding(0)
                 .height(28)

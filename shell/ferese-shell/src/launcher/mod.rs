@@ -464,12 +464,14 @@ impl FereseShell {
                 if launcher.closing && !launcher.progress.is_animating() {
                     return self.finish_launcher();
                 }
-                if !launcher.closing && launcher.query.is_empty() && launcher.category == Some(Category::Windows) {
-                    if let Some(control) = &self.control {
-                        launcher
-                            .thumbnails
-                            .refresh(&launcher.rows, launcher.selected, control, now);
-                    }
+                if !launcher.closing
+                    && launcher.query.is_empty()
+                    && launcher.category == Some(Category::Windows)
+                    && let Some(control) = &self.control
+                {
+                    launcher
+                        .thumbnails
+                        .refresh(&launcher.rows, launcher.selected, control, now);
                 }
                 if !launcher.closing
                     && now.duration_since(launcher.refresh) >= Duration::from_secs(1)

@@ -886,10 +886,10 @@ impl Ferese {
         let Some(surface) = self.seat.get_keyboard().and_then(|keyboard| keyboard.current_focus()) else {
             return false;
         };
-        if !self
+        if self
             .space
             .layer_for_surface(&surface, smithay::desktop::WindowSurfaceType::ALL)
-            .is_some_and(|layer| layer.namespace() == "ferese-launcher")
+            .is_none_or(|layer| layer.namespace() != "ferese-launcher")
             || self
                 .layer_under(location)
                 .is_some_and(|(layer, _, _)| layer.wl_surface() == &surface)

@@ -1848,7 +1848,7 @@ dependencies = [
 
 [[package]]
 name = "ferese"
-version = "0.1.0-beta"
+version = "0.1.0-beta.2"
 dependencies = [
  "ab_glyph",
  "async-channel",
@@ -1881,14 +1881,14 @@ dependencies = [
 
 [[package]]
 name = "ferese-activities"
-version = "0.1.0-beta"
+version = "0.1.0-beta.2"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "ferese-animation"
-version = "0.1.0-beta"
+version = "0.1.0-beta.2"
 dependencies = [
  "ferese-layout",
  "serde",
@@ -1896,7 +1896,7 @@ dependencies = [
 
 [[package]]
 name = "ferese-config"
-version = "0.1.0-beta"
+version = "0.1.0-beta.2"
 dependencies = [
  "ferese-activities",
  "ferese-panel",
@@ -1911,7 +1911,7 @@ dependencies = [
 
 [[package]]
 name = "ferese-core"
-version = "0.1.0-beta"
+version = "0.1.0-beta.2"
 dependencies = [
  "ferese-layout",
  "serde",
@@ -1919,7 +1919,7 @@ dependencies = [
 
 [[package]]
 name = "ferese-ipc"
-version = "0.1.0-beta"
+version = "0.1.0-beta.2"
 dependencies = [
  "ferese-activities",
  "ferese-theme-model",
@@ -1930,11 +1930,11 @@ dependencies = [
 
 [[package]]
 name = "ferese-layout"
-version = "0.1.0-beta"
+version = "0.1.0-beta.2"
 
 [[package]]
 name = "ferese-lock"
-version = "0.1.0-beta"
+version = "0.1.0-beta.2"
 dependencies = [
  "ferese-config",
  "ferese-ipc",
@@ -1954,7 +1954,7 @@ dependencies = [
 
 [[package]]
 name = "ferese-panel"
-version = "0.1.0-beta"
+version = "0.1.0-beta.2"
 dependencies = [
  "ferese-animation",
  "ferese-layout",
@@ -1964,7 +1964,7 @@ dependencies = [
 
 [[package]]
 name = "ferese-polkit-agent"
-version = "0.1.0-beta"
+version = "0.1.0-beta.2"
 dependencies = [
  "ferese-config",
  "ferese-ipc",
@@ -1983,7 +1983,7 @@ dependencies = [
 
 [[package]]
 name = "ferese-protocols"
-version = "0.1.0-beta"
+version = "0.1.0-beta.2"
 dependencies = [
  "bitflags 2.13.2",
  "wayland-backend",
@@ -1995,7 +1995,7 @@ dependencies = [
 
 [[package]]
 name = "ferese-settings"
-version = "0.1.0-beta"
+version = "0.1.0-beta.2"
 dependencies = [
  "ferese-config",
  "ferese-ipc",
@@ -2021,7 +2021,7 @@ source = "git+https://github.com/ferese-wm/ferese-shape?tag=v0.1.0#63d7b6dfd520d
 
 [[package]]
 name = "ferese-shell"
-version = "0.1.0-beta"
+version = "0.1.0-beta.2"
 dependencies = [
  "base64",
  "ferese-activities",
@@ -2055,7 +2055,7 @@ dependencies = [
 
 [[package]]
 name = "ferese-theme"
-version = "0.1.0-beta"
+version = "0.1.0-beta.2"
 dependencies = [
  "ferese-config",
  "ferese-layout",
@@ -2069,7 +2069,7 @@ dependencies = [
 
 [[package]]
 name = "ferese-theme-client"
-version = "0.1.0-beta"
+version = "0.1.0-beta.2"
 dependencies = [
  "ferese-config",
  "ferese-ipc",
@@ -2083,14 +2083,14 @@ dependencies = [
 
 [[package]]
 name = "ferese-theme-model"
-version = "0.1.0-beta"
+version = "0.1.0-beta.2"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "feresectl"
-version = "0.1.0-beta"
+version = "0.1.0-beta.2"
 dependencies = [
  "clap",
  "ferese-activities",
@@ -8249,7 +8249,7 @@ checksum = "2fb433233f2df9344722454bc7e96465c9d03bff9d77c248f9e7523fe79585b5"
 
 [[package]]
 name = "xdg-desktop-portal-ferese"
-version = "0.1.0-beta"
+version = "0.1.0-beta.2"
 dependencies = [
  "calloop 0.14.4",
  "dirs 6.0.0",

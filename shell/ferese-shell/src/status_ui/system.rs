@@ -118,8 +118,12 @@ pub(super) fn view<'a>(
                     container(shell.battery_indicator(theme, p, true))
                         .center_x(Length::Fill)
                         .center_y(28),
-                    shell.render.text("Battery").size(11)
-                        .width(Length::Fill).height(16)
+                    shell
+                        .render
+                        .text("Battery")
+                        .size(11)
+                        .width(Length::Fill)
+                        .height(16)
                         .align_x(alignment::Horizontal::Center)
                         .class(theme::Text::Color(muted)),
                 ]

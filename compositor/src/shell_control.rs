@@ -703,6 +703,79 @@ fn send_request_failed(shell: &FereseShellV1, request: ferese_shell_v1::FailedRe
     );
 }
 
+impl Ferese {
+    pub(crate) fn dismiss_launcher(&self) {
+        for shell in self
+            .shell_resources
+            .iter()
+            .filter_map(|s| s.upgrade().ok())
+            .filter(|s| s.version() >= 10)
+        {
+            shell.dismiss_launcher();
+        }
+    }
+
+    fn shell_thumbnail(&mut self, id: WindowId) -> Option<(u32, u32, std::fs::File)> {
+        use std::io::{Seek, Write};
+        if self.session_lock.active() {
+            return None;
+        }
+        let window = self
+            .windows
+            .ids()
+            .iter()
+            .find(|(_, candidate)| **candidate == id)?
+            .0
+            .clone();
+        if self.capture_protected(&window) {
+            return None;
+        }
+        let workspace = self.workspaces.workspace_for_window(id)?;
+        let owner = self.output_workspaces.output_for_workspace(workspace)?;
+        let output = self
+            .output_ids
+            .iter()
+            .find(|(_, candidate)| **candidate == owner)?
+            .0
+            .clone();
+        let geometry = window.geometry();
+        if geometry.size.w <= 0 || geometry.size.h <= 0 {
+            return None;
+        }
+        let scale = (320. / f64::from(geometry.size.w))
+            .min(168. / f64::from(geometry.size.h))
+            .min(1.);
+        let result = if let Some(backend) = self.nested_backend.clone() {
+            let mut backend = backend.try_borrow_mut().ok()?;
+            crate::render::capture_window_frame(backend.renderer(), &window, geometry, scale, None)
+        } else {
+            let mut backend = self.direct_backend.take()?;
+            let result = backend.capture_window_frame(self, &window, &output, None, scale);
+            self.direct_backend = Some(backend);
+            result
+        };
+        let mut buffer = result.ok()?;
+        if buffer.width <= 0 || buffer.width > 320 || buffer.height <= 0 || buffer.height > 168 {
+            return None;
+        }
+        // GL ABGR readback is RGBA bytes on the supported little-endian targets.
+        // Iced expects straight rather than premultiplied channels.
+        for pixel in buffer.pixels.chunks_exact_mut(4) {
+            let alpha = u16::from(pixel[3]);
+            for channel in &mut pixel[..3] {
+                *channel = (u16::from(*channel) * 255 + alpha / 2)
+                    .checked_div(alpha)
+                    .unwrap_or(0)
+                    .min(255) as u8;
+            }
+        }
+        let mut file = tempfile::tempfile().ok()?;
+        file.write_all(&buffer.pixels).ok()?;
+        file.rewind().ok()?;
+        Some((buffer.width as u32, buffer.height as u32, file))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -914,78 +987,5 @@ mod tests {
 
             assert_eq!(join_id(hi, lo), WindowId(id));
         }
-    }
-}
-
-impl Ferese {
-    pub(crate) fn dismiss_launcher(&self) {
-        for shell in self
-            .shell_resources
-            .iter()
-            .filter_map(|s| s.upgrade().ok())
-            .filter(|s| s.version() >= 10)
-        {
-            shell.dismiss_launcher();
-        }
-    }
-
-    fn shell_thumbnail(&mut self, id: WindowId) -> Option<(u32, u32, std::fs::File)> {
-        use std::io::{Seek, Write};
-        if self.session_lock.active() {
-            return None;
-        }
-        let window = self
-            .windows
-            .ids()
-            .iter()
-            .find(|(_, candidate)| **candidate == id)?
-            .0
-            .clone();
-        if self.capture_protected(&window) {
-            return None;
-        }
-        let workspace = self.workspaces.workspace_for_window(id)?;
-        let owner = self.output_workspaces.output_for_workspace(workspace)?;
-        let output = self
-            .output_ids
-            .iter()
-            .find(|(_, candidate)| **candidate == owner)?
-            .0
-            .clone();
-        let geometry = window.geometry();
-        if geometry.size.w <= 0 || geometry.size.h <= 0 {
-            return None;
-        }
-        let scale = (320. / f64::from(geometry.size.w))
-            .min(168. / f64::from(geometry.size.h))
-            .min(1.);
-        let result = if let Some(backend) = self.nested_backend.clone() {
-            let mut backend = backend.try_borrow_mut().ok()?;
-            crate::render::capture_window_frame(backend.renderer(), &window, geometry, scale, None)
-        } else {
-            let mut backend = self.direct_backend.take()?;
-            let result = backend.capture_window_frame(self, &window, &output, None, scale);
-            self.direct_backend = Some(backend);
-            result
-        };
-        let mut buffer = result.ok()?;
-        if buffer.width <= 0 || buffer.width > 320 || buffer.height <= 0 || buffer.height > 168 {
-            return None;
-        }
-        // GL ABGR readback is RGBA bytes on the supported little-endian targets.
-        // Iced expects straight rather than premultiplied channels.
-        for pixel in buffer.pixels.chunks_exact_mut(4) {
-            let alpha = u16::from(pixel[3]);
-            for channel in &mut pixel[..3] {
-                *channel = (u16::from(*channel) * 255 + alpha / 2)
-                    .checked_div(alpha)
-                    .unwrap_or(0)
-                    .min(255) as u8;
-            }
-        }
-        let mut file = tempfile::tempfile().ok()?;
-        file.write_all(&buffer.pixels).ok()?;
-        file.rewind().ok()?;
-        Some((buffer.width as u32, buffer.height as u32, file))
     }
 }
