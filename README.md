@@ -19,9 +19,8 @@ Choose a layout per workspace and configure the desktop through Settings or a KD
 has packages for Fedora 44 and Arch Linux on x86_64. This README and the wiki
 describe `main`.
 
-https://github.com/user-attachments/assets/681f0748-8813-4e2d-b3cc-28a3dc5b3c64
+![Ferese desktop with the launcher, build progress, Appearance settings and terminal windows](docs/images/screenshots/ferese-desktop.png)
 
-[Full demo at 2× speed](https://ferese-wm.github.io/ferese/#desktop-preview) ·
 [Screenshots](https://github.com/ferese-wm/ferese/wiki/Screenshots)
 
 ## Using Ferese

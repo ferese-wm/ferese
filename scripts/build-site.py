@@ -33,7 +33,7 @@ def main():
     if OUTPUT.exists():
         shutil.rmtree(OUTPUT)
     OUTPUT.mkdir(parents=True)
-    for name in ('index.html', 'home.css', 'home.js', 'styles.css'):
+    for name in ('index.html', 'home.css', 'styles.css'):
         shutil.copy2(ROOT / 'site' / name, OUTPUT / name)
     (OUTPUT / 'assets').mkdir(exist_ok=True)
     shutil.copytree(ROOT / 'site/assets', OUTPUT / 'assets', dirs_exist_ok=True)
