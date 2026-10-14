@@ -998,9 +998,13 @@ impl Ferese {
         }
         let keyboard = self.seat.get_keyboard().expect("seat has a keyboard");
         self.focus_output_at(position);
+        if let Some(layer) = self.exclusive_keyboard_layer() {
+            keyboard.set_focus(self, Some(layer.wl_surface().clone()), serial);
+            return;
+        }
 
         if let Some((layer, _, _)) = self.layer_under(position) {
-            if layer.can_receive_keyboard_focus() {
+            if self.layer_keyboard_eligible(&layer) {
                 keyboard.set_focus(self, Some(layer.wl_surface().clone()), serial);
             } else if raise
                 && keyboard.current_focus().is_some_and(|surface| {

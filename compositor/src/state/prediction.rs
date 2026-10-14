@@ -189,6 +189,40 @@ impl Ferese {
         })
     }
 
+    pub(crate) fn output_resize_deadline(&self, output: &Output) -> Option<Duration> {
+        self.output_window_records(output, false)
+            .filter(|(id, _, _)| self.window_belongs_to_output(*id, output))
+            .flat_map(|(id, record, _)| {
+                // Client-size waits are retired while visiting mapped surfaces.
+                // Hidden tabs/workspaces must not arm an already-expired timer.
+                let mapped = self
+                    .windows
+                    .window(id)
+                    .is_some_and(|window| self.space.element_location(window).is_some());
+                [
+                    record.resize.map(|wait| wait.deadline()),
+                    record
+                        .geometry
+                        .filter(|_| mapped)
+                        .and_then(|geometry| geometry.client.commit_deadline()),
+                ]
+            })
+            .flatten()
+            .min()
+    }
+
+    fn snapshot_is_waiting(&self, id: WindowId, geometry: &WindowGeometry) -> bool {
+        self.presentation_dependencies.reflow_blocked(id, &self.windows)
+            || geometry.client.committed_size.is_some_and(|size| {
+                crate::presentation::resize_needs_old_frame(
+                    geometry.visual.current,
+                    geometry.logical,
+                    size.width,
+                    size.height,
+                )
+            })
+    }
+
     pub(crate) fn output_has_animations(&self, output: &Output) -> bool {
         if self
             .render
@@ -213,7 +247,7 @@ impl Ferese {
             return true;
         }
 
-        self.output_window_records(output, false).any(|(id, record, _)| {
+        self.output_window_records(output, true).any(|(id, record, blocked)| {
             let Some(mut geometry) = record.geometry else {
                 return false;
             };
@@ -222,9 +256,8 @@ impl Ferese {
                 return false;
             }
 
-            if record.resize.is_some()
-                || record.opening.is_some()
-                || self.render.snapshot(&id).is_some()
+            if record.opening.is_some()
+                || (self.render.snapshot(&id).is_some() && !self.snapshot_is_waiting(id, &geometry))
                 || record.focus.as_ref().is_some_and(|focus| focus.is_animating())
                 || record.shadow.as_ref().is_some_and(|shadow| shadow.is_animating())
                 || record
@@ -235,7 +268,7 @@ impl Ferese {
                 return true;
             }
 
-            if geometry.advance(Duration::ZERO, self.spring_config, self.animations_enabled) {
+            if !blocked && geometry.advance(Duration::ZERO, self.spring_config, self.animations_enabled) {
                 return true;
             }
 
@@ -243,13 +276,18 @@ impl Ferese {
                 return false;
             };
 
-            self.viewports
-                .get(&workspace)
-                .is_some_and(ViewportPresentation::needs_tick)
-                || record.coupled_width.as_ref().is_some_and(|(_, width)| {
-                    let mut width = *width;
-                    width.advance(Duration::ZERO, self.viewport_spring_config)
-                })
+            (!self
+                .presentation_dependencies
+                .viewport_blocked(workspace, &self.windows)
+                && self
+                    .viewports
+                    .get(&workspace)
+                    .is_some_and(ViewportPresentation::needs_tick))
+                || (!blocked
+                    && record.coupled_width.as_ref().is_some_and(|(_, width)| {
+                        let mut width = *width;
+                        width.advance(Duration::ZERO, self.viewport_spring_config)
+                    }))
         })
     }
 
@@ -373,6 +411,117 @@ fn predict_geometry(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pending_resize_waits_without_refresh_cadence_and_recovers() {
+        if !crate::startup_tests::private_runtime(
+            "state::prediction::tests::pending_resize_waits_without_refresh_cadence_and_recovers",
+        ) {
+            return;
+        }
+        use crate::frame_scheduler::FrameScheduler;
+        let mut event_loop = EventLoop::try_new().unwrap();
+        let display = Display::new().unwrap();
+        let config = crate::config::Config::default().runtime_config().unwrap();
+        let mut state = Ferese::new(&mut event_loop, display, config).unwrap();
+        let output = Output::new(
+            "resize-idle".into(),
+            smithay::output::PhysicalProperties {
+                size: (0, 0).into(),
+                subpixel: smithay::output::Subpixel::Unknown,
+                make: "test".into(),
+                model: "test".into(),
+            },
+        );
+        output.change_current_state(
+            Some(smithay::output::Mode {
+                size: (1920, 1080).into(),
+                refresh: 60_000,
+            }),
+            None,
+            None,
+            Some((0, 0).into()),
+        );
+        state.space.map_output(&output, (0, 0));
+        state.register_output(&output, "resize-idle".into());
+        let id = WindowId(1);
+        state.workspaces.insert_window(id, Axis::Horizontal, 0.5).unwrap();
+        let settled = WindowGeometry::new(Rect::new(0., 0., 400., 300.), None);
+        state.windows.records.insert(
+            id,
+            super::super::window_registry::WindowRecord {
+                geometry: Some(settled),
+                ..Default::default()
+            },
+        );
+        state.windows.set_transaction(
+            id,
+            crate::resize_transaction::ResizeTransaction::new(9.into(), Duration::ZERO),
+        );
+        state.rebuild_presentation_dependencies();
+        assert_eq!(state.output_resize_deadline(&output), Some(Duration::from_millis(300)));
+        let mut held = settled;
+        held.visual.set_target(Rect::new(100., 0., 400., 300.));
+        state.windows.set_geometry(id, held);
+        // Geometry which cannot advance is not visual activity either.
+        assert!(!state.output_has_animations(&output));
+        for hz in [60, 120, 240] {
+            let interval = Duration::from_nanos(1_000_000_000 / hz);
+            let mut scheduler = FrameScheduler::new(interval);
+            scheduler.request(Duration::ZERO);
+            let mut attempts = 0;
+            for tick in 0..(hz * 3 / 10) {
+                let now = interval * tick as u32;
+                if scheduler.plan(now).is_some() {
+                    let plan = scheduler.begin().unwrap();
+                    attempts += 1;
+                    scheduler.rendered(plan, now, Duration::ZERO, false);
+                    if state.sample_frame(&output, Duration::ZERO).animating {
+                        scheduler.request(now);
+                    }
+                }
+            }
+            assert_eq!(attempts, 1, "pending-only render attempts at {hz} Hz");
+        }
+        // Real fades remain live even while buffer-dependent geometry is held.
+        state.windows.update(id, |record| {
+            let mut opening = AnimatedValue::new(0.0);
+            opening.set_target(1.0);
+            record.opening = Some(opening);
+        });
+        assert!(state.output_has_animations(&output));
+        state.windows.update(id, |record| record.opening = None);
+        // A client commit removes the wait and wakes its held geometry.
+        let mut moving = settled;
+        moving.visual.set_target(Rect::new(100., 0., 400., 300.));
+        state.windows.set_geometry(id, moving);
+        state.windows.clear_transaction(&id);
+        state.release_presentation_dependencies();
+        assert_eq!(state.output_resize_deadline(&output), None);
+        assert!(state.output_has_animations(&output));
+        state.windows.geometry_mut(&id).unwrap().client.request_size(
+            ClientSize {
+                width: 800,
+                height: 300,
+            },
+            Duration::ZERO,
+        );
+        assert_eq!(
+            state.output_resize_deadline(&output),
+            None,
+            "unmapped client-size waits cannot arm expired wakeups"
+        );
+        // Timeout processing still releases a pending wait.
+        state.windows.set_transaction(
+            id,
+            crate::resize_transaction::ResizeTransaction::new(10.into(), Duration::ZERO),
+        );
+        state.advance_animations_at(Duration::ZERO, Duration::from_millis(300));
+        assert!(state.windows.transaction(&id).is_none());
+        state.unregister_output(&output);
+        assert_eq!(state.output_resize_deadline(&output), None);
+        assert!(!state.output_has_animations(&output));
+    }
 
     #[test]
     #[ignore = "requires a private XDG_RUNTIME_DIR and permission to bind test sockets"]

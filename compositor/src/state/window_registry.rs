@@ -153,7 +153,13 @@ impl<W: Eq + Hash> WindowRegistry<W> {
     }
 
     pub fn set_transaction(&mut self, id: WindowId, transaction: ResizeTransaction) {
-        self.update(id, |record| record.resize = Some(transaction));
+        self.update(id, |record| {
+            record.resize = Some(
+                record
+                    .resize
+                    .map_or(transaction, |pending| pending.superseded_by(transaction)),
+            );
+        });
     }
 
     pub fn clear_transaction(&mut self, id: &WindowId) {
@@ -364,6 +370,27 @@ mod tests {
         assert_eq!(windows.take_column_width_requests(), HashSet::from([second]));
         assert!(windows.take_column_width_requests().is_empty());
         assert!(windows.record(second).is_some());
+    }
+
+    #[test]
+    fn repeated_configures_preserve_the_pending_wait_bound() {
+        use std::time::Duration;
+        let mut windows = WindowRegistry::default();
+        let id = windows.allocate_id();
+        windows.register("stalled", id);
+        for serial in 1u32..=30 {
+            let now = Duration::from_millis(u64::from(serial - 1) * 10);
+            windows.set_transaction(id, ResizeTransaction::new(serial.into(), now));
+            windows.expire_transactions(now);
+            assert!(windows.transaction(&id).is_some());
+            assert!(!windows.transaction(&id).unwrap().accepts(Some((serial - 1).into())));
+        }
+        windows.expire_transactions(Duration::from_millis(300));
+        assert!(windows.transaction(&id).is_none());
+        windows.set_transaction(id, ResizeTransaction::new(31.into(), Duration::from_millis(400)));
+        assert!(!windows.transaction(&id).unwrap().expired(Duration::from_millis(699)));
+        windows.expire_transactions(Duration::from_millis(700));
+        assert!(windows.transaction(&id).is_none());
     }
 
     #[test]

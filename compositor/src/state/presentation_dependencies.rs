@@ -30,6 +30,106 @@ pub(super) struct ViewportDependencies {
 
 const MAX_VIEWPORT_STEPS: usize = 32;
 
+/// Connect moving tiles where their conservative swept bounds overlap. Such
+/// tiles must hand off together: advancing one into a neighbor's
+/// still-presented source would break the resize/reflow boundary. A fixed
+/// boundary between independent branches merely touches and creates no edge.
+/// Use solved presentation rectangles, so constraints, gaps and interrupted
+/// motion participate rather than assuming structural siblings are independent.
+fn tree_reflow_groups(
+    motions: impl IntoIterator<Item = (WindowId, Rect, Rect, ferese_animation::RectVelocity)>,
+    inner_gap: f64,
+    allow_overshoot: bool,
+) -> HashMap<WindowId, usize> {
+    let motions = motions
+        .into_iter()
+        .filter(|(_, source, target, velocity)| {
+            source != target
+                || [velocity.x, velocity.y, velocity.width, velocity.height]
+                    .into_iter()
+                    .any(|speed| speed != 0.0)
+        })
+        .collect::<Vec<_>>();
+    // Endpoint bounds cannot contain an overshooting spring or a retargeted
+    // component still moving away from its destination. Keep the moving tiles
+    // together until their trajectories can be bounded by their endpoints.
+    let reversing = motions.iter().any(|(_, source, target, velocity)| {
+        [
+            (target.x - source.x, velocity.x),
+            (target.y - source.y, velocity.y),
+            (target.width - source.width, velocity.width),
+            (target.height - source.height, velocity.height),
+        ]
+        .into_iter()
+        .any(|(distance, speed)| speed != 0.0 && distance * speed <= 0.0)
+    });
+    if allow_overshoot || reversing {
+        return motions.into_iter().map(|(id, ..)| (id, 0)).collect();
+    }
+    let margin = inner_gap.max(0.0) / 2.0;
+    let moving = motions
+        .into_iter()
+        .filter(|(_, source, target, _)| source != target)
+        .map(|(id, source, target, velocity)| {
+            let left = source.x.min(target.x) - margin;
+            let top = source.y.min(target.y) - margin;
+            // Geometry uses one no-crossing spring for its components. With
+            // proportional velocities an edge shares their progress, including
+            // a fixed split boundary. Interrupted components can have different
+            // progress: bound each separately rather than miss an intermediate
+            // excursion of x+width or y+height beyond both endpoint rectangles.
+            let edge =
+                |position: f64, size: f64, target_position: f64, target_size: f64, speed: f64, size_speed: f64| {
+                    if (speed * (target_size - size) - size_speed * (target_position - position)).abs() < 1e-6 {
+                        (position + size).max(target_position + target_size)
+                    } else {
+                        position.max(target_position) + size.max(target_size)
+                    }
+                };
+            let right = edge(
+                source.x,
+                source.width,
+                target.x,
+                target.width,
+                velocity.x,
+                velocity.width,
+            ) + margin;
+            let bottom = edge(
+                source.y,
+                source.height,
+                target.y,
+                target.height,
+                velocity.y,
+                velocity.height,
+            ) + margin;
+            (id, Rect::new(left, top, right - left, bottom - top))
+        })
+        .collect::<Vec<_>>();
+    let mut groups = HashMap::new();
+    for (id, _) in &moving {
+        if groups.contains_key(id) {
+            continue;
+        }
+        let group = groups.len();
+        groups.insert(*id, group);
+        let mut frontier = vec![*id];
+        while let Some(id) = frontier.pop() {
+            let bounds = moving.iter().find(|(window, _)| *window == id).unwrap().1;
+            for (other, candidate) in &moving {
+                if !groups.contains_key(other)
+                    && bounds.x.max(candidate.x) + 0.001 < (bounds.x + bounds.width).min(candidate.x + candidate.width)
+                    && bounds.y.max(candidate.y) + 0.001
+                        < (bounds.y + bounds.height).min(candidate.y + candidate.height)
+                {
+                    groups.insert(*other, group);
+                    frontier.push(*other);
+                }
+            }
+        }
+    }
+    groups
+}
+
 /// The buffer-dependent properties in this path. Translation has its own
 /// inputs; it does not inherit a tile's resize/reflow wait by membership.
 #[derive(Default)]
@@ -268,6 +368,37 @@ impl Ferese {
         let mut reflow = HashMap::new();
         let mut viewport = HashMap::new();
         let mut previous_viewport = std::mem::take(&mut self.presentation_dependencies.viewport);
+        let tree_groups = self
+            .workspaces
+            .iter()
+            .filter_map(|workspace| {
+                let WorkspaceLayout::Tree(tree) = &workspace.layout else {
+                    return None;
+                };
+                let motions = tree.window_ids().filter_map(|id| {
+                    let record = self.windows.record(id)?;
+                    // Output-owned geometry does not participate in tiled reflow.
+                    if workspace.fullscreen == Some(id) || record.maximized {
+                        return None;
+                    }
+                    let geometry = record.geometry?;
+                    Some((
+                        id,
+                        geometry.visual.current,
+                        geometry.visual.target,
+                        geometry.visual.velocity,
+                    ))
+                });
+                Some((
+                    workspace.id,
+                    tree_reflow_groups(
+                        motions,
+                        self.gap_config.inner,
+                        self.spring_config.crossing == ferese_animation::CrossingPolicy::AllowOvershoot,
+                    ),
+                ))
+            })
+            .collect::<HashMap<_, _>>();
         for (&id, _) in self.windows.records() {
             let Some(workspace_id) = self.workspaces.workspace_for_window(id) else {
                 continue;
@@ -306,9 +437,9 @@ impl Ferese {
                                         source == own || (source < own && transaction.width_changes())
                                     })
                             }),
-                            WorkspaceLayout::Tree(_) => {
-                                workspace.layout.contains(id) && workspace.layout.contains(*slow)
-                            }
+                            WorkspaceLayout::Tree(_) => tree_groups.get(&workspace_id).is_some_and(|groups| {
+                                groups.get(&id).is_some_and(|group| groups.get(slow) == Some(group))
+                            }),
                         });
                 if linked {
                     waits.push(commit);
@@ -365,6 +496,193 @@ impl Ferese {
 mod tests {
     use super::*;
     use crate::resize_transaction::ResizeTransaction;
+
+    fn tree_reflow_groups(
+        motions: impl IntoIterator<Item = (WindowId, Rect, Rect)>,
+        inner_gap: f64,
+    ) -> HashMap<WindowId, usize> {
+        super::tree_reflow_groups(
+            motions
+                .into_iter()
+                .map(|(id, source, target)| (id, source, target, Default::default())),
+            inner_gap,
+            false,
+        )
+    }
+
+    #[test]
+    fn interrupted_components_use_conservative_edge_bounds() {
+        let source = Rect::new(0.0, 0.0, 100.0, 100.0);
+        let target = Rect::new(40.0, 0.0, 60.0, 100.0);
+        let neighbor = Rect::new(110.0, 0.0, 100.0, 100.0);
+        let moving_neighbor = Rect::new(110.0, 0.0, 110.0, 100.0);
+        let groups = super::tree_reflow_groups(
+            [
+                (
+                    WindowId(1),
+                    source,
+                    target,
+                    ferese_animation::RectVelocity {
+                        x: 100.0,
+                        ..Default::default()
+                    },
+                ),
+                (WindowId(2), neighbor, moving_neighbor, Default::default()),
+            ],
+            0.0,
+            false,
+        );
+        assert_eq!(groups[&WindowId(1)], groups[&WindowId(2)]);
+        let groups = tree_reflow_groups(
+            [(WindowId(1), source, target), (WindowId(2), neighbor, moving_neighbor)],
+            0.0,
+        );
+        assert_ne!(
+            groups[&WindowId(1)],
+            groups[&WindowId(2)],
+            "coherent fixed edge remains independent"
+        );
+    }
+
+    fn nested_tree() -> ferese_layout::LayoutTree {
+        let mut tree = ferese_layout::LayoutTree::default();
+        tree.insert(WindowId(1), None, Axis::Horizontal, 0.5).unwrap();
+        tree.insert(WindowId(3), Some(WindowId(1)), Axis::Horizontal, 0.5)
+            .unwrap();
+        tree.insert(WindowId(2), Some(WindowId(1)), Axis::Vertical, 0.5)
+            .unwrap();
+        tree.insert(WindowId(4), Some(WindowId(3)), Axis::Vertical, 0.5)
+            .unwrap();
+        tree
+    }
+
+    #[test]
+    fn solved_tree_motion_links_shared_boundaries_but_not_independent_branches() {
+        let bounds = Rect::new(0.0, 0.0, 800.0, 600.0);
+        for gap in [0.0, 10.0, 80.0] {
+            let gaps = GapConfig {
+                inner: gap,
+                outer: 10.0,
+                smart: false,
+            };
+            let mut tree = nested_tree();
+            let solve = |tree: &ferese_layout::LayoutTree, constraints: &HashMap<WindowId, SizeConstraints>| {
+                tree.geometry_with_constraints(bounds, gaps, constraints, Some(WindowId(1)))
+                    .unwrap()
+                    .geometry
+            };
+            let constraints = HashMap::new();
+            let source = solve(&tree, &constraints);
+            tree.resize_window(WindowId(1), Direction::Down, 0.1).unwrap();
+            tree.resize_window(WindowId(3), Direction::Down, 0.1).unwrap();
+            let target = solve(&tree, &constraints);
+            let group = |source: &HashMap<WindowId, Rect>, target: &HashMap<WindowId, Rect>| {
+                tree_reflow_groups(
+                    source
+                        .iter()
+                        .filter_map(|(&id, &rect)| Some((id, rect, *target.get(&id)?))),
+                    gap,
+                )
+            };
+            let groups = group(&source, &target);
+            assert_eq!(groups[&WindowId(1)], groups[&WindowId(2)]);
+            assert_eq!(groups[&WindowId(3)], groups[&WindowId(4)]);
+            assert_ne!(groups[&WindowId(1)], groups[&WindowId(3)]);
+
+            // A horizontal request walks through the vertical child to the
+            // root split: both branches' actual x/width now participate.
+            tree.resize_window(WindowId(1), Direction::Right, 0.1).unwrap();
+            let ancestor = solve(&tree, &constraints);
+            let groups = group(&source, &ancestor);
+            assert!(groups.values().all(|group| *group == groups[&WindowId(1)]));
+
+            // A minimum in a descendant can move an ancestor boundary even
+            // though no ancestor ratio was explicitly changed.
+            let tree = nested_tree();
+            let constrained = solve(
+                &tree,
+                &HashMap::from([(
+                    WindowId(1),
+                    SizeConstraints {
+                        min_width: 500.0,
+                        ..Default::default()
+                    },
+                )]),
+            );
+            let groups = group(&source, &constrained);
+            assert_eq!(groups[&WindowId(1)], groups[&WindowId(3)]);
+            assert_eq!(groups[&WindowId(2)], groups[&WindowId(4)]);
+            assert_ne!(
+                groups[&WindowId(1)],
+                groups[&WindowId(2)],
+                "fixed row boundary remains independent"
+            );
+
+            // Maximum constraints clip actual presented bounds. A clipped
+            // leaf that does not move cannot hold the changing allocation.
+            let maximum = HashMap::from([(
+                WindowId(1),
+                SizeConstraints {
+                    max_width: Some(100.0),
+                    ..Default::default()
+                },
+            )]);
+            let clipped_source = solve(&tree, &maximum);
+            let mut wider = tree.clone();
+            wider.resize_window(WindowId(1), Direction::Right, 0.1).unwrap();
+            let clipped_target = solve(&wider, &maximum);
+            assert_eq!(clipped_source[&WindowId(1)], clipped_target[&WindowId(1)]);
+            assert!(!group(&clipped_source, &clipped_target).contains_key(&WindowId(1)));
+
+            // Retarget from the held presentation, not the previous logical
+            // destination. Reversing one branch leaves the other independent.
+            let mut reversed = target.clone();
+            for id in [WindowId(1), WindowId(2)] {
+                reversed.insert(id, source[&id]);
+            }
+            let groups = group(&source, &reversed);
+            assert!(!groups.contains_key(&WindowId(1)));
+            assert_eq!(groups[&WindowId(3)], groups[&WindowId(4)]);
+        }
+    }
+
+    #[test]
+    fn tree_motion_ignores_settled_and_hidden_tiles_and_links_transitive_reflow() {
+        let ids = [WindowId(1), WindowId(2), WindowId(3), WindowId(4)];
+        let source = ids.map(|id| Rect::new((id.0 - 1) as f64 * 100.0, 0.0, 100.0, 100.0));
+        let target = [
+            Rect::new(0.0, 0.0, 140.0, 100.0),
+            Rect::new(140.0, 0.0, 100.0, 100.0),
+            Rect::new(240.0, 0.0, 60.0, 100.0),
+            source[3],
+        ];
+        let groups = tree_reflow_groups(
+            ids.into_iter().enumerate().map(|(i, id)| (id, source[i], target[i])),
+            0.0,
+        );
+        assert_eq!(
+            groups[&ids[0]], groups[&ids[2]],
+            "shared boundaries connect transitively"
+        );
+        assert!(!groups.contains_key(&ids[3]), "settled tile owns no reflow");
+
+        let mut tree = nested_tree();
+        tree.stack_window(WindowId(2), WindowId(1)).unwrap();
+        let before = tree.geometry(Rect::new(0.0, 0.0, 800.0, 600.0)).unwrap();
+        tree.resize_window(WindowId(2), Direction::Right, 0.1).unwrap();
+        let after = tree.geometry(Rect::new(0.0, 0.0, 800.0, 600.0)).unwrap();
+        let groups = tree_reflow_groups(
+            before
+                .iter()
+                .filter_map(|(&id, &rect)| Some((id, rect, *after.get(&id)?))),
+            0.0,
+        );
+        assert!(
+            !groups.contains_key(&WindowId(1)),
+            "inactive tab has no presented geometry"
+        );
+        assert_eq!(groups[&WindowId(2)], groups[&WindowId(3)]);
+    }
 
     #[test]
     fn viewport_recipe_handles_cancellation_joint_pages_and_bounded_bursts() {

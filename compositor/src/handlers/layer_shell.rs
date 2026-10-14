@@ -15,18 +15,32 @@ impl WlrLayerShellHandler for Ferese {
     }
 
     fn new_layer_surface(&mut self, surface: LayerSurface, output: Option<WlOutput>, _layer: Layer, namespace: String) {
-        let output = output
-            .as_ref()
-            .and_then(Output::from_resource)
-            .or_else(|| self.space.outputs().next().cloned());
+        // A wl_output resource can outlive its registered desktop output.
+        // Explicit requests retain their identity; only unspecified requests
+        // may use the focused/default output policy.
+        let usable = |output: &Output| {
+            self.output_id(output).is_some()
+                && output.current_mode().is_some()
+                && self.space.outputs().any(|candidate| candidate == output)
+        };
+        let output = match output {
+            Some(resource) => Output::from_resource(&resource).filter(usable),
+            None => self
+                .focused_output()
+                .filter(|output| usable(output))
+                .cloned()
+                .or_else(|| self.space.outputs().find(|output| usable(output)).cloned()),
+        };
         let Some(output) = output else {
             tracing::warn!(%namespace, "layer surface has no available output");
+            surface.send_close();
             return;
         };
         let layer = DesktopLayerSurface::new(surface, namespace.clone());
 
         if let Err(error) = layer_map_for_output(&output).map_layer(&layer) {
             tracing::warn!(%namespace, %error, "failed to map layer surface");
+            layer.layer_surface().send_close();
             return;
         }
 
@@ -159,9 +173,12 @@ pub fn handle_commit(state: &mut Ferese, surface: &WlSurface) {
                     .layer_for_surface(&surface, WindowSurfaceType::ALL)
                     .is_some_and(|focused| focused == layer)
             });
-    if !state.session_lock.active()
+    state.reconcile_layer_keyboard_focus();
+    if pointer_on_layer
+        && !state.session_lock.active()
         && !state.input_capture.captures(1)
-        && (policy.keyboard_interactivity == KeyboardInteractivity::Exclusive || pointer_on_layer)
+        && state.layer_keyboard_eligible(&layer)
+        && state.exclusive_keyboard_layer().is_none()
         && matches!(policy.layer, Layer::Top | Layer::Overlay)
         && !layer_has_keyboard_focus(state, &layer)
     {
@@ -170,8 +187,6 @@ pub fn handle_commit(state: &mut Ferese, surface: &WlSurface) {
             Some(layer.wl_surface().clone()),
             smithay::utils::SERIAL_COUNTER.next_serial(),
         );
-    } else if !layer.can_receive_keyboard_focus() && layer_has_keyboard_focus(state, &layer) {
-        state.restore_keyboard_focus();
     }
 
     if let Err(error) = state.display_handle.flush_clients() {
@@ -179,13 +194,99 @@ pub fn handle_commit(state: &mut Ferese, surface: &WlSurface) {
     }
 }
 
+impl Ferese {
+    /// Layer-map membership tracks the role and output, not buffer mapping.
+    /// Use the renderer state updated by on_commit_buffer_handler, as for windows.
+    pub(crate) fn layer_keyboard_eligible(&self, layer: &DesktopLayerSurface) -> bool {
+        layer.layer_surface().alive()
+            && layer.can_receive_keyboard_focus()
+            && smithay::backend::renderer::utils::with_renderer_surface_state(layer.wl_surface(), |state| {
+                state.buffer().is_some()
+            })
+            .unwrap_or(false)
+            && self.space.outputs().any(|output| {
+                layer_map_for_output(output)
+                    .layers()
+                    .any(|candidate| candidate == layer)
+            })
+    }
+
+    fn keyboard_layer_root(&self) -> Option<WlSurface> {
+        let surface = self.seat.get_keyboard()?.current_focus()?;
+        let root = self
+            .popups
+            .find_popup(&surface)
+            .and_then(|popup| smithay::desktop::find_popup_root_surface(&popup).ok())
+            .unwrap_or(surface);
+        (smithay::wayland::compositor::get_role(&root) == Some(smithay::wayland::shell::wlr_layer::LAYER_SURFACE_ROLE))
+            .then_some(root)
+    }
+
+    pub(crate) fn keyboard_focused_layer(&self) -> Option<DesktopLayerSurface> {
+        self.space
+            .layer_for_surface(&self.keyboard_layer_root()?, WindowSurfaceType::ALL)
+    }
+
+    pub(crate) fn exclusive_keyboard_layer(&self) -> Option<DesktopLayerSurface> {
+        // Overlay outranks Top. Keep the current owner among peers; the protocol
+        // leaves ordering within one layer to the compositor.
+        let focused = self.keyboard_focused_layer();
+        for priority in [Layer::Overlay, Layer::Top] {
+            if let Some(layer) = focused.as_ref().filter(|layer| {
+                layer.layer() == priority
+                    && layer.cached_state().keyboard_interactivity == KeyboardInteractivity::Exclusive
+                    && self.layer_keyboard_eligible(layer)
+            }) {
+                return Some(layer.clone());
+            }
+            for output in self.space.outputs() {
+                let layers = layer_map_for_output(output)
+                    .layers_on(priority)
+                    .rev()
+                    .cloned()
+                    .collect::<Vec<_>>();
+                if let Some(layer) = layers.into_iter().find(|layer| {
+                    layer.cached_state().keyboard_interactivity == KeyboardInteractivity::Exclusive
+                        && self.layer_keyboard_eligible(layer)
+                }) {
+                    return Some(layer.clone());
+                }
+            }
+        }
+        None
+    }
+
+    pub(crate) fn reconcile_layer_keyboard_focus(&mut self) {
+        if self.session_lock.active() || self.input_capture.captures(1) {
+            return;
+        }
+        let keyboard = self.seat.get_keyboard().expect("seat has a keyboard");
+        if let Some(root) = self.keyboard_layer_root().filter(|_| {
+            !self
+                .keyboard_focused_layer()
+                .is_some_and(|layer| self.layer_keyboard_eligible(&layer))
+        }) {
+            // A popup grab cannot keep an ineligible layer alive as input owner.
+            for (popup, _) in smithay::desktop::PopupManager::popups_for_surface(&root) {
+                let _ = smithay::desktop::PopupManager::dismiss_popup(&root, &popup);
+            }
+            keyboard.unset_grab(self);
+            self.restore_keyboard_focus();
+        } else if !keyboard.is_grabbed()
+            && let Some(layer) = self.exclusive_keyboard_layer()
+            && !layer_has_keyboard_focus(self, &layer)
+        {
+            keyboard.set_focus(
+                self,
+                Some(layer.wl_surface().clone()),
+                smithay::utils::SERIAL_COUNTER.next_serial(),
+            );
+        }
+    }
+}
+
 fn layer_has_keyboard_focus(state: &Ferese, layer: &DesktopLayerSurface) -> bool {
-    state
-        .seat
-        .get_keyboard()
-        .and_then(|keyboard| keyboard.current_focus())
-        .and_then(|surface| state.space.layer_for_surface(&surface, WindowSurfaceType::ALL))
-        .is_some_and(|focused| focused == *layer)
+    state.keyboard_focused_layer().is_some_and(|focused| focused == *layer)
 }
 
 #[cfg(test)]
@@ -224,3 +325,6 @@ mod tests {
         assert_ne!(original, LayoutState::from_policy(policy, Rectangle::default()));
     }
 }
+
+#[cfg(test)]
+mod output_tests;

@@ -29,6 +29,7 @@ host. Hardware checks remain separate.
 
 - [Live Activities checks](#live-activities-checks): core, CLI, shell hooks, installer setup and native rendering.
 - [Desktop reconciliation](desktop-reconciliation.md): topology publication, hardware failure and presentation ownership.
+- [Rendering diagnostics](rendering-performance.md): per-output outcomes and repeatable hardware baselines.
 - [DMA-BUF feedback](dmabuf-feedback.md): conservative allocation hints, fallback and hardware validation.
 - [Output management tests](output-management-testing.md): profiles, hotplug, mirroring, lid handling and failed DRM commits.
 - [Nested resize checks](nested-resize-testing.md): wallpaper and bar responsiveness.

@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 
 pub(crate) mod capture;
 mod crtc_assignment;
+mod diagnostics;
 pub(crate) mod feedback;
 pub(crate) mod gamma;
 mod lid;
@@ -18,6 +19,7 @@ mod redraw;
 mod scheduling;
 mod topology;
 mod transaction;
+use diagnostics::{Diagnostics, PrimaryOutcome};
 use output_power::{OutputPower, Power};
 use redraw::{AnimationFallback, SchedulingMetrics};
 use scheduling::*;
@@ -276,6 +278,7 @@ struct DirectOutput {
     primary_commit: Option<CommitCounter>,
     capture_texture: Option<GlesTexture>,
     render_metrics: RenderMetrics,
+    diagnostics: Diagnostics,
     dmabuf_feedback: feedback::OutputFeedback,
     frame_pending: bool,
     completion: recovery::Completion,
@@ -777,12 +780,7 @@ pub(crate) fn validate_live_outputs(state: &Ferese, profiles: &[OutputProfile]) 
         &backend.manual_outputs,
     );
     resolve_output_positions(backend, &mut desired)?;
-    let mut usable = 0;
-    for device in backend.devices.values() {
-        let scan = select_outputs(device, &backend.monitors, &desired, backend.low_power).map_err(|e| e.to_string())?;
-        transaction::validate_device(device, &scan).map_err(|error| error.to_string())?;
-        usable += scan.selections.len();
-    }
+    let usable = validate_output_configuration(backend, &desired)?;
     if usable == 0 {
         return Err("display configuration would leave no usable output".into());
     }
@@ -847,11 +845,15 @@ fn open_device(state: &mut Ferese, path: &Path) -> Result<DrmNode, Box<dyn Error
                             if output.frame_pending && recovery::inject("retirement") {
                                 tracing::warn!(?node, ?crtc, "injecting DRM retirement failure");
                                 retirement_failed = true;
+                                output.diagnostics.retirement(false, true);
+                                output.diagnostics.report_if_due();
                                 return None;
                             }
 
                             let (feedback, completed, error) = recovery::retirement(output.surface.frame_submitted());
                             retired = completed;
+                            output.diagnostics.retirement(completed, error.is_some());
+                            output.diagnostics.report_if_due();
                             if let Some(error) = error {
                                 tracing::error!(?node, ?crtc, %error, "failed to retire DRM frame");
                                 retirement_failed = true;
@@ -1319,21 +1321,23 @@ fn render_output(
                 sampled_output_elements(state, &mut device.renderer, &output.output, true, &frame)
             };
             let effects = frame_effect_metrics(&elements, output.output.current_scale().fractional_scale());
-            let flags = planes::frame_flags(
-                state.output_has_fullscreen_for_frame(&output.output, frame.overview.is_presenting()),
-                frame.animating,
-                state.session_lock.active(),
-            );
-            let result = output.surface.render_frame(
-                &mut device.renderer,
-                &elements,
-                if output.mirror_source.is_some() {
-                    [0.0, 0.0, 0.0, 1.0]
-                } else {
-                    [0.035, 0.04, 0.055, 1.0]
-                },
-                flags,
-            )?;
+            let fullscreen = state.output_has_fullscreen_for_frame(&output.output, frame.overview.is_presenting());
+            let locked = state.session_lock.active();
+            let flags = planes::frame_flags(fullscreen, frame.animating, locked);
+            output.diagnostics.attempt(fullscreen, frame.animating, locked);
+            let result = output
+                .surface
+                .render_frame(
+                    &mut device.renderer,
+                    &elements,
+                    if output.mirror_source.is_some() {
+                        [0.0, 0.0, 0.0, 1.0]
+                    } else {
+                        [0.035, 0.04, 0.055, 1.0]
+                    },
+                    flags,
+                )
+                .inspect_err(|_| output.diagnostics.render_failed())?;
 
             let primary_format = match &result.primary_element {
                 PrimaryPlaneElement::Swapchain(primary) => Some(primary.buffer().format()),
@@ -1354,10 +1358,16 @@ fn render_output(
             if result.needs_sync()
                 && let PrimaryPlaneElement::Swapchain(primary) = &result.primary_element
             {
-                primary.sync.wait()?;
+                primary.sync.wait().inspect_err(|_| output.diagnostics.sync_failed())?;
             }
 
             if result.is_empty {
+                output.diagnostics.no_damage();
+                let capture_started = output.diagnostics.capture_start(|| {
+                    [true, false]
+                        .into_iter()
+                        .any(|cursor| state.has_pending_screencopy(&output.output, cursor))
+                });
                 output
                     .dmabuf_feedback
                     .observed_frame(primary_format, &result.states, feedback_candidates);
@@ -1373,6 +1383,7 @@ fn render_output(
                     );
                 }
 
+                output.diagnostics.capture_finished(capture_started);
                 output
                     .render_metrics
                     .record_no_damage(render_started.elapsed(), missed_deadlines);
@@ -1417,10 +1428,22 @@ fn render_output(
                     Kind::Vsync | Kind::HwClock | Kind::HwCompletion,
                 )
             };
+            let primary_outcome = PrimaryOutcome::classify(
+                matches!(result.primary_element, PrimaryPlaneElement::Element(_)),
+                !damage.is_empty(),
+            );
+            let cursor_plane = result.cursor_element.is_some();
             let visibility = result.states.clone();
             drop(result);
 
-            capture::after_queue(output.surface.queue_frame(presentation), || {
+            let queued = output.surface.queue_frame(presentation);
+            output.diagnostics.queue_result(
+                &queued,
+                primary_outcome,
+                cursor_plane,
+                flags.contains(FrameFlags::ALLOW_PRIMARY_PLANE_SCANOUT),
+            );
+            capture::after_queue(queued, || {
                 output
                     .dmabuf_feedback
                     .observed_frame(primary_format, &visibility, feedback_candidates);
@@ -1437,6 +1460,11 @@ fn render_output(
                 }
 
                 output.lock_frame_pending = state.session_lock.active();
+                let capture_started = output.diagnostics.capture_start(|| {
+                    [true, false]
+                        .into_iter()
+                        .any(|cursor| state.has_pending_screencopy(&output.output, cursor))
+                });
 
                 if output.mirror_source.is_some() {
                     capture::capture_mirror(state, &mut device.renderer, &scene_output, &frame, &mut output);
@@ -1449,11 +1477,14 @@ fn render_output(
                         &frame,
                     );
                 }
+                output.diagnostics.capture_finished(capture_started);
             })?;
 
             Ok(true)
         })()
     };
+
+    output.diagnostics.report_if_due();
 
     // Keep the footprint of the last successful scene, including queued
     // cursor planes. Requests do not read the pointer while a grab holds it.
@@ -1591,10 +1622,59 @@ fn remember_applied_configuration(state: &mut Ferese) {
 
 fn validate_desired_outputs(state: &Ferese) -> Result<(), String> {
     let backend = state.direct_backend.as_ref().ok_or("direct backend unavailable")?;
-    for device in backend.devices.values() {
-        let scan = select_outputs(device, &backend.monitors, &backend.desired_outputs, backend.low_power)
-            .map_err(|error| error.to_string())?;
-        transaction::validate_device(device, &scan).map_err(|error| error.to_string())?;
+    validate_output_configuration(backend, &backend.desired_outputs).map(|_| ())
+}
+
+fn validate_output_configuration(
+    backend: &DirectBackendState,
+    desired: &DesiredOutputConfiguration,
+) -> Result<usize, String> {
+    let scans = backend
+        .devices
+        .values()
+        .map(|device| {
+            select_outputs(device, &backend.monitors, desired, backend.low_power)
+                .map(|scan| (device, scan))
+                .map_err(|error| error.to_string())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let selected = scans
+        .iter()
+        .flat_map(|(device, scan)| {
+            let device_key = drm_device_key(&device.drm);
+            scan.selections
+                .iter()
+                .map(move |selection| format!("{device_key}/{}", selection.connector))
+        })
+        .collect::<Vec<_>>();
+    validate_output_plan(desired, &selected, || {
+        for (device, scan) in &scans {
+            transaction::validate_device(device, scan).map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    })?;
+    Ok(selected.len())
+}
+
+/// Keep plan completeness separate from the hardware probe so a partial scan
+/// cannot be accepted merely because the driver accepts its selected subset.
+fn validate_output_plan(
+    desired: &DesiredOutputConfiguration,
+    selected: &[String],
+    test_hardware: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
+    validate_selected_outputs(&desired.outputs, selected)?;
+    test_hardware()
+}
+
+fn validate_selected_outputs<'a>(
+    outputs: impl IntoIterator<Item = &'a crate::output_policy::DesiredOutput>,
+    selected: &[String],
+) -> Result<(), String> {
+    for output in outputs.into_iter().filter(|output| output.settings.enabled) {
+        if !selected.contains(&output.key) {
+            return Err(format!("enabled output {} has no usable CRTC assignment", output.key));
+        }
     }
     Ok(())
 }
@@ -1696,10 +1776,37 @@ fn animation_fallbacks(state: &mut Ferese) -> Vec<(DrmNode, crtc::Handle, Instan
     fallbacks
 }
 
+// Pending buffers are events with deadlines, not visual animations. Recompute
+// from current output identities and waits so commit, replacement and teardown
+// cancel stale wakeups, including mirrored and sleeping outputs.
+fn resize_deadlines(state: &Ferese) -> Vec<(Output, Instant)> {
+    let Some(backend) = state.direct_backend.as_ref().filter(|backend| backend.can_render()) else {
+        return Vec::new();
+    };
+    if state.session_lock.sleeping {
+        return Vec::new();
+    }
+    backend
+        .devices
+        .values()
+        .filter(|device| device.drm.is_active())
+        .flat_map(|device| device.outputs.values())
+        .filter(|output| output.power.can_render())
+        .filter_map(|output| {
+            let scene = backend.scene_output(state, &output.output);
+            Some((
+                output.output.clone(),
+                state.start_time + state.output_resize_deadline(&scene)?,
+            ))
+        })
+        .collect()
+}
+
 fn arm_animation_timer(state: &mut Ferese) {
     let deadline = animation_fallbacks(state)
         .iter()
         .map(|(_, _, deadline)| *deadline)
+        .chain(resize_deadlines(state).into_iter().map(|(_, deadline)| deadline))
         .min();
     let Some(backend) = state.direct_backend.as_mut() else {
         return;
@@ -1724,6 +1831,18 @@ fn arm_animation_timer(state: &mut Ferese) {
                 backend.animation_timer = None;
                 backend.animation_deadline = None;
                 backend.scheduling_metrics.fallback_wakes += 1;
+            }
+
+            let now = Instant::now();
+            let expired_outputs = resize_deadlines(state)
+                .into_iter()
+                .filter_map(|(output, deadline)| (deadline <= now).then_some(output))
+                .collect::<Vec<_>>();
+            if !expired_outputs.is_empty() {
+                // Retire waits before rearming, even if a DRM submission is
+                // in flight. redraw advances the shared clock and requests the
+                // released outputs plus any final animation frames elsewhere.
+                render_on(state, &expired_outputs);
             }
 
             // Revalidate identities, power state, activity and normal frame chains
@@ -2053,6 +2172,19 @@ fn select_outputs(
         }
     }
 
+    let prefix = format!("{device_key}/");
+    let selected = selections
+        .iter()
+        .map(|selection| format!("{prefix}{}", selection.connector))
+        .collect::<Vec<_>>();
+    // Also guard the rescan immediately before applying a device transaction:
+    // hotplug can invalidate the earlier configuration-wide validation.
+    validate_selected_outputs(
+        desired.outputs.iter().filter(|output| output.key.starts_with(&prefix)),
+        &selected,
+    )
+    .map_err(io::Error::other)?;
+
     selections.sort_by_key(|selection| selection.settings.position.is_none());
     Ok(OutputScan {
         selections,
@@ -2147,6 +2279,7 @@ fn create_direct_output(
     );
     surface.set_output_mode_source((&output).into());
     let render_metrics = RenderMetrics::from_environment(output.name());
+    let diagnostics = Diagnostics::from_environment(output.name());
     let dmabuf_feedback = feedback::OutputFeedback::new(
         render_node.dev_id(),
         node.dev_id(),
@@ -2174,6 +2307,7 @@ fn create_direct_output(
         primary_commit: None,
         capture_texture: None,
         render_metrics,
+        diagnostics,
         dmabuf_feedback,
         frame_pending: false,
         completion: Default::default(),
@@ -2480,6 +2614,170 @@ mod tests {
     use std::time::SystemTime;
 
     use super::*;
+
+    fn three_monitor_plan(layout: crate::config::OutputLayout) -> DesiredOutputConfiguration {
+        let monitors = ["A", "B", "C"].map(|key| Monitor {
+            key: key.into(),
+            connector: key.into(),
+            identity: key.into(),
+            aliases: vec![],
+            internal: key == "A",
+            usable: true,
+        });
+        let profile = OutputProfile {
+            name: "three".into(),
+            outputs: monitors
+                .iter()
+                .map(|monitor| crate::output_policy::defaults(monitor.key.clone()))
+                .collect(),
+            layout,
+            confirm_timeout: 15,
+            lid_policy: crate::config::LidPolicy::Ignore,
+            lid_closed: None,
+            mirror_source: None,
+        };
+        crate::output_policy::select_profile(&monitors, false, &[profile], &ManualOverride::default())
+    }
+
+    #[test]
+    fn complete_live_plan_still_requires_hardware_success() {
+        let desired = three_monitor_plan(crate::config::OutputLayout::Extend);
+        let selected = vec!["A".into(), "B".into(), "C".into()];
+        assert!(validate_output_plan(&desired, &selected, || Ok(())).is_ok());
+        assert_eq!(
+            validate_output_plan(&desired, &selected, || Err("atomic TEST_ONLY failed".into())),
+            Err("atomic TEST_ONLY failed".into())
+        );
+    }
+
+    #[test]
+    fn requiredness_does_not_allow_a_connected_enabled_output_to_be_omitted() {
+        let mut desired = three_monitor_plan(crate::config::OutputLayout::Extend);
+        desired.outputs[2].settings.required = false;
+        let error = validate_output_plan(&desired, &["A".into(), "B".into()], || Ok(())).unwrap_err();
+        assert!(error.contains("C"));
+        desired.outputs[2].settings.enabled = false;
+        assert!(validate_output_plan(&desired, &["A".into(), "B".into()], || Ok(())).is_ok());
+    }
+
+    #[test]
+    fn disconnected_monitors_affect_profile_matching_and_do_not_need_assignments() {
+        let connected = ["A", "B"].map(|key| Monitor {
+            key: key.into(),
+            connector: key.into(),
+            identity: key.into(),
+            aliases: vec![],
+            internal: key == "A",
+            usable: true,
+        });
+        let mut profile = OutputProfile {
+            name: "dock".into(),
+            outputs: ["A", "B", "C"]
+                .map(|key| crate::output_policy::defaults(key.into()))
+                .into(),
+            layout: crate::config::OutputLayout::Extend,
+            confirm_timeout: 15,
+            lid_policy: crate::config::LidPolicy::Ignore,
+            lid_closed: None,
+            mirror_source: None,
+        };
+        for required in [true, false] {
+            profile.outputs[2].required = required;
+            let desired =
+                crate::output_policy::select_profile(&connected, false, &[profile.clone()], &ManualOverride::default());
+            assert_eq!(desired.profile.as_deref(), if required { None } else { Some("dock") });
+            assert_eq!(desired.outputs.len(), 2);
+            assert!(validate_output_plan(&desired, &["A".into(), "B".into()], || Ok(())).is_ok());
+        }
+    }
+
+    #[test]
+    fn device_scans_cannot_satisfy_another_gpus_missing_output() {
+        let mut desired = three_monitor_plan(crate::config::OutputLayout::Extend);
+        desired.outputs[0].key = "gpu-one/A".into();
+        desired.outputs[1].key = "gpu-two/B".into();
+        desired.outputs[2].key = "gpu-two/C".into();
+        let selected = vec!["gpu-one/A".into(), "gpu-two/B".into(), "gpu-one/C".into()];
+        assert!(validate_output_plan(&desired, &selected, || Ok(())).is_err());
+        // A device-local rescan checks only its own enabled outputs.
+        assert!(
+            validate_selected_outputs(
+                desired
+                    .outputs
+                    .iter()
+                    .filter(|output| output.key.starts_with("gpu-one/")),
+                &selected
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn impossible_assignment_reaches_live_validation_as_an_error() {
+        let desired = three_monitor_plan(crate::config::OutputLayout::Extend);
+        let crtc = std::num::NonZeroU32::new(1).unwrap().into();
+        let requests = (0..3)
+            .map(|_| crtc_assignment::Candidates {
+                applied: None,
+                kernel: None,
+                compatible: vec![crtc],
+            })
+            .collect::<Vec<_>>();
+        let selected = desired
+            .outputs
+            .iter()
+            .zip(crtc_assignment::assign(&requests))
+            .filter(|(_, assignment)| assignment.is_some())
+            .map(|(output, _)| output.key.clone())
+            .collect::<Vec<_>>();
+        assert!(validate_output_plan(&desired, &selected, || Ok(())).is_err());
+    }
+
+    #[test]
+    fn feasible_three_monitor_assignment_passes_live_plan_validation() {
+        let desired = three_monitor_plan(crate::config::OutputLayout::Extend);
+        let requests = [&[1, 2][..], &[1, 3][..], &[1, 3][..]].map(|compatible| crtc_assignment::Candidates {
+            applied: None,
+            kernel: None,
+            compatible: compatible
+                .iter()
+                .map(|value| std::num::NonZeroU32::new(*value).unwrap().into())
+                .collect(),
+        });
+        let selected = desired
+            .outputs
+            .iter()
+            .zip(crtc_assignment::assign(&requests))
+            .filter(|(_, assignment)| assignment.is_some())
+            .map(|(output, _)| output.key.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(selected.len(), 3);
+        assert!(validate_output_plan(&desired, &selected, || Ok(())).is_ok());
+    }
+
+    #[test]
+    fn live_plan_rejects_partial_extend_and_mirror_before_hardware_validation() {
+        for layout in [crate::config::OutputLayout::Extend, crate::config::OutputLayout::Mirror] {
+            let desired = three_monitor_plan(layout);
+            for omitted in ["A", "B", "C"] {
+                let selected = ["A", "B", "C"]
+                    .into_iter()
+                    .filter(|key| *key != omitted)
+                    .map(String::from)
+                    .collect::<Vec<_>>();
+                let probed = std::cell::Cell::new(false);
+                let result = validate_output_plan(&desired, &selected, || {
+                    probed.set(true);
+                    Ok(()) // A driver can accept the incomplete two-output request.
+                });
+                assert!(
+                    result.is_err(),
+                    "accepted a partial {layout:?} configuration without {omitted}"
+                );
+                assert!(!probed.get());
+            }
+        }
+    }
 
     #[test]
     fn repeated_unconfirmed_changes_keep_original_rollback_and_manual_state() {

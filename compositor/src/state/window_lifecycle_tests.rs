@@ -32,6 +32,123 @@ fn fixture() -> (smithay::reexports::calloop::EventLoop<'static, Ferese>, Ferese
 }
 
 #[test]
+fn tree_resize_does_not_hold_motion_in_an_unchanged_neighboring_branch() {
+    if !crate::startup_tests::private_runtime(
+        "state::window_lifecycle_tests::tree_resize_does_not_hold_motion_in_an_unchanged_neighboring_branch",
+    ) {
+        return;
+    }
+    let (mut events, mut state, output) = fixture();
+    state.animation_test_time = Some(Duration::ZERO);
+    state.gap_config = GapConfig {
+        inner: 10.0,
+        outer: 10.0,
+        smart: false,
+    };
+    let mut clients = (0..4)
+        .map(|_| window(&mut state, &mut events, 0xff112233))
+        .collect::<Vec<_>>();
+    let ids = clients
+        .iter()
+        .map(|(window, _)| state.windows.ids()[window])
+        .collect::<Vec<_>>();
+    let [a, b, c, d] = ids.as_slice() else { unreachable!() };
+    let (a, b, c, d) = (*a, *b, *c, *d);
+    let mut tree = ferese_layout::LayoutTree::default();
+    tree.insert(a, None, Axis::Horizontal, 0.5).unwrap();
+    tree.insert(c, Some(a), Axis::Horizontal, 0.5).unwrap();
+    tree.insert(b, Some(a), Axis::Vertical, 0.5).unwrap();
+    tree.insert(d, Some(c), Axis::Vertical, 0.5).unwrap();
+    state.workspaces.active_mut().layout = WorkspaceLayout::Tree(tree);
+    state.relayout();
+    state.animations_enabled = true;
+    let resize = |state: &mut Ferese, id| {
+        let WorkspaceLayout::Tree(tree) = &mut state.workspaces.active_mut().layout else {
+            panic!()
+        };
+        tree.resize_window(id, Direction::Down, 0.1).unwrap();
+        state.relayout();
+        state.display_handle.flush_clients().unwrap();
+    };
+    resize(&mut state, c);
+    for (_, wire) in &mut clients[2..] {
+        ack_configure(wire, 3);
+        request(wire, 2, 1, &[6, 0, 0], None);
+        request(wire, 2, 6, &[], None);
+    }
+    dispatch(&mut events, &mut state);
+    for id in [c, d] {
+        assert!(state.windows.transaction(&id).is_none());
+    }
+    state.advance_animations_at(Duration::from_millis(16), Duration::from_millis(16));
+    state.advance_animations_at(Duration::from_millis(16), Duration::from_millis(32));
+    let right_targets = [c, d].map(|id| state.windows.geometry(&id).unwrap().logical);
+    resize(&mut state, a);
+    assert_eq!(
+        right_targets,
+        [c, d].map(|id| state.windows.geometry(&id).unwrap().logical)
+    );
+    assert!(state.windows.transaction(&a).is_some());
+    let before = [a, b, c, d].map(|id| state.windows.geometry(&id).unwrap().visual.current);
+    state.advance_animations_at(Duration::from_millis(16), Duration::from_millis(48));
+    let after = [a, b, c, d].map(|id| state.windows.geometry(&id).unwrap().visual.current);
+    assert_eq!(before[..2], after[..2], "linked left reflow must wait");
+    assert_ne!(before[2], after[2], "right branch must continue its existing motion");
+    assert_ne!(before[3], after[3]);
+    let frame = state.sample_frame(&output, Duration::from_millis(16));
+    assert_eq!(frame.windows[&a].geometry.visual.current, after[0]);
+    assert_ne!(frame.windows[&c].geometry.visual.current, after[2]);
+    for id in [a, c] {
+        let window = state.windows.window(id).unwrap();
+        let geometry = state.windows.geometry(&id).unwrap();
+        let location = state.space.element_location(window).unwrap();
+        assert_eq!(location.x, geometry.visual.current.x.round() as i32);
+        assert_eq!(location.y, geometry.visual.current.y.round() as i32);
+        let point = (geometry.visual.current.x + 5.0, geometry.visual.current.y + 5.0).into();
+        let (surface, origin) = state.window_surface_under(point).unwrap();
+        assert_eq!(surface, *window.toplevel().unwrap().wl_surface());
+        assert!((origin.y - geometry.visual.current.y).abs() < 0.001);
+    }
+
+    // Acknowledgement does not release the left branch; one committing client
+    // cannot release the other tile's linked resize boundary either.
+    ack_configure(&mut clients[0].1, 3);
+    dispatch(&mut events, &mut state);
+    assert!(state.windows.transaction(&a).is_some());
+    request(&mut clients[0].1, 2, 1, &[6, 0, 0], None);
+    request(&mut clients[0].1, 2, 6, &[], None);
+    dispatch(&mut events, &mut state);
+    assert!(state.windows.transaction(&a).is_none());
+    assert!(state.presentation_dependencies.reflow_blocked(a, &state.windows));
+    assert!(state.presentation_dependencies.reflow_blocked(b, &state.windows));
+    state.advance_animations_at(Duration::from_millis(284), Duration::from_millis(332));
+    assert!(state.windows.transaction(&b).is_none());
+    assert_eq!(state.windows.geometry(&a).unwrap().visual.current, after[0]);
+    state.advance_animations_at(Duration::from_millis(16), Duration::from_millis(348));
+    assert_ne!(state.windows.geometry(&a).unwrap().visual.current, after[0]);
+
+    // Removing the serial owner retires its wait, and switching layouts never
+    // carries a tree cohort into the new scrolling coordinate system.
+    resize(&mut state, a);
+    request(&mut clients[0].1, 2, 1, &[0, 0, 0], None);
+    request(&mut clients[0].1, 2, 6, &[], None);
+    dispatch(&mut events, &mut state);
+    assert!(!state.presentation_dependencies.reflow_blocked(c, &state.windows));
+    state
+        .workspaces
+        .set_active_layout_mode(ferese_core::LayoutMode::Scrolling, Rect::new(0.0, 0.0, 800.0, 600.0))
+        .unwrap();
+    state.relayout();
+    for id in [c, d] {
+        state.windows.clear_transaction(&id);
+    }
+    state.release_presentation_dependencies();
+    for id in [c, d] {
+        assert!(!state.presentation_dependencies.reflow_blocked(id, &state.windows));
+    }
+}
+
+#[test]
 fn width_cycle_keeps_stacked_rows_together_through_holds_forecasts_and_reversal() {
     if !crate::startup_tests::private_runtime(
         "state::window_lifecycle_tests::width_cycle_keeps_stacked_rows_together_through_holds_forecasts_and_reversal",

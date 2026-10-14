@@ -74,6 +74,13 @@ filter by connector type. A layout that would disable the final usable display
 falls back to a working display. Profiles that explicitly disable all their
 listed outputs are invalid.
 
+`required` controls whether a profile matches when a monitor is absent. Every
+connected monitor enabled by the resolved policy, including optional monitors
+and mirror targets, needs its own compatible CRTC assignment. Ferese rejects an
+incomplete assignment before applying the configuration. A complete assignment
+still needs to pass driver validation; connector compatibility alone does not
+establish that the hardware accepts the modes and planes.
+
 Monitor identities use EDID manufacturer, product/model and serial, rather than
 a hash of the entire EDID. Without a usable serial, the identity includes the
 GPU's sysfs hardware path and connector. For duplicate serials, Ferese adds the

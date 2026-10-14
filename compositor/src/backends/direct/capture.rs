@@ -3,11 +3,50 @@ use smithay::backend::renderer::element::RenderElement;
 use smithay::backend::renderer::gles::{GlesError, GlesRenderer, GlesTarget, GlesTexture};
 use smithay::backend::renderer::{Bind, Offscreen, Texture};
 use smithay::output::Output;
+use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 use std::fmt::Display;
+use std::time::{Duration, Instant};
 
 use crate::Ferese;
 use crate::render::{capture_output_elements, redraw_output};
 use crate::state::FrameScene;
+
+const CACHE_IDLE: Duration = Duration::from_secs(2);
+
+pub(crate) fn touch_cache(state: &mut Ferese) {
+    if state.capture_last_used.replace(Instant::now()).is_some() {
+        return;
+    }
+    if let Err(error) = state
+        .loop_handle
+        .insert_source(Timer::from_duration(CACHE_IDLE), |_, _, state| {
+            let Some(last_used) = state.capture_last_used else {
+                return TimeoutAction::Drop;
+            };
+            let idle = last_used.elapsed();
+            if idle < CACHE_IDLE {
+                return TimeoutAction::ToDuration(CACHE_IDLE - idle);
+            }
+            // A stream can pause or fail without another repaint. Release its
+            // offscreen targets and filtered-scene caches from the event loop.
+            state.capture_last_used = None;
+            state.capture_render = Default::default();
+            state.nested_capture_texture = None;
+            if let Some(backend) = state.direct_backend.as_mut() {
+                for device in backend.devices.values_mut() {
+                    for output in device.outputs.values_mut() {
+                        output.capture_texture = None;
+                        output.mirror_capture_texture = None;
+                    }
+                }
+            }
+            TimeoutAction::Drop
+        })
+    {
+        state.capture_last_used = None;
+        tracing::warn!(%error, "could not schedule capture cache cleanup");
+    }
+}
 
 pub(crate) fn capture_output(
     state: &mut Ferese,

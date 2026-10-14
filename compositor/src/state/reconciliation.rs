@@ -178,6 +178,7 @@ impl Ferese {
         if changes.focus || self.session_lock.active() {
             self.restore_keyboard_focus();
         }
+        self.reconcile_layer_keyboard_focus();
         self.refresh_lock_outputs();
         self.refresh_idle_inhibition();
         let batch = self.desktop_transition.take().unwrap();
