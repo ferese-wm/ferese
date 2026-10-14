@@ -39,7 +39,33 @@ const MAX_VIEWPORT_STEPS: usize = 32;
 fn tree_reflow_groups(
     motions: impl IntoIterator<Item = (WindowId, Rect, Rect, ferese_animation::RectVelocity)>,
     inner_gap: f64,
+    allow_overshoot: bool,
 ) -> HashMap<WindowId, usize> {
+    let motions = motions
+        .into_iter()
+        .filter(|(_, source, target, velocity)| {
+            source != target
+                || [velocity.x, velocity.y, velocity.width, velocity.height]
+                    .into_iter()
+                    .any(|speed| speed != 0.0)
+        })
+        .collect::<Vec<_>>();
+    // Endpoint bounds cannot contain an overshooting spring or a retargeted
+    // component still moving away from its destination. Keep the moving tiles
+    // together until their trajectories can be bounded by their endpoints.
+    let reversing = motions.iter().any(|(_, source, target, velocity)| {
+        [
+            (target.x - source.x, velocity.x),
+            (target.y - source.y, velocity.y),
+            (target.width - source.width, velocity.width),
+            (target.height - source.height, velocity.height),
+        ]
+        .into_iter()
+        .any(|(distance, speed)| speed != 0.0 && distance * speed <= 0.0)
+    });
+    if allow_overshoot || reversing {
+        return motions.into_iter().map(|(id, ..)| (id, 0)).collect();
+    }
     let margin = inner_gap.max(0.0) / 2.0;
     let moving = motions
         .into_iter()
@@ -363,7 +389,14 @@ impl Ferese {
                         geometry.visual.velocity,
                     ))
                 });
-                Some((workspace.id, tree_reflow_groups(motions, self.gap_config.inner)))
+                Some((
+                    workspace.id,
+                    tree_reflow_groups(
+                        motions,
+                        self.gap_config.inner,
+                        self.spring_config.crossing == ferese_animation::CrossingPolicy::AllowOvershoot,
+                    ),
+                ))
             })
             .collect::<HashMap<_, _>>();
         for (&id, _) in self.windows.records() {
@@ -473,6 +506,7 @@ mod tests {
                 .into_iter()
                 .map(|(id, source, target)| (id, source, target, Default::default())),
             inner_gap,
+            false,
         )
     }
 
@@ -496,6 +530,7 @@ mod tests {
                 (WindowId(2), neighbor, moving_neighbor, Default::default()),
             ],
             0.0,
+            false,
         );
         assert_eq!(groups[&WindowId(1)], groups[&WindowId(2)]);
         let groups = tree_reflow_groups(
