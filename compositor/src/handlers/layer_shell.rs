@@ -15,18 +15,32 @@ impl WlrLayerShellHandler for Ferese {
     }
 
     fn new_layer_surface(&mut self, surface: LayerSurface, output: Option<WlOutput>, _layer: Layer, namespace: String) {
-        let output = output
-            .as_ref()
-            .and_then(Output::from_resource)
-            .or_else(|| self.space.outputs().next().cloned());
+        // A wl_output resource can outlive its registered desktop output.
+        // Explicit requests retain their identity; only unspecified requests
+        // may use the focused/default output policy.
+        let usable = |output: &Output| {
+            self.output_id(output).is_some()
+                && output.current_mode().is_some()
+                && self.space.outputs().any(|candidate| candidate == output)
+        };
+        let output = match output {
+            Some(resource) => Output::from_resource(&resource).filter(usable),
+            None => self
+                .focused_output()
+                .filter(|output| usable(output))
+                .cloned()
+                .or_else(|| self.space.outputs().find(|output| usable(output)).cloned()),
+        };
         let Some(output) = output else {
             tracing::warn!(%namespace, "layer surface has no available output");
+            surface.send_close();
             return;
         };
         let layer = DesktopLayerSurface::new(surface, namespace.clone());
 
         if let Err(error) = layer_map_for_output(&output).map_layer(&layer) {
             tracing::warn!(%namespace, %error, "failed to map layer surface");
+            layer.layer_surface().send_close();
             return;
         }
 
@@ -311,3 +325,6 @@ mod tests {
         assert_ne!(original, LayoutState::from_policy(policy, Rectangle::default()));
     }
 }
+
+#[cfg(test)]
+mod output_tests;
