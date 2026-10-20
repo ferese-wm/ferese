@@ -233,6 +233,8 @@ enum Message {
     MediaTick,
     ActivitiesUpdated(std::sync::Arc<ferese_ipc::activities::Snapshot>),
     ActivityTick,
+    Pomodoro(ferese_ipc::activities::PomodoroAction, Option<ferese_activities::Id>),
+    PomodoroResult(Result<(), String>),
     ActivityHover(window::Id, bool),
     ActivityActivate(window::Id, ferese_activities::Id),
     ActivityNavigation(
@@ -494,6 +496,27 @@ impl cosmic::Application for FereseShell {
                 self.sync_hub_activity()
             }
             Message::ActivityTick => self.sync_hub_activity(),
+            Message::Pomodoro(action, session) => cosmic::task::future(async move {
+                let result = tokio::task::spawn_blocking(move || {
+                    let args = serde_json::to_value(ferese_ipc::activities::PomodoroRequest {
+                        version: ferese_ipc::activities::VERSION,
+                        action,
+                        session,
+                    })
+                    .map_err(|error| error.to_string())?;
+                    crate::compositor_ipc::request("pomodoro", args).map(|_| ())
+                })
+                .await
+                .unwrap_or_else(|error| Err(error.to_string()));
+                cosmic::Action::App(Message::PomodoroResult(result))
+            }),
+            Message::PomodoroResult(result) => {
+                if let Err(error) = result {
+                    self.notifications
+                        .service_error("Pomodoro could not be changed", &error);
+                }
+                Task::none()
+            }
             Message::ActivityHover(id, entered) => {
                 self.activity_hover(id, entered);
                 self.sync_hub_activity()

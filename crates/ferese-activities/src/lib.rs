@@ -1,5 +1,7 @@
 //! Typed activity data and deterministic policy. The host supplies verified owners
 //! and suspend-aware milliseconds; this crate performs no I/O or rendering.
+pub mod pomodoro;
+
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
@@ -32,6 +34,7 @@ pub enum Value {
     Progress(f32),
     Text(String),
     Countdown { remaining_ms: u64, sampled_at: Time },
+    PausedCountdown { remaining_ms: u64 },
 }
 
 impl Value {
@@ -41,6 +44,7 @@ impl Value {
                 remaining_ms,
                 sampled_at,
             } => Some(remaining_ms.saturating_sub(now.saturating_sub(*sampled_at))),
+            Self::PausedCountdown { remaining_ms } => Some(*remaining_ms),
             _ => None,
         }
     }
@@ -109,6 +113,9 @@ impl Data {
                 return Err("progress must be finite and between zero and one");
             }
             Value::Text(value) => text(value)?,
+            Value::PausedCountdown { remaining_ms } if *remaining_ms > 7 * 24 * 60 * 60 * 1_000 => {
+                return Err("countdown exceeds seven days");
+            }
             Value::Countdown {
                 remaining_ms,
                 sampled_at,
@@ -121,10 +128,10 @@ impl Data {
             _ => {}
         }
         match &self.template {
-            Template::Timer if !matches!(self.value, Value::Countdown { .. }) => {
+            Template::Timer if !matches!(self.value, Value::Countdown { .. } | Value::PausedCountdown { .. }) => {
                 return Err("timer requires a countdown");
             }
-            Template::Progress if matches!(self.value, Value::Countdown { .. }) => {
+            Template::Progress if matches!(self.value, Value::Countdown { .. } | Value::PausedCountdown { .. }) => {
                 return Err("countdown requires timer template");
             }
             Template::Media { artist, .. } => {
@@ -240,6 +247,10 @@ impl Store {
             generation: 0,
             entries: BTreeMap::new(),
         }
+    }
+
+    pub fn session(&self) -> u64 {
+        self.session
     }
 
     pub fn entries(&self) -> impl Iterator<Item = &Activity> {

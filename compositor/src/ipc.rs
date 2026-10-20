@@ -232,6 +232,33 @@ pub(crate) fn init(
                     Err(error) => Response::error(call.request.id, "activity_rejected", error),
                 };
                 let _ = call.response.try_send(response);
+            } else if call.request.command == "pomodoro" {
+                let result = validate_request(&call.request)
+                    .map_err(|error| error.message)
+                    .and_then(|()| {
+                        if state.session_lock.active() {
+                            return Err("Session locked".into());
+                        }
+                        let request: ferese_ipc::activities::PomodoroRequest =
+                            serde_json::from_value(call.request.args).map_err(|error| error.to_string())?;
+                        let output = state
+                            .outputs_json()
+                            .as_array()
+                            .and_then(|outputs| {
+                                outputs
+                                    .iter()
+                                    .find(|output| output["focused"] == true)
+                                    .or_else(|| outputs.first())
+                            })
+                            .and_then(|output| output["name"].as_str())
+                            .map(str::to_owned);
+                        state.activities.pomodoro_control(request, output)
+                    });
+                let response = match result {
+                    Ok(value) => Response::success(call.request.id, value),
+                    Err(error) => Response::error(call.request.id, "pomodoro_rejected", error),
+                };
+                let _ = call.response.try_send(response);
             } else if call.request.command == "activity-get" {
                 if state.session_lock.active() {
                     let _ = call.response.try_send(Response::error(
@@ -415,7 +442,7 @@ pub(crate) fn init(
     })?;
     let worker = Worker::spawn(encoded);
 
-    let activity_timer = DeadlineTimer::new(event_loop.handle(), |state: &mut Ferese, _| state.activities.tick());
+    let activity_timer = crate::activities::deadline::Deadline::new(event_loop.handle())?;
     let (rules_send, rules_receive) = sync_channel(1);
     let monitor = activity_owner::Monitor::new(sender.clone());
     let state_monitor = monitor.clone();

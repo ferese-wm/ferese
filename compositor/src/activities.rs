@@ -1,5 +1,7 @@
 //! Session broker: verified process identities, one-shot policy deadlines and
 //! bounded long-poll subscribers. Process inspection runs on IPC workers.
+pub(crate) mod deadline;
+mod pomodoro;
 mod publication;
 use ferese_activities::{Data, Id, Owner, Source, State, Store, Template, Value};
 use ferese_ipc::{
@@ -10,7 +12,7 @@ use serde_json::json;
 use std::collections::BTreeMap;
 use std::sync::mpsc::SyncSender;
 use std::sync::{Arc, RwLock};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 #[derive(Clone, Debug)]
 pub(crate) struct Rules {
@@ -21,12 +23,15 @@ pub(crate) type SharedRules = Arc<RwLock<Arc<Rules>>>;
 
 pub(crate) struct Engine {
     pub store: Store,
+    pomodoro: Option<pomodoro::Timer>,
+    pomodoro_settings: ferese_activities::pomodoro::Settings,
+    alerts: Option<pomodoro::Alerts>,
     pub rules: SharedRules,
     pub monitor: Option<crate::ipc::activity_owner::Monitor>,
     process_enabled: bool,
     process_sender: Option<smithay::reexports::calloop::channel::SyncSender<crate::ipc::IpcEvent>>,
     process_watcher: Option<crate::activities_process::Watcher>,
-    pub timer: Option<crate::ipc::DeadlineTimer<crate::Ferese>>,
+    pub timer: Option<deadline::Deadline>,
     revision: u64,
     cached_snapshot: Option<Arc<Snapshot>>,
     publisher: Option<publication::Publisher>,
@@ -40,6 +45,9 @@ impl Default for Engine {
     fn default() -> Self {
         let settings = ferese_config::activities::Settings::default();
         Self {
+            pomodoro: None,
+            pomodoro_settings: Default::default(),
+            alerts: None,
             store: Store::new(ferese_ipc::activities::now_ms() ^ u64::from(std::process::id()) << 32),
             rules: Arc::new(RwLock::new(Arc::new(Rules {
                 enabled: false,
@@ -109,6 +117,7 @@ impl Engine {
         matcher: ferese_config::activities::Matcher,
     ) {
         self.store.limits = settings.limits();
+        self.pomodoro_settings = settings.pomodoro.clone();
         self.process_enabled = settings.sources.process_watch;
         *self.rules.write().expect("activity rules") = Arc::new(Rules {
             enabled: settings.sources.shell_hook,
@@ -145,7 +154,16 @@ impl Engine {
             revision: self.revision,
             now_ms: ferese_ipc::activities::now_ms(),
             limits: self.store.limits,
-            activities: self.store.entries().cloned().collect(),
+            activities: self
+                .store
+                .entries()
+                .cloned()
+                .chain(self.pomodoro.iter().map(|timer| timer.activity()))
+                .collect(),
+            pomodoro: self.pomodoro.as_ref().map(|timer| ferese_ipc::activities::Pomodoro {
+                id: timer.id.clone(),
+                timer: timer.session.clone(),
+            }),
             windows: self
                 .windows
                 .iter()
@@ -218,7 +236,9 @@ impl Engine {
         self.schedule();
     }
     pub fn tick(&mut self) {
-        self.store.advance(ferese_ipc::activities::now_ms());
+        let now = ferese_ipc::activities::now_ms();
+        self.store.advance(now);
+        self.advance_pomodoro(now);
         self.changed();
     }
     pub fn schedule(&self) {
@@ -234,11 +254,15 @@ impl Engine {
         }
         if let Some(timer) = &self.timer {
             let now = ferese_ipc::activities::now_ms();
-            timer.update(
+            if let Err(error) = timer.update(
                 self.store
                     .next_deadline(now)
-                    .map(|deadline| Instant::now() + Duration::from_millis(deadline.saturating_sub(now))),
-            );
+                    .into_iter()
+                    .chain(self.pomodoro.as_ref().and_then(|timer| timer.session.deadline))
+                    .min(),
+            ) {
+                tracing::error!(%error, "Activity deadline could not be armed");
+            }
         }
     }
     pub fn publish_verified(

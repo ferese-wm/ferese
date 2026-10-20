@@ -87,6 +87,7 @@ pub struct Snapshot {
     pub activities: Vec<Activity>,
     #[serde(default)]
     pub windows: Vec<ActivityWindow>,
+    pub pomodoro: Option<Pomodoro>,
 }
 impl Default for Snapshot {
     fn default() -> Self {
@@ -97,6 +98,34 @@ impl Default for Snapshot {
             limits: Limits::default(),
             activities: vec![],
             windows: vec![],
+            pomodoro: None,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PomodoroAction {
+    Start,
+    Pause,
+    Resume,
+    Next,
+    Stop,
+    Reset,
+    Status,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PomodoroRequest {
+    pub version: u32,
+    pub action: PomodoroAction,
+    /// Popup controls carry the displayed generation, so a delayed click cannot
+    /// affect a replacement session. CLI commands may address the current one.
+    pub session: Option<Id>,
+}
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct Pomodoro {
+    pub id: Id,
+    pub timer: ferese_activities::pomodoro::Session,
 }

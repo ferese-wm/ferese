@@ -168,7 +168,7 @@ impl Ferese {
         self.desktop_transition.as_mut().unwrap().publishing = true;
         let activity_output = self.space.outputs().next().map(|output| output.name());
         if let Some(output) = activity_output
-            && self.activities.store.attach_output(&output)
+            && (self.activities.store.attach_output(&output) | self.activities.pomodoro_attach_output(&output))
         {
             self.activities.changed();
         }

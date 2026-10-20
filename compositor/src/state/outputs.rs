@@ -103,6 +103,8 @@ impl Ferese {
             .find(|candidate| *candidate != output)
             .map(|output| output.name());
         self.activities.store.remove_output(&output.name(), fallback.as_deref());
+        self.activities
+            .pomodoro_remove_output(&output.name(), fallback.as_deref());
         self.activities.changed();
         self.display_presentation.remove_output(output);
         self.output_redraw_pending.retain(|pending| pending != output);

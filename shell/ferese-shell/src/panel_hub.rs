@@ -1497,6 +1497,126 @@ mod tests {
         });
     }
     #[test]
+    fn pomodoro_controls_fit_and_tab_enter_targets_the_current_session() {
+        use cosmic::iced::advanced::{renderer::Headless, widget::operation};
+        use cosmic::iced::keyboard::{Event as KeyEvent, Key, Location, Modifiers, key};
+        use ferese_activities::pomodoro::{Session, Status};
+        use ferese_ipc::activities::PomodoroAction;
+        #[derive(Default)]
+        struct TextBounds(Vec<(String, Rectangle)>);
+        impl widget::Operation for TextBounds {
+            fn traverse(&mut self, visit: &mut dyn FnMut(&mut dyn widget::Operation)) {
+                visit(self);
+            }
+            fn text(&mut self, _: Option<&widget::Id>, bounds: Rectangle, text: &str) {
+                self.0.push((text.into(), bounds));
+            }
+        }
+        let renderer = cosmic::iced::futures::executor::block_on(cosmic::Renderer::new(
+            cosmic::iced::Font::default(),
+            cosmic::iced::Pixels(14.),
+            Some("tiny-skia"),
+        ))
+        .unwrap();
+        for status in [
+            None,
+            Some(Status::Running),
+            Some(Status::Paused),
+            Some(Status::Ready),
+            Some(Status::Finished),
+        ] {
+            let mut app = shell();
+            let bar = app.outputs[0].bar;
+            seed_activities(&mut app, 1);
+            let id = app.activities.snapshot.activities[0].id.clone();
+            if let Some(status) = status {
+                let mut timer = Session::start(Default::default(), ferese_ipc::activities::now_ms()).unwrap();
+                timer.status = status;
+                if status != Status::Running {
+                    timer.deadline = None;
+                }
+                std::sync::Arc::make_mut(&mut app.activities.snapshot).pomodoro =
+                    Some(ferese_ipc::activities::Pomodoro { id: id.clone(), timer });
+            }
+            for width in [260., 312.] {
+                let mut view = app.activity_list(bar, 1.);
+                let mut tree = widget::Tree::new(&view);
+                let node = view.as_widget_mut().layout(
+                    &mut tree,
+                    &renderer,
+                    &layout::Limits::new(Size::ZERO, Size::new(width, 600.)),
+                );
+                let mut labels = TextBounds::default();
+                view.as_widget_mut()
+                    .operate(&mut tree, Layout::new(&node), &renderer, &mut labels);
+                for (text, bounds) in &labels.0 {
+                    assert!(
+                        bounds.x >= 0. && bounds.x + bounds.width <= width + 0.5,
+                        "{status:?} {width} {text}: {bounds:?}"
+                    );
+                }
+                let mut tab: Box<dyn widget::Operation> = Box::new(operation::focusable::focus_next());
+                loop {
+                    view.as_widget_mut()
+                        .operate(&mut tree, Layout::new(&node), &renderer, &mut tab);
+                    match tab.finish() {
+                        operation::Outcome::Chain(next) => tab = next,
+                        _ => break,
+                    }
+                }
+                let event = Event::Keyboard(KeyEvent::KeyPressed {
+                    key: Key::Named(key::Named::Enter),
+                    modified_key: Key::Named(key::Named::Enter),
+                    physical_key: key::Physical::Code(key::Code::Enter),
+                    location: Location::Standard,
+                    modifiers: Modifiers::empty(),
+                    text: None,
+                    repeat: false,
+                });
+                let mut messages = Vec::new();
+                view.as_widget_mut().update(
+                    &mut tree,
+                    &event,
+                    Layout::new(&node),
+                    mouse::Cursor::Unavailable,
+                    &renderer,
+                    &mut clipboard::Null,
+                    &mut Shell::new(&mut messages),
+                    &Rectangle::with_size(Size::new(width, 600.)),
+                );
+                let expected = match status {
+                    Some(Status::Running) => PomodoroAction::Pause,
+                    Some(Status::Paused | Status::Ready) => PomodoroAction::Resume,
+                    _ => PomodoroAction::Start,
+                };
+                assert!(messages.iter().any(|message|matches!(message,cosmic::Action::App(Message::Pomodoro(action,session)) if *action==expected && *session==status.map(|_|id.clone()))),"{status:?}: {messages:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn paused_pomodoro_never_requests_countdown_frames() {
+        let mut app = shell();
+        let bar = app.outputs[0].bar;
+        seed_activities(&mut app, 1);
+        let now = ferese_ipc::activities::now_ms();
+        let entry = &mut std::sync::Arc::make_mut(&mut app.activities.snapshot).activities[0];
+        entry.data.template = ferese_activities::Template::Timer;
+        entry.data.value = ferese_activities::Value::Countdown {
+            remaining_ms: 50_000,
+            sampled_at: now,
+        };
+        drop(app.sync_hub_activity());
+        assert!(app.activity_tick_subscription().units() > 0);
+        std::sync::Arc::make_mut(&mut app.activities.snapshot).activities[0]
+            .data
+            .value = ferese_activities::Value::PausedCountdown { remaining_ms: 50_000 };
+        drop(app.sync_hub_activity());
+        assert_eq!(app.activity_tick_subscription().units(), 0);
+        assert!(app.activity_available(bar));
+    }
+
+    #[test]
     fn activity_target_must_still_exist_and_activities_has_no_duplicate_shortcut() {
         let mut app = shell();
         let bar = app.outputs[0].bar;

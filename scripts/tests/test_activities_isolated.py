@@ -107,6 +107,35 @@ class Activities(unittest.TestCase):
             shutil.copyfile(cls.root / "native.log", Path(destination) / "activities-native.log")
         cls.temporary.cleanup()
 
+    def test_pomodoro_survives_cli_disconnect_and_controls_preserve_time(self):
+        self.call("pomodoro", "stop")
+        try:
+            first = self.query("pomodoro", "start")
+            self.assertIsNotNone(first)
+            self.assertNotEqual(first["id"]["owner"]["pid"], os.getpid())
+            self.assertEqual(first["timer"]["phase"], "work")
+            self.assertNotEqual(self.call("pomodoro", "start", check=False).returncode, 0)
+            paused = self.query("pomodoro", "pause")
+            remaining = paused["timer"]["remaining_ms"]
+            time.sleep(.15)
+            self.assertEqual(self.query("pomodoro", "status")["timer"]["remaining_ms"], remaining)
+            entries = self.query("activity", "list")["activities"]
+            timer = next(entry for entry in entries if entry["id"] == first["id"])
+            self.assertEqual(timer["data"]["value"]["kind"], "paused-countdown")
+            self.assertIn("Paused", timer["data"]["title"])
+            resumed = self.query("pomodoro", "resume")
+            self.assertEqual(resumed["id"], first["id"])
+            self.assertEqual(resumed["timer"]["remaining_ms"], remaining)
+            skipped = self.query("pomodoro", "next")
+            self.assertEqual(skipped["timer"]["phase"], "short-break")
+            self.assertEqual(skipped["timer"]["completed_work"], 0)
+            reset = self.query("pomodoro", "reset")
+            self.assertNotEqual(reset["id"], first["id"])
+            self.assertTrue(all(child.poll() is None for child in self.children))
+        finally:
+            self.call("pomodoro", "stop")
+        self.assertIsNone(self.query("pomodoro", "status"))
+
     def test_live_watch_and_native_bar_render_progress_without_resizing(self):
         def bar():
             trace = (self.root / "native.log").read_text()

@@ -2,6 +2,7 @@ mod activities;
 mod autostart;
 mod cli;
 mod output;
+mod pomodoro;
 
 use std::error::Error;
 use std::io::Write;
@@ -55,6 +56,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     match &cli.command {
         Command::Theme { action } => theme_command(action, &socket, cli.json),
         Command::Activity { action } => activities::command(action, &socket, cli.json),
+        Command::Pomodoro { action } => pomodoro::command(action, &socket, cli.json),
         Command::EventStream => event_stream(&socket),
         command => {
             let (command, args) = command.ipc().expect("IPC command");

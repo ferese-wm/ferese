@@ -37,6 +37,7 @@ pub struct Settings {
     pub start_delay_ms: u64,
     pub result_flash_ms: u64,
     pub sources: Sources,
+    pub pomodoro: ferese_activities::pomodoro::Settings,
     pub rules: Vec<Rule>,
 }
 impl Default for Settings {
@@ -49,6 +50,7 @@ impl Default for Settings {
             start_delay_ms: 300,
             result_flash_ms: 1_500,
             sources: Sources::default(),
+            pomodoro: Default::default(),
             rules: builtins(),
         }
     }
@@ -181,6 +183,7 @@ impl Settings {
         }
     }
     pub fn validate(&self) -> Result<(), String> {
+        self.pomodoro.validate().map_err(str::to_owned)?;
         if !(1..=2).contains(&self.max_visible)
             || !(1..=128).contains(&self.max_total)
             || self.start_delay_ms > 60_000
@@ -282,6 +285,7 @@ pub(crate) fn parse(node: &KdlNode) -> Result<Value, Error> {
                     | "start-delay-ms"
                     | "result-flash-ms"
                     | "sources"
+                    | "pomodoro"
             ) {
                 return Err(diagnostic(child, "unknown activity node"));
             }
@@ -351,6 +355,27 @@ fn builtins() -> Vec<Rule> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn pomodoro_settings_are_strict_and_validate_duration_ranges() {
+        let doc=crate::Document::parse("activities { pomodoro { work-minutes 40; short-break-minutes 7; long-break-minutes 20; intervals 3; auto-advance #true; notifications #false; }; }").unwrap();
+        let settings: Settings = serde_json::from_value(doc.value()["activities"].clone()).unwrap();
+        assert_eq!(settings.pomodoro.work_minutes, 40);
+        assert_eq!(settings.pomodoro.intervals, 3);
+        assert!(settings.pomodoro.auto_advance);
+        assert!(!settings.pomodoro.notifications);
+        for invalid in [
+            "work-minutes 0",
+            "short-break-minutes 61",
+            "long-break-minutes 121",
+            "intervals 13",
+            "work-minuts 20",
+        ] {
+            assert!(
+                crate::Document::parse(&format!("activities {{ pomodoro {{ {invalid}; }}; }}")).is_err(),
+                "{invalid}"
+            );
+        }
+    }
     #[test]
     fn settings_are_opt_in_and_matching_discards_nonmatches() {
         let settings = Settings::default();

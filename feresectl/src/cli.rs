@@ -24,6 +24,11 @@ pub enum Command {
         #[command(subcommand)]
         action: LauncherAction,
     },
+    /// Control the session’s work and break timer.
+    Pomodoro {
+        #[command(subcommand)]
+        action: crate::pomodoro::Action,
+    },
     /// Publish bounded activity data owned by the invoking shell.
     Activity {
         #[command(subcommand)]
@@ -248,7 +253,7 @@ pub enum LauncherAction {
 impl Command {
     pub fn ipc(&self) -> Option<(&'static str, Value)> {
         let (command, args) = match self {
-            Self::Activity { .. } | Self::Run { .. } => return None,
+            Self::Pomodoro { .. } | Self::Activity { .. } | Self::Run { .. } => return None,
             Self::Launcher {
                 action: LauncherAction::Toggle,
             } => ("toggle-launcher", json!({})),

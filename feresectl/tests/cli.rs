@@ -485,3 +485,26 @@ fn launcher_toggle_uses_the_shell_command() {
     );
     server.join().unwrap();
 }
+
+#[test]
+fn pomodoro_commands_use_the_versioned_session_api() {
+    for action in ["start", "pause", "resume", "next", "stop", "reset", "status"] {
+        let directory = tempfile::tempdir().unwrap();
+        let socket = directory.path().join("control.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let worker = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let request: Request = read_frame(&mut stream).unwrap();
+            assert_eq!(request.command, "pomodoro");
+            assert_eq!(request.args, json!({"version":1,"action":action,"session":null}));
+            write_frame(&mut stream, &Response::success(request.id, json!({"phase":"work"}))).unwrap();
+        });
+        success(
+            ctl(&["--socket", socket.to_str().unwrap(), "pomodoro", action])
+                .output()
+                .unwrap(),
+        );
+        worker.join().unwrap();
+    }
+    success(ctl(&["pomodoro", "--help"]).output().unwrap());
+}
