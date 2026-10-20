@@ -540,6 +540,13 @@ mod tests {
     /// A truncated ancillary buffer must be rejected and its delivered descriptors closed.
     #[test]
     fn truncated_control_messages_still_close_the_descriptors_they_delivered() {
+        // Descriptor counts cover the whole process; isolate them from other
+        // tests opening display sockets and process-monitor descriptors.
+        if !crate::startup_tests::private_runtime(
+            "xwayland::readiness::tests::truncated_control_messages_still_close_the_descriptors_they_delivered",
+        ) {
+            return;
+        }
         let runtime = private_runtime_dir("ctrunc");
         let socket = ReadinessSocket::create(&runtime, 24).unwrap();
         let path = socket.path().to_owned();
@@ -573,6 +580,13 @@ mod tests {
     /// A flood of malformed datagrams must leak nothing and leave the socket usable.
     #[test]
     fn a_storm_of_malformed_datagrams_leaks_nothing_and_leaves_the_socket_usable() {
+        // Descriptor counts cover the whole process; isolate them from other
+        // tests opening display sockets and process-monitor descriptors.
+        if !crate::startup_tests::private_runtime(
+            "xwayland::readiness::tests::a_storm_of_malformed_datagrams_leaks_nothing_and_leaves_the_socket_usable",
+        ) {
+            return;
+        }
         let runtime = private_runtime_dir("storm");
         let socket = ReadinessSocket::create(&runtime, 25).unwrap();
         let path = socket.path().to_owned();
