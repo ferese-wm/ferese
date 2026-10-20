@@ -50,6 +50,7 @@ jobs:
       - name: Test installer, session recovery and private portal contracts
         env:
           FERESE_TEST_PORTAL_INTERFACES: ${{ github.workspace }}/build/portal-contracts/data
+          FERESE_TEST_PORTAL_BACKGROUND: "1"
         run: python3 -m unittest discover -s scripts/tests -v
       - name: Test capture privacy, resize dependencies and cursor composition
         env:

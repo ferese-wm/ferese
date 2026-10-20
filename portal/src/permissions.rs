@@ -149,6 +149,17 @@ impl Background {
                 }
             }
             .await;
+            // An interrupted generation is no longer authoritative. Clear it
+            // before waiting to reconnect, and signal only an actual change.
+            let had_apps = {
+                let mut states = self.states.write().await;
+                let had_apps = !states.is_empty();
+                states.clear();
+                had_apps
+            };
+            if had_apps {
+                let _ = Self::running_applications_changed(&emitter).await;
+            }
             if let Err(error) = result {
                 eprintln!("ferese portal: background event stream: {error}");
             }
