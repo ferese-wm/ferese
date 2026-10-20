@@ -178,3 +178,24 @@ When there are no subscribers, event publication does not build desktop
 snapshots. With subscribers, it compares logical domain snapshots after each
 dispatch. Ordinary damage, cursor movement, and redraw code do not publish events
 directly.
+
+### Pomodoro controls
+
+The `pomodoro` command uses the activity schema version:
+
+```json
+{"version":1,"type":"command","id":1,"command":"pomodoro","args":{"version":1,"action":"start","session":null}}
+```
+
+Actions are `start`, `pause`, `resume`, `next`, `stop`, `reset` and `status`.
+The result is the current `{id, timer}` record, or `null` when no session exists.
+Activity snapshots include this record in `pomodoro` and its Timer presentation
+in `activities`. Running timers carry a host-authoritative BOOTTIME `deadline`;
+paused timers carry their exact `remaining_ms` and no deadline. The
+`paused-countdown` activity value preserves that duration without ticking.
+
+Popup controls send the displayed activity ID in `session`. The host rejects
+it if a reset or restart replaced that session, so a delayed action can't stop
+a new timer. CLI commands use `null` to address the current session. These
+commands use the same authenticated, same-user socket as other activity calls
+and are unavailable while the desktop is locked.

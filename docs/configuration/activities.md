@@ -150,3 +150,43 @@ and never logged.
 Configuration is validated before application; an invalid reload preserves the
 last valid configuration. Diagnostics include source offsets for activity
 configuration errors.
+
+## Pomodoro
+
+Pomodoro uses the Activities item and works without shell hooks. Add these
+settings inside your existing `activities` block to change the defaults:
+
+```kdl
+activities {
+    pomodoro {
+        work-minutes 25
+        short-break-minutes 5
+        long-break-minutes 15
+        intervals 4
+        auto-advance #false
+        notifications #true
+    }
+}
+```
+
+`work-minutes` accepts 1–180, `short-break-minutes` accepts 1–60 and
+`long-break-minutes` accepts 1–120. `intervals` accepts 1–12 work intervals
+per session. The session ends after its long break; start another when you
+want to continue. These settings apply when you start or reset a session,
+so reloading configuration doesn't change an interval already in progress.
+
+With `auto-advance #false`, a completed interval leaves the next phase ready
+until you start it. Enabling it starts the next phase automatically. A running
+interval includes time spent asleep, but a paused interval does not. If an
+interval expires during suspend, Ferese completes that interval on wake and
+starts any automatic next phase then; it doesn't count more work while the
+machine is asleep.
+
+Completion notifications identify the phase that ended and the next phase.
+They are silent and use the normal notification service, including Do Not
+Disturb and lock-screen privacy. Set `notifications #false` to turn them off.
+Stopping, resetting or skipping an interval doesn't send a completion alert.
+
+The compositor owns the timer, so closing a terminal or restarting the shell
+won't stop it. Restarting the compositor ends the session without restoring its
+timer or replaying completion notifications.

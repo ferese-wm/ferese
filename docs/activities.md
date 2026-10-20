@@ -247,3 +247,39 @@ See [Ownership and lifecycle](development/activities.md#publisher-ownership-and-
 ## Extensions and templates
 
 See [Templates and the IPC schema](development/activities.md#extensions-and-templates).
+
+## Pomodoro
+
+Start a work session with:
+
+```sh
+feresectl pomodoro start
+```
+
+The default session has four 25-minute work intervals, with 5-minute short
+breaks and a 15-minute long break after the fourth work interval. It finishes
+at the end of the long break. Each completed interval sends a silent
+notification, and the next phase waits for you to start it unless you've
+enabled automatic advancement in [Pomodoro settings](configuration/activities.md#pomodoro).
+
+Open the activity list to pause, resume, skip, reset or stop the timer. In Morph,
+the controls are in the Activities tab; other panel styles use the Activities
+popup. You can reach the buttons with Tab and activate them with Enter.
+The paused timer stays visible with its remaining time frozen.
+
+The same controls are available from a terminal or a configured keybinding:
+
+```sh
+feresectl pomodoro pause
+feresectl pomodoro resume
+feresectl pomodoro next
+feresectl pomodoro status
+feresectl pomodoro reset
+feresectl pomodoro stop
+```
+
+`next` skips a running or paused interval without counting it as completed work.
+When the next phase is already ready, `next` starts it. `reset` cancels the
+session and starts again with your current settings, while `stop` removes it.
+Only one session can run at a time, and it survives closing the terminal that
+started it. See the settings reference for suspend and restart behavior.
