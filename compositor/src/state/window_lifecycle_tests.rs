@@ -1334,3 +1334,70 @@ fn shell_can_move_a_window_to_the_current_workspace_on_another_output() {
     assert_eq!(state.workspaces.workspace_for_window(id), Some(destination));
     assert!(state.move_managed_window_to_workspace(id, destination));
 }
+
+fn change_transient_parent(state: &mut Ferese, child: &Window, parent: Option<&Window>) {
+    use smithay::wayland::{
+        compositor::with_states,
+        shell::xdg::{XdgShellHandler, XdgToplevelSurfaceData},
+    };
+    let toplevel = child.toplevel().unwrap();
+    with_states(toplevel.wl_surface(), |states| {
+        states
+            .data_map
+            .get::<XdgToplevelSurfaceData>()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .parent = parent.map(|parent| parent.toplevel().unwrap().wl_surface().clone());
+    });
+    state.parent_changed(toplevel.clone());
+}
+
+#[test]
+fn transient_fullscreen_exception_follows_parent_changes() {
+    if !crate::startup_tests::private_runtime(
+        "state::window_lifecycle_tests::transient_fullscreen_exception_follows_parent_changes",
+    ) {
+        return;
+    }
+    let (mut events, mut state, _output) = fixture();
+    let (parent, _parent_wire) = window(&mut state, &mut events, 0xff112233);
+    let (other, _other_wire) = window(&mut state, &mut events, 0xff223344);
+    let (child, _child_wire) = window(&mut state, &mut events, 0xff334455);
+    let parent_id = state.windows.ids()[&parent];
+    let other_id = state.windows.ids()[&other];
+    let child_id = state.windows.ids()[&child];
+    state.set_window_fullscreen(parent_id, true);
+    change_transient_parent(&mut state, &child, Some(&parent));
+    assert_eq!(state.floating_above_fullscreen.get(&child_id), Some(&parent_id));
+    change_transient_parent(&mut state, &child, None);
+    assert!(
+        !state.floating_above_fullscreen.contains_key(&child_id),
+        "unparenting must revoke fullscreen priority"
+    );
+    assert!(
+        matches!(
+            state.workspaces.placement(child_id),
+            Some(WindowPlacement::Floating { .. })
+        ),
+        "unparenting must not retile the dialog"
+    );
+    change_transient_parent(&mut state, &child, Some(&parent));
+    change_transient_parent(&mut state, &child, Some(&other));
+    assert!(
+        !state.floating_above_fullscreen.contains_key(&child_id),
+        "an ordinary parent must not retain the old fullscreen exception"
+    );
+    state.set_window_fullscreen(other_id, true);
+    change_transient_parent(&mut state, &child, Some(&other));
+    assert_eq!(state.floating_above_fullscreen.get(&child_id), Some(&other_id));
+    state.remove_tiled_window(&other);
+    assert!(
+        state
+            .floating_above_fullscreen
+            .values()
+            .all(|parent| *parent != other_id),
+        "removing a parent must revoke its children's exceptions"
+    );
+    assert!(state.windows.window(child_id).is_some());
+}

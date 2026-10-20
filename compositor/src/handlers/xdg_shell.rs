@@ -60,10 +60,7 @@ impl XdgShellHandler for Ferese {
     fn parent_changed(&mut self, surface: ToplevelSurface) {
         self.refresh_capture_privacy();
         self.refresh_idle_inhibition();
-        let Some(parent) = surface.parent() else {
-            return;
-        };
-        let parent = self.windows.id_for_surface(&parent);
+        let parent = surface.parent().and_then(|parent| self.windows.id_for_surface(&parent));
         let child = self
             .windows
             .id_for_surface(surface.wl_surface())
@@ -77,8 +74,8 @@ impl XdgShellHandler for Ferese {
             })
             .cloned();
 
-        if let (Some(parent), Some(child)) = (parent, child) {
-            self.make_window_transient(&child, parent);
+        if let Some(child) = child {
+            self.update_window_parent(&child, parent);
         }
     }
 

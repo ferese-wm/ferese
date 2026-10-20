@@ -415,17 +415,27 @@ impl Ferese {
         self.restore_keyboard_focus();
     }
 
-    pub fn make_window_transient(&mut self, window: &Window, parent: WindowId) {
+    pub fn update_window_parent(&mut self, window: &Window, parent: Option<WindowId>) {
         let Some(id) = self.windows.ids().get(window).copied() else {
             return;
         };
-
-        if self.workspaces.workspace_for_window(id) != self.workspaces.workspace_for_window(parent) {
-            tracing::warn!(?id, ?parent, "ignored transient parent on another workspace");
-            return;
+        // A stacking exception belongs to the current relationship. Revoke it
+        // even when the replacement parent is absent or cannot be placed here.
+        let removed = self.floating_above_fullscreen.remove(&id).is_some();
+        if removed {
+            self.invalidate_window_stacking();
         }
-
-        let Some(bounds) = self.floating_bounds_for_window(parent) else {
+        let placement = parent.and_then(|parent| {
+            if self.workspaces.workspace_for_window(id) != self.workspaces.workspace_for_window(parent) {
+                tracing::warn!(?id, ?parent, "ignored transient parent on another workspace");
+                return None;
+            }
+            self.floating_bounds_for_window(parent).map(|bounds| (parent, bounds))
+        });
+        let Some((parent, bounds)) = placement else {
+            if removed {
+                self.relayout();
+            }
             return;
         };
 
@@ -441,11 +451,19 @@ impl Ferese {
                 .toggle_floating(id, rect, Axis::Horizontal, 0.5)
                 .map(|_| ()),
             Some(WindowPlacement::Floating { .. }) => self.workspaces.set_floating_rect(id, rect),
-            None => return,
+            None => {
+                if removed {
+                    self.relayout();
+                }
+                return;
+            }
         };
 
         if let Err(error) = result {
             tracing::warn!(%error, ?id, ?parent, "failed to apply transient placement");
+            if removed {
+                self.relayout();
+            }
             return;
         }
 
@@ -488,7 +506,8 @@ impl Ferese {
         self.render.remove_window(id);
         self.capture_render.remove_window(id);
         self.window_stack.remove(id);
-        self.floating_above_fullscreen.remove(&id);
+        self.floating_above_fullscreen
+            .retain(|child, parent| *child != id && *parent != id);
         if let Err(error) = self.workspaces.remove_window(id) {
             tracing::error!(%error, ?id, "failed to remove window from layout");
         }
