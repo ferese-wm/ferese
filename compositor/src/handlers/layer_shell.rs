@@ -65,6 +65,13 @@ impl WlrLayerShellHandler for Ferese {
     }
 
     fn layer_destroyed(&mut self, surface: LayerSurface) {
+        if self
+            .pending_layer_focus
+            .as_ref()
+            .is_some_and(|(target, _)| target == surface.wl_surface())
+        {
+            self.pending_layer_focus = None;
+        }
         let Some(layer) = self
             .space
             .layer_for_surface(surface.wl_surface(), WindowSurfaceType::TOPLEVEL)
@@ -137,6 +144,14 @@ pub fn handle_commit(state: &mut Ferese, surface: &WlSurface) {
         .cloned()
         .collect::<Vec<_>>();
 
+    if !state.layer_mapped_and_visible(&layer)
+        && state
+            .pending_layer_focus
+            .as_ref()
+            .is_some_and(|(target, _)| target == surface)
+    {
+        state.pending_layer_focus = None;
+    }
     let policy = layer.cached_state();
     let current = LayoutState::current(&layer);
     let previous = layer
@@ -159,22 +174,24 @@ pub fn handle_commit(state: &mut Ferese, surface: &WlSurface) {
     // Configure acknowledgement and keyboard policy are independent of layout.
     layer.layer_surface().send_pending_configure();
 
-    // A click can enable keyboard interaction after its button event was
-    // delivered. Give that layer focus without requiring a second click.
-    let pointer_on_layer = requested_focus
-        && !state.seat.get_keyboard().is_some_and(|keyboard| keyboard.is_grabbed())
+    // Consume the opening interaction once. Later commits, pointer hover, or
+    // another input target must not give a panel a fresh claim to focus.
+    let opening_interaction = if requested_focus
         && state
-            .seat
-            .get_pointer()
-            .and_then(|pointer| pointer.current_focus())
-            .is_some_and(|surface| {
-                state
-                    .space
-                    .layer_for_surface(&surface, WindowSurfaceType::ALL)
-                    .is_some_and(|focused| focused == layer)
-            });
+            .pending_layer_focus
+            .as_ref()
+            .is_some_and(|(target, _)| target == surface)
+    {
+        state
+            .pending_layer_focus
+            .take()
+            .is_some_and(|(_, at)| at.elapsed() <= std::time::Duration::from_secs(5))
+    } else {
+        false
+    };
     state.reconcile_layer_keyboard_focus();
-    if pointer_on_layer
+    if opening_interaction
+        && !state.seat.get_keyboard().is_some_and(|keyboard| keyboard.is_grabbed())
         && !state.session_lock.active()
         && !state.input_capture.captures(1)
         && state.layer_keyboard_eligible(&layer)

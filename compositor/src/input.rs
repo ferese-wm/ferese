@@ -867,6 +867,7 @@ impl Ferese {
                 );
             }
             InputEvent::TouchCancel { .. } => {
+                self.pending_layer_focus = None;
                 self.consumed_touch_slots.clear();
                 let touch = self.seat.get_touch().expect("seat has touch capability");
                 touch.cancel(self);
@@ -1012,6 +1013,7 @@ impl Ferese {
     }
 
     fn focus_window_at(&mut self, position: Point<f64, Logical>, serial: Serial, raise: bool) {
+        self.pending_layer_focus = None;
         if self.input_capture.captures(1) {
             return;
         }
@@ -1043,6 +1045,14 @@ impl Ferese {
                 // Clicking a noninteractive layer (such as wallpaper) must
                 // release an expanded panel's focus too.
                 self.restore_keyboard_focus();
+            }
+            if raise
+                && layer.cached_state().keyboard_interactivity
+                    == smithay::wayland::shell::wlr_layer::KeyboardInteractivity::None
+            {
+                // The client may enable OnDemand only after receiving this
+                // opening press. Touch does not establish pointer focus.
+                self.pending_layer_focus = Some((layer.wl_surface().clone(), std::time::Instant::now()));
             }
             return;
         }

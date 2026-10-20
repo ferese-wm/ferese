@@ -759,3 +759,82 @@ fn animated_overview_exit_revokes_top_focus_when_it_becomes_hidden() {
         "completion of the visibility transition revokes focus without a client commit"
     );
 }
+
+#[test]
+fn touch_opened_on_demand_layer_does_not_need_pointer_focus() {
+    if !crate::startup_tests::private_runtime(
+        "input::layer_focus_tests::touch_opened_on_demand_layer_does_not_need_pointer_focus",
+    ) {
+        return;
+    }
+    let (mut state, mut events, output) = fixture();
+    let (panel, mut wire) = layer(&mut state, &mut events, &output);
+    let pointer = state.seat.get_pointer().unwrap();
+    let keyboard = state.seat.get_keyboard().unwrap();
+    let inside = Point::from((20., 20.));
+    assert_eq!(pointer.current_focus(), None);
+    // TouchDown focuses the target before delivering the opening touch.
+    // Unlike the pointer regression, no pointer motion establishes focus.
+    state.focus_window_at(inside, SERIAL_COUNTER.next_serial(), true);
+    assert_eq!(keyboard.current_focus(), None);
+    request(&mut wire, 3, 4, &[2], None); // OnDemand.
+    request(&mut wire, 2, 6, &[], None);
+    dispatch(&mut events, &mut state);
+    assert_eq!(
+        keyboard.current_focus(),
+        Some(panel.wl_surface().clone()),
+        "opening must not require a second click"
+    );
+    state.focus_window_at(inside, SERIAL_COUNTER.next_serial(), true);
+    assert_eq!(
+        keyboard.current_focus(),
+        Some(panel.wl_surface().clone()),
+        "inside clicks keep the panel open"
+    );
+
+    let outside = Point::from((400., 300.));
+    let input_time = state.last_pointer_time;
+    pointer.motion(
+        &mut state,
+        None,
+        &MotionEvent {
+            location: outside,
+            serial: SERIAL_COUNTER.next_serial(),
+            time: input_time,
+        },
+    );
+    state.focus_window_at(outside, SERIAL_COUNTER.next_serial(), true);
+    assert_eq!(keyboard.current_focus(), None, "empty-desktop clicks dismiss the panel");
+    request(&mut wire, 2, 6, &[], None);
+    dispatch(&mut events, &mut state);
+    assert_eq!(
+        keyboard.current_focus(),
+        None,
+        "later animation commits must not reclaim focus"
+    );
+    commit_policy(&mut state, &mut events, &mut wire, 0);
+    state.focus_window_at(inside, SERIAL_COUNTER.next_serial(), true);
+    state.focus_window_at(outside, SERIAL_COUNTER.next_serial(), true);
+    commit_policy(&mut state, &mut events, &mut wire, 2);
+    assert_eq!(
+        keyboard.current_focus(),
+        None,
+        "a later interaction cancels delayed focus"
+    );
+    commit_policy(&mut state, &mut events, &mut wire, 0);
+    pointer.motion(
+        &mut state,
+        Some((panel.wl_surface().clone(), (0., 0.).into())),
+        &MotionEvent {
+            location: inside,
+            serial: SERIAL_COUNTER.next_serial(),
+            time: input_time,
+        },
+    );
+    commit_policy(&mut state, &mut events, &mut wire, 2);
+    assert_eq!(
+        keyboard.current_focus(),
+        None,
+        "pointer hover alone cannot open keyboard focus"
+    );
+}
