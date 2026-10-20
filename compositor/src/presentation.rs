@@ -101,7 +101,7 @@ pub(crate) fn take_output_feedback(
     let visible_output =
         |surface: &WlSurface, _: &SurfaceData| rendered_feedback_output(output, surface.into(), rendered);
     let surface_flags = |surface: &WlSurface, _: &SurfaceData| {
-        flags | surface_presentation_feedback_flags_from_states(surface, rendered)
+        flags | surface_presentation_feedback_flags_from_states(surface, None, rendered)
     };
 
     for window in state.space.elements().filter(|window| {
@@ -288,8 +288,9 @@ impl RenderElement<GlesRenderer> for PhysicalShaderElement {
         dst: Rectangle<i32, Physical>,
         damage: &[Rectangle<i32, Physical>],
         opaque: &[Rectangle<i32, Physical>],
+        cache: Option<&smithay::utils::user_data::UserDataMap>,
     ) -> Result<(), GlesError> {
-        self.inner.draw(frame, src, dst, damage, opaque)
+        self.inner.draw(frame, src, dst, damage, opaque, cache)
     }
 }
 
@@ -349,6 +350,7 @@ impl RenderElement<GlesRenderer> for NativeTextureElement {
         dst: Rectangle<i32, Physical>,
         damage: &[Rectangle<i32, Physical>],
         opaque: &[Rectangle<i32, Physical>],
+        _cache: Option<&smithay::utils::user_data::UserDataMap>,
     ) -> Result<(), GlesError> {
         frame.render_texture_from_to(
             &self.texture,
@@ -532,6 +534,7 @@ mod tests {
         let output = Output::new(
             "owner".into(),
             PhysicalProperties {
+                serial_number: String::new(),
                 size: (0, 0).into(),
                 subpixel: Subpixel::Unknown,
                 make: "test".into(),
@@ -543,10 +546,12 @@ mod tests {
         assert!(rendered_feedback_output(&output, id.clone(), &states).is_none());
         for state in [
             RenderElementState {
+                needs_capture: false,
                 visible_area: 0,
                 presentation_state: RenderElementPresentationState::Skipped,
             },
             RenderElementState {
+                needs_capture: false,
                 visible_area: 0,
                 presentation_state: RenderElementPresentationState::Rendering { reason: None },
             },
@@ -561,6 +566,7 @@ mod tests {
             states.states.insert(
                 id.clone(),
                 RenderElementState {
+                    needs_capture: false,
                     visible_area: 32,
                     presentation_state,
                 },

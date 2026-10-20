@@ -1,5 +1,6 @@
 pub(crate) mod activation;
 mod compositor;
+mod dispatch;
 pub(crate) mod gamma_control;
 mod input_method;
 mod layer_shell;
@@ -7,13 +8,15 @@ pub(crate) mod screencopy;
 pub(crate) mod screenshot;
 pub(crate) mod screenshot_worker;
 pub(crate) mod security_context;
+#[cfg(test)]
+mod toplevel_icon_tests;
 pub(crate) mod window_capture;
 mod xdg_shell;
 
 use smithay::desktop::{PopupManager, layer_map_for_output};
 use smithay::input::pointer::{CursorImageStatus, PointerHandle};
+use smithay::input::tablet::TabletSeatHandler;
 use smithay::input::{Seat, SeatHandler, SeatState};
-use smithay::reexports::wayland_protocols::xdg::shell::server::{xdg_popup, xdg_positioner, xdg_surface, xdg_wm_base};
 use smithay::reexports::wayland_server::Resource;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::wayland::compositor::{TraversalAction, with_states, with_surface_tree_downward};
@@ -28,15 +31,11 @@ use smithay::wayland::output::OutputHandler;
 use smithay::wayland::pointer_constraints::{PointerConstraint, PointerConstraintsHandler, with_pointer_constraint};
 use smithay::wayland::selection::SelectionHandler;
 use smithay::wayland::selection::data_device::{
-    ClientDndGrabHandler, DataDeviceHandler, DataDeviceState, ServerDndGrabHandler, set_data_device_focus,
+    DataDeviceHandler, DataDeviceState, WaylandDndGrabHandler, set_data_device_focus,
 };
 use smithay::wayland::selection::primary_selection::{
     PrimarySelectionHandler, PrimarySelectionState, set_primary_focus,
 };
-use smithay::wayland::shell::xdg::{
-    XdgPositionerUserData, XdgShellState, XdgShellSurfaceUserData, XdgSurfaceUserData, XdgWmBaseUserData,
-};
-use smithay::wayland::tablet_manager::TabletSeatHandler;
 use smithay::wayland::xdg_foreign::{XdgForeignHandler, XdgForeignState};
 use smithay::wayland::xdg_toplevel_icon::XdgToplevelIconHandler;
 
@@ -99,6 +98,7 @@ impl SeatHandler for Ferese {
 }
 
 impl OutputHandler for Ferese {}
+impl smithay::wayland::text_input::TextInputActivation for Ferese {}
 
 impl FractionalScaleHandler for Ferese {
     fn new_fractional_scale(&mut self, surface: WlSurface) {
@@ -285,31 +285,66 @@ impl SelectionHandler for Ferese {
     type SelectionUserData = ();
 }
 
-impl ClientDndGrabHandler for Ferese {}
-impl ServerDndGrabHandler for Ferese {}
-impl TabletSeatHandler for Ferese {}
+impl smithay::input::dnd::DndGrabHandler for Ferese {}
+
+impl WaylandDndGrabHandler for Ferese {
+    fn dnd_requested<S: smithay::input::dnd::Source>(
+        &mut self,
+        source: S,
+        _icon: Option<WlSurface>,
+        seat: Seat<Self>,
+        serial: smithay::utils::Serial,
+        type_: smithay::input::dnd::GrabType,
+    ) {
+        use smithay::input::dnd::{DnDGrab, GrabType};
+        match type_ {
+            GrabType::Pointer => {
+                let pointer = seat.get_pointer().expect("validated pointer drag");
+                let start = pointer.grab_start_data().expect("validated pointer grab");
+                pointer.set_grab(
+                    self,
+                    DnDGrab::new_pointer(&self.display_handle, start, source, seat),
+                    serial,
+                    smithay::input::pointer::Focus::Keep,
+                );
+            }
+            GrabType::Touch => {
+                let touch = seat.get_touch().expect("validated touch drag");
+                let start = touch.grab_start_data().expect("validated touch grab");
+                touch.set_grab(
+                    self,
+                    DnDGrab::new_touch(&self.display_handle, start, source, seat),
+                    serial,
+                );
+            }
+        }
+    }
+}
+impl TabletSeatHandler for Ferese {
+    type ToolFocus = WlSurface;
+}
 
 impl DataDeviceHandler for Ferese {
-    fn data_device_state(&self) -> &DataDeviceState {
-        &self.data_device_state
+    fn data_device_state(&mut self) -> &mut DataDeviceState {
+        &mut self.data_device_state
     }
 }
 
 impl PrimarySelectionHandler for Ferese {
-    fn primary_selection_state(&self) -> &PrimarySelectionState {
-        &self.primary_selection_state
+    fn primary_selection_state(&mut self) -> &mut PrimarySelectionState {
+        &mut self.primary_selection_state
     }
 }
 
 impl smithay::wayland::selection::wlr_data_control::DataControlHandler for Ferese {
-    fn data_control_state(&self) -> &smithay::wayland::selection::wlr_data_control::DataControlState {
-        &self.wlr_data_control_state
+    fn data_control_state(&mut self) -> &mut smithay::wayland::selection::wlr_data_control::DataControlState {
+        &mut self.wlr_data_control_state
     }
 }
 
 impl smithay::wayland::selection::ext_data_control::DataControlHandler for Ferese {
-    fn data_control_state(&self) -> &smithay::wayland::selection::ext_data_control::DataControlState {
-        &self.ext_data_control_state
+    fn data_control_state(&mut self) -> &mut smithay::wayland::selection::ext_data_control::DataControlState {
+        &mut self.ext_data_control_state
     }
 }
 
@@ -320,47 +355,3 @@ impl XdgForeignHandler for Ferese {
 }
 
 impl XdgToplevelIconHandler for Ferese {}
-
-smithay::delegate_compositor!(Ferese);
-smithay::delegate_alpha_modifier!(Ferese);
-smithay::delegate_cursor_shape!(Ferese);
-smithay::delegate_data_device!(Ferese);
-smithay::delegate_dmabuf!(Ferese);
-smithay::delegate_fractional_scale!(Ferese);
-smithay::delegate_idle_inhibit!(Ferese);
-smithay::delegate_idle_notify!(Ferese);
-smithay::delegate_input_method_manager!(Ferese);
-smithay::delegate_keyboard_shortcuts_inhibit!(Ferese);
-smithay::delegate_layer_shell!(Ferese);
-smithay::delegate_output!(Ferese);
-smithay::delegate_pointer_constraints!(Ferese);
-smithay::delegate_presentation!(Ferese);
-smithay::delegate_primary_selection!(Ferese);
-smithay::delegate_relative_pointer!(Ferese);
-smithay::delegate_seat!(Ferese);
-smithay::delegate_shm!(Ferese);
-smithay::delegate_single_pixel_buffer!(Ferese);
-smithay::delegate_text_input_manager!(Ferese);
-smithay::delegate_viewporter!(Ferese);
-smithay::delegate_xdg_activation!(Ferese);
-smithay::delegate_xdg_decoration!(Ferese);
-smithay::delegate_xdg_foreign!(Ferese);
-smithay::reexports::wayland_server::delegate_global_dispatch!(
-    Ferese: [xdg_wm_base::XdgWmBase: ()] => XdgShellState
-);
-smithay::reexports::wayland_server::delegate_dispatch!(
-    Ferese: [xdg_wm_base::XdgWmBase: XdgWmBaseUserData] => XdgShellState
-);
-smithay::reexports::wayland_server::delegate_dispatch!(
-    Ferese: [xdg_positioner::XdgPositioner: XdgPositionerUserData] => XdgShellState
-);
-smithay::reexports::wayland_server::delegate_dispatch!(
-    Ferese: [xdg_popup::XdgPopup: XdgShellSurfaceUserData] => XdgShellState
-);
-smithay::reexports::wayland_server::delegate_dispatch!(
-    Ferese: [xdg_surface::XdgSurface: XdgSurfaceUserData] => XdgShellState
-);
-smithay::delegate_xdg_toplevel_icon!(Ferese);
-
-smithay::delegate_data_control!(Ferese);
-smithay::delegate_ext_data_control!(Ferese);

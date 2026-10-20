@@ -175,6 +175,7 @@ mod tests {
         let output = Output::new(
             "capture".into(),
             PhysicalProperties {
+                serial_number: String::new(),
                 size: (0, 0).into(),
                 subpixel: Subpixel::Unknown,
                 make: "test".into(),
@@ -273,6 +274,7 @@ mod failure_tests {
         let output = Output::new(
             "capture-failure".into(),
             smithay::output::PhysicalProperties {
+                serial_number: String::new(),
                 size: (0, 0).into(),
                 subpixel: smithay::output::Subpixel::Unknown,
                 make: "test".into(),
@@ -292,6 +294,7 @@ mod failure_tests {
         let other_output = Output::new(
             "other-capture".into(),
             smithay::output::PhysicalProperties {
+                serial_number: String::new(),
                 size: (0, 0).into(),
                 subpixel: smithay::output::Subpixel::Unknown,
                 make: "test".into(),

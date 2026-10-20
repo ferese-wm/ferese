@@ -459,7 +459,7 @@ impl crate::Ferese {
                     &smithay::input::pointer::MotionEvent {
                         location,
                         serial: smithay::utils::SERIAL_COUNTER.next_serial(),
-                        time: 0,
+                        time: smithay::backend::input::InputTime::from_millis(0),
                     },
                 );
                 pointer.frame(self);
@@ -499,7 +499,7 @@ impl crate::Ferese {
                 &smithay::input::pointer::MotionEvent {
                     location: from,
                     serial: smithay::utils::SERIAL_COUNTER.next_serial(),
-                    time: 0,
+                    time: smithay::backend::input::InputTime::from_millis(0),
                 },
             );
             pointer.frame(self);

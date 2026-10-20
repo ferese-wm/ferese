@@ -38,8 +38,8 @@ impl InputBackend for TestInput {
 #[derive(Debug)]
 struct TestKey(Keycode, KeyState);
 impl Event<TestInput> for TestKey {
-    fn time(&self) -> u64 {
-        1_000
+    fn time(&self) -> smithay::backend::input::InputTime {
+        smithay::backend::input::InputTime::from_micros(1_000)
     }
     fn device(&self) -> WinitVirtualDevice {
         WinitVirtualDevice

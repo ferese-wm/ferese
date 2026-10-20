@@ -45,12 +45,15 @@ pub fn init(event_loop: &mut EventLoop<Ferese>, state: &mut Ferese) -> Result<()
         refresh: backend
             .window()
             .current_monitor()
-            .and_then(|monitor| monitor.refresh_rate_millihertz())
+            .and_then(|monitor| monitor.current_video_mode())
+            .and_then(|mode| mode.refresh_rate_millihertz())
+            .map(|rate| rate.get())
             .unwrap_or(60_000) as i32,
     };
     let output = Output::new(
         "ferese-winit".into(),
         PhysicalProperties {
+            serial_number: String::new(),
             size: (0, 0).into(),
             subpixel: Subpixel::Unknown,
             make: "Ferese".into(),
@@ -104,7 +107,9 @@ pub fn init(event_loop: &mut EventLoop<Ferese>, state: &mut Ferese) -> Result<()
                     let rate = backend
                         .window()
                         .current_monitor()
-                        .and_then(|monitor| monitor.refresh_rate_millihertz())
+                        .and_then(|monitor| monitor.current_video_mode())
+                        .and_then(|mode| mode.refresh_rate_millihertz())
+                        .map(|rate| rate.get())
                         .unwrap_or(60_000) as i32;
                     if !resize_nested_output(state, &output, &drawable, (size.w, size.h), scale_factor, rate) {
                         return;
@@ -355,6 +360,7 @@ mod tests {
         let output = Output::new(
             "nested".into(),
             PhysicalProperties {
+                serial_number: String::new(),
                 size: (0, 0).into(),
                 subpixel: Subpixel::Unknown,
                 make: "test".into(),
@@ -471,6 +477,7 @@ mod tests {
         let output = Output::new(
             "nested".into(),
             PhysicalProperties {
+                serial_number: String::new(),
                 size: (0, 0).into(),
                 subpixel: Subpixel::Unknown,
                 make: "test".into(),

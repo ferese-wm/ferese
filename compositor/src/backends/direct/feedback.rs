@@ -73,7 +73,7 @@ impl OutputFeedback {
             // without ALLOW_PRIMARY_PLANE_SCANOUT_ANY Smithay compares the full
             // format with the swapchain. Renderer-only formats remain in fallback.
             match DmabufFeedbackBuilder::new(self.render_device, self.render_formats.iter().copied())
-                .add_preference_tranche(self.scanout_device, Some(TrancheFlags::Scanout), [format])
+                .add_preference_tranche(self.scanout_device, TrancheFlags::Scanout, [format], 4..=6)
                 .build()
             {
                 Ok(feedback) => self.preferred = Some(feedback),
@@ -260,6 +260,7 @@ mod tests {
         states.states.insert(
             id.clone(),
             RenderElementState {
+                needs_capture: false,
                 visible_area: 100,
                 presentation_state: RenderElementPresentationState::Rendering { reason: None },
             },
@@ -287,7 +288,7 @@ mod tests {
         assert!(o.preferred.is_none());
         o.observe_format(Some(linear));
         let expected = DmabufFeedbackBuilder::new(10, [linear, other])
-            .add_preference_tranche(20, Some(TrancheFlags::Scanout), [linear])
+            .add_preference_tranche(20, TrancheFlags::Scanout, [linear], 4..=6)
             .build()
             .unwrap();
         assert_eq!(o.preferred.as_ref(), Some(&expected));
@@ -413,6 +414,7 @@ mod tests {
         for (state, expected) in [
             (
                 RenderElementState {
+                    needs_capture: false,
                     visible_area: 100,
                     presentation_state: RenderElementPresentationState::Rendering {
                         reason: Some(RenderingReason::FormatUnsupported),
@@ -422,6 +424,7 @@ mod tests {
             ),
             (
                 RenderElementState {
+                    needs_capture: false,
                     visible_area: 100,
                     presentation_state: RenderElementPresentationState::Rendering {
                         reason: Some(RenderingReason::ScanoutFailed),
@@ -431,6 +434,7 @@ mod tests {
             ),
             (
                 RenderElementState {
+                    needs_capture: false,
                     visible_area: 0,
                     presentation_state: RenderElementPresentationState::Skipped,
                 },
@@ -438,6 +442,7 @@ mod tests {
             ),
             (
                 RenderElementState {
+                    needs_capture: false,
                     visible_area: 100,
                     presentation_state: RenderElementPresentationState::ZeroCopy,
                 },

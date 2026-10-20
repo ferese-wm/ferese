@@ -67,6 +67,7 @@ mod tests {
         let output = Output::new(
             "snapshot-test".into(),
             PhysicalProperties {
+                serial_number: String::new(),
                 size: (0, 0).into(),
                 subpixel: Subpixel::Unknown,
                 make: "test".into(),

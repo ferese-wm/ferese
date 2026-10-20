@@ -66,6 +66,7 @@ fn subscriptions_update_deduplicate_and_retire_device_preferences() {
     let output = Output::new(
         "feedback-test".into(),
         PhysicalProperties {
+            serial_number: String::new(),
             size: (0, 0).into(),
             subpixel: Subpixel::Unknown,
             make: "test".into(),
@@ -89,7 +90,7 @@ fn subscriptions_update_deduplicate_and_retire_device_preferences() {
     };
     let fallback = DmabufFeedbackBuilder::new(10, [f]).build().unwrap();
     let preferred = DmabufFeedbackBuilder::new(10, [f])
-        .add_preference_tranche(20, Some(TrancheFlags::Scanout), [f])
+        .add_preference_tranche(20, TrancheFlags::Scanout, [f], 4..=6)
         .build()
         .unwrap();
     let global = state

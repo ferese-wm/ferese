@@ -86,13 +86,21 @@ pub(crate) fn window(state: &mut Ferese, events: &mut EventLoop<'static, Ferese>
         .insert_client(server, Arc::new(ClientState::default()))
         .unwrap();
     let compositor = client
-        .create_resource::<WlCompositor, (), Ferese>(&state.display_handle, 6, ())
+        .create_resource::<WlCompositor, smithay::wayland::GlobalData, Ferese>(
+            &state.display_handle,
+            6,
+            smithay::wayland::GlobalData,
+        )
         .unwrap();
     let shell = client
         .create_resource::<XdgWmBase, XdgWmBaseUserData, Ferese>(&state.display_handle, 6, Default::default())
         .unwrap();
     let shm = client
-        .create_resource::<WlShm, (), Ferese>(&state.display_handle, 1, ())
+        .create_resource::<WlShm, smithay::wayland::GlobalData, Ferese>(
+            &state.display_handle,
+            1,
+            smithay::wayland::GlobalData,
+        )
         .unwrap();
     request(&mut wire, compositor.id().protocol_id(), 0, &[2], None);
     request(&mut wire, shell.id().protocol_id(), 2, &[3, 2], None);
@@ -141,10 +149,18 @@ fn attach_children(
     use smithay::reexports::wayland_server::protocol::wl_subcompositor::WlSubcompositor;
     let client = window.toplevel().unwrap().wl_surface().client().unwrap();
     let compositor = client
-        .create_resource::<WlCompositor, (), Ferese>(&state.display_handle, 6, ())
+        .create_resource::<WlCompositor, smithay::wayland::GlobalData, Ferese>(
+            &state.display_handle,
+            6,
+            smithay::wayland::GlobalData,
+        )
         .unwrap();
     let subcompositor = client
-        .create_resource::<WlSubcompositor, (), Ferese>(&state.display_handle, 1, ())
+        .create_resource::<WlSubcompositor, smithay::wayland::GlobalData, Ferese>(
+            &state.display_handle,
+            1,
+            smithay::wayland::GlobalData,
+        )
         .unwrap();
     request(wire, compositor.id().protocol_id(), 0, &[7], None);
     request(wire, subcompositor.id().protocol_id(), 1, &[8, 7, 2], None);
@@ -242,6 +258,7 @@ fn lock_scene_draws_the_pointer_and_delivers_client_cursor_frames() {
     let output = Output::new(
         "lock-cursor".into(),
         PhysicalProperties {
+            serial_number: String::new(),
             size: (0, 0).into(),
             subpixel: Subpixel::Unknown,
             make: "test".into(),
@@ -266,7 +283,11 @@ fn lock_scene_draws_the_pointer_and_delivers_client_cursor_frames() {
     let (desktop, mut wire) = window(&mut state, &mut events, 0xffff0000);
     let client = desktop.toplevel().unwrap().wl_surface().client().unwrap();
     let manager = client
-        .create_resource::<ExtSessionLockManagerV1, (), Ferese>(&state.display_handle, 1, ())
+        .create_resource::<ExtSessionLockManagerV1, smithay::wayland::GlobalData, Ferese>(
+            &state.display_handle,
+            1,
+            smithay::wayland::GlobalData,
+        )
         .unwrap();
     request(&mut wire, manager.id().protocol_id(), 1, &[7], None);
     let deadline = std::time::Instant::now() + Duration::from_secs(1);
@@ -311,7 +332,11 @@ fn lock_scene_draws_the_pointer_and_delivers_client_cursor_frames() {
     }
 
     let compositor = client
-        .create_resource::<WlCompositor, (), Ferese>(&state.display_handle, 6, ())
+        .create_resource::<WlCompositor, smithay::wayland::GlobalData, Ferese>(
+            &state.display_handle,
+            6,
+            smithay::wayland::GlobalData,
+        )
         .unwrap();
     request(&mut wire, compositor.id().protocol_id(), 0, &[8], None);
     request(&mut wire, 8, 1, &[6, 0, 0], None);
@@ -388,6 +413,7 @@ fn capture_privacy_pixels_and_policy_transitions() {
     let output = Output::new(
         "privacy".into(),
         PhysicalProperties {
+            serial_number: String::new(),
             size: (0, 0).into(),
             subpixel: Subpixel::Unknown,
             make: "test".into(),
@@ -563,6 +589,7 @@ fn capture_privacy_pixels_and_policy_transitions() {
     let second = Output::new(
         "second".into(),
         PhysicalProperties {
+            serial_number: String::new(),
             size: (0, 0).into(),
             subpixel: Subpixel::Unknown,
             make: "test".into(),
@@ -649,7 +676,11 @@ fn capture_privacy_pixels_and_policy_transitions() {
     use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
     let client = secret.toplevel().unwrap().wl_surface().client().unwrap();
     let compositor = client
-        .create_resource::<WlCompositor, (), Ferese>(&state.display_handle, 6, ())
+        .create_resource::<WlCompositor, smithay::wayland::GlobalData, Ferese>(
+            &state.display_handle,
+            6,
+            smithay::wayland::GlobalData,
+        )
         .unwrap();
     request(&mut secret_wire, compositor.id().protocol_id(), 0, &[13], None);
     request(&mut secret_wire, 13, 1, &[6, 0, 0], None);
@@ -756,6 +787,7 @@ fn resize_dependencies_protocol_and_pixels() {
     let output = Output::new(
         "resize".into(),
         PhysicalProperties {
+            serial_number: String::new(),
             size: (0, 0).into(),
             subpixel: Subpixel::Unknown,
             make: "test".into(),
@@ -944,7 +976,11 @@ fn resize_dependencies_protocol_and_pixels() {
     assert_ne!(state.viewports[&workspace].motion().current, frozen);
     let client = b.toplevel().unwrap().wl_surface().client().unwrap();
     let shm = client
-        .create_resource::<WlShm, (), Ferese>(&state.display_handle, 1, ())
+        .create_resource::<WlShm, smithay::wayland::GlobalData, Ferese>(
+            &state.display_handle,
+            1,
+            smithay::wayland::GlobalData,
+        )
         .unwrap();
     let mut resized = tempfile::tempfile().unwrap();
     resized.write_all(&0xff00ff00u32.to_ne_bytes().repeat(32 * 48)).unwrap();

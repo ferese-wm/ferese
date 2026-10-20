@@ -83,7 +83,7 @@ pub(super) fn validate_device(device: &DirectDevice, scan: &OutputScan) -> Resul
     let mut buffers = Vec::new();
     let mut framebuffers = Vec::new();
     let mut allocator = GbmAllocator::new(device.gbm.clone(), GbmBufferFlags::RENDERING | GbmBufferFlags::SCANOUT);
-    let exporter = GbmFramebufferExporter::new(device.gbm.clone(), Some(device.render_node));
+    let exporter = GbmFramebufferExporter::new(device.gbm.clone(), Some(device.render_node).into());
     let mut used_planes = HashSet::new();
     let desired_crtcs = scan
         .selections

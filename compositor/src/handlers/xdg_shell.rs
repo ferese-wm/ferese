@@ -490,9 +490,7 @@ impl Dispatch<xdg_toplevel::XdgToplevel, XdgShellSurfaceUserData> for Ferese {
             return;
         }
 
-        <XdgShellState as Dispatch<xdg_toplevel::XdgToplevel, XdgShellSurfaceUserData, Ferese>>::request(
-            state, client, resource, request, data, dhandle, data_init,
-        );
+        smithay::wayland::Dispatch2::request(data, state, client, resource, request, dhandle, data_init);
     }
 
     fn destroyed(
@@ -501,9 +499,7 @@ impl Dispatch<xdg_toplevel::XdgToplevel, XdgShellSurfaceUserData> for Ferese {
         resource: &xdg_toplevel::XdgToplevel,
         data: &XdgShellSurfaceUserData,
     ) {
-        <XdgShellState as Dispatch<xdg_toplevel::XdgToplevel, XdgShellSurfaceUserData, Ferese>>::destroyed(
-            state, client, resource, data,
-        );
+        smithay::wayland::Dispatch2::destroyed(data, state, client, resource);
     }
 }
 

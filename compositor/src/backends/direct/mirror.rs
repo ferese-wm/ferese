@@ -28,6 +28,7 @@ pub(super) fn elements(
         Output::new(
             "mirror-canvas".into(),
             PhysicalProperties {
+                serial_number: String::new(),
                 size: (0, 0).into(),
                 subpixel: Subpixel::Unknown,
                 make: "Ferese".into(),
@@ -121,6 +122,7 @@ mod tests {
             Output::new(
                 name.into(),
                 PhysicalProperties {
+                    serial_number: String::new(),
                     size: (0, 0).into(),
                     subpixel: Subpixel::Unknown,
                     make: "test".into(),

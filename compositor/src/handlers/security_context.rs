@@ -27,5 +27,3 @@ impl SecurityContextHandler for Ferese {
         }
     }
 }
-
-smithay::delegate_security_context!(Ferese);

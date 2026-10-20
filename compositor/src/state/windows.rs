@@ -531,11 +531,8 @@ impl Ferese {
             return;
         };
 
-        let serial = with_states(surface, |states| {
-            states
-                .data_map
-                .get::<XdgToplevelSurfaceData>()
-                .and_then(|data| data.lock().ok().and_then(|data| data.current_serial))
+        let serial = window.toplevel().and_then(|toplevel| {
+            toplevel.with_cached_state(|state| state.last_acked.as_ref().map(|configure| configure.serial))
         });
         if !transaction.accepts(serial) {
             return;
@@ -601,15 +598,10 @@ impl Ferese {
         let Some(&id) = self.windows.ids().get(window) else {
             return;
         };
-        // current_serial is promoted by Smithay on commit, unlike
-        // configure_serial, which only records an acknowledgement.
+        // Read the acknowledgement attached to this commit, not a newer ack
+        // that arrived without its corresponding buffer.
         let committed_serial = window.toplevel().and_then(|toplevel| {
-            with_states(toplevel.wl_surface(), |states| {
-                states
-                    .data_map
-                    .get::<XdgToplevelSurfaceData>()
-                    .and_then(|data| data.lock().ok().and_then(|data| data.current_serial))
-            })
+            toplevel.with_cached_state(|state| state.last_acked.as_ref().map(|configure| configure.serial))
         });
         if self
             .windows
@@ -687,14 +679,17 @@ impl Ferese {
         // Never let an old buffer undo a newer resize or a fullscreen transition.
         self.windows.update(id, |w| w.placement_anchor = None);
         let settled_configure = window.toplevel().is_some_and(|toplevel| {
+            let committed = toplevel.with_cached_state(|state| state.last_acked.clone());
             with_states(toplevel.wl_surface(), |states| {
                 states.data_map.get::<XdgToplevelSurfaceData>().is_some_and(|data| {
                     let Ok(data) = data.lock() else { return false };
                     floating_commit_is_current(
                         data.pending_configures().is_empty(),
-                        data.current_serial,
-                        data.configure_serial,
-                        data.current.states.contains(xdg_toplevel::State::Resizing),
+                        committed.as_ref().map(|configure| configure.serial),
+                        data.last_acked.as_ref().map(|configure| configure.serial),
+                        committed
+                            .as_ref()
+                            .is_some_and(|configure| configure.state.states.contains(xdg_toplevel::State::Resizing)),
                     )
                 })
             })

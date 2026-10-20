@@ -214,6 +214,7 @@ mod tests {
             output: Output::new(
                 name.into(),
                 PhysicalProperties {
+                    serial_number: String::new(),
                     size: (0, 0).into(),
                     subpixel: Subpixel::Unknown,
                     make: "test".into(),
@@ -250,7 +251,11 @@ mod tests {
             .insert_client(server, Arc::new(ClientState::default()))
             .unwrap();
         let compositor = client
-            .create_resource::<WlCompositor, (), Ferese>(&state.display_handle, 6, ())
+            .create_resource::<WlCompositor, smithay::wayland::GlobalData, Ferese>(
+                &state.display_handle,
+                6,
+                smithay::wayland::GlobalData,
+            )
             .unwrap();
         let shell = client
             .create_resource::<XdgWmBase, XdgWmBaseUserData, Ferese>(&state.display_handle, 6, Default::default())
@@ -519,7 +524,11 @@ mod tests {
             .insert_client(server, Arc::new(ClientState::default()))
             .unwrap();
         let lock = client
-            .create_resource::<ExtSessionLockManagerV1, (), Ferese>(&state.display_handle, 1, ())
+            .create_resource::<ExtSessionLockManagerV1, smithay::wayland::GlobalData, Ferese>(
+                &state.display_handle,
+                1,
+                smithay::wayland::GlobalData,
+            )
             .unwrap();
         request(&mut lock_wire, lock.id().protocol_id(), 1, &[2]);
         event_loop.dispatch(Duration::from_millis(10), &mut state).unwrap();

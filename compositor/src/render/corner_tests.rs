@@ -832,6 +832,7 @@ fn window_tint_does_not_inherit_panel_geometry() {
                 geometry,
                 &[Rectangle::from_size(geometry.size)],
                 &[],
+                None,
             )
             .unwrap();
         let _ = frame.finish().unwrap();
@@ -845,6 +846,7 @@ fn window_tint_does_not_inherit_panel_geometry() {
     let output = Output::new(
         "tint-test".into(),
         PhysicalProperties {
+            serial_number: String::new(),
             size: (0, 0).into(),
             subpixel: Subpixel::Unknown,
             make: "test".into(),

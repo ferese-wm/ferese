@@ -107,6 +107,7 @@ impl RenderElement<GlesRenderer> for SharedPixelShaderElement {
         dst: Rectangle<i32, Physical>,
         damage: &[Rectangle<i32, Physical>],
         _opaque: &[Rectangle<i32, Physical>],
+        _cache: Option<&smithay::utils::user_data::UserDataMap>,
     ) -> Result<(), GlesError> {
         frame.render_pixel_shader_to(
             &self.shader,
@@ -143,7 +144,9 @@ mod tests {
                 .render(&mut target, (32, 32).into(), Transform::Normal)
                 .unwrap();
             frame.clear(Color32F::TRANSPARENT, &[rect]).unwrap();
-            element.draw(&mut frame, element.src(), rect, &[rect], &[]).unwrap();
+            element
+                .draw(&mut frame, element.src(), rect, &[rect], &[], None)
+                .unwrap();
             let _ = frame.finish().unwrap();
         }
 

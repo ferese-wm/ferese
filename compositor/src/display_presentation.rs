@@ -76,6 +76,7 @@ mod tests {
         Output::new(
             name.into(),
             PhysicalProperties {
+                serial_number: String::new(),
                 size: (0, 0).into(),
                 subpixel: Subpixel::Unknown,
                 make: "test".into(),
@@ -89,6 +90,7 @@ mod tests {
         states.states.insert(
             id.clone(),
             RenderElementState {
+                needs_capture: false,
                 visible_area: 20,
                 presentation_state: RenderElementPresentationState::ZeroCopy,
             },

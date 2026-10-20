@@ -133,7 +133,7 @@ fn delayed_loading_does_not_block_cursor_callbacks_or_pointer_dispatch() {
         &MotionEvent {
             location: (10.0, 20.0).into(),
             serial: SERIAL_COUNTER.next_serial(),
-            time: 1,
+            time: smithay::backend::input::InputTime::from_millis(1),
         },
     );
     state.cursor_image(&seat, CursorImageStatus::Named(CursorIcon::Text));
@@ -162,6 +162,7 @@ fn cursor_animation_advances_and_cancels_on_hide_and_shape_change() {
     let output = Output::new(
         "cursor-test".into(),
         PhysicalProperties {
+            serial_number: String::new(),
             size: (0, 0).into(),
             subpixel: Subpixel::Unknown,
             make: "test".into(),

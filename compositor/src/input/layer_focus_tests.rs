@@ -29,13 +29,25 @@ fn layer_with_policy(
         .insert_client(server, Arc::new(ClientState::default()))
         .unwrap();
     let compositor = client
-        .create_resource::<WlCompositor, (), Ferese>(&state.display_handle, 6, ())
+        .create_resource::<WlCompositor, smithay::wayland::GlobalData, Ferese>(
+            &state.display_handle,
+            6,
+            smithay::wayland::GlobalData,
+        )
         .unwrap();
     let layers = client
-        .create_resource::<ZwlrLayerShellV1, (), Ferese>(&state.display_handle, 4, ())
+        .create_resource::<ZwlrLayerShellV1, smithay::wayland::GlobalData, Ferese>(
+            &state.display_handle,
+            4,
+            smithay::wayland::GlobalData,
+        )
         .unwrap();
     let shm = client
-        .create_resource::<WlShm, (), Ferese>(&state.display_handle, 1, ())
+        .create_resource::<WlShm, smithay::wayland::GlobalData, Ferese>(
+            &state.display_handle,
+            1,
+            smithay::wayland::GlobalData,
+        )
         .unwrap();
     request(&mut wire, compositor.id().protocol_id(), 0, &[2], None);
     request(
@@ -126,6 +138,7 @@ fn on_demand_layer_focus_follows_opening_and_outside_clicks() {
     let output = Output::new(
         "focus".into(),
         PhysicalProperties {
+            serial_number: String::new(),
             size: (0, 0).into(),
             subpixel: Subpixel::Unknown,
             make: "test".into(),
@@ -153,7 +166,7 @@ fn on_demand_layer_focus_follows_opening_and_outside_clicks() {
         &MotionEvent {
             location: inside,
             serial: SERIAL_COUNTER.next_serial(),
-            time: 0,
+            time: smithay::backend::input::InputTime::from_millis(0),
         },
     );
     // The opening click arrives while the collapsed panel is noninteractive.
@@ -181,7 +194,7 @@ fn on_demand_layer_focus_follows_opening_and_outside_clicks() {
         &MotionEvent {
             location: outside,
             serial: SERIAL_COUNTER.next_serial(),
-            time: 1,
+            time: smithay::backend::input::InputTime::from_millis(1),
         },
     );
     state.focus_window_at(outside, SERIAL_COUNTER.next_serial(), true);
@@ -263,6 +276,7 @@ fn fixture_with_animations(animations: bool) -> (Ferese, EventLoop<'static, Fere
     let output = Output::new(
         "layers".into(),
         PhysicalProperties {
+            serial_number: String::new(),
             size: (0, 0).into(),
             subpixel: Subpixel::Unknown,
             make: "test".into(),
@@ -285,6 +299,27 @@ fn fixture_with_animations(animations: bool) -> (Ferese, EventLoop<'static, Fere
 
 fn commit_policy(state: &mut Ferese, events: &mut EventLoop<'static, Ferese>, wire: &mut UnixStream, keyboard: u32) {
     request(wire, 3, 4, &[keyboard], None);
+    request(wire, 2, 6, &[], None);
+    dispatch(events, state);
+}
+
+// Unmapping resets the layer's pending state. Reapply its policy and complete
+// the initial bufferless configure/ack exchange before attaching again.
+fn remap_layer(
+    state: &mut Ferese,
+    events: &mut EventLoop<'static, Ferese>,
+    wire: &mut UnixStream,
+    keyboard: u32,
+    level: u32,
+) {
+    request(wire, 3, 0, &[65, 48], None);
+    request(wire, 3, 1, &[1 | 4], None);
+    request(wire, 3, 4, &[keyboard], None);
+    request(wire, 3, 8, &[level], None);
+    request(wire, 2, 6, &[], None);
+    dispatch(events, state);
+    ack_latest_configure(wire);
+    request(wire, 2, 1, &[5, 0, 0], None);
     request(wire, 2, 6, &[], None);
     dispatch(events, state);
 }
@@ -328,6 +363,12 @@ fn null_buffer_commit_revokes_layer_focus_without_destroying_role() {
             fallback,
             "null commit must revoke keyboard focus for policy {interactivity}"
         );
+        // An unmapped surface is back in its initial state. Keep this commit
+        // valid while asserting that keyboard policy alone cannot remap it.
+        request(&mut wire, 3, 0, &[64, 48], None);
+        request(&mut wire, 3, 1, &[1 | 4], None);
+        request(&mut wire, 3, 4, &[interactivity], None);
+        request(&mut wire, 3, 8, &[2], None);
         request(&mut wire, 2, 6, &[], None);
         dispatch(&mut events, &mut state);
         assert_eq!(
@@ -335,16 +376,7 @@ fn null_buffer_commit_revokes_layer_focus_without_destroying_role() {
             fallback,
             "unmapped commits must not reclaim focus"
         );
-        // Reconfigure with a changed size before mapping again. This follows
-        // the protocol's bufferless-commit/configure/ack sequence, including
-        // with Smithay 0.7 which retains configure state on null commits.
-        request(&mut wire, 3, 0, &[65, 48], None);
-        request(&mut wire, 2, 6, &[], None);
-        dispatch(&mut events, &mut state);
-        ack_latest_configure(&mut wire);
-        request(&mut wire, 2, 1, &[5, 0, 0], None);
-        request(&mut wire, 2, 6, &[], None);
-        dispatch(&mut events, &mut state);
+        remap_layer(&mut state, &mut events, &mut wire, interactivity, 2);
         if interactivity == 2 {
             assert_eq!(
                 keyboard.current_focus(),
@@ -443,7 +475,11 @@ fn layer_mapping_commits_do_not_override_session_lock() {
     let (panel, mut wire) = layer_with_policy(&mut state, &mut events, &output, 1, 3);
     let client = panel.wl_surface().client().unwrap();
     let manager = client
-        .create_resource::<ExtSessionLockManagerV1, (), Ferese>(&state.display_handle, 1, ())
+        .create_resource::<ExtSessionLockManagerV1, smithay::wayland::GlobalData, Ferese>(
+            &state.display_handle,
+            1,
+            smithay::wayland::GlobalData,
+        )
         .unwrap();
     request(&mut wire, manager.id().protocol_id(), 1, &[6], None);
     dispatch(&mut events, &mut state);
@@ -458,9 +494,7 @@ fn layer_mapping_commits_do_not_override_session_lock() {
     request(&mut wire, 2, 1, &[0, 0, 0], None);
     request(&mut wire, 2, 6, &[], None);
     dispatch(&mut events, &mut state);
-    request(&mut wire, 2, 1, &[5, 0, 0], None);
-    request(&mut wire, 2, 6, &[], None);
-    dispatch(&mut events, &mut state);
+    remap_layer(&mut state, &mut events, &mut wire, 1, 3);
     assert_eq!(keyboard.current_focus(), None, "layer remapping cannot bypass the lock");
     request(&mut wire, 3, 7, &[], None);
     dispatch(&mut events, &mut state);
@@ -532,13 +566,7 @@ fn fullscreen_hidden_top_commits_cannot_steal_keyboard_focus() {
     request(&mut top_wire, 2, 1, &[0, 0, 0], None);
     request(&mut top_wire, 2, 6, &[], None);
     dispatch(&mut events, &mut state);
-    request(&mut top_wire, 3, 0, &[65, 48], None);
-    request(&mut top_wire, 2, 6, &[], None);
-    dispatch(&mut events, &mut state);
-    ack_latest_configure(&mut top_wire);
-    request(&mut top_wire, 2, 1, &[5, 0, 0], None);
-    request(&mut top_wire, 2, 6, &[], None);
-    dispatch(&mut events, &mut state);
+    remap_layer(&mut state, &mut events, &mut top_wire, 1, 2);
     assert_eq!(
         keyboard.current_focus(),
         fallback,
@@ -555,7 +583,7 @@ fn fullscreen_hidden_top_commits_cannot_steal_keyboard_focus() {
         &MotionEvent {
             location: (20., 20.).into(),
             serial: SERIAL_COUNTER.next_serial(),
-            time: 0,
+            time: smithay::backend::input::InputTime::from_millis(0),
         },
     );
     state.set_window_fullscreen(id, true);
@@ -596,7 +624,11 @@ fn valid_layer_popup_grab_survives_commits_but_not_parent_unmapping() {
     state.focus_window_at((20., 20.).into(), SERIAL_COUNTER.next_serial(), true);
     let client = top.wl_surface().client().unwrap();
     let compositor = client
-        .create_resource::<WlCompositor, (), Ferese>(&state.display_handle, 6, ())
+        .create_resource::<WlCompositor, smithay::wayland::GlobalData, Ferese>(
+            &state.display_handle,
+            6,
+            smithay::wayland::GlobalData,
+        )
         .unwrap();
     let shell = client
         .create_resource::<XdgWmBase, XdgWmBaseUserData, Ferese>(&state.display_handle, 6, Default::default())
@@ -684,6 +716,7 @@ fn fullscreen_layer_eligibility_is_per_output_and_respects_overview() {
     let other = Output::new(
         "other".into(),
         PhysicalProperties {
+            serial_number: String::new(),
             size: (0, 0).into(),
             subpixel: Subpixel::Unknown,
             make: "test".into(),

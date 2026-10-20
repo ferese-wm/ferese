@@ -112,6 +112,7 @@ fn nested_instances_share_a_runtime_and_route_launched_clients_to_their_own_ipc(
         let output = Output::new(
             name.into(),
             PhysicalProperties {
+                serial_number: String::new(),
                 size: (0, 0).into(),
                 subpixel: Subpixel::Unknown,
                 make: "test".into(),
@@ -294,7 +295,11 @@ fn deferred_cursor_redraw_runs_after_input_lock_is_released() {
         .insert_client(server, Arc::new(crate::state::ClientState::default()))
         .unwrap();
     let compositor = client
-        .create_resource::<WlCompositor, (), Ferese>(&state.display_handle, 6, ())
+        .create_resource::<WlCompositor, smithay::wayland::GlobalData, Ferese>(
+            &state.display_handle,
+            6,
+            smithay::wayland::GlobalData,
+        )
         .unwrap();
     // wl_compositor.create_surface(new_id=2).
     for word in [compositor.id().protocol_id(), 12u32 << 16, 2] {
@@ -314,7 +319,7 @@ fn deferred_cursor_redraw_runs_after_input_lock_is_released() {
             let event = MotionEvent {
                 location: (10.0, 20.0).into(),
                 serial: SERIAL_COUNTER.next_serial(),
-                time: 0,
+                time: smithay::backend::input::InputTime::from_millis(0),
             };
             pointer.motion(state, Some((surface.clone(), (0.0, 0.0).into())), &event);
             // Smithay invokes Ferese::cursor_image while holding its real pointer lock.

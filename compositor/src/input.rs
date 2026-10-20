@@ -180,7 +180,8 @@ impl Ferese {
                     self.input_settings.touchpad.swipe_threshold,
                 );
 
-                self.swipe.start_time(std::time::Duration::from_micros(event.time()));
+                self.swipe
+                    .start_time(std::time::Duration::from_micros(event.time().micros()));
 
                 if self.swipe.active() {
                     self.focus_output_at(pointer.current_location());
@@ -189,7 +190,7 @@ impl Ferese {
                         self,
                         &GestureSwipeBeginEvent {
                             serial: SERIAL_COUNTER.next_serial(),
-                            time: event.time_msec(),
+                            time: event.time(),
                             fingers: event.fingers(),
                         },
                     );
@@ -200,7 +201,7 @@ impl Ferese {
                     self.swipe.update_at(
                         event.delta_x(),
                         event.delta_y(),
-                        std::time::Duration::from_micros(event.time()),
+                        std::time::Duration::from_micros(event.time().micros()),
                     );
 
                     if self.swipe_navigation_blocked() {
@@ -230,7 +231,7 @@ impl Ferese {
                     seat.get_pointer().expect("seat has a pointer").gesture_swipe_update(
                         self,
                         &GestureSwipeUpdateEvent {
-                            time: event.time_msec(),
+                            time: event.time(),
                             delta: event.delta(),
                         },
                     );
@@ -242,7 +243,7 @@ impl Ferese {
                     let cancelled = event.cancelled() || self.swipe_navigation_blocked();
                     let direction = self
                         .swipe
-                        .finish_at(cancelled, std::time::Duration::from_micros(event.time()));
+                        .finish_at(cancelled, std::time::Duration::from_micros(event.time().micros()));
                     let workspace_handled = self.finish_workspace_swipe(direction);
                     let focus_handled = self.finish_focus_swipe(direction);
                     let handled = workspace_handled || focus_handled || self.swipe.preview_started();
@@ -269,7 +270,7 @@ impl Ferese {
                         self,
                         &GestureSwipeEndEvent {
                             serial: SERIAL_COUNTER.next_serial(),
-                            time: event.time_msec(),
+                            time: event.time(),
                             cancelled: event.cancelled(),
                         },
                     );
@@ -291,6 +292,13 @@ impl Ferese {
                     }
                 }
 
+                // Smithay filters duplicate pressed transitions before calling
+                // the binding filter. Repeat only the compositor-owned action;
+                // clients receive their initial press and repeat it themselves.
+                if state == KeyState::Pressed && self.binding_mode_pressed.contains(&keycode) {
+                    self.repeat_intercepted_key(keycode);
+                    return;
+                }
                 let serial = SERIAL_COUNTER.next_serial();
                 let interaction_focus = keyboard.current_focus();
                 let client_grab = keyboard
@@ -301,7 +309,7 @@ impl Ferese {
                     keycode,
                     state,
                     serial,
-                    event.time_msec(),
+                    event.time(),
                     |data, modifiers, keysym| {
                         if data.focus_cycle.is_some() {
                             if data.session_lock.active() || data.input_capture.captures(1) {
@@ -314,7 +322,7 @@ impl Ferese {
                         if state == KeyState::Released {
                             data.binding_mode_pressed.remove(&keycode);
                             data.binding_mode_repeats.remove(&keycode);
-                            data.portal_shortcuts.release(keycode, Event::time(&event));
+                            data.portal_shortcuts.release(keycode, Event::time(&event).micros());
                             if data.intercepted_keys.remove(&keycode) {
                                 return FilterResult::Intercept(());
                             }
@@ -326,12 +334,8 @@ impl Ferese {
                             return FilterResult::Forward;
                         }
                         let raw_symbols = keysym.raw_syms().into_iter().map(|symbol| symbol.raw()).collect::<Vec<_>>();
-                        let first_press = data.binding_mode_pressed.insert(keycode);
+                        data.binding_mode_pressed.insert(keycode);
                         if data.session_lock.active() {
-                            // Preserve ownership of keys held across the lock transition.
-                            if !first_press && !data.intercepted_keys.contains(&keycode) {
-                                return FilterResult::Forward;
-                            }
                             if let Some(step) = locked_brightness_step(keysym.modified_sym().raw()) {
                                 data.intercepted_keys.insert(keycode);
                                 // Never execute configurable commands while locked.
@@ -345,29 +349,6 @@ impl Ferese {
                                 return FilterResult::Intercept(());
                             }
                             return if data.intercepted_keys.contains(&keycode) {
-                                FilterResult::Intercept(())
-                            } else {
-                                FilterResult::Forward
-                            };
-                        }
-                        if !first_press {
-                            // A held key belongs to the recipient of its first
-                            // press, even when a mode or configuration changes.
-                            return if data.intercepted_keys.contains(&keycode) {
-                                if !data.session_lock.active() && !data.input_capture.active()
-                                    && !data.seat.keyboard_shortcuts_inhibited()
-                                    && let Some(binding) = data.binding_mode_repeats.get(&keycode)
-                                        .filter(|binding| binding.matches(keycode, &raw_symbols,
-                                            modifiers.logo, modifiers.ctrl, modifiers.alt, modifiers.shift))
-                                        .cloned()
-                                {
-                                    let action = binding.action;
-                                    if let BindingAction::FocusMru(reverse) = action {
-                                        data.cycle_focus(reverse, modifiers.alt);
-                                    } else {
-                                        data.execute_binding(action);
-                                    }
-                                }
                                 FilterResult::Intercept(())
                             } else {
                                 FilterResult::Forward
@@ -480,7 +461,7 @@ impl Ferese {
                                     keycode,
                                     &raw_symbols,
                                     modifiers,
-                                    Event::time(&event),
+                                    Event::time(&event).micros(),
                                 )
                             {
                                 data.intercepted_keys.insert(keycode);
@@ -515,7 +496,7 @@ impl Ferese {
                 }
             }
             InputEvent::PointerMotionAbsolute { event, .. } => {
-                self.last_pointer_time = event.time_msec();
+                self.last_pointer_time = event.time();
                 let Some(position) = self.absolute_event_position(&event) else {
                     return;
                 };
@@ -532,7 +513,7 @@ impl Ferese {
                     &MotionEvent {
                         location: position,
                         serial: SERIAL_COUNTER.next_serial(),
-                        time: event.time_msec(),
+                        time: event.time(),
                     },
                 );
                 pointer.frame(self);
@@ -541,7 +522,7 @@ impl Ferese {
                 crate::backends::direct::render_cursor(self);
             }
             InputEvent::PointerMotion { event, .. } => {
-                self.last_pointer_time = event.time_msec();
+                self.last_pointer_time = event.time();
                 let pointer = self.seat.get_pointer().expect("seat has a pointer");
                 let position = pointer.current_location();
                 let focus = self.surface_under(position);
@@ -564,7 +545,7 @@ impl Ferese {
                     &RelativeMotionEvent {
                         delta: (delta.x / scale_x, delta.y / scale_y).into(),
                         delta_unaccel: (delta_unaccel.x / scale_x, delta_unaccel.y / scale_y).into(),
-                        utime: event.time(),
+                        time: event.time(),
                     },
                 );
                 let requested = self.clamp_pointer_position(position + delta);
@@ -577,7 +558,7 @@ impl Ferese {
                     &MotionEvent {
                         location,
                         serial: SERIAL_COUNTER.next_serial(),
-                        time: event.time_msec(),
+                        time: event.time(),
                     },
                 );
                 pointer.frame(self);
@@ -586,7 +567,7 @@ impl Ferese {
                 crate::backends::direct::render_cursor(self);
             }
             InputEvent::PointerButton { event, .. } => {
-                self.last_pointer_time = event.time_msec();
+                self.last_pointer_time = event.time();
                 if self.input_capture.active() {
                     if self.input_capture.captures(2) {
                         self.input_capture.push(serde_json::json!({"type":"button", "button":event.button_code(), "pressed":event.state() == ButtonState::Pressed}));
@@ -609,7 +590,7 @@ impl Ferese {
                                 &MotionEvent {
                                     location: pointer.current_location(),
                                     serial,
-                                    time: event.time_msec(),
+                                    time: event.time(),
                                 },
                             );
                         }
@@ -620,7 +601,7 @@ impl Ferese {
                             button: event.button_code(),
                             state: event.state(),
                             serial,
-                            time: event.time_msec(),
+                            time: event.time(),
                         },
                     );
                     pointer.frame(self);
@@ -666,7 +647,7 @@ impl Ferese {
                         popup,
                         crate::focus_effect::BoundedFade::new(f64::from(opacity)),
                     ));
-                    pointer.unset_grab(self, serial, event.time_msec());
+                    pointer.unset_grab(self, serial, event.time());
                     self.focus_window_at(pointer.current_location(), serial, true);
                     crate::backends::direct::render_surface(self, &root);
                 }
@@ -684,7 +665,7 @@ impl Ferese {
                                 button: event.button_code(),
                                 state: event.state(),
                                 serial,
-                                time: event.time_msec(),
+                                time: event.time(),
                             },
                         );
                         pointer.frame(self);
@@ -717,7 +698,7 @@ impl Ferese {
                             button: event.button_code(),
                             state: event.state(),
                             serial,
-                            time: event.time_msec(),
+                            time: event.time(),
                         },
                     );
                     pointer.frame(self);
@@ -744,13 +725,13 @@ impl Ferese {
                         button: event.button_code(),
                         state: event.state(),
                         serial,
-                        time: event.time_msec(),
+                        time: event.time(),
                     },
                 );
                 pointer.frame(self);
             }
             InputEvent::PointerAxis { event, .. } => {
-                self.last_pointer_time = event.time_msec();
+                self.last_pointer_time = event.time();
                 let source = event.source();
                 let horizontal = event
                     .amount(Axis::Horizontal)
@@ -777,7 +758,7 @@ impl Ferese {
                 ) {
                     return;
                 }
-                let mut frame = AxisFrame::new(event.time_msec()).source(source);
+                let mut frame = AxisFrame::new(event.time()).source(source);
                 if horizontal != 0.0 {
                     frame = frame.value(Axis::Horizontal, horizontal);
                     if let Some(value) = event.amount_v120(Axis::Horizontal) {
@@ -829,7 +810,7 @@ impl Ferese {
                         slot: event.slot(),
                         location,
                         serial,
-                        time: event.time_msec(),
+                        time: event.time(),
                     },
                 );
             }
@@ -848,7 +829,7 @@ impl Ferese {
                     &TouchMotionEvent {
                         slot: event.slot(),
                         location,
-                        time: event.time_msec(),
+                        time: event.time(),
                     },
                 );
             }
@@ -862,7 +843,7 @@ impl Ferese {
                     &UpEvent {
                         slot: event.slot(),
                         serial: SERIAL_COUNTER.next_serial(),
-                        time: event.time_msec(),
+                        time: event.time(),
                     },
                 );
             }
@@ -1010,6 +991,60 @@ impl Ferese {
         };
 
         candidates.get(neighbor).copied()
+    }
+
+    fn repeat_intercepted_key(&mut self, keycode: smithay::input::keyboard::Keycode) {
+        if !self.intercepted_keys.contains(&keycode) {
+            return;
+        }
+        let keyboard = self.seat.get_keyboard().expect("seat has a keyboard");
+        let modifiers = keyboard.modifier_state();
+        let raw_symbols = keyboard.with_xkb_state(self, |context| {
+            let xkb = context.xkb().lock().unwrap();
+            xkb.raw_syms_for_key_in_layout(keycode, xkb.active_layout())
+                .iter()
+                .map(|symbol| symbol.raw())
+                .collect::<Vec<_>>()
+        });
+        if self.session_lock.active() {
+            // Repeats retain press ownership and never run configurable commands
+            // on the lock screen, including keys held before locking.
+            if let Some(step) = raw_symbols.iter().find_map(|symbol| locked_brightness_step(*symbol))
+                && let Some(child) = spawn_client(
+                    self,
+                    ["brightnessctl", "set", step],
+                    crate::private_client::ClientCapabilities::default(),
+                )
+            {
+                crate::process::watch_client_exit(&self.loop_handle, child);
+            }
+            return;
+        }
+        if self.input_capture.active() || self.seat.keyboard_shortcuts_inhibited() {
+            return;
+        }
+        let Some(binding) = self
+            .binding_mode_repeats
+            .get(&keycode)
+            .filter(|binding| {
+                binding.matches(
+                    keycode,
+                    &raw_symbols,
+                    modifiers.logo,
+                    modifiers.ctrl,
+                    modifiers.alt,
+                    modifiers.shift,
+                )
+            })
+            .cloned()
+        else {
+            return;
+        };
+        if let BindingAction::FocusMru(reverse) = binding.action {
+            self.cycle_focus(reverse, modifiers.alt);
+        } else {
+            self.execute_binding(binding.action);
+        }
     }
 
     fn focus_window_at(&mut self, position: Point<f64, Logical>, serial: Serial, raise: bool) {

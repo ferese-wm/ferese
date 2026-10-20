@@ -474,18 +474,18 @@ fn configure_libinput_device(state: &Ferese, device: &mut LibinputDevice) {
     if device.config_tap_finger_count() > 0
         && let Err(error) = device.config_tap_set_enabled(settings.tap)
     {
-        tracing::warn!(device = device.name(), ?error, "failed to configure tap-to-click");
+        tracing::warn!(device = %device.name(), ?error, "failed to configure tap-to-click");
     }
     if device.config_scroll_has_natural_scroll()
         && let Err(error) = device.config_scroll_set_natural_scroll_enabled(settings.natural_scroll)
     {
-        tracing::warn!(device = device.name(), ?error, "failed to configure natural scrolling");
+        tracing::warn!(device = %device.name(), ?error, "failed to configure natural scrolling");
     }
     if device.config_dwt_is_available()
         && let Err(error) = device.config_dwt_set_enabled(settings.disable_while_typing)
     {
         tracing::warn!(
-            device = device.name(),
+            device = %device.name(),
             ?error,
             "failed to configure disable-while-typing"
         );
@@ -2264,7 +2264,7 @@ fn create_direct_output(
         drm_surface,
         None,
         allocator,
-        GbmFramebufferExporter::new(gbm.clone(), Some(render_node)),
+        GbmFramebufferExporter::new(gbm.clone(), Some(render_node).into()),
         [Fourcc::Argb8888, Fourcc::Abgr8888],
         renderer.dmabuf_formats(),
         drm.cursor_size(),
@@ -2341,6 +2341,7 @@ fn create_output(
     let output = Output::new(
         name,
         PhysicalProperties {
+            serial_number: String::new(),
             size: (physical_size.0 as i32, physical_size.1 as i32).into(),
             subpixel: Subpixel::from(connector.subpixel()),
             make: edid_identity

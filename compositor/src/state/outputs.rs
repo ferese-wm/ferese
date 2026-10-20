@@ -216,8 +216,8 @@ mod tests {
     struct TestButton(ButtonState);
 
     impl Event<TestInput> for TestButton {
-        fn time(&self) -> u64 {
-            1_000
+        fn time(&self) -> smithay::backend::input::InputTime {
+            smithay::backend::input::InputTime::from_micros(1_000)
         }
         fn device(&self) -> WinitVirtualDevice {
             WinitVirtualDevice
@@ -241,7 +241,7 @@ mod tests {
             &MotionEvent {
                 location: position,
                 serial: SERIAL_COUNTER.next_serial(),
-                time: 1,
+                time: smithay::backend::input::InputTime::from_millis(1),
             },
         );
         pointer.frame(state);
@@ -268,6 +268,7 @@ mod tests {
             let output = Output::new(
                 name.into(),
                 smithay::output::PhysicalProperties {
+                    serial_number: String::new(),
                     size: (0, 0).into(),
                     subpixel: smithay::output::Subpixel::Unknown,
                     make: "test".into(),

@@ -279,6 +279,7 @@ mod tests {
             let output = Output::new(
                 format!("cursor-test-{index}"),
                 PhysicalProperties {
+                    serial_number: String::new(),
                     size: (0, 0).into(),
                     subpixel: Subpixel::Unknown,
                     make: "test".into(),
@@ -313,7 +314,7 @@ mod tests {
                 &MotionEvent {
                     location: (x, 500.0).into(),
                     serial: SERIAL_COUNTER.next_serial(),
-                    time: 0,
+                    time: smithay::backend::input::InputTime::from_millis(0),
                 },
             );
             let current = [
@@ -337,7 +338,7 @@ mod tests {
             &MotionEvent {
                 location: (1919.0, 500.0).into(),
                 serial: SERIAL_COUNTER.next_serial(),
-                time: 0,
+                time: smithay::backend::input::InputTime::from_millis(0),
             },
         );
         assert!(cursor_on_output(&state, &outputs[0]));
@@ -351,7 +352,7 @@ mod tests {
                 &MotionEvent {
                     location: (x, 500.0).into(),
                     serial: SERIAL_COUNTER.next_serial(),
-                    time: 0,
+                    time: smithay::backend::input::InputTime::from_millis(0),
                 },
             );
             assert!(

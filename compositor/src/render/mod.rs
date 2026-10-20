@@ -243,6 +243,7 @@ impl RenderElement<GlesRenderer> for BlurRenderElement {
         dst: Rectangle<i32, Physical>,
         damage: &[Rectangle<i32, Physical>],
         opaque_regions: &[Rectangle<i32, Physical>],
+        _cache: Option<&smithay::utils::user_data::UserDataMap>,
     ) -> Result<(), GlesError> {
         let texture = self.texture.tex_id();
         let [x, y, width, height] = self.capture_rect;
@@ -558,6 +559,7 @@ impl RenderElement<GlesRenderer> for RoundedSurfaceRenderElement {
         dst: Rectangle<i32, Physical>,
         damage: &[Rectangle<i32, Physical>],
         opaque_regions: &[Rectangle<i32, Physical>],
+        _cache: Option<&smithay::utils::user_data::UserDataMap>,
     ) -> Result<(), GlesError> {
         match self.inner.texture() {
             WaylandSurfaceTexture::Texture(texture) => frame.render_texture_from_to(
@@ -1036,8 +1038,8 @@ mod tests {
                     for y in [geometry.loc.y, geometry.loc.y + geometry.size.h] {
                         let nx = 2.0 * x as f32 / element_size.w as f32 - 1.0;
                         let ny = 1.0 - 2.0 * y as f32 / element_size.h as f32;
-                        let tx = matrix[0][0] * nx + matrix[1][0] * ny;
-                        let ty = matrix[0][1] * nx + matrix[1][1] * ny;
+                        let tx = matrix.matrix2.x_axis.x * nx + matrix.matrix2.y_axis.x * ny;
+                        let ty = matrix.matrix2.x_axis.y * nx + matrix.matrix2.y_axis.y * ny;
                         xs.push((tx + 1.0) * output_size.w as f32 / 2.0);
                         ys.push((1.0 - ty) * output_size.h as f32 / 2.0);
                     }

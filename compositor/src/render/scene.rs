@@ -351,7 +351,13 @@ fn scene_elements(
                 elements.push(shadow.into());
             }
         } else {
-            elements.extend(constrain_space_element::<GlesRenderer, _, AnimatedWindowRenderElement>(
+            elements.extend(constrain_space_element::<
+                GlesRenderer,
+                _,
+                AnimatedWindowRenderElement,
+                _,
+                _,
+            >(
                 renderer,
                 &window,
                 constrain.loc,

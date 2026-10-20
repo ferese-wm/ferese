@@ -234,7 +234,11 @@ mod tests {
         use smithay::reexports::wayland_server::protocol::wl_compositor::WlCompositor;
         use smithay::wayland::shell::xdg::XdgWmBaseUserData;
         let compositor = recipient
-            .create_resource::<WlCompositor, (), Ferese>(&state.display_handle, 6, ())
+            .create_resource::<WlCompositor, smithay::wayland::GlobalData, Ferese>(
+                &state.display_handle,
+                6,
+                smithay::wayland::GlobalData,
+            )
             .unwrap();
         let shell = recipient
             .create_resource::<XdgWmBase, XdgWmBaseUserData, Ferese>(&state.display_handle, 6, Default::default())

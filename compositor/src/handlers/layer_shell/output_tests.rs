@@ -19,6 +19,7 @@ fn output(state: &mut Ferese, name: &str, x: i32) -> Output {
     let output = Output::new(
         name.into(),
         PhysicalProperties {
+            serial_number: String::new(),
             size: (0, 0).into(),
             subpixel: Subpixel::Unknown,
             make: "test".into(),
@@ -78,10 +79,18 @@ impl Client {
             .insert_client(server, Arc::new(ClientState::default()))
             .unwrap();
         let compositor = client
-            .create_resource::<WlCompositor, (), Ferese>(&state.display_handle, 6, ())
+            .create_resource::<WlCompositor, smithay::wayland::GlobalData, Ferese>(
+                &state.display_handle,
+                6,
+                smithay::wayland::GlobalData,
+            )
             .unwrap();
         let shell = client
-            .create_resource::<ZwlrLayerShellV1, (), Ferese>(&state.display_handle, 4, ())
+            .create_resource::<ZwlrLayerShellV1, smithay::wayland::GlobalData, Ferese>(
+                &state.display_handle,
+                4,
+                smithay::wayland::GlobalData,
+            )
             .unwrap();
         request(&mut wire, 1, 1, &[2], None); // Registry.
         request(&mut wire, compositor.id().protocol_id(), 0, &[3], None);
@@ -281,6 +290,7 @@ fn unregistered_output_is_not_a_creation_fallback() {
     let ghost = Output::new(
         "ghost".into(),
         PhysicalProperties {
+            serial_number: String::new(),
             size: (0, 0).into(),
             subpixel: Subpixel::Unknown,
             make: "test".into(),

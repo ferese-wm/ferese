@@ -150,6 +150,7 @@ mod tests {
         let output = Output::new(
             "focus".into(),
             smithay::output::PhysicalProperties {
+                serial_number: String::new(),
                 size: (0, 0).into(),
                 subpixel: smithay::output::Subpixel::Unknown,
                 make: "test".into(),

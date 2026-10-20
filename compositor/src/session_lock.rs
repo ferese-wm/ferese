@@ -4,8 +4,8 @@ use std::time::{Duration, Instant};
 use smithay::output::Output;
 use smithay::reexports::calloop::RegistrationToken;
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
+#[cfg(test)]
 use smithay::reexports::wayland_protocols::ext::session_lock::v1::server::ext_session_lock_manager_v1::ExtSessionLockManagerV1;
-use smithay::reexports::wayland_protocols::ext::session_lock::v1::server::ext_session_lock_surface_v1::ExtSessionLockSurfaceV1;
 use smithay::reexports::wayland_protocols::ext::session_lock::v1::server::ext_session_lock_v1;
 use smithay::reexports::wayland_protocols::ext::session_lock::v1::server::ext_session_lock_v1::ExtSessionLockV1;
 use smithay::reexports::wayland_server::protocol::wl_output::WlOutput;
@@ -457,14 +457,14 @@ impl SessionLockHandler for Ferese {
         self.set_overview_active(false);
         let serial = SERIAL_COUNTER.next_serial();
         if let Some(pointer) = self.seat.get_pointer() {
-            pointer.unset_grab(self, serial, 0);
+            pointer.unset_grab(self, serial, smithay::backend::input::InputTime::now());
             pointer.motion(
                 self,
                 None,
                 &smithay::input::pointer::MotionEvent {
                     location: pointer.current_location(),
                     serial,
-                    time: 0,
+                    time: smithay::backend::input::InputTime::from_millis(0),
                 },
             );
             pointer.frame(self);
@@ -512,8 +512,8 @@ impl SessionLockHandler for Ferese {
     }
 }
 
-// Smithay delegates unlock even after posting InvalidUnlock. Check ownership
-// and confirmation first so a rejected/unfinished lock cannot unlock the owner.
+// Tie requests to Ferese's confirmed lock owner before delegating to Smithay.
+// Rejected lockers cannot create lock surfaces or release another client's lock.
 impl Dispatch<ExtSessionLockV1, SessionLockState> for Ferese {
     fn request(
         state: &mut Self,
@@ -538,17 +538,16 @@ impl Dispatch<ExtSessionLockV1, SessionLockState> for Ferese {
             lock.post_error(ext_session_lock_v1::Error::InvalidUnlock, "not the active lock owner");
             return;
         }
-        <SessionLockManagerState as Dispatch<ExtSessionLockV1, SessionLockState, Ferese>>::request(
-            state, client, lock, request, data, display, data_init,
-        );
+        smithay::wayland::Dispatch2::request(data, state, client, lock, request, display, data_init);
     }
 
     fn destroyed(
         state: &mut Self,
-        _: smithay::reexports::wayland_server::backend::ClientId,
+        client: smithay::reexports::wayland_server::backend::ClientId,
         lock: &ExtSessionLockV1,
-        _: &SessionLockState,
+        data: &SessionLockState,
     ) {
+        smithay::wayland::Dispatch2::destroyed(data, state, client, lock);
         if state.session_lock.lifecycle.owner() == Some(lock) {
             state.session_lock.lifecycle = Lifecycle::Orphaned;
             state.session_lock.surfaces.clear();
@@ -557,9 +556,6 @@ impl Dispatch<ExtSessionLockV1, SessionLockState> for Ferese {
         }
     }
 }
-smithay::reexports::wayland_server::delegate_global_dispatch!(Ferese: [ExtSessionLockManagerV1: smithay::wayland::session_lock::SessionLockManagerGlobalData] => SessionLockManagerState);
-smithay::reexports::wayland_server::delegate_dispatch!(Ferese: [ExtSessionLockManagerV1: ()] => SessionLockManagerState);
-smithay::reexports::wayland_server::delegate_dispatch!(Ferese: [ExtSessionLockSurfaceV1: smithay::wayland::session_lock::ExtLockSurfaceUserData] => SessionLockManagerState);
 
 #[cfg(test)]
 mod tests;

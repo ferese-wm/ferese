@@ -33,6 +33,7 @@ fn every_panel_style_owns_clearance_at_its_reserved_edge() {
     let output = Output::new(
         "clearance".into(),
         PhysicalProperties {
+            serial_number: String::new(),
             size: (0, 0).into(),
             subpixel: Subpixel::Unknown,
             make: "test".into(),
@@ -60,10 +61,18 @@ fn every_panel_style_owns_clearance_at_its_reserved_edge() {
         .insert_client(server, Arc::new(ClientState::default()))
         .unwrap();
     let compositor = client
-        .create_resource::<WlCompositor, (), Ferese>(&state.display_handle, 6, ())
+        .create_resource::<WlCompositor, smithay::wayland::GlobalData, Ferese>(
+            &state.display_handle,
+            6,
+            smithay::wayland::GlobalData,
+        )
         .unwrap();
     let layers = client
-        .create_resource::<ZwlrLayerShellV1, (), Ferese>(&state.display_handle, 4, ())
+        .create_resource::<ZwlrLayerShellV1, smithay::wayland::GlobalData, Ferese>(
+            &state.display_handle,
+            4,
+            smithay::wayland::GlobalData,
+        )
         .unwrap();
     request(&mut wire, compositor.id().protocol_id(), 0, &[2]);
     let mut namespace = b"ferese-shell-top-bar\0".to_vec();

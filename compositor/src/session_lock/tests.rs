@@ -71,6 +71,7 @@ fn mirror_must_present_protected_frame_before_lock_is_ready() {
         Output::new(
             name.into(),
             smithay::output::PhysicalProperties {
+                serial_number: String::new(),
                 size: (0, 0).into(),
                 subpixel: smithay::output::Subpixel::Unknown,
                 make: "test".into(),
@@ -106,6 +107,7 @@ fn protected_fallback_frames_allow_idle_after_early_locker_crash() {
     let output = Output::new(
         "test".into(),
         smithay::output::PhysicalProperties {
+            serial_number: String::new(),
             size: (0, 0).into(),
             subpixel: smithay::output::Subpixel::Unknown,
             make: "test".into(),
@@ -221,6 +223,7 @@ impl Fixture {
         let output = Output::new(
             name.into(),
             smithay::output::PhysicalProperties {
+                serial_number: String::new(),
                 size: (0, 0).into(),
                 subpixel: smithay::output::Subpixel::Unknown,
                 make: "test".into(),
@@ -249,7 +252,11 @@ impl Fixture {
             .insert_client(server, Arc::new(crate::state::ClientState::default()))
             .unwrap();
         let manager = client
-            .create_resource::<ExtSessionLockManagerV1, (), Ferese>(&self.state.display_handle, 1, ())
+            .create_resource::<ExtSessionLockManagerV1, smithay::wayland::GlobalData, Ferese>(
+                &self.state.display_handle,
+                1,
+                smithay::wayland::GlobalData,
+            )
             .unwrap();
         request(&mut wire, manager.id().protocol_id(), 1, &[2]);
         self.dispatch();
@@ -318,7 +325,11 @@ impl Locker {
         request(&mut self.wire, registry, 0, &args);
         let compositor = self
             .client
-            .create_resource::<WlCompositor, (), Ferese>(&fixture.state.display_handle, 6, ())
+            .create_resource::<WlCompositor, smithay::wayland::GlobalData, Ferese>(
+                &fixture.state.display_handle,
+                6,
+                smithay::wayland::GlobalData,
+            )
             .unwrap();
         let surface_id = self.id();
         request(&mut self.wire, compositor.id().protocol_id(), 0, &[surface_id]);
@@ -694,7 +705,7 @@ fn lock_input_preserves_owner_click_grabs_and_rejects_retired_surfaces() {
         &smithay::input::pointer::MotionEvent {
             location: (10.0, 10.0).into(),
             serial,
-            time: 1,
+            time: smithay::backend::input::InputTime::from_millis(1),
         },
     );
     pointer.button(
@@ -703,7 +714,7 @@ fn lock_input_preserves_owner_click_grabs_and_rejects_retired_surfaces() {
             button: 0x110,
             state: smithay::backend::input::ButtonState::Pressed,
             serial,
-            time: 2,
+            time: smithay::backend::input::InputTime::from_millis(2),
         },
     );
     assert!(pointer.is_grabbed());
@@ -718,7 +729,7 @@ fn lock_input_preserves_owner_click_grabs_and_rejects_retired_surfaces() {
             button: 0x110,
             state: smithay::backend::input::ButtonState::Released,
             serial: SERIAL_COUNTER.next_serial(),
-            time: 3,
+            time: smithay::backend::input::InputTime::from_millis(3),
         },
     );
     assert!(!pointer.is_grabbed());
@@ -728,7 +739,7 @@ fn lock_input_preserves_owner_click_grabs_and_rejects_retired_surfaces() {
             button: 0x110,
             state: smithay::backend::input::ButtonState::Pressed,
             serial: SERIAL_COUNTER.next_serial(),
-            time: 4,
+            time: smithay::backend::input::InputTime::from_millis(4),
         },
     );
     assert!(pointer.is_grabbed());

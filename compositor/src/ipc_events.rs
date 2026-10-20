@@ -234,6 +234,7 @@ mod tests {
             output: Output::new(
                 name.into(),
                 PhysicalProperties {
+                    serial_number: String::new(),
                     size: (0, 0).into(),
                     subpixel: Subpixel::Unknown,
                     make: "test".into(),

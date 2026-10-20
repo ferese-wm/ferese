@@ -11,6 +11,7 @@ fn fixture() -> (smithay::reexports::calloop::EventLoop<'static, Ferese>, Ferese
     let output = Output::new(
         "test".into(),
         smithay::output::PhysicalProperties {
+            serial_number: String::new(),
             size: (0, 0).into(),
             subpixel: smithay::output::Subpixel::Unknown,
             make: "test".into(),
@@ -778,7 +779,11 @@ fn floating_maximize_and_restore_work_in_both_layouts() {
         use std::os::fd::AsRawFd;
         let client = window.toplevel().unwrap().wl_surface().client().unwrap();
         let shm = client
-            .create_resource::<WlShm, (), Ferese>(&state.display_handle, 1, ())
+            .create_resource::<WlShm, smithay::wayland::GlobalData, Ferese>(
+                &state.display_handle,
+                1,
+                smithay::wayland::GlobalData,
+            )
             .unwrap();
         let (width, height) = (maximized.width.round() as u32, maximized.height.round() as u32);
         let mut file = tempfile::tempfile().unwrap();
@@ -803,14 +808,9 @@ fn floating_maximize_and_restore_work_in_both_layouts() {
         next_object += 2;
         request(&mut wire, 2, 6, &[], None);
         dispatch(&mut events, &mut state);
-        assert!(
-            window
-                .toplevel()
-                .unwrap()
-                .current_state()
-                .states
-                .contains(xdg_toplevel::State::Maximized)
-        );
+        assert!(window.toplevel().unwrap().with_committed_state(|state| {
+            state.is_some_and(|state| state.states.contains(xdg_toplevel::State::Maximized))
+        }));
 
         state.set_window_maximized(id, false);
         assert_eq!(state.windows.geometry(&id).unwrap().logical, normal, "{mode:?}");
@@ -820,14 +820,9 @@ fn floating_maximize_and_restore_work_in_both_layouts() {
         request(&mut wire, 2, 1, &[6, 0, 0], None);
         request(&mut wire, 2, 6, &[], None);
         dispatch(&mut events, &mut state);
-        assert!(
-            !window
-                .toplevel()
-                .unwrap()
-                .current_state()
-                .states
-                .contains(xdg_toplevel::State::Maximized)
-        );
+        assert!(!window.toplevel().unwrap().with_committed_state(|state| {
+            state.is_some_and(|state| state.states.contains(xdg_toplevel::State::Maximized))
+        }));
         assert_eq!(
             state.workspaces.placement(id),
             Some(WindowPlacement::Floating { rect: normal })
@@ -846,7 +841,7 @@ fn malformed_resize_limits_disconnect_only_the_client_and_motion_survives() {
 
     let (mut events, mut state, _) = fixture();
     for (minimum, maximum) in [
-        ((800, 0), (400, 0)),
+        ((800i32, 0), (400, 0)),
         ((0, 800), (0, 400)),
         ((-1, 0), (0, 0)),
         ((0, 0), (-1, 0)),
@@ -883,10 +878,14 @@ fn malformed_resize_limits_disconnect_only_the_client_and_motion_survives() {
             &MotionEvent {
                 location: (120.0, 130.0).into(),
                 serial: SERIAL_COUNTER.next_serial(),
-                time: 1,
+                time: smithay::backend::input::InputTime::from_millis(1),
             },
         );
-        pointer.unset_grab(&mut state, SERIAL_COUNTER.next_serial(), 2);
+        pointer.unset_grab(
+            &mut state,
+            SERIAL_COUNTER.next_serial(),
+            smithay::backend::input::InputTime::from_millis(2),
+        );
         wire.set_nonblocking(true).unwrap();
         let mut messages = Vec::new();
         let _ = wire.read_to_end(&mut messages);
@@ -1310,6 +1309,7 @@ fn shell_can_move_a_window_to_the_current_workspace_on_another_output() {
     let second = Output::new(
         "second".into(),
         smithay::output::PhysicalProperties {
+            serial_number: String::new(),
             size: (0, 0).into(),
             subpixel: smithay::output::Subpixel::Unknown,
             make: "test".into(),

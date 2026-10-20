@@ -427,6 +427,7 @@ mod tests {
         let output = Output::new(
             "resize-idle".into(),
             smithay::output::PhysicalProperties {
+                serial_number: String::new(),
                 size: (0, 0).into(),
                 subpixel: smithay::output::Subpixel::Unknown,
                 make: "test".into(),
@@ -548,6 +549,7 @@ mod tests {
             let output = Output::new(
                 format!("focus-{index}"),
                 smithay::output::PhysicalProperties {
+                    serial_number: String::new(),
                     size: (0, 0).into(),
                     subpixel: smithay::output::Subpixel::Unknown,
                     make: "test".into(),
@@ -657,6 +659,7 @@ mod tests {
         let output = Output::new(
             "overview-slide-test".into(),
             smithay::output::PhysicalProperties {
+                serial_number: String::new(),
                 size: (0, 0).into(),
                 subpixel: smithay::output::Subpixel::Unknown,
                 make: "test".into(),
@@ -780,6 +783,7 @@ mod tests {
         let output = Output::new(
             "forecast-test".into(),
             smithay::output::PhysicalProperties {
+                serial_number: String::new(),
                 size: (0, 0).into(),
                 subpixel: smithay::output::Subpixel::Unknown,
                 make: "test".into(),
@@ -829,6 +833,7 @@ mod tests {
         let other = Output::new(
             "other-forecast".into(),
             smithay::output::PhysicalProperties {
+                serial_number: String::new(),
                 size: (0, 0).into(),
                 subpixel: smithay::output::Subpixel::Unknown,
                 make: "test".into(),
