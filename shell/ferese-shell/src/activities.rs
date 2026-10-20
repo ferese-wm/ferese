@@ -1,5 +1,6 @@
 //! Shared Activities item and Morph presentation. Publishers provide data only.
 mod compact;
+mod pomodoro;
 mod ring;
 pub(crate) mod subscription;
 use crate::{FereseShell, Message, status_ui};
@@ -949,60 +950,6 @@ impl FereseShell {
             .width(if intrinsic { Length::Fixed(budget) } else { Length::Fill })
             .into()
     }
-    fn pomodoro_controls(&self, opacity: f32) -> Element<'_, cosmic::Action<Message>> {
-        use ferese_activities::pomodoro::Status;
-        use ferese_ipc::activities::PomodoroAction as Action;
-        let current = self.activities.snapshot.pomodoro.as_ref();
-        let session = current.map(|current| current.id.clone());
-        let control = |label: &'static str, action| {
-            button::text(label).on_press(cosmic::Action::App(Message::Pomodoro(action, session.clone())))
-        };
-        let mut controls = row::with_capacity(4).spacing(6).align_y(Alignment::Center);
-        let description = if let Some(current) = current {
-            let timer = &current.timer;
-            if timer.status == Status::Finished {
-                controls = controls
-                    .push(control("Start again", Action::Start))
-                    .push(control("Dismiss", Action::Stop));
-                format!("Pomodoro finished · {} work intervals", timer.completed_work)
-            } else {
-                controls = controls.push(match timer.status {
-                    Status::Running => control("Pause", Action::Pause),
-                    Status::Paused => control("Resume", Action::Resume),
-                    _ => control("Start phase", Action::Resume),
-                });
-                if timer.status != Status::Ready {
-                    controls = controls.push(control("Skip", Action::Next));
-                }
-                controls = controls
-                    .push(control("Reset", Action::Reset))
-                    .push(control("Stop", Action::Stop));
-                format!(
-                    "Pomodoro · {}{} · {}/{}",
-                    timer.phase.label(),
-                    match timer.status {
-                        Status::Paused => " · Paused",
-                        Status::Ready => " · Ready",
-                        _ => "",
-                    },
-                    timer.completed_work,
-                    timer.settings.intervals
-                )
-            }
-        } else {
-            controls = controls.push(control("Start Pomodoro", Action::Start));
-            "Pomodoro".into()
-        };
-        column![
-            self.render.text(description).size(12).class(theme::Text::Color(
-                self.config.theme.palette().text.scale_alpha(opacity)
-            )),
-            controls
-        ]
-        .spacing(6)
-        .width(Length::Fill)
-        .into()
-    }
     pub fn activity_list(&self, id: window::Id, opacity: f32) -> Element<'_, cosmic::Action<Message>> {
         let palette = self.config.theme.palette();
         let name = self.output_for_bar(id).map(|output| output.name.as_str()).unwrap_or("");
@@ -1021,9 +968,28 @@ impl FereseShell {
             });
         let mut rows = Vec::with_capacity(entries.len());
         if entries.is_empty() {
-            rows.push(self.render.text("No active tasks").size(13).into());
+            rows.push(
+                container(
+                    self.render
+                        .text("No active tasks")
+                        .size(12)
+                        .class(theme::Text::Color(palette.muted.scale_alpha(opacity))),
+                )
+                .padding([8, 10])
+                .into(),
+            );
         }
         for activity in entries {
+            // The timer card already represents this activity and owns its focus ID.
+            if self
+                .activities
+                .snapshot
+                .pomodoro
+                .as_ref()
+                .is_some_and(|timer| timer.id == activity.id)
+            {
+                continue;
+            }
             let mut text = column![
                 self.render
                     .text(activity.data.title.clone())
@@ -1129,12 +1095,12 @@ impl FereseShell {
         // Keep unnamed row roots: the toolkit's column does not move directly
         // named child trees when their order changes. Inner button IDs restore
         // focus through the normal named-state reconciliation on each rebuild.
-        column![
-            self.pomodoro_controls(opacity),
-            column::with_children(rows).spacing(4).width(Length::Fill)
-        ]
-        .spacing(8)
-        .width(Length::Fill)
-        .into()
+        let mut body = column![self.pomodoro_controls(id, opacity)]
+            .spacing(8)
+            .width(Length::Fill);
+        if !rows.is_empty() {
+            body = body.push(column::with_children(rows).spacing(4).width(Length::Fill));
+        }
+        body.into()
     }
 }

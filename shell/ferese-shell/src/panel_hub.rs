@@ -1512,12 +1512,18 @@ mod tests {
                 self.0.push((text.into(), bounds));
             }
         }
-        let renderer = cosmic::iced::futures::executor::block_on(cosmic::Renderer::new(
+        let mut renderer = cosmic::iced::futures::executor::block_on(cosmic::Renderer::new(
             cosmic::iced::Font::default(),
             cosmic::iced::Pixels(14.),
             Some("tiny-skia"),
         ))
         .unwrap();
+        let mut app = shell();
+        app.config.font_family = Some("JetBrains Mono".into());
+        app.render = crate::rendering::Rendering::new(&app.config);
+        let bar = app.outputs[0].bar;
+        seed_activities(&mut app, 1);
+        let id = app.activities.snapshot.activities[0].id.clone();
         for status in [
             None,
             Some(Status::Running),
@@ -1525,20 +1531,23 @@ mod tests {
             Some(Status::Ready),
             Some(Status::Finished),
         ] {
-            let mut app = shell();
-            let bar = app.outputs[0].bar;
-            seed_activities(&mut app, 1);
-            let id = app.activities.snapshot.activities[0].id.clone();
             if let Some(status) = status {
                 let mut timer = Session::start(Default::default(), ferese_ipc::activities::now_ms()).unwrap();
                 timer.status = status;
                 if status != Status::Running {
                     timer.deadline = None;
                 }
+                if status == Status::Finished {
+                    timer.remaining_ms = 0;
+                    timer.completed_work = timer.settings.intervals;
+                }
+                std::sync::Arc::make_mut(&mut app.activities.snapshot).activities[0]
+                    .data
+                    .title = "Pomodoro · Focus".into();
                 std::sync::Arc::make_mut(&mut app.activities.snapshot).pomodoro =
                     Some(ferese_ipc::activities::Pomodoro { id: id.clone(), timer });
             }
-            for width in [260., 312.] {
+            for width in [240., 260., 312.] {
                 let mut view = app.activity_list(bar, 1.);
                 let mut tree = widget::Tree::new(&view);
                 let node = view.as_widget_mut().layout(
@@ -1555,41 +1564,90 @@ mod tests {
                         "{status:?} {width} {text}: {bounds:?}"
                     );
                 }
-                let mut tab: Box<dyn widget::Operation> = Box::new(operation::focusable::focus_next());
-                loop {
-                    view.as_widget_mut()
-                        .operate(&mut tree, Layout::new(&node), &renderer, &mut tab);
-                    match tab.finish() {
-                        operation::Outcome::Chain(next) => tab = next,
-                        _ => break,
-                    }
-                }
-                let event = Event::Keyboard(KeyEvent::KeyPressed {
-                    key: Key::Named(key::Named::Enter),
-                    modified_key: Key::Named(key::Named::Enter),
-                    physical_key: key::Physical::Code(key::Code::Enter),
-                    location: Location::Standard,
-                    modifiers: Modifiers::empty(),
-                    text: None,
-                    repeat: false,
-                });
-                let mut messages = Vec::new();
-                view.as_widget_mut().update(
-                    &mut tree,
-                    &event,
-                    Layout::new(&node),
-                    mouse::Cursor::Unavailable,
-                    &renderer,
-                    &mut clipboard::Null,
-                    &mut Shell::new(&mut messages),
-                    &Rectangle::with_size(Size::new(width, 600.)),
+                assert!(
+                    !labels.0.iter().any(|(text, _)| text == "Pomodoro · Focus"),
+                    "the timer must not appear twice"
                 );
-                let expected = match status {
+                if let Some(directory) = std::env::var_os("FERESE_POMODORO_CAPTURE_DIR") {
+                    use cosmic::iced::advanced::renderer::Renderer as _;
+                    let directory = std::path::PathBuf::from(directory);
+                    std::fs::create_dir_all(&directory).unwrap();
+                    let viewport = Rectangle::with_size(node.size());
+                    renderer.reset(viewport);
+                    view.as_widget().draw(
+                        &tree,
+                        &mut renderer,
+                        &app.config.theme.palette().native_theme(),
+                        &cosmic::iced::advanced::renderer::Style {
+                            text_color: crate::color(app.config.theme.text_primary),
+                            icon_color: crate::color(app.config.theme.text_primary),
+                            scale_factor: 1.5,
+                        },
+                        Layout::new(&node),
+                        mouse::Cursor::Unavailable,
+                        &viewport,
+                    );
+                    let physical = Size::new(
+                        (node.size().width * 1.5).ceil() as u32,
+                        (node.size().height * 1.5).ceil() as u32,
+                    );
+                    let pixels = renderer.screenshot(physical, 1.5, crate::color(app.config.theme.surface_popover));
+                    image_codec::save_buffer(
+                        directory.join(format!("{status:?}-{width}.png")),
+                        &pixels,
+                        physical.width,
+                        physical.height,
+                        image_codec::ColorType::Rgba8,
+                    )
+                    .unwrap();
+                }
+                let primary = match status {
                     Some(Status::Running) => PomodoroAction::Pause,
                     Some(Status::Paused | Status::Ready) => PomodoroAction::Resume,
                     _ => PomodoroAction::Start,
                 };
-                assert!(messages.iter().any(|message|matches!(message,cosmic::Action::App(Message::Pomodoro(action,session)) if *action==expected && *session==status.map(|_|id.clone()))),"{status:?}: {messages:?}");
+                let mut expected = vec![primary];
+                if matches!(status, Some(Status::Running | Status::Paused)) {
+                    expected.push(PomodoroAction::Next);
+                }
+                if status.is_some_and(|status| status != Status::Finished) {
+                    expected.push(PomodoroAction::Reset);
+                }
+                if status.is_some() {
+                    expected.push(PomodoroAction::Stop);
+                }
+                for expected in expected {
+                    let mut tab: Box<dyn widget::Operation> = Box::new(operation::focusable::focus_next());
+                    loop {
+                        view.as_widget_mut()
+                            .operate(&mut tree, Layout::new(&node), &renderer, &mut tab);
+                        match tab.finish() {
+                            operation::Outcome::Chain(next) => tab = next,
+                            _ => break,
+                        }
+                    }
+                    let event = Event::Keyboard(KeyEvent::KeyPressed {
+                        key: Key::Named(key::Named::Enter),
+                        modified_key: Key::Named(key::Named::Enter),
+                        physical_key: key::Physical::Code(key::Code::Enter),
+                        location: Location::Standard,
+                        modifiers: Modifiers::empty(),
+                        text: None,
+                        repeat: false,
+                    });
+                    let mut messages = Vec::new();
+                    view.as_widget_mut().update(
+                        &mut tree,
+                        &event,
+                        Layout::new(&node),
+                        mouse::Cursor::Unavailable,
+                        &renderer,
+                        &mut clipboard::Null,
+                        &mut Shell::new(&mut messages),
+                        &Rectangle::with_size(Size::new(width, 600.)),
+                    );
+                    assert!(messages.iter().any(|message|matches!(message,cosmic::Action::App(Message::Pomodoro(action,session)) if *action==expected && *session==status.map(|_|id.clone()))),"{status:?} {expected:?}: {messages:?}");
+                }
             }
         }
     }
