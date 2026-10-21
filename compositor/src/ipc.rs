@@ -18,12 +18,16 @@ mod transport;
 use ferese_layout::Direction;
 use serde_json::{Value, json};
 use smithay::output::Output;
-use smithay::reexports::calloop::{EventLoop, LoopHandle, LoopSignal, RegistrationToken, channel, timer};
+use smithay::reexports::calloop::{
+    EventLoop, LoopHandle, LoopSignal, RegistrationToken, channel, timer,
+};
 use smithay::utils::Transform;
 
 use crate::Ferese;
 use crate::config::OutputTransform;
-use crate::handlers::screenshot::{Action, Geometry, OutputLayout, PartOutcome, PartSender, parse_geometry, plan};
+use crate::handlers::screenshot::{
+    Action, Geometry, OutputLayout, PartOutcome, PartSender, parse_geometry, plan,
+};
 use crate::handlers::screenshot_worker::{Encoded, Job, Worker};
 use crate::handlers::{screencopy, screenshot_worker};
 
@@ -107,7 +111,10 @@ impl Endpoint {
 
     fn desktop_at(path: PathBuf) -> io::Result<Self> {
         prepare_parent(&path)?;
-        Ok(Self { path, instance: None })
+        Ok(Self {
+            path,
+            instance: None,
+        })
     }
 
     pub(crate) fn instance() -> io::Result<Self> {
@@ -115,7 +122,9 @@ impl Endpoint {
     }
 
     fn instance_at(default: PathBuf) -> io::Result<Self> {
-        let root = default.parent().expect("runtime control socket has a parent");
+        let root = default
+            .parent()
+            .expect("runtime control socket has a parent");
         prepare_directory(root)?;
         let instances = root.join("instances");
         prepare_directory(&instances)?;
@@ -133,7 +142,9 @@ impl Endpoint {
 impl Drop for IpcSocketGuard {
     fn drop(&mut self) {
         if self.path.symlink_metadata().is_ok_and(|metadata| {
-            metadata.file_type().is_socket() && metadata.dev() == self.device && metadata.ino() == self.inode
+            metadata.file_type().is_socket()
+                && metadata.dev() == self.device
+                && metadata.ino() == self.inode
         }) {
             let _ = fs::remove_file(&self.path);
         }
@@ -158,58 +169,13 @@ pub(crate) fn init(
 
     let (sender, receiver): (channel::SyncSender<IpcEvent>, channel::Channel<IpcEvent>) =
         channel::sync_channel(REQUEST_QUEUE_CAPACITY);
-    event_loop.handle().insert_source(receiver, |event, _, state| {
-        if let channel::Event::Msg(event) = event {
-            let call = match event {
-                IpcEvent::Call(call) => *call,
-                IpcEvent::ActivityDetected(owner, matched, fd) => {
-                    let output = state
-                        .outputs_json()
-                        .as_array()
-                        .and_then(|outputs| {
-                            outputs
-                                .iter()
-                                .find(|output| output["focused"] == true)
-                                .or_else(|| outputs.first())
-                        })
-                        .and_then(|output| output["name"].as_str())
-                        .map(str::to_owned);
-                    state.activities.detect_process(owner, *matched, output, &fd);
-                    return;
-                }
-                IpcEvent::ActivityOwnerExited(owner) => {
-                    state.activities.owner_exit(owner);
-                    return;
-                }
-                IpcEvent::Closed(owner) => {
-                    state.activities.remove_connection(owner);
-                    state.ipc_events.remove(owner);
-                    for request in state.screenshot.terminate_owner(owner) {
-                        state
-                            .pending_screencopies
-                            .retain(|capture| capture.request_id() != Some(request));
-                    }
-                    let captured = state.input_capture.active();
-                    state.input_capture.remove_owner(owner);
-                    if captured && !state.input_capture.active() {
-                        state.restore_input_capture_focus();
-                    }
-                    state.portal_shortcuts.remove(owner);
-                    state.portal_session.remove(owner);
-                    state.theme_engine.remove(owner);
-                    state.media_engine.remove(owner);
-                    state.refresh_idle_inhibition();
-                    return;
-                }
-            };
-            if call.request.command == "activity-publish" {
-                let result = validate_request(&call.request)
-                    .map_err(|error| error.message)
-                    .and_then(|()| {
-                        if state.session_lock.active() {
-                            return Err("Session locked".into());
-                        }
-                        let (owner, publish, matched) = call.activity.ok_or("Unverified activity owner")?;
+    event_loop
+        .handle()
+        .insert_source(receiver, |event, _, state| {
+            if let channel::Event::Msg(event) = event {
+                let call = match event {
+                    IpcEvent::Call(call) => *call,
+                    IpcEvent::ActivityDetected(owner, matched, fd) => {
                         let output = state
                             .outputs_json()
                             .as_array()
@@ -221,225 +187,313 @@ pub(crate) fn init(
                             })
                             .and_then(|output| output["name"].as_str())
                             .map(str::to_owned);
-                        let window = state.activity_window(&owner);
                         state
                             .activities
-                            .publish_verified(owner, publish, matched, output, window)
-                    });
-                state.activities.schedule();
-                let response = match result {
-                    Ok(result) => Response::success(call.request.id, result),
-                    Err(error) => Response::error(call.request.id, "activity_rejected", error),
-                };
-                let _ = call.response.try_send(response);
-            } else if call.request.command == "pomodoro" {
-                let result = validate_request(&call.request)
-                    .map_err(|error| error.message)
-                    .and_then(|()| {
-                        if state.session_lock.active() {
-                            return Err("Session locked".into());
-                        }
-                        let request: ferese_ipc::activities::PomodoroRequest =
-                            serde_json::from_value(call.request.args).map_err(|error| error.to_string())?;
-                        let output = state
-                            .outputs_json()
-                            .as_array()
-                            .and_then(|outputs| {
-                                outputs
-                                    .iter()
-                                    .find(|output| output["focused"] == true)
-                                    .or_else(|| outputs.first())
-                            })
-                            .and_then(|output| output["name"].as_str())
-                            .map(str::to_owned);
-                        state.activities.pomodoro_control(request, output)
-                    });
-                let response = match result {
-                    Ok(value) => Response::success(call.request.id, value),
-                    Err(error) => Response::error(call.request.id, "pomodoro_rejected", error),
-                };
-                let _ = call.response.try_send(response);
-            } else if call.request.command == "activity-get" {
-                if state.session_lock.active() {
-                    let _ = call.response.try_send(Response::error(
-                        call.request.id,
-                        "session_locked",
-                        "IPC unavailable while session is locked",
-                    ));
-                } else if let Err(error) = validate_request(&call.request) {
-                    let _ = call
-                        .response
-                        .try_send(Response::error(call.request.id, error.code, error.message));
-                } else {
-                    state.activities.get(call.request.id, call.response);
-                }
-            } else if call.request.command == "activity-watch" {
-                if state.session_lock.active() {
-                    let _ = call.response.try_send(Response::error(
-                        call.request.id,
-                        "session_locked",
-                        "IPC unavailable while session is locked",
-                    ));
-                } else if let Err(error) = validate_request(&call.request) {
-                    let _ = call
-                        .response
-                        .try_send(Response::error(call.request.id, error.code, error.message));
-                } else if let Some(since) = call.request.args["since"].as_u64() {
-                    state
-                        .activities
-                        .watch(call.owner, call.request.id, since, call.response);
-                } else {
-                    let _ = call.response.try_send(Response::error(
-                        call.request.id,
-                        "invalid_argument",
-                        "Missing activity revision",
-                    ));
-                }
-            } else if call.request.command == "event-stream" {
-                let result = validate_request(&call.request).and_then(|()| {
-                    if call.request.args["version"].as_u64() != Some(u64::from(ferese_ipc::events::VERSION)) {
-                        return Err(CommandError::new(
-                            "unsupported_event_version",
-                            "Unsupported event schema version",
-                        ));
+                            .detect_process(owner, *matched, output, &fd);
+                        return;
                     }
-                    state
-                        .ipc_events
-                        .subscribe(call.owner, call.events.expect("event stream sender"))
-                        .map_err(|error| CommandError::new("subscriber_limit", error))
-                });
-                let response = match result {
-                    Ok(()) => Response::success(call.request.id, json!({"version": ferese_ipc::events::VERSION})),
-                    Err(error) => Response::error(call.request.id, error.code, error.message),
+                    IpcEvent::ActivityOwnerExited(owner) => {
+                        state.activities.owner_exit(owner);
+                        return;
+                    }
+                    IpcEvent::Closed(owner) => {
+                        state.activities.remove_connection(owner);
+                        state.ipc_events.remove(owner);
+                        for request in state.screenshot.terminate_owner(owner) {
+                            state
+                                .pending_screencopies
+                                .retain(|capture| capture.request_id() != Some(request));
+                        }
+                        let captured = state.input_capture.active();
+                        state.input_capture.remove_owner(owner);
+                        if captured && !state.input_capture.active() {
+                            state.restore_input_capture_focus();
+                        }
+                        state.portal_shortcuts.remove(owner);
+                        state.portal_session.remove(owner);
+                        state.theme_engine.remove(owner);
+                        state.media_engine.remove(owner);
+                        state.refresh_idle_inhibition();
+                        return;
+                    }
                 };
-                let _ = call.response.try_send(response);
-            } else if call.request.command.starts_with("input-capture-") && !call.native_portal {
-                let _ = call.response.try_send(Response::error(
-                    call.request.id,
-                    "access_denied",
-                    "Input capture is restricted to the native portal",
-                ));
-            } else if call.request.command == "input-capture-watch" {
-                if let Err(error) = validate_request(&call.request) {
-                    let _ = call
-                        .response
-                        .try_send(Response::error(call.request.id, error.code, error.message));
-                } else if let Some(id) = call.request.args["session"].as_u64() {
-                    state
-                        .input_capture
-                        .watch(call.owner, call.request.id, id, call.response);
-                } else {
-                    let _ = call.response.try_send(Response::error(
-                        call.request.id,
-                        "invalid_argument",
-                        "Missing capture session",
-                    ));
-                }
-            } else if matches!(call.request.command.as_str(), "media-watch" | "media-action") {
-                if let Err(error) = validate_request(&call.request) {
-                    let _ = call
-                        .response
-                        .try_send(Response::error(call.request.id, error.code, error.message));
-                } else if state.session_lock.active() {
-                    let _ = call.response.try_send(Response::error(
-                        call.request.id,
-                        "session_locked",
-                        "IPC unavailable while session is locked",
-                    ));
-                } else if call.request.command == "media-watch" {
-                    if let Some(since) = call.request.args["since"].as_u64() {
+                if call.request.command == "activity-publish" {
+                    let result = validate_request(&call.request)
+                        .map_err(|error| error.message)
+                        .and_then(|()| {
+                            if state.session_lock.active() {
+                                return Err("Session locked".into());
+                            }
+                            let (owner, publish, matched) =
+                                call.activity.ok_or("Unverified activity owner")?;
+                            let output = state
+                                .outputs_json()
+                                .as_array()
+                                .and_then(|outputs| {
+                                    outputs
+                                        .iter()
+                                        .find(|output| output["focused"] == true)
+                                        .or_else(|| outputs.first())
+                                })
+                                .and_then(|output| output["name"].as_str())
+                                .map(str::to_owned);
+                            let window = state.activity_window(&owner);
+                            state
+                                .activities
+                                .publish_verified(owner, publish, matched, output, window)
+                        });
+                    state.activities.schedule();
+                    let response = match result {
+                        Ok(result) => Response::success(call.request.id, result),
+                        Err(error) => Response::error(call.request.id, "activity_rejected", error),
+                    };
+                    let _ = call.response.try_send(response);
+                } else if call.request.command == "pomodoro" {
+                    let result = validate_request(&call.request)
+                        .map_err(|error| error.message)
+                        .and_then(|()| {
+                            if state.session_lock.active() {
+                                return Err("Session locked".into());
+                            }
+                            let request: ferese_ipc::activities::PomodoroRequest =
+                                serde_json::from_value(call.request.args)
+                                    .map_err(|error| error.to_string())?;
+                            let output = state
+                                .outputs_json()
+                                .as_array()
+                                .and_then(|outputs| {
+                                    outputs
+                                        .iter()
+                                        .find(|output| output["focused"] == true)
+                                        .or_else(|| outputs.first())
+                                })
+                                .and_then(|output| output["name"].as_str())
+                                .map(str::to_owned);
+                            state.activities.pomodoro_control(request, output)
+                        });
+                    let response = match result {
+                        Ok(value) => Response::success(call.request.id, value),
+                        Err(error) => Response::error(call.request.id, "pomodoro_rejected", error),
+                    };
+                    let _ = call.response.try_send(response);
+                } else if call.request.command == "activity-get" {
+                    if state.session_lock.active() {
+                        let _ = call.response.try_send(Response::error(
+                            call.request.id,
+                            "session_locked",
+                            "IPC unavailable while session is locked",
+                        ));
+                    } else if let Err(error) = validate_request(&call.request) {
+                        let _ = call.response.try_send(Response::error(
+                            call.request.id,
+                            error.code,
+                            error.message,
+                        ));
+                    } else {
+                        state.activities.get(call.request.id, call.response);
+                    }
+                } else if call.request.command == "activity-watch" {
+                    if state.session_lock.active() {
+                        let _ = call.response.try_send(Response::error(
+                            call.request.id,
+                            "session_locked",
+                            "IPC unavailable while session is locked",
+                        ));
+                    } else if let Err(error) = validate_request(&call.request) {
+                        let _ = call.response.try_send(Response::error(
+                            call.request.id,
+                            error.code,
+                            error.message,
+                        ));
+                    } else if let Some(since) = call.request.args["since"].as_u64() {
                         state
-                            .media_engine
+                            .activities
                             .watch(call.owner, call.request.id, since, call.response);
                     } else {
                         let _ = call.response.try_send(Response::error(
                             call.request.id,
                             "invalid_argument",
-                            "Missing media revision",
+                            "Missing activity revision",
                         ));
                     }
-                } else if let Err(error) = state
-                    .media_engine
-                    .action(call.request.args, Some((call.request.id, call.response.clone())))
+                } else if call.request.command == "event-stream" {
+                    let result = validate_request(&call.request).and_then(|()| {
+                        if call.request.args["version"].as_u64()
+                            != Some(u64::from(ferese_ipc::events::VERSION))
+                        {
+                            return Err(CommandError::new(
+                                "unsupported_event_version",
+                                "Unsupported event schema version",
+                            ));
+                        }
+                        state
+                            .ipc_events
+                            .subscribe(call.owner, call.events.expect("event stream sender"))
+                            .map_err(|error| CommandError::new("subscriber_limit", error))
+                    });
+                    let response = match result {
+                        Ok(()) => Response::success(
+                            call.request.id,
+                            json!({"version": ferese_ipc::events::VERSION}),
+                        ),
+                        Err(error) => Response::error(call.request.id, error.code, error.message),
+                    };
+                    let _ = call.response.try_send(response);
+                } else if call.request.command.starts_with("input-capture-") && !call.native_portal
                 {
-                    let _ = call
-                        .response
-                        .try_send(Response::error(call.request.id, "media_unavailable", error));
-                }
-            } else if call.request.command == "theme-watch" {
-                if let Err(error) = validate_request(&call.request) {
-                    let _ = call
-                        .response
-                        .try_send(Response::error(call.request.id, error.code, error.message));
-                } else if let Some(since) = call.request.args["since"].as_u64() {
-                    state
-                        .theme_engine
-                        .watch(call.owner, call.request.id, since, call.response);
-                } else {
                     let _ = call.response.try_send(Response::error(
                         call.request.id,
-                        "invalid_argument",
-                        "Missing theme revision",
+                        "access_denied",
+                        "Input capture is restricted to the native portal",
                     ));
-                }
-            } else if call.request.command == "session-watch" {
-                if let Err(error) = validate_request(&call.request) {
-                    let _ = call
-                        .response
-                        .send(Response::error(call.request.id, error.code, error.message));
-                } else if let Some(since) = call.request.args["since"].as_u64() {
-                    state
-                        .portal_session
-                        .watch(call.owner, call.request.id, since, call.response);
+                } else if call.request.command == "input-capture-watch" {
+                    if let Err(error) = validate_request(&call.request) {
+                        let _ = call.response.try_send(Response::error(
+                            call.request.id,
+                            error.code,
+                            error.message,
+                        ));
+                    } else if let Some(id) = call.request.args["session"].as_u64() {
+                        state
+                            .input_capture
+                            .watch(call.owner, call.request.id, id, call.response);
+                    } else {
+                        let _ = call.response.try_send(Response::error(
+                            call.request.id,
+                            "invalid_argument",
+                            "Missing capture session",
+                        ));
+                    }
+                } else if matches!(
+                    call.request.command.as_str(),
+                    "media-watch" | "media-action"
+                ) {
+                    if let Err(error) = validate_request(&call.request) {
+                        let _ = call.response.try_send(Response::error(
+                            call.request.id,
+                            error.code,
+                            error.message,
+                        ));
+                    } else if state.session_lock.active() {
+                        let _ = call.response.try_send(Response::error(
+                            call.request.id,
+                            "session_locked",
+                            "IPC unavailable while session is locked",
+                        ));
+                    } else if call.request.command == "media-watch" {
+                        if let Some(since) = call.request.args["since"].as_u64() {
+                            state.media_engine.watch(
+                                call.owner,
+                                call.request.id,
+                                since,
+                                call.response,
+                            );
+                        } else {
+                            let _ = call.response.try_send(Response::error(
+                                call.request.id,
+                                "invalid_argument",
+                                "Missing media revision",
+                            ));
+                        }
+                    } else if let Err(error) = state.media_engine.action(
+                        call.request.args,
+                        Some((call.request.id, call.response.clone())),
+                    ) {
+                        let _ = call.response.try_send(Response::error(
+                            call.request.id,
+                            "media_unavailable",
+                            error,
+                        ));
+                    }
+                } else if call.request.command == "theme-watch" {
+                    if let Err(error) = validate_request(&call.request) {
+                        let _ = call.response.try_send(Response::error(
+                            call.request.id,
+                            error.code,
+                            error.message,
+                        ));
+                    } else if let Some(since) = call.request.args["since"].as_u64() {
+                        state
+                            .theme_engine
+                            .watch(call.owner, call.request.id, since, call.response);
+                    } else {
+                        let _ = call.response.try_send(Response::error(
+                            call.request.id,
+                            "invalid_argument",
+                            "Missing theme revision",
+                        ));
+                    }
+                } else if call.request.command == "session-watch" {
+                    if let Err(error) = validate_request(&call.request) {
+                        let _ = call.response.send(Response::error(
+                            call.request.id,
+                            error.code,
+                            error.message,
+                        ));
+                    } else if let Some(since) = call.request.args["since"].as_u64() {
+                        state.portal_session.watch(
+                            call.owner,
+                            call.request.id,
+                            since,
+                            call.response,
+                        );
+                    } else {
+                        let _ = call.response.send(Response::error(
+                            call.request.id,
+                            "invalid_argument",
+                            "Missing session revision",
+                        ));
+                    }
+                } else if call.request.command == "reload-config" {
+                    if let Err(error) = validate_request(&call.request) {
+                        let _ = call.response.try_send(Response::error(
+                            call.request.id,
+                            error.code,
+                            error.message,
+                        ));
+                    } else if state.session_lock.active() {
+                        let _ = call.response.try_send(Response::error(
+                            call.request.id,
+                            "session_locked",
+                            "IPC unavailable while session is locked",
+                        ));
+                    } else if let Err(error) =
+                        state.queue_config_reload(false, Some((call.request.id, call.response)))
+                    {
+                        tracing::warn!(%error, "cannot queue configuration reload");
+                    }
+                } else if call.request.command == "screenshot-window" {
+                    state.start_window_screenshot(call.owner, call.request, call.response);
+                } else if call.request.command == "screenshot" {
+                    // Deferred: this path answers the caller itself, exactly
+                    // once, whenever the request finishes or is terminated.
+                    state.start_screenshot(call.owner, call.request, call.response);
                 } else {
-                    let _ = call.response.send(Response::error(
-                        call.request.id,
-                        "invalid_argument",
-                        "Missing session revision",
-                    ));
+                    let response = state.handle_ipc_request(call.owner, call.request);
+                    let _ = call.response.send(response);
                 }
-            } else if call.request.command == "reload-config" {
-                if let Err(error) = validate_request(&call.request) {
-                    let _ = call
-                        .response
-                        .try_send(Response::error(call.request.id, error.code, error.message));
-                } else if state.session_lock.active() {
-                    let _ = call.response.try_send(Response::error(
-                        call.request.id,
-                        "session_locked",
-                        "IPC unavailable while session is locked",
-                    ));
-                } else if let Err(error) = state.queue_config_reload(false, Some((call.request.id, call.response))) {
-                    tracing::warn!(%error, "cannot queue configuration reload");
-                }
-            } else if call.request.command == "screenshot-window" {
-                state.start_window_screenshot(call.owner, call.request, call.response);
-            } else if call.request.command == "screenshot" {
-                // Deferred: this path answers the caller itself, exactly
-                // once, whenever the request finishes or is terminated.
-                state.start_screenshot(call.owner, call.request, call.response);
-            } else {
-                let response = state.handle_ipc_request(call.owner, call.request);
-                let _ = call.response.send(response);
             }
-        }
-    })?;
+        })?;
 
     // Screenshot readbacks publish parts here, so the loop wakes as soon as a
     // readback lands, whichever backend produced it.
     let (parts, part_events) = channel::channel::<PartOutcome>();
-    event_loop.handle().insert_source(part_events, |event, _, state| {
-        if let channel::Event::Msg(outcome) = event {
-            state.on_screenshot_part(outcome);
-        }
-    })?;
+    event_loop
+        .handle()
+        .insert_source(part_events, |event, _, state| {
+            if let channel::Event::Msg(outcome) = event {
+                state.on_screenshot_part(outcome);
+            }
+        })?;
 
     let (encoded, encoded_events) = channel::sync_channel::<Encoded>(RESULT_QUEUE_CAPACITY);
-    event_loop.handle().insert_source(encoded_events, |event, _, state| {
-        if let channel::Event::Msg(result) = event {
-            state.on_screenshot_encoded(result);
-        }
-    })?;
+    event_loop
+        .handle()
+        .insert_source(encoded_events, |event, _, state| {
+            if let channel::Event::Msg(result) = event {
+                state.on_screenshot_encoded(result);
+            }
+        })?;
     let worker = Worker::spawn(encoded);
 
     let activity_timer = crate::activities::deadline::Deadline::new(event_loop.handle())?;
@@ -589,7 +643,10 @@ fn accept_connections(
         }
 
         let Some(permit) = try_acquire_connection(&active_connections) else {
-            tracing::warn!(limit = MAX_CONNECTIONS, "rejected IPC connection at worker limit");
+            tracing::warn!(
+                limit = MAX_CONNECTIONS,
+                "rejected IPC connection at worker limit"
+            );
             continue;
         };
         let sender = sender.clone();
@@ -601,7 +658,13 @@ fn accept_connections(
             .name("ferese-ipc-client".to_owned())
             .spawn(move || {
                 let _permit = permit;
-                serve_connection_with_activities(stream, sender, signal, owner, Some((monitor, rules)));
+                serve_connection_with_activities(
+                    stream,
+                    sender,
+                    signal,
+                    owner,
+                    Some((monitor, rules)),
+                );
             })
         {
             tracing::warn!(%error, "could not start IPC connection worker");
@@ -621,11 +684,18 @@ fn try_acquire_connection(active: &Arc<AtomicUsize>) -> Option<ConnectionPermit>
         }
     }
 
-    Some(ConnectionPermit { active: active.clone() })
+    Some(ConnectionPermit {
+        active: active.clone(),
+    })
 }
 
 #[cfg(test)]
-fn serve_connection(stream: UnixStream, sender: channel::SyncSender<IpcEvent>, signal: LoopSignal, owner: u64) {
+fn serve_connection(
+    stream: UnixStream,
+    sender: channel::SyncSender<IpcEvent>,
+    signal: LoopSignal,
+    owner: u64,
+) {
     serve_connection_with_activities(stream, sender, signal, owner, None)
 }
 fn serve_connection_with_activities(
@@ -648,7 +718,9 @@ fn serve_connection_with_activities(
             Err(ferese_ipc::FrameError::Io(error))
                 if matches!(
                     error.kind(),
-                    io::ErrorKind::UnexpectedEof | io::ErrorKind::ConnectionReset | io::ErrorKind::BrokenPipe
+                    io::ErrorKind::UnexpectedEof
+                        | io::ErrorKind::ConnectionReset
+                        | io::ErrorKind::BrokenPipe
                 ) =>
             {
                 return;
@@ -675,7 +747,8 @@ fn serve_connection_with_activities(
             let verified = (|| -> Result<_, String> {
                 validate_request(&request).map_err(|error| error.message)?;
                 let wire: ferese_ipc::activities::Request =
-                    serde_json::from_value(std::mem::take(&mut request.args)).map_err(|error| error.to_string())?;
+                    serde_json::from_value(std::mem::take(&mut request.args))
+                        .map_err(|error| error.to_string())?;
                 if wire.version != ferese_ipc::activities::VERSION {
                     return Err("Unsupported activity schema".into());
                 }
@@ -688,25 +761,31 @@ fn serve_connection_with_activities(
                     .map_err(|error| error.to_string())?;
                 let mut publish = wire.publish;
                 let is_run = matches!(publish, ferese_ipc::activities::Publish::Run { .. });
-                let matched = if let ferese_ipc::activities::Publish::Hook { command, cwd, .. }
-                | ferese_ipc::activities::Publish::Run { command, cwd, .. } = &mut publish
-                {
-                    let rules = rules.read().map_err(|_| "Activity rules unavailable")?.clone();
-                    let matched = if rules.enabled || is_run {
-                        rules.matcher.matches(command, cwd, &parents)
+                let matched =
+                    if let ferese_ipc::activities::Publish::Hook { command, cwd, .. }
+                    | ferese_ipc::activities::Publish::Run { command, cwd, .. } = &mut publish
+                    {
+                        let rules = rules
+                            .read()
+                            .map_err(|_| "Activity rules unavailable")?
+                            .clone();
+                        let matched = if rules.enabled || is_run {
+                            rules.matcher.matches(command, cwd, &parents)
+                        } else {
+                            None
+                        };
+                        command.clear();
+                        cwd.clear();
+                        matched
                     } else {
                         None
                     };
-                    command.clear();
-                    cwd.clear();
-                    matched
-                } else {
-                    None
-                };
                 if matches!(
                     publish,
-                    ferese_ipc::activities::Publish::Start { .. } | ferese_ipc::activities::Publish::Run { .. }
-                ) || (matches!(publish, ferese_ipc::activities::Publish::Hook { .. }) && matched.is_some())
+                    ferese_ipc::activities::Publish::Start { .. }
+                        | ferese_ipc::activities::Publish::Run { .. }
+                ) || (matches!(publish, ferese_ipc::activities::Publish::Hook { .. })
+                    && matched.is_some())
                 {
                     identity.capture_ancestors();
                 }
@@ -715,8 +794,11 @@ fn serve_connection_with_activities(
             match verified {
                 Ok(verified) => Some(verified),
                 Err(error) => {
-                    if transport::write_response(&stream, &Response::error(request.id, "owner_rejected", error))
-                        .is_err()
+                    if transport::write_response(
+                        &stream,
+                        &Response::error(request.id, "owner_rejected", error),
+                    )
+                    .is_err()
                     {
                         return;
                     }
@@ -738,7 +820,8 @@ fn serve_connection_with_activities(
                 | "input-capture-register"
                 | "begin-session-end"
         );
-        let screenshot_requested = matches!(request.command.as_str(), "screenshot" | "screenshot-window");
+        let screenshot_requested =
+            matches!(request.command.as_str(), "screenshot" | "screenshot-window");
         let call = IpcEvent::Call(Box::new(IpcCall {
             native_portal,
             activity,
@@ -812,7 +895,10 @@ fn serve_connection_with_activities(
 }
 
 // Socket I/O stays on the bounded connection worker, never the compositor loop.
-fn relay_events(stream: &mut UnixStream, events: std::sync::mpsc::Receiver<Arc<ferese_ipc::events::Event>>) {
+fn relay_events(
+    stream: &mut UnixStream,
+    events: std::sync::mpsc::Receiver<Arc<ferese_ipc::events::Event>>,
+) {
     loop {
         match events.recv_timeout(Duration::from_millis(250)) {
             Ok(event) => {
@@ -855,7 +941,10 @@ fn u32_arg(args: &Value, key: &str) -> Result<u32, CommandError> {
 
 fn discard_undelivered_screenshot(response: &Response) {
     if response.error.is_none()
-        && let Some(path) = response.result.as_ref().and_then(|result| result["path"].as_str())
+        && let Some(path) = response
+            .result
+            .as_ref()
+            .and_then(|result| result["path"].as_str())
         && let Err(error) = fs::remove_file(path)
         && error.kind() != io::ErrorKind::NotFound
     {
@@ -882,7 +971,11 @@ impl Ferese {
                     | "cancel-session-end"
             )
         {
-            return Response::error(request.id, "session_locked", "IPC unavailable while session is locked");
+            return Response::error(
+                request.id,
+                "session_locked",
+                "IPC unavailable while session is locked",
+            );
         }
         if let Err(error) = validate_request(&request) {
             return Response::error(request.id, error.code, error.message);
@@ -894,7 +987,12 @@ impl Ferese {
         }
     }
 
-    fn dispatch_ipc_command(&mut self, owner: u64, command: &str, args: &Value) -> Result<Value, CommandError> {
+    fn dispatch_ipc_command(
+        &mut self,
+        owner: u64,
+        command: &str,
+        args: &Value,
+    ) -> Result<Value, CommandError> {
         match command {
             "theme-get" | "theme-status" => return Ok(self.theme_engine.value()),
             "theme-set-mode" => {
@@ -905,7 +1003,9 @@ impl Ferese {
                     .map_err(|error| CommandError::new("invalid_config", error));
             }
             "night-light" => {
-                return Ok(json!(crate::backends::direct::gamma::night_light_status(self)));
+                return Ok(json!(crate::backends::direct::gamma::night_light_status(
+                    self
+                )));
             }
             "portal-inhibit" => {
                 let inhibition = serde_json::from_value(args.clone())
@@ -923,7 +1023,8 @@ impl Ferese {
                 return Ok(crate::xwayland::status_snapshot(self).to_value());
             }
             ferese_ipc::xwayland::RETRY_COMMAND => {
-                crate::xwayland::retry(self).map_err(|error| CommandError::new("x11_unavailable", error))?;
+                crate::xwayland::retry(self)
+                    .map_err(|error| CommandError::new("x11_unavailable", error))?;
 
                 return Ok(crate::xwayland::status_snapshot(self).to_value());
             }
@@ -955,9 +1056,9 @@ impl Ferese {
                     .validate_end(
                         u32_arg(args, "token")?,
                         u32_arg(args, "inhibitor-revision")?,
-                        args["force"]
-                            .as_bool()
-                            .ok_or_else(|| CommandError::new("invalid_argument", "Missing force confirmation"))?,
+                        args["force"].as_bool().ok_or_else(|| {
+                            CommandError::new("invalid_argument", "Missing force confirmation")
+                        })?,
                     )
                     .map_err(|error| CommandError::new("inhibited", error))?;
                 return Ok(json!({}));
@@ -967,17 +1068,17 @@ impl Ferese {
                     .commit_end(
                         u32_arg(args, "token")?,
                         u32_arg(args, "inhibitor-revision")?,
-                        args["force"]
-                            .as_bool()
-                            .ok_or_else(|| CommandError::new("invalid_argument", "Missing force confirmation"))?,
+                        args["force"].as_bool().ok_or_else(|| {
+                            CommandError::new("invalid_argument", "Missing force confirmation")
+                        })?,
                     )
                     .map_err(|error| CommandError::new("inhibited", error))?;
                 return Ok(json!({}));
             }
             "logind-session-ending" => {
-                let ending = args["ending"]
-                    .as_bool()
-                    .ok_or_else(|| CommandError::new("invalid_argument", "Missing shutdown state"))?;
+                let ending = args["ending"].as_bool().ok_or_else(|| {
+                    CommandError::new("invalid_argument", "Missing shutdown state")
+                })?;
                 self.portal_session.set_phase(if ending { 3 } else { 1 });
                 return Ok(json!({}));
             }
@@ -990,7 +1091,9 @@ impl Ferese {
                 return Ok(json!({}));
             }
             "portal-shortcuts-poll" => {
-                return Ok(self.portal_shortcuts.poll(owner, self.session_lock.active()));
+                return Ok(self
+                    .portal_shortcuts
+                    .poll(owner, self.session_lock.active()));
             }
             "input-capture-register" => {
                 if self.session_lock.active() {
@@ -1006,7 +1109,8 @@ impl Ferese {
                     let xkb = state.xkb().lock().unwrap();
                     // SAFETY: the ref-counted keymap does not escape the locked Xkb;
                     // only its owned string is retained for the EIS keyboard.
-                    unsafe { xkb.keymap() }.get_as_string(smithay::input::keyboard::xkb::KEYMAP_FORMAT_TEXT_V1)
+                    unsafe { xkb.keymap() }
+                        .get_as_string(smithay::input::keyboard::xkb::KEYMAP_FORMAT_TEXT_V1)
                 });
                 return Ok(json!({"session":id, "keymap":keymap}));
             }
@@ -1015,9 +1119,9 @@ impl Ferese {
                 return self
                     .input_capture
                     .zones(
-                        args["session"]
-                            .as_u64()
-                            .ok_or_else(|| CommandError::new("invalid_capture", "Missing session"))?,
+                        args["session"].as_u64().ok_or_else(|| {
+                            CommandError::new("invalid_capture", "Missing session")
+                        })?,
                     )
                     .map_err(|e| CommandError::new("invalid_capture", e));
             }
@@ -1074,8 +1178,12 @@ impl Ferese {
                 let result = if command == "input-capture-disable" {
                     self.input_capture.disable(id)
                 } else {
-                    self.input_capture
-                        .release(id, args["activation_id"].as_u64().and_then(|id| u32::try_from(id).ok()))
+                    self.input_capture.release(
+                        id,
+                        args["activation_id"]
+                            .as_u64()
+                            .and_then(|id| u32::try_from(id).ok()),
+                    )
                 };
                 result.map_err(|e| CommandError::new("invalid_capture", e))?;
                 if active && !self.input_capture.active() {
@@ -1166,7 +1274,9 @@ impl Ferese {
                     .get("pid")
                     .and_then(Value::as_u64)
                     .and_then(|pid| u32::try_from(pid).ok())
-                    .ok_or_else(|| CommandError::new("invalid_argument", "pid must be an unsigned process ID"))?;
+                    .ok_or_else(|| {
+                        CommandError::new("invalid_argument", "pid must be an unsigned process ID")
+                    })?;
                 return Ok(json!(self.has_client_surfaces(pid)));
             }
             "get-workspaces" => return Ok(self.workspaces_json()),
@@ -1185,29 +1295,38 @@ impl Ferese {
                 }));
             }
             "output-confirm" | "output-revert" => {
-                crate::backends::direct::confirm_output_configuration(self, command == "output-confirm")
-                    .map_err(|error| CommandError::new("output_configuration_failed", error))?;
+                crate::backends::direct::confirm_output_configuration(
+                    self,
+                    command == "output-confirm",
+                )
+                .map_err(|error| CommandError::new("output_configuration_failed", error))?;
                 return Ok(self.outputs_json());
             }
             "output-profile" => {
-                let name = args["name"]
-                    .as_str()
-                    .ok_or_else(|| CommandError::new("invalid_arguments", "output-profile requires a name or auto"))?;
+                let name = args["name"].as_str().ok_or_else(|| {
+                    CommandError::new(
+                        "invalid_arguments",
+                        "output-profile requires a name or auto",
+                    )
+                })?;
                 crate::backends::direct::set_output_profile(self, name)
                     .map_err(|error| CommandError::new("output_configuration_failed", error))?;
                 return Ok(self.outputs_json());
             }
             "output-layout" => {
-                let layout = serde_json::from_value::<crate::config::OutputLayout>(args["layout"].clone())
-                    .map_err(|_| CommandError::new("invalid_arguments", "unknown display layout"))?;
+                let layout =
+                    serde_json::from_value::<crate::config::OutputLayout>(args["layout"].clone())
+                        .map_err(|_| {
+                        CommandError::new("invalid_arguments", "unknown display layout")
+                    })?;
                 crate::backends::direct::set_output_layout(self, layout)
                     .map_err(|error| CommandError::new("output_configuration_failed", error))?;
                 return Ok(self.outputs_json());
             }
             "output-internal" => {
-                let enabled = args["enabled"]
-                    .as_bool()
-                    .ok_or_else(|| CommandError::new("invalid_arguments", "output-internal requires on or off"))?;
+                let enabled = args["enabled"].as_bool().ok_or_else(|| {
+                    CommandError::new("invalid_arguments", "output-internal requires on or off")
+                })?;
                 crate::backends::direct::set_internal_output(self, enabled)
                     .map_err(|error| CommandError::new("output_configuration_failed", error))?;
                 return Ok(self.outputs_json());
@@ -1225,7 +1344,12 @@ impl Ferese {
 
     // Screenshot replies are deferred: this either answers the caller now, or
     // hands the reply to the coordinator, which answers exactly once.
-    pub(crate) fn start_screenshot(&mut self, owner: u64, request: Request, response: SyncSender<Response>) {
+    pub(crate) fn start_screenshot(
+        &mut self,
+        owner: u64,
+        request: Request,
+        response: SyncSender<Response>,
+    ) {
         // A macro rather than a closure: the message may be a borrowed str or an
         // owned String, and Response::error already accepts either.
         macro_rules! reject {
@@ -1292,7 +1416,10 @@ impl Ferese {
                 return;
             }
         };
-        let specs = planned.iter().map(|part| part.spec(&layouts[part.index])).collect();
+        let specs = planned
+            .iter()
+            .map(|part| part.spec(&layouts[part.index]))
+            .collect();
 
         // admit stores the reply only on success, so a clone survives the
         // rejection path and every caller is answered exactly once.
@@ -1300,7 +1427,8 @@ impl Ferese {
         let id = match self.screenshot.admit(owner, request.id, response, specs) {
             Ok(id) => id,
             Err(message) => {
-                let _ = fallback.try_send(Response::error(request.id, "screenshot_rejected", message));
+                let _ =
+                    fallback.try_send(Response::error(request.id, "screenshot_rejected", message));
                 return;
             }
         };
@@ -1328,9 +1456,18 @@ impl Ferese {
         crate::backends::direct::render_on(self, &outputs);
     }
 
-    fn start_window_screenshot(&mut self, owner: u64, request: Request, response: SyncSender<Response>) {
+    fn start_window_screenshot(
+        &mut self,
+        owner: u64,
+        request: Request,
+        response: SyncSender<Response>,
+    ) {
         let reject = |message: String| {
-            let _ = response.try_send(Response::error(request.id, "window_capture_failed", message));
+            let _ = response.try_send(Response::error(
+                request.id,
+                "window_capture_failed",
+                message,
+            ));
         };
         if self.session_lock.active() || !screencopy::capture_allowed() {
             reject("Screen capture is unavailable".into());
@@ -1386,16 +1523,25 @@ impl Ferese {
             buffer_height: size.h,
         };
         let fallback = response.clone();
-        let capture = match self.screenshot.admit(owner, request.id, response, vec![spec]) {
+        let capture = match self
+            .screenshot
+            .admit(owner, request.id, response, vec![spec])
+        {
             Ok(capture) => capture,
             Err(error) => {
-                let _ = fallback.try_send(Response::error(request.id, "screenshot_rejected", error));
+                let _ =
+                    fallback.try_send(Response::error(request.id, "screenshot_rejected", error));
                 return;
             }
         };
         let result = if let Some(backend) = &self.nested_backend {
             match backend.try_borrow_mut() {
-                Ok(mut backend) => crate::render::capture_window_buffer(backend.renderer(), &window, geometry, scale),
+                Ok(mut backend) => crate::render::capture_window_buffer(
+                    backend.renderer(),
+                    &window,
+                    geometry,
+                    scale,
+                ),
                 Err(_) => Err("Window renderer is busy".into()),
             }
         } else if let Some(backend) = &mut self.direct_backend {
@@ -1447,7 +1593,8 @@ impl Ferese {
                         .is_ok()
                 });
                 if !submitted {
-                    self.screenshot.reject(request, "Screenshot encoding queue is full");
+                    self.screenshot
+                        .reject(request, "Screenshot encoding queue is full");
                 }
             }
             Action::Delivered(path) => {
@@ -1500,7 +1647,11 @@ impl Ferese {
         });
         ferese_ipc::events::Snapshot {
             outputs,
-            workspaces: if locked { json!([]) } else { self.workspaces_json() },
+            workspaces: if locked {
+                json!([])
+            } else {
+                self.workspaces_json()
+            },
             windows,
             focus: if locked {
                 Value::Null
@@ -1528,12 +1679,13 @@ impl Ferese {
 
     fn has_client_surfaces(&self, pid: u32) -> bool {
         use smithay::reexports::wayland_server::Resource;
-        let belongs_to = |surface: &smithay::reexports::wayland_server::protocol::wl_surface::WlSurface| {
-            surface
-                .client()
-                .and_then(|client| client.get_credentials(&self.display_handle).ok())
-                .is_some_and(|credentials| credentials.pid as u32 == pid)
-        };
+        let belongs_to =
+            |surface: &smithay::reexports::wayland_server::protocol::wl_surface::WlSurface| {
+                surface
+                    .client()
+                    .and_then(|client| client.get_credentials(&self.display_handle).ok())
+                    .is_some_and(|credentials| credentials.pid as u32 == pid)
+            };
         self.windows
             .ids()
             .keys()
@@ -1589,7 +1741,10 @@ impl Ferese {
             .workspace_views(&self.workspaces)
             .into_iter()
             .map(|view| {
-                let workspace = self.workspaces.workspace(view.id).expect("workspace view exists");
+                let workspace = self
+                    .workspaces
+                    .workspace(view.id)
+                    .expect("workspace view exists");
                 let mode = match workspace.layout.mode() {
                     LayoutMode::Scrolling => "scrolling",
                     LayoutMode::Tree => "tree",
@@ -1686,7 +1841,9 @@ impl Ferese {
                     })
                 })
                 .collect::<Vec<_>>();
-            outputs.sort_by(|left, right| left["connector"].as_str().cmp(&right["connector"].as_str()));
+            outputs.sort_by(|left, right| {
+                left["connector"].as_str().cmp(&right["connector"].as_str())
+            });
             return Value::Array(outputs);
         }
 
@@ -1742,7 +1899,9 @@ fn geometry_arg(args: &Value) -> Result<Geometry, String> {
     match args.get("geometry") {
         None | Some(Value::Null) => Ok(Geometry::All),
         Some(value) => {
-            let text = value.as_str().ok_or("geometry must be a string like \"x,y WxH\"")?;
+            let text = value
+                .as_str()
+                .ok_or("geometry must be a string like \"x,y WxH\"")?;
             parse_geometry(text)
         }
     }
@@ -1756,7 +1915,10 @@ fn validate_request(request: &Request) -> Result<(), CommandError> {
         ));
     }
     if request.kind != "command" {
-        return Err(CommandError::new("invalid_type", "expected type \"command\""));
+        return Err(CommandError::new(
+            "invalid_type",
+            "expected type \"command\"",
+        ));
     }
 
     Ok(())
@@ -1821,11 +1983,18 @@ fn workspace_arg(args: &Value) -> Result<u32, CommandError> {
         .and_then(Value::as_u64)
         .and_then(|index| u32::try_from(index).ok())
         .filter(|index| *index > 0)
-        .ok_or_else(|| CommandError::new("invalid_argument", "index must be a positive 32-bit integer"))
+        .ok_or_else(|| {
+            CommandError::new(
+                "invalid_argument",
+                "index must be a positive 32-bit integer",
+            )
+        })
 }
 
 fn prepare_parent(socket: &Path) -> Result<(), io::Error> {
-    let parent = socket.parent().expect("the Ferese control socket always has a parent");
+    let parent = socket
+        .parent()
+        .expect("the Ferese control socket always has a parent");
     prepare_directory(parent)
 }
 
@@ -1878,7 +2047,11 @@ fn bind_listener(path: &Path) -> Result<UnixListener, io::Error> {
 }
 
 fn peer_uid(stream: &UnixStream) -> Result<u32, io::Error> {
-    let mut credentials = libc::ucred { pid: 0, uid: 0, gid: 0 };
+    let mut credentials = libc::ucred {
+        pid: 0,
+        uid: 0,
+        gid: 0,
+    };
     let mut length = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
 
     // SAFETY: `credentials` and `length` point to initialized, correctly sized
@@ -1940,7 +2113,10 @@ mod tests {
         let (mut event_loop, mut state) = deadline_loop();
         let timer = state.timer.as_ref().unwrap();
         timer.update(None);
-        assert!(timer.armed.borrow().is_none(), "idle registers no timeout source");
+        assert!(
+            timer.armed.borrow().is_none(),
+            "idle registers no timeout source"
+        );
         event_loop.dispatch(Duration::ZERO, &mut state).unwrap();
         assert_eq!(state.fired, 0);
 
@@ -1977,7 +2153,10 @@ mod tests {
         state.timer.as_ref().unwrap().update(Some(due));
         state.timer.as_ref().unwrap().update(None);
         event_loop.dispatch(Duration::ZERO, &mut state).unwrap();
-        assert_eq!(state.fired, 0, "cancelling the due timer removes its wakeup");
+        assert_eq!(
+            state.fired, 0,
+            "cancelling the due timer removes its wakeup"
+        );
         assert!(state.timer.as_ref().unwrap().armed.borrow().is_none());
     }
 
@@ -1991,7 +2170,10 @@ mod tests {
             .update(Some(Instant::now() - Duration::from_secs(1)));
         drop(state.timer.take());
         event_loop.dispatch(Duration::ZERO, &mut state).unwrap();
-        assert_eq!(state.fired, 0, "dropping the observer removes its timer callback");
+        assert_eq!(
+            state.fired, 0,
+            "dropping the observer removes its timer callback"
+        );
     }
 
     #[test]
@@ -2034,7 +2216,10 @@ mod tests {
 
     #[test]
     fn parses_direction_arguments() {
-        assert_eq!(direction_arg(&json!({ "direction": "left" })).unwrap(), Direction::Left);
+        assert_eq!(
+            direction_arg(&json!({ "direction": "left" })).unwrap(),
+            Direction::Left
+        );
         assert!(direction_arg(&json!({ "direction": "diagonal" })).is_err());
     }
 
@@ -2084,7 +2269,10 @@ mod tests {
         assert!(try_acquire_connection(&active).is_none());
         let deadline = Instant::now() + transport::FRAME_TIMEOUT + Duration::from_secs(3);
         while active.load(Ordering::Acquire) != 0 {
-            assert!(Instant::now() < deadline, "silent peers retained connection slots");
+            assert!(
+                Instant::now() < deadline,
+                "silent peers retained connection slots"
+            );
             thread::sleep(Duration::from_millis(20));
         }
         assert!(try_acquire_connection(&active).is_some());
@@ -2104,7 +2292,9 @@ mod tests {
         let worker = thread::spawn(move || serve_connection(server, sender, signal, 1));
         let invalid = b"not-json";
 
-        client.write_all(&(invalid.len() as u32).to_be_bytes()).unwrap();
+        client
+            .write_all(&(invalid.len() as u32).to_be_bytes())
+            .unwrap();
         client.write_all(invalid).unwrap();
         client.shutdown(Shutdown::Write).unwrap();
         client
@@ -2173,7 +2363,10 @@ mod tests {
         assert!(!first_directory.exists());
         assert!(second.path.parent().unwrap().is_dir());
         assert!(default.symlink_metadata().unwrap().file_type().is_socket());
-        assert_eq!(bind_listener(&default).unwrap_err().kind(), io::ErrorKind::AddrInUse);
+        assert_eq!(
+            bind_listener(&default).unwrap_err().kind(),
+            io::ErrorKind::AddrInUse
+        );
         drop(host);
     }
 
@@ -2213,7 +2406,10 @@ mod tests {
         fs::set_permissions(&outside, fs::Permissions::from_mode(0o755)).unwrap();
         std::os::unix::fs::symlink(&outside, default.parent().unwrap().join("instances")).unwrap();
         assert!(Endpoint::instance_at(default).is_err());
-        assert_eq!(fs::metadata(outside).unwrap().permissions().mode() & 0o777, 0o755);
+        assert_eq!(
+            fs::metadata(outside).unwrap().permissions().mode() & 0o777,
+            0o755
+        );
     }
 
     #[test]
@@ -2245,7 +2441,10 @@ mod tests {
         let socket = root.join("control.sock");
         let first = bind_listener(&socket).unwrap();
 
-        assert_eq!(bind_listener(&socket).unwrap_err().kind(), io::ErrorKind::AddrInUse);
+        assert_eq!(
+            bind_listener(&socket).unwrap_err().kind(),
+            io::ErrorKind::AddrInUse
+        );
         drop(first);
         let replacement = bind_listener(&socket).unwrap();
 
@@ -2261,7 +2460,10 @@ mod tests {
         let socket = root.join("control.sock");
         fs::write(&socket, b"keep").unwrap();
 
-        assert_eq!(bind_listener(&socket).unwrap_err().kind(), io::ErrorKind::AddrInUse);
+        assert_eq!(
+            bind_listener(&socket).unwrap_err().kind(),
+            io::ErrorKind::AddrInUse
+        );
         assert_eq!(fs::read(&socket).unwrap(), b"keep");
         fs::remove_dir_all(root).unwrap();
     }
@@ -2296,7 +2498,9 @@ mod tests {
     #[test]
     fn stalled_event_socket_write_expires_on_the_worker() {
         let (_client, mut server) = UnixStream::pair().unwrap();
-        server.set_write_timeout(Some(Duration::from_millis(50))).unwrap();
+        server
+            .set_write_timeout(Some(Duration::from_millis(50)))
+            .unwrap();
         let (sender, receiver) = sync_channel(1);
         let (finished, completion) = sync_channel(1);
         sender

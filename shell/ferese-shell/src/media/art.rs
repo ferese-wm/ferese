@@ -304,11 +304,17 @@ mod tests {
                 None
             })
         });
-        assert_eq!(starts.recv_timeout(Duration::from_secs(2)).unwrap(), "first");
+        assert_eq!(
+            starts.recv_timeout(Duration::from_secs(2)).unwrap(),
+            "first"
+        );
         queue.0.lock().unwrap().pending = Some(key("second"));
         queue.0.lock().unwrap().pending = Some(key("latest"));
         resume.send(()).unwrap();
-        assert_eq!(starts.recv_timeout(Duration::from_secs(2)).unwrap(), "latest");
+        assert_eq!(
+            starts.recv_timeout(Duration::from_secs(2)).unwrap(),
+            "latest"
+        );
         queue.0.lock().unwrap().stopped = true;
         queue.1.notify_one();
         worker.join().unwrap();

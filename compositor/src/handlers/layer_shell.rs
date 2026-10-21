@@ -1,4 +1,6 @@
-use smithay::desktop::{LayerSurface as DesktopLayerSurface, PopupKind, WindowSurfaceType, layer_map_for_output};
+use smithay::desktop::{
+    LayerSurface as DesktopLayerSurface, PopupKind, WindowSurfaceType, layer_map_for_output,
+};
 use smithay::output::Output;
 use smithay::reexports::wayland_server::protocol::wl_output::WlOutput;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
@@ -14,7 +16,13 @@ impl WlrLayerShellHandler for Ferese {
         &mut self.layer_shell_state
     }
 
-    fn new_layer_surface(&mut self, surface: LayerSurface, output: Option<WlOutput>, _layer: Layer, namespace: String) {
+    fn new_layer_surface(
+        &mut self,
+        surface: LayerSurface,
+        output: Option<WlOutput>,
+        _layer: Layer,
+        namespace: String,
+    ) {
         // A wl_output resource can outlive its registered desktop output.
         // Explicit requests retain their identity; only unspecified requests
         // may use the focused/default output policy.
@@ -82,7 +90,11 @@ impl WlrLayerShellHandler for Ferese {
         let outputs = self
             .space
             .outputs()
-            .filter(|output| layer_map_for_output(output).layer_geometry(&layer).is_some())
+            .filter(|output| {
+                layer_map_for_output(output)
+                    .layer_geometry(&layer)
+                    .is_some()
+            })
             .cloned()
             .collect::<Vec<_>>();
 
@@ -134,13 +146,20 @@ impl LayoutState {
 }
 
 pub fn handle_commit(state: &mut Ferese, surface: &WlSurface) {
-    let Some(layer) = state.space.layer_for_surface(surface, WindowSurfaceType::TOPLEVEL) else {
+    let Some(layer) = state
+        .space
+        .layer_for_surface(surface, WindowSurfaceType::TOPLEVEL)
+    else {
         return;
     };
     let outputs = state
         .space
         .outputs()
-        .filter(|output| layer_map_for_output(output).layer_geometry(&layer).is_some())
+        .filter(|output| {
+            layer_map_for_output(output)
+                .layer_geometry(&layer)
+                .is_some()
+        })
         .cloned()
         .collect::<Vec<_>>();
 
@@ -154,9 +173,9 @@ pub fn handle_commit(state: &mut Ferese, surface: &WlSurface) {
     }
     let policy = layer.cached_state();
     let current = LayoutState::current(&layer);
-    let previous = layer
-        .user_data()
-        .get_or_insert_threadsafe(|| std::sync::Mutex::new(None::<(LayoutState, KeyboardInteractivity)>));
+    let previous = layer.user_data().get_or_insert_threadsafe(|| {
+        std::sync::Mutex::new(None::<(LayoutState, KeyboardInteractivity)>)
+    });
     let (changed, requested_focus) = {
         let mut previous = previous.lock().unwrap();
         let changed = previous.as_ref().map(|(layout, _)| layout) != Some(&current);
@@ -191,7 +210,10 @@ pub fn handle_commit(state: &mut Ferese, surface: &WlSurface) {
     };
     state.reconcile_layer_keyboard_focus();
     if opening_interaction
-        && !state.seat.get_keyboard().is_some_and(|keyboard| keyboard.is_grabbed())
+        && !state
+            .seat
+            .get_keyboard()
+            .is_some_and(|keyboard| keyboard.is_grabbed())
         && !state.session_lock.active()
         && !state.input_capture.captures(1)
         && state.layer_keyboard_eligible(&layer)
@@ -199,11 +221,15 @@ pub fn handle_commit(state: &mut Ferese, surface: &WlSurface) {
         && matches!(policy.layer, Layer::Top | Layer::Overlay)
         && !layer_has_keyboard_focus(state, &layer)
     {
-        state.seat.get_keyboard().expect("seat has a keyboard").set_focus(
-            state,
-            Some(layer.wl_surface().clone()),
-            smithay::utils::SERIAL_COUNTER.next_serial(),
-        );
+        state
+            .seat
+            .get_keyboard()
+            .expect("seat has a keyboard")
+            .set_focus(
+                state,
+                Some(layer.wl_surface().clone()),
+                smithay::utils::SERIAL_COUNTER.next_serial(),
+            );
     }
 
     if let Err(error) = state.display_handle.flush_clients() {
@@ -220,9 +246,10 @@ impl Ferese {
     /// Use the renderer state updated by on_commit_buffer_handler, as for windows.
     fn layer_mapped_and_visible(&self, layer: &DesktopLayerSurface) -> bool {
         layer.layer_surface().alive()
-            && smithay::backend::renderer::utils::with_renderer_surface_state(layer.wl_surface(), |state| {
-                state.buffer().is_some()
-            })
+            && smithay::backend::renderer::utils::with_renderer_surface_state(
+                layer.wl_surface(),
+                |state| state.buffer().is_some(),
+            )
             .unwrap_or(false)
             && self.space.outputs().any(|output| {
                 self.layer_visible_on_output(output, layer.layer())
@@ -239,8 +266,9 @@ impl Ferese {
             .find_popup(&surface)
             .and_then(|popup| smithay::desktop::find_popup_root_surface(&popup).ok())
             .unwrap_or(surface);
-        (smithay::wayland::compositor::get_role(&root) == Some(smithay::wayland::shell::wlr_layer::LAYER_SURFACE_ROLE))
-            .then_some(root)
+        (smithay::wayland::compositor::get_role(&root)
+            == Some(smithay::wayland::shell::wlr_layer::LAYER_SURFACE_ROLE))
+        .then_some(root)
     }
 
     pub(crate) fn keyboard_focused_layer(&self) -> Option<DesktopLayerSurface> {
@@ -255,7 +283,8 @@ impl Ferese {
         for priority in [Layer::Overlay, Layer::Top] {
             if let Some(layer) = focused.as_ref().filter(|layer| {
                 layer.layer() == priority
-                    && layer.cached_state().keyboard_interactivity == KeyboardInteractivity::Exclusive
+                    && layer.cached_state().keyboard_interactivity
+                        == KeyboardInteractivity::Exclusive
                     && self.layer_keyboard_eligible(layer)
             }) {
                 return Some(layer.clone());
@@ -313,7 +342,9 @@ impl Ferese {
 }
 
 fn layer_has_keyboard_focus(state: &Ferese, layer: &DesktopLayerSurface) -> bool {
-    state.keyboard_focused_layer().is_some_and(|focused| focused == *layer)
+    state
+        .keyboard_focused_layer()
+        .is_some_and(|focused| focused == *layer)
 }
 
 #[cfg(test)]
@@ -349,7 +380,10 @@ mod tests {
             original,
             LayoutState::from_policy(policy, Rectangle::from_size((800, 33).into()))
         );
-        assert_ne!(original, LayoutState::from_policy(policy, Rectangle::default()));
+        assert_ne!(
+            original,
+            LayoutState::from_policy(policy, Rectangle::default())
+        );
     }
 }
 

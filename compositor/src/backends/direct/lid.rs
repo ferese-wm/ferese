@@ -182,9 +182,13 @@ impl Reader {
                                     "block",
                                 ),
                             )
-                            .and_then(|reply| reply.body().deserialize::<zbus::zvariant::OwnedFd>());
+                            .and_then(|reply| {
+                                reply.body().deserialize::<zbus::zvariant::OwnedFd>()
+                            });
                         match inhibitor {
-                            Ok(descriptor) => worker_lease.lock().unwrap().accept(generation, descriptor),
+                            Ok(descriptor) => {
+                                worker_lease.lock().unwrap().accept(generation, descriptor)
+                            }
                             Err(error) => tracing::warn!(%error, "could not own logind lid policy"),
                         }
                         continue;
@@ -302,16 +306,17 @@ fn request(state: &mut Ferese, reactivate: bool, wake: bool) {
     backend.lid_reader.lease.lock().unwrap().suspend = false;
     let probe = backend.lid.begin(reactivate, wake);
     let sent = backend.lid_reader.requests.send(probe).is_ok();
-    let timer = state
-        .loop_handle
-        .insert_source(Timer::from_duration(Duration::from_secs(3)), move |_, _, state| {
+    let timer = state.loop_handle.insert_source(
+        Timer::from_duration(Duration::from_secs(3)),
+        move |_, _, state| {
             if let Some(backend) = state.direct_backend.as_mut() {
                 backend.lid_reader.deadline = None;
             }
             tracing::warn!("lid refresh deadline elapsed; retaining the latest observed state");
             complete_refresh(state, probe, None);
             TimeoutAction::Drop
-        });
+        },
+    );
 
     if sent && let Ok(token) = timer {
         state.direct_backend.as_mut().unwrap().lid_reader.deadline = Some(token);

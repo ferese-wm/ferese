@@ -26,7 +26,9 @@ use ferese_layout::{ColumnWidth, Direction, GapConfig, ViewportFocusStrategy};
 pub use input_motion::InputSettings;
 use input_motion::*;
 use outputs::*;
-pub use outputs::{LidPolicy, OutputLayout, OutputModeRequest, OutputProfile, OutputSettings, OutputTransform};
+pub use outputs::{
+    LidPolicy, OutputLayout, OutputModeRequest, OutputProfile, OutputSettings, OutputTransform,
+};
 use serde::Deserialize;
 use smithay::input::keyboard::{Keycode, keysyms, xkb};
 pub(crate) use tab_indicator::TabIndicatorSettings;
@@ -128,11 +130,19 @@ impl Config {
             ferese_panel::validate(panels).map_err(ConfigError::Binding)?;
         }
         self.activities.validate().map_err(ConfigError::Binding)?;
-        self.notifications.validate().map_err(ConfigError::Binding)?;
+        self.notifications
+            .validate()
+            .map_err(ConfigError::Binding)?;
         self.xwayland.validate().map_err(ConfigError::Binding)?;
         for daemon in &self.autostart {
-            if daemon.command.first().is_none_or(|program| program.trim().is_empty()) {
-                return Err(ConfigError::Binding("autostart command must contain a program".into()));
+            if daemon
+                .command
+                .first()
+                .is_none_or(|program| program.trim().is_empty())
+            {
+                return Err(ConfigError::Binding(
+                    "autostart command must contain a program".into(),
+                ));
             }
         }
         let input_settings = self.input_settings()?;
@@ -451,7 +461,10 @@ mod tests {
         let runtime = config.runtime_config().unwrap();
         assert_eq!(runtime.panel_background_opacity, Some(0.8));
         assert!((runtime.theme_settings.shell_opacity - 0.3).abs() < 0.001);
-        let inherited = Config::parse_source("panel main;").unwrap().runtime_config().unwrap();
+        let inherited = Config::parse_source("panel main;")
+            .unwrap()
+            .runtime_config()
+            .unwrap();
         assert!(inherited.panel_background_opacity.is_none());
     }
 
@@ -475,7 +488,12 @@ mod tests {
     #[test]
     fn validates_shell_composition_before_publishing_config() {
         let source = r#"panel "main" { end { group "status" { item "network" kind="network"; item "clock" kind="clock"; }; }; }"#;
-        assert!(Config::parse_source(source).unwrap().runtime_config().is_ok());
+        assert!(
+            Config::parse_source(source)
+                .unwrap()
+                .runtime_config()
+                .is_ok()
+        );
         assert!(
             Config::parse_source(&source.replace("item \"clock\"", "item \"network\""))
                 .unwrap()
@@ -498,10 +516,14 @@ mod tests {
                 "panel main {{ style {}; end {{ group status {{ item clock kind=clock; }}; }}; }}",
                 style.key()
             );
-            Config::parse_source(&source).unwrap().runtime_config().unwrap();
+            Config::parse_source(&source)
+                .unwrap()
+                .runtime_config()
+                .unwrap();
         }
         for surface in ["none", "inset", "island"] {
-            let invalid = format!("panel main {{ end {{ group status {{ surface {surface}; }}; }}; }}");
+            let invalid =
+                format!("panel main {{ end {{ group status {{ surface {surface}; }}; }}; }}");
             assert!(Config::parse_source(&invalid).is_err());
         }
         assert!(Config::parse_source("panel main { group-surface invalid; }").is_err());
@@ -512,11 +534,18 @@ mod tests {
     #[test]
     fn group_padding_is_validated_before_live_publication() {
         for padding in ["0", "4.5", "12", "32"] {
-            let source = format!("panel main {{ end {{ group status {{ island-padding {padding}; }}; }}; }}");
-            Config::parse_source(&source).unwrap().runtime_config().unwrap();
+            let source = format!(
+                "panel main {{ end {{ group status {{ island-padding {padding}; }}; }}; }}"
+            );
+            Config::parse_source(&source)
+                .unwrap()
+                .runtime_config()
+                .unwrap();
         }
         for padding in ["-1", "32.5", "\"small\""] {
-            let source = format!("panel main {{ end {{ group status {{ island-padding {padding}; }}; }}; }}");
+            let source = format!(
+                "panel main {{ end {{ group status {{ island-padding {padding}; }}; }}; }}"
+            );
             assert!(
                 Config::parse_source(&source)
                     .map(|config| config.runtime_config().is_err())
@@ -529,7 +558,8 @@ mod tests {
     fn rejects_removed_physics_keys_before_publication() {
         for property in ["spring", "viewport-spring"] {
             for coefficient in ["mass", "stiffness", "damping", "damping-ratio"] {
-                let source = format!("animations {{ {property} {{ {coefficient} 0; overshoot #true; }}; }}");
+                let source =
+                    format!("animations {{ {property} {{ {coefficient} 0; overshoot #true; }}; }}");
                 let error = Config::parse_source(&source).unwrap_err().to_string();
                 assert!(error.contains("unknown field"), "{error}");
             }
@@ -541,10 +571,9 @@ mod tests {
     #[test]
     fn display_key_has_a_default_binding_and_can_be_rebound() {
         let bindings = parse("").runtime_config().unwrap().bindings;
-        assert!(bindings.iter().any(
-            |binding| binding.trigger == BindingTrigger::Keysym(keysyms::KEY_XF86Display)
-                && binding.action == BindingAction::ToggleDisplayMode
-        ));
+        assert!(bindings.iter().any(|binding| binding.trigger
+            == BindingTrigger::Keysym(keysyms::KEY_XF86Display)
+            && binding.action == BindingAction::ToggleDisplayMode));
         let bindings = parse(
             "binding keys=\"XF86Display\" disabled=#true\nbinding keys=\"Super+P\" action=\"toggle-display-mode\"\n",
         )
@@ -557,9 +586,8 @@ mod tests {
                 .any(|binding| binding.trigger == BindingTrigger::Keysym(keysyms::KEY_XF86Display))
         );
         assert!(
-            bindings
-                .iter()
-                .any(|binding| binding.modifiers.logo && binding.action == BindingAction::ToggleDisplayMode)
+            bindings.iter().any(|binding| binding.modifiers.logo
+                && binding.action == BindingAction::ToggleDisplayMode)
         );
     }
 
@@ -580,12 +608,9 @@ mod tests {
                 .iter()
                 .any(|binding| binding.trigger == BindingTrigger::Keysym(keysyms::KEY_F1))
         );
-        assert!(
-            bindings
-                .iter()
-                .any(|binding| binding.trigger == BindingTrigger::Keysym(keysyms::KEY_F2)
-                    && binding.action == BindingAction::ToggleKeybindingGuide)
-        );
+        assert!(bindings.iter().any(|binding| binding.trigger
+            == BindingTrigger::Keysym(keysyms::KEY_F2)
+            && binding.action == BindingAction::ToggleKeybindingGuide));
     }
     #[test]
     fn workspace_back_and_forth_config_is_optional_and_bindable() {
@@ -635,7 +660,12 @@ mod tests {
             BindingAction::FocusMru(false),
             BindingAction::FocusMru(true),
         ] {
-            assert!(defaults.bindings.iter().any(|binding| binding.action == action));
+            assert!(
+                defaults
+                    .bindings
+                    .iter()
+                    .any(|binding| binding.action == action)
+            );
         }
         for (name, action) in [
             ("focus-last-window", BindingAction::FocusLastWindow),
@@ -654,7 +684,8 @@ mod tests {
             false,
             true,
             false
-        ) && binding.action == BindingAction::FocusMru(false)));
+        ) && binding.action
+            == BindingAction::FocusMru(false)));
         assert!(bindings.iter().any(|binding| binding.matches(
             23_u32.into(),
             &[keysyms::KEY_Tab],
@@ -662,7 +693,8 @@ mod tests {
             false,
             true,
             true
-        ) && binding.action == BindingAction::FocusMru(true)));
+        ) && binding.action
+            == BindingAction::FocusMru(true)));
     }
 
     #[test]
@@ -677,8 +709,14 @@ mod tests {
         let source = "input {\n    touchpad {\n        swipe-threshold 96\n    }\n}\nbinding keys=\"Swipe3Up\" action=\"toggle-overview\"\noutput-profile name=\"desk\" {\n    output match=\"DP-1\" scale=1.5 {\n        position 0 0\n    }\n}\nautostart {\n    command \"program\" \"argument with space\"\n}\n";
         let config = Config::parse_source(source).unwrap();
         config.runtime_config().unwrap();
-        assert_eq!(config.input_settings().unwrap().touchpad.swipe_threshold, 96);
-        assert_eq!(config.output_profiles().unwrap()[0].outputs[0].position, Some([0, 0]));
+        assert_eq!(
+            config.input_settings().unwrap().touchpad.swipe_threshold,
+            96
+        );
+        assert_eq!(
+            config.output_profiles().unwrap()[0].outputs[0].position,
+            Some([0, 0])
+        );
     }
 
     #[test]
@@ -716,7 +754,9 @@ mod tests {
         );
         assert_eq!(config.xwayland, XwaylandConfig::default());
         assert!(config.xwayland.enabled);
-        let runtime = config.runtime_config().expect("the existing config stays valid");
+        let runtime = config
+            .runtime_config()
+            .expect("the existing config stays valid");
         assert!(runtime.xwayland.enabled);
     }
 
@@ -725,7 +765,10 @@ mod tests {
         let config = parse("");
 
         assert_eq!(config.layout_mode(), LayoutMode::Scrolling);
-        assert_eq!(config.default_column_width().unwrap(), ColumnWidth::Proportion(0.5));
+        assert_eq!(
+            config.default_column_width().unwrap(),
+            ColumnWidth::Proportion(0.5)
+        );
         assert_eq!(config.gap_config().unwrap(), GapConfig::default());
     }
 
@@ -735,7 +778,10 @@ mod tests {
         let numeric = parse("scrolling {\n    default-column-width 1.0\n}\n");
 
         assert_eq!(full.default_column_width().unwrap(), ColumnWidth::Full);
-        assert_eq!(numeric.default_column_width().unwrap(), ColumnWidth::Proportion(1.0));
+        assert_eq!(
+            numeric.default_column_width().unwrap(),
+            ColumnWidth::Proportion(1.0)
+        );
     }
 
     #[test]
@@ -759,10 +805,19 @@ mod tests {
         let minimal = parse("");
         let centered = parse("scrolling {\n    focus-strategy \"center_on_focus\"\n}\n");
         let paged = parse("scrolling {\n    focus-strategy \"paged\"\n}\n");
-        assert_eq!(paged.scrolling_focus_strategy(), ViewportFocusStrategy::Paged);
+        assert_eq!(
+            paged.scrolling_focus_strategy(),
+            ViewportFocusStrategy::Paged
+        );
 
-        assert_eq!(minimal.scrolling_focus_strategy(), ViewportFocusStrategy::Minimal);
-        assert_eq!(centered.scrolling_focus_strategy(), ViewportFocusStrategy::Center);
+        assert_eq!(
+            minimal.scrolling_focus_strategy(),
+            ViewportFocusStrategy::Minimal
+        );
+        assert_eq!(
+            centered.scrolling_focus_strategy(),
+            ViewportFocusStrategy::Center
+        );
     }
 
     #[test]
@@ -804,7 +859,8 @@ mod tests {
 
     #[test]
     fn parses_and_validates_layout_gaps() {
-        let configured = parse("layout {\n    inner-gap 6.0\n    outer-gap 14.0\n    smart-gaps #true\n}\n");
+        let configured =
+            parse("layout {\n    inner-gap 6.0\n    outer-gap 14.0\n    smart-gaps #true\n}\n");
         let invalid = parse("layout {\n    outer-gap -1.0\n}\n");
 
         assert_eq!(
@@ -842,9 +898,11 @@ mod tests {
             "theme {\n    colors {\n        border \"#11223344\"\n        accent \"#AABBCC\"\n        shadow \"#01020380\"\n    }\n    geometry {\n        border-width 1.5\n        focus-ring-width 3.0\n        window-radius 12.0\n    }\n    shadow {\n        soft {\n            offset-y -2.0\n            blur 24.0\n            opacity 0.4\n        }\n    }\n    material {\n        style \"translucent\"\n    }\n}\n",
         );
         let invalid_color = parse("theme {\n    colors {\n        accent \"blue\"\n    }\n}\n");
-        let invalid_radius = parse("theme {\n    geometry {\n        window-radius -1.0\n    }\n}\n");
-        let invalid_opacity =
-            parse("theme {\n    shadow {\n        soft {\n            opacity 1.1\n        }\n    }\n}\n");
+        let invalid_radius =
+            parse("theme {\n    geometry {\n        window-radius -1.0\n    }\n}\n");
+        let invalid_opacity = parse(
+            "theme {\n    shadow {\n        soft {\n            opacity 1.1\n        }\n    }\n}\n",
+        );
 
         assert_eq!(
             configured.theme_settings().unwrap(),
@@ -877,15 +935,24 @@ mod tests {
         assert!(invalid_radius.theme_settings().is_err());
         assert!(invalid_opacity.theme_settings().is_err());
         assert!(
-            ferese_config::from_str::<Config>("theme {\n    material {\n        style \"mist\"\n    }\n}\n").is_err()
+            ferese_config::from_str::<Config>(
+                "theme {\n    material {\n        style \"mist\"\n    }\n}\n"
+            )
+            .is_err()
         );
     }
 
     #[test]
     fn materials_default_to_solid_and_reject_removed_style() {
-        assert_eq!(parse("").theme_settings().unwrap().material_style, MaterialStyle::Solid);
+        assert_eq!(
+            parse("").theme_settings().unwrap().material_style,
+            MaterialStyle::Solid
+        );
         assert!(
-            ferese_config::from_str::<Config>("theme {\n    material {\n        style \"glass\"\n    }\n}\n").is_err()
+            ferese_config::from_str::<Config>(
+                "theme {\n    material {\n        style \"glass\"\n    }\n}\n"
+            )
+            .is_err()
         );
     }
 
@@ -932,9 +999,11 @@ mod tests {
             "from \"#112233\"\nto \"#445566\"\nangle #inf\n",
         ] {
             assert!(
-                Config::parse_source(&format!("theme {{ focus-ring {{ gradient {{\n{settings}\n}} }} }}"))
-                    .and_then(|config| config.theme_settings())
-                    .is_err()
+                Config::parse_source(&format!(
+                    "theme {{ focus-ring {{ gradient {{\n{settings}\n}} }} }}"
+                ))
+                .and_then(|config| config.theme_settings())
+                .is_err()
             );
         }
         assert!(
@@ -1023,17 +1092,21 @@ mod tests {
         for key in ["active-opacity", "inactive-opacity", "inactive-dim"] {
             for value in ["-0.1", "1.1", "#nan", "#inf"] {
                 assert!(
-                    Config::parse_source(&format!("appearance {{ focus-effect {{ {key} {value}; }} }}"))
-                        .and_then(|config| config.runtime_config())
-                        .is_err()
+                    Config::parse_source(&format!(
+                        "appearance {{ focus-effect {{ {key} {value}; }} }}"
+                    ))
+                    .and_then(|config| config.runtime_config())
+                    .is_err()
                 );
             }
         }
         for value in ["-1", "#nan", "#inf"] {
             assert!(
-                Config::parse_source(&format!("appearance {{ focus-effect {{ duration-ms {value}; }} }}"))
-                    .and_then(|config| config.runtime_config())
-                    .is_err()
+                Config::parse_source(&format!(
+                    "appearance {{ focus-effect {{ duration-ms {value}; }} }}"
+                ))
+                .and_then(|config| config.runtime_config())
+                .is_err()
             );
         }
         let disabled = parse("appearance { focus-effect { enabled #false; active-opacity 0.9; inactive-opacity 0.8; inactive-dim 0.25; }; }")
@@ -1109,9 +1182,11 @@ mod tests {
         );
         for threshold in [0, 15, 1001] {
             assert!(
-                parse(&format!("input {{ touchpad {{ swipe-threshold {threshold}; }} }}"))
-                    .input_settings()
-                    .is_err()
+                parse(&format!(
+                    "input {{ touchpad {{ swipe-threshold {threshold}; }} }}"
+                ))
+                .input_settings()
+                .is_err()
             );
         }
     }
@@ -1133,8 +1208,9 @@ mod tests {
 
     #[test]
     fn guide_uses_effective_bindings_including_overrides_and_unbindings() {
-        let config =
-            parse("binding keys=\"Super+Q\" action=\"none\"\nbinding keys=\"Super+Tab\" action=\"toggle-floating\"\n");
+        let config = parse(
+            "binding keys=\"Super+Q\" action=\"none\"\nbinding keys=\"Super+Tab\" action=\"toggle-floating\"\n",
+        );
         let input = config.input_settings().unwrap();
         let map = physical_keymap(&input).unwrap();
         let entries = config
@@ -1143,12 +1219,13 @@ mod tests {
             .iter()
             .filter_map(|binding| binding.guide_entry(Some(&map)))
             .collect::<Vec<_>>();
-        assert!(!entries.iter().any(|entry| entry["description"] == "Close window"));
         assert!(
-            entries
+            !entries
                 .iter()
-                .any(|entry| entry["keys"] == "Super + Tab" && entry["description"] == "Toggle floating window")
+                .any(|entry| entry["description"] == "Close window")
         );
+        assert!(entries.iter().any(|entry| entry["keys"] == "Super + Tab"
+            && entry["description"] == "Toggle floating window"));
         assert!(entries.iter().any(|entry| entry["keys"] == "Super + Enter"));
     }
 
@@ -1157,7 +1234,11 @@ mod tests {
         let defaults = Config::default().runtime_config().unwrap();
         for (key, name, action) in [
             (keysyms::KEY_XF86AudioPlay, "media-play-pause", "play-pause"),
-            (keysyms::KEY_XF86AudioPause, "media-play-pause", "play-pause"),
+            (
+                keysyms::KEY_XF86AudioPause,
+                "media-play-pause",
+                "play-pause",
+            ),
             (keysyms::KEY_XF86AudioNext, "media-next", "next"),
             (keysyms::KEY_XF86AudioPrev, "media-previous", "previous"),
         ] {
@@ -1186,7 +1267,9 @@ mod tests {
             parse("scrolling { default-column-display \"tabbed\"; }\n").default_column_display(),
             ferese_layout::ColumnDisplay::Tabbed
         );
-        assert!(Config::parse_source("scrolling { default-column-display \"unknown\"; }\n").is_err());
+        assert!(
+            Config::parse_source("scrolling { default-column-display \"unknown\"; }\n").is_err()
+        );
     }
 
     #[test]
@@ -1224,7 +1307,11 @@ mod tests {
                 && binding.trigger == BindingTrigger::Keysym(keysyms::KEY_f)
                 && binding.action == action));
         }
-        assert!(bindings.iter().any(|binding| binding.action == BindingAction::Exit));
+        assert!(
+            bindings
+                .iter()
+                .any(|binding| binding.action == BindingAction::Exit)
+        );
         assert!(bindings.iter().any(|binding| binding.modifiers.logo
             && !binding.modifiers.shift
             && binding.trigger == BindingTrigger::Keysym(keysyms::KEY_space)
@@ -1242,13 +1329,16 @@ mod tests {
             binding.modifiers.logo
                 && binding.modifiers.shift
                 && binding.trigger == BindingTrigger::Keysym(keysyms::KEY_s)
-                && binding.action == BindingAction::Spawn(vec!["ferese-screenshot".to_owned()].into())
+                && binding.action
+                    == BindingAction::Spawn(vec!["ferese-screenshot".to_owned()].into())
         }));
         assert!(bindings.iter().any(|binding| {
             binding.trigger == BindingTrigger::Keysym(keysyms::KEY_Print)
                 && binding.modifiers == BindingModifiers::default()
                 && binding.action
-                    == BindingAction::Spawn(vec!["ferese-screenshot".to_owned(), "--full".to_owned()].into())
+                    == BindingAction::Spawn(
+                        vec!["ferese-screenshot".to_owned(), "--full".to_owned()].into(),
+                    )
         }));
         assert!(bindings.iter().any(|binding| {
             binding.modifiers.logo
@@ -1269,18 +1359,26 @@ mod tests {
         assert_eq!(bindings.len(), 63);
         assert!(bindings.iter().any(|binding| {
             binding.action
-                == BindingAction::Spawn(vec!["foot".to_owned(), "--app-id".to_owned(), "work".to_owned()].into())
+                == BindingAction::Spawn(
+                    vec!["foot".to_owned(), "--app-id".to_owned(), "work".to_owned()].into(),
+                )
         }));
 
         let input = unbound.input_settings().unwrap();
         let bindings = unbound.bindings(&input).unwrap();
         assert_eq!(bindings.len(), 62);
-        assert!(!bindings.iter().any(|binding| binding.action == BindingAction::Close));
+        assert!(
+            !bindings
+                .iter()
+                .any(|binding| binding.action == BindingAction::Close)
+        );
     }
 
     #[test]
     fn accepts_physical_xkb_key_names() {
-        let config = parse("binding keys=\"Super+AD06\" match=\"physical\" action=\"focus\" argument=\"left\"\n");
+        let config = parse(
+            "binding keys=\"Super+AD06\" match=\"physical\" action=\"focus\" argument=\"left\"\n",
+        );
         let input = config.input_settings().unwrap();
         let bindings = config.bindings(&input).unwrap();
 
@@ -1292,9 +1390,13 @@ mod tests {
 
     #[test]
     fn rejects_duplicate_or_invalid_user_bindings() {
-        let duplicate = parse("binding keys=\"Super+Q\" action=\"close\"\nbinding keys=\"logo+q\" action=\"close\"\n");
-        let missing_command = parse("binding keys=\"Super+Enter\" action=\"spawn\" argument=\"missing\"\n");
-        let invalid_argument = parse("binding keys=\"Super+Q\" action=\"close\" argument=\"left\"\n");
+        let duplicate = parse(
+            "binding keys=\"Super+Q\" action=\"close\"\nbinding keys=\"logo+q\" action=\"close\"\n",
+        );
+        let missing_command =
+            parse("binding keys=\"Super+Enter\" action=\"spawn\" argument=\"missing\"\n");
+        let invalid_argument =
+            parse("binding keys=\"Super+Q\" action=\"close\" argument=\"left\"\n");
 
         for config in [duplicate, missing_command, invalid_argument] {
             let input = config.input_settings().unwrap();
@@ -1308,7 +1410,12 @@ mod tests {
             "window-rule app-id=\"org.example.Editor\" workspace=3 floating=#true width=900.0 height=600.0 min-width=500 min-height=400 fullscreen=#false block-out-from-screencasts=#true\n",
         );
         let rules = config.window_rules().unwrap();
-        let result = window_rules::resolve(&rules, Some("org.example.editor.desktop"), Some("Document"), false);
+        let result = window_rules::resolve(
+            &rules,
+            Some("org.example.editor.desktop"),
+            Some("Document"),
+            false,
+        );
 
         assert_eq!(result.workspace, Some(3));
         assert_eq!(result.floating, Some(true));
@@ -1406,24 +1513,34 @@ mod tests {
         ] {
             assert!(parse(source).output_profiles().is_err(), "{source}");
         }
-        assert!(Config::parse_source("output-profile a layout=\"docked\" { output eDP-1; }").is_err());
+        assert!(
+            Config::parse_source("output-profile a layout=\"docked\" { output eDP-1; }").is_err()
+        );
     }
 
     #[test]
     fn automatic_refresh_is_opt_in_and_rejects_wrong_types() {
-        let config = parse("output-profile laptop { output eDP-1 mode=\"2880x1800@120\" auto-refresh=#true; }");
+        let config = parse(
+            "output-profile laptop { output eDP-1 mode=\"2880x1800@120\" auto-refresh=#true; }",
+        );
         assert!(config.output_profiles().unwrap()[0].outputs[0].auto_refresh);
         let manual = parse("output-profile laptop { output eDP-1 mode=\"2880x1800@60\"; }");
         assert!(!manual.output_profiles().unwrap()[0].outputs[0].auto_refresh);
-        assert!(Config::parse_source("output-profile laptop { output eDP-1 auto-refresh=\"yes\"; }").is_err());
+        assert!(
+            Config::parse_source("output-profile laptop { output eDP-1 auto-refresh=\"yes\"; }")
+                .is_err()
+        );
     }
 
     #[test]
     fn rejects_invalid_output_profiles() {
-        let invalid_scale = parse("output-profile name=\"bad\" {\n    output match=\"eDP-1\" scale=0.0\n}\n");
-        let invalid_mode = parse("output-profile name=\"bad\" {\n    output match=\"eDP-1\" mode=\"native\"\n}\n");
-        let duplicate =
-            parse("output-profile name=\"bad\" {\n    output match=\"eDP-1\"\n    output match=\"eDP-1\"\n}\n");
+        let invalid_scale =
+            parse("output-profile name=\"bad\" {\n    output match=\"eDP-1\" scale=0.0\n}\n");
+        let invalid_mode =
+            parse("output-profile name=\"bad\" {\n    output match=\"eDP-1\" mode=\"native\"\n}\n");
+        let duplicate = parse(
+            "output-profile name=\"bad\" {\n    output match=\"eDP-1\"\n    output match=\"eDP-1\"\n}\n",
+        );
 
         assert!(invalid_scale.output_profiles().is_err());
         assert!(invalid_mode.output_profiles().is_err());

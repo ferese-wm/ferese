@@ -121,7 +121,8 @@ impl ReadinessSocket {
                             from_satellite = true;
                         }
                     }
-                } else if cmsg.cmsg_level == libc::SOL_SOCKET && cmsg.cmsg_type == libc::SCM_RIGHTS {
+                } else if cmsg.cmsg_level == libc::SOL_SOCKET && cmsg.cmsg_type == libc::SCM_RIGHTS
+                {
                     // Accepting a datagram must never adopt descriptors from an
                     // untrusted sender. Close them instead of dropping them on
                     // the floor, where they would stay open in this process.
@@ -144,7 +145,9 @@ impl ReadinessSocket {
         // Decided only after the control walk: a completely filled payload
         // buffer cannot be distinguished from truncation, and the kernel's
         // truncation flags never satisfy the readiness contract.
-        if received as usize == buffer.len() || message.msg_flags & (libc::MSG_CTRUNC | libc::MSG_TRUNC) != 0 {
+        if received as usize == buffer.len()
+            || message.msg_flags & (libc::MSG_CTRUNC | libc::MSG_TRUNC) != 0
+        {
             return Ok(false);
         }
 
@@ -187,8 +190,12 @@ fn exact_line(payload: &[u8], wanted: &[u8]) -> Option<bool> {
 }
 
 fn is_key_value(line: &str) -> bool {
-    line.split_once('=')
-        .is_some_and(|(key, _)| !key.is_empty() && key.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'_'))
+    line.split_once('=').is_some_and(|(key, _)| {
+        !key.is_empty()
+            && key
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+    })
 }
 
 impl Drop for ReadinessSocket {
@@ -247,10 +254,12 @@ mod tests {
     }
 
     fn private_runtime_dir(name: &str) -> PathBuf {
-        let root = std::env::temp_dir().join(format!("ferese-readiness-{name}-{}", std::process::id()));
+        let root =
+            std::env::temp_dir().join(format!("ferese-readiness-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
-        std::fs::set_permissions(&root, std::os::unix::fs::PermissionsExt::from_mode(0o700)).unwrap();
+        std::fs::set_permissions(&root, std::os::unix::fs::PermissionsExt::from_mode(0o700))
+            .unwrap();
         root
     }
 
@@ -290,7 +299,8 @@ mod tests {
                 }
                 // A descriptor for a known file, so the receiver can prove it
                 // closed exactly this one rather than guessing at a count.
-                let Ok(name) = std::ffi::CString::new(sentinel.as_os_str().as_encoded_bytes()) else {
+                let Ok(name) = std::ffi::CString::new(sentinel.as_os_str().as_encoded_bytes())
+                else {
                     libc::_exit(73);
                 };
                 let spare = libc::open(name.as_ptr(), libc::O_RDONLY);
@@ -411,7 +421,11 @@ mod tests {
 
     /// Send `READY=1` with more descriptors than the receiver's control buffer can
     /// hold, so the kernel truncates the ancillary data while installing what fits.
-    fn send_descriptors_beyond_capacity_from_child(path: &Path, sentinel: &Path, count: usize) -> i32 {
+    fn send_descriptors_beyond_capacity_from_child(
+        path: &Path,
+        sentinel: &Path,
+        count: usize,
+    ) -> i32 {
         // SAFETY: the child performs only socket/open/sendmsg/sleep/_exit, all
         // async-signal-safe except sleep, which is a bounded wait before exit.
         unsafe {
@@ -422,7 +436,8 @@ mod tests {
                 if fd < 0 {
                     libc::_exit(70);
                 }
-                let Ok(name) = std::ffi::CString::new(sentinel.as_os_str().as_encoded_bytes()) else {
+                let Ok(name) = std::ffi::CString::new(sentinel.as_os_str().as_encoded_bytes())
+                else {
                     libc::_exit(73);
                 };
                 let sentinel_fd = libc::open(name.as_ptr(), libc::O_RDONLY);
@@ -488,7 +503,8 @@ mod tests {
                 if fd < 0 {
                     libc::_exit(70);
                 }
-                let Ok(name) = std::ffi::CString::new(sentinel.as_os_str().as_encoded_bytes()) else {
+                let Ok(name) = std::ffi::CString::new(sentinel.as_os_str().as_encoded_bytes())
+                else {
                     libc::_exit(73);
                 };
                 let sentinel_fd = libc::open(name.as_ptr(), libc::O_RDONLY);
@@ -510,7 +526,8 @@ mod tests {
                         control.payload.as_mut_ptr(),
                         std::mem::size_of::<libc::c_int>(),
                     );
-                    control.header.cmsg_len = (cmsg_data_offset() + std::mem::size_of::<libc::c_int>()) as _;
+                    control.header.cmsg_len =
+                        (cmsg_data_offset() + std::mem::size_of::<libc::c_int>()) as _;
                     control.header.cmsg_level = libc::SOL_SOCKET;
                     control.header.cmsg_type = libc::SCM_RIGHTS;
 
@@ -518,7 +535,8 @@ mod tests {
                     message.msg_iov = std::ptr::from_mut(&mut iov);
                     message.msg_iovlen = 1;
                     message.msg_control = std::ptr::from_mut(&mut control).cast();
-                    message.msg_controllen = cmsg_data_offset() + std::mem::size_of::<libc::c_int>();
+                    message.msg_controllen =
+                        cmsg_data_offset() + std::mem::size_of::<libc::c_int>();
                     if libc::sendmsg(fd, std::ptr::from_ref(&message), libc::MSG_NOSIGNAL) < 0 {
                         libc::_exit(71);
                     }
@@ -625,7 +643,9 @@ mod tests {
                 libc::kill(pid, libc::SIGKILL);
                 libc::waitpid(pid, std::ptr::from_mut(&mut status), 0);
             }
-            panic!("the storm was not delivered within the shared deadline: {judged} of 128 judged");
+            panic!(
+                "the storm was not delivered within the shared deadline: {judged} of 128 judged"
+            );
         }
 
         // Every datagram was accepted, so the sender has reached its exit.
@@ -635,7 +655,10 @@ mod tests {
             libc::WIFEXITED(status) && libc::WEXITSTATUS(status) == 0,
             "child must deliver the storm: {status:#x}"
         );
-        assert!(judged >= 128, "the storm must be delivered and judged: {judged}");
+        assert!(
+            judged >= 128,
+            "the storm must be delivered and judged: {judged}"
+        );
         assert!(
             started.elapsed() < std::time::Duration::from_secs(2),
             "judging the storm must not stall the consumer: {:?}",
@@ -685,7 +708,10 @@ mod tests {
 
     /// A unique empty file used to identify a delivered descriptor.
     fn sentinel_file(name: &str) -> PathBuf {
-        let path = std::env::temp_dir().join(format!("ferese-readiness-sentinel-{name}-{}", std::process::id()));
+        let path = std::env::temp_dir().join(format!(
+            "ferese-readiness-sentinel-{name}-{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_file(&path);
         std::fs::write(&path, b"").unwrap();
         path
@@ -709,7 +735,10 @@ mod tests {
             let path = socket.path().to_owned();
             assert!(path.exists());
             assert!(path.starts_with(&runtime));
-            assert!(path.to_string_lossy().contains('7'), "path must encode the generation");
+            assert!(
+                path.to_string_lossy().contains('7'),
+                "path must encode the generation"
+            );
             path
         };
 
@@ -815,7 +844,10 @@ mod tests {
             libc::waitpid(pid, std::ptr::from_mut(&mut status), 0);
         }
 
-        assert!(accepted, "an exact READY=1 from the expected PID must be accepted");
+        assert!(
+            accepted,
+            "an exact READY=1 from the expected PID must be accepted"
+        );
     }
 
     #[test]
@@ -830,7 +862,9 @@ mod tests {
             if pid == 0 {
                 for _ in 0..500 {
                     if let Ok(client) = UnixDatagram::unbound()
-                        && client.send_to(b"RELOADING=1\nSTATUS=starting", &path).is_ok()
+                        && client
+                            .send_to(b"RELOADING=1\nSTATUS=starting", &path)
+                            .is_ok()
                     {
                         libc::_exit(0);
                     }

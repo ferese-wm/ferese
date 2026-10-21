@@ -22,7 +22,11 @@ pub(super) fn view<'a>(
     } = style;
     use ferese_config::theme::{Appearance, Mode};
     let mut modes = row([]).spacing(6);
-    for (mode, label) in [(Mode::Light, "☀ Light"), (Mode::Dark, "☾ Dark"), (Mode::Auto, "◐ Auto")] {
+    for (mode, label) in [
+        (Mode::Light, "☀ Light"),
+        (Mode::Dark, "☾ Dark"),
+        (Mode::Auto, "◐ Auto"),
+    ] {
         modes = modes.push(motion::button(
             shell.render,
             button::custom(shell.render.text(label).font(shell.render.font).size(13))
@@ -45,7 +49,12 @@ pub(super) fn view<'a>(
         let settings = motion::button(
             shell.render,
             button::custom(
-                ferese_theme::icons::tinted(ferese_theme::icons::SETTINGS, 18, color(theme.text_primary)).opacity(p),
+                ferese_theme::icons::tinted(
+                    ferese_theme::icons::SETTINGS,
+                    18,
+                    color(theme.text_primary),
+                )
+                .opacity(p),
             )
             .name("Open Ferese Settings")
             .width(30)
@@ -135,7 +144,10 @@ pub(super) fn view<'a>(
         );
     }
 
-    if shell.status.network.is_some() || shell.status.bluetooth.is_some() || shell.status.battery.is_some() {
+    if shell.status.network.is_some()
+        || shell.status.bluetooth.is_some()
+        || shell.status.battery.is_some()
+    {
         rows = rows.push(control_card(shell.render, connections.into(), primary, p));
     }
     rows = audio::view(shell, rows, style, true);
@@ -195,7 +207,10 @@ fn connection_control<'a>(
         .height(28)
         .align_x(alignment::Horizontal::Center)
         .align_y(alignment::Vertical::Center);
-    let content = column![icon].spacing(2).width(Length::Fill).align_x(Alignment::Center);
+    let content = column![icon]
+        .spacing(2)
+        .width(Length::Fill)
+        .align_x(Alignment::Center);
     let content = content.push(
         render
             .text(connection_caption(detail))
@@ -210,12 +225,18 @@ fn connection_control<'a>(
             .class(theme::Text::Color(muted)),
     );
     let Some(action) = action else {
-        return container(content).width(Length::FillPortion(1)).padding(4).into();
+        return container(content)
+            .width(Length::FillPortion(1))
+            .padding(4)
+            .into();
     };
     let button = button::custom(content)
         .width(Length::Fill)
         .padding(4)
-        .name(format!("{label}: {}, {detail}", if enabled { "on" } else { "off" }))
+        .name(format!(
+            "{label}: {}, {detail}",
+            if enabled { "on" } else { "off" }
+        ))
         .on_press(cosmic::Action::App(Message::Control(action)));
     let tile: Element<'_, cosmic::Action<Message>> = if selected {
         button
@@ -277,8 +298,14 @@ mod tests {
         assert_eq!(super::connection_caption("88%"), "88%");
         assert_eq!(super::connection_caption("Flow84@Lofree"), "Flow84@Lofr…");
         assert_eq!(super::connection_caption("123456789012"), "123456789012");
-        assert_eq!(super::connection_caption("My very long headphones"), "My very lon…");
-        assert_eq!(super::connection_caption("  Device\n name  "), "Device name");
+        assert_eq!(
+            super::connection_caption("My very long headphones"),
+            "My very lon…"
+        );
+        assert_eq!(
+            super::connection_caption("  Device\n name  "),
+            "Device name"
+        );
         let caption = super::connection_caption("耳機耳機耳機耳機耳機耳機耳機");
         assert_eq!(caption.chars().count(), 12);
         assert!(caption.ends_with('…'));

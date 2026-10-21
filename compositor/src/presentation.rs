@@ -5,7 +5,9 @@ use std::time::{Duration, Instant};
 use ferese_animation::AnimatedRect;
 
 use smithay::backend::renderer::element::{Element, Id, Kind, RenderElement, RenderElementStates};
-use smithay::backend::renderer::gles::{GlesError, GlesFrame, GlesRenderer, GlesTexProgram, GlesTexture, Uniform};
+use smithay::backend::renderer::gles::{
+    GlesError, GlesFrame, GlesRenderer, GlesTexProgram, GlesTexture, Uniform,
+};
 use smithay::backend::renderer::utils::{CommitCounter, DamageSet};
 use smithay::desktop::utils::OutputPresentationFeedback;
 use smithay::output::Output;
@@ -52,7 +54,8 @@ impl WindowPresentation {
     }
 
     pub fn close(&mut self) {
-        self.bounds.set_target(scaled_visual_rect(self.bounds.current, 0.98));
+        self.bounds
+            .set_target(scaled_visual_rect(self.bounds.current, 0.98));
         self.opacity.set_target(0.0);
         self.emphasis.set_target(0.0);
         self.shadow.set_target(0.0);
@@ -64,21 +67,32 @@ impl WindowPresentation {
     /// always follows the window's shared rounded geometry.
     pub fn shadow_factors(self) -> (f64, f64, f64) {
         let strength = self.shadow.current.clamp(0.0, 1.0);
-        (0.75 + 0.25 * strength, 0.9 + 0.1 * strength, 0.8 + 0.2 * strength)
+        (
+            0.75 + 0.25 * strength,
+            0.9 + 0.1 * strength,
+            0.8 + 0.2 * strength,
+        )
     }
 }
 
 // Response multipliers preserve damping ratio and the user's crossing policy.
 // Emphasis responds sooner; the shadow settles a little later than the bounds.
-pub(crate) fn emphasis_spring(base: ferese_animation::SpringConfig) -> ferese_animation::SpringConfig {
+pub(crate) fn emphasis_spring(
+    base: ferese_animation::SpringConfig,
+) -> ferese_animation::SpringConfig {
     visual_response(base, 0.8)
 }
 
-pub(crate) fn shadow_spring(base: ferese_animation::SpringConfig) -> ferese_animation::SpringConfig {
+pub(crate) fn shadow_spring(
+    base: ferese_animation::SpringConfig,
+) -> ferese_animation::SpringConfig {
     visual_response(base, 1.2)
 }
 
-fn visual_response(base: ferese_animation::SpringConfig, response: f64) -> ferese_animation::SpringConfig {
+fn visual_response(
+    base: ferese_animation::SpringConfig,
+    response: f64,
+) -> ferese_animation::SpringConfig {
     ferese_animation::SpringConfig {
         stiffness: base.stiffness / (response * response),
         damping: base.damping / response,
@@ -95,11 +109,14 @@ pub(crate) fn take_output_feedback(
     flags: wp_presentation_feedback::Kind,
 ) -> OutputPresentationFeedback {
     use smithay::desktop::layer_map_for_output;
-    use smithay::desktop::utils::{OutputPresentationFeedback, surface_presentation_feedback_flags_from_states};
+    use smithay::desktop::utils::{
+        OutputPresentationFeedback, surface_presentation_feedback_flags_from_states,
+    };
 
     let mut feedback = OutputPresentationFeedback::new(output);
-    let visible_output =
-        |surface: &WlSurface, _: &SurfaceData| rendered_feedback_output(output, surface.into(), rendered);
+    let visible_output = |surface: &WlSurface, _: &SurfaceData| {
+        rendered_feedback_output(output, surface.into(), rendered)
+    };
     let surface_flags = |surface: &WlSurface, _: &SurfaceData| {
         flags | surface_presentation_feedback_flags_from_states(surface, None, rendered)
     };
@@ -121,7 +138,11 @@ pub(crate) fn take_output_feedback(
     feedback
 }
 
-fn rendered_feedback_output(output: &Output, id: Id, rendered: &RenderElementStates) -> Option<Output> {
+fn rendered_feedback_output(
+    output: &Output,
+    id: Id,
+    rendered: &RenderElementStates,
+) -> Option<Output> {
     rendered
         .element_render_state(id)
         .is_some_and(crate::display_presentation::is_visible)
@@ -153,7 +174,11 @@ pub(crate) fn physical_rect(
 pub(crate) use ferese_shape::Shape as CornerShape;
 
 /// Conservative extent of the corner shoulders, in physical pixels.
-pub(crate) fn corner_extent(radius: f32, size: smithay::utils::Size<i32, Physical>, shape: CornerShape) -> f32 {
+pub(crate) fn corner_extent(
+    radius: f32,
+    size: smithay::utils::Size<i32, Physical>,
+    shape: CornerShape,
+) -> f32 {
     if shape == CornerShape::Circular {
         return radius;
     }
@@ -175,7 +200,12 @@ impl RoundedRect {
         self
     }
 
-    pub(crate) fn new(rect: ferese_layout::Rect, origin: Point<i32, Logical>, scale: f64, radius: f64) -> Self {
+    pub(crate) fn new(
+        rect: ferese_layout::Rect,
+        origin: Point<i32, Logical>,
+        scale: f64,
+        radius: f64,
+    ) -> Self {
         let rect = physical_rect(rect, origin, scale);
         Self {
             radius: clamp_radius(radius * scale, rect.size),
@@ -271,7 +301,11 @@ impl Element for PhysicalShaderElement {
         self.geometry
     }
 
-    fn damage_since(&self, _: Scale<f64>, commit: Option<CommitCounter>) -> DamageSet<i32, Physical> {
+    fn damage_since(
+        &self,
+        _: Scale<f64>,
+        commit: Option<CommitCounter>,
+    ) -> DamageSet<i32, Physical> {
         if commit == Some(self.current_commit()) {
             DamageSet::default()
         } else {
@@ -333,7 +367,11 @@ impl Element for NativeTextureElement {
         Kind::Unspecified
     }
 
-    fn damage_since(&self, _: Scale<f64>, commit: Option<CommitCounter>) -> DamageSet<i32, Physical> {
+    fn damage_since(
+        &self,
+        _: Scale<f64>,
+        commit: Option<CommitCounter>,
+    ) -> DamageSet<i32, Physical> {
         if commit == Some(self.commit) {
             DamageSet::default()
         } else {
@@ -454,7 +492,8 @@ mod tests {
     fn layered_responses_preserve_damping_and_settle_independently() {
         use ferese_animation::{AnimatedValue, SpringConfig};
         let base = SpringConfig::default();
-        let damping_ratio = |spring: SpringConfig| spring.damping / (2.0 * (spring.mass * spring.stiffness).sqrt());
+        let damping_ratio =
+            |spring: SpringConfig| spring.damping / (2.0 * (spring.mass * spring.stiffness).sqrt());
         for spring in [emphasis_spring(base), shadow_spring(base)] {
             assert!((damping_ratio(spring) - damping_ratio(base)).abs() < 1e-12);
             assert_eq!(spring.crossing, base.crossing);
@@ -482,7 +521,12 @@ mod tests {
     #[test]
     fn rounded_outline_clamps_after_physical_snapping() {
         // Logical clamping would give 1.125; the snapped 3px rect allows radius 1.5.
-        let outline = RoundedRect::new(ferese_layout::Rect::new(0.2, 0.2, 1.5, 4.0), (0, 0).into(), 1.5, 20.0);
+        let outline = RoundedRect::new(
+            ferese_layout::Rect::new(0.2, 0.2, 1.5, 4.0),
+            (0, 0).into(),
+            1.5,
+            20.0,
+        );
         assert_eq!(outline.rect, Rectangle::new((0, 0).into(), (3, 6).into()));
         assert_eq!(outline.radius, 1.5);
         for scale in [1.0, 1.25, 1.5, 2.0] {
@@ -504,7 +548,12 @@ mod tests {
         assert_eq!(clamp_radius(0.0, size), 0.0);
         assert_eq!(clamp_radius(-1.0, size), 0.0);
         assert_eq!(clamp_radius(2.0, (0, 10).into()), 0.0);
-        let outline = RoundedRect::new(ferese_layout::Rect::new(0.0, 0.0, 10.0, 10.0), (0, 0).into(), 1.5, 1.5);
+        let outline = RoundedRect::new(
+            ferese_layout::Rect::new(0.0, 0.0, 10.0, 10.0),
+            (0, 0).into(),
+            1.5,
+            1.5,
+        );
         assert_eq!(outline.radius, 2.25);
     }
 
@@ -528,7 +577,9 @@ mod tests {
 
     #[test]
     fn presentation_feedback_excludes_missing_and_occluded_surfaces() {
-        use smithay::backend::renderer::element::{RenderElementPresentationState, RenderElementState};
+        use smithay::backend::renderer::element::{
+            RenderElementPresentationState, RenderElementState,
+        };
         use smithay::output::{PhysicalProperties, Subpixel};
 
         let output = Output::new(
@@ -580,9 +631,24 @@ mod tests {
 
     #[test]
     fn reversing_a_grow_replaces_the_smaller_snapshot() {
-        assert!(!snapshot_covers_source((500, 600).into(), (1000, 600).into(), 1.0, 1.0));
-        assert!(snapshot_covers_source((1000, 600).into(), (500, 600).into(), 1.0, 1.0));
-        assert!(!snapshot_covers_source((1000, 600).into(), (500, 600).into(), 1.0, 1.8));
+        assert!(!snapshot_covers_source(
+            (500, 600).into(),
+            (1000, 600).into(),
+            1.0,
+            1.0
+        ));
+        assert!(snapshot_covers_source(
+            (1000, 600).into(),
+            (500, 600).into(),
+            1.0,
+            1.0
+        ));
+        assert!(!snapshot_covers_source(
+            (1000, 600).into(),
+            (500, 600).into(),
+            1.0,
+            1.8
+        ));
     }
 
     #[test]
@@ -660,11 +726,13 @@ mod tests {
         fast.callback_sent(start);
         fast.callback_sent(start + Duration::from_millis(8));
         assert_eq!(
-            slow.callback_deadline(start + Duration::from_millis(8), start).unwrap(),
+            slow.callback_deadline(start + Duration::from_millis(8), start)
+                .unwrap(),
             start + Duration::from_millis(16)
         );
         assert_eq!(
-            fast.callback_deadline(start + Duration::from_millis(8), start).unwrap(),
+            fast.callback_deadline(start + Duration::from_millis(8), start)
+                .unwrap(),
             start + Duration::from_millis(16)
         );
     }
@@ -686,14 +754,25 @@ mod tests {
     fn fractional_motion_does_not_quantize_to_logical_pixels() {
         let rect = ferese_layout::Rect::new(0.3, 0.3, 100.2, 80.2);
         assert_eq!(physical_rect(rect, (0, 0).into(), 1.8).loc, (1, 1).into());
-        assert_eq!(physical_rect(rect, (0, 0).into(), 1.8).size, (180, 144).into());
+        assert_eq!(
+            physical_rect(rect, (0, 0).into(), 1.8).size,
+            (180, 144).into()
+        );
     }
 
     #[test]
     fn adjacent_frames_share_edges_at_all_output_scales() {
         for scale in [1.0, 1.25, 1.5, 1.8, 2.0] {
-            let left = physical_rect(ferese_layout::Rect::new(13.3, 0.0, 500.4, 800.0), (0, 0).into(), scale);
-            let right = physical_rect(ferese_layout::Rect::new(513.7, 0.0, 500.4, 800.0), (0, 0).into(), scale);
+            let left = physical_rect(
+                ferese_layout::Rect::new(13.3, 0.0, 500.4, 800.0),
+                (0, 0).into(),
+                scale,
+            );
+            let right = physical_rect(
+                ferese_layout::Rect::new(513.7, 0.0, 500.4, 800.0),
+                (0, 0).into(),
+                scale,
+            );
             assert_eq!(left.loc.x + left.size.w, right.loc.x);
         }
     }

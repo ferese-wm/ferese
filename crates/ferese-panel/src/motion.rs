@@ -31,7 +31,12 @@ impl Geometry {
 
     fn values(self) -> [f64; COUNT] {
         let mut values = [0.; COUNT];
-        values[..4].copy_from_slice(&[self.bounds.x, self.bounds.y, self.bounds.width, self.bounds.height]);
+        values[..4].copy_from_slice(&[
+            self.bounds.x,
+            self.bounds.y,
+            self.bounds.width,
+            self.bounds.height,
+        ]);
         values[4..8].copy_from_slice(&self.radii);
         values[8..12].copy_from_slice(&self.margin);
         values[12..16].copy_from_slice(&self.thickness);
@@ -53,7 +58,9 @@ impl Geometry {
 
     fn validate(self) -> Result<Self, &'static str> {
         let values = self.values();
-        if values.iter().any(|value| !value.is_finite()) || values[2..].iter().any(|value| *value < 0.) {
+        if values.iter().any(|value| !value.is_finite())
+            || values[2..].iter().any(|value| *value < 0.)
+        {
             Err("panel animation geometry must be finite with nonnegative extents")
         } else {
             Ok(self)
@@ -82,7 +89,10 @@ impl Motion {
         )
     }
 
-    pub(crate) fn with_spring(geometry: Geometry, spring: SpringConfig) -> Result<Self, &'static str> {
+    pub(crate) fn with_spring(
+        geometry: Geometry,
+        spring: SpringConfig,
+    ) -> Result<Self, &'static str> {
         Ok(Self {
             values: geometry.validate()?.values().map(AnimatedValue::new),
             spring,
@@ -106,14 +116,16 @@ impl Motion {
                 // Extrema alternate; later peaks decay, so the first two suffice.
                 for phase in [first, first + std::f64::consts::PI] {
                     let t = phase / frequency;
-                    let position =
-                        value.target + (-decay * t).exp() * (displacement * phase.cos() + sine * phase.sin());
+                    let position = value.target
+                        + (-decay * t).exp() * (displacement * phase.cos() + sine * phase.sin());
                     maximum = maximum.max(position);
                 }
             } else {
                 // Total spring energy bounds displacement for any nonnegative damping.
                 maximum = maximum.max(
-                    value.target + (displacement * displacement + value.velocity * value.velocity / omega2).sqrt(),
+                    value.target
+                        + (displacement * displacement + value.velocity * value.velocity / omega2)
+                            .sqrt(),
                 );
             }
             maximum
@@ -229,7 +241,11 @@ mod tests {
             let before = motion.current();
             let velocity = motion.values.map(|value| value.velocity);
             motion
-                .retarget(if turn % 2 == 0 { expanded() } else { collapsed() })
+                .retarget(if turn % 2 == 0 {
+                    expanded()
+                } else {
+                    collapsed()
+                })
                 .unwrap();
             assert_eq!(motion.current(), before);
             assert_eq!(motion.values.map(|value| value.velocity), velocity);

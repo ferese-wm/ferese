@@ -39,13 +39,17 @@ fn decode(path: &Path) -> Result<Pixels, String> {
     match decoder.color_type() {
         ColorType::Rgba8 => {
             let mut data = MmapMut::map_anon(bytes).map_err(|error| error.to_string())?;
-            decoder.read_image(&mut data).map_err(|error| error.to_string())?;
+            decoder
+                .read_image(&mut data)
+                .map_err(|error| error.to_string())?;
             mapped_image(width, height, data)
         }
 
         ColorType::Rgb8 => {
             let mut rgb = MmapMut::map_anon(bytes / 4 * 3).map_err(|error| error.to_string())?;
-            decoder.read_image(&mut rgb).map_err(|error| error.to_string())?;
+            decoder
+                .read_image(&mut rgb)
+                .map_err(|error| error.to_string())?;
             let mut rgba = MmapMut::map_anon(bytes).map_err(|error| error.to_string())?;
             for (source, target) in rgb.chunks_exact(3).zip(rgba.chunks_exact_mut(4)) {
                 target[..3].copy_from_slice(source);
@@ -56,7 +60,8 @@ fn decode(path: &Path) -> Result<Pixels, String> {
         }
 
         _ => {
-            let decoded = image::DynamicImage::from_decoder(decoder).map_err(|error| error.to_string())?;
+            let decoded =
+                image::DynamicImage::from_decoder(decoder).map_err(|error| error.to_string())?;
             from_rgba(decoded.into_rgba8())
         }
     }
@@ -73,7 +78,8 @@ fn rgba_bytes(width: u32, height: u32) -> Result<usize, String> {
 
 pub(super) fn from_rgba(image: image::RgbaImage) -> Result<Pixels, String> {
     let (width, height) = image.dimensions();
-    let mut data = MmapMut::map_anon(rgba_bytes(width, height)?).map_err(|error| error.to_string())?;
+    let mut data =
+        MmapMut::map_anon(rgba_bytes(width, height)?).map_err(|error| error.to_string())?;
     data.copy_from_slice(image.as_raw());
     mapped_image(width, height, data)
 }
@@ -96,7 +102,11 @@ mod tests {
             DynamicImage::ImageLuma8(ImageBuffer::from_pixel(7, 5, Luma([81]))),
             DynamicImage::ImageLumaA8(ImageBuffer::from_pixel(7, 5, LumaA([81, 127]))),
             DynamicImage::ImageRgb16(ImageBuffer::from_pixel(7, 5, Rgb([8000, 21000, 41000]))),
-            DynamicImage::ImageRgba16(ImageBuffer::from_pixel(7, 5, Rgba([8000, 21000, 41000, 32000]))),
+            DynamicImage::ImageRgba16(ImageBuffer::from_pixel(
+                7,
+                5,
+                Rgba([8000, 21000, 41000, 32000]),
+            )),
         ];
         for (index, image) in images.iter().enumerate() {
             let path = directory.path().join(format!("image-{index}.png"));
@@ -153,7 +163,11 @@ mod tests {
                 .output()
                 .unwrap();
             println!("{}", String::from_utf8_lossy(&output.stdout));
-            assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
             return;
         }
 
@@ -180,13 +194,21 @@ mod tests {
                 "/../assets/wallpapers/ferese-wallpaper-light.png"
             )),
         ];
-        drop(std::thread::spawn(move || load(paths[0]).unwrap()).join().unwrap());
+        drop(
+            std::thread::spawn(move || load(paths[0]).unwrap())
+                .join()
+                .unwrap(),
+        );
         let baseline = rss_kib();
         let mut current = None;
         for index in 0..20 {
             // Transfer ownership out of the decoder thread, as WallpaperState does.
             let path = paths[index % paths.len()];
-            current = Some(std::thread::spawn(move || load(path).unwrap()).join().unwrap());
+            current = Some(
+                std::thread::spawn(move || load(path).unwrap())
+                    .join()
+                    .unwrap(),
+            );
         }
 
         let with_wallpaper = rss_kib();

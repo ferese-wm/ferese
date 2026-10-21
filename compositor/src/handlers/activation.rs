@@ -40,7 +40,9 @@ impl<C: PartialEq> InputHistory<C> {
 
     fn validate(&self, serial: Serial, client: &C, now: Instant) -> Option<Instant> {
         self.events.iter().rev().find_map(|(event, owner, time)| {
-            (*event == serial && owner == client && now.saturating_duration_since(*time) <= TOKEN_MAX_AGE)
+            (*event == serial
+                && owner == client
+                && now.saturating_duration_since(*time) <= TOKEN_MAX_AGE)
                 .then_some(*time)
         })
     }
@@ -55,7 +57,8 @@ impl Ferese {
         }
 
         if let Some(client) = surface.and_then(|surface| surface.client()) {
-            self.activation_inputs.record(serial, client.id(), Instant::now());
+            self.activation_inputs
+                .record(serial, client.id(), Instant::now());
         }
     }
 }
@@ -86,14 +89,23 @@ impl XdgActivationHandler for Ferese {
             return false;
         }
 
-        let Some(time) = self.activation_inputs.validate(*serial, client, Instant::now()) else {
+        let Some(time) = self
+            .activation_inputs
+            .validate(*serial, client, Instant::now())
+        else {
             return false;
         };
-        data.user_data.insert_if_missing(|| ApprovedInteraction(time));
+        data.user_data
+            .insert_if_missing(|| ApprovedInteraction(time));
         true
     }
 
-    fn request_activation(&mut self, token: XdgActivationToken, data: XdgActivationTokenData, surface: WlSurface) {
+    fn request_activation(
+        &mut self,
+        token: XdgActivationToken,
+        data: XdgActivationTokenData,
+        surface: WlSurface,
+    ) {
         self.xdg_activation_state.remove_token(&token);
         if self.session_lock.active() || self.input_capture.captures(1) {
             return;
@@ -152,7 +164,9 @@ mod tests {
             wire.write_all(&bytes).unwrap();
         };
         send(&mut wire, 1, 1, &[2]); // wl_display.get_registry
-        events.dispatch(Duration::from_millis(1), &mut state).unwrap();
+        events
+            .dispatch(Duration::from_millis(1), &mut state)
+            .unwrap();
         state.display_handle.flush_clients().unwrap();
         wire.set_nonblocking(true).unwrap();
         let mut globals = Vec::new();
@@ -162,10 +176,16 @@ mod tests {
         let mut seat_name = None;
         while offset < globals.len() {
             let header = u32::from_ne_bytes(globals[offset + 4..offset + 8].try_into().unwrap());
-            if u32::from_ne_bytes(globals[offset..offset + 4].try_into().unwrap()) == 2 && header & 0xffff == 0 {
-                let length = u32::from_ne_bytes(globals[offset + 12..offset + 16].try_into().unwrap()) as usize;
+            if u32::from_ne_bytes(globals[offset..offset + 4].try_into().unwrap()) == 2
+                && header & 0xffff == 0
+            {
+                let length =
+                    u32::from_ne_bytes(globals[offset + 12..offset + 16].try_into().unwrap())
+                        as usize;
                 if &globals[offset + 16..offset + 16 + length] == b"wl_seat\0" {
-                    seat_name = Some(u32::from_ne_bytes(globals[offset + 8..offset + 12].try_into().unwrap()));
+                    seat_name = Some(u32::from_ne_bytes(
+                        globals[offset + 8..offset + 12].try_into().unwrap(),
+                    ));
                 }
             }
 
@@ -180,7 +200,9 @@ mod tests {
         );
         args.extend([7, 3]);
         send(&mut wire, 2, 0, &args);
-        events.dispatch(Duration::from_millis(1), &mut state).unwrap();
+        events
+            .dispatch(Duration::from_millis(1), &mut state)
+            .unwrap();
         let seat: WlSeat = state
             .seat
             .client_seats(&launcher)
@@ -208,7 +230,9 @@ mod tests {
             !state.token_created(token.clone(), data()),
             "fresh token renewed stale input"
         );
-        state.activation_inputs.record(serial, launcher.id(), Instant::now());
+        state
+            .activation_inputs
+            .record(serial, launcher.id(), Instant::now());
         let approved = data();
         assert!(state.token_created(token.clone(), approved.clone()));
         assert!(approved.user_data.get::<ApprovedInteraction>().is_some());
@@ -227,7 +251,15 @@ mod tests {
         // The proof is attached to the token, not the recipient identity. This
         // is what lets a validated launcher hand it to a different application.
         assert_ne!(approved.client_id, Some(recipient.id()));
-        assert!(approved.user_data.get::<ApprovedInteraction>().unwrap().0.elapsed() < TOKEN_MAX_AGE);
+        assert!(
+            approved
+                .user_data
+                .get::<ApprovedInteraction>()
+                .unwrap()
+                .0
+                .elapsed()
+                < TOKEN_MAX_AGE
+        );
 
         // A valid handoff must not focus a recipient before its first buffer.
         use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_wm_base::XdgWmBase;
@@ -241,12 +273,18 @@ mod tests {
             )
             .unwrap();
         let shell = recipient
-            .create_resource::<XdgWmBase, XdgWmBaseUserData, Ferese>(&state.display_handle, 6, Default::default())
+            .create_resource::<XdgWmBase, XdgWmBaseUserData, Ferese>(
+                &state.display_handle,
+                6,
+                Default::default(),
+            )
             .unwrap();
         send(&mut recipient_wire, compositor.id().protocol_id(), 0, &[2]);
         send(&mut recipient_wire, shell.id().protocol_id(), 2, &[3, 2]);
         send(&mut recipient_wire, 3, 1, &[4]);
-        events.dispatch(Duration::from_millis(1), &mut state).unwrap();
+        events
+            .dispatch(Duration::from_millis(1), &mut state)
+            .unwrap();
         let target = state
             .space
             .elements()
@@ -272,7 +310,11 @@ mod tests {
         assert_eq!(history.validate(Serial::from(13), &"launcher", now), None);
         assert_eq!(history.validate(serial, &"other-client", now), None);
         assert_eq!(
-            history.validate(serial, &"launcher", now + TOKEN_MAX_AGE + Duration::from_millis(1)),
+            history.validate(
+                serial,
+                &"launcher",
+                now + TOKEN_MAX_AGE + Duration::from_millis(1)
+            ),
             None
         );
         // An approved token retains the interaction time across client handoff.

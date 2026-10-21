@@ -25,7 +25,9 @@ pub(crate) enum Kind {
 pub(super) fn valid_answer(kind: &Kind, value: &str) -> bool {
     match kind {
         Kind::Pin => !value.is_empty() && value.chars().count() <= 16,
-        Kind::Passkey => !value.is_empty() && value.len() <= 6 && value.bytes().all(|b| b.is_ascii_digit()),
+        Kind::Passkey => {
+            !value.is_empty() && value.len() <= 6 && value.bytes().all(|b| b.is_ascii_digit())
+        }
         Kind::Display(_) => false,
         _ => true,
     }
@@ -107,19 +109,29 @@ impl Pairing {
     }
 
     fn check(state: &Pending, device: &str, sender: Option<&str>) -> Result<(), Error> {
-        if state.target.as_deref() != Some(device) || sender.is_none() || state.owner.as_deref() != sender {
+        if state.target.as_deref() != Some(device)
+            || sender.is_none()
+            || state.owner.as_deref() != sender
+        {
             Err(Error::Rejected("No matching pairing request".into()))
         } else {
             Ok(())
         }
     }
 
-    async fn ask(&self, device: OwnedObjectPath, kind: Kind, sender: Option<&str>) -> Result<Zeroizing<String>, Error> {
+    async fn ask(
+        &self,
+        device: OwnedObjectPath,
+        kind: Kind,
+        sender: Option<&str>,
+    ) -> Result<Zeroizing<String>, Error> {
         let (id, rx) = {
             let mut state = self.0.lock().unwrap();
             Self::check(&state, device.as_str(), sender)?;
             if state.reply.is_some() {
-                return Err(Error::Rejected("A pairing question is already pending".into()));
+                return Err(Error::Rejected(
+                    "A pairing question is already pending".into(),
+                ));
             }
             state.serial = state.serial.wrapping_add(1);
             let id = state.serial;
@@ -141,7 +153,12 @@ impl Pairing {
             .ok_or_else(|| Error::Canceled("Pairing canceled or timed out".into()))
     }
 
-    fn display(&self, device: OwnedObjectPath, text: String, sender: Option<&str>) -> Result<(), Error> {
+    fn display(
+        &self,
+        device: OwnedObjectPath,
+        text: String,
+        sender: Option<&str>,
+    ) -> Result<(), Error> {
         let mut state = self.0.lock().unwrap();
         Self::check(&state, device.as_str(), sender)?;
         state.serial = state.serial.wrapping_add(1);
@@ -171,14 +188,20 @@ impl Pairing {
         device: OwnedObjectPath,
         #[zbus(header)] header: Header<'_>,
     ) -> Result<String, Error> {
-        let answer = self.ask(device, Kind::Pin, header.sender().map(|s| s.as_str())).await?;
+        let answer = self
+            .ask(device, Kind::Pin, header.sender().map(|s| s.as_str()))
+            .await?;
         if !valid_answer(&Kind::Pin, &answer) {
             return Err(Error::Rejected("PIN must have 1–16 characters".into()));
         }
         Ok(answer.to_string())
     }
 
-    async fn request_passkey(&self, device: OwnedObjectPath, #[zbus(header)] header: Header<'_>) -> Result<u32, Error> {
+    async fn request_passkey(
+        &self,
+        device: OwnedObjectPath,
+        #[zbus(header)] header: Header<'_>,
+    ) -> Result<u32, Error> {
         let answer = self
             .ask(device, Kind::Passkey, header.sender().map(|s| s.as_str()))
             .await?;
@@ -198,9 +221,13 @@ impl Pairing {
         passkey: u32,
         #[zbus(header)] header: Header<'_>,
     ) -> Result<(), Error> {
-        self.ask(device, Kind::Confirm(passkey), header.sender().map(|s| s.as_str()))
-            .await
-            .map(|_| ())
+        self.ask(
+            device,
+            Kind::Confirm(passkey),
+            header.sender().map(|s| s.as_str()),
+        )
+        .await
+        .map(|_| ())
     }
 
     async fn request_authorization(
@@ -219,9 +246,13 @@ impl Pairing {
         uuid: String,
         #[zbus(header)] header: Header<'_>,
     ) -> Result<(), Error> {
-        self.ask(device, Kind::Service(uuid), header.sender().map(|s| s.as_str()))
-            .await
-            .map(|_| ())
+        self.ask(
+            device,
+            Kind::Service(uuid),
+            header.sender().map(|s| s.as_str()),
+        )
+        .await
+        .map(|_| ())
     }
 
     fn display_pin_code(
@@ -276,7 +307,9 @@ impl Client {
         .await
         .map_err(|e| e.to_string())?;
         let mut registered = self.registered.lock().await;
-        if registered.as_ref() == Some(&owner) && self.agent.0.lock().unwrap().owner.as_ref() == Some(&owner) {
+        if registered.as_ref() == Some(&owner)
+            && self.agent.0.lock().unwrap().owner.as_ref() == Some(&owner)
+        {
             return Ok(());
         }
         self.agent.0.lock().unwrap().owner = Some(owner.clone());
@@ -286,11 +319,16 @@ impl Client {
             .await
             .map_err(|e| e.to_string())?;
         let path = OwnedObjectPath::try_from(PATH).unwrap();
-        proxy(&self.connection, "org.bluez", "/org/bluez", "org.bluez.AgentManager1")
-            .await?
-            .call::<_, _, ()>("RegisterAgent", &(path, "KeyboardDisplay"))
-            .await
-            .map_err(|e| e.to_string())?;
+        proxy(
+            &self.connection,
+            "org.bluez",
+            "/org/bluez",
+            "org.bluez.AgentManager1",
+        )
+        .await?
+        .call::<_, _, ()>("RegisterAgent", &(path, "KeyboardDisplay"))
+        .await
+        .map_err(|e| e.to_string())?;
         *registered = Some(owner);
         Ok(())
     }
@@ -338,11 +376,22 @@ mod tests {
         pairing.0.lock().unwrap().owner = Some(":1.2".into());
         let generation = pairing.begin("/device/1").unwrap();
         let path = OwnedObjectPath::try_from("/device/2").unwrap();
-        assert!(pairing.ask(path, Kind::Authorize, Some(":1.2")).await.is_err());
+        assert!(
+            pairing
+                .ask(path, Kind::Authorize, Some(":1.2"))
+                .await
+                .is_err()
+        );
         let path = OwnedObjectPath::try_from("/device/1").unwrap();
-        assert!(pairing.ask(path.clone(), Kind::Authorize, Some(":1.9")).await.is_err());
+        assert!(
+            pairing
+                .ask(path.clone(), Kind::Authorize, Some(":1.9"))
+                .await
+                .is_err()
+        );
         let other = pairing.clone();
-        let task = tokio::spawn(async move { other.ask(path, Kind::Confirm(123456), Some(":1.2")).await });
+        let task =
+            tokio::spawn(async move { other.ask(path, Kind::Confirm(123456), Some(":1.2")).await });
         tokio::task::yield_now().await;
         let id = pairing.prompt().unwrap().id;
         pairing.reply(id.wrapping_sub(1), Some(Zeroizing::new(String::new())));
@@ -361,7 +410,11 @@ mod tests {
         let other = pairing.clone();
         let task = tokio::spawn(async move {
             other
-                .ask(OwnedObjectPath::try_from("/device/1").unwrap(), Kind::Pin, Some(":1.2"))
+                .ask(
+                    OwnedObjectPath::try_from("/device/1").unwrap(),
+                    Kind::Pin,
+                    Some(":1.2"),
+                )
                 .await
         });
         tokio::task::yield_now().await;
@@ -370,6 +423,9 @@ mod tests {
         assert!(task.await.unwrap().is_err());
         pairing.begin("/device/2").unwrap();
         pairing.finish(old);
-        assert_eq!(pairing.0.lock().unwrap().target.as_deref(), Some("/device/2"));
+        assert_eq!(
+            pairing.0.lock().unwrap().target.as_deref(),
+            Some("/device/2")
+        );
     }
 }

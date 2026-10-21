@@ -74,8 +74,12 @@ impl Config {
                 Err(ConfigError::LayoutValue { field, value })
             }
         };
-        let color =
-            |value: &Option<String>, field| value.as_ref().map(|s| parse_color(s, field).map(|c| c.0)).transpose();
+        let color = |value: &Option<String>, field| {
+            value
+                .as_ref()
+                .map(|s| parse_color(s, field).map(|c| c.0))
+                .transpose()
+        };
         let width = range(c.width, 1.0, 16.0, "tab_indicator.width")?;
         let hit_width = range(c.hit_width, width, 64.0, "tab_indicator.hit_width")?;
         let font_size = range(c.font_size, 8.0, 32.0, "tab_indicator.font_size")?;
@@ -85,11 +89,21 @@ impl Config {
             font_size,
             outline_width: range(c.outline_width, 0.0, 8.0, "tab_indicator.outline_width")?,
             outline_color: color(&c.outline_color, "tab_indicator.outline_color")?,
-            segment_height: range(c.segment_height, width, 128.0, "tab_indicator.segment_height")?,
+            segment_height: range(
+                c.segment_height,
+                width,
+                128.0,
+                "tab_indicator.segment_height",
+            )?,
             segment_gap: range(c.segment_gap, 0.0, 64.0, "tab_indicator.segment_gap")?,
             gap_threshold: range(c.gap_threshold, width, 128.0, "tab_indicator.gap_threshold")?,
             list_width: range(c.list_width, 80.0, 640.0, "tab_indicator.list_width")?,
-            row_height: range(c.row_height, font_size + 6.0, 80.0, "tab_indicator.row_height")?,
+            row_height: range(
+                c.row_height,
+                font_size + 6.0,
+                80.0,
+                "tab_indicator.row_height",
+            )?,
             padding: range(c.padding, 0.0, 24.0, "tab_indicator.padding")?,
             flash_duration: std::time::Duration::from_millis(range(
                 c.flash_duration_ms as f64,
@@ -111,9 +125,18 @@ mod tests {
 
     #[test]
     fn indicator_defaults_overrides_and_validation() {
-        let c = Config::parse_source("").unwrap().tab_indicator_settings().unwrap();
+        let c = Config::parse_source("")
+            .unwrap()
+            .tab_indicator_settings()
+            .unwrap();
         assert_eq!(
-            (c.width, c.segment_height, c.segment_gap, c.hit_width, c.gap_threshold),
+            (
+                c.width,
+                c.segment_height,
+                c.segment_gap,
+                c.hit_width,
+                c.gap_threshold
+            ),
             (4., 24., 4., 12., 8.)
         );
         assert_eq!(c.flash_duration.as_millis(), 1000);
@@ -123,7 +146,10 @@ mod tests {
         )
         .unwrap();
         let c = config.tab_indicator_settings().unwrap();
-        assert_eq!((c.width, c.hit_width, c.flash_duration.as_millis()), (3., 14., 750));
+        assert_eq!(
+            (c.width, c.hit_width, c.flash_duration.as_millis()),
+            (3., 14., 750)
+        );
         assert_eq!(c.active_color, Some([1., 0., 0., 1.]));
         for source in [
             "width 0",
@@ -133,7 +159,9 @@ mod tests {
             "flash-duration-ms 60001",
             "active-color \"invalid\"",
         ] {
-            let config = Config::parse_source(&format!("scrolling {{ tab-indicator {{ {source}; }}; }}")).unwrap();
+            let config =
+                Config::parse_source(&format!("scrolling {{ tab-indicator {{ {source}; }}; }}"))
+                    .unwrap();
             assert!(config.tab_indicator_settings().is_err(), "{source}");
         }
         assert!(Config::parse_source("scrolling { tab-indicator { typo 1; }; }").is_err());

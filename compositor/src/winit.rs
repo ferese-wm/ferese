@@ -41,7 +41,11 @@ pub fn init(event_loop: &mut EventLoop<Ferese>, state: &mut Ferese) -> Result<()
     state.dmabuf_imports.register(dmabuf_global);
     let initial_scale = normalized_scale(backend.scale_factor());
     let mode = Mode {
-        size: if drawable.get() { initial_size } else { (1, 1).into() },
+        size: if drawable.get() {
+            initial_size
+        } else {
+            (1, 1).into()
+        },
         refresh: backend
             .window()
             .current_monitor()
@@ -333,16 +337,24 @@ fn send_nested_frame_callbacks(state: &mut Ferese, output: &Output) {
             .get(*window)
             .is_some_and(|id| state.window_belongs_to_output(*id, output))
     }) {
-        window.send_frame(output, time, None, |surface, _| eligible.get(&surface.into()).cloned());
+        window.send_frame(output, time, None, |surface, _| {
+            eligible.get(&surface.into()).cloned()
+        });
     }
     for layer in layer_surfaces(output) {
-        layer.send_frame(output, time, None, |surface, _| eligible.get(&surface.into()).cloned());
+        layer.send_frame(output, time, None, |surface, _| {
+            eligible.get(&surface.into()).cloned()
+        });
     }
     state.send_cursor_frame(output);
 }
 
 fn normalized_scale(scale: f64) -> f64 {
-    if scale.is_finite() && scale > 0.0 { scale } else { 1.0 }
+    if scale.is_finite() && scale > 0.0 {
+        scale
+    } else {
+        1.0
+    }
 }
 
 #[cfg(test)]
@@ -351,7 +363,9 @@ mod tests {
 
     #[test]
     fn zero_host_resize_preserves_geometry_and_recovers() {
-        if !crate::startup_tests::private_runtime("winit::tests::zero_host_resize_preserves_geometry_and_recovers") {
+        if !crate::startup_tests::private_runtime(
+            "winit::tests::zero_host_resize_preserves_geometry_and_recovers",
+        ) {
             return;
         }
 
@@ -437,7 +451,9 @@ mod tests {
                 .collect::<Vec<_>>(),
         )
         .unwrap();
-        events.dispatch(Duration::from_millis(1), &mut state).unwrap();
+        events
+            .dispatch(Duration::from_millis(1), &mut state)
+            .unwrap();
         state.display_handle.flush_clients().unwrap();
         wire.set_nonblocking(true).unwrap();
         let mut globals = Vec::new();
@@ -471,7 +487,8 @@ mod tests {
 
         let mut events = EventLoop::try_new().unwrap();
         let mut state = crate::startup_tests::state(&mut events);
-        let display = unsafe { EGLDisplay::new(EGLDevice::enumerate().unwrap().last().unwrap()).unwrap() };
+        let display =
+            unsafe { EGLDisplay::new(EGLDevice::enumerate().unwrap().last().unwrap()).unwrap() };
         let context = EGLContext::new(&display).unwrap();
         let mut renderer = unsafe { GlesRenderer::new(context).unwrap() };
         let output = Output::new(
@@ -485,8 +502,12 @@ mod tests {
             },
         );
         let size: Size<i32, Physical> = (32, 24).into();
-        let mut displayed: GlesTexture = renderer.create_buffer(Fourcc::Abgr8888, (32, 24).into()).unwrap();
-        let mut offscreen: GlesTexture = renderer.create_buffer(Fourcc::Abgr8888, (32, 24).into()).unwrap();
+        let mut displayed: GlesTexture = renderer
+            .create_buffer(Fourcc::Abgr8888, (32, 24).into())
+            .unwrap();
+        let mut offscreen: GlesTexture = renderer
+            .create_buffer(Fourcc::Abgr8888, (32, 24).into())
+            .unwrap();
         let damage = [Rectangle::from_size(size)];
         let mut framebuffer = renderer.bind(&mut displayed).unwrap();
         for changed_binding in [false, true] {
@@ -508,15 +529,20 @@ mod tests {
                         let _target = renderer.bind(&mut offscreen).unwrap();
                     }
                     assert!(
-                        crate::backends::direct::capture::capture_request(&mut state, &output, false, || {
-                            Err::<(), _>("injected offscreen allocation/render failure")
-                        })
+                        crate::backends::direct::capture::capture_request(
+                            &mut state,
+                            &output,
+                            false,
+                            || { Err::<(), _>("injected offscreen allocation/render failure") }
+                        )
                         .is_none()
                     );
                     true
                 },
                 |renderer, framebuffer| {
-                    let _ = renderer.render(framebuffer, size, Transform::Normal)?.finish()?;
+                    let _ = renderer
+                        .render(framebuffer, size, Transform::Normal)?
+                        .finish()?;
                     Ok::<_, GlesError>(())
                 },
             )
@@ -524,13 +550,24 @@ mod tests {
             assert!(receiver.try_recv().unwrap().result.is_err());
             assert!(receiver.try_recv().is_err());
             assert!(state.pending_screencopies.is_empty());
-            let mut frame = renderer.render(&mut framebuffer, size, Transform::Normal).unwrap();
-            frame.clear(Color32F::new(0.0, 0.0, 1.0, 1.0), &damage).unwrap();
+            let mut frame = renderer
+                .render(&mut framebuffer, size, Transform::Normal)
+                .unwrap();
+            frame
+                .clear(Color32F::new(0.0, 0.0, 1.0, 1.0), &damage)
+                .unwrap();
             frame.finish().unwrap().wait().unwrap();
             let pixels = renderer
-                .copy_framebuffer(&framebuffer, Rectangle::from_size((32, 24).into()), Fourcc::Abgr8888)
+                .copy_framebuffer(
+                    &framebuffer,
+                    Rectangle::from_size((32, 24).into()),
+                    Fourcc::Abgr8888,
+                )
                 .unwrap();
-            assert_eq!(&renderer.map_texture(&pixels).unwrap()[..4], &[0, 0, 255, 255]);
+            assert_eq!(
+                &renderer.map_texture(&pixels).unwrap()[..4],
+                &[0, 0, 255, 255]
+            );
         }
     }
 

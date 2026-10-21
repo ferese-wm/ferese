@@ -88,7 +88,8 @@ impl Adaptive {
     }
 
     pub fn deadline(&self) -> Option<Duration> {
-        self.pending.map(|(_, since)| since.saturating_add(HYSTERESIS))
+        self.pending
+            .map(|(_, since)| since.saturating_add(HYSTERESIS))
     }
 }
 

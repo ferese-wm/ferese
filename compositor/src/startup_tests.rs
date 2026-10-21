@@ -10,7 +10,9 @@ use calloop::EventLoop;
 use calloop::signals::{Signal, Signals};
 use smithay::input::SeatHandler;
 use smithay::input::pointer::{CursorImageStatus, MotionEvent};
-use smithay::reexports::wayland_server::protocol::{wl_compositor::WlCompositor, wl_surface::WlSurface};
+use smithay::reexports::wayland_server::protocol::{
+    wl_compositor::WlCompositor, wl_surface::WlSurface,
+};
 use smithay::reexports::wayland_server::{Display, Resource};
 use smithay::utils::SERIAL_COUNTER;
 
@@ -54,7 +56,11 @@ pub(crate) fn private_runtime(test: &str) -> bool {
         std::thread::sleep(Duration::from_millis(10));
     };
 
-    assert!(status.success(), "{}", std::fs::read_to_string(log_path).unwrap());
+    assert!(
+        status.success(),
+        "{}",
+        std::fs::read_to_string(log_path).unwrap()
+    );
     false
 }
 
@@ -68,7 +74,9 @@ pub(crate) fn state(events: &mut EventLoop<'static, Ferese>) -> Ferese {
 #[test]
 fn nested_instances_share_a_runtime_and_route_launched_clients_to_their_own_ipc() {
     use smithay::output::{Mode, Output, PhysicalProperties, Subpixel};
-    if !private_runtime("startup_tests::nested_instances_share_a_runtime_and_route_launched_clients_to_their_own_ipc") {
+    if !private_runtime(
+        "startup_tests::nested_instances_share_a_runtime_and_route_launched_clients_to_their_own_ipc",
+    ) {
         return;
     }
     let mut host_events = EventLoop::try_new().unwrap();
@@ -168,7 +176,8 @@ with open(sys.argv[1], 'w') as report:
             assert!(Instant::now() < deadline, "nested IPC client timed out");
             events.dispatch(Duration::from_millis(10), state).unwrap();
         }
-        let result: serde_json::Value = serde_json::from_slice(&std::fs::read(report).unwrap()).unwrap();
+        let result: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(report).unwrap()).unwrap();
         assert_eq!(
             result["socket"],
             state.session_environment.control_socket.to_str().unwrap()
@@ -179,17 +188,37 @@ with open(sys.argv[1], 'w') as report:
     let first_directory = first_socket.parent().unwrap().to_owned();
     drop(first);
     assert!(!first_directory.exists());
-    assert!(host_socket.symlink_metadata().unwrap().file_type().is_socket());
-    assert!(second_socket.symlink_metadata().unwrap().file_type().is_socket());
+    assert!(
+        host_socket
+            .symlink_metadata()
+            .unwrap()
+            .file_type()
+            .is_socket()
+    );
+    assert!(
+        second_socket
+            .symlink_metadata()
+            .unwrap()
+            .file_type()
+            .is_socket()
+    );
     let second_directory = second_socket.parent().unwrap().to_owned();
     drop(second);
     assert!(!second_directory.exists());
-    assert!(host_socket.symlink_metadata().unwrap().file_type().is_socket());
+    assert!(
+        host_socket
+            .symlink_metadata()
+            .unwrap()
+            .file_type()
+            .is_socket()
+    );
 }
 
 #[test]
 fn launched_clients_unblock_termination_signals_and_keep_private_sockets() {
-    if !private_runtime("startup_tests::launched_clients_unblock_termination_signals_and_keep_private_sockets") {
+    if !private_runtime(
+        "startup_tests::launched_clients_unblock_termination_signals_and_keep_private_sockets",
+    ) {
         return;
     }
 
@@ -198,13 +227,27 @@ fn launched_clients_unblock_termination_signals_and_keep_private_sockets() {
     let signals = Signals::new(&[Signal::SIGINT, Signal::SIGTERM, Signal::SIGUSR1]).unwrap();
     let mut private = crate::private_client::ClientCapabilities::EFFECTS;
     private.insert(crate::private_client::ClientCapabilities::SHELL_CONTROL);
-    for capabilities in [crate::private_client::ClientCapabilities::default(), private] {
-        let mut child = crate::process::spawn_client(&mut state, ["/bin/sleep", "30"], capabilities).unwrap();
+    for capabilities in [
+        crate::private_client::ClientCapabilities::default(),
+        private,
+    ] {
+        let mut child =
+            crate::process::spawn_client(&mut state, ["/bin/sleep", "30"], capabilities).unwrap();
         let status = std::fs::read_to_string(format!("/proc/{}/status", child.id())).unwrap();
-        let blocked = status.lines().find(|line| line.starts_with("SigBlk:")).unwrap();
+        let blocked = status
+            .lines()
+            .find(|line| line.starts_with("SigBlk:"))
+            .unwrap();
         let blocked = u64::from_str_radix(blocked.split_whitespace().nth(1).unwrap(), 16).unwrap();
-        assert_eq!(blocked & ((1 << (libc::SIGINT - 1)) | (1 << (libc::SIGTERM - 1))), 0);
-        assert_ne!(blocked & (1 << (libc::SIGUSR1 - 1)), 0, "unrelated mask was lost");
+        assert_eq!(
+            blocked & ((1 << (libc::SIGINT - 1)) | (1 << (libc::SIGTERM - 1))),
+            0
+        );
+        assert_ne!(
+            blocked & (1 << (libc::SIGUSR1 - 1)),
+            0,
+            "unrelated mask was lost"
+        );
         if !capabilities.is_empty() {
             let environment = std::fs::read(format!("/proc/{}/environ", child.id())).unwrap();
             for name in ["WAYLAND_SOCKET=", "FERESE_SHELL_CONTROL_SOCKET="] {
@@ -239,7 +282,9 @@ fn launched_clients_unblock_termination_signals_and_keep_private_sockets() {
 
 #[test]
 fn explicit_client_exit_is_reaped_without_stopping_the_compositor() {
-    if !private_runtime("startup_tests::explicit_client_exit_is_reaped_without_stopping_the_compositor") {
+    if !private_runtime(
+        "startup_tests::explicit_client_exit_is_reaped_without_stopping_the_compositor",
+    ) {
         return;
     }
 
@@ -256,13 +301,21 @@ fn explicit_client_exit_is_reaped_without_stopping_the_compositor() {
     let deadline = Instant::now() + Duration::from_secs(2);
     while watched.borrow().is_some() {
         assert!(Instant::now() < deadline, "client was not reaped");
-        events.dispatch(Duration::from_millis(10), &mut state).unwrap();
+        events
+            .dispatch(Duration::from_millis(10), &mut state)
+            .unwrap();
         after_dispatch(&mut state);
     }
 
     let mut status = 0;
-    assert_eq!(unsafe { libc::waitpid(pid as i32, &mut status, libc::WNOHANG) }, -1);
-    assert_eq!(std::io::Error::last_os_error().raw_os_error(), Some(libc::ECHILD));
+    assert_eq!(
+        unsafe { libc::waitpid(pid as i32, &mut status, libc::WNOHANG) },
+        -1
+    );
+    assert_eq!(
+        std::io::Error::last_os_error().raw_os_error(),
+        Some(libc::ECHILD)
+    );
     // Exit watching removes itself; subsequent event-loop dispatch remains usable.
     events.dispatch(Duration::ZERO, &mut state).unwrap();
 }
@@ -306,7 +359,9 @@ fn deferred_cursor_redraw_runs_after_input_lock_is_released() {
         client_wire.write_all(&word.to_ne_bytes()).unwrap();
     }
 
-    events.dispatch(Duration::from_millis(10), &mut state).unwrap();
+    events
+        .dispatch(Duration::from_millis(10), &mut state)
+        .unwrap();
     let surface = client
         .object_from_protocol_id::<WlSurface>(&state.display_handle, 2)
         .unwrap();
@@ -365,16 +420,25 @@ fn wayland_roundtrip_completes_without_a_rendered_frame() {
         client.write_all(&word.to_ne_bytes()).unwrap();
     }
 
-    events.dispatch(Duration::from_millis(10), &mut state).unwrap();
-    client.set_read_timeout(Some(Duration::from_millis(20))).unwrap();
+    events
+        .dispatch(Duration::from_millis(10), &mut state)
+        .unwrap();
+    client
+        .set_read_timeout(Some(Duration::from_millis(20)))
+        .unwrap();
     let mut reply = [0u8; 12];
     assert!(
         client.read_exact(&mut reply).is_err(),
         "dispatch flushed replies before after_dispatch"
     );
     after_dispatch(&mut state);
-    client.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
+    client
+        .set_read_timeout(Some(Duration::from_secs(1)))
+        .unwrap();
     client.read_exact(&mut reply).unwrap();
     assert_eq!(u32::from_ne_bytes(reply[0..4].try_into().unwrap()), 2);
-    assert_eq!(u32::from_ne_bytes(reply[4..8].try_into().unwrap()) & 0xffff, 0);
+    assert_eq!(
+        u32::from_ne_bytes(reply[4..8].try_into().unwrap()) & 0xffff,
+        0
+    );
 }

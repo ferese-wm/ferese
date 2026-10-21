@@ -19,7 +19,12 @@ impl<M> Widget<M, Theme, cosmic::Renderer> for Thumbnail {
         Size::new(Length::Fixed(44.), Length::Fixed(17.))
     }
 
-    fn layout(&mut self, _: &mut widget::Tree, _: &cosmic::Renderer, limits: &layout::Limits) -> layout::Node {
+    fn layout(
+        &mut self,
+        _: &mut widget::Tree,
+        _: &cosmic::Renderer,
+        limits: &layout::Limits,
+    ) -> layout::Node {
         layout::Node::new(limits.resolve(44., 17., Size::ZERO))
     }
 

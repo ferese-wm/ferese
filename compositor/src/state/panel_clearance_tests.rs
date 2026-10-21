@@ -100,14 +100,19 @@ fn every_panel_style_owns_clearance_at_its_reserved_edge() {
             request(&mut wire, 3, 2, &[panel.exclusive_zone(false) as u32]);
             request(&mut wire, 3, 3, &[geometry.edge_margin as u32, 0, 0, 0]);
             request(&mut wire, 2, 6, &[]);
-            events.dispatch(Duration::from_millis(1), &mut state).unwrap();
+            events
+                .dispatch(Duration::from_millis(1), &mut state)
+                .unwrap();
             let bounds = state.output_bounds_for(&output).unwrap();
             let edge = f64::from(geometry.edge_margin + 36 + clearance);
             assert_eq!(bounds.y, edge, "{style:?}, clearance={clearance}");
             for outer in [0., 12.] {
                 let adjusted = state.panel_layout_bounds(bounds, outer);
                 let window = maximized_rect(adjusted, outer);
-                assert_eq!(window.y, edge, "{style:?}, clearance={clearance}, outer={outer}");
+                assert_eq!(
+                    window.y, edge,
+                    "{style:?}, clearance={clearance}, outer={outer}"
+                );
                 assert_eq!(window.x, bounds.x + outer);
                 assert_eq!(window.y + window.height, bounds.y + bounds.height - outer);
             }
@@ -115,7 +120,9 @@ fn every_panel_style_owns_clearance_at_its_reserved_edge() {
     }
     request(&mut wire, 3, 2, &[0]);
     request(&mut wire, 2, 6, &[]);
-    events.dispatch(Duration::from_millis(1), &mut state).unwrap();
+    events
+        .dispatch(Duration::from_millis(1), &mut state)
+        .unwrap();
     let bounds = state.output_bounds_for(&output).unwrap();
     assert_eq!(
         state.panel_layout_bounds(bounds, 12.),

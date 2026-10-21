@@ -6,7 +6,8 @@ use smithay::utils::{Buffer, Physical, Rectangle};
 
 /// Fit the complete source into the transformed target; black letterbox, never crop.
 fn fit(source: (i32, i32), target: (i32, i32)) -> Rectangle<i32, Physical> {
-    let scale = (target.0 as f64 / source.0.max(1) as f64).min(target.1 as f64 / source.1.max(1) as f64);
+    let scale =
+        (target.0 as f64 / source.0.max(1) as f64).min(target.1 as f64 / source.1.max(1) as f64);
     let width = (source.0 as f64 * scale).round().max(1.0) as i32;
     let height = (source.1 as f64 * scale).round().max(1.0) as i32;
     Rectangle::new(
@@ -21,7 +22,10 @@ pub(super) fn elements(
     source: &Output,
     frame: &crate::state::FrameScene,
     target: &mut DirectOutput,
-) -> Result<Vec<crate::render::AnimatedWindowRenderElement>, smithay::backend::renderer::gles::GlesError> {
+) -> Result<
+    Vec<crate::render::AnimatedWindowRenderElement>,
+    smithay::backend::renderer::gles::GlesError,
+> {
     let elements = sampled_output_elements(state, renderer, source, true, frame);
     // Target renderer owns this texture, including when source and target use different GPUs.
     let canvas = target.mirror_canvas.get_or_insert_with(|| {
@@ -36,7 +40,13 @@ pub(super) fn elements(
             },
         )
     });
-    compose(renderer, &mut target.mirror_texture, canvas, source, &elements)?;
+    compose(
+        renderer,
+        &mut target.mirror_texture,
+        canvas,
+        source,
+        &elements,
+    )?;
     let texture = target
         .mirror_texture
         .as_ref()
@@ -44,7 +54,13 @@ pub(super) fn elements(
         .clone();
     target.mirror_commit.increment();
     Ok(vec![
-        fitted_texture(texture, &target.output, target.mirror_id.clone(), target.mirror_commit).into(),
+        fitted_texture(
+            texture,
+            &target.output,
+            target.mirror_id.clone(),
+            target.mirror_commit,
+        )
+        .into(),
     ])
 }
 
@@ -141,19 +157,20 @@ mod tests {
             None,
         );
         let canvas = output("canvas");
-        let colors: Vec<crate::render::AnimatedWindowRenderElement> = [(0, [1., 0., 0., 1.]), (32, [0., 0., 1., 1.])]
-            .into_iter()
-            .map(|(y, color)| {
-                SolidColorRenderElement::new(
-                    Id::new(),
-                    Rectangle::new((0, y).into(), (32, 32).into()),
-                    CommitCounter::default(),
-                    Color32F::from(color),
-                    Kind::Unspecified,
-                )
-                .into()
-            })
-            .collect();
+        let colors: Vec<crate::render::AnimatedWindowRenderElement> =
+            [(0, [1., 0., 0., 1.]), (32, [0., 0., 1., 1.])]
+                .into_iter()
+                .map(|(y, color)| {
+                    SolidColorRenderElement::new(
+                        Id::new(),
+                        Rectangle::new((0, y).into(), (32, 32).into()),
+                        CommitCounter::default(),
+                        Color32F::from(color),
+                        Kind::Unspecified,
+                    )
+                    .into()
+                })
+                .collect();
         let mut texture = None;
         compose(&mut renderer, &mut texture, &canvas, &source, &colors).unwrap();
         assert_eq!(texture.as_ref().unwrap().size(), (32, 64).into());
@@ -175,9 +192,15 @@ mod tests {
                 CommitCounter::default(),
             );
             let mut target_texture = None;
-            let framebuffer = capture::render_capture(&mut renderer, &mut target_texture, &target, &[element]).unwrap();
+            let framebuffer =
+                capture::render_capture(&mut renderer, &mut target_texture, &target, &[element])
+                    .unwrap();
             let mapping = renderer
-                .copy_framebuffer(&framebuffer, Rectangle::from_size((96, 64).into()), Fourcc::Abgr8888)
+                .copy_framebuffer(
+                    &framebuffer,
+                    Rectangle::from_size((96, 64).into()),
+                    Fourcc::Abgr8888,
+                )
                 .unwrap();
             let pixels = renderer.map_texture(&mapping).unwrap();
             let red = pixels

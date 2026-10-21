@@ -7,7 +7,11 @@ impl Ferese {
         // on_commit_buffer_handler has not reset the previous renderer state.
         let removed = with_states(surface, |states| {
             matches!(
-                states.cached_state.get::<SurfaceAttributes>().current().buffer,
+                states
+                    .cached_state
+                    .get::<SurfaceAttributes>()
+                    .current()
+                    .buffer,
                 Some(BufferAssignment::Removed)
             )
         });
@@ -23,13 +27,20 @@ impl Ferese {
     }
 
     pub(super) fn retain_closed_window(&mut self, window: &Window) {
-        if !self.animations_enabled || self.session_lock.active() || self.render.closing.len() >= 64 {
+        if !self.animations_enabled || self.session_lock.active() || self.render.closing.len() >= 64
+        {
             return;
         }
         let Some(&id) = self.windows.ids().get(window) else {
             return;
         };
-        if self.render.closing.iter().any(|window| window.presentation.id == id) || !self.window_content_ready(window) {
+        if self
+            .render
+            .closing
+            .iter()
+            .any(|window| window.presentation.id == id)
+            || !self.window_content_ready(window)
+        {
             return;
         }
         let Some(output) = self
@@ -77,8 +88,17 @@ impl Ferese {
             .position(|candidate| *candidate == id)
             .and_then(|index| order.get(index + 1))
             .copied();
-        let used = self.render.snapshots().map(|snapshot| snapshot.bytes()).sum::<usize>()
-            + self.render.closing.iter().map(|window| window.bytes()).sum::<usize>();
+        let used = self
+            .render
+            .snapshots()
+            .map(|snapshot| snapshot.bytes())
+            .sum::<usize>()
+            + self
+                .render
+                .closing
+                .iter()
+                .map(|window| window.bytes())
+                .sum::<usize>();
         let remaining = crate::presentation::SNAPSHOT_BUDGET.saturating_sub(used);
         let scale = output.current_scale().fractional_scale();
         let result = if let Some(backend) = &self.nested_backend {
@@ -103,7 +123,9 @@ impl Ferese {
                 let handoff = self
                     .render
                     .snapshot(&id)
-                    .filter(|old| old.context == snapshot.context && (old.scale - scale).abs() < 0.001)
+                    .filter(|old| {
+                        old.context == snapshot.context && (old.scale - scale).abs() < 0.001
+                    })
                     .cloned()
                     .map(|old| (old, handoff_size));
                 let material = window.toplevel().and_then(|toplevel| {

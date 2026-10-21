@@ -28,7 +28,10 @@ impl SessionConnection {
     }
 
     fn request(&self, command: &str, args: Value) -> Result<Value, String> {
-        let mut stream = self.stream.lock().map_err(|_| "Compositor connection failed")?;
+        let mut stream = self
+            .stream
+            .lock()
+            .map_err(|_| "Compositor connection failed")?;
         let request = ferese_ipc::Request {
             version: ferese_ipc::VERSION,
             id: 1,
@@ -37,7 +40,8 @@ impl SessionConnection {
             args,
         };
         ferese_ipc::write_frame(&mut *stream, &request).map_err(|error| error.to_string())?;
-        let response: ferese_ipc::Response = ferese_ipc::read_frame(&mut *stream).map_err(|error| error.to_string())?;
+        let response: ferese_ipc::Response =
+            ferese_ipc::read_frame(&mut *stream).map_err(|error| error.to_string())?;
         if let Some(error) = response.error {
             return Err(error.message);
         }
@@ -80,8 +84,12 @@ impl Approval {
     }
 
     pub fn prepare(&self) -> Result<(), String> {
-        if matches!(self.mode, Mode::Shutdown | Mode::Suspend) && login_inhibitors(self.mode)? != self.external {
-            return Err("Applications changed their inhibitors; review the confirmation again".into());
+        if matches!(self.mode, Mode::Shutdown | Mode::Suspend)
+            && login_inhibitors(self.mode)? != self.external
+        {
+            return Err(
+                "Applications changed their inhibitors; review the confirmation again".into(),
+            );
         }
         if self.mode == Mode::Shutdown {
             self.connection
@@ -94,7 +102,9 @@ impl Approval {
         } else if self.mode == Mode::Suspend {
             let state = call("get-session-state")?;
             if state["inhibitor-revision"].as_u64() != Some(u64::from(self.revision)) {
-                return Err("Applications changed their inhibitors; review the confirmation again".into());
+                return Err(
+                    "Applications changed their inhibitors; review the confirmation again".into(),
+                );
             }
         }
         Ok(())
@@ -117,12 +127,19 @@ fn login_inhibitors(mode: Mode) -> Result<Vec<String>, String> {
         "org.freedesktop.login1.Manager",
     )
     .map_err(|error| error.to_string())?;
-    let inhibitors: Vec<(String, String, String, String, u32, u32)> =
-        proxy.call("ListInhibitors", &()).map_err(|error| error.to_string())?;
-    let what = if mode == Mode::Suspend { "sleep" } else { "shutdown" };
+    let inhibitors: Vec<(String, String, String, String, u32, u32)> = proxy
+        .call("ListInhibitors", &())
+        .map_err(|error| error.to_string())?;
+    let what = if mode == Mode::Suspend {
+        "sleep"
+    } else {
+        "shutdown"
+    };
     let mut reasons = inhibitors
         .into_iter()
-        .filter(|(flags, _, _, inhibition, _, _)| inhibition == "block" && flags.split(':').any(|flag| flag == what))
+        .filter(|(flags, _, _, inhibition, _, _)| {
+            inhibition == "block" && flags.split(':').any(|flag| flag == what)
+        })
         .map(|(_, app, reason, _, _, _)| format!("{app}: {reason}"))
         .collect::<Vec<_>>();
     reasons.sort();
@@ -162,7 +179,9 @@ pub(super) fn inhibitors(mode: Mode) -> Result<Approval, String> {
             }
         }
         let flags = if mode == Mode::Suspend { 4 } else { 1 };
-        let entries = state["inhibitors"].as_array().ok_or("Invalid inhibitor list")?;
+        let entries = state["inhibitors"]
+            .as_array()
+            .ok_or("Invalid inhibitor list")?;
         let mut reasons = entries
             .iter()
             .filter(|entry| entry["flags"].as_u64().unwrap_or(0) & flags != 0)
@@ -171,7 +190,9 @@ pub(super) fn inhibitors(mode: Mode) -> Result<Approval, String> {
                     .as_str()
                     .filter(|app| !app.is_empty())
                     .unwrap_or("Application");
-                let reason = entry["reason"].as_str().unwrap_or("Requested session inhibition");
+                let reason = entry["reason"]
+                    .as_str()
+                    .unwrap_or("Requested session inhibition");
                 format!("{app}: {reason}")
             })
             .collect::<Vec<_>>();

@@ -39,11 +39,12 @@ pub(crate) struct Bluetooth {
 }
 
 pub(crate) async fn read(connection: &Connection) -> Result<Bluetooth, String> {
-    let objects: ManagedObjects = proxy(connection, BLUEZ, "/", "org.freedesktop.DBus.ObjectManager")
-        .await?
-        .call("GetManagedObjects", &())
-        .await
-        .map_err(|e| e.to_string())?;
+    let objects: ManagedObjects =
+        proxy(connection, BLUEZ, "/", "org.freedesktop.DBus.ObjectManager")
+            .await?
+            .call("GetManagedObjects", &())
+            .await
+            .map_err(|e| e.to_string())?;
     Ok(snapshot(&objects))
 }
 
@@ -85,7 +86,11 @@ fn snapshot(objects: &ManagedObjects) -> Bluetooth {
             result.devices.push(Device {
                 path: path.to_string(),
                 adapter: adapter.to_string(),
-                name: if alias.is_empty() { address.clone() } else { alias },
+                name: if alias.is_empty() {
+                    address.clone()
+                } else {
+                    alias
+                },
                 address,
                 icon: string(p, "Icon"),
                 connected: boolean(p, "Connected"),
@@ -116,7 +121,11 @@ pub(crate) async fn power(connection: &Connection, path: &str, on: bool) -> Resu
         .map_err(|e| e.to_string())
 }
 
-pub(crate) async fn adapter_call(connection: &Connection, path: &str, method: &str) -> Result<(), String> {
+pub(crate) async fn adapter_call(
+    connection: &Connection,
+    path: &str,
+    method: &str,
+) -> Result<(), String> {
     proxy(connection, BLUEZ, path, ADAPTER)
         .await?
         .call::<_, _, ()>(method, &())
@@ -124,7 +133,11 @@ pub(crate) async fn adapter_call(connection: &Connection, path: &str, method: &s
         .map_err(|e| e.to_string())
 }
 
-pub(crate) async fn device_call(connection: &Connection, path: &str, method: &str) -> Result<(), String> {
+pub(crate) async fn device_call(
+    connection: &Connection,
+    path: &str,
+    method: &str,
+) -> Result<(), String> {
     proxy(connection, BLUEZ, path, DEVICE)
         .await?
         .call::<_, _, ()>(method, &())
@@ -140,7 +153,11 @@ pub(crate) async fn trust(connection: &Connection, path: &str, on: bool) -> Resu
         .map_err(|e| e.to_string())
 }
 
-pub(crate) async fn forget(connection: &Connection, adapter: &str, path: &str) -> Result<(), String> {
+pub(crate) async fn forget(
+    connection: &Connection,
+    adapter: &str,
+    path: &str,
+) -> Result<(), String> {
     let path = OwnedObjectPath::try_from(path).map_err(|e| e.to_string())?;
     proxy(connection, BLUEZ, adapter, ADAPTER)
         .await?

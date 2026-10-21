@@ -16,10 +16,17 @@ pub fn runtime_default() -> io::Result<PathBuf> {
     resolve_with(None, None, std::env::var_os("XDG_RUNTIME_DIR").as_deref())
 }
 
-fn resolve_with(explicit: Option<&Path>, socket: Option<&OsStr>, runtime: Option<&OsStr>) -> io::Result<PathBuf> {
+fn resolve_with(
+    explicit: Option<&Path>,
+    socket: Option<&OsStr>,
+    runtime: Option<&OsStr>,
+) -> io::Result<PathBuf> {
     if let Some(path) = explicit {
         if path.as_os_str().is_empty() {
-            return Err(io::Error::new(io::ErrorKind::InvalidInput, "IPC socket path is empty"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "IPC socket path is empty",
+            ));
         }
         return Ok(path.to_owned());
     }
@@ -41,8 +48,14 @@ mod tests {
         let runtime = Some(OsStr::new("/run/user/1000"));
         let host = OsStr::new("/run/user/1000/ferese/control.sock");
         let nested = Path::new("/tmp/nested/ferese/control.sock");
-        assert_eq!(resolve_with(Some(nested), Some(host), runtime).unwrap(), nested);
-        assert_eq!(resolve_with(None, Some(nested.as_os_str()), runtime).unwrap(), nested);
+        assert_eq!(
+            resolve_with(Some(nested), Some(host), runtime).unwrap(),
+            nested
+        );
+        assert_eq!(
+            resolve_with(None, Some(nested.as_os_str()), runtime).unwrap(),
+            nested
+        );
         assert_eq!(resolve_with(None, None, runtime).unwrap(), Path::new(host));
         assert_eq!(
             resolve_with(None, Some(OsStr::new("")), runtime).unwrap(),

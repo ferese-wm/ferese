@@ -1,16 +1,21 @@
 use super::{
-    Anchor, Background, BarMetrics, Color, Connection, ContentFit, Dispatch, EFFECT_FRAME_PENDING, Element, Event,
-    EventQueue, FereseEffectsManagerV1, FereseShell, FereseSurfaceEffectsV1, GlobalListContents, IcedMargin,
-    IcedOutput, KeyboardInteractivity, Layer, Length, Limits, Message, Ordering, OutputSurfaces, PlatformSpecific,
-    Proxy, QueueHandle, SctkLayerSurfaceSettings, Task, WallpaperMode, config, container, delegate_noop,
-    destroy_layer_surface, ferese_surface_effects_v1, image, output_bar_hidden, registry_queue_init, status_ui, theme,
-    wayland, window, wl_output, wl_registry, wl_surface,
+    Anchor, Background, BarMetrics, Color, Connection, ContentFit, Dispatch, EFFECT_FRAME_PENDING,
+    Element, Event, EventQueue, FereseEffectsManagerV1, FereseShell, FereseSurfaceEffectsV1,
+    GlobalListContents, IcedMargin, IcedOutput, KeyboardInteractivity, Layer, Length, Limits,
+    Message, Ordering, OutputSurfaces, PlatformSpecific, Proxy, QueueHandle,
+    SctkLayerSurfaceSettings, Task, WallpaperMode, config, container, delegate_noop,
+    destroy_layer_surface, ferese_surface_effects_v1, image, output_bar_hidden,
+    registry_queue_init, status_ui, theme, wayland, window, wl_output, wl_registry, wl_surface,
 };
 
 #[cfg(test)]
 mod tests;
 
-pub(super) fn panel_placement(edge: ferese_panel::Edge, margin: i32, side: i32) -> (Anchor, IcedMargin) {
+pub(super) fn panel_placement(
+    edge: ferese_panel::Edge,
+    margin: i32,
+    side: i32,
+) -> (Anchor, IcedMargin) {
     let (anchor, top, bottom) = match edge {
         ferese_panel::Edge::Top => (Anchor::TOP, margin, 0),
         ferese_panel::Edge::Bottom => (Anchor::BOTTOM, 0, margin),
@@ -27,12 +32,20 @@ pub(super) fn panel_placement(edge: ferese_panel::Edge, margin: i32, side: i32) 
 }
 
 impl FereseShell {
-    pub(super) fn output_event(&mut self, event: wayland::OutputEvent, output: wl_output::WlOutput) -> Task<Message> {
+    pub(super) fn output_event(
+        &mut self,
+        event: wayland::OutputEvent,
+        output: wl_output::WlOutput,
+    ) -> Task<Message> {
         if matches!(event, wayland::OutputEvent::Removed) {
             if let Some(index) = self.outputs.iter().position(|entry| entry.output == output) {
                 let entry = self.outputs.remove(index);
                 self.refresh_media_art(false);
-                let menu = if self.menu.as_ref().is_some_and(|menu| menu.anchor.parent == entry.bar) {
+                let menu = if self
+                    .menu
+                    .as_ref()
+                    .is_some_and(|menu| menu.anchor.parent == entry.bar)
+                {
                     self.destroy_menu()
                 } else {
                     Task::none()
@@ -84,7 +97,12 @@ impl FereseShell {
 
             let bar = entry.bar;
             let margin = self.update_panel_margin(bar, false);
-            let popup = if resized && self.menu.as_ref().is_some_and(|menu| menu.anchor.parent == bar) {
+            let popup = if resized
+                && self
+                    .menu
+                    .as_ref()
+                    .is_some_and(|menu| menu.anchor.parent == bar)
+            {
                 self.destroy_menu()
             } else {
                 Task::none()
@@ -105,13 +123,18 @@ impl FereseShell {
                 margin,
                 popup,
                 tooltip,
-                window::scale_factor(bar).map(move |scale| cosmic::Action::App(Message::PanelScale(bar, scale))),
+                window::scale_factor(bar)
+                    .map(move |scale| cosmic::Action::App(Message::PanelScale(bar, scale))),
             ]);
         }
 
         let bar_surface_id = window::Id::unique();
         let wallpaper_surface_id = window::Id::unique();
-        let runtime = super::panel_runtime::Runtime::new(&self.config.panels[0], &self.snapshot, name.as_deref());
+        let runtime = super::panel_runtime::Runtime::new(
+            &self.config.panels[0],
+            &self.snapshot,
+            name.as_deref(),
+        );
         let panel = runtime.panel(&self.config.panels[0]);
         let geometry = panel.resolved_geometry();
         let panel_surface = panel.surface();
@@ -123,7 +146,8 @@ impl FereseShell {
                 .find(|output| Some(output.name.as_str()) == name.as_deref())
                 .map(|output| output.id),
         ));
-        let (edge_anchor, margin) = panel_placement(self.config.panels[0].edge, geometry.edge_margin, 0);
+        let (edge_anchor, margin) =
+            panel_placement(self.config.panels[0].edge, geometry.edge_margin, 0);
         let bar = BarMetrics::from(geometry);
         let hub_size = runtime.hub.as_ref().map(|hub| hub.borrow().allocation);
         let bar_anchor = if hub_size.is_some() {
@@ -189,9 +213,11 @@ impl FereseShell {
                 namespace: "ferese-shell-top-bar".to_owned(),
                 // Measure at full width before applying the requested side inset.
                 margin,
-                size: Some(hub_size.map_or((None, Some(bar.height.round() as u32)), |size| {
-                    (Some(size[0]), Some(size[1]))
-                })),
+                size: Some(
+                    hub_size.map_or((None, Some(bar.height.round() as u32)), |size| {
+                        (Some(size[0]), Some(size[1]))
+                    }),
+                ),
                 size_limits: Limits::NONE,
                 // Reserve space toward the desktop; layer-shell accounts for the edge margin.
                 exclusive_zone,
@@ -221,9 +247,15 @@ impl FereseShell {
         self.outputs
             .iter()
             .any(|entry| entry.bar == id || entry.wallpaper == Some(id))
-            || self.launcher.as_ref().is_some_and(|launcher| launcher.id == id)
+            || self
+                .launcher
+                .as_ref()
+                .is_some_and(|launcher| launcher.id == id)
             || self.menu.as_ref().is_some_and(|menu| menu.id == id)
-            || self.system_modal.as_ref().is_some_and(|modal| modal.contains(id))
+            || self
+                .system_modal
+                .as_ref()
+                .is_some_and(|modal| modal.contains(id))
             || self
                 .notification_surface
                 .as_ref()
@@ -235,11 +267,17 @@ impl FereseShell {
         if let Some(task) = self.launcher_event(&event, id) {
             return task;
         }
-        if matches!(event, Event::Mouse(cosmic::iced::mouse::Event::CursorEntered)) {
+        if matches!(
+            event,
+            Event::Mouse(cosmic::iced::mouse::Event::CursorEntered)
+        ) {
             return self.hub_hover(id, true);
         }
         if matches!(event, Event::Mouse(cosmic::iced::mouse::Event::CursorLeft)) {
-            return Task::batch([self.dismiss_workspace_tooltip_for_bar(id), self.hub_hover(id, false)]);
+            return Task::batch([
+                self.dismiss_workspace_tooltip_for_bar(id),
+                self.hub_hover(id, false),
+            ]);
         }
         if let Event::Mouse(cosmic::iced::mouse::Event::ButtonPressed(_)) = &event
             && let Some(modal) = &mut self.system_modal
@@ -326,9 +364,15 @@ impl FereseShell {
             let target = Id::new("ferese-panel-hub");
             let focus: Box<dyn cosmic::iced::advanced::widget::Operation<cosmic::Action<Message>>> =
                 if modifiers.shift() {
-                    Box::new(operation::scoped(target, operation::focusable::focus_previous()))
+                    Box::new(operation::scoped(
+                        target,
+                        operation::focusable::focus_previous(),
+                    ))
                 } else {
-                    Box::new(operation::scoped(target, operation::focusable::focus_next()))
+                    Box::new(operation::scoped(
+                        target,
+                        operation::focusable::focus_next(),
+                    ))
                 };
             let task = cosmic::iced::advanced::widget::operate(focus);
             return if self.hub_mode(id)
@@ -348,7 +392,10 @@ impl FereseShell {
             ..
         }) = &event
             && !modifiers.control()
-            && self.system_modal.as_ref().is_some_and(|modal| modal.contains(id))
+            && self
+                .system_modal
+                .as_ref()
+                .is_some_and(|modal| modal.contains(id))
         {
             return self.navigate_system_modal(modifiers.shift());
         }
@@ -380,9 +427,10 @@ impl FereseShell {
             return self.close_hub(*layer);
         }
         match event {
-            Event::PlatformSpecific(PlatformSpecific::Wayland(wayland::Event::Output(event, output))) => {
-                self.output_event(event, output)
-            }
+            Event::PlatformSpecific(PlatformSpecific::Wayland(wayland::Event::Output(
+                event,
+                output,
+            ))) => self.output_event(event, output),
             Event::Window(window::Event::Rescaled(scale)) => {
                 cosmic::task::message(cosmic::Action::App(Message::PanelScale(id, scale)))
             }
@@ -392,34 +440,47 @@ impl FereseShell {
                 // owner has gone away. IDs are never reused by the shell.
                 Task::batch([
                     destroy_layer_surface(id),
-                    cosmic::task::message(cosmic::Action::Surface(cosmic::surface::action::destroy_popup(id))),
+                    cosmic::task::message(cosmic::Action::Surface(
+                        cosmic::surface::action::destroy_popup(id),
+                    )),
                 ])
             }
             Event::Window(window::Event::Opened { .. })
                 if self.outputs.iter().any(|entry| entry.bar == id)
                     || self.menu.as_ref().is_some_and(|menu| menu.id == id)
-                    || self.system_modal.as_ref().is_some_and(|modal| modal.contains(id))
+                    || self
+                        .system_modal
+                        .as_ref()
+                        .is_some_and(|modal| modal.contains(id))
                     || self
                         .notification_surface
                         .as_ref()
                         .is_some_and(|surface| surface.id == id) =>
             {
                 Task::batch([
-                    window::scale_factor(id).map(move |scale| cosmic::Action::App(Message::PanelScale(id, scale))),
+                    window::scale_factor(id)
+                        .map(move |scale| cosmic::Action::App(Message::PanelScale(id, scale))),
                     self.focus_system_modal(id),
-                    window::run(id, native_wayland_surface)
-                        .map(move |surface| cosmic::Action::App(Message::NativeSurface(id, surface))),
+                    window::run(id, native_wayland_surface).map(move |surface| {
+                        cosmic::Action::App(Message::NativeSurface(id, surface))
+                    }),
                 ])
             }
             Event::Keyboard(cosmic::iced::keyboard::Event::KeyPressed {
                 key: cosmic::iced::keyboard::Key::Named(cosmic::iced::keyboard::key::Named::Escape),
                 ..
             }) if self.menu.is_some() => self.close_menu(),
-            Event::PlatformSpecific(PlatformSpecific::Wayland(wayland::Event::Popup(event, surface, popup_id))) => {
+            Event::PlatformSpecific(PlatformSpecific::Wayland(wayland::Event::Popup(
+                event,
+                surface,
+                popup_id,
+            ))) => {
                 if matches!(event, wayland::PopupEvent::Done) {
                     self.closing_menu_effects.remove(&popup_id);
                 }
-                if self.workspace_ui.tooltip == Some(popup_id) && matches!(event, wayland::PopupEvent::Done) {
+                if self.workspace_ui.tooltip == Some(popup_id)
+                    && matches!(event, wayland::PopupEvent::Done)
+                {
                     self.workspace_ui.tooltip = None;
                     return self.dismiss_workspace_tooltip();
                 }
@@ -444,7 +505,9 @@ impl FereseShell {
                 }
                 Task::none()
             }
-            Event::Window(window::Event::Closed) if self.menu.as_ref().is_some_and(|menu| menu.id == id) => {
+            Event::Window(window::Event::Closed)
+                if self.menu.as_ref().is_some_and(|menu| menu.id == id) =>
+            {
                 self.menu = None;
                 EFFECT_FRAME_PENDING.store(false, Ordering::Relaxed);
                 Task::none()
@@ -454,7 +517,10 @@ impl FereseShell {
                 self.dismiss_workspace_tooltip()
             }
             Event::Window(window::Event::Closed)
-                if self.system_modal.as_ref().is_some_and(|modal| modal.contains(id)) =>
+                if self
+                    .system_modal
+                    .as_ref()
+                    .is_some_and(|modal| modal.contains(id)) =>
             {
                 self.close_system_modal()
             }
@@ -462,9 +528,11 @@ impl FereseShell {
                 self.closing_menu_effects.remove(&id);
                 Task::none()
             }
-            Event::PlatformSpecific(PlatformSpecific::Wayland(wayland::Event::Frame(_, surface, frame_id)))
-                if self.menu.as_ref().is_some_and(|menu| menu.id == frame_id) =>
-            {
+            Event::PlatformSpecific(PlatformSpecific::Wayland(wayland::Event::Frame(
+                _,
+                surface,
+                frame_id,
+            ))) if self.menu.as_ref().is_some_and(|menu| menu.id == frame_id) => {
                 if let Some(menu) = &mut self.menu
                     && menu.effects.is_none()
                 {
@@ -472,22 +540,32 @@ impl FereseShell {
                 }
                 Task::none()
             }
-            Event::PlatformSpecific(PlatformSpecific::Wayland(wayland::Event::Frame(_, surface, frame_id)))
-                if self.outputs.iter().any(|entry| entry.bar == frame_id) =>
-            {
+            Event::PlatformSpecific(PlatformSpecific::Wayland(wayland::Event::Frame(
+                _,
+                surface,
+                frame_id,
+            ))) if self.outputs.iter().any(|entry| entry.bar == frame_id) => {
                 self.attach_effects(frame_id, &surface);
                 Task::none()
             }
-            Event::PlatformSpecific(PlatformSpecific::Wayland(wayland::Event::Layer(_, surface, layer_id)))
-                if self
-                    .notification_surface
-                    .as_ref()
-                    .is_some_and(|entry| entry.id == layer_id) =>
+            Event::PlatformSpecific(PlatformSpecific::Wayland(wayland::Event::Layer(
+                _,
+                surface,
+                layer_id,
+            ))) if self
+                .notification_surface
+                .as_ref()
+                .is_some_and(|entry| entry.id == layer_id) =>
             {
                 let entry = self.notification_surface.as_mut().unwrap();
 
                 if entry.effects.is_none() {
-                    match EffectsBinding::attach_role(&mut self.effects_context, &surface, None, 1.0) {
+                    match EffectsBinding::attach_role(
+                        &mut self.effects_context,
+                        &surface,
+                        None,
+                        1.0,
+                    ) {
                         Ok(binding) => entry.effects = Some(binding),
                         Err(error) => {
                             eprintln!("ferese-shell: notification effects unavailable: {error}")
@@ -496,9 +574,11 @@ impl FereseShell {
                 }
                 Task::none()
             }
-            Event::PlatformSpecific(PlatformSpecific::Wayland(wayland::Event::Layer(_, surface, layer_id)))
-                if self.outputs.iter().any(|entry| entry.bar == layer_id) =>
-            {
+            Event::PlatformSpecific(PlatformSpecific::Wayland(wayland::Event::Layer(
+                _,
+                surface,
+                layer_id,
+            ))) if self.outputs.iter().any(|entry| entry.bar == layer_id) => {
                 self.attach_effects(layer_id, &surface);
                 self.attach_power_material(layer_id, &surface);
                 window::scale_factor(layer_id)
@@ -523,8 +603,12 @@ impl FereseShell {
         // The first panel presentation supplies the role and measured shape
         // together with its buffer. Enabling the role here would paint the
         // whole surface before those bounds arrive.
-        let binding =
-            EffectsBinding::attach_role(&mut self.effects_context, surface, None, if hidden { 0.0 } else { 1.0 });
+        let binding = EffectsBinding::attach_role(
+            &mut self.effects_context,
+            surface,
+            None,
+            if hidden { 0.0 } else { 1.0 },
+        );
 
         match binding {
             Ok(binding) => entry.effects = Some(binding),
@@ -566,21 +650,28 @@ pub(super) fn native_wayland_surface(
     use cosmic::iced::window::raw_window_handle::{RawDisplayHandle, RawWindowHandle};
     let display = window.display_handle().map_err(|error| error.to_string())?;
     let handle = window.window_handle().map_err(|error| error.to_string())?;
-    let (RawDisplayHandle::Wayland(display), RawWindowHandle::Wayland(handle)) = (display.as_raw(), handle.as_raw())
+    let (RawDisplayHandle::Wayland(display), RawWindowHandle::Wayland(handle)) =
+        (display.as_raw(), handle.as_raw())
     else {
         return Err("shell material requires a Wayland surface".to_owned());
     };
     // SAFETY: iced lends matching, live Wayland handles for this callback.
     // This backend borrows the display; it never disconnects iced's connection.
     // Both handles belong to the runtime, which outlives the shell bindings.
-    let backend = unsafe { wayland_client::backend::Backend::from_foreign_display(display.display.as_ptr().cast()) };
+    let backend = unsafe {
+        wayland_client::backend::Backend::from_foreign_display(display.display.as_ptr().cast())
+    };
     let connection = Connection::from_backend(backend);
     // SAFETY: raw-window-handle identifies this pointer as a live wl_surface.
     let id = unsafe {
-        wayland_client::backend::ObjectId::from_ptr(wl_surface::WlSurface::interface(), handle.surface.as_ptr().cast())
+        wayland_client::backend::ObjectId::from_ptr(
+            wl_surface::WlSurface::interface(),
+            handle.surface.as_ptr().cast(),
+        )
     }
     .map_err(|error| error.to_string())?;
-    let surface = wl_surface::WlSurface::from_id(&connection, id).map_err(|error| error.to_string())?;
+    let surface =
+        wl_surface::WlSurface::from_id(&connection, id).map_err(|error| error.to_string())?;
     Ok((connection, surface))
 }
 
@@ -611,7 +702,12 @@ fn validate_region_counts(regions: usize, opacities: usize) -> Result<(), std::i
     Ok(())
 }
 
-type EffectPresentation = (Vec<[f32; 5]>, u32, Vec<u32>, ferese_surface_effects_v1::Role);
+type EffectPresentation = (
+    Vec<[f32; 5]>,
+    u32,
+    Vec<u32>,
+    ferese_surface_effects_v1::Role,
+);
 
 // Keep one registry on the shell connection: wl_registry has no destructor on
 // the protocol versions we support, so creating one per popup leaks objects.
@@ -655,10 +751,9 @@ impl EffectsBinding {
         let connection = Connection::from_backend(backend);
         // Native handles can create distinct borrowed Backend wrappers around
         // the same wl_display. Backend equality compares wrappers, not displays.
-        if context
-            .as_ref()
-            .is_none_or(|context| context.connection.backend().display_ptr() != connection.backend().display_ptr())
-        {
+        if context.as_ref().is_none_or(|context| {
+            context.connection.backend().display_ptr() != connection.backend().display_ptr()
+        }) {
             let (globals, queue) = registry_queue_init::<EffectsState>(&connection)?;
             // Cache the registry even when this compositor lacks our extension.
             let manager = globals
@@ -742,17 +837,19 @@ impl EffectsBinding {
             .collect();
         validate_region_counts(regions.len(), values.len())?;
         let mut previous = self.presentation.borrow_mut();
-        if previous
-            .as_ref()
-            .is_some_and(|old| old.0 == regions && old.1 == opacity && old.2 == values && old.3 == role)
-        {
+        if previous.as_ref().is_some_and(|old| {
+            old.0 == regions && old.1 == opacity && old.2 == values && old.3 == role
+        }) {
             return Ok(());
         }
         self.surface.set_presentation(
             role,
             encode_regions(regions),
             opacity,
-            values.iter().flat_map(|value| value.to_ne_bytes()).collect(),
+            values
+                .iter()
+                .flat_map(|value| value.to_ne_bytes())
+                .collect(),
         );
         self.connection.flush()?;
         if let Some(old) = previous.as_mut() {
@@ -768,7 +865,10 @@ impl EffectsBinding {
         Ok(())
     }
 
-    pub(super) fn set_regions(&self, regions: &[[f32; 5]]) -> Result<(), Box<dyn std::error::Error>> {
+    pub(super) fn set_regions(
+        &self,
+        regions: &[[f32; 5]],
+    ) -> Result<(), Box<dyn std::error::Error>> {
         self.set_material_regions(regions, ferese_surface_effects_v1::Role::Popover)
     }
 
@@ -795,7 +895,8 @@ impl EffectsBinding {
     pub(super) fn set_visible(&self, visible: bool) -> Result<(), Box<dyn std::error::Error>> {
         self.set_opacity(1.0)?;
         if visible {
-            self.surface.set_role(ferese_surface_effects_v1::Role::Panel);
+            self.surface
+                .set_role(ferese_surface_effects_v1::Role::Panel);
         } else {
             self.surface.clear_role();
         }

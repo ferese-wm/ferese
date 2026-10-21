@@ -115,7 +115,8 @@ impl Runtime {
             }
             Event::Activity { priority, peek } => {
                 let changed = self.priority != priority;
-                let resized = priority.is_some() && current == Mode::Peek && self.peek_width != peek.1;
+                let resized =
+                    priority.is_some() && current == Mode::Peek && self.peek_width != peek.1;
                 self.priority = priority;
                 if (!changed && !resized) || current.expanded() {
                     return false;
@@ -140,7 +141,8 @@ impl Runtime {
                 (Mode::Toast, None)
             }
             Event::ToastExpired(token) => {
-                if !matches!(self.transient, Transient::Toast { token: live, .. } if live == token) {
+                if !matches!(self.transient, Transient::Toast { token: live, .. } if live == token)
+                {
                     return false;
                 }
                 self.restore_transient();

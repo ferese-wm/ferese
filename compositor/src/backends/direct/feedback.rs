@@ -72,17 +72,27 @@ impl OutputFeedback {
             // Restrict the preference to the observed primary format/modifier:
             // without ALLOW_PRIMARY_PLANE_SCANOUT_ANY Smithay compares the full
             // format with the swapchain. Renderer-only formats remain in fallback.
-            match DmabufFeedbackBuilder::new(self.render_device, self.render_formats.iter().copied())
-                .add_preference_tranche(self.scanout_device, TrancheFlags::Scanout, [format], 4..=6)
-                .build()
+            match DmabufFeedbackBuilder::new(
+                self.render_device,
+                self.render_formats.iter().copied(),
+            )
+            .add_preference_tranche(self.scanout_device, TrancheFlags::Scanout, [format], 4..=6)
+            .build()
             {
                 Ok(feedback) => self.preferred = Some(feedback),
-                Err(error) => tracing::warn!(%error, "output DMA-BUF feedback unavailable; retaining render fallback"),
+                Err(error) => {
+                    tracing::warn!(%error, "output DMA-BUF feedback unavailable; retaining render fallback")
+                }
             }
         }
     }
 
-    pub fn observed_frame(&mut self, format: Option<Format>, states: &RenderElementStates, candidates: HashSet<Id>) {
+    pub fn observed_frame(
+        &mut self,
+        format: Option<Format>,
+        states: &RenderElementStates,
+        candidates: HashSet<Id>,
+    ) {
         self.observe_format(format);
         self.visible = states
             .states
@@ -203,13 +213,17 @@ pub(crate) fn refresh(state: &mut Ferese) {
                         .filter(|id| {
                             state
                                 .current_window_presentation(*id)
-                                .is_some_and(|presentation| presentation.alpha() == 1.0 && presentation.dim == 0.0)
+                                .is_some_and(|presentation| {
+                                    presentation.alpha() == 1.0 && presentation.dim == 0.0
+                                })
                         })
                         .and_then(|id| state.windows.window(id))
                         .and_then(|window| window.toplevel())
                         .filter(|toplevel| {
-                            with_renderer_surface_state(toplevel.wl_surface(), |state| state.buffer().is_some())
-                                .unwrap_or(false)
+                            with_renderer_surface_state(toplevel.wl_surface(), |state| {
+                                state.buffer().is_some()
+                            })
+                            .unwrap_or(false)
                         })
                         .map(|toplevel| Id::from(toplevel.wl_surface()))
                 })
@@ -251,8 +265,10 @@ mod tests {
         let feedback = DmabufFeedbackBuilder::new(10, [format(Fourcc::Argb8888, Modifier::Linear)])
             .build()
             .unwrap();
-        let global = state.create_global_with_default_feedback::<Ferese>(&display.handle(), &feedback);
-        let other = state.create_global_with_default_feedback::<Ferese>(&display.handle(), &feedback);
+        let global =
+            state.create_global_with_default_feedback::<Ferese>(&display.handle(), &feedback);
+        let other =
+            state.create_global_with_default_feedback::<Ferese>(&display.handle(), &feedback);
         (display, global, other)
     }
     fn visible(output: &mut OutputFeedback, id: &Id, f: Format) {
@@ -273,11 +289,31 @@ mod tests {
         let linear = format(Fourcc::Argb8888, Modifier::Linear);
         let implicit = format(Fourcc::Argb8888, Modifier::Invalid);
         let opaque = format(Fourcc::Xrgb8888, Modifier::Linear);
-        assert!(compatible(&formats(&[linear, implicit]), &formats(&[linear]), linear));
-        assert!(!compatible(&formats(&[linear]), &formats(&[implicit]), linear));
-        assert!(!compatible(&formats(&[linear]), &formats(&[opaque]), linear));
-        assert!(!compatible(&formats(&[linear]), &formats(&[implicit]), implicit));
-        assert!(!compatible(&formats(&[opaque]), &formats(&[linear]), linear));
+        assert!(compatible(
+            &formats(&[linear, implicit]),
+            &formats(&[linear]),
+            linear
+        ));
+        assert!(!compatible(
+            &formats(&[linear]),
+            &formats(&[implicit]),
+            linear
+        ));
+        assert!(!compatible(
+            &formats(&[linear]),
+            &formats(&[opaque]),
+            linear
+        ));
+        assert!(!compatible(
+            &formats(&[linear]),
+            &formats(&[implicit]),
+            implicit
+        ));
+        assert!(!compatible(
+            &formats(&[opaque]),
+            &formats(&[linear]),
+            linear
+        ));
     }
 
     #[test]
@@ -307,7 +343,11 @@ mod tests {
         let mut b = output(&[f], &[f]);
         visible(&mut a, &id, f);
         visible(&mut b, &id, f);
-        fn view(global: DmabufGlobal, feedback: &OutputFeedback, eligible: Option<Id>) -> OutputView<'_> {
+        fn view(
+            global: DmabufGlobal,
+            feedback: &OutputFeedback,
+            eligible: Option<Id>,
+        ) -> OutputView<'_> {
             OutputView {
                 global,
                 feedback,
@@ -320,7 +360,10 @@ mod tests {
             select(
                 global,
                 &id,
-                [view(global, &a, Some(id.clone())), view(global, &b, Some(id.clone()))]
+                [
+                    view(global, &a, Some(id.clone())),
+                    view(global, &b, Some(id.clone()))
+                ]
             )
             .is_none()
         );
@@ -331,7 +374,10 @@ mod tests {
             select(
                 global,
                 &id,
-                [view(global, &a, Some(id.clone())), view(global, &b, Some(id.clone()))]
+                [
+                    view(global, &a, Some(id.clone())),
+                    view(global, &b, Some(id.clone()))
+                ]
             )
             .is_some()
         );
@@ -347,7 +393,12 @@ mod tests {
         let mut o = output(&[f], &[f]);
         visible(&mut o, &id, f);
         o.invalidate();
-        assert!(o.observed.is_none() && o.preferred.is_none() && o.visible.is_empty() && o.candidates.is_empty());
+        assert!(
+            o.observed.is_none()
+                && o.preferred.is_none()
+                && o.visible.is_empty()
+                && o.candidates.is_empty()
+        );
         o.observe_format(None);
         assert!(o.preferred.is_none());
         visible(&mut o, &id, f);
@@ -390,9 +441,12 @@ mod tests {
                     "clipped storage must remain hidden"
                 );
                 let faded = solid(bounds, 0.8);
-                assert!(!candidate_geometry(&faded, bounds, scale.into(), || panic!(
-                    "faded elements must not probe storage"
-                )));
+                assert!(!candidate_geometry(
+                    &faded,
+                    bounds,
+                    scale.into(),
+                    || panic!("faded elements must not probe storage")
+                ));
                 let mut partial = bounds;
                 partial.size.w -= 1;
                 assert!(!candidate_geometry(
@@ -474,7 +528,9 @@ mod tests {
         let f = format(Fourcc::Argb8888, Modifier::Linear);
         let id = Id::new();
         let mut o = output(&[f], &[f]);
-        let failed = super::super::capture::after_queue(Err::<(), _>("queue failed"), || visible(&mut o, &id, f));
+        let failed = super::super::capture::after_queue(Err::<(), _>("queue failed"), || {
+            visible(&mut o, &id, f)
+        });
         assert!(failed.is_err());
         assert!(o.visible.is_empty() && o.preferred.is_none());
         super::super::capture::after_queue(Ok::<(), ()>(()), || visible(&mut o, &id, f)).unwrap();

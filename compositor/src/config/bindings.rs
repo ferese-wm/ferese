@@ -12,7 +12,10 @@ impl Config {
     fn binding_commands(&self) -> HashMap<String, Vec<String>> {
         let mut commands = HashMap::from([
             ("terminal".to_owned(), vec!["foot".to_owned()]),
-            ("screenshot".to_owned(), vec!["ferese-screenshot".to_owned()]),
+            (
+                "screenshot".to_owned(),
+                vec!["ferese-screenshot".to_owned()],
+            ),
             (
                 "screenshot-full".to_owned(),
                 vec!["ferese-screenshot".to_owned(), "--full".to_owned()],
@@ -36,7 +39,10 @@ impl Config {
         for configured in &self.bindings {
             let identity = binding_identity(configured, &keymap)?;
             if !supplied.insert(identity.clone()) {
-                return Err(ConfigError::Binding(format!("duplicate binding {:?}", configured.keys)));
+                return Err(ConfigError::Binding(format!(
+                    "duplicate binding {:?}",
+                    configured.keys
+                )));
             }
 
             bindings.retain(|binding| binding_identity_for_runtime(binding) != identity);
@@ -56,13 +62,19 @@ impl Config {
     }
 }
 
-pub(super) fn validate_commands(commands: &HashMap<String, Vec<String>>) -> Result<(), ConfigError> {
+pub(super) fn validate_commands(
+    commands: &HashMap<String, Vec<String>>,
+) -> Result<(), ConfigError> {
     for (name, argv) in commands {
         if name.trim().is_empty() {
-            return Err(ConfigError::Binding("command names cannot be empty".to_owned()));
+            return Err(ConfigError::Binding(
+                "command names cannot be empty".to_owned(),
+            ));
         }
         if argv.is_empty() || argv[0].is_empty() {
-            return Err(ConfigError::Binding(format!("command {name:?} must contain a program")));
+            return Err(ConfigError::Binding(format!(
+                "command {name:?} must contain a program"
+            )));
         }
     }
 
@@ -98,10 +110,9 @@ pub(super) fn parse_binding(
     }
 
     let identity = binding_identity(configured, keymap)?;
-    let action = configured
-        .action
-        .as_deref()
-        .ok_or_else(|| ConfigError::Binding(format!("binding {:?} has no action", configured.keys)))?;
+    let action = configured.action.as_deref().ok_or_else(|| {
+        ConfigError::Binding(format!("binding {:?} has no action", configured.keys))
+    })?;
     let action = parse_action(action, configured.argument.as_deref(), commands)?;
     let trigger = match identity.match_mode {
         BindingMatch::Keysym => BindingTrigger::Keysym(identity.key),
@@ -130,7 +141,9 @@ pub(super) fn binding_identity(
 ) -> Result<BindingIdentity, ConfigError> {
     let (modifiers, key) = parse_chord(&configured.keys)?;
     if let Some((fingers, direction)) = parse_swipe(&key) {
-        if configured.match_mode == BindingMatch::Physical || modifiers != BindingModifiers::default() {
+        if configured.match_mode == BindingMatch::Physical
+            || modifiers != BindingModifiers::default()
+        {
             return Err(ConfigError::Binding(
                 "swipes cannot use keyboard modifiers or physical key matching".into(),
             ));
@@ -170,7 +183,9 @@ pub(super) fn binding_identity_for_runtime(binding: &Binding) -> BindingIdentity
     let (match_mode, key) = match binding.trigger {
         BindingTrigger::Keysym(key) => (BindingMatch::Keysym, key),
         BindingTrigger::Physical(key) => (BindingMatch::Physical, key.raw()),
-        BindingTrigger::Swipe { fingers, direction } => (BindingMatch::Swipe, fingers * 4 + direction as u32),
+        BindingTrigger::Swipe { fingers, direction } => {
+            (BindingMatch::Swipe, fingers * 4 + direction as u32)
+        }
     };
 
     BindingIdentity {
@@ -198,7 +213,9 @@ pub(super) fn parse_chord(chord: &str) -> Result<(BindingModifiers, String), Con
         };
         if let Some(slot) = slot {
             if *slot {
-                return Err(ConfigError::Binding(format!("duplicate modifier in {chord:?}")));
+                return Err(ConfigError::Binding(format!(
+                    "duplicate modifier in {chord:?}"
+                )));
             }
             *slot = true;
         } else if key.replace(component.to_owned()).is_some() {
@@ -208,7 +225,9 @@ pub(super) fn parse_chord(chord: &str) -> Result<(BindingModifiers, String), Con
         }
     }
 
-    let key = key.ok_or_else(|| ConfigError::Binding(format!("key chord {chord:?} does not contain a key")))?;
+    let key = key.ok_or_else(|| {
+        ConfigError::Binding(format!("key chord {chord:?} does not contain a key"))
+    })?;
     Ok((modifiers, key))
 }
 
@@ -264,8 +283,10 @@ pub(super) fn parse_action(
             Ok(())
         }
     };
-    let required_argument =
-        || argument.ok_or_else(|| ConfigError::Binding(format!("action {action:?} requires an argument")));
+    let required_argument = || {
+        argument
+            .ok_or_else(|| ConfigError::Binding(format!("action {action:?} requires an argument")))
+    };
 
     match action {
         "binding-mode" => Ok(BindingAction::BindingMode(required_argument()?.to_owned())),
@@ -275,7 +296,9 @@ pub(super) fn parse_action(
         }
         "workspace-next" | "workspace-previous" => {
             no_argument()?;
-            Ok(BindingAction::SwitchRelativeWorkspace(action == "workspace-next"))
+            Ok(BindingAction::SwitchRelativeWorkspace(
+                action == "workspace-next",
+            ))
         }
         "workspace-back-and-forth" => {
             no_argument()?;
@@ -310,9 +333,15 @@ pub(super) fn parse_action(
         }
         "focus" => Ok(BindingAction::Focus(parse_direction(required_argument()?)?)),
         "move" => Ok(BindingAction::Move(parse_direction(required_argument()?)?)),
-        "resize" => Ok(BindingAction::Resize(parse_direction(required_argument()?)?)),
-        "workspace" => Ok(BindingAction::SwitchWorkspace(parse_workspace(required_argument()?)?)),
-        "move-to-workspace" => Ok(BindingAction::MoveToWorkspace(parse_workspace(required_argument()?)?)),
+        "resize" => Ok(BindingAction::Resize(
+            parse_direction(required_argument()?)?,
+        )),
+        "workspace" => Ok(BindingAction::SwitchWorkspace(parse_workspace(
+            required_argument()?,
+        )?)),
+        "move-to-workspace" => Ok(BindingAction::MoveToWorkspace(parse_workspace(
+            required_argument()?,
+        )?)),
         "toggle-maximized" => {
             no_argument()?;
             Ok(BindingAction::ToggleMaximized)
@@ -337,7 +366,9 @@ pub(super) fn parse_action(
             no_argument()?;
             Ok(BindingAction::ToggleColumnTabbed)
         }
-        "join-tab" => Ok(BindingAction::JoinTab(parse_direction(required_argument()?)?)),
+        "join-tab" => Ok(BindingAction::JoinTab(parse_direction(
+            required_argument()?
+        )?)),
         "leave-tab" => {
             no_argument()?;
             Ok(BindingAction::LeaveTab)
@@ -396,14 +427,18 @@ pub(super) fn parse_direction(argument: &str) -> Result<Direction, ConfigError> 
         "right" => Ok(Direction::Right),
         "up" => Ok(Direction::Up),
         "down" => Ok(Direction::Down),
-        _ => Err(ConfigError::Binding(format!("invalid direction {argument:?}"))),
+        _ => Err(ConfigError::Binding(format!(
+            "invalid direction {argument:?}"
+        ))),
     }
 }
 
 pub(super) fn parse_workspace(argument: &str) -> Result<u8, ConfigError> {
     match argument.parse() {
         Ok(workspace) if workspace > 0 => Ok(workspace),
-        _ => Err(ConfigError::Binding(format!("invalid workspace {argument:?}"))),
+        _ => Err(ConfigError::Binding(format!(
+            "invalid workspace {argument:?}"
+        ))),
     }
 }
 
@@ -446,13 +481,25 @@ pub(super) fn default_bindings() -> Vec<BindingConfig> {
 
     for (key, direction) in [("H", "left"), ("J", "down"), ("K", "up"), ("L", "right")] {
         bindings.push(binding("Super+".to_owned() + key, "focus", Some(direction)));
-        bindings.push(binding("Super+Shift+".to_owned() + key, "move", Some(direction)));
-        bindings.push(binding("Super+Ctrl+".to_owned() + key, "resize", Some(direction)));
+        bindings.push(binding(
+            "Super+Shift+".to_owned() + key,
+            "move",
+            Some(direction),
+        ));
+        bindings.push(binding(
+            "Super+Ctrl+".to_owned() + key,
+            "resize",
+            Some(direction),
+        ));
     }
 
     for workspace in 1..=9 {
         let workspace = workspace.to_string();
-        bindings.push(binding(format!("Super+{workspace}"), "workspace", Some(&workspace)));
+        bindings.push(binding(
+            format!("Super+{workspace}"),
+            "workspace",
+            Some(&workspace),
+        ));
         bindings.push(binding(
             format!("Super+Shift+{workspace}"),
             "move-to-workspace",
@@ -463,7 +510,11 @@ pub(super) fn default_bindings() -> Vec<BindingConfig> {
     bindings
 }
 
-pub(super) fn binding(keys: impl Into<String>, action: impl Into<String>, argument: Option<&str>) -> BindingConfig {
+pub(super) fn binding(
+    keys: impl Into<String>,
+    action: impl Into<String>,
+    argument: Option<&str>,
+) -> BindingConfig {
     BindingConfig {
         keys: keys.into(),
         match_mode: BindingMatch::Keysym,
@@ -557,7 +608,10 @@ impl Binding {
         let symbol = parse_keysym(&key)?;
         if (modifiers.ctrl
             && modifiers.alt
-            && matches!(symbol, keysyms::KEY_Escape | keysyms::KEY_F1..=keysyms::KEY_F12))
+            && matches!(
+                symbol,
+                keysyms::KEY_Escape | keysyms::KEY_F1..=keysyms::KEY_F12
+            ))
             || (keysyms::KEY_XF86Switch_VT_1..=keysyms::KEY_XF86Switch_VT_12).contains(&symbol)
         {
             return Err(ConfigError::Binding("Reserved system shortcut".into()));
@@ -576,19 +630,34 @@ impl Binding {
         match (&self.trigger, &other.trigger) {
             (BindingTrigger::Keysym(left), BindingTrigger::Keysym(right)) => left == right,
             (BindingTrigger::Keysym(symbol), BindingTrigger::Physical(code))
-            | (BindingTrigger::Physical(code), BindingTrigger::Keysym(symbol)) => (0..map.num_layouts_for_key(*code))
-                .any(|layout| {
+            | (BindingTrigger::Physical(code), BindingTrigger::Keysym(symbol)) => {
+                (0..map.num_layouts_for_key(*code)).any(|layout| {
                     map.key_get_syms_by_level(*code, layout, 0)
                         .iter()
                         .any(|key| key.raw() == *symbol)
-                }),
+                })
+            }
             (BindingTrigger::Physical(left), BindingTrigger::Physical(right)) => left == right,
             _ => false,
         }
     }
 
-    pub fn matches(&self, keycode: Keycode, keysyms: &[u32], logo: bool, ctrl: bool, alt: bool, shift: bool) -> bool {
-        self.modifiers == BindingModifiers { logo, ctrl, alt, shift }
+    pub fn matches(
+        &self,
+        keycode: Keycode,
+        keysyms: &[u32],
+        logo: bool,
+        ctrl: bool,
+        alt: bool,
+        shift: bool,
+    ) -> bool {
+        self.modifiers
+            == BindingModifiers {
+                logo,
+                ctrl,
+                alt,
+                shift,
+            }
             && match self.trigger {
                 BindingTrigger::Keysym(expected) => keysyms.contains(&expected),
                 BindingTrigger::Physical(expected) => expected == keycode,
@@ -600,7 +669,11 @@ impl Binding {
         let description = match &self.action {
             BindingAction::BindingMode(name) => format!("Switch to binding mode {name}"),
             BindingAction::None => return None,
-            BindingAction::Spawn(argv) if argv.first().is_some_and(|program| program == "ferese-screenshot") => {
+            BindingAction::Spawn(argv)
+                if argv
+                    .first()
+                    .is_some_and(|program| program == "ferese-screenshot") =>
+            {
                 if argv.iter().any(|arg| arg == "--full") {
                     "Capture whole screen"
                 } else {
@@ -619,7 +692,9 @@ impl Binding {
             BindingAction::Exit => "Log out (with confirmation)".into(),
             BindingAction::Focus(direction) => format!("Focus window {direction:?}"),
             BindingAction::FocusLastWindow => "Return to last focused window".into(),
-            BindingAction::FocusFloating => "Switch focus between tiled and floating windows".into(),
+            BindingAction::FocusFloating => {
+                "Switch focus between tiled and floating windows".into()
+            }
             BindingAction::FocusMru(reverse) => if *reverse {
                 "Previous window in focus history"
             } else {
@@ -629,11 +704,16 @@ impl Binding {
             BindingAction::Move(direction) => format!("Move window {direction:?}"),
             BindingAction::Resize(direction) => format!("Resize window {direction:?}"),
             BindingAction::SwitchWorkspace(index) => format!("Go to workspace {index}"),
-            BindingAction::WorkspaceBackAndForth => "Return to last workspace on this monitor".into(),
-            BindingAction::MoveToWorkspace(index) => format!("Move window to workspace {index}"),
-            BindingAction::SwitchRelativeWorkspace(next) => {
-                if *next { "Next workspace" } else { "Previous workspace" }.into()
+            BindingAction::WorkspaceBackAndForth => {
+                "Return to last workspace on this monitor".into()
             }
+            BindingAction::MoveToWorkspace(index) => format!("Move window to workspace {index}"),
+            BindingAction::SwitchRelativeWorkspace(next) => if *next {
+                "Next workspace"
+            } else {
+                "Previous workspace"
+            }
+            .into(),
             BindingAction::ToggleFullscreen => "Toggle fullscreen".into(),
             BindingAction::ToggleMaximized => "Toggle full-width window".into(),
             BindingAction::ToggleLayout => "Switch workspace layout".into(),
@@ -642,7 +722,12 @@ impl Binding {
             BindingAction::ToggleColumnTabbed => "Toggle stacked / tabbed column".into(),
             BindingAction::JoinTab(direction) => format!("Join tab group {direction:?}"),
             BindingAction::LeaveTab => "Leave tab group".into(),
-            BindingAction::CycleTab(previous) => if *previous { "Previous tab" } else { "Next tab" }.into(),
+            BindingAction::CycleTab(previous) => if *previous {
+                "Previous tab"
+            } else {
+                "Next tab"
+            }
+            .into(),
             BindingAction::Consume => "Join window into column or tab group".into(),
             BindingAction::Expel => "Leave column or tab group".into(),
             BindingAction::ToggleFloating => "Toggle floating window".into(),
@@ -694,7 +779,11 @@ impl Binding {
         matches!(self.trigger, BindingTrigger::Swipe { fingers, .. } if fingers == count)
     }
 
-    pub(crate) fn matches_swipe(&self, count: u32, target: crate::gestures::SwipeDirection) -> bool {
+    pub(crate) fn matches_swipe(
+        &self,
+        count: u32,
+        target: crate::gestures::SwipeDirection,
+    ) -> bool {
         matches!(self.trigger, BindingTrigger::Swipe { fingers, direction } if fingers == count && direction == target)
     }
 }

@@ -15,7 +15,8 @@ fn mapped_tree(surface: &WlSurface) -> bool {
     let mut current = Some(surface.clone());
     while let Some(surface) = current {
         if !surface.is_alive()
-            || !with_renderer_surface_state(&surface, |state| state.buffer().is_some()).unwrap_or(false)
+            || !with_renderer_surface_state(&surface, |state| state.buffer().is_some())
+                .unwrap_or(false)
         {
             return false;
         }
@@ -29,9 +30,12 @@ impl Ferese {
         let mut surfaces = Vec::new();
         if self.session_lock.active() {
             for lock in self.session_lock.surfaces.values() {
-                smithay::desktop::utils::with_surfaces_surface_tree(lock.wl_surface(), |surface, _| {
-                    surfaces.push(surface.clone());
-                });
+                smithay::desktop::utils::with_surfaces_surface_tree(
+                    lock.wl_surface(),
+                    |surface, _| {
+                        surfaces.push(surface.clone());
+                    },
+                );
             }
         } else {
             for window in self.space.elements() {
@@ -55,7 +59,12 @@ impl Ferese {
                 let output = self
                     .display_presentation
                     .outputs_for(&id)
-                    .max_by_key(|output| (output.current_mode().map_or(0, |mode| mode.refresh), output.name()))?
+                    .max_by_key(|output| {
+                        (
+                            output.current_mode().map_or(0, |mode| mode.refresh),
+                            output.name(),
+                        )
+                    })?
                     .clone();
                 Some((id, output))
             })

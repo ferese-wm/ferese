@@ -47,8 +47,9 @@ impl PlayersState {
     }
 
     pub fn selected(&self) -> Option<&Player> {
-        let eligible =
-            |player: &&Player| player.view.status != Playback::Stopped && !self.ignored.contains(&player.name);
+        let eligible = |player: &&Player| {
+            player.view.status != Playback::Stopped && !self.ignored.contains(&player.name)
+        };
         if let Some(player) = self
             .pinned
             .as_ref()

@@ -103,7 +103,11 @@ impl FereseShell {
         let completion = launcher
             .rows
             .get(launcher.selected)
-            .filter(|_| !launcher.query.is_empty() && launcher.ghost_visible && launcher.query.chars().count() <= 28)
+            .filter(|_| {
+                !launcher.query.is_empty()
+                    && launcher.ghost_visible
+                    && launcher.query.chars().count() <= 28
+            })
             .map(|row| {
                 if row
                     .title
@@ -168,7 +172,8 @@ impl FereseShell {
             .spacing(16)
             .align_y(cosmic::iced::Alignment::Center);
         if let Some(handle) = search_match.and_then(|result| result.icon.clone()) {
-            input_row = input_row.push(cosmic::widget::icon::icon(handle).size(28).opacity(opacity));
+            input_row =
+                input_row.push(cosmic::widget::icon::icon(handle).size(28).opacity(opacity));
         }
         if launcher.query.is_empty() && launcher.category.is_none() {
             let dark = self.config.theme.appearance == ferese_config::theme::Appearance::Dark;
@@ -225,7 +230,10 @@ impl FereseShell {
         let input_content = if let Some(error) = launcher.status_message() {
             column![
                 input_row,
-                self.render.text(error).size(12).class(theme::Text::Color(muted))
+                self.render
+                    .text(error)
+                    .size(12)
+                    .class(theme::Text::Color(muted))
             ]
             .spacing(2)
         } else {
@@ -243,13 +251,22 @@ impl FereseShell {
         ];
         if launcher.apps_browse() {
             let total = launcher.rows.len().div_ceil(4);
-            let first = launcher.apps_first_row.min(total.saturating_sub(1)).saturating_sub(1);
+            let first = launcher
+                .apps_first_row
+                .min(total.saturating_sub(1))
+                .saturating_sub(1);
             let end = (first + 6).min(total);
             let mut grid = cosmic::iced::widget::keyed_column(Vec::<(usize, Ui<'_>)>::new());
             if first > 0 {
                 grid = grid.push(usize::MAX, Space::new().height(first as f32 * 108.));
             }
-            for (row_index, apps) in launcher.rows.chunks(4).enumerate().skip(first).take(end - first) {
+            for (row_index, apps) in launcher
+                .rows
+                .chunks(4)
+                .enumerate()
+                .skip(first)
+                .take(end - first)
+            {
                 let mut tiles = row![].spacing(12);
                 for (column_index, app) in apps.iter().enumerate() {
                     let glyph: Ui<'_> = match &app.icon {
@@ -278,11 +295,13 @@ impl FereseShell {
                         .width(Length::Fill)
                         .height(100)
                         .padding(12)
-                        .class(button_style(if launcher.selected == row_index * 4 + column_index {
-                            palette.accent.scale_alpha(opacity)
-                        } else {
-                            Color::TRANSPARENT
-                        }))
+                        .class(button_style(
+                            if launcher.selected == row_index * 4 + column_index {
+                                palette.accent.scale_alpha(opacity)
+                            } else {
+                                Color::TRANSPARENT
+                            },
+                        ))
                         .on_press(message(Message::ActivateRow(id, app.id.clone()))),
                     );
                 }
@@ -295,14 +314,21 @@ impl FereseShell {
                 );
             }
             if end < total {
-                grid = grid.push(usize::MAX - 1, Space::new().height((total - end) as f32 * 108. - 8.));
+                grid = grid.push(
+                    usize::MAX - 1,
+                    Space::new().height((total - end) as f32 * 108. - 8.),
+                );
             }
             if launcher.rows.is_empty() {
                 grid = grid.push(
                     usize::MAX - 2,
                     container(
                         self.render
-                            .text(if launcher.running { "Loading apps…" } else { "No apps" })
+                            .text(if launcher.running {
+                                "Loading apps…"
+                            } else {
+                                "No apps"
+                            })
                             .size(14)
                             .class(theme::Text::Color(muted)),
                     )
@@ -337,7 +363,12 @@ impl FereseShell {
                     continue;
                 };
                 let window = self.snapshot.windows.iter().find(|w| w.id == id);
-                let workspace = window.and_then(|w| self.snapshot.workspaces.iter().find(|ws| ws.id == w.workspace));
+                let workspace = window.and_then(|w| {
+                    self.snapshot
+                        .workspaces
+                        .iter()
+                        .find(|ws| ws.id == w.workspace)
+                });
                 let thumbnail: Ui<'_> = match launcher.thumbnails.images.get(&id) {
                     Some(handle) => image(handle.clone())
                         .width(Length::Fill)
@@ -368,7 +399,11 @@ impl FereseShell {
                             .apps
                             .as_ref()
                             .and_then(|apps| apps.name(&w.app_id))
-                            .unwrap_or(if w.app_id.is_empty() { &w.title } else { &w.app_id })
+                            .unwrap_or(if w.app_id.is_empty() {
+                                &w.title
+                            } else {
+                                &w.app_id
+                            })
                     }))
                     .size(14)
                     .class(theme::Text::Color(text));
@@ -390,7 +425,10 @@ impl FereseShell {
                         .width(Length::Fill)
                         .padding(0)
                         .class(button_style(Color::TRANSPARENT))
-                        .on_press(message(Message::ActivateRow(launcher.id, result.id.clone()))),
+                        .on_press(message(Message::ActivateRow(
+                            launcher.id,
+                            result.id.clone(),
+                        ))),
                 );
             }
             if launcher.rows.is_empty() {
@@ -402,7 +440,9 @@ impl FereseShell {
                 );
             }
             body = body.push(container(cards).padding([0, 16]));
-        } else if launcher.alternatives || (launcher.query.is_empty() && launcher.category.is_some()) {
+        } else if launcher.alternatives
+            || (launcher.query.is_empty() && launcher.category.is_some())
+        {
             let start = launcher.selected.saturating_sub(4);
             let mut rows = column![].spacing(0);
             for (index, result) in launcher.rows.iter().enumerate().skip(start).take(5) {
@@ -437,11 +477,17 @@ impl FereseShell {
                 ]
                 .spacing(3)
                 .width(Length::Fill);
-                let mut content = row![glyph, labels].spacing(12).align_y(cosmic::iced::Alignment::Center);
+                let mut content = row![glyph, labels]
+                    .spacing(12)
+                    .align_y(cosmic::iced::Alignment::Center);
                 if index == launcher.selected {
                     content = content.push(
                         self.render
-                            .text(if result.requires_alt() { "Alt+Enter" } else { "Enter" })
+                            .text(if result.requires_alt() {
+                                "Alt+Enter"
+                            } else {
+                                "Enter"
+                            })
                             .size(12)
                             .class(theme::Text::Color(muted)),
                     );
@@ -463,7 +509,10 @@ impl FereseShell {
                         },
                         18.,
                     ))
-                    .on_press(message(Message::ActivateRow(launcher.id, result.id.clone()))),
+                    .on_press(message(Message::ActivateRow(
+                        launcher.id,
+                        result.id.clone(),
+                    ))),
                 );
             }
             if launcher.rows.is_empty() {

@@ -157,7 +157,9 @@ impl Recorder {
         match event {
             Event::Update(update) => match update.state.as_str() {
                 "selecting" if self.control.is_some() => self.state = State::Selecting,
-                "recording" if self.control.is_some() && !matches!(self.state, State::Recording(_)) => {
+                "recording"
+                    if self.control.is_some() && !matches!(self.state, State::Recording(_)) =>
+                {
                     self.state = State::Recording(Instant::now());
                 }
                 "saving" => self.state = State::Saving,
@@ -168,11 +170,17 @@ impl Recorder {
                         .unwrap_or_else(|| State::Error("Recorder returned no saved file".into()))
                 }
                 "cancelled" => self.state = State::Idle,
-                "error" => self.state = State::Error(update.message.unwrap_or_else(|| "Recording failed".into())),
+                "error" => {
+                    self.state =
+                        State::Error(update.message.unwrap_or_else(|| "Recording failed".into()))
+                }
                 _ => (),
             },
             Event::Exited => {
-                if matches!(self.state, State::Selecting | State::Recording(_) | State::Saving) {
+                if matches!(
+                    self.state,
+                    State::Selecting | State::Recording(_) | State::Saving
+                ) {
                     self.state = State::Error("The recorder stopped unexpectedly".into());
                 }
                 self.control.take();
@@ -287,7 +295,11 @@ mod tests {
         })
     }
 
-    fn session() -> (Recorder, std::process::Child, tokio::sync::mpsc::Sender<Event>) {
+    fn session() -> (
+        Recorder,
+        std::process::Child,
+        tokio::sync::mpsc::Sender<Event>,
+    ) {
         // A real control pipe lets stop() exercise EOF without a recorder,
         // portal, encoder, or D-Bus service.
         let mut child = Command::new("cat")
@@ -330,7 +342,9 @@ mod tests {
         recorder.apply(update("saving", None));
         recorder.apply(update("saved", Some("display.webm".into())));
         assert!(recorder.apply(Event::Exited));
-        assert!(matches!(recorder.state, State::Saved(ref path) if path == &PathBuf::from("display.webm")));
+        assert!(
+            matches!(recorder.state, State::Saved(ref path) if path == &PathBuf::from("display.webm"))
+        );
         assert!(!recorder.busy());
         assert_eq!(recorder.subscription().units(), 0);
         assert!(send.try_send(Event::Exited).is_err());
@@ -394,10 +408,14 @@ mod tests {
             assert!(!recorder.busy());
             match terminal {
                 "saved" => {
-                    assert!(matches!(recorder.state, State::Saved(ref path) if path == &PathBuf::from("video.webm")))
+                    assert!(
+                        matches!(recorder.state, State::Saved(ref path) if path == &PathBuf::from("video.webm"))
+                    )
                 }
                 "cancelled" => assert!(matches!(recorder.state, State::Idle)),
-                _ => assert!(matches!(recorder.state, State::Error(ref message) if message == "Recording failed")),
+                _ => assert!(
+                    matches!(recorder.state, State::Error(ref message) if message == "Recording failed")
+                ),
             }
             assert!(send.try_send(Event::Exited).is_err());
         }
@@ -407,8 +425,14 @@ mod tests {
     fn missing_path_and_unexpected_exit_remain_errors() {
         let mut recorder = Recorder::default();
         recorder.apply(update("saved", None));
-        assert!(matches!(recorder.state, State::Error(ref message) if message == "Recorder returned no saved file"));
-        for state in [State::Selecting, State::Recording(Instant::now()), State::Saving] {
+        assert!(
+            matches!(recorder.state, State::Error(ref message) if message == "Recorder returned no saved file")
+        );
+        for state in [
+            State::Selecting,
+            State::Recording(Instant::now()),
+            State::Saving,
+        ] {
             recorder.state = state;
             recorder.apply(Event::Exited);
             assert!(
@@ -445,7 +469,10 @@ mod tests {
             );
         }
         send.try_send(Event::Exited).unwrap();
-        assert!(matches!(stream.next().now_or_never(), Some(Some(Event::Exited))));
+        assert!(matches!(
+            stream.next().now_or_never(),
+            Some(Some(Event::Exited))
+        ));
         drop(send);
         assert!(matches!(stream.next().now_or_never(), Some(None)));
     }

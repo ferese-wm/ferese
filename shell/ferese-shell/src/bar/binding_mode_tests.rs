@@ -23,27 +23,46 @@ fn a_binding_mode_owns_the_panel_instead_of_hidden_morph_hover_or_menus() {
         .reset(&shell.config.panels[0], &shell.snapshot, Some("test"));
     let id = shell.outputs[0].bar;
     shell.snapshot.binding_mode = Some("resize".into());
-    let allocation = shell.outputs[0].runtime.hub.as_ref().unwrap().borrow().allocation;
+    let allocation = shell.outputs[0]
+        .runtime
+        .hub
+        .as_ref()
+        .unwrap()
+        .borrow()
+        .allocation;
     drop(shell.hub_hover(id, true));
     assert_eq!(shell.hub_mode(id), Some(ferese_panel::morph::Mode::Idle));
     drop(shell.open_hub(id, status_ui::Menu::Calendar));
     assert_eq!(shell.hub_mode(id), Some(ferese_panel::morph::Mode::Idle));
     assert_eq!(
-        shell.outputs[0].runtime.hub.as_ref().unwrap().borrow().allocation,
+        shell.outputs[0]
+            .runtime
+            .hub
+            .as_ref()
+            .unwrap()
+            .borrow()
+            .allocation,
         allocation
     );
 }
 
 #[test]
 fn mode_entry_dismisses_existing_popovers_and_collapses_expanded_morph_content() {
-    for style in [ferese_panel::PanelStyle::Flat, ferese_panel::PanelStyle::Morph] {
+    for style in [
+        ferese_panel::PanelStyle::Flat,
+        ferese_panel::PanelStyle::Morph,
+    ] {
         let mut shell = crate::tests::shell_with_measured_panel();
         shell.config.panels[0].style = style;
         shell.outputs[0]
             .runtime
             .reset(&shell.config.panels[0], &shell.snapshot, Some("test"));
         let id = shell.outputs[0].bar;
-        let collapsed = shell.outputs[0].runtime.hub.as_ref().map(|hub| hub.borrow().allocation);
+        let collapsed = shell.outputs[0]
+            .runtime
+            .hub
+            .as_ref()
+            .map(|hub| hub.borrow().allocation);
         if collapsed.is_some() {
             drop(shell.open_hub(id, status_ui::Menu::Calendar));
             assert!(shell.hub_mode(id).unwrap().expanded());
@@ -117,13 +136,19 @@ fn mode_name_and_escape_hint_fit_the_published_shape_in_every_panel_style() {
                 .hub
                 .as_ref()
                 .map(|hub| hub.borrow().allocation)
-                .unwrap_or([1200, shell.config.panels[0].resolved_geometry().height as u32]);
-            let viewport = Rectangle::with_size(Size::new(allocation[0] as f32, allocation[1] as f32));
+                .unwrap_or([
+                    1200,
+                    shell.config.panels[0].resolved_geometry().height as u32,
+                ]);
+            let viewport =
+                Rectangle::with_size(Size::new(allocation[0] as f32, allocation[1] as f32));
             let mut view = shell.view_layer(id);
             let mut tree = widget::Tree::new(&view);
-            let node =
-                view.as_widget_mut()
-                    .layout(&mut tree, &renderer, &layout::Limits::new(Size::ZERO, viewport.size()));
+            let node = view.as_widget_mut().layout(
+                &mut tree,
+                &renderer,
+                &layout::Limits::new(Size::ZERO, viewport.size()),
+            );
             let mut messages = Vec::new();
             view.as_widget_mut().update(
                 &mut tree,
@@ -141,7 +166,11 @@ fn mode_name_and_escape_hint_fit_the_published_shape_in_every_panel_style() {
                     cosmic::Action::App(Message::PanelSurfaceChanged(_, scene)) => Some(scene),
                     _ => None,
                 })
-                .unwrap_or_else(|| panic!("{style}: mode must replace the previous native clipping and input shape"));
+                .unwrap_or_else(|| {
+                    panic!(
+                        "{style}: mode must replace the previous native clipping and input shape"
+                    )
+                });
             let mut labels = TextBounds::default();
             view.as_widget_mut()
                 .operate(&mut tree, Layout::new(&node), &renderer, &mut labels);
@@ -150,7 +179,10 @@ fn mode_name_and_escape_hint_fit_the_published_shape_in_every_panel_style() {
                 "{style}: mode name missing"
             );
             assert!(
-                labels.0.iter().any(|(text, _)| text.contains("Esc to exit")),
+                labels
+                    .0
+                    .iter()
+                    .any(|(text, _)| text.contains("Esc to exit")),
                 "{style}: exit hint missing"
             );
             for (text, bounds) in &labels.0 {
@@ -186,7 +218,11 @@ fn mode_name_and_escape_hint_fit_the_published_shape_in_every_panel_style() {
                 mouse::Cursor::Unavailable,
                 &viewport,
             );
-            let pixels = renderer.screenshot(Size::new(allocation[0], allocation[1]), 1., Color::TRANSPARENT);
+            let pixels = renderer.screenshot(
+                Size::new(allocation[0], allocation[1]),
+                1.,
+                Color::TRANSPARENT,
+            );
             assert!(
                 pixels.chunks_exact(4).any(|pixel| pixel[3] > 0),
                 "{style}: no visible pixels"

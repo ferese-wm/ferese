@@ -133,32 +133,41 @@ fn reap(child: &RefCell<Option<Child>>) -> bool {
     }
 }
 
-pub(crate) fn watch_client_exit(handle: &LoopHandle<'static, Ferese>, child: Child) -> Rc<RefCell<Option<Child>>> {
+pub(crate) fn watch_client_exit(
+    handle: &LoopHandle<'static, Ferese>,
+    child: Child,
+) -> Rc<RefCell<Option<Child>>> {
     let pid = child.id();
     let owner = Rc::new(RefCell::new(Some(child)));
     let watched = owner.clone();
     let result = pidfd(pid).and_then(|fd| {
         handle
-            .insert_source(Generic::new(fd, Interest::READ, Mode::Level), move |_, _, _| {
-                Ok(if reap(&watched) {
-                    PostAction::Remove
-                } else {
-                    PostAction::Continue
-                })
-            })
+            .insert_source(
+                Generic::new(fd, Interest::READ, Mode::Level),
+                move |_, _, _| {
+                    Ok(if reap(&watched) {
+                        PostAction::Remove
+                    } else {
+                        PostAction::Continue
+                    })
+                },
+            )
             .map_err(io::Error::other)
     });
 
     if let Err(error) = result {
         warn!(%error, pid, "could not watch client exit with pidfd; polling instead");
         let watched = owner.clone();
-        if let Err(error) = handle.insert_source(Timer::from_duration(Duration::from_millis(250)), move |_, _, _| {
-            if reap(&watched) {
-                TimeoutAction::Drop
-            } else {
-                TimeoutAction::ToDuration(Duration::from_millis(250))
-            }
-        }) {
+        if let Err(error) = handle.insert_source(
+            Timer::from_duration(Duration::from_millis(250)),
+            move |_, _, _| {
+                if reap(&watched) {
+                    TimeoutAction::Drop
+                } else {
+                    TimeoutAction::ToDuration(Duration::from_millis(250))
+                }
+            },
+        ) {
             warn!(%error, pid, "could not schedule client exit polling; stopping child");
             if let Some(mut child) = owner.borrow_mut().take() {
                 terminate_child(&mut child);

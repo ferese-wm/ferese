@@ -17,31 +17,32 @@ pub(crate) fn touch_cache(state: &mut Ferese) {
     if state.capture_last_used.replace(Instant::now()).is_some() {
         return;
     }
-    if let Err(error) = state
-        .loop_handle
-        .insert_source(Timer::from_duration(CACHE_IDLE), |_, _, state| {
-            let Some(last_used) = state.capture_last_used else {
-                return TimeoutAction::Drop;
-            };
-            let idle = last_used.elapsed();
-            if idle < CACHE_IDLE {
-                return TimeoutAction::ToDuration(CACHE_IDLE - idle);
-            }
-            // A stream can pause or fail without another repaint. Release its
-            // offscreen targets and filtered-scene caches from the event loop.
-            state.capture_last_used = None;
-            state.capture_render = Default::default();
-            state.nested_capture_texture = None;
-            if let Some(backend) = state.direct_backend.as_mut() {
-                for device in backend.devices.values_mut() {
-                    for output in device.outputs.values_mut() {
-                        output.capture_texture = None;
-                        output.mirror_capture_texture = None;
+    if let Err(error) =
+        state
+            .loop_handle
+            .insert_source(Timer::from_duration(CACHE_IDLE), |_, _, state| {
+                let Some(last_used) = state.capture_last_used else {
+                    return TimeoutAction::Drop;
+                };
+                let idle = last_used.elapsed();
+                if idle < CACHE_IDLE {
+                    return TimeoutAction::ToDuration(CACHE_IDLE - idle);
+                }
+                // A stream can pause or fail without another repaint. Release its
+                // offscreen targets and filtered-scene caches from the event loop.
+                state.capture_last_used = None;
+                state.capture_render = Default::default();
+                state.nested_capture_texture = None;
+                if let Some(backend) = state.direct_backend.as_mut() {
+                    for device in backend.devices.values_mut() {
+                        for output in device.outputs.values_mut() {
+                            output.capture_texture = None;
+                            output.mirror_capture_texture = None;
+                        }
                     }
                 }
-            }
-            TimeoutAction::Drop
-        })
+                TimeoutAction::Drop
+            })
     {
         state.capture_last_used = None;
         tracing::warn!(%error, "could not schedule capture cache cleanup");
@@ -85,9 +86,18 @@ pub(super) fn capture_mirror(
         }
         let elements = capture_output_elements(state, renderer, source, include_cursor, scene);
         // Never sample mirror_texture: it contains the unfiltered display.
-        let canvas = output.mirror_canvas.as_ref().expect("mirror display composed");
+        let canvas = output
+            .mirror_canvas
+            .as_ref()
+            .expect("mirror display composed");
         let Some(()) = capture_request(state, &output.output, include_cursor, || {
-            super::mirror::compose(renderer, &mut output.mirror_capture_texture, canvas, source, &elements)
+            super::mirror::compose(
+                renderer,
+                &mut output.mirror_capture_texture,
+                canvas,
+                source,
+                &elements,
+            )
         }) else {
             continue;
         };
@@ -98,7 +108,12 @@ pub(super) fn capture_mirror(
             Default::default(),
         );
         let Some(target) = capture_request(state, &output.output, include_cursor, || {
-            render_capture(renderer, &mut output.capture_texture, &output.output, &[element])
+            render_capture(
+                renderer,
+                &mut output.capture_texture,
+                &output.output,
+                &[element],
+            )
         }) else {
             continue;
         };
@@ -168,7 +183,10 @@ mod tests {
     #[test]
     #[ignore = "requires an EGL rendering device"]
     fn capture_recomposes_cursor_without_touching_the_display_target() {
-        let device = EGLDevice::enumerate().unwrap().last().expect("an EGL device");
+        let device = EGLDevice::enumerate()
+            .unwrap()
+            .last()
+            .expect("an EGL device");
         let display = unsafe { EGLDisplay::new(device).unwrap() };
         let context = EGLContext::new(&display).unwrap();
         let mut renderer = unsafe { GlesRenderer::new(context).unwrap() };
@@ -223,18 +241,32 @@ mod tests {
         ] {
             let target = render_capture(&mut renderer, &mut capture, &output, &elements).unwrap();
             let mapping = renderer
-                .copy_framebuffer(&target, Rectangle::from_size((32, 24).into()), Fourcc::Abgr8888)
+                .copy_framebuffer(
+                    &target,
+                    Rectangle::from_size((32, 24).into()),
+                    Fourcc::Abgr8888,
+                )
                 .unwrap();
             let pixels = renderer.map_texture(&mapping).unwrap();
             assert_eq!(&pixels[..4], &expected);
-            assert_eq!(&pixels[(12 * 32 + 16) * 4..(12 * 32 + 16) * 4 + 4], &[255, 0, 0, 255]);
+            assert_eq!(
+                &pixels[(12 * 32 + 16) * 4..(12 * 32 + 16) * 4 + 4],
+                &[255, 0, 0, 255]
+            );
             drop(target);
 
             let target = renderer.bind(displayed.as_mut().unwrap()).unwrap();
             let mapping = renderer
-                .copy_framebuffer(&target, Rectangle::from_size((32, 24).into()), Fourcc::Abgr8888)
+                .copy_framebuffer(
+                    &target,
+                    Rectangle::from_size((32, 24).into()),
+                    Fourcc::Abgr8888,
+                )
                 .unwrap();
-            assert_eq!(&renderer.map_texture(&mapping).unwrap()[..4], &[255, 0, 0, 255]);
+            assert_eq!(
+                &renderer.map_texture(&mapping).unwrap()[..4],
+                &[255, 0, 0, 255]
+            );
         }
 
         output.change_current_state(
@@ -246,7 +278,9 @@ mod tests {
             None,
             None,
         );
-        let _ = render_capture::<SolidColorRenderElement>(&mut renderer, &mut capture, &output, &[]).unwrap();
+        let _ =
+            render_capture::<SolidColorRenderElement>(&mut renderer, &mut capture, &output, &[])
+                .unwrap();
         assert_eq!(capture.as_ref().unwrap().size(), (48, 16).into());
     }
 }
@@ -318,7 +352,10 @@ mod failure_tests {
             Ok::<(), ()>(())
         };
         after_queue(queued, || {
-            assert!(submitted.get(), "capture must run after the display queue succeeds");
+            assert!(
+                submitted.get(),
+                "capture must run after the display queue succeeds"
+            );
             assert!(
                 capture_request(&mut state, &output, false, || Err::<(), _>(
                     "injected allocation failure"
@@ -328,14 +365,20 @@ mod failure_tests {
         })
         .unwrap();
 
-        assert!(submitted.get(), "capture failure must not undo queued display work");
+        assert!(
+            submitted.get(),
+            "capture failure must not undo queued display work"
+        );
         assert_eq!(state.pending_screencopies.len(), 1);
         assert_eq!(state.pending_screencopies[0].output, other_output);
         let outcome = receiver.try_recv().unwrap();
         assert_eq!(outcome.request, 41);
         assert_eq!(outcome.part, 0);
         assert!(outcome.result.is_err());
-        assert!(receiver.try_recv().is_err(), "request should fail exactly once");
+        assert!(
+            receiver.try_recv().is_err(),
+            "request should fail exactly once"
+        );
         assert!(
             other_receiver.try_recv().is_err(),
             "other output's request must stay pending"

@@ -21,8 +21,8 @@ pub(super) fn view<'a>(
         opacity: p,
     } = style;
     if let Some(a) = &shell.status.audio {
-        let mut volume_heading =
-            row![shell.render.text("Volume").size(13).width(Length::Fill)].align_y(Alignment::Center);
+        let mut volume_heading = row![shell.render.text("Volume").size(13).width(Length::Fill)]
+            .align_y(Alignment::Center);
         if combined {
             volume_heading = volume_heading.push(shell_switch(
                 shell.render,
@@ -35,7 +35,11 @@ pub(super) fn view<'a>(
         }
         let audio = column![
             volume_heading,
-            shell.render.text(&a.output).size(12).class(theme::Text::Color(muted)),
+            shell
+                .render
+                .text(&a.output)
+                .size(12)
+                .class(theme::Text::Color(muted)),
             slider_row(
                 shell.render,
                 audio_icon(a.volume, a.muted),
@@ -62,7 +66,9 @@ pub(super) fn heading<'a>(
     mut heading: super::MenuHeading<'a>,
     style: MenuStyle,
 ) -> super::MenuHeading<'a> {
-    let MenuStyle { theme, opacity: p, .. } = style;
+    let MenuStyle {
+        theme, opacity: p, ..
+    } = style;
     if let Some(audio) = &shell.status.audio {
         heading = heading.push(shell_switch(
             shell.render,

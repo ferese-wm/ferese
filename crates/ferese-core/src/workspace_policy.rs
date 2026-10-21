@@ -56,13 +56,22 @@ impl OutputWorkspaceMap {
             .filter(|id| workspaces.workspace(*id).is_some())
     }
 
-    pub fn ordered_workspaces(&self, workspaces: &WorkspaceSet, output: OutputId) -> Vec<WorkspaceId> {
+    pub fn ordered_workspaces(
+        &self,
+        workspaces: &WorkspaceSet,
+        output: OutputId,
+    ) -> Vec<WorkspaceId> {
         self.ordered_workspace_ids(workspaces, output).collect()
     }
 
     /// Out-of-range numeric selection resolves to the trailing spare. Looking
     /// up a gesture target never creates workspaces or changes history.
-    pub fn workspace_at(&self, workspaces: &WorkspaceSet, output: OutputId, index: u32) -> Option<WorkspaceId> {
+    pub fn workspace_at(
+        &self,
+        workspaces: &WorkspaceSet,
+        output: OutputId,
+        index: u32,
+    ) -> Option<WorkspaceId> {
         let index = index.checked_sub(1)? as usize;
         self.ordered_workspace_ids(workspaces, output)
             .nth(index)
@@ -76,8 +85,13 @@ impl OutputWorkspaceMap {
         workspaces: &mut WorkspaceSet,
         transitions: &HashSet<WorkspaceId>,
     ) -> Vec<WorkspaceId> {
-        if let Some(active) = self.focused_output().and_then(|output| self.active_workspace(output)) {
-            workspaces.activate(active).expect("output's active workspace exists");
+        if let Some(active) = self
+            .focused_output()
+            .and_then(|output| self.active_workspace(output))
+        {
+            workspaces
+                .activate(active)
+                .expect("output's active workspace exists");
         }
 
         let mut protected = HashSet::new();
@@ -129,7 +143,11 @@ mod tests {
         let mut outputs = OutputWorkspaceMap::default();
         let output = OutputId(1);
         outputs
-            .connect(output, OutputGeometry::new(0, 0, 1000, 800), set.active_id())
+            .connect(
+                output,
+                OutputGeometry::new(0, 0, 1000, 800),
+                set.active_id(),
+            )
             .unwrap();
 
         (set, outputs, output)
@@ -142,7 +160,10 @@ mod tests {
         for output in outputs.connected_outputs() {
             let ids = outputs.ordered_workspaces(set, output);
             assert!(set.workspace(*ids.last().unwrap()).unwrap().is_empty());
-            let empties = ids.iter().filter(|id| set.workspace(**id).unwrap().is_empty()).count();
+            let empties = ids
+                .iter()
+                .filter(|id| set.workspace(**id).unwrap().is_empty())
+                .count();
             let active_middle_empty = outputs
                 .active_workspace(output)
                 .is_some_and(|id| Some(&id) != ids.last() && set.workspace(id).unwrap().is_empty());
@@ -156,12 +177,14 @@ mod tests {
         let first = set.active_id();
         reconcile(&mut set, &mut outputs);
         assert_eq!(set.iter().count(), 1);
-        set.insert_window(WindowId(1), Axis::Horizontal, 0.5).unwrap();
+        set.insert_window(WindowId(1), Axis::Horizontal, 0.5)
+            .unwrap();
         reconcile(&mut set, &mut outputs);
         let second = outputs.workspace_at(&set, output, 2).unwrap();
         outputs.switch_workspace(output, second).unwrap();
         reconcile(&mut set, &mut outputs);
-        set.insert_window(WindowId(2), Axis::Horizontal, 0.5).unwrap();
+        set.insert_window(WindowId(2), Axis::Horizontal, 0.5)
+            .unwrap();
         reconcile(&mut set, &mut outputs);
         let spare = outputs.workspace_at(&set, output, 3).unwrap();
 
@@ -187,7 +210,8 @@ mod tests {
     fn selected_empty_survives_until_leaving_but_history_does_not_pin_it() {
         let (mut set, mut outputs, output) = setup();
         let first = set.active_id();
-        set.insert_window(WindowId(1), Axis::Horizontal, 0.5).unwrap();
+        set.insert_window(WindowId(1), Axis::Horizontal, 0.5)
+            .unwrap();
         reconcile(&mut set, &mut outputs);
         let spare = outputs.workspace_at(&set, output, 2).unwrap();
         set.remove_window(WindowId(1)).unwrap();
@@ -205,7 +229,8 @@ mod tests {
     fn transitions_temporarily_protect_empty_workspaces_and_cancelled_lookup_has_no_effect() {
         let (mut set, mut outputs, output) = setup();
         let first = set.active_id();
-        set.insert_window(WindowId(1), Axis::Horizontal, 0.5).unwrap();
+        set.insert_window(WindowId(1), Axis::Horizontal, 0.5)
+            .unwrap();
         reconcile(&mut set, &mut outputs);
         let spare = outputs.workspace_at(&set, output, 2).unwrap();
         let before = outputs.workspace_views(&set);
@@ -246,7 +271,8 @@ mod tests {
     fn monitors_have_independent_positions_and_reconnect_restores_occupied_workspaces() {
         let (mut set, mut outputs, left) = setup();
         let first = set.active_id();
-        set.insert_window(WindowId(1), Axis::Horizontal, 0.5).unwrap();
+        set.insert_window(WindowId(1), Axis::Horizontal, 0.5)
+            .unwrap();
         reconcile(&mut set, &mut outputs);
         let right = OutputId(2);
         let second = set.create_workspace();
@@ -255,16 +281,25 @@ mod tests {
             .unwrap();
         outputs.focus_output(right).unwrap();
         reconcile(&mut set, &mut outputs);
-        set.insert_window(WindowId(2), Axis::Horizontal, 0.5).unwrap();
+        set.insert_window(WindowId(2), Axis::Horizontal, 0.5)
+            .unwrap();
         reconcile(&mut set, &mut outputs);
         assert_eq!(outputs.workspace_at(&set, left, 1), Some(first));
         assert_eq!(outputs.workspace_at(&set, right, 1), Some(second));
         assert_eq!(
-            outputs.workspace_views(&set).iter().filter(|view| view.visible).count(),
+            outputs
+                .workspace_views(&set)
+                .iter()
+                .filter(|view| view.visible)
+                .count(),
             2
         );
         assert_eq!(
-            outputs.workspace_views(&set).iter().filter(|view| view.focused).count(),
+            outputs
+                .workspace_views(&set)
+                .iter()
+                .filter(|view| view.focused)
+                .count(),
             1
         );
 
@@ -295,7 +330,11 @@ mod sequences {
         let mut set = WorkspaceSet::default();
         let mut outputs = OutputWorkspaceMap::default();
         outputs
-            .connect(OutputId(1), OutputGeometry::new(0, 0, 1000, 800), set.active_id())
+            .connect(
+                OutputId(1),
+                OutputGeometry::new(0, 0, 1000, 800),
+                set.active_id(),
+            )
             .unwrap();
         let mut next_window = 1;
         let mut seed = 0x1234_5678_u64;
@@ -313,11 +352,13 @@ mod sequences {
 
             match seed % 5 {
                 0 => {
-                    set.insert_window(WindowId(next_window), Axis::Horizontal, 0.5).unwrap();
+                    set.insert_window(WindowId(next_window), Axis::Horizontal, 0.5)
+                        .unwrap();
                     next_window += 1;
                 }
                 1 if !windows.is_empty() => {
-                    set.remove_window(windows[seed as usize % windows.len()]).unwrap();
+                    set.remove_window(windows[seed as usize % windows.len()])
+                        .unwrap();
                 }
                 2 => {
                     let index = (seed % 9 + 1) as u32;
@@ -326,8 +367,13 @@ mod sequences {
                 }
                 3 if !windows.is_empty() => {
                     let target = outputs.workspace_at(&set, output, u32::MAX).unwrap();
-                    set.move_window_to_workspace(windows[seed as usize % windows.len()], target, Axis::Horizontal, 0.5)
-                        .unwrap();
+                    set.move_window_to_workspace(
+                        windows[seed as usize % windows.len()],
+                        target,
+                        Axis::Horizontal,
+                        0.5,
+                    )
+                    .unwrap();
                 }
                 _ => {
                     if outputs.active_workspace(OutputId(2)).is_some() {
@@ -335,7 +381,11 @@ mod sequences {
                     } else {
                         let fallback = set.create_workspace();
                         outputs
-                            .connect(OutputId(2), OutputGeometry::new(1000, 0, 1000, 800), fallback)
+                            .connect(
+                                OutputId(2),
+                                OutputGeometry::new(1000, 0, 1000, 800),
+                                fallback,
+                            )
                             .unwrap();
                         outputs.focus_output(OutputId(2)).unwrap();
                     }
@@ -348,7 +398,10 @@ mod sequences {
             assert_eq!(views.iter().filter(|view| view.focused).count(), 1);
             assert_eq!(views.len(), set.iter().count());
             for output in outputs.connected_outputs() {
-                let rows = views.iter().filter(|view| view.output == output).collect::<Vec<_>>();
+                let rows = views
+                    .iter()
+                    .filter(|view| view.output == output)
+                    .collect::<Vec<_>>();
                 assert_eq!(rows.last().unwrap().window_count, 0);
                 for (index, row) in rows.iter().enumerate() {
                     assert_eq!(row.index, index as u32 + 1);

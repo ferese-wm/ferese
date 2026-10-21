@@ -187,7 +187,9 @@ impl Client {
         match command {
             Command::WifiPower(on) => wifi::power(&self.connection, on).await,
             Command::WifiScan => wifi::scan(&self.connection).await,
-            Command::WifiConnect(network, password) => wifi::connect(&self.connection, &network, &password).await,
+            Command::WifiConnect(network, password) => {
+                wifi::connect(&self.connection, &network, &password).await
+            }
             Command::WifiDisconnect(path) => wifi::disconnect(&self.connection, &path).await,
             Command::WifiForget(path) => wifi::forget(&self.connection, &path).await,
             Command::BluetoothPower(path, on) => {
@@ -199,10 +201,18 @@ impl Client {
             Command::BluetoothScan(path) => self.discover(path, epoch).await,
             Command::BluetoothStop => self.stop_discovery().await,
             Command::BluetoothPair(path) => self.pair(&path, epoch).await,
-            Command::BluetoothConnect(path) => bluetooth::device_call(&self.connection, &path, "Connect").await,
-            Command::BluetoothDisconnect(path) => bluetooth::device_call(&self.connection, &path, "Disconnect").await,
-            Command::BluetoothTrust(path, on) => bluetooth::trust(&self.connection, &path, on).await,
-            Command::BluetoothForget(adapter, path) => bluetooth::forget(&self.connection, &adapter, &path).await,
+            Command::BluetoothConnect(path) => {
+                bluetooth::device_call(&self.connection, &path, "Connect").await
+            }
+            Command::BluetoothDisconnect(path) => {
+                bluetooth::device_call(&self.connection, &path, "Disconnect").await
+            }
+            Command::BluetoothTrust(path, on) => {
+                bluetooth::trust(&self.connection, &path, on).await
+            }
+            Command::BluetoothForget(adapter, path) => {
+                bluetooth::forget(&self.connection, &adapter, &path).await
+            }
             Command::CancelPairing => self.cancel_pairing().await,
         }
     }
@@ -238,7 +248,9 @@ impl Drop for Client {
     }
 }
 
-async fn bounded<T>(future: impl std::future::Future<Output = Result<T, String>>) -> Result<T, String> {
+async fn bounded<T>(
+    future: impl std::future::Future<Output = Result<T, String>>,
+) -> Result<T, String> {
     tokio::time::timeout(Duration::from_secs(10), future)
         .await
         .map_err(|_| "The connection service did not respond. Try again.".to_owned())?

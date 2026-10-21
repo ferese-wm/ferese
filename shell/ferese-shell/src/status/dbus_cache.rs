@@ -16,7 +16,11 @@ struct Signals {
 }
 
 impl Signals {
-    fn new(connection: &Connection, service: &str, wake: Option<Arc<PollState>>) -> zbus::Result<Self> {
+    fn new(
+        connection: &Connection,
+        service: &str,
+        wake: Option<Arc<PollState>>,
+    ) -> zbus::Result<Self> {
         // Install both rules before the snapshot, including when the service is
         // currently absent. Owner changes invalidate paths after a restart.
         let changes = MessageIterator::for_match_rule(
@@ -45,7 +49,9 @@ impl Signals {
         let (stop, stopped) = oneshot::channel::<()>();
         std::thread::spawn(move || {
             // Enter a runtime for zbus stream cleanup, including cancellation.
-            let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build();
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build();
             if let Ok(runtime) = runtime {
                 // Dropping the blocking wrappers enters zbus' runtime, so do
                 // this before entering our async runtime.
@@ -120,8 +126,16 @@ impl<T: Clone> Cache<T> {
         (self.action != u64::MAX && (self.signals.is_none() || self.retry)).then_some(self.retry_at)
     }
 
-    pub(super) fn read(&mut self, action: u64, read: fn(&Connection) -> zbus::Result<Option<T>>) -> Option<T> {
-        if self.signals.as_ref().is_some_and(|s| !s.alive.load(Ordering::Acquire)) {
+    pub(super) fn read(
+        &mut self,
+        action: u64,
+        read: fn(&Connection) -> zbus::Result<Option<T>>,
+    ) -> Option<T> {
+        if self
+            .signals
+            .as_ref()
+            .is_some_and(|s| !s.alive.load(Ordering::Acquire))
+        {
             self.signals = None;
             self.bus.connection = None;
             self.value = None;
@@ -135,7 +149,10 @@ impl<T: Clone> Cache<T> {
         }
         // If subscription setup fails, read fresh rather than trusting a cache
         // with no invalidation. Retry setup at the bounded recovery deadline.
-        let revision = self.signals.as_ref().map(|s| s.revision.load(Ordering::Acquire));
+        let revision = self
+            .signals
+            .as_ref()
+            .map(|s| s.revision.load(Ordering::Acquire));
         if (revision.is_none() && Instant::now() >= self.retry_at)
             || revision.is_some_and(|revision| revision != self.revision)
             || action != self.action
@@ -211,10 +228,19 @@ mod tests {
             assert_eq!(cache.read(0, read_counter), Some(1));
         }
         assert_eq!(count.load(Ordering::Relaxed), 1);
-        assert!(cache.next_retry().is_none(), "healthy subscriptions must not poll");
+        assert!(
+            cache.next_retry().is_none(),
+            "healthy subscriptions must not poll"
+        );
         assert_eq!(cache.read(1, read_counter), Some(2));
         server
-            .emit_signal(None::<&str>, "/test", "org.ferese.StatusCounter", "Changed", &())
+            .emit_signal(
+                None::<&str>,
+                "/test",
+                "org.ferese.StatusCounter",
+                "Changed",
+                &(),
+            )
             .unwrap();
         let deadline = Instant::now() + Duration::from_secs(2);
         while cache.read(1, read_counter) != Some(3) {
@@ -227,7 +253,10 @@ mod tests {
             assert!(Instant::now() < deadline, "owner loss kept stale data");
             std::thread::sleep(Duration::from_millis(1));
         }
-        assert!(cache.next_retry().is_none(), "absent services wait for owner changes");
+        assert!(
+            cache.next_retry().is_none(),
+            "absent services wait for owner changes"
+        );
         server.request_name("org.ferese.StatusCounter").unwrap();
         let deadline = Instant::now() + Duration::from_secs(2);
         while cache.read(1, read_counter).is_none() {
@@ -270,13 +299,24 @@ mod tests {
         };
         let before = signals.revision.load(Ordering::Acquire);
         server
-            .emit_signal(None::<&str>, "/test", "org.ferese.StatusTest", "Changed", &())
+            .emit_signal(
+                None::<&str>,
+                "/test",
+                "org.ferese.StatusTest",
+                "Changed",
+                &(),
+            )
             .unwrap();
         let (state, timeout) = wake
             .1
-            .wait_timeout_while(wake.0.lock().unwrap(), Duration::from_secs(2), |state| state.4 == 0)
+            .wait_timeout_while(wake.0.lock().unwrap(), Duration::from_secs(2), |state| {
+                state.4 == 0
+            })
             .unwrap();
-        assert!(!timeout.timed_out(), "service signal must wake the status worker");
+        assert!(
+            !timeout.timed_out(),
+            "service signal must wake the status worker"
+        );
         assert!(state.4 > 0);
         drop(state);
         wait(before);

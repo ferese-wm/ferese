@@ -79,7 +79,8 @@ impl std::str::FromStr for CornerRadii {
                 let number = if part == "0" {
                     part
                 } else {
-                    part.strip_suffix("px").ok_or("use pixel values such as 4px")?
+                    part.strip_suffix("px")
+                        .ok_or("use pixel values such as 4px")?
                 };
                 number.parse::<f32>().map_err(|_| "invalid corner radius")
             })
@@ -152,7 +153,10 @@ mod tests {
         let radii = CornerRadii([4., 8., 12., 16.]);
         assert_eq!(radii.at_top_edge(true).0, [0., 0., 12., 16.]);
         assert_eq!(radii.at_top_edge(false), radii);
-        assert_eq!(radii.at_edge(super::super::Edge::Bottom, true).0, [4., 8., 0., 0.]);
+        assert_eq!(
+            radii.at_edge(super::super::Edge::Bottom, true).0,
+            [4., 8., 0., 0.]
+        );
         assert_eq!(radii.at_edge(super::super::Edge::Bottom, false), radii);
         assert_eq!(radii.0, [4., 8., 12., 16.]);
     }
@@ -171,6 +175,9 @@ mod tests {
         ] {
             assert!(source.parse::<CornerRadii>().is_err(), "{source}");
         }
-        assert_eq!(CornerRadii([4., 40., 0., 18.]).clamped(100., 28.).0, [4., 14., 0., 14.]);
+        assert_eq!(
+            CornerRadii([4., 40., 0., 18.]).clamped(100., 28.).0,
+            [4., 14., 0., 14.]
+        );
     }
 }

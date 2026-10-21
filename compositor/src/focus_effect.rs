@@ -3,7 +3,11 @@ use std::time::Duration;
 use crate::config::FocusEffectSettings;
 use ferese_layout::WindowId;
 
-pub(crate) fn target(settings: FocusEffectSettings, active: Option<WindowId>, window: WindowId) -> f64 {
+pub(crate) fn target(
+    settings: FocusEffectSettings,
+    active: Option<WindowId>,
+    window: WindowId,
+) -> f64 {
     if !settings.has_effects() || active == Some(window) {
         1.0
     } else {
@@ -16,12 +20,18 @@ impl FocusEffectSettings {
         self.enabled && (self.active_opacity != self.inactive_opacity || self.inactive_dim != 0.0)
     }
 
-    pub(crate) fn resolve(self, progress: f64, has_active: bool, overview_opacity: f32) -> (f32, f64) {
+    pub(crate) fn resolve(
+        self,
+        progress: f64,
+        has_active: bool,
+        overview_opacity: f32,
+    ) -> (f32, f64) {
         if !self.enabled {
             return (1.0, 0.0);
         }
         let progress = progress.clamp(0.0, 1.0);
-        let alpha = self.inactive_opacity + (self.active_opacity - self.inactive_opacity) * progress;
+        let alpha =
+            self.inactive_opacity + (self.active_opacity - self.inactive_opacity) * progress;
         let dim = if has_active {
             self.inactive_dim * (1.0 - progress) * (1.0 - f64::from(overview_opacity))
         } else {
@@ -87,7 +97,11 @@ impl BoundedFade {
     pub fn advance_visual(&mut self, target: f64, delta: Duration, duration_ms: f64) -> bool {
         self.advance(
             target,
-            if self.target != target { Duration::ZERO } else { delta },
+            if self.target != target {
+                Duration::ZERO
+            } else {
+                delta
+            },
             duration_ms,
         )
     }

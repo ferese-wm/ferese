@@ -59,7 +59,9 @@ impl Requests {
         let mut pending = self.0.lock().await;
 
         if pending.len() >= self.1 || pending.contains_key(handle.as_str()) {
-            return Err(zbus::fdo::Error::LimitsExceeded("Request limit reached".into()));
+            return Err(zbus::fdo::Error::LimitsExceeded(
+                "Request limit reached".into(),
+            ));
         }
         let cancel = Arc::new(Cancel::default());
 
@@ -74,7 +76,9 @@ impl Requests {
             )
             .await?
         {
-            return Err(zbus::fdo::Error::InvalidArgs("Request already exists".into()));
+            return Err(zbus::fdo::Error::InvalidArgs(
+                "Request already exists".into(),
+            ));
         }
         pending.insert(handle.to_string(), (owner, cancel.clone()));
 
@@ -83,7 +87,10 @@ impl Requests {
 
     pub(crate) async fn end(&self, connection: &Connection, handle: &OwnedObjectPath) {
         self.0.lock().await.remove(handle.as_str());
-        let _ = connection.object_server().remove::<Request, _>(handle).await;
+        let _ = connection
+            .object_server()
+            .remove::<Request, _>(handle)
+            .await;
     }
 }
 
@@ -243,13 +250,19 @@ pub(crate) async fn consent(
     }
 }
 
-pub(crate) async fn ipc(command: &'static str, args: serde_json::Value) -> Result<serde_json::Value, String> {
+pub(crate) async fn ipc(
+    command: &'static str,
+    args: serde_json::Value,
+) -> Result<serde_json::Value, String> {
     tokio::task::spawn_blocking(move || ipc_sync(command, args))
         .await
         .map_err(|error| error.to_string())?
 }
 
-pub(crate) fn ipc_sync(command: &'static str, args: serde_json::Value) -> Result<serde_json::Value, String> {
+pub(crate) fn ipc_sync(
+    command: &'static str,
+    args: serde_json::Value,
+) -> Result<serde_json::Value, String> {
     let path = ferese_ipc::socket::resolve(None).map_err(|error| error.to_string())?;
     let mut stream = UnixStream::connect(path).map_err(|error| error.to_string())?;
 
@@ -271,10 +284,14 @@ pub(crate) fn ipc_sync(command: &'static str, args: serde_json::Value) -> Result
     exchange(&mut stream, &request)
 }
 
-fn exchange(stream: &mut UnixStream, request: &ferese_ipc::Request) -> Result<serde_json::Value, String> {
+fn exchange(
+    stream: &mut UnixStream,
+    request: &ferese_ipc::Request,
+) -> Result<serde_json::Value, String> {
     ferese_ipc::write_frame(stream, request).map_err(|error| error.to_string())?;
 
-    let response: ferese_ipc::Response = ferese_ipc::read_frame(stream).map_err(|error| error.to_string())?;
+    let response: ferese_ipc::Response =
+        ferese_ipc::read_frame(stream).map_err(|error| error.to_string())?;
     if response.id != request.id || response.version != ferese_ipc::VERSION {
         return Err("Unexpected compositor response ID or protocol version".into());
     }
@@ -322,7 +339,8 @@ async fn select_geometry(point: bool) -> Result<Option<String>, String> {
 }
 
 pub(crate) async fn wait_for_surface_removal(pid: u32) -> Result<(), String> {
-    wait_for_surface_removal_using(|| ipc("has-client-surfaces", serde_json::json!({"pid": pid}))).await
+    wait_for_surface_removal_using(|| ipc("has-client-surfaces", serde_json::json!({"pid": pid})))
+        .await
 }
 
 pub(crate) async fn wait_for_surface_removal_using<
@@ -344,7 +362,10 @@ async fn capture(geometry: Option<String>) -> Result<Vec<u8>, String> {
     capture_command("screenshot", serde_json::json!({"geometry": geometry})).await
 }
 
-async fn capture_command(command: &'static str, args: serde_json::Value) -> Result<Vec<u8>, String> {
+async fn capture_command(
+    command: &'static str,
+    args: serde_json::Value,
+) -> Result<Vec<u8>, String> {
     tokio::task::spawn_blocking(move || {
         let result = ipc_sync(command, args)?;
         let path = result["path"].as_str().ok_or("Missing screenshot path")?;
@@ -501,14 +522,20 @@ fn window_sources(windows: &serde_json::Value) -> Result<Vec<crate::capture::Sou
     Ok(sources)
 }
 
-pub(crate) fn sharing_window_sources(windows: &serde_json::Value) -> Result<Vec<crate::capture::Source>, String> {
+pub(crate) fn sharing_window_sources(
+    windows: &serde_json::Value,
+) -> Result<Vec<crate::capture::Source>, String> {
     let windows = windows.as_array().ok_or("Invalid window list")?;
     let eligible = windows
         .iter()
         .filter(|window| {
             window["workspace"].as_u64().is_some()
-                && window["capture_width"].as_i64().is_some_and(|width| width > 0)
-                && window["capture_height"].as_i64().is_some_and(|height| height > 0)
+                && window["capture_width"]
+                    .as_i64()
+                    .is_some_and(|width| width > 0)
+                && window["capture_height"]
+                    .as_i64()
+                    .is_some_and(|height| height > 0)
                 && window["app_id"].as_str() != Some("dev.ferese.ScreenShare")
         })
         .take(128)
@@ -564,7 +591,8 @@ async fn select_window(app: &str, parent: &str) -> Result<Option<u64>, String> {
     if !output.status.success() {
         return Ok(None);
     }
-    let names: Vec<String> = serde_json::from_slice(&output.stdout).map_err(|_| "Invalid window selection")?;
+    let names: Vec<String> =
+        serde_json::from_slice(&output.stdout).map_err(|_| "Invalid window selection")?;
     if names.len() != 1 || !prompt.sources.iter().any(|source| source.name == names[0]) {
         return Err("Unknown selected window".into());
     }
@@ -595,7 +623,9 @@ async fn pick_color(app: &str, parent: &str) -> Result<Option<Options>, String> 
     let color = png_color(&bytes)?;
     Ok(Some(HashMap::from([(
         "color".into(),
-        Value::from(color).try_to_owned().map_err(|error| error.to_string())?,
+        Value::from(color)
+            .try_to_owned()
+            .map_err(|error| error.to_string())?,
     )])))
 }
 
@@ -608,7 +638,9 @@ fn png_color(bytes: &[u8]) -> Result<(f64, f64, f64), String> {
         .filter(|size| *size <= 16 * 1024)
         .ok_or("Unexpected pixel dimensions")?;
     let mut pixels = vec![0; size];
-    let info = reader.next_frame(&mut pixels).map_err(|error| error.to_string())?;
+    let info = reader
+        .next_frame(&mut pixels)
+        .map_err(|error| error.to_string())?;
     if info.width == 0 || info.height == 0 {
         return Err("Empty image".into());
     }
@@ -628,7 +660,8 @@ fn private_directory(name: &str) -> Result<PathBuf, String> {
         .join("ferese/portal")
         .join(name);
     std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
-    std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700)).map_err(|error| error.to_string())?;
+    std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700))
+        .map_err(|error| error.to_string())?;
     Ok(directory)
 }
 
@@ -696,7 +729,11 @@ fn prepare_wallpaper(input: &Path, cancel: &Cancel) -> Result<tempfile::NamedTem
         .custom_flags(libc::O_NONBLOCK)
         .open(input)
         .map_err(|error| error.to_string())?;
-    if !input.metadata().map_err(|error| error.to_string())?.is_file() {
+    if !input
+        .metadata()
+        .map_err(|error| error.to_string())?
+        .is_file()
+    {
         return Err("Wallpaper must be a regular file".into());
     }
     let directory = private_directory("wallpapers")?;
@@ -719,7 +756,8 @@ fn prepare_wallpaper(input: &Path, cancel: &Cancel) -> Result<tempfile::NamedTem
         if size > MAX_IMAGE_BYTES {
             return Err("Wallpaper is too large".into());
         }
-        std::io::Write::write_all(&mut file, &buffer[..bytes]).map_err(|error| error.to_string())?;
+        std::io::Write::write_all(&mut file, &buffer[..bytes])
+            .map_err(|error| error.to_string())?;
     }
     if size == 0 {
         return Err("Wallpaper is empty".into());
@@ -728,7 +766,9 @@ fn prepare_wallpaper(input: &Path, cancel: &Cancel) -> Result<tempfile::NamedTem
         .map_err(|error| error.to_string())?
         .with_guessed_format()
         .map_err(|error| error.to_string())?;
-    let (width, height) = reader.into_dimensions().map_err(|error| error.to_string())?;
+    let (width, height) = reader
+        .into_dimensions()
+        .map_err(|error| error.to_string())?;
     if width == 0
         || height == 0
         || width > 16384
@@ -799,25 +839,35 @@ fn edit_wallpaper(
     let source = file.source();
     let mut document = ferese_config::Document::parse(source).map_err(|error| error.to_string())?;
     let directory = path.parent().ok_or("Invalid config path")?;
-    let before = wallpaper_theme(&document, directory, appearance)?.tokens.background;
+    let before = wallpaper_theme(&document, directory, appearance)?
+        .tokens
+        .background;
     let (variant, other) = match appearance {
         Appearance::Light => ("light", Appearance::Dark),
         Appearance::Dark => ("dark", Appearance::Light),
     };
-    let other_before = wallpaper_theme(&document, directory, other)?.tokens.background;
+    let other_before = wallpaper_theme(&document, directory, other)?
+        .tokens
+        .background;
     let base = format!("theme.{variant}.background");
     if target == "background" && before.lock_path.is_none() {
         let old = before
             .path
             .unwrap_or_else(|| ferese_config::default_wallpaper_for(appearance).into());
         document
-            .set(&format!("{base}.lock_path"), old.to_string_lossy().into_owned().into())
+            .set(
+                &format!("{base}.lock_path"),
+                old.to_string_lossy().into_owned().into(),
+            )
             .map_err(|error| error.to_string())?;
     }
 
     if target != "lockscreen" {
         document
-            .set(&format!("{base}.path"), image.to_string_lossy().into_owned().into())
+            .set(
+                &format!("{base}.path"),
+                image.to_string_lossy().into_owned().into(),
+            )
             .map_err(|error| error.to_string())?;
     }
 
@@ -830,10 +880,15 @@ fn edit_wallpaper(
             .map_err(|error| error.to_string())?;
     }
 
-    let after = wallpaper_theme(&document, directory, appearance)?.tokens.background;
+    let after = wallpaper_theme(&document, directory, appearance)?
+        .tokens
+        .background;
     if (target != "lockscreen" && after.path.as_deref() != Some(image))
         || (target != "background" && after.lock_path.as_deref() != Some(image))
-        || wallpaper_theme(&document, directory, other)?.tokens.background != other_before
+        || wallpaper_theme(&document, directory, other)?
+            .tokens
+            .background
+            != other_before
     {
         return Err("Wallpaper change did not resolve to the requested image".into());
     }
@@ -867,11 +922,18 @@ mod tests {
             (ferese_ipc::VERSION, 8, false),
         ] {
             let (mut client, mut server) = UnixStream::pair().unwrap();
-            client.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
-            server.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+            client
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            server
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
             let peer = std::thread::spawn(move || {
                 let _: ferese_ipc::Request = ferese_ipc::read_frame(&mut server).unwrap();
-                let mut response = ferese_ipc::Response::success(id, serde_json::json!({"path": "/tmp/capture.png"}));
+                let mut response = ferese_ipc::Response::success(
+                    id,
+                    serde_json::json!({"path": "/tmp/capture.png"}),
+                );
                 response.version = version;
                 ferese_ipc::write_frame(&mut server, &response).unwrap();
             });
@@ -894,7 +956,11 @@ mod tests {
     fn local_uris_preserve_special_characters_and_reject_network_paths() {
         let path = Path::new("/tmp/wallpaper #1_日本.png");
         assert_eq!(local_path(&file_uri(path).unwrap()).unwrap(), path);
-        for uri in ["https://example.com/a.png", "file://example.com/a.png", "not a URI"] {
+        for uri in [
+            "https://example.com/a.png",
+            "file://example.com/a.png",
+            "not a URI",
+        ] {
             assert!(local_path(uri).is_err());
         }
     }
@@ -955,29 +1021,60 @@ mod tests {
             )
             .unwrap();
             let resolve = |mode| {
-                let document = ferese_config::Document::parse(&std::fs::read_to_string(&path).unwrap()).unwrap();
-                wallpaper_theme(&document, dir.path(), mode).unwrap().tokens.background
+                let document =
+                    ferese_config::Document::parse(&std::fs::read_to_string(&path).unwrap())
+                        .unwrap();
+                wallpaper_theme(&document, dir.path(), mode)
+                    .unwrap()
+                    .tokens
+                    .background
             };
             let other = if appearance == Light { Dark } else { Light };
             let untouched = resolve(other);
             edit_wallpaper(&path, Path::new("/desktop.png"), "background", appearance).unwrap();
-            assert_eq!(resolve(appearance).path.as_deref(), Some(Path::new("/desktop.png")));
-            assert_eq!(resolve(appearance).lock_path.as_deref(), Some(Path::new("/old.png")));
+            assert_eq!(
+                resolve(appearance).path.as_deref(),
+                Some(Path::new("/desktop.png"))
+            );
+            assert_eq!(
+                resolve(appearance).lock_path.as_deref(),
+                Some(Path::new("/old.png"))
+            );
             assert_eq!(resolve(other), untouched);
-            assert!(std::fs::read_to_string(&path).unwrap().contains("Keep my settings"));
+            assert!(
+                std::fs::read_to_string(&path)
+                    .unwrap()
+                    .contains("Keep my settings")
+            );
 
             edit_wallpaper(&path, Path::new("/lock.png"), "lockscreen", appearance).unwrap();
-            assert_eq!(resolve(appearance).path.as_deref(), Some(Path::new("/desktop.png")));
-            assert_eq!(resolve(appearance).lock_path.as_deref(), Some(Path::new("/lock.png")));
+            assert_eq!(
+                resolve(appearance).path.as_deref(),
+                Some(Path::new("/desktop.png"))
+            );
+            assert_eq!(
+                resolve(appearance).lock_path.as_deref(),
+                Some(Path::new("/lock.png"))
+            );
             assert_eq!(resolve(other), untouched);
 
             edit_wallpaper(&path, Path::new("/both.png"), "both", appearance).unwrap();
-            assert_eq!(resolve(appearance).path.as_deref(), Some(Path::new("/both.png")));
-            assert_eq!(resolve(appearance).lock_path.as_deref(), Some(Path::new("/both.png")));
+            assert_eq!(
+                resolve(appearance).path.as_deref(),
+                Some(Path::new("/both.png"))
+            );
+            assert_eq!(
+                resolve(appearance).lock_path.as_deref(),
+                Some(Path::new("/both.png"))
+            );
             assert_eq!(resolve(other), untouched);
-            let document = ferese_config::Document::parse(&std::fs::read_to_string(&path).unwrap()).unwrap();
+            let document =
+                ferese_config::Document::parse(&std::fs::read_to_string(&path).unwrap()).unwrap();
             assert_eq!(document.get("theme.background.path").unwrap(), "/old.png");
-            assert_eq!(document.get("commands.terminal").unwrap(), &serde_json::json!(["foot"]));
+            assert_eq!(
+                document.get("commands.terminal").unwrap(),
+                &serde_json::json!(["foot"])
+            );
         }
     }
 
@@ -1000,15 +1097,20 @@ mod tests {
             "#,
             )
             .unwrap();
-            let before = ferese_config::Document::parse(&std::fs::read_to_string(&path).unwrap()).unwrap();
+            let before =
+                ferese_config::Document::parse(&std::fs::read_to_string(&path).unwrap()).unwrap();
             let other = if appearance == Light { Dark } else { Light };
             let old_active = wallpaper_theme(&before, dir.path(), appearance)
                 .unwrap()
                 .tokens
                 .background;
-            let old_other = wallpaper_theme(&before, dir.path(), other).unwrap().tokens.background;
+            let old_other = wallpaper_theme(&before, dir.path(), other)
+                .unwrap()
+                .tokens
+                .background;
             edit_wallpaper(&path, Path::new("/new.png"), "background", appearance).unwrap();
-            let after = ferese_config::Document::parse(&std::fs::read_to_string(&path).unwrap()).unwrap();
+            let after =
+                ferese_config::Document::parse(&std::fs::read_to_string(&path).unwrap()).unwrap();
             let current = wallpaper_theme(&after, dir.path(), appearance)
                 .unwrap()
                 .tokens
@@ -1016,22 +1118,35 @@ mod tests {
             assert_eq!(current.path.as_deref(), Some(Path::new("/new.png")));
             assert_eq!(current.lock_path, old_active.lock_path);
             assert_eq!(
-                wallpaper_theme(&after, dir.path(), other).unwrap().tokens.background,
+                wallpaper_theme(&after, dir.path(), other)
+                    .unwrap()
+                    .tokens
+                    .background,
                 old_other
             );
             assert_eq!(after.get("theme.mode").unwrap(), "auto");
-            assert_eq!(after.get("theme.background"), before.get("theme.background"));
+            assert_eq!(
+                after.get("theme.background"),
+                before.get("theme.background")
+            );
 
             edit_wallpaper(&path, Path::new("/new-lock.png"), "lockscreen", appearance).unwrap();
-            let after = ferese_config::Document::parse(&std::fs::read_to_string(&path).unwrap()).unwrap();
+            let after =
+                ferese_config::Document::parse(&std::fs::read_to_string(&path).unwrap()).unwrap();
             let current = wallpaper_theme(&after, dir.path(), appearance)
                 .unwrap()
                 .tokens
                 .background;
             assert_eq!(current.path.as_deref(), Some(Path::new("/new.png")));
-            assert_eq!(current.lock_path.as_deref(), Some(Path::new("/new-lock.png")));
             assert_eq!(
-                wallpaper_theme(&after, dir.path(), other).unwrap().tokens.background,
+                current.lock_path.as_deref(),
+                Some(Path::new("/new-lock.png"))
+            );
+            assert_eq!(
+                wallpaper_theme(&after, dir.path(), other)
+                    .unwrap()
+                    .tokens
+                    .background,
                 old_other
             );
         }
@@ -1053,16 +1168,30 @@ mod tests {
         "#,
         )
         .unwrap();
-        let before = ferese_config::Document::parse(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        let previous = wallpaper_theme(&before, dir.path(), Dark).unwrap().tokens.background;
+        let before =
+            ferese_config::Document::parse(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let previous = wallpaper_theme(&before, dir.path(), Dark)
+            .unwrap()
+            .tokens
+            .background;
         assert_eq!(previous.lock_path, None);
         edit_wallpaper(&path, Path::new("/new.png"), "background", Dark).unwrap();
-        let after = ferese_config::Document::parse(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        let current = wallpaper_theme(&after, dir.path(), Dark).unwrap().tokens.background;
+        let after =
+            ferese_config::Document::parse(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let current = wallpaper_theme(&after, dir.path(), Dark)
+            .unwrap()
+            .tokens
+            .background;
         assert_eq!(current.lock_path, previous.path);
         assert_eq!(
-            wallpaper_theme(&after, dir.path(), Light).unwrap().tokens.background,
-            wallpaper_theme(&before, dir.path(), Light).unwrap().tokens.background
+            wallpaper_theme(&after, dir.path(), Light)
+                .unwrap()
+                .tokens
+                .background,
+            wallpaper_theme(&before, dir.path(), Light)
+                .unwrap()
+                .tokens
+                .background
         );
     }
 
@@ -1109,6 +1238,10 @@ mod tests {
         std::fs::write(&path, [0u8; 32]).unwrap();
         let cancel = Cancel::default();
         cancel.stop();
-        assert!(prepare_wallpaper(&path, &cancel).unwrap_err().contains("cancelled"));
+        assert!(
+            prepare_wallpaper(&path, &cancel)
+                .unwrap_err()
+                .contains("cancelled")
+        );
     }
 }

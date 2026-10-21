@@ -5,7 +5,9 @@ use cosmic::{Element, theme};
 
 use super::Menu;
 use crate::status::Snapshot;
-use crate::{BarMetrics, FereseShell, Message, accented_icon, bar_content, color, motion, recording};
+use crate::{
+    BarMetrics, FereseShell, Message, accented_icon, bar_content, color, motion, recording,
+};
 
 impl FereseShell {
     pub(crate) fn view_media_item(
@@ -48,8 +50,9 @@ impl FereseShell {
         } else {
             status_icon(kind, &self.status)
         };
-        let selected =
-            selected || (kind == Menu::Recording && matches!(self.recorder.state, recording::State::Recording(_)));
+        let selected = selected
+            || (kind == Menu::Recording
+                && matches!(self.recorder.state, recording::State::Recording(_)));
         let foreground = color(if selected {
             theme.accent
         } else if enabled {
@@ -82,20 +85,17 @@ impl FereseShell {
                 .as_ref()
                 .is_some_and(|n| n.count > 0 && !n.dnd)
         {
-            content = content.push(
-                container(self.render.text(""))
-                    .width(4)
-                    .height(4)
-                    .class(theme::Container::custom(move |_| container::Style {
-                        background: Some(Background::Color(foreground)),
-                        border: Border {
-                            shape: BorderShape::Continuous,
-                            radius: self.render.radius(2.0).into(),
-                            ..Default::default()
-                        },
+            content = content.push(container(self.render.text("")).width(4).height(4).class(
+                theme::Container::custom(move |_| container::Style {
+                    background: Some(Background::Color(foreground)),
+                    border: Border {
+                        shape: BorderShape::Continuous,
+                        radius: self.render.radius(2.0).into(),
                         ..Default::default()
-                    })),
-            );
+                    },
+                    ..Default::default()
+                }),
+            ));
         }
         let content = bar_content(content, metrics.group_item_height);
         let recording_busy = kind == Menu::Recording && self.recorder.busy();
@@ -107,7 +107,10 @@ impl FereseShell {
             } else {
                 status_label(kind, &self.status)
             })
-            .padding([0.0, ((metrics.height - f32::from(metrics.icon_size)) * 0.5).max(4.0)])
+            .padding([
+                0.0,
+                ((metrics.height - f32::from(metrics.icon_size)) * 0.5).max(4.0),
+            ])
             .height(metrics.group_item_height)
             .on_press_with_rectangle(move |offset, bounds| {
                 if kind == Menu::Recording {
@@ -134,7 +137,10 @@ impl FereseShell {
 fn status_label(kind: Menu, s: &Snapshot) -> String {
     match kind {
         Menu::Network => match &s.network {
-            Some(n) if n.enabled => format!("Wi-Fi: {}", n.connection.as_deref().unwrap_or("not connected")),
+            Some(n) if n.enabled => format!(
+                "Wi-Fi: {}",
+                n.connection.as_deref().unwrap_or("not connected")
+            ),
             _ => "Wi-Fi: off".into(),
         },
         Menu::Bluetooth => match &s.bluetooth {
@@ -204,7 +210,9 @@ pub(super) fn status_icon(kind: Menu, s: &Snapshot) -> (&'static [u8], bool) {
             }
         }
         Menu::Bluetooth => match &s.bluetooth {
-            Some(b) if b.enabled && !b.devices.is_empty() => (ferese_theme::icons::BLUETOOTH_CONNECTED, true),
+            Some(b) if b.enabled && !b.devices.is_empty() => {
+                (ferese_theme::icons::BLUETOOTH_CONNECTED, true)
+            }
             Some(b) if b.enabled => (ferese_theme::icons::BLUETOOTH_ON, true),
             _ => (ferese_theme::icons::BLUETOOTH_OFF, false),
         },
@@ -261,26 +269,41 @@ mod tests {
             }),
             ..Default::default()
         };
-        assert_eq!(status_icon(Menu::Audio, &s), (ferese_theme::icons::VOLUME_MUTE, false));
+        assert_eq!(
+            status_icon(Menu::Audio, &s),
+            (ferese_theme::icons::VOLUME_MUTE, false)
+        );
 
         s.battery = Some(status::Battery {
             percent: 2,
             status: "Charging".into(),
         });
-        assert_eq!(status_icon(Menu::Battery, &s).0, ferese_theme::icons::BATTERY_CHARGING);
+        assert_eq!(
+            status_icon(Menu::Battery, &s).0,
+            ferese_theme::icons::BATTERY_CHARGING
+        );
 
-        s.notifications = Some(status::Notifications { count: 3, dnd: true });
+        s.notifications = Some(status::Notifications {
+            count: 3,
+            dnd: true,
+        });
         assert_eq!(
             status_icon(Menu::Notifications, &s).0,
             ferese_theme::icons::NOTIFICATIONS_OFF
         );
-        assert_eq!(status_label(Menu::Notifications, &s), "Notifications: do not disturb");
+        assert_eq!(
+            status_label(Menu::Notifications, &s),
+            "Notifications: do not disturb"
+        );
 
         s.bluetooth = Some(status::Bluetooth {
             enabled: false,
             devices: vec!["Headphones".into()],
         });
-        assert_eq!(status_icon(Menu::Bluetooth, &s).0, ferese_theme::icons::BLUETOOTH_OFF);
+        assert_eq!(
+            status_icon(Menu::Bluetooth, &s).0,
+            ferese_theme::icons::BLUETOOTH_OFF
+        );
     }
 
     #[test]

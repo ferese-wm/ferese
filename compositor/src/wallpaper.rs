@@ -93,7 +93,10 @@ impl WallpaperState {
         Self::with_wakeup(config, None)
     }
 
-    pub fn with_wakeup(config: WallpaperConfig, wakeup: Option<smithay::reexports::calloop::LoopSignal>) -> Self {
+    pub fn with_wakeup(
+        config: WallpaperConfig,
+        wakeup: Option<smithay::reexports::calloop::LoopSignal>,
+    ) -> Self {
         Self::with_decoder(config, wakeup, Decoder::new(pixels::load))
     }
 
@@ -165,7 +168,9 @@ impl WallpaperState {
     }
 
     pub fn reload(&mut self, config: WallpaperConfig) {
-        if self.config.path != config.path && config.path.as_ref().is_some_and(|path| !path.is_file()) {
+        if self.config.path != config.path
+            && config.path.as_ref().is_some_and(|path| !path.is_file())
+        {
             tracing::warn!("new wallpaper is unavailable; retaining previous image");
             return;
         }
@@ -214,7 +219,9 @@ impl WallpaperState {
     }
 
     fn upload_ready(&self, context: &ErasedContextId, now: Instant) -> bool {
-        self.upload_retries.get(context).is_none_or(|retry| now >= *retry)
+        self.upload_retries
+            .get(context)
+            .is_none_or(|retry| now >= *retry)
     }
 
     pub(crate) fn take_retry_wakeup(&self) -> bool {
@@ -323,7 +330,11 @@ impl WallpaperState {
         }
     }
 
-    pub fn element(&mut self, renderer: &mut GlesRenderer, output: &Output) -> Option<NativeTextureElement> {
+    pub fn element(
+        &mut self,
+        renderer: &mut GlesRenderer,
+        output: &Output,
+    ) -> Option<NativeTextureElement> {
         let context = renderer.context_id().erased();
 
         if !self.textures.contains_key(&context) {
@@ -341,7 +352,8 @@ impl WallpaperState {
                 let size = Size::from((pixels.width() as i32, pixels.height() as i32));
                 let bytes = pixels.as_raw().len();
 
-                let texture = renderer.import_memory(pixels.as_raw(), Fourcc::Abgr8888, size, false);
+                let texture =
+                    renderer.import_memory(pixels.as_raw(), Fourcc::Abgr8888, size, false);
 
                 (size, bytes, texture)
             };
@@ -372,7 +384,8 @@ impl WallpaperState {
                 Err(error) => {
                     // Keep pixels alive on failure so the retry does not require
                     // another decode.
-                    self.upload_retries.insert(context, Instant::now() + UPLOAD_RETRY_DELAY);
+                    self.upload_retries
+                        .insert(context, Instant::now() + UPLOAD_RETRY_DELAY);
 
                     tracing::debug!(%error, "wallpaper texture import failed");
 
@@ -382,7 +395,9 @@ impl WallpaperState {
         }
 
         let cached = self.textures.get(&context)?;
-        let output_size = output.current_transform().transform_size(output.current_mode()?.size);
+        let output_size = output
+            .current_transform()
+            .transform_size(output.current_mode()?.size);
 
         let (geometry, source) = image_geometry(cached.size, output_size, self.mode);
 
@@ -414,7 +429,11 @@ fn image_geometry(
             (
                 Rectangle::from_size(output),
                 Rectangle::new(
-                    ((f64::from(image.w) - width) / 2.0, (f64::from(image.h) - height) / 2.0).into(),
+                    (
+                        (f64::from(image.w) - width) / 2.0,
+                        (f64::from(image.h) - height) / 2.0,
+                    )
+                        .into(),
                     (width, height).into(),
                 ),
             )
@@ -427,7 +446,10 @@ fn image_geometry(
             )
                 .into();
             (
-                Rectangle::new(((output.w - size.w) / 2, (output.h - size.h) / 2).into(), size),
+                Rectangle::new(
+                    ((output.w - size.w) / 2, (output.h - size.h) / 2).into(),
+                    size,
+                ),
                 Rectangle::from_size(image.to_f64()),
             )
         }
@@ -484,7 +506,9 @@ mod tests {
         let expected = image::RgbaImage::from_pixel(3, 2, image::Rgba([32, 80, 160, 255]));
         for name in ["wallpaper-portal", "wallpaper.jpg"] {
             let path = directory.path().join(name);
-            expected.save_with_format(&path, image::ImageFormat::Png).unwrap();
+            expected
+                .save_with_format(&path, image::ImageFormat::Png)
+                .unwrap();
             let mut state = WallpaperState::new(WallpaperConfig {
                 path: Some(path),
                 mode: WallpaperMode::Fill,
@@ -519,7 +543,9 @@ mod tests {
         state.arm_retry_timer(&event_loop.handle(), now).unwrap();
         assert!(state.retry_timer_pending.get());
         assert!(!state.take_retry_wakeup());
-        event_loop.dispatch(Some(Duration::from_secs(1)), &mut ()).unwrap();
+        event_loop
+            .dispatch(Some(Duration::from_secs(1)), &mut ())
+            .unwrap();
         assert!(!state.retry_timer_pending.get());
         assert!(
             state.take_retry_wakeup(),
@@ -527,7 +553,10 @@ mod tests {
         );
         assert!(!state.take_retry_wakeup());
         let after = Instant::now();
-        assert_eq!(state.next_retry_deadline(after), Some(after + UPLOAD_RETRY_DELAY));
+        assert_eq!(
+            state.next_retry_deadline(after),
+            Some(after + UPLOAD_RETRY_DELAY)
+        );
         state.forget_context(&context);
         assert_eq!(state.next_retry_deadline(after), None);
         state.retry_wakeup.set(true);
@@ -582,14 +611,18 @@ mod tests {
             mode: WallpaperMode::Fill,
         });
         let now = Instant::now();
-        state.upload_retries.insert(context.clone(), now + UPLOAD_RETRY_DELAY);
+        state
+            .upload_retries
+            .insert(context.clone(), now + UPLOAD_RETRY_DELAY);
         assert!(!state.upload_ready(&context, now));
         assert!(state.upload_ready(&other, now));
         assert!(state.upload_ready(&context, now + UPLOAD_RETRY_DELAY));
         state.forget_context(&context);
         assert!(state.upload_ready(&context, now));
 
-        state.upload_retries.insert(context.clone(), now + UPLOAD_RETRY_DELAY);
+        state
+            .upload_retries
+            .insert(context.clone(), now + UPLOAD_RETRY_DELAY);
         let (sender, receiver) = mpsc::channel();
         state.receiver = Some(receiver);
         sender
@@ -642,11 +675,16 @@ mod tests {
 
     #[test]
     fn fill_crops_and_fit_letterboxes_without_reallocating_image() {
-        let (geometry, source) = image_geometry((3840, 2160).into(), (1600, 1000).into(), WallpaperMode::Fill);
+        let (geometry, source) = image_geometry(
+            (3840, 2160).into(),
+            (1600, 1000).into(),
+            WallpaperMode::Fill,
+        );
         assert_eq!(geometry.size, (1600, 1000).into());
         assert_eq!(source.size.h, 2160.0);
         assert!(source.loc.x > 0.0);
-        let (geometry, source) = image_geometry((3840, 2160).into(), (1600, 1000).into(), WallpaperMode::Fit);
+        let (geometry, source) =
+            image_geometry((3840, 2160).into(), (1600, 1000).into(), WallpaperMode::Fit);
         assert_eq!(geometry.size, (1600, 900).into());
         assert_eq!(geometry.loc, (0, 50).into());
         assert_eq!(source.size, (3840.0, 2160.0).into());

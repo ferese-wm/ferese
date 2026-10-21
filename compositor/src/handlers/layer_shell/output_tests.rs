@@ -151,7 +151,13 @@ impl Client {
     ) -> Vec<Vec<u32>> {
         if output == 0 {
             // Reserve the output slot with a spare surface for unspecified requests.
-            request(&mut self.wire, self.compositor.id().protocol_id(), 0, &[5], None);
+            request(
+                &mut self.wire,
+                self.compositor.id().protocol_id(),
+                0,
+                &[5],
+                None,
+            );
         }
         request(
             &mut self.wire,
@@ -199,8 +205,9 @@ fn assert_closed_without_configure(messages: &[Vec<u32>]) {
 
 #[test]
 fn zero_outputs_close_new_layer_roles() {
-    if !crate::startup_tests::private_runtime("handlers::layer_shell::output_tests::zero_outputs_close_new_layer_roles")
-    {
+    if !crate::startup_tests::private_runtime(
+        "handlers::layer_shell::output_tests::zero_outputs_close_new_layer_roles",
+    ) {
         return;
     }
     let (mut state, mut events) = fixture();
@@ -259,8 +266,9 @@ fn unspecified_output_uses_focused_registered_output() {
 
 #[test]
 fn valid_explicit_output_is_preserved() {
-    if !crate::startup_tests::private_runtime("handlers::layer_shell::output_tests::valid_explicit_output_is_preserved")
-    {
+    if !crate::startup_tests::private_runtime(
+        "handlers::layer_shell::output_tests::valid_explicit_output_is_preserved",
+    ) {
         return;
     }
     let (mut state, mut events) = fixture();

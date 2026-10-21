@@ -26,7 +26,10 @@ impl Identity {
     pub fn from_edid(edid: &[u8]) -> Option<Self> {
         if edid.len() < 128
             || edid[..8] != [0, 255, 255, 255, 255, 255, 255, 0]
-            || edid[..128].iter().fold(0u8, |sum, byte| sum.wrapping_add(*byte)) != 0
+            || edid[..128]
+                .iter()
+                .fold(0u8, |sum, byte| sum.wrapping_add(*byte))
+                != 0
         {
             return None;
         }
@@ -62,7 +65,11 @@ impl Identity {
         if serial.is_none() && numeric_serial != 0 && numeric_serial != u32::MAX {
             serial = Some(format!("{numeric_serial:08X}"));
         }
-        Some(Self { make, model, serial })
+        Some(Self {
+            make,
+            model,
+            serial,
+        })
     }
 
     pub fn base(&self) -> String {
@@ -90,8 +97,12 @@ impl IdentityRegistry {
                 *counts.entry(identity.base()).or_insert(0) += 1;
             }
         }
-        self.ambiguous
-            .extend(counts.into_iter().filter(|(_, count)| *count > 1).map(|(base, _)| base));
+        self.ambiguous.extend(
+            counts
+                .into_iter()
+                .filter(|(_, count)| *count > 1)
+                .map(|(base, _)| base),
+        );
         // Prefer already-known identities, but never permit duplicate runtime IDs.
         let mut used = HashSet::new();
         let mut ordered = monitors.iter().enumerate().collect::<Vec<_>>();
@@ -107,12 +118,15 @@ impl IdentityRegistry {
                 .known
                 .get(key)
                 .filter(|known| {
-                    base.as_ref().is_some_and(|base| *known == base || *known == &qualified)
+                    base.as_ref()
+                        .is_some_and(|base| *known == base || *known == &qualified)
                         || (base.is_none() && *known == &qualified)
                 })
                 .cloned()
                 .unwrap_or_else(|| {
-                    if identity.as_ref().is_some_and(|identity| identity.serial.is_some())
+                    if identity
+                        .as_ref()
+                        .is_some_and(|identity| identity.serial.is_some())
                         && !self.ambiguous.contains(base.as_ref().unwrap())
                     {
                         base.clone().unwrap()
@@ -208,7 +222,10 @@ mod tests {
         edid[10..12].copy_from_slice(&0x1234u16.to_le_bytes());
         edid[12..16].copy_from_slice(&42u32.to_le_bytes());
         edid[127] = 0u8.wrapping_sub(edid.iter().fold(0u8, |sum, byte| sum.wrapping_add(*byte)));
-        assert_eq!(Identity::from_edid(&edid).unwrap().base(), "edid:DEL:1234:0000002A");
+        assert_eq!(
+            Identity::from_edid(&edid).unwrap().base(),
+            "edid:DEL:1234:0000002A"
+        );
         edid[127] ^= 1;
         assert!(Identity::from_edid(&edid).is_none());
     }

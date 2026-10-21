@@ -55,7 +55,11 @@ pub fn indicator<'a, M: 'a>(
 ) -> Element<'a, M> {
     let progress = progress.clamp(0., 1.);
     let occupied = workspace.window_count > 0;
-    let neutral = if occupied { palette.text } else { palette.muted };
+    let neutral = if occupied {
+        palette.text
+    } else {
+        palette.muted
+    };
     let foreground = crate::mix(neutral, palette.accent, progress);
     let content: Element<'a, M> = match style {
         WorkspaceStyle::Numbers | WorkspaceStyle::Tabs => {
@@ -66,7 +70,11 @@ pub fn indicator<'a, M: 'a>(
             };
 
             crate::text(label, font)
-                .size(if style == WorkspaceStyle::Tabs { 11 } else { 12 })
+                .size(if style == WorkspaceStyle::Tabs {
+                    11
+                } else {
+                    12
+                })
                 .width(width(style) - 8.)
                 .align_x(cosmic::iced::alignment::Horizontal::Center)
                 .wrapping(cosmic::iced::widget::text::Wrapping::None)
@@ -81,7 +89,11 @@ pub fn indicator<'a, M: 'a>(
             .height(6)
             .class(theme::Container::custom(move |_| {
                 let mut paint = crate::controls::surface_appearance(
-                    foreground.scale_alpha(if occupied { 0.65 + 0.35 * progress } else { progress }),
+                    foreground.scale_alpha(if occupied {
+                        0.65 + 0.35 * progress
+                    } else {
+                        progress
+                    }),
                     3.,
                 );
                 paint.border.width = 1.;
@@ -97,15 +109,25 @@ pub fn indicator<'a, M: 'a>(
             };
             let svg = format!(
                 "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 26 22\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.4\" stroke-linejoin=\"round\">{back}<rect x=\"2\" y=\"7\" width=\"16\" height=\"12\" rx=\"2.5\"/>{}</svg>",
-                if occupied { "<path d=\"M2 11h16\"/>" } else { "" }
+                if occupied {
+                    "<path d=\"M2 11h16\"/>"
+                } else {
+                    ""
+                }
             );
 
-            cosmic::widget::icon::from_svg_bytes(crate::icons::tint_svg(svg.as_bytes(), foreground, foreground))
-                .symbolic(false)
-                .icon()
-                .size(20)
-                .class(theme::Svg::custom(|_| cosmic::iced::widget::svg::Style { color: None }))
-                .into()
+            cosmic::widget::icon::from_svg_bytes(crate::icons::tint_svg(
+                svg.as_bytes(),
+                foreground,
+                foreground,
+            ))
+            .symbolic(false)
+            .icon()
+            .size(20)
+            .class(theme::Svg::custom(|_| cosmic::iced::widget::svg::Style {
+                color: None,
+            }))
+            .into()
         }
         WorkspaceStyle::AppIcons => {
             let mut icons = row::with_capacity(2).spacing(3).align_y(Alignment::Center);
@@ -128,7 +150,10 @@ pub fn indicator<'a, M: 'a>(
         let marker = container(Space::new())
             .width(10)
             .height(2)
-            .class(crate::controls::surface(foreground.scale_alpha(progress), 1.));
+            .class(crate::controls::surface(
+                foreground.scale_alpha(progress),
+                1.,
+            ));
         cosmic::iced::widget::stack![
             face,
             container(marker)
@@ -150,7 +175,8 @@ pub fn indicator<'a, M: 'a>(
                 Color::TRANSPARENT
             } else if progress > 0. {
                 palette.accent.scale_alpha(0.16 * progress)
-            } else if style == WorkspaceStyle::Tabs || occupied && style == WorkspaceStyle::Numbers {
+            } else if style == WorkspaceStyle::Tabs || occupied && style == WorkspaceStyle::Numbers
+            {
                 palette.text.scale_alpha(0.045)
             } else {
                 Color::TRANSPARENT
@@ -177,7 +203,8 @@ pub fn sample<'a, M: 'a>(
 
     for (index, count, active) in [(1, 2, true), (2, 1, false), (3, 0, false)] {
         let apps = if style == WorkspaceStyle::AppIcons && count > 0 {
-            let mut apps = vec![crate::icons::tinted(crate::icons::SETTINGS, 16, palette.text).into()];
+            let mut apps =
+                vec![crate::icons::tinted(crate::icons::SETTINGS, 16, palette.text).into()];
 
             if count > 1 {
                 apps.push(crate::icons::tinted(crate::icons::FERESE, 16, palette.accent).into());
@@ -210,7 +237,9 @@ pub fn sample<'a, M: 'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cosmic::iced::advanced::{Layout, Renderer, layout, renderer, renderer::Headless, widget::Tree};
+    use cosmic::iced::advanced::{
+        Layout, Renderer, layout, renderer, renderer::Headless, widget::Tree,
+    };
     use cosmic::iced::{Font, Pixels, Rectangle, Size, mouse};
 
     #[test]
@@ -241,7 +270,9 @@ mod tests {
                     (3, 1., "Design and development"),
                 ] {
                     let apps = (0..count.min(2))
-                        .map(|_| crate::icons::tinted(crate::icons::SETTINGS, 16, palette.text).into())
+                        .map(|_| {
+                            crate::icons::tinted(crate::icons::SETTINGS, 16, palette.text).into()
+                        })
                         .collect();
                     let mut view: Element<'_, ()> = indicator(
                         style,
@@ -314,7 +345,10 @@ mod tests {
             active: true,
             visible_elsewhere: false,
         };
-        assert_eq!(tooltip_label(&workspace), "Workspace 2 · Design · 1 window · Active");
+        assert_eq!(
+            tooltip_label(&workspace),
+            "Workspace 2 · Design · 1 window · Active"
+        );
         workspace.name = "2".into();
         workspace.window_count = 0;
         workspace.active = false;

@@ -17,7 +17,15 @@ pub(crate) fn geometry_driven<'a, M: 'a>(
     completion: impl Fn(Instant) -> Option<M> + 'a,
     measurement: Option<ContentMeasurement<'a, M>>,
 ) -> Element<'a, M> {
-    driven(revision, build, active, after_frame, completion, true, measurement)
+    driven(
+        revision,
+        build,
+        active,
+        after_frame,
+        completion,
+        true,
+        measurement,
+    )
 }
 
 pub(crate) fn frame_driven<'a, M: 'a>(
@@ -27,7 +35,15 @@ pub(crate) fn frame_driven<'a, M: 'a>(
     after_frame: impl Fn(Instant) + 'a,
     completion: impl Fn(Instant) -> Option<M> + 'a,
 ) -> Element<'a, M> {
-    driven(revision, build, active, after_frame, completion, false, None)
+    driven(
+        revision,
+        build,
+        active,
+        after_frame,
+        completion,
+        false,
+        None,
+    )
 }
 
 fn driven<'a, M: 'a>(
@@ -111,11 +127,16 @@ impl<'a, M: 'a> Widget<M, Theme, cosmic::Renderer> for FrameDriven<'a, M> {
     }
     fn children(&self) -> Vec<widget::Tree> {
         std::iter::once(widget::Tree::new(&self.content))
-            .chain(self.measurement.iter().map(|m| widget::Tree::new(&m.content)))
+            .chain(
+                self.measurement
+                    .iter()
+                    .map(|m| widget::Tree::new(&m.content)),
+            )
             .collect()
     }
     fn diff(&mut self, tree: &mut widget::Tree) {
-        tree.children.truncate(1 + usize::from(self.measurement.is_some()));
+        tree.children
+            .truncate(1 + usize::from(self.measurement.is_some()));
         tree.children[0].diff(&mut self.content);
         if let Some(measurement) = &mut self.measurement {
             if tree.children.len() == 1 {
@@ -138,11 +159,13 @@ impl<'a, M: 'a> Widget<M, Theme, cosmic::Renderer> for FrameDriven<'a, M> {
         if !self.measured {
             if let Some(measurement) = &mut self.measurement {
                 // Measure at the final width once, so spring overshoot never changes wrapping or its target.
-                let probe_limits = layout::Limits::new(Size::ZERO, Size::new(measurement.width, f32::INFINITY));
-                let node = measurement
-                    .content
-                    .as_widget_mut()
-                    .layout(&mut tree.children[1], renderer, &probe_limits);
+                let probe_limits =
+                    layout::Limits::new(Size::ZERO, Size::new(measurement.width, f32::INFINITY));
+                let node = measurement.content.as_widget_mut().layout(
+                    &mut tree.children[1],
+                    renderer,
+                    &probe_limits,
+                );
                 (measurement.measured)(node.size());
                 let now = Instant::now();
                 self.content = (self.build)(now);
@@ -161,7 +184,9 @@ impl<'a, M: 'a> Widget<M, Theme, cosmic::Renderer> for FrameDriven<'a, M> {
         tree: &widget::Tree,
         cursor: mouse::Cursor,
     ) -> iced_accessibility::A11yTree {
-        self.content.as_widget().a11y_nodes(layout, &tree.children[0], cursor)
+        self.content
+            .as_widget()
+            .a11y_nodes(layout, &tree.children[0], cursor)
     }
     fn update(
         &mut self,
@@ -174,7 +199,8 @@ impl<'a, M: 'a> Widget<M, Theme, cosmic::Renderer> for FrameDriven<'a, M> {
         shell: &mut Shell<'_, M>,
         viewport: &Rectangle,
     ) {
-        let redraw = if let Event::Window(cosmic::iced::window::Event::RedrawRequested(at)) = event {
+        let redraw = if let Event::Window(cosmic::iced::window::Event::RedrawRequested(at)) = event
+        {
             tree.state
                 .downcast_mut::<FrameState>()
                 .begin(*at, self.revision)
@@ -234,7 +260,10 @@ impl<'a, M: 'a> Widget<M, Theme, cosmic::Renderer> for FrameDriven<'a, M> {
             if std::mem::take(&mut tree.state.downcast_mut::<FrameState>().pending) {
                 (self.after_frame)(*at);
                 let completion = (self.completion)(*at);
-                if tree.state.downcast_mut::<FrameState>().complete(completion.is_none())
+                if tree
+                    .state
+                    .downcast_mut::<FrameState>()
+                    .complete(completion.is_none())
                     && let Some(message) = completion
                 {
                     shell.publish(message);
@@ -252,9 +281,15 @@ impl<'a, M: 'a> Widget<M, Theme, cosmic::Renderer> for FrameDriven<'a, M> {
         cursor: mouse::Cursor,
         viewport: &Rectangle,
     ) {
-        self.content
-            .as_widget()
-            .draw(&tree.children[0], renderer, theme, style, layout, cursor, viewport);
+        self.content.as_widget().draw(
+            &tree.children[0],
+            renderer,
+            theme,
+            style,
+            layout,
+            cursor,
+            viewport,
+        );
     }
     fn mouse_interaction(
         &self,
@@ -264,9 +299,13 @@ impl<'a, M: 'a> Widget<M, Theme, cosmic::Renderer> for FrameDriven<'a, M> {
         viewport: &Rectangle,
         renderer: &cosmic::Renderer,
     ) -> mouse::Interaction {
-        self.content
-            .as_widget()
-            .mouse_interaction(&tree.children[0], layout, cursor, viewport, renderer)
+        self.content.as_widget().mouse_interaction(
+            &tree.children[0],
+            layout,
+            cursor,
+            viewport,
+            renderer,
+        )
     }
     fn operate(
         &mut self,
@@ -287,9 +326,13 @@ impl<'a, M: 'a> Widget<M, Theme, cosmic::Renderer> for FrameDriven<'a, M> {
         viewport: &Rectangle,
         translation: Vector,
     ) -> Option<cosmic::iced::advanced::overlay::Element<'b, M, Theme, cosmic::Renderer>> {
-        self.content
-            .as_widget_mut()
-            .overlay(&mut tree.children[0], layout, renderer, viewport, translation)
+        self.content.as_widget_mut().overlay(
+            &mut tree.children[0],
+            layout,
+            renderer,
+            viewport,
+            translation,
+        )
     }
 }
 
@@ -386,11 +429,18 @@ mod tests {
             );
             assert_eq!(shell.redraw_request(), RedrawRequest::Wait);
             assert_eq!(messages.len(), 1);
-            assert_eq!(samples.borrow().len(), settled_builds, "settled redraw rebuilt content");
+            assert_eq!(
+                samples.borrow().len(),
+                settled_builds,
+                "settled redraw rebuilt content"
+            );
             let values = samples.borrow();
             assert!(values.windows(2).all(|pair| pair[1] >= pair[0]));
             assert_eq!(values.last(), Some(&1.0));
-            assert!(values.len() > (hz / 4) as usize, "high refresh callbacks were skipped");
+            assert!(
+                values.len() > (hz / 4) as usize,
+                "high refresh callbacks were skipped"
+            );
         }
         // Keep this mutable: the real render path shares the same renderer.
         renderer.reset(Rectangle::default());

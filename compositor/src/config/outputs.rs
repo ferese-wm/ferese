@@ -9,13 +9,19 @@ impl Config {
             .map(|profile| {
                 let name = profile.name.trim();
                 if name.is_empty() {
-                    return Err(ConfigError::OutputProfile("profile names cannot be empty".to_owned()));
+                    return Err(ConfigError::OutputProfile(
+                        "profile names cannot be empty".to_owned(),
+                    ));
                 }
                 if !names.insert(name.to_owned()) {
-                    return Err(ConfigError::OutputProfile(format!("duplicate profile name {name:?}")));
+                    return Err(ConfigError::OutputProfile(format!(
+                        "duplicate profile name {name:?}"
+                    )));
                 }
                 if profile.outputs.is_empty() {
-                    return Err(ConfigError::OutputProfile(format!("profile {name:?} has no outputs")));
+                    return Err(ConfigError::OutputProfile(format!(
+                        "profile {name:?} has no outputs"
+                    )));
                 }
 
                 let mut matchers = HashSet::new();
@@ -70,13 +76,16 @@ impl Config {
                     )));
                 }
                 if let Some(source) = &profile.mirror_source
-                    && !outputs.iter().any(|output| &output.matcher == source && output.enabled)
+                    && !outputs
+                        .iter()
+                        .any(|output| &output.matcher == source && output.enabled)
                 {
                     return Err(ConfigError::OutputProfile(format!(
                         "profile {name:?}: mirror source must name an enabled output"
                     )));
                 }
-                if profile.layout == OutputLayout::Mirror && outputs.iter().filter(|output| output.enabled).count() < 2
+                if profile.layout == OutputLayout::Mirror
+                    && outputs.iter().filter(|output| output.enabled).count() < 2
                 {
                     return Err(ConfigError::OutputProfile(format!(
                         "profile {name:?}: mirror needs at least two enabled outputs"
@@ -101,7 +110,9 @@ pub(super) fn parse_output_mode(value: &str) -> Result<OutputModeRequest, String
     let (size, refresh) = value
         .trim()
         .split_once('@')
-        .map_or((value.trim(), None), |(size, refresh)| (size, Some(refresh)));
+        .map_or((value.trim(), None), |(size, refresh)| {
+            (size, Some(refresh))
+        });
     let (width, height) = size
         .split_once('x')
         .ok_or_else(|| format!("mode {value:?} must use WIDTHxHEIGHT or WIDTHxHEIGHT@REFRESH"))?;

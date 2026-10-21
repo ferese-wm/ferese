@@ -35,18 +35,21 @@ use std::time::{Duration, Instant};
 use calloop::LoopHandle;
 use ferese_animation::{AnimatedValue, ClientSize, PresentationMode, SpringConfig, WindowGeometry};
 use ferese_core::{
-    LayoutMode, OutputGeometry, OutputId, OutputWorkspaceMap, WindowPlacement, WorkspaceId, WorkspaceLayout,
-    WorkspaceSet,
+    LayoutMode, OutputGeometry, OutputId, OutputWorkspaceMap, WindowPlacement, WorkspaceId,
+    WorkspaceLayout, WorkspaceSet,
 };
 use ferese_layout::{
-    Axis, ColumnWidth, Direction, GapConfig, LayoutResult, Rect, SizeConstraints, ViewportFocusStrategy, WindowId,
+    Axis, ColumnWidth, Direction, GapConfig, LayoutResult, Rect, SizeConstraints,
+    ViewportFocusStrategy, WindowId,
 };
 use ferese_protocols::shell::v1::server::ferese_shell_v1::FereseShellV1;
 use smithay::backend::drm::{DrmEventTime, DrmNode};
 use smithay::backend::input::Keycode;
 use smithay::desktop::space::SpaceElement;
 use smithay::desktop::utils::send_frames_surface_tree;
-use smithay::desktop::{LayerSurface, PopupKind, PopupManager, Space, Window, WindowSurfaceType, layer_map_for_output};
+use smithay::desktop::{
+    LayerSurface, PopupKind, PopupManager, Space, Window, WindowSurfaceType, layer_map_for_output,
+};
 use smithay::input::keyboard::XkbConfig;
 use smithay::input::pointer::{CursorIcon, CursorImageStatus};
 use smithay::input::{Seat, SeatState};
@@ -55,7 +58,9 @@ use smithay::reexports::calloop::generic::Generic;
 use smithay::reexports::calloop::{EventLoop, Interest, LoopSignal, Mode, PostAction};
 use smithay::reexports::drm::control::crtc;
 use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
-use smithay::reexports::wayland_server::backend::{ClientData, ClientId, DisconnectReason, ObjectId};
+use smithay::reexports::wayland_server::backend::{
+    ClientData, ClientId, DisconnectReason, ObjectId,
+};
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::reexports::wayland_server::{Display, DisplayHandle, Weak};
 use smithay::utils::{Logical, Point, Rectangle, Size};
@@ -67,7 +72,9 @@ use smithay::wayland::fractional_scale::FractionalScaleManagerState;
 use smithay::wayland::idle_inhibit::IdleInhibitManagerState;
 use smithay::wayland::idle_notify::IdleNotifierState;
 use smithay::wayland::input_method::InputMethodManagerState;
-use smithay::wayland::keyboard_shortcuts_inhibit::{KeyboardShortcutsInhibitState, KeyboardShortcutsInhibitor};
+use smithay::wayland::keyboard_shortcuts_inhibit::{
+    KeyboardShortcutsInhibitState, KeyboardShortcutsInhibitor,
+};
 use smithay::wayland::output::OutputManagerState;
 use smithay::wayland::pointer_constraints::PointerConstraintsState;
 use smithay::wayland::presentation::PresentationState;
@@ -90,7 +97,9 @@ use smithay::wayland::xdg_toplevel_icon::XdgToplevelIconManager;
 use window_registry::WindowRegistry;
 
 use crate::backends::direct::DirectBackendState;
-use crate::config::{Binding, BindingSet, DaemonConfig, InputSettings, OutputProfile, ThemeSettings};
+use crate::config::{
+    Binding, BindingSet, DaemonConfig, InputSettings, OutputProfile, ThemeSettings,
+};
 use crate::cursor::NamedCursor;
 use crate::focus_effect::BoundedFade;
 use crate::gestures::{Swipe, SwipeDirection};
@@ -124,7 +133,9 @@ fn workspace_swipe_is_current(
 ) -> bool {
     outputs.focused_output() == Some(output)
         && outputs.active_workspace(output) == Some(from)
-        && outputs.output_for_workspace(to).is_none_or(|owner| owner == output)
+        && outputs
+            .output_for_workspace(to)
+            .is_none_or(|owner| owner == output)
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -144,7 +155,10 @@ impl SlideOffset {
     }
 
     fn opposite(self) -> Self {
-        Self { x: -self.x, y: -self.y }
+        Self {
+            x: -self.x,
+            y: -self.y,
+        }
     }
 
     fn between(self, target: Self, progress: f64) -> Self {
@@ -227,7 +241,12 @@ struct WorkspaceSlide {
 }
 
 impl WorkspaceSlide {
-    fn new(previous: Option<Self>, from: WorkspaceId, to: WorkspaceId, direction: SwipeDirection) -> Self {
+    fn new(
+        previous: Option<Self>,
+        from: WorkspaceId,
+        to: WorkspaceId,
+        direction: SwipeDirection,
+    ) -> Self {
         let movement = SlideOffset::for_swipe(direction);
         let mut items = previous
             .map(|slide| {
@@ -643,12 +662,16 @@ impl Ferese {
         let fractional_scale_state = FractionalScaleManagerState::new::<Self>(&display_handle);
         let idle_inhibit_state = IdleInhibitManagerState::new::<Self>(&display_handle);
         let idle_notifier_state = IdleNotifierState::new(&display_handle, event_loop.handle());
-        let session_lock_state =
-            smithay::wayland::session_lock::SessionLockManagerState::new::<Self, _>(&display_handle, |_| true);
-        let input_method_enabled = std::env::var_os("FERESE_ENABLE_INPUT_METHOD").is_some_and(|value| value == "1");
+        let session_lock_state = smithay::wayland::session_lock::SessionLockManagerState::new::<
+            Self,
+            _,
+        >(&display_handle, |_| true);
+        let input_method_enabled =
+            std::env::var_os("FERESE_ENABLE_INPUT_METHOD").is_some_and(|value| value == "1");
         let input_method_manager_state =
             InputMethodManagerState::new::<Self, _>(&display_handle, move |_| input_method_enabled);
-        let keyboard_shortcuts_inhibit_state = KeyboardShortcutsInhibitState::new::<Self>(&display_handle);
+        let keyboard_shortcuts_inhibit_state =
+            KeyboardShortcutsInhibitState::new::<Self>(&display_handle);
         let shortcut_inhibit_enabled =
             std::env::var_os("FERESE_ENABLE_SHORTCUT_INHIBIT").is_some_and(|value| value == "1");
         if !shortcut_inhibit_enabled {
@@ -659,13 +682,15 @@ impl Ferese {
         let text_input_manager_state = TextInputManagerState::new::<Self>(&display_handle);
         let output_manager_state = OutputManagerState::new_with_xdg_output::<Self>(&display_handle);
         let pointer_constraints_state = PointerConstraintsState::new::<Self>(&display_handle);
-        let presentation_state = PresentationState::new::<Self>(&display_handle, libc::CLOCK_MONOTONIC as u32);
+        let presentation_state =
+            PresentationState::new::<Self>(&display_handle, libc::CLOCK_MONOTONIC as u32);
         let data_device_state = DataDeviceState::new::<Self>(&display_handle);
         let primary_selection_state = PrimarySelectionState::new::<Self>(&display_handle);
-        let security_context_state = smithay::wayland::security_context::SecurityContextState::new::<Self, _>(
-            &display_handle,
-            crate::handlers::security_context::unrestricted_client,
-        );
+        let security_context_state =
+            smithay::wayland::security_context::SecurityContextState::new::<Self, _>(
+                &display_handle,
+                crate::handlers::security_context::unrestricted_client,
+            );
         // Host clipboard tools retain direct access. Sandboxed clients use
         // ordinary selection protocols, which follow keyboard focus.
         let wlr_data_control_state = wlr_data_control::DataControlState::new::<Self, _>(
@@ -687,8 +712,8 @@ impl Ferese {
         let xdg_toplevel_icon_manager = XdgToplevelIconManager::new::<Self>(&display_handle);
         let mut seat_state = SeatState::new();
         let mut seat = seat_state.new_wl_seat(&display_handle, "ferese-winit");
-        let xkb_options =
-            (!config.input_settings.xkb_options.is_empty()).then(|| config.input_settings.xkb_options.join(","));
+        let xkb_options = (!config.input_settings.xkb_options.is_empty())
+            .then(|| config.input_settings.xkb_options.join(","));
         seat.add_keyboard(
             XkbConfig {
                 layout: &config.input_settings.xkb_layout,
@@ -900,9 +925,10 @@ impl Ferese {
         sections: &serde_json::Value,
     ) -> Result<(), String> {
         let changed = |keys: &[&str]| {
-            self.config_sections
-                .as_ref()
-                .is_none_or(|previous| keys.iter().any(|key| previous.get(*key) != sections.get(*key)))
+            self.config_sections.as_ref().is_none_or(|previous| {
+                keys.iter()
+                    .any(|key| previous.get(*key) != sections.get(*key))
+            })
         };
         let activities_changed = changed(&["activities"]);
         let layout_changed = changed(&["layout", "scrolling", "workspaces"]);
@@ -911,8 +937,9 @@ impl Ferese {
         let daemons_changed = changed(&["autostart"]);
         let lock_changed = changed(&["lock_screen"]);
         let panel_layout_changed = self.panel_style != config.panel_style;
-        let non_output_scene_changed =
-            layout_changed || panel_layout_changed || changed(&["animations", "appearance", "window_rules"]);
+        let non_output_scene_changed = layout_changed
+            || panel_layout_changed
+            || changed(&["animations", "appearance", "window_rules"]);
         let scene_changed = non_output_scene_changed || changed(&["output_profiles"]);
 
         if self.output_profiles != config.output_profiles {
@@ -978,7 +1005,10 @@ impl Ferese {
                     self.restore_input_capture_focus();
                 }
             }
-            keyboard.change_repeat_info(config.input_settings.repeat_rate, config.input_settings.repeat_delay_ms);
+            keyboard.change_repeat_info(
+                config.input_settings.repeat_rate,
+                config.input_settings.repeat_delay_ms,
+            );
         }
 
         if lock_changed {
@@ -1022,10 +1052,12 @@ impl Ferese {
         }
         self.workspace_auto_back_and_forth = config.workspace_auto_back_and_forth;
         if bindings_changed || input_changed {
-            self.portal_shortcuts.reconcile(&self.bindings, &self.input_settings);
+            self.portal_shortcuts
+                .reconcile(&self.bindings, &self.input_settings);
         }
         let old_rules = std::mem::replace(&mut self.window_rules, config.window_rules);
-        let idle_policy_changed = self.idle_inhibit != config.idle_inhibit || old_rules != self.window_rules;
+        let idle_policy_changed =
+            self.idle_inhibit != config.idle_inhibit || old_rules != self.window_rules;
         self.idle_inhibit = config.idle_inhibit;
         self.theme_settings = config.theme_settings;
         self.panel_corner_radius = config.panel_corner_radius;
@@ -1168,11 +1200,19 @@ fn constrained_floating_rect(rect: Rect, constraints: SizeConstraints) -> Rect {
     Rect::new(
         rect.x,
         rect.y,
-        rect.width
-            .clamp(min_width, constraints.max_width.unwrap_or(f64::INFINITY).max(min_width)),
+        rect.width.clamp(
+            min_width,
+            constraints
+                .max_width
+                .unwrap_or(f64::INFINITY)
+                .max(min_width),
+        ),
         rect.height.clamp(
             min_height,
-            constraints.max_height.unwrap_or(f64::INFINITY).max(min_height),
+            constraints
+                .max_height
+                .unwrap_or(f64::INFINITY)
+                .max(min_height),
         ),
     )
 }
@@ -1188,7 +1228,12 @@ fn natural_floating_rect(bounds: Rect, size: ClientSize) -> Rect {
     )
 }
 
-fn restored_scrolling_world_x(had_geometry: bool, visual_x: f64, viewport_x: f64, target_world_x: f64) -> f64 {
+fn restored_scrolling_world_x(
+    had_geometry: bool,
+    visual_x: f64,
+    viewport_x: f64,
+    target_world_x: f64,
+) -> f64 {
     if had_geometry {
         visual_x + viewport_x
     } else {
@@ -1224,9 +1269,10 @@ fn client_size(window: &Window) -> Option<ClientSize> {
 
 pub(crate) fn window_has_buffer(window: &Window) -> bool {
     window.toplevel().is_some_and(|toplevel| {
-        smithay::backend::renderer::utils::with_renderer_surface_state(toplevel.wl_surface(), |state| {
-            state.buffer().is_some()
-        })
+        smithay::backend::renderer::utils::with_renderer_surface_state(
+            toplevel.wl_surface(),
+            |state| state.buffer().is_some(),
+        )
         .unwrap_or(false)
     })
 }
@@ -1289,7 +1335,8 @@ impl ClientData for ClientState {
 mod tests {
     #[test]
     fn overview_slide_prediction_uses_the_same_clock_as_live_motion() {
-        let mut slide = WorkspaceSlide::new(None, WorkspaceId(1), WorkspaceId(2), SwipeDirection::Left);
+        let mut slide =
+            WorkspaceSlide::new(None, WorkspaceId(1), WorkspaceId(2), SwipeDirection::Left);
         slide.speed = crate::overview::OVERVIEW_MOTION_SPEED;
         for delta in [
             Duration::from_millis(8),
@@ -1309,17 +1356,24 @@ mod tests {
 
     #[test]
     fn slide_item_sampling_matches_advance_without_mutating_the_slide() {
-        let mut slide = WorkspaceSlide::new(None, WorkspaceId(1), WorkspaceId(2), SwipeDirection::Up);
+        let mut slide =
+            WorkspaceSlide::new(None, WorkspaceId(1), WorkspaceId(2), SwipeDirection::Up);
         slide.advance(Duration::from_millis(30));
         for held in [None, Some(0.35)] {
             slide.held_progress = held;
-            for delta in [Duration::ZERO, Duration::from_millis(8), Duration::from_millis(400)] {
+            for delta in [
+                Duration::ZERO,
+                Duration::from_millis(8),
+                Duration::from_millis(400),
+            ] {
                 let before = (slide.items[0].start, slide.items[0].velocity);
                 let mut reference = slide.clone();
                 reference.advance(delta);
                 for (item, advanced) in slide.items.iter().zip(&reference.items) {
                     let (position, velocity) = slide.sample(item, delta);
-                    let expected = held.map_or(advanced.start, |p| advanced.start.between(advanced.target, p));
+                    let expected = held.map_or(advanced.start, |p| {
+                        advanced.start.between(advanced.target, p)
+                    });
                     assert_eq!(position, expected);
                     assert_eq!(velocity, advanced.velocity);
                 }
@@ -1341,7 +1395,11 @@ mod tests {
             .collect();
         let reversed = WorkspaceSlide::new(Some(slide), to, from, SwipeDirection::Down);
         for (id, position, velocity) in before {
-            let item = reversed.items.iter().find(|item| item.workspace == id).unwrap();
+            let item = reversed
+                .items
+                .iter()
+                .find(|item| item.workspace == id)
+                .unwrap();
             assert_eq!(item.start, position);
             assert_eq!(item.velocity, velocity);
             assert!(velocity.y < 0.0);
@@ -1377,7 +1435,11 @@ mod tests {
     #[test]
     fn sampling_slide_progress_matches_advancing_without_mutating_the_slide() {
         let slide = WorkspaceSlide::new(None, WorkspaceId(1), WorkspaceId(2), SwipeDirection::Left);
-        for delta in [Duration::ZERO, Duration::from_millis(16), Duration::from_millis(100)] {
+        for delta in [
+            Duration::ZERO,
+            Duration::from_millis(16),
+            Duration::from_millis(100),
+        ] {
             let mut advanced = slide.clone();
             advanced.advance(delta);
             for (before, after) in slide.items.iter().zip(&advanced.items) {
@@ -1417,7 +1479,11 @@ mod tests {
             .connect(left, OutputGeometry::new(0, 0, 1000, 1000), from)
             .unwrap();
         outputs
-            .connect(right, OutputGeometry::new(1000, 0, 1000, 1000), WorkspaceId(2))
+            .connect(
+                right,
+                OutputGeometry::new(1000, 0, 1000, 1000),
+                WorkspaceId(2),
+            )
             .unwrap();
         assert!(workspace_swipe_is_current(&outputs, left, from, to));
         outputs.focus_output(right).unwrap();
@@ -1428,7 +1494,12 @@ mod tests {
         assert_eq!(outputs.active_workspace(left), Some(from));
         assert_eq!(outputs.output_for_workspace(to), Some(right));
         outputs.switch_workspace(left, WorkspaceId(4)).unwrap();
-        assert!(!workspace_swipe_is_current(&outputs, left, from, WorkspaceId(5)));
+        assert!(!workspace_swipe_is_current(
+            &outputs,
+            left,
+            from,
+            WorkspaceId(5)
+        ));
     }
 
     #[test]
@@ -1436,11 +1507,17 @@ mod tests {
         for assignment in [None, Some(OutputId(1)), Some(OutputId(2))] {
             let mut workspaces = WorkspaceSet::default();
             let first = workspaces.active_id();
-            workspaces.insert_window(WindowId(1), Axis::Horizontal, 0.5).unwrap();
+            workspaces
+                .insert_window(WindowId(1), Axis::Horizontal, 0.5)
+                .unwrap();
             let second = workspaces.create_workspace();
             workspaces.activate(second).unwrap();
-            workspaces.insert_window(WindowId(2), Axis::Horizontal, 0.5).unwrap();
-            workspaces.insert_window(WindowId(3), Axis::Horizontal, 0.5).unwrap();
+            workspaces
+                .insert_window(WindowId(2), Axis::Horizontal, 0.5)
+                .unwrap();
+            workspaces
+                .insert_window(WindowId(3), Axis::Horizontal, 0.5)
+                .unwrap();
             workspaces.activate(first).unwrap();
 
             let mut outputs = OutputWorkspaceMap::default();
@@ -1462,7 +1539,11 @@ mod tests {
             };
             outputs.focus_output(OutputId(1)).unwrap();
 
-            assert!(activate_window_workspace(&mut workspaces, &mut outputs, WindowId(2)));
+            assert!(activate_window_workspace(
+                &mut workspaces,
+                &mut outputs,
+                WindowId(2)
+            ));
             assert_eq!(outputs.active_workspace(owner), Some(second));
             assert_eq!(outputs.focused_output(), Some(owner));
             assert_eq!(outputs.output_for_workspace(second), Some(owner));
@@ -1477,8 +1558,12 @@ mod tests {
     #[test]
     fn selecting_a_tiled_window_reveals_it_past_another_fullscreen_window() {
         let mut workspaces = WorkspaceSet::default();
-        workspaces.insert_window(WindowId(1), Axis::Horizontal, 0.5).unwrap();
-        workspaces.insert_window(WindowId(2), Axis::Horizontal, 0.5).unwrap();
+        workspaces
+            .insert_window(WindowId(1), Axis::Horizontal, 0.5)
+            .unwrap();
+        workspaces
+            .insert_window(WindowId(2), Axis::Horizontal, 0.5)
+            .unwrap();
         workspaces.set_fullscreen(WindowId(1), true).unwrap();
         let mut outputs = OutputWorkspaceMap::default();
         outputs
@@ -1489,7 +1574,11 @@ mod tests {
             )
             .unwrap();
 
-        assert!(activate_window_workspace(&mut workspaces, &mut outputs, WindowId(2)));
+        assert!(activate_window_workspace(
+            &mut workspaces,
+            &mut outputs,
+            WindowId(2)
+        ));
         assert_eq!(workspaces.active().fullscreen, None);
         assert_eq!(workspaces.active().last_focused, Some(WindowId(2)));
     }
@@ -1626,15 +1715,26 @@ mod tests {
         assert!(chained.contains(first));
         assert!(chained.contains(second));
         assert!(chained.contains(third));
-        let first_start = chained.items.iter().find(|item| item.workspace == first).unwrap().start;
+        let first_start = chained
+            .items
+            .iter()
+            .find(|item| item.workspace == first)
+            .unwrap()
+            .start;
         let second_start = chained
             .items
             .iter()
             .find(|item| item.workspace == second)
             .unwrap()
             .start;
-        assert_eq!((first_start.x * 1600.0, first_start.y * 900.0), first_position);
-        assert_eq!((second_start.x * 1600.0, second_start.y * 900.0), second_position);
+        assert_eq!(
+            (first_start.x * 1600.0, first_start.y * 900.0),
+            first_position
+        );
+        assert_eq!(
+            (second_start.x * 1600.0, second_start.y * 900.0),
+            second_position
+        );
 
         let reversed = WorkspaceSlide::new(Some(chained), third, first, SwipeDirection::Down);
         assert_eq!(reversed.items.len(), 3);
@@ -1667,7 +1767,10 @@ mod tests {
             constrained_floating_rect(Rect::new(40., 60., 1000., 800.), constraints),
             Rect::new(40., 60., 900., 700.)
         );
-        assert_eq!(constrained_floating_rect(rect, SizeConstraints::default()), rect);
+        assert_eq!(
+            constrained_floating_rect(rect, SizeConstraints::default()),
+            rect
+        );
     }
 
     #[test]
@@ -1675,7 +1778,12 @@ mod tests {
         let serial = Some(12.into());
         assert!(floating_commit_is_current(true, serial, serial, false));
         assert!(!floating_commit_is_current(false, serial, serial, false));
-        assert!(!floating_commit_is_current(true, Some(11.into()), serial, false));
+        assert!(!floating_commit_is_current(
+            true,
+            Some(11.into()),
+            serial,
+            false
+        ));
         assert!(!floating_commit_is_current(true, serial, serial, true));
         assert!(!floating_commit_is_current(true, None, None, false));
     }
@@ -1684,7 +1792,8 @@ mod tests {
     fn display_reposition_moves_floats_with_their_output_and_clamps_after_shrinking() {
         let old = ferese_layout::Rect::new(0., 0., 1920., 1080.);
         let new = ferese_layout::Rect::new(2000., 0., 1000., 700.);
-        let rect = super::moved_floating_rect(ferese_layout::Rect::new(1500., 800., 400., 300.), old, new);
+        let rect =
+            super::moved_floating_rect(ferese_layout::Rect::new(1500., 800., 400., 300.), old, new);
         assert_eq!(rect, ferese_layout::Rect::new(2600., 400., 400., 300.));
     }
     use super::*;
@@ -1752,7 +1861,10 @@ mod tests {
     fn fullscreen_exit_restores_world_x_from_presented_position() {
         assert_eq!(restored_scrolling_world_x(true, 0.0, 0.0, 505.0), 0.0);
         assert_eq!(restored_scrolling_world_x(true, 25.0, 480.0, 505.0), 505.0);
-        assert_eq!(restored_scrolling_world_x(false, 10.0, 495.0, 1_000.0), 1_000.0);
+        assert_eq!(
+            restored_scrolling_world_x(false, 10.0, 495.0, 1_000.0),
+            1_000.0
+        );
     }
 
     #[derive(Clone, Copy, PartialEq, Debug)]
@@ -1785,7 +1897,11 @@ mod tests {
     #[test]
     fn stacking_is_not_settled_when_z_index_is_mixed_even_with_matching_order() {
         let current = [stacked(1, 30), stacked(2, 40)];
-        assert!(!stacking_order_settled(current.iter(), &current, |window| window.z_index));
+        assert!(!stacking_order_settled(
+            current.iter(),
+            &current,
+            |window| window.z_index
+        ));
     }
 
     #[test]

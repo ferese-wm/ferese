@@ -1,7 +1,9 @@
 mod frames;
 pub(crate) use frames::{ContentMeasurement, frame_driven, geometry_driven};
 
-use cosmic::iced::advanced::{Clipboard, Layout, Renderer as _, Shell, Widget, layout, mouse, renderer, widget};
+use cosmic::iced::advanced::{
+    Clipboard, Layout, Renderer as _, Shell, Widget, layout, mouse, renderer, widget,
+};
 use cosmic::iced::{Event, Length, Rectangle, Size, Transformation, Vector};
 use cosmic::{Element, Theme};
 
@@ -59,9 +61,13 @@ impl PopupMotion {
             value.snap();
             return value;
         }
-        let spring = self.settings.spring_config().expect("validated motion settings");
+        let spring = self
+            .settings
+            .spring_config()
+            .expect("validated motion settings");
         value.advance(
-            now.saturating_duration_since(started).mul_f64(self.settings.speed),
+            now.saturating_duration_since(started)
+                .mul_f64(self.settings.speed),
             SpringConfig {
                 position_tolerance: 0.00001,
                 velocity_tolerance: 0.00001,
@@ -113,7 +119,14 @@ pub(crate) fn button<'a, M: Clone + 'a>(
     opacity: f32,
 ) -> Element<'a, M> {
     let paint = move |progress: f32, pressed: bool| {
-        ferese_theme::controls::shell_button(foreground, selected, opacity, render.radius(14.), progress, pressed)
+        ferese_theme::controls::shell_button(
+            foreground,
+            selected,
+            opacity,
+            render.radius(14.),
+            progress,
+            pressed,
+        )
     };
     painted_button(render, button, paint)
 }
@@ -127,8 +140,14 @@ pub(crate) fn circular_button<'a, M: Clone + 'a>(
     diameter: f32,
 ) -> Element<'a, M> {
     let paint = move |progress: f32, pressed: bool| {
-        let mut style =
-            ferese_theme::controls::shell_button(foreground, false, opacity, diameter / 2.0, progress, pressed);
+        let mut style = ferese_theme::controls::shell_button(
+            foreground,
+            false,
+            opacity,
+            diameter / 2.0,
+            progress,
+            pressed,
+        );
         style.shape = Some(cosmic::iced::border::Shape::Circular);
         if let Some(fill) = fill {
             style.background = Some(
@@ -177,7 +196,12 @@ struct HoverState {
 }
 
 impl HoverState {
-    fn advance(&mut self, target: f32, now: std::time::Instant, duration: std::time::Duration) -> bool {
+    fn advance(
+        &mut self,
+        target: f32,
+        now: std::time::Instant,
+        duration: std::time::Duration,
+    ) -> bool {
         if self.target != target {
             self.start = self.current;
             self.target = target;
@@ -187,7 +211,8 @@ impl HoverState {
             1.0
         } else {
             self.started.map_or(1.0, |start| {
-                (now.saturating_duration_since(start).as_secs_f32() / duration.as_secs_f32()).min(1.0)
+                (now.saturating_duration_since(start).as_secs_f32() / duration.as_secs_f32())
+                    .min(1.0)
             })
         };
         self.current = self.start + (self.target - self.start) * t * t * (3.0 - 2.0 * t);
@@ -212,7 +237,9 @@ impl<M> Widget<M, Theme, cosmic::Renderer> for Hover<'_, M> {
         tree: &widget::Tree,
         cursor: mouse::Cursor,
     ) -> iced_accessibility::A11yTree {
-        self.content.as_widget().a11y_nodes(layout, &tree.children[0], cursor)
+        self.content
+            .as_widget()
+            .a11y_nodes(layout, &tree.children[0], cursor)
     }
 
     fn tag(&self) -> widget::tree::Tag {
@@ -289,10 +316,17 @@ impl<M> Widget<M, Theme, cosmic::Renderer> for Hover<'_, M> {
         cursor: mouse::Cursor,
         viewport: &Rectangle,
     ) {
-        self.progress.set(tree.state.downcast_ref::<HoverState>().current);
-        self.content
-            .as_widget()
-            .draw(&tree.children[0], renderer, theme, style, layout, cursor, viewport);
+        self.progress
+            .set(tree.state.downcast_ref::<HoverState>().current);
+        self.content.as_widget().draw(
+            &tree.children[0],
+            renderer,
+            theme,
+            style,
+            layout,
+            cursor,
+            viewport,
+        );
     }
 
     fn mouse_interaction(
@@ -303,9 +337,13 @@ impl<M> Widget<M, Theme, cosmic::Renderer> for Hover<'_, M> {
         viewport: &Rectangle,
         renderer: &cosmic::Renderer,
     ) -> mouse::Interaction {
-        self.content
-            .as_widget()
-            .mouse_interaction(&tree.children[0], layout, cursor, viewport, renderer)
+        self.content.as_widget().mouse_interaction(
+            &tree.children[0],
+            layout,
+            cursor,
+            viewport,
+            renderer,
+        )
     }
 
     fn operate(
@@ -328,13 +366,22 @@ impl<M> Widget<M, Theme, cosmic::Renderer> for Hover<'_, M> {
         viewport: &Rectangle,
         translation: Vector,
     ) -> Option<cosmic::iced::advanced::overlay::Element<'a, M, Theme, cosmic::Renderer>> {
-        self.content
-            .as_widget_mut()
-            .overlay(&mut tree.children[0], layout, renderer, viewport, translation)
+        self.content.as_widget_mut().overlay(
+            &mut tree.children[0],
+            layout,
+            renderer,
+            viewport,
+            translation,
+        )
     }
 }
 
-pub fn animated<'a, M: 'a>(content: Element<'a, M>, progress: f32, regions: Regions, radius: f32) -> Element<'a, M> {
+pub fn animated<'a, M: 'a>(
+    content: Element<'a, M>,
+    progress: f32,
+    regions: Regions,
+    radius: f32,
+) -> Element<'a, M> {
     animated_from_edge(content, progress, regions, radius, ferese_panel::Edge::Top)
 }
 
@@ -351,7 +398,11 @@ pub fn animated_from_edge<'a, M: 'a>(
         regions: Some(regions),
         radius,
         scale: 1.,
-        direction: if edge == ferese_panel::Edge::Top { -1. } else { 1. },
+        direction: if edge == ferese_panel::Edge::Top {
+            -1.
+        } else {
+            1.
+        },
     })
 }
 
@@ -383,7 +434,8 @@ impl<M> Motion<'_, M> {
     fn cursor(&self, layout: Layout<'_>, cursor: mouse::Cursor) -> mouse::Cursor {
         cursor.position().map_or(mouse::Cursor::Unavailable, |p| {
             mouse::Cursor::Available(
-                layout.bounds().center() + (p - layout.bounds().center() - self.translation()) / self.scale,
+                layout.bounds().center()
+                    + (p - layout.bounds().center() - self.translation()) / self.scale,
             )
         })
     }
@@ -396,10 +448,10 @@ impl<M> Widget<M, Theme, cosmic::Renderer> for Motion<'_, M> {
         tree: &widget::Tree,
         cursor: mouse::Cursor,
     ) -> iced_accessibility::A11yTree {
-        let mut nodes = self
-            .content
-            .as_widget()
-            .a11y_nodes(layout, tree, self.cursor(layout, cursor));
+        let mut nodes =
+            self.content
+                .as_widget()
+                .a11y_nodes(layout, tree, self.cursor(layout, cursor));
         let offset = self.translation();
         for node in nodes.root_mut() {
             transform_accessible_node(node, offset, layout.bounds().center(), self.scale);
@@ -453,9 +505,12 @@ impl<M> Widget<M, Theme, cosmic::Renderer> for Motion<'_, M> {
         if let Some(regions) = &self.regions {
             let mut collected = regions.lock().unwrap();
             collected.clear();
-            self.content
-                .as_widget_mut()
-                .operate(tree, layout, renderer, &mut ReuseRegions(&mut collected));
+            self.content.as_widget_mut().operate(
+                tree,
+                layout,
+                renderer,
+                &mut ReuseRegions(&mut collected),
+            );
             if collected.is_empty()
                 && let Some(content) = layout.children().next()
             {
@@ -471,9 +526,9 @@ impl<M> Widget<M, Theme, cosmic::Renderer> for Motion<'_, M> {
             );
         }
         let cursor = self.cursor(layout, cursor);
-        self.content
-            .as_widget_mut()
-            .update(tree, event, layout, cursor, renderer, clipboard, shell, viewport);
+        self.content.as_widget_mut().update(
+            tree, event, layout, cursor, renderer, clipboard, shell, viewport,
+        );
     }
 
     fn draw(
@@ -517,9 +572,13 @@ impl<M> Widget<M, Theme, cosmic::Renderer> for Motion<'_, M> {
         viewport: &Rectangle,
         renderer: &cosmic::Renderer,
     ) -> mouse::Interaction {
-        self.content
-            .as_widget()
-            .mouse_interaction(tree, layout, self.cursor(layout, cursor), viewport, renderer)
+        self.content.as_widget().mouse_interaction(
+            tree,
+            layout,
+            self.cursor(layout, cursor),
+            viewport,
+            renderer,
+        )
     }
 
     fn operate(
@@ -529,7 +588,9 @@ impl<M> Widget<M, Theme, cosmic::Renderer> for Motion<'_, M> {
         renderer: &cosmic::Renderer,
         operation: &mut dyn widget::Operation,
     ) {
-        self.content.as_widget_mut().operate(tree, layout, renderer, operation);
+        self.content
+            .as_widget_mut()
+            .operate(tree, layout, renderer, operation);
     }
 
     fn overlay<'a>(
@@ -564,7 +625,13 @@ fn transform_accessible_node(
     }
 }
 
-fn transform_regions(regions: &mut [[f32; 5]], center: cosmic::iced::Point, scale: f32, offset: Vector, radius: f32) {
+fn transform_regions(
+    regions: &mut [[f32; 5]],
+    center: cosmic::iced::Point,
+    scale: f32,
+    offset: Vector,
+    radius: f32,
+) {
     for region in regions {
         region[0] = center.x + (region[0] - center.x) * scale + offset.x;
         region[1] = center.y + (region[1] - center.y) * scale + offset.y;
@@ -580,7 +647,10 @@ impl widget::Operation for ReuseRegions<'_> {
         children(self);
     }
     fn container(&mut self, id: Option<&widget::Id>, bounds: Rectangle) {
-        if id != Some(&widget::Id::new("ferese-blur-card")) || bounds.width <= 0. || bounds.height <= 0. {
+        if id != Some(&widget::Id::new("ferese-blur-card"))
+            || bounds.width <= 0.
+            || bounds.height <= 0.
+        {
             return;
         }
         let r = [bounds.x, bounds.y, bounds.width, bounds.height, 0.];
@@ -639,21 +709,30 @@ mod tests {
                 &renderer,
                 &layout::Limits::new(Size::ZERO, viewport.size()),
             );
-            let plain_a11y =
-                plain
-                    .as_widget()
-                    .a11y_nodes(Layout::new(&plain_node), &plain_tree, mouse::Cursor::Unavailable);
+            let plain_a11y = plain.as_widget().a11y_nodes(
+                Layout::new(&plain_node),
+                &plain_tree,
+                mouse::Cursor::Unavailable,
+            );
             assert!(!plain_a11y.root().is_empty());
-            let mut wrapped = animated_from_edge(make_content().into(), 0.5, Default::default(), 10., edge);
+            let mut wrapped =
+                animated_from_edge(make_content().into(), 0.5, Default::default(), 10., edge);
             let mut tree = widget::Tree::new(&wrapped);
-            let node =
-                wrapped
-                    .as_widget_mut()
-                    .layout(&mut tree, &renderer, &layout::Limits::new(Size::ZERO, viewport.size()));
-            let offset = if edge == ferese_panel::Edge::Top { -2. } else { 2. };
-            let accessible = wrapped
-                .as_widget()
-                .a11y_nodes(Layout::new(&node), &tree, mouse::Cursor::Unavailable);
+            let node = wrapped.as_widget_mut().layout(
+                &mut tree,
+                &renderer,
+                &layout::Limits::new(Size::ZERO, viewport.size()),
+            );
+            let offset = if edge == ferese_panel::Edge::Top {
+                -2.
+            } else {
+                2.
+            };
+            let accessible = wrapped.as_widget().a11y_nodes(
+                Layout::new(&node),
+                &tree,
+                mouse::Cursor::Unavailable,
+            );
             assert_eq!(accessible.root().len(), plain_a11y.root().len());
             for (actual, expected) in accessible
                 .root()
@@ -713,7 +792,9 @@ mod tests {
                     Vector::new(40., 80.),
                 )
                 .expect("motion forwards tooltip");
-            let plain_layout = plain_overlay.as_overlay_mut().layout(&renderer, viewport.size());
+            let plain_layout = plain_overlay
+                .as_overlay_mut()
+                .layout(&renderer, viewport.size());
             let overlay_layout = overlay.as_overlay_mut().layout(&renderer, viewport.size());
             fn tooltip_bounds(node: &layout::Node) -> Rectangle {
                 // Tooltip and row each return an overlay group; descend past
@@ -778,7 +859,11 @@ mod tests {
         let mut regions = Vec::new();
         let mut collector = ReuseRegions(&mut regions);
         let card = Rectangle::new((380.0, 420.0).into(), (440.0, 220.0).into());
-        widget::Operation::container(&mut collector, Some(&widget::Id::new("ferese-blur-card")), card);
+        widget::Operation::container(
+            &mut collector,
+            Some(&widget::Id::new("ferese-blur-card")),
+            card,
+        );
         transform_regions(
             &mut regions,
             cosmic::iced::Point::ORIGIN,
@@ -793,7 +878,10 @@ mod tests {
     fn popup_waits_for_configuration_and_preserves_reversal_velocity() {
         let now = std::time::Instant::now();
         let mut motion = PopupMotion::new(Settings::default());
-        assert_eq!(motion.progress_at(now + std::time::Duration::from_secs(30)), 0.0);
+        assert_eq!(
+            motion.progress_at(now + std::time::Duration::from_secs(30)),
+            0.0
+        );
         motion.begin(now);
         let reverse = now + std::time::Duration::from_millis(90);
         let before = motion.sample(reverse);
@@ -804,7 +892,10 @@ mod tests {
         assert_eq!(after.current, before.current);
         assert_eq!(after.velocity, before.velocity);
         assert!(motion.closing());
-        assert_eq!(motion.progress_at(reverse + std::time::Duration::from_secs(2)), 0.0);
+        assert_eq!(
+            motion.progress_at(reverse + std::time::Duration::from_secs(2)),
+            0.0
+        );
     }
 
     #[test]
@@ -850,7 +941,10 @@ mod tests {
         let before = motion.progress_at(reopen);
         motion.retarget(1.0, reopen);
         assert_eq!(motion.progress_at(reopen), before);
-        assert_eq!(motion.progress_at(reopen + std::time::Duration::from_secs(2)), 1.0);
+        assert_eq!(
+            motion.progress_at(reopen + std::time::Duration::from_secs(2)),
+            1.0
+        );
         for settings in [
             Settings {
                 reduced_motion: true,

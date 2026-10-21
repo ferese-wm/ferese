@@ -8,7 +8,11 @@ const POPUP_WIDTH: u32 = 368;
 const HISTORY_MAX_HEIGHT: f32 = 620.0;
 
 fn popup_height(notice: &notifications::Notice, count: usize) -> u32 {
-    let body = if notice.body.is_empty() && count == 1 { 0 } else { 22 };
+    let body = if notice.body.is_empty() && count == 1 {
+        0
+    } else {
+        22
+    };
     let actions = if notice.live && notice.actions.iter().any(|(key, _)| key != "default") {
         39
     } else {
@@ -111,7 +115,10 @@ fn icon_control<'a>(
     );
     cosmic::widget::tooltip(
         control,
-        render.text(label).size(11).class(theme::Text::Color(foreground)),
+        render
+            .text(label)
+            .size(11)
+            .class(theme::Text::Color(foreground)),
         cosmic::widget::tooltip::Position::Left,
     )
     .class(theme::Container::custom(move |_| container::Style {
@@ -155,7 +162,8 @@ impl FereseShell {
                     .map(|menu| self.panel_for_bar(menu.anchor.parent))
                     .unwrap_or(&self.config.panels[0])
                     .resolved_geometry();
-                (height as f32 - geometry.edge_margin as f32 - geometry.height - 8.0 - 12.0).max(1.0)
+                (height as f32 - geometry.edge_margin as f32 - geometry.height - 8.0 - 12.0)
+                    .max(1.0)
             })
             .min(HISTORY_MAX_HEIGHT)
     }
@@ -224,10 +232,9 @@ impl FereseShell {
             .outputs
             .iter()
             .find(|entry| {
-                self.snapshot
-                    .outputs
-                    .iter()
-                    .any(|output| output.focused && Some(output.name.as_str()) == entry.name.as_deref())
+                self.snapshot.outputs.iter().any(|output| {
+                    output.focused && Some(output.name.as_str()) == entry.name.as_deref()
+                })
             })
             .or_else(|| self.outputs.first())
             .map(|entry| entry.output.clone());
@@ -250,7 +257,9 @@ impl FereseShell {
             .notifications
             .popup_groups()
             .iter()
-            .map(|(notice, _, count)| popup_height(notice, *count) + if *count > 1 { 12 } else { 0 })
+            .map(|(notice, _, count)| {
+                popup_height(notice, *count) + if *count > 1 { 12 } else { 0 }
+            })
             .sum::<u32>()
             + count.saturating_sub(1) as u32 * 8
             + 8;
@@ -264,7 +273,12 @@ impl FereseShell {
             .outputs
             .iter()
             .find(|entry| entry.output == output)
-            .map(|entry| entry.runtime.panel(&self.config.panels[0]).resolved_geometry())
+            .map(|entry| {
+                entry
+                    .runtime
+                    .panel(&self.config.panels[0])
+                    .resolved_geometry()
+            })
             .unwrap_or_else(|| self.config.panels[0].resolved_geometry());
         let top = geometry.height + geometry.edge_margin as f32 + 12.0;
         let height = desired_height.min((output_height as f32 - top - 12.0).max(100.0) as u32);
@@ -338,7 +352,8 @@ impl FereseShell {
         let id = notice.id;
         let mut bold = self.render.font;
         bold.weight = cosmic::iced::font::Weight::Bold;
-        let app_icon = if notice.app.to_lowercase().starts_with("ferese") || notice.icon.is_empty() {
+        let app_icon = if notice.app.to_lowercase().starts_with("ferese") || notice.icon.is_empty()
+        {
             accented_icon(ferese_theme::icons::FERESE, 18, accent, accent)
         } else if notice.icon.starts_with('/') {
             icon::icon(icon::from_path(notice.icon.clone().into())).size(18)
@@ -356,7 +371,8 @@ impl FereseShell {
                     palette.surface_popover
                 }),
             );
-            let (badge_fill, badge_text) = ferese_theme::accent_pair(badge_fill, color(palette.text_primary));
+            let (badge_fill, badge_text) =
+                ferese_theme::accent_pair(badge_fill, color(palette.text_primary));
             let badge = container(
                 self.render
                     .text(count.to_string())
@@ -457,13 +473,18 @@ impl FereseShell {
         };
         if !body.is_empty() {
             content = content.push(
-                container(self.render.text(body).size(13).class(theme::Text::Color(muted)))
-                    .height(if history && count == 1 {
-                        Length::Shrink
-                    } else {
-                        Length::Fixed(18.0)
-                    })
-                    .clip(true),
+                container(
+                    self.render
+                        .text(body)
+                        .size(13)
+                        .class(theme::Text::Color(muted)),
+                )
+                .height(if history && count == 1 {
+                    Length::Shrink
+                } else {
+                    Length::Fixed(18.0)
+                })
+                .clip(true),
             );
         }
         let mut face = column([]).push(container(content).padding([12, 14]).width(Length::Fill));
@@ -478,13 +499,13 @@ impl FereseShell {
                 let mut actions = row([]);
                 for (index, (key, label)) in available.into_iter().enumerate() {
                     if index > 0 {
-                        actions =
-                            actions.push(container(cosmic::iced::widget::Space::new().width(1).height(38)).class(
-                                theme::Container::custom(move |_| container::Style {
+                        actions = actions.push(
+                            container(cosmic::iced::widget::Space::new().width(1).height(38))
+                                .class(theme::Container::custom(move |_| container::Style {
                                     background: Some(Background::Color(divider)),
                                     ..Default::default()
-                                }),
-                            ));
+                                })),
+                        );
                     }
                     actions = actions.push(card_button(
                         self.render,
@@ -505,12 +526,17 @@ impl FereseShell {
                 }
                 face = face
                     .push(
-                        container(cosmic::iced::widget::Space::new().width(Length::Fill).height(1)).class(
-                            theme::Container::custom(move |_| container::Style {
+                        container(
+                            cosmic::iced::widget::Space::new()
+                                .width(Length::Fill)
+                                .height(1),
+                        )
+                        .class(theme::Container::custom(move |_| {
+                            container::Style {
                                 background: Some(Background::Color(divider)),
                                 ..Default::default()
-                            }),
-                        ),
+                            }
+                        })),
                     )
                     .push(actions);
             }
@@ -544,20 +570,25 @@ impl FereseShell {
             // bottom edges, after the card's measured height.
             let back = move |inset: f32| {
                 container(
-                    container(cosmic::iced::widget::Space::new().width(Length::Fill).height(6))
-                        .width(Length::Fill)
-                        .class(theme::Container::custom(move |_| container::Style {
-                            background: Some(Background::Color(Color {
-                                a: 0.045 * opacity,
-                                ..foreground
-                            })),
-                            border: Border {
-                                shape: BorderShape::Continuous,
-                                radius: [0.0, 0.0, self.render.radius(6.0), self.render.radius(6.0)].into(),
-                                ..Default::default()
-                            },
-                            ..Default::default()
+                    container(
+                        cosmic::iced::widget::Space::new()
+                            .width(Length::Fill)
+                            .height(6),
+                    )
+                    .width(Length::Fill)
+                    .class(theme::Container::custom(move |_| container::Style {
+                        background: Some(Background::Color(Color {
+                            a: 0.045 * opacity,
+                            ..foreground
                         })),
+                        border: Border {
+                            shape: BorderShape::Continuous,
+                            radius: [0.0, 0.0, self.render.radius(6.0), self.render.radius(6.0)]
+                                .into(),
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    })),
                 )
                 .padding([0.0, inset])
             };
@@ -575,7 +606,10 @@ impl FereseShell {
                 Message::ToggleNotificationHistory
             }));
         } else if notice.live && notice.actions.iter().any(|(key, _)| key == "default") {
-            area = area.on_press(cosmic::Action::App(Message::InvokeNotification(id, "default".into())));
+            area = area.on_press(cosmic::Action::App(Message::InvokeNotification(
+                id,
+                "default".into(),
+            )));
         }
         area.into()
     }
@@ -608,7 +642,10 @@ impl FereseShell {
         )
     }
 
-    pub(super) fn view_notifications_at(&self, now: std::time::Instant) -> Element<'_, cosmic::Action<Message>> {
+    pub(super) fn view_notifications_at(
+        &self,
+        now: std::time::Instant,
+    ) -> Element<'_, cosmic::Action<Message>> {
         if self.notifications.history_open {
             let palette = self.config.theme;
             let surface = self.menu.as_ref();
@@ -630,7 +667,11 @@ impl FereseShell {
             } else {
                 format!(
                     "{count} {} · {} {}",
-                    if count == 1 { "notification" } else { "notifications" },
+                    if count == 1 {
+                        "notification"
+                    } else {
+                        "notifications"
+                    },
                     groups.len(),
                     if groups.len() == 1 { "app" } else { "apps" }
                 )
@@ -644,7 +685,12 @@ impl FereseShell {
                         .font(bold)
                         .class(theme::Text::Color(primary)),
                 )
-                .push(self.render.text(subtitle).size(11).class(theme::Text::Color(muted)));
+                .push(
+                    self.render
+                        .text(subtitle)
+                        .size(11)
+                        .class(theme::Text::Color(muted)),
+                );
             let header = row([])
                 .spacing(10)
                 .align_y(alignment::Vertical::Center)
@@ -658,7 +704,11 @@ impl FereseShell {
                     well,
                     28,
                 ));
-            let dnd_color = if self.notifications.dnd { accent } else { muted };
+            let dnd_color = if self.notifications.dnd {
+                accent
+            } else {
+                muted
+            };
             let dnd_icon = if self.notifications.dnd {
                 ferese_theme::icons::NOTIFICATIONS_OFF
             } else {
@@ -713,7 +763,8 @@ impl FereseShell {
                     self.notifications.dnd,
                     1.0,
                 ));
-            let controls = ferese_theme::menus::section(dnd.into(), primary, opacity, palette.material_radius);
+            let controls =
+                ferese_theme::menus::section(dnd.into(), primary, opacity, palette.material_radius);
             let mut content = column([]).spacing(10).push(header).push(controls);
             if count == 0 {
                 let empty = column([])
@@ -738,7 +789,11 @@ impl FereseShell {
                             .size(11)
                             .class(theme::Text::Color(muted)),
                     );
-                content = content.push(container(empty).center_x(Length::Fill).center_y(Length::Fill));
+                content = content.push(
+                    container(empty)
+                        .center_x(Length::Fill)
+                        .center_y(Length::Fill),
+                );
             } else {
                 content = content.push(
                     row([])
@@ -805,7 +860,12 @@ impl FereseShell {
                         }
                         entries = entries.push(cards);
                     } else {
-                        entries = entries.push(self.notification_card(latest, opacity, true, group.len()));
+                        entries = entries.push(self.notification_card(
+                            latest,
+                            opacity,
+                            true,
+                            group.len(),
+                        ));
                     }
                 }
                 content = content.push(
@@ -825,7 +885,8 @@ impl FereseShell {
                 .max_height(self.notification_history_height_limit())
                 .width(Length::Fill)
                 .class(theme::Container::custom(move |_| container::Style {
-                    background: (!compositor_material).then_some(Background::Color(color(palette.surface_popover))),
+                    background: (!compositor_material)
+                        .then_some(Background::Color(color(palette.surface_popover))),
                     border: Border {
                         shape: BorderShape::Continuous,
                         color: color_with_opacity(palette.text_muted, 0.18 * opacity),
@@ -840,7 +901,9 @@ impl FereseShell {
             motion::animated_from_edge(
                 panel,
                 progress,
-                surface.map(|surface| surface.regions.clone()).unwrap_or_default(),
+                surface
+                    .map(|surface| surface.regions.clone())
+                    .unwrap_or_default(),
                 palette.material_radius,
                 self.config.panels[0].edge,
             )
@@ -920,7 +983,12 @@ mod tests {
                         mouse::Cursor::Unavailable,
                         &bounds,
                     );
-                    let pixels = Headless::screenshot(&mut renderer, Size::new(120, 60), 1.0, Color::TRANSPARENT);
+                    let pixels = Headless::screenshot(
+                        &mut renderer,
+                        Size::new(120, 60),
+                        1.0,
+                        Color::TRANSPARENT,
+                    );
                     let center = node.bounds().center();
                     let alpha = pixels[((center.y as usize * 120 + center.x as usize) * 4) + 3];
                     assert!(
@@ -983,9 +1051,11 @@ mod tests {
                     },
                 );
                 let mut tree = Tree::new(card.as_widget());
-                let node =
-                    card.as_widget_mut()
-                        .layout(&mut tree, &renderer, &layout::Limits::new(Size::ZERO, bounds.size()));
+                let node = card.as_widget_mut().layout(
+                    &mut tree,
+                    &renderer,
+                    &layout::Limits::new(Size::ZERO, bounds.size()),
+                );
                 renderer.reset(bounds);
                 card.as_widget().draw(
                     &tree,
@@ -996,7 +1066,10 @@ mod tests {
                     mouse::Cursor::Available((80.0, 100.0).into()),
                     &bounds,
                 );
-                let size = Size::new((bounds.width * scale) as u32, (bounds.height * scale) as u32);
+                let size = Size::new(
+                    (bounds.width * scale) as u32,
+                    (bounds.height * scale) as u32,
+                );
                 let pixels = Headless::screenshot(&mut renderer, size, scale, Color::TRANSPARENT);
                 let alpha = |x: u32, y: u32| pixels[((y * size.width + x) * 4 + 3) as usize];
                 assert_eq!(

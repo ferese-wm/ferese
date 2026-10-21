@@ -21,7 +21,11 @@ impl FocusHistory {
         self.windows.retain(|id| *id != window);
     }
 
-    pub fn candidates(&self, current: Option<WindowId>, available: impl AsRef<[WindowId]>) -> Vec<WindowId> {
+    pub fn candidates(
+        &self,
+        current: Option<WindowId>,
+        available: impl AsRef<[WindowId]>,
+    ) -> Vec<WindowId> {
         let mut remaining = available.as_ref().iter().copied().collect::<HashSet<_>>();
         let mut ordered = Vec::with_capacity(remaining.len());
 
@@ -71,7 +75,12 @@ impl FocusCycle {
         let old = self
             .selected
             .and_then(|id| self.windows.iter().position(|candidate| *candidate == id));
-        let before = old.map(|index| self.windows[..index].iter().filter(|id| available.contains(id)).count());
+        let before = old.map(|index| {
+            self.windows[..index]
+                .iter()
+                .filter(|id| available.contains(id))
+                .count()
+        });
         let survives = self.selected.is_some_and(|id| available.contains(&id));
         self.windows.retain(|id| available.contains(id));
         if self.windows.is_empty() {
@@ -142,7 +151,10 @@ mod tests {
             [3, 2, 1, 4].map(WindowId)
         );
         history.record(WindowId(2));
-        assert_eq!(history.candidates(Some(WindowId(2)), available)[1], WindowId(3));
+        assert_eq!(
+            history.candidates(Some(WindowId(2)), available)[1],
+            WindowId(3)
+        );
         history.remove(WindowId(3));
         assert_eq!(
             history.candidates(None, vec![WindowId(1), WindowId(4)]),
@@ -158,7 +170,10 @@ mod tests {
         assert_eq!(cycle.advance(false, &available), Some(WindowId(1)));
         assert_eq!(cycle.advance(false, &available), Some(WindowId(3)));
         assert_eq!(cycle.advance(true, &available), Some(WindowId(1)));
-        assert_eq!(cycle.advance(false, &[WindowId(3), WindowId(2)]), Some(WindowId(3)));
+        assert_eq!(
+            cycle.advance(false, &[WindowId(3), WindowId(2)]),
+            Some(WindowId(3))
+        );
         assert_eq!(cycle.advance(false, &[]), None);
     }
 
@@ -177,7 +192,13 @@ mod tests {
         let available = [3, 2, 1].map(WindowId);
         let mut cycle = FocusCycle::new(available.to_vec(), Some(WindowId(3)));
         assert_eq!(cycle.advance(false, &available), Some(WindowId(2)));
-        assert_eq!(cycle.reconcile(&[WindowId(3), WindowId(1)]), Some(WindowId(1)));
-        assert_eq!(cycle.reconcile(&[WindowId(3), WindowId(1)]), Some(WindowId(1)));
+        assert_eq!(
+            cycle.reconcile(&[WindowId(3), WindowId(1)]),
+            Some(WindowId(1))
+        );
+        assert_eq!(
+            cycle.reconcile(&[WindowId(3), WindowId(1)]),
+            Some(WindowId(1))
+        );
     }
 }

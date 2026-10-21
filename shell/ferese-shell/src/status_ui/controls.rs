@@ -30,7 +30,11 @@ pub(super) fn status_summary<'a>(
         .center_y(32)
         .class(theme::Container::custom(move |_| container::Style {
             background: Some(Background::Color(Color {
-                a: if enabled { 0.22 * opacity } else { 0.06 * opacity },
+                a: if enabled {
+                    0.22 * opacity
+                } else {
+                    0.06 * opacity
+                },
                 ..badge_color
             })),
             border: Border {
@@ -58,7 +62,10 @@ pub(super) fn status_summary<'a>(
         badge,
         column![
             render.text(title).size(14),
-            render.text(subtitle).size(12).class(theme::Text::Color(muted)),
+            render
+                .text(subtitle)
+                .size(12)
+                .class(theme::Text::Color(muted)),
         ]
         .spacing(4)
         .width(Length::Fill)
@@ -176,13 +183,17 @@ pub(super) fn slider_row(
     icon_accent: Color,
     opacity: f32,
 ) -> Element<'static, cosmic::Action<Message>> {
-    let control = slider(if brightness { 1..=100 } else { 0..=100 }, value, move |value| {
-        cosmic::Action::App(Message::Control(if brightness {
-            Action::Brightness(value)
-        } else {
-            Action::Volume(value)
-        }))
-    })
+    let control = slider(
+        if brightness { 1..=100 } else { 0..=100 },
+        value,
+        move |value| {
+            cosmic::Action::App(Message::Control(if brightness {
+                Action::Brightness(value)
+            } else {
+                Action::Volume(value)
+            }))
+        },
+    )
     .width(Length::Fill)
     .height(24)
     .class(ferese_theme::menus::slider(foreground, opacity));

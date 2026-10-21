@@ -26,7 +26,10 @@ impl Publisher {
                         .as_ref()
                         .is_some_and(|(snapshot, _)| Arc::ptr_eq(snapshot, &job.snapshot))
                     {
-                        cached = Some((job.snapshot.clone(), serde_json::json!(job.snapshot.as_ref())));
+                        cached = Some((
+                            job.snapshot.clone(),
+                            serde_json::json!(job.snapshot.as_ref()),
+                        ));
                     }
                     let value = &cached.as_ref().unwrap().1;
                     // Lock acquisition revokes queued/in-flight serialization.
@@ -54,7 +57,12 @@ impl Publisher {
         }
     }
 }
-fn deliver(epoch: u64, current: &RwLock<u64>, recipients: Vec<Recipient>, value: &serde_json::Value) {
+fn deliver(
+    epoch: u64,
+    current: &RwLock<u64>,
+    recipients: Vec<Recipient>,
+    value: &serde_json::Value,
+) {
     let current = current.read().expect("activity publication epoch");
     if epoch != *current {
         locked(recipients);
@@ -116,9 +124,16 @@ mod tests {
 
         let publisher = Publisher::new().unwrap();
         let (slow, _slow_receive) = mpsc::sync_channel(1);
-        slow.send(Response::success(1, serde_json::json!({}))).unwrap();
+        slow.send(Response::success(1, serde_json::json!({})))
+            .unwrap();
         let (fast, fast_receive) = mpsc::sync_channel(1);
         publisher.send(Arc::new(Snapshot::default()), vec![(2, slow), (3, fast)]);
-        assert_eq!(fast_receive.recv_timeout(Duration::from_secs(1)).unwrap().id, 3);
+        assert_eq!(
+            fast_receive
+                .recv_timeout(Duration::from_secs(1))
+                .unwrap()
+                .id,
+            3
+        );
     }
 }

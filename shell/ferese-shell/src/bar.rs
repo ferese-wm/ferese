@@ -1,6 +1,6 @@
 use super::{
-    BarMetrics, Color, Element, FereseShell, Length, Message, ShellSnapshot, alignment, bar_icon, button, color,
-    container, control, motion, row, status_ui, theme, window,
+    BarMetrics, Color, Element, FereseShell, Length, Message, ShellSnapshot, alignment, bar_icon,
+    button, color, container, control, motion, row, status_ui, theme, window,
 };
 use crate::panel::{Availability, Item, ItemKind, Panel, Zone};
 #[cfg(test)]
@@ -16,7 +16,10 @@ use crate::panel_layout::Placement;
 mod binding_mode_tests;
 
 impl FereseShell {
-    pub(super) fn binding_mode_transition(&mut self, was_active: bool) -> cosmic::app::Task<Message> {
+    pub(super) fn binding_mode_transition(
+        &mut self,
+        was_active: bool,
+    ) -> cosmic::app::Task<Message> {
         match (was_active, self.snapshot.binding_mode.is_some()) {
             (false, true) => {
                 let mut tasks = vec![self.destroy_menu(), self.dismiss_workspace_tooltip()];
@@ -39,25 +42,35 @@ impl FereseShell {
     }
 
     pub(super) fn output_for_bar(&self, id: window::Id) -> Option<&control::OutputSnapshot> {
-        let name = self.outputs.iter().find(|entry| entry.bar == id)?.name.as_deref()?;
-        self.snapshot.outputs.iter().find(|output| output.name == name)
+        let name = self
+            .outputs
+            .iter()
+            .find(|entry| entry.bar == id)?
+            .name
+            .as_deref()?;
+        self.snapshot
+            .outputs
+            .iter()
+            .find(|output| output.name == name)
     }
 
     pub(super) fn active_bar(&self) -> Option<window::Id> {
         self.outputs
             .iter()
             .find(|entry| {
-                self.snapshot
-                    .outputs
-                    .iter()
-                    .any(|output| output.focused && Some(output.name.as_str()) == entry.name.as_deref())
+                self.snapshot.outputs.iter().any(|output| {
+                    output.focused && Some(output.name.as_str()) == entry.name.as_deref()
+                })
             })
             .or_else(|| self.outputs.first())
             .map(|output| output.bar)
     }
 
     pub(super) fn bar_hidden(&self, id: window::Id) -> bool {
-        output_bar_hidden(&self.snapshot, self.output_for_bar(id).map(|output| output.id))
+        output_bar_hidden(
+            &self.snapshot,
+            self.output_for_bar(id).map(|output| output.id),
+        )
     }
 
     pub(super) fn view_layer(&self, id: window::Id) -> Element<'_, cosmic::Action<Message>> {
@@ -75,7 +88,8 @@ impl FereseShell {
             return self.view_hub(id);
         }
         let mut shell_theme = self.config.theme.for_bar();
-        shell_theme.bar_background[3] = (shell_theme.panel_opacity(panel.background_opacity) * 255.).round() as u8;
+        shell_theme.bar_background[3] =
+            (shell_theme.panel_opacity(panel.background_opacity) * 255.).round() as u8;
         let output = self.outputs.iter().find(|output| output.bar == id);
         let effects = output.and_then(|output| output.effects.as_ref());
         let compositor_material = effects.is_some();
@@ -91,7 +105,11 @@ impl FereseShell {
         let mut samples = Vec::new();
         for zone in [&panel.center, &panel.start, &panel.end] {
             for group in &zone.groups {
-                for item in group.items.iter().filter(|item| item.available(availability)) {
+                for item in group
+                    .items
+                    .iter()
+                    .filter(|item| item.available(availability))
+                {
                     if matches!(item.kind, ItemKind::FocusedWindow)
                         && focused_bar_title(&self.snapshot, self.output_for_bar(id)).is_empty()
                     {
@@ -171,7 +189,10 @@ impl FereseShell {
                         availability,
                         |item| matches!(resolution.items.get(&item.id), Some(Placement::Visible { width, .. }) if *width > 0.0),
                         |item, surface| {
-                            let Some(Placement::Visible { representation, width }) = resolution.items.get(&item.id)
+                            let Some(Placement::Visible {
+                                representation,
+                                width,
+                            }) = resolution.items.get(&item.id)
                             else {
                                 unreachable!()
                             };
@@ -221,11 +242,17 @@ impl FereseShell {
                     }
                 };
                 cosmic::iced::widget::stack![
-                    row![start, cosmic::iced::widget::Space::new().width(Length::Fill), end]
-                        .width(Length::Fill)
-                        .height(Length::Fill)
-                        .align_y(cosmic::iced::Alignment::Center),
-                    container(center).center_x(Length::Fill).center_y(Length::Fill),
+                    row![
+                        start,
+                        cosmic::iced::widget::Space::new().width(Length::Fill),
+                        end
+                    ]
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .align_y(cosmic::iced::Alignment::Center),
+                    container(center)
+                        .center_x(Length::Fill)
+                        .center_y(Length::Fill),
                 ]
                 .into()
             },
@@ -267,9 +294,17 @@ impl FereseShell {
         self.with_workspace_hover(id, content)
     }
 
-    fn view_binding_mode<'a>(&'a self, id: window::Id, name: &'a str) -> Element<'a, cosmic::Action<Message>> {
+    fn view_binding_mode<'a>(
+        &'a self,
+        id: window::Id,
+        name: &'a str,
+    ) -> Element<'a, cosmic::Action<Message>> {
         let panel = self.panel_for_bar(id);
-        let output = self.outputs.iter().find(|entry| entry.bar == id).expect("panel output");
+        let output = self
+            .outputs
+            .iter()
+            .find(|entry| entry.bar == id)
+            .expect("panel output");
         let effects = output.effects.as_ref();
         let width = output
             .runtime
@@ -297,7 +332,9 @@ impl FereseShell {
         .width(width as f32)
         .height(panel.resolved_geometry().height)
         .align_y(alignment::Vertical::Center);
-        let content = container(badge).center_x(Length::Fill).center_y(Length::Fill);
+        let content = container(badge)
+            .center_x(Length::Fill)
+            .center_y(Length::Fill);
         let palette = self.config.theme.for_bar();
         let mut background = color(palette.bar_background);
         background.a = palette.panel_opacity(panel.background_opacity);
@@ -345,7 +382,12 @@ impl FereseShell {
                 .map(|(workspace, target)| presentation::HoverTarget {
                     id: target.clone(),
                     exited: Box::new(move || {
-                        cosmic::Action::App(Message::HoverWorkspace(id, workspace, target.clone(), false))
+                        cosmic::Action::App(Message::HoverWorkspace(
+                            id,
+                            workspace,
+                            target.clone(),
+                            false,
+                        ))
                     }),
                 }),
         )
@@ -377,7 +419,10 @@ impl FereseShell {
             ItemKind::Overview => motion::button(
                 self.render,
                 button::custom(overview_control(
-                    BarMetrics { control_height, ..bar },
+                    BarMetrics {
+                        control_height,
+                        ..bar
+                    },
                     color(shell_theme.accent),
                 ))
                 .height(control_height)
@@ -425,15 +470,30 @@ impl FereseShell {
                 return (container(element).max_width(360).into(), !title.is_empty());
             }
             ItemKind::Activities => {
-                return self.view_activity_item(id, item, representation, selected, width, control_height);
+                return self.view_activity_item(
+                    id,
+                    item,
+                    representation,
+                    selected,
+                    width,
+                    control_height,
+                );
             }
             ItemKind::Media => self.view_media_item(representation, selected, width),
-            ItemKind::QuickSettings => self.view_status_item(status_ui::Menu::System, false, selected),
-            ItemKind::NightLight => self.view_status_item(status_ui::Menu::NightLight, false, selected),
+            ItemKind::QuickSettings => {
+                self.view_status_item(status_ui::Menu::System, false, selected)
+            }
+            ItemKind::NightLight => {
+                self.view_status_item(status_ui::Menu::NightLight, false, selected)
+            }
             ItemKind::Network => self.view_status_item(status_ui::Menu::Network, false, selected),
             ItemKind::Audio => self.view_status_item(status_ui::Menu::Audio, false, selected),
-            ItemKind::Recording => self.view_status_item(status_ui::Menu::Recording, false, selected),
-            ItemKind::Notifications => self.view_status_item(status_ui::Menu::Notifications, false, selected),
+            ItemKind::Recording => {
+                self.view_status_item(status_ui::Menu::Recording, false, selected)
+            }
+            ItemKind::Notifications => {
+                self.view_status_item(status_ui::Menu::Notifications, false, selected)
+            }
             ItemKind::Battery { percentage } => self.view_status_item(
                 status_ui::Menu::Battery,
                 percentage && representation != Representation::Icon,
@@ -453,7 +513,9 @@ impl FereseShell {
                         self.render
                             .text(date)
                             .size(bar.text_size)
-                            .line_height(cosmic::iced::widget::text::LineHeight::Absolute(20.into()))
+                            .line_height(cosmic::iced::widget::text::LineHeight::Absolute(
+                                20.into(),
+                            ))
                             .wrapping(cosmic::iced::widget::text::Wrapping::None)
                             .class(theme::Text::Color(foreground)),
                     );
@@ -496,7 +558,10 @@ impl FereseShell {
                 ))
                 .name("Display mode")
                 .height(control_height)
-                .padding([0.0, ((bar.height - f32::from(bar.icon_size)) * 0.5).max(4.0)])
+                .padding([
+                    0.0,
+                    ((bar.height - f32::from(bar.icon_size)) * 0.5).max(4.0),
+                ])
                 .on_press(cosmic::Action::App(Message::OpenDisplays(
                     self.outputs
                         .iter()
@@ -515,15 +580,17 @@ impl FereseShell {
             .into();
         (
             element.map(move |action| match action {
-                cosmic::Action::App(Message::OpenMenu(kind, anchor)) => cosmic::Action::App(Message::OpenPopover(
-                    kind,
-                    status_ui::PopoverAnchor {
-                        parent: id,
-                        panel: panel.clone(),
-                        item: Some(item.clone()),
-                        rectangle: anchor,
-                    },
-                )),
+                cosmic::Action::App(Message::OpenMenu(kind, anchor)) => {
+                    cosmic::Action::App(Message::OpenPopover(
+                        kind,
+                        status_ui::PopoverAnchor {
+                            parent: id,
+                            panel: panel.clone(),
+                            item: Some(item.clone()),
+                            rectangle: anchor,
+                        },
+                    ))
+                }
                 other => other,
             }),
             true,
@@ -532,10 +599,19 @@ impl FereseShell {
 
     pub(crate) fn view_panel_overflow<'a>(
         &'a self,
-        mut rows: cosmic::widget::Column<'a, cosmic::Action<Message>, cosmic::Theme, cosmic::Renderer>,
+        mut rows: cosmic::widget::Column<
+            'a,
+            cosmic::Action<Message>,
+            cosmic::Theme,
+            cosmic::Renderer,
+        >,
     ) -> cosmic::widget::Column<'a, cosmic::Action<Message>, cosmic::Theme, cosmic::Renderer> {
         let Some(menu) = &self.menu else { return rows };
-        let Some(output) = self.outputs.iter().find(|output| output.bar == menu.anchor.parent) else {
+        let Some(output) = self
+            .outputs
+            .iter()
+            .find(|output| output.bar == menu.anchor.parent)
+        else {
             return rows;
         };
         let panel = self.panel_for_bar(output.bar);
@@ -569,7 +645,10 @@ impl FereseShell {
                 ) => cosmic::Action::App(Message::PanelAction(Box::new(message))),
                 other => other,
             });
-            rows = rows.push(cosmic::widget::column![self.render.text(item.kind.label()).size(12), element].spacing(4));
+            rows = rows.push(
+                cosmic::widget::column![self.render.text(item.kind.label()).size(12), element]
+                    .spacing(4),
+            );
         }
         rows
     }
@@ -645,7 +724,9 @@ impl FereseShell {
                 ))
                 .height(bar.group_item_height)
                 .padding(0)
-                .on_press(cosmic::Action::App(Message::ActivateWorkspace(workspace.id)));
+                .on_press(cosmic::Action::App(Message::ActivateWorkspace(
+                    workspace.id,
+                )));
 
             let selector = motion::button(
                 self.render,
@@ -658,8 +739,10 @@ impl FereseShell {
                 false,
                 opacity,
             );
-            let target =
-                cosmic::iced::advanced::widget::Id::new(format!("workspace:{id:?}:{instance}:{}", workspace.id));
+            let target = cosmic::iced::advanced::widget::Id::new(format!(
+                "workspace:{id:?}:{instance}:{}",
+                workspace.id
+            ));
             let selector = cosmic::widget::mouse_area(container(selector).id(target.clone()))
                 .on_enter(cosmic::Action::App(Message::HoverWorkspace(
                     id,
@@ -679,7 +762,12 @@ impl FereseShell {
                 selector
             } else {
                 selector.on_move(move |_| {
-                    cosmic::Action::App(Message::HoverWorkspace(id, workspace.id, target.clone(), true))
+                    cosmic::Action::App(Message::HoverWorkspace(
+                        id,
+                        workspace.id,
+                        target.clone(),
+                        true,
+                    ))
                 })
             };
             workspace_buttons = workspace_buttons.push(selector);
@@ -688,8 +776,14 @@ impl FereseShell {
     }
 }
 
-fn group_material_id(panel: &Panel, group: &crate::panel::Group) -> cosmic::iced::advanced::widget::Id {
-    cosmic::iced::advanced::widget::Id::new(format!("panel:{}:group:{}:material", panel.id.0, group.id.0))
+fn group_material_id(
+    panel: &Panel,
+    group: &crate::panel::Group,
+) -> cosmic::iced::advanced::widget::Id {
+    cosmic::iced::advanced::widget::Id::new(format!(
+        "panel:{}:group:{}:material",
+        panel.id.0, group.id.0
+    ))
 }
 
 /// Render ordered instances; item rendering does not choose its neighbors or surface.
@@ -706,7 +800,8 @@ fn view_zone<'a>(
         .align_y(cosmic::iced::Alignment::Center);
     for group in &zone.groups {
         let surface = panel.group_surface();
-        let mut controls = row::with_capacity(group.items.len()).align_y(cosmic::iced::Alignment::Center);
+        let mut controls =
+            row::with_capacity(group.items.len()).align_y(cosmic::iced::Alignment::Center);
         let mut count = 0;
         for item in group
             .items
@@ -714,11 +809,14 @@ fn view_zone<'a>(
             .filter(|item| item.available(availability) && visible(item))
         {
             if count > 0 {
-                controls =
-                    controls.push(cosmic::iced::widget::Space::new().width(item.gap_before.unwrap_or(group.spacing)));
+                controls = controls.push(
+                    cosmic::iced::widget::Space::new()
+                        .width(item.gap_before.unwrap_or(group.spacing)),
+                );
             }
             let (element, _) = render(item, surface);
-            controls = controls.push(container(element).id(format!("panel:{}:item:{}", panel.id.0, item.id.0)));
+            controls = controls
+                .push(container(element).id(format!("panel:{}:item:{}", panel.id.0, item.id.0)));
             count += 1;
         }
         if count == 0 {
@@ -756,9 +854,16 @@ pub(super) fn bar_content<'a>(
     container(content).center_y(height)
 }
 
-pub(super) fn overview_control(bar: BarMetrics, foreground: Color) -> Element<'static, cosmic::Action<Message>> {
+pub(super) fn overview_control(
+    bar: BarMetrics,
+    foreground: Color,
+) -> Element<'static, cosmic::Action<Message>> {
     bar_content(
-        bar_icon(ferese_theme::icons::FERESE, bar.overview_icon_size, foreground),
+        bar_icon(
+            ferese_theme::icons::FERESE,
+            bar.overview_icon_size,
+            foreground,
+        ),
         bar.control_height,
     )
     .width(bar.overview_icon_size)
@@ -795,7 +900,10 @@ pub(super) fn output_bar_hidden(snapshot: &ShellSnapshot, output: Option<u64>) -
     })
 }
 
-pub(super) fn focused_bar_title<'a>(snapshot: &'a ShellSnapshot, output: Option<&control::OutputSnapshot>) -> &'a str {
+pub(super) fn focused_bar_title<'a>(
+    snapshot: &'a ShellSnapshot,
+    output: Option<&control::OutputSnapshot>,
+) -> &'a str {
     let Some(output) = output else {
         return "";
     };
@@ -812,7 +920,10 @@ pub(super) fn focused_bar_title<'a>(snapshot: &'a ShellSnapshot, output: Option<
         })
 }
 
-pub(super) fn workspace_active_on_bar(workspace: u64, output: Option<&control::OutputSnapshot>) -> bool {
+pub(super) fn workspace_active_on_bar(
+    workspace: u64,
+    output: Option<&control::OutputSnapshot>,
+) -> bool {
     output.is_some_and(|output| output.active_workspace == workspace)
 }
 
@@ -934,7 +1045,13 @@ mod island_tests {
         let mut previous_label = 0.;
         for width in [120., 200., 320.] {
             let mut view = shell
-                .view_panel_item(shell.outputs[0].bar, &item, Some(width), true, Representation::Wide)
+                .view_panel_item(
+                    shell.outputs[0].bar,
+                    &item,
+                    Some(width),
+                    true,
+                    Representation::Wide,
+                )
                 .0;
             let mut tree = widget::Tree::new(&view);
             let node = view.as_widget_mut().layout(
@@ -1004,12 +1121,20 @@ mod island_tests {
                 let last = labels.0.last().unwrap();
                 let right = node.size().width - last.x - last.width;
                 assert!((left - right).abs() < 0.01);
-                assert!(right <= 4.01, "panel height must not add horizontal space to the clock");
+                assert!(
+                    right <= 4.01,
+                    "panel height must not add horizontal space to the clock"
+                );
             }
         }
     }
 
-    fn measure_zone(panel: &Panel, zone: &Zone, availability: Availability, title_content: bool) -> Bounds {
+    fn measure_zone(
+        panel: &Panel,
+        zone: &Zone,
+        availability: Availability,
+        title_content: bool,
+    ) -> Bounds {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -1040,7 +1165,12 @@ mod island_tests {
                     20.
                 };
                 (
-                    container(cosmic::iced::widget::Space::new().width(width).height(height)).into(),
+                    container(
+                        cosmic::iced::widget::Space::new()
+                            .width(width)
+                            .height(height),
+                    )
+                    .into(),
                     !matches!(item.kind, ItemKind::FocusedWindow) || title_content,
                 )
             },
@@ -1053,7 +1183,10 @@ mod island_tests {
         let node = view.as_widget_mut().layout(
             &mut tree,
             &renderer,
-            &layout::Limits::new(Size::ZERO, Size::new(1200., panel.resolved_geometry().height)),
+            &layout::Limits::new(
+                Size::ZERO,
+                Size::new(1200., panel.resolved_geometry().height),
+            ),
         );
         let mut bounds = Bounds {
             group_ids: zone
@@ -1116,12 +1249,19 @@ mod island_tests {
                 }
                 let start = measure_zone(&panel, &panel.start, Availability::default(), true);
                 assert_eq!(
-                    start.items.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(),
+                    start
+                        .items
+                        .iter()
+                        .map(|(id, _)| id.as_str())
+                        .collect::<Vec<_>>(),
                     ["overview", "workspaces"]
                 );
                 let islands = background == PanelStyle::Floating;
                 assert_eq!(start.items[0].1.x, if islands { padding + 3. } else { 0. });
-                assert_eq!(start.items[1].1.x - start.items[0].1.x, if islands { 29. } else { 34. });
+                assert_eq!(
+                    start.items[1].1.x - start.items[0].1.x,
+                    if islands { 29. } else { 34. }
+                );
                 assert_eq!(start.islands.len(), panel.start.groups.len());
                 if islands {
                     assert_eq!(
@@ -1134,12 +1274,18 @@ mod island_tests {
                 }
                 let end = measure_zone(&panel, &panel.end, Availability::default(), true);
                 assert_eq!(
-                    end.items.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(),
+                    end.items
+                        .iter()
+                        .map(|(id, _)| id.as_str())
+                        .collect::<Vec<_>>(),
                     ["quick-settings", "night-light", "recording", "clock"]
                 );
                 assert_eq!(end.items[1].1.x - end.items[0].1.x, 21.);
                 assert_eq!(end.items[2].1.x - end.items[1].1.x, 21.);
-                assert_eq!(end.items[3].1.x - end.items[2].1.x, if islands { 21. } else { 34. });
+                assert_eq!(
+                    end.items[3].1.x - end.items[2].1.x,
+                    if islands { 21. } else { 34. }
+                );
                 if islands {
                     assert_eq!(
                         end.islands[0],
@@ -1154,7 +1300,8 @@ mod island_tests {
                 if islands {
                     assert_eq!(center.islands[0].width, 80. + 2. * padding);
                 }
-                let empty_title = measure_zone(&panel, &panel.center, Availability::default(), false);
+                let empty_title =
+                    measure_zone(&panel, &panel.center, Availability::default(), false);
                 assert!(empty_title.islands.is_empty());
                 assert!(
                     empty_title.items.is_empty(),
@@ -1190,16 +1337,27 @@ mod island_tests {
         panel.end.groups.insert(0, unavailable);
         let result = measure_zone(&panel, &panel.end, Availability::default(), true);
         assert_eq!(
-            result.items.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(),
+            result
+                .items
+                .iter()
+                .map(|(id, _)| id.as_str())
+                .collect::<Vec<_>>(),
             ["clock", "other-clock"]
         );
-        assert_eq!(result.items[0].1.x, 7., "an unavailable group adds no space");
+        assert_eq!(
+            result.items[0].1.x, 7.,
+            "an unavailable group adds no space"
+        );
         assert_eq!(result.items[1].1.x, 68.);
         assert_eq!(result.islands.len(), 1);
         panel.end.groups[1].items.reverse();
         let reordered = measure_zone(&panel, &panel.end, Availability::default(), true);
         assert_eq!(
-            reordered.items.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(),
+            reordered
+                .items
+                .iter()
+                .map(|(id, _)| id.as_str())
+                .collect::<Vec<_>>(),
             ["other-clock", "clock"]
         );
     }
@@ -1213,10 +1371,20 @@ mod island_tests {
             input[0],
             cosmic::iced::Rectangle::new((12., 2.).into(), (81., 25.).into())
         );
-        assert!(!input.iter().any(|region| region.contains((240., 14.).into())));
-        assert_eq!(input_region(PanelSurface::None, true, &regions), Some(Vec::new()));
+        assert!(
+            !input
+                .iter()
+                .any(|region| region.contains((240., 14.).into()))
+        );
+        assert_eq!(
+            input_region(PanelSurface::None, true, &regions),
+            Some(Vec::new())
+        );
         assert_eq!(input_region(PanelSurface::Solid, false, &regions), None);
-        assert_eq!(input_region(PanelSurface::Solid, true, &regions), Some(Vec::new()));
+        assert_eq!(
+            input_region(PanelSurface::Solid, true, &regions),
+            Some(Vec::new())
+        );
     }
 
     #[test]

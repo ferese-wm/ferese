@@ -14,9 +14,10 @@ impl App {
         }
         self.connections.loading = true;
         if let Some(client) = self.connections.client.clone() {
-            Task::perform(async move { Box::new(client.snapshot().await) }, |snapshot| {
-                cosmic::Action::App(Message::ConnectionsRefreshed(snapshot))
-            })
+            Task::perform(
+                async move { Box::new(client.snapshot().await) },
+                |snapshot| cosmic::Action::App(Message::ConnectionsRefreshed(snapshot)),
+            )
         } else {
             Task::perform(Client::new(), |client| {
                 cosmic::Action::App(Message::ConnectionsReady(client))
@@ -24,7 +25,10 @@ impl App {
         }
     }
 
-    pub(crate) fn connections_ready(&mut self, result: Result<Arc<Client>, String>) -> Task<Message> {
+    pub(crate) fn connections_ready(
+        &mut self,
+        result: Result<Arc<Client>, String>,
+    ) -> Task<Message> {
         self.connections.loading = false;
         match result {
             Ok(client) => {
@@ -80,18 +84,26 @@ impl App {
                 let prompt = self.connections.client.as_ref().and_then(|c| c.prompt());
                 if prompt != self.connections.prompt {
                     self.connections.pairing_input.zeroize();
-                    let needs_input = prompt
-                        .as_ref()
-                        .is_some_and(|p| matches!(p.kind, super::agent::Kind::Pin | super::agent::Kind::Passkey));
+                    let needs_input = prompt.as_ref().is_some_and(|p| {
+                        matches!(
+                            p.kind,
+                            super::agent::Kind::Pin | super::agent::Kind::Passkey
+                        )
+                    });
                     self.connections.prompt = prompt;
                     let scroll = cosmic::iced::widget::scrollable::snap_to(
                         cosmic::widget::Id::new("settings-content"),
-                        cosmic::iced::widget::scrollable::RelativeOffset { x: None, y: Some(0.) },
+                        cosmic::iced::widget::scrollable::RelativeOffset {
+                            x: None,
+                            y: Some(0.),
+                        },
                     );
                     return if needs_input {
                         Task::batch([
                             scroll,
-                            cosmic::widget::text_input::focus(cosmic::widget::Id::new("bluetooth-passkey")),
+                            cosmic::widget::text_input::focus(cosmic::widget::Id::new(
+                                "bluetooth-passkey",
+                            )),
                         ])
                     } else {
                         scroll
@@ -132,8 +144,12 @@ impl App {
                     && network.security.can_create()
                     && super::wifi::valid_password(network.security, &self.connections.password)
                 {
-                    let password = std::mem::replace(&mut self.connections.password, Zeroizing::new(String::new()));
-                    return self.connections_input(Input::Run(Command::WifiConnect(network, password)));
+                    let password = std::mem::replace(
+                        &mut self.connections.password,
+                        Zeroizing::new(String::new()),
+                    );
+                    return self
+                        .connections_input(Input::Run(Command::WifiConnect(network, password)));
                 }
             }
             Input::PairingValue(id, value) => {
@@ -154,8 +170,12 @@ impl App {
                     return Task::none();
                 }
                 if let Some(client) = &self.connections.client {
-                    let value = accepted
-                        .then(|| std::mem::replace(&mut self.connections.pairing_input, Zeroizing::new(String::new())));
+                    let value = accepted.then(|| {
+                        std::mem::replace(
+                            &mut self.connections.pairing_input,
+                            Zeroizing::new(String::new()),
+                        )
+                    });
                     client.reply(id, value);
                 }
                 self.connections.pairing_input.zeroize();
@@ -165,7 +185,10 @@ impl App {
                 self.connections.forget = Some(command);
                 return cosmic::iced::widget::scrollable::snap_to(
                     cosmic::widget::Id::new("settings-content"),
-                    cosmic::iced::widget::scrollable::RelativeOffset { x: None, y: Some(0.) },
+                    cosmic::iced::widget::scrollable::RelativeOffset {
+                        x: None,
+                        y: Some(0.),
+                    },
                 );
             }
             Input::CancelForget => self.connections.forget = None,
@@ -195,9 +218,10 @@ impl App {
                 self.connections.selected = None;
                 self.connections.hidden = false;
                 let epoch = client.epoch();
-                return Task::perform(async move { client.execute_checked(command, epoch).await }, |result| {
-                    cosmic::Action::App(Message::ConnectionFinished(result))
-                });
+                return Task::perform(
+                    async move { client.execute_checked(command, epoch).await },
+                    |result| cosmic::Action::App(Message::ConnectionFinished(result)),
+                );
             }
         }
         Task::none()
@@ -295,7 +319,10 @@ mod tests {
             hidden: false,
         };
         for message in [
-            Input::Run(Command::WifiConnect(network, Zeroizing::new("never-log-this".into()))),
+            Input::Run(Command::WifiConnect(
+                network,
+                Zeroizing::new("never-log-this".into()),
+            )),
             Input::Password(Zeroizing::new("never-log-this".into())),
             Input::PairingValue(1, Zeroizing::new("never-log-this".into())),
         ] {
@@ -312,7 +339,9 @@ mod tests {
             (
                 "/unused/connections-test.kdl".into(),
                 crate::store::Snapshot::parse(String::new()),
-                Some(crate::InitialPage::Connections(super::super::Tab::Bluetooth)),
+                Some(crate::InitialPage::Connections(
+                    super::super::Tab::Bluetooth,
+                )),
             ),
         );
         assert_eq!(app.page, crate::schema::Page::Connections);

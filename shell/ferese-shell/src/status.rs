@@ -159,15 +159,24 @@ impl Service {
         let (updates, rx) = tokio::sync::watch::channel(None);
         // Polling and writes have separate workers: a missing D-Bus service must
         // never hold up volume/brightness changes. Publish only coherent polls.
-        let shared = Arc::new((Mutex::new((0u64, false, None::<ActionError>, false, 0)), Condvar::new()));
+        let shared = Arc::new((
+            Mutex::new((0u64, false, None::<ActionError>, false, 0)),
+            Condvar::new(),
+        ));
         let polling = shared.clone();
 
         thread::spawn(move || {
-            let mut network = dbus_cache::Cache::with_wake("org.freedesktop.NetworkManager", polling.clone());
+            let mut network =
+                dbus_cache::Cache::with_wake("org.freedesktop.NetworkManager", polling.clone());
             let mut bluetooth = dbus_cache::Cache::with_wake("org.bluez", polling.clone());
-            let mut battery_cache = dbus_cache::Cache::with_wake("org.freedesktop.UPower", polling.clone());
-            let mut profiles = dbus_cache::Cache::with_wake("org.freedesktop.UPower.PowerProfiles", polling.clone());
-            let mut legacy_profiles = dbus_cache::Cache::with_wake("net.hadess.PowerProfiles", polling.clone());
+            let mut battery_cache =
+                dbus_cache::Cache::with_wake("org.freedesktop.UPower", polling.clone());
+            let mut profiles = dbus_cache::Cache::with_wake(
+                "org.freedesktop.UPower.PowerProfiles",
+                polling.clone(),
+            );
+            let mut legacy_profiles =
+                dbus_cache::Cache::with_wake("net.hadess.PowerProfiles", polling.clone());
             let mut login = dbus_cache::Cache::with_wake("org.freedesktop.login1", polling.clone());
             let mut audio = audio_cache::Cache::new(polling.clone());
             let mut hardware = hardware::Monitor::start(polling.clone()).ok();
@@ -191,7 +200,12 @@ impl Service {
                     .map(Some)
                 });
                 let fallback_profiles = legacy_profiles.read(before, |connection| {
-                    read_power_profiles(connection, "net.hadess.PowerProfiles", "/net/hadess/PowerProfiles").map(Some)
+                    read_power_profiles(
+                        connection,
+                        "net.hadess.PowerProfiles",
+                        "/net/hadess/PowerProfiles",
+                    )
+                    .map(Some)
                 });
 
                 let mut snapshot = Snapshot {
@@ -298,10 +312,12 @@ impl Service {
     pub fn send(&mut self, action: Action) -> Result<(), ActionError> {
         let generation = self.generation + 1;
         let error_action = action.clone();
-        self.tx.try_send((generation, action)).map_err(|_| ActionError {
-            action: error_action,
-            message: "Controls are busy; please try again".to_owned(),
-        })?;
+        self.tx
+            .try_send((generation, action))
+            .map_err(|_| ActionError {
+                action: error_action,
+                message: "Controls are busy; please try again".to_owned(),
+            })?;
         self.generation = generation;
 
         Ok(())
@@ -328,7 +344,8 @@ pub fn available(program: &str) -> bool {
         return executable(Path::new(program));
     }
 
-    env::var_os("PATH").is_some_and(|paths| env::split_paths(&paths).any(|path| executable(&path.join(program))))
+    env::var_os("PATH")
+        .is_some_and(|paths| env::split_paths(&paths).any(|path| executable(&path.join(program))))
 }
 
 fn run(program: &str, args: &[&str]) -> Result<String, String> {
@@ -380,7 +397,10 @@ impl StatusBus {
         }
     }
 
-    fn query<T>(&mut self, query: impl FnOnce(&zbus::blocking::Connection) -> zbus::Result<T>) -> Option<T> {
+    fn query<T>(
+        &mut self,
+        query: impl FnOnce(&zbus::blocking::Connection) -> zbus::Result<T>,
+    ) -> Option<T> {
         if self.connection.is_none() {
             let builder = if self.system {
                 zbus::blocking::connection::Builder::system()
@@ -388,7 +408,11 @@ impl StatusBus {
                 zbus::blocking::connection::Builder::session()
             };
 
-            self.connection = builder.ok()?.method_timeout(Duration::from_secs(2)).build().ok();
+            self.connection = builder
+                .ok()?
+                .method_timeout(Duration::from_secs(2))
+                .build()
+                .ok();
         }
 
         match query(self.connection.as_ref()?) {
@@ -436,7 +460,9 @@ impl StatusBus {
     }
 }
 
-fn read_capabilities(connection: &zbus::blocking::Connection) -> zbus::Result<Option<(bool, bool, bool)>> {
+fn read_capabilities(
+    connection: &zbus::blocking::Connection,
+) -> zbus::Result<Option<(bool, bool, bool)>> {
     let can = |method| -> zbus::Result<bool> {
         let value: String = connection
             .call_method(
@@ -452,7 +478,11 @@ fn read_capabilities(connection: &zbus::blocking::Connection) -> zbus::Result<Op
         Ok(value == "yes" || value == "challenge")
     };
 
-    Ok(Some((can("CanPowerOff")?, can("CanReboot")?, can("CanSuspend")?)))
+    Ok(Some((
+        can("CanPowerOff")?,
+        can("CanReboot")?,
+        can("CanSuspend")?,
+    )))
 }
 
 fn read_battery(connection: &zbus::blocking::Connection) -> zbus::Result<Option<Battery>> {
@@ -500,7 +530,8 @@ pub fn parse_audio(value: &str) -> Option<(u8, bool)> {
 }
 
 fn audio() -> Option<Audio> {
-    let (volume, muted) = parse_audio(&run("wpctl", &["get-volume", "@DEFAULT_AUDIO_SINK@"]).ok()?)?;
+    let (volume, muted) =
+        parse_audio(&run("wpctl", &["get-volume", "@DEFAULT_AUDIO_SINK@"]).ok()?)?;
     let info = run("wpctl", &["inspect", "@DEFAULT_AUDIO_SINK@"]).ok()?;
     let output = info
         .lines()
@@ -508,11 +539,17 @@ fn audio() -> Option<Audio> {
         .map(|s| s.trim_matches('"').to_owned())
         .unwrap_or_else(|| "Default output".into());
 
-    Some(Audio { volume, muted, output })
+    Some(Audio {
+        volume,
+        muted,
+        output,
+    })
 }
 
 fn read(path: &Path, name: &str) -> Option<String> {
-    fs::read_to_string(path.join(name)).ok().map(|s| s.trim().to_owned())
+    fs::read_to_string(path.join(name))
+        .ok()
+        .map(|s| s.trim().to_owned())
 }
 
 fn battery() -> Option<Battery> {
@@ -521,7 +558,10 @@ fn battery() -> Option<Battery> {
     let mut batteries = entries
         .flatten()
         .map(|e| e.path())
-        .filter(|p| read(p, "type").as_deref() == Some("Battery") && read(p, "scope").as_deref() != Some("Device"))
+        .filter(|p| {
+            read(p, "type").as_deref() == Some("Battery")
+                && read(p, "scope").as_deref() != Some("Device")
+        })
         .collect::<Vec<_>>();
 
     batteries.sort();
@@ -541,7 +581,13 @@ fn power_profiles(bus: &mut StatusBus) -> Option<PowerProfiles> {
             "org.freedesktop.UPower.PowerProfiles",
             "/org/freedesktop/UPower/PowerProfiles",
         )
-        .or_else(|_| read_power_profiles(connection, "net.hadess.PowerProfiles", "/net/hadess/PowerProfiles"))
+        .or_else(|_| {
+            read_power_profiles(
+                connection,
+                "net.hadess.PowerProfiles",
+                "/net/hadess/PowerProfiles",
+            )
+        })
     })
 }
 
@@ -552,8 +598,10 @@ fn read_power_profiles(
 ) -> zbus::Result<PowerProfiles> {
     let proxy = zbus::blocking::Proxy::new(connection, destination, path, destination)?;
     let active = proxy.get_property::<String>("ActiveProfile")?;
-    let profiles =
-        proxy.get_property::<Vec<std::collections::HashMap<String, zbus::zvariant::OwnedValue>>>("Profiles")?;
+    let profiles = proxy
+        .get_property::<Vec<std::collections::HashMap<String, zbus::zvariant::OwnedValue>>>(
+            "Profiles",
+        )?;
     let names = ["power-saver", "balanced", "performance"];
     let available = names.map(|name| {
         profiles.iter().any(|profile| {
@@ -616,18 +664,30 @@ fn execute(action: &Action, settings: Option<&[String]>) -> Result<(), String> {
         ),
         Action::Mute(on) => run(
             "wpctl",
-            &["set-mute", "@DEFAULT_AUDIO_SINK@", if *on { "1" } else { "0" }],
+            &[
+                "set-mute",
+                "@DEFAULT_AUDIO_SINK@",
+                if *on { "1" } else { "0" },
+            ],
         ),
         Action::Brightness(value) => run(
             "brightnessctl",
-            &["--class=backlight", "set", &format!("{}%", value.clamp(&1, &100))],
+            &[
+                "--class=backlight",
+                "set",
+                &format!("{}%", value.clamp(&1, &100)),
+            ],
         ),
         Action::NightLight(enabled) => return night_light::Change::Enabled(*enabled).save(),
         Action::NightLightTemperature(temperature) => {
             return night_light::Change::Temperature(*temperature).save();
         }
-        Action::Dnd(_) | Action::Notifications => return Err("Native notifications are unavailable".into()),
-        Action::PowerProfile(profile) if matches!(*profile, "power-saver" | "balanced" | "performance") => {
+        Action::Dnd(_) | Action::Notifications => {
+            return Err("Native notifications are unavailable".into());
+        }
+        Action::PowerProfile(profile)
+            if matches!(*profile, "power-saver" | "balanced" | "performance") =>
+        {
             run("powerprofilesctl", &["set", profile])
         }
         Action::PowerProfile(_) => return Err("Invalid power profile".to_owned()),
@@ -790,7 +850,10 @@ mod tests {
         assert!(bus.can_power("CanReboot"));
         assert!(!bus.can_power("CanSuspend"));
         mode.store(1, Ordering::Relaxed);
-        assert!(!bus.can_power("CanPowerOff"), "capabilities must not be cached");
+        assert!(
+            !bus.can_power("CanPowerOff"),
+            "capabilities must not be cached"
+        );
         assert!(bus.connection.is_some());
         assert!(!bus.notification_service_owned());
         server.request_name("org.erikreider.swaync").unwrap();
@@ -821,7 +884,12 @@ mod tests {
         assert_eq!(brightness_percent(2.0, 3.0), Some(67));
         assert_eq!(brightness_percent(0.0, 400.0), Some(0));
 
-        for (current, max) in [(1.0, 0.0), (-1.0, 100.0), (f64::NAN, 100.0), (1.0, f64::INFINITY)] {
+        for (current, max) in [
+            (1.0, 0.0),
+            (-1.0, 100.0),
+            (f64::NAN, 100.0),
+            (1.0, f64::INFINITY),
+        ] {
             assert_eq!(brightness_percent(current, max), None);
         }
     }
@@ -885,7 +953,10 @@ mod tests {
             panic!("worker result missing");
         };
         assert_eq!(update.generation, 3);
-        assert!(matches!(stream.as_mut().poll_next(&mut context), Poll::Ready(None)));
+        assert!(matches!(
+            stream.as_mut().poll_next(&mut context),
+            Poll::Ready(None)
+        ));
     }
 
     #[test]
@@ -906,7 +977,10 @@ mod tests {
             state.1 = false;
             shared.1.notify_one();
         }
-        assert_eq!(receiver.recv_timeout(Duration::from_secs(2)).unwrap(), Some(8));
+        assert_eq!(
+            receiver.recv_timeout(Duration::from_secs(2)).unwrap(),
+            Some(8)
+        );
         worker.join().unwrap();
     }
 

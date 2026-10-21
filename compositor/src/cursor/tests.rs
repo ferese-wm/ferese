@@ -7,17 +7,27 @@ use smithay::utils::SERIAL_COUNTER;
 
 fn file(frames: &[(u32, u32, u32, u32)]) -> Vec<u8> {
     let mut bytes = b"Xcur".to_vec();
-    bytes.extend([16u32, 1, frames.len() as u32].into_iter().flat_map(u32::to_le_bytes));
+    bytes.extend(
+        [16u32, 1, frames.len() as u32]
+            .into_iter()
+            .flat_map(u32::to_le_bytes),
+    );
     let mut pos = 16 + frames.len() * 12;
     for &(size, width, _, _) in frames {
-        bytes.extend([0xfffd0002, size, pos as u32].into_iter().flat_map(u32::to_le_bytes));
+        bytes.extend(
+            [0xfffd0002, size, pos as u32]
+                .into_iter()
+                .flat_map(u32::to_le_bytes),
+        );
         pos += 36 + width as usize * width as usize * 4;
     }
     for &(size, width, hotspot, delay) in frames {
         bytes.extend(
-            [36, 0xfffd0002, size, 1, width, width, hotspot, hotspot, delay]
-                .into_iter()
-                .flat_map(u32::to_le_bytes),
+            [
+                36, 0xfffd0002, size, 1, width, width, hotspot, hotspot, delay,
+            ]
+            .into_iter()
+            .flat_map(u32::to_le_bytes),
         );
         bytes.extend([255, 255, 255, 255].repeat(width as usize * width as usize));
     }
@@ -49,12 +59,20 @@ fn unavailable_hidpi_size_preserves_logical_size_and_hotspot() {
     assert_eq!(frame.buffer_scale, 2);
     assert_eq!(frame.size.w, 64);
     assert_eq!(frame.hotspot.x, 32);
-    assert_eq!(frame.logical_rect((100.0, 100.0).into()).size, (32.0, 32.0).into());
+    assert_eq!(
+        frame.logical_rect((100.0, 100.0).into()).size,
+        (32.0, 32.0).into()
+    );
 }
 
 #[test]
 fn selects_a_nominal_sequence_and_preserves_frame_delays() {
-    let asset = parse_cursor(&file(&[(48, 48, 24, 70), (24, 24, 12, 30), (24, 24, 12, 80)]), 24, 1).unwrap();
+    let asset = parse_cursor(
+        &file(&[(48, 48, 24, 70), (24, 24, 12, 30), (24, 24, 12, 80)]),
+        24,
+        1,
+    )
+    .unwrap();
     assert_eq!(asset.frames.len(), 2);
     for (time, index, remaining) in [
         (0, 0, 30),
@@ -93,7 +111,11 @@ fn rejects_oversized_and_malformed_assets_before_buffer_allocation() {
     bytes.truncate(16);
     bytes[12..16].copy_from_slice(&3u32.to_le_bytes());
     for _ in 0..3 {
-        bytes.extend([0xfffd0002, 1024, 52].into_iter().flat_map(u32::to_le_bytes));
+        bytes.extend(
+            [0xfffd0002, 1024, 52]
+                .into_iter()
+                .flat_map(u32::to_le_bytes),
+        );
     }
     bytes.extend(frame);
     assert!(parse_cursor(&bytes, 24, 1).is_none());
@@ -143,9 +165,15 @@ fn delayed_loading_does_not_block_cursor_callbacks_or_pointer_dispatch() {
         state.named_cursor_frame().is_some(),
         "cached fallback must remain visible"
     );
-    assert!(calls.try_recv().is_err(), "decoder is still deliberately blocked");
+    assert!(
+        calls.try_recv().is_err(),
+        "decoder is still deliberately blocked"
+    );
     release.send(()).unwrap();
-    assert_eq!(calls.recv_timeout(Duration::from_secs(2)).unwrap().0, CursorIcon::Text);
+    assert_eq!(
+        calls.recv_timeout(Duration::from_secs(2)).unwrap().0,
+        CursorIcon::Text
+    );
 }
 
 #[test]
@@ -188,7 +216,9 @@ fn cursor_animation_advances_and_cancels_on_hide_and_shape_change() {
     assert!(state.cursor_animation.timer.is_some());
     // Invoke the same deadline callback by dispatching the real timer.
     while Instant::now() < now + Duration::from_millis(35) {
-        events.dispatch(Duration::from_millis(5), &mut state).unwrap();
+        events
+            .dispatch(Duration::from_millis(5), &mut state)
+            .unwrap();
     }
     state.update_named_cursor(now + Duration::from_millis(30));
     assert_eq!(state.cursor_animation.frame, 1);
@@ -200,7 +230,9 @@ fn cursor_animation_advances_and_cancels_on_hide_and_shape_change() {
     state.cursor_image(&seat, CursorImageStatus::Named(CursorIcon::Wait));
     state.update_named_cursor(now + Duration::from_millis(32));
     assert!(state.cursor_animation.timer.is_some());
-    state.named_cursors.insert(CursorIcon::Text, fallback_cursor());
+    state
+        .named_cursors
+        .insert(CursorIcon::Text, fallback_cursor());
     state.cursor_image(&seat, CursorImageStatus::Named(CursorIcon::Text));
     state.update_named_cursor(now + Duration::from_millis(33));
     assert!(state.cursor_animation.timer.is_none());
@@ -208,9 +240,18 @@ fn cursor_animation_advances_and_cancels_on_hide_and_shape_change() {
 
 #[test]
 fn supplies_legacy_fallback_names_for_common_cursors() {
-    assert_eq!(cursor_names(CursorIcon::Default), ["default", "left_ptr", "arrow"]);
-    assert_eq!(cursor_names(CursorIcon::Pointer), ["pointer", "hand2", "left_ptr"]);
-    assert_eq!(cursor_names(CursorIcon::Text), ["text", "xterm", "left_ptr"]);
+    assert_eq!(
+        cursor_names(CursorIcon::Default),
+        ["default", "left_ptr", "arrow"]
+    );
+    assert_eq!(
+        cursor_names(CursorIcon::Pointer),
+        ["pointer", "hand2", "left_ptr"]
+    );
+    assert_eq!(
+        cursor_names(CursorIcon::Text),
+        ["text", "xterm", "left_ptr"]
+    );
     assert_eq!(
         cursor_names(CursorIcon::Crosshair),
         ["crosshair", "default", "left_ptr"]

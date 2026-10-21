@@ -19,8 +19,12 @@ pub fn intersection(a: Rect, b: Rect) -> Option<Rect> {
 
 pub fn clamp_to_work(mut rect: Rect, work: Rect) -> Rect {
     // Preserve client minimum sizes even when the work area is smaller.
-    rect.x = rect.x.clamp(work.x, work.x + (work.width - rect.width).max(0.0));
-    rect.y = rect.y.clamp(work.y, work.y + (work.height - rect.height).max(0.0));
+    rect.x = rect
+        .x
+        .clamp(work.x, work.x + (work.width - rect.width).max(0.0));
+    rect.y = rect
+        .y
+        .clamp(work.y, work.y + (work.height - rect.height).max(0.0));
     rect
 }
 
@@ -35,14 +39,27 @@ pub fn centered(size: (f64, f64), anchor: Rect) -> Rect {
 
 pub fn anchored_size(rect: Rect, size: (f64, f64), left: bool, top: bool) -> Rect {
     Rect::new(
-        if left { rect.x + rect.width - size.0 } else { rect.x },
-        if top { rect.y + rect.height - size.1 } else { rect.y },
+        if left {
+            rect.x + rect.width - size.0
+        } else {
+            rect.x
+        },
+        if top {
+            rect.y + rect.height - size.1
+        } else {
+            rect.y
+        },
         size.0,
         size.1,
     )
 }
 
-pub fn min_overlap(size: (f64, f64), work: Rect, others: &[Rect], anchor: (f64, f64)) -> Option<Rect> {
+pub fn min_overlap(
+    size: (f64, f64),
+    work: Rect,
+    others: &[Rect],
+    anchor: (f64, f64),
+) -> Option<Rect> {
     let (width, height) = size;
     if !width.is_finite()
         || !height.is_finite()
@@ -77,12 +94,15 @@ pub fn min_overlap(size: (f64, f64), work: Rect, others: &[Rect], anchor: (f64, 
                 .filter_map(|other| intersection(rect, *other))
                 .map(|r| r.width * r.height)
                 .sum::<f64>();
-            let distance = (x + width / 2.0 - anchor.0).powi(2) + (y + height / 2.0 - anchor.1).powi(2);
+            let distance =
+                (x + width / 2.0 - anchor.0).powi(2) + (y + height / 2.0 - anchor.1).powi(2);
             let cost = (overlap, distance);
-            if best
-                .as_ref()
-                .is_none_or(|(old, _)| cost.0.total_cmp(&old.0).then(cost.1.total_cmp(&old.1)).is_lt())
-            {
+            if best.as_ref().is_none_or(|(old, _)| {
+                cost.0
+                    .total_cmp(&old.0)
+                    .then(cost.1.total_cmp(&old.1))
+                    .is_lt()
+            }) {
                 best = Some((cost, rect));
             }
         }
@@ -97,7 +117,10 @@ pub struct Cascade {
 
 impl Cascade {
     pub fn place(&mut self, output: &str, work: Rect, size: (f64, f64)) -> Rect {
-        let position = self.positions.entry(output.to_owned()).or_insert((work.x, work.y));
+        let position = self
+            .positions
+            .entry(output.to_owned())
+            .or_insert((work.x, work.y));
         if position.0 < work.x
             || position.1 < work.y
             || position.0 + size.0 > work.x + work.width
@@ -132,7 +155,10 @@ impl Remembered {
 
     pub fn restore(&self, outputs: &[(String, Rect)]) -> Option<Rect> {
         let work = outputs.iter().find(|(name, _)| *name == self.output)?.1;
-        if !self.fractions.iter().all(|v| v.is_finite()) || self.fractions[2] <= 0.0 || self.fractions[3] <= 0.0 {
+        if !self.fractions.iter().all(|v| v.is_finite())
+            || self.fractions[2] <= 0.0
+            || self.fractions[3] <= 0.0
+        {
             return None;
         }
         let [x, y, w, h] = self.fractions;
@@ -142,11 +168,15 @@ impl Remembered {
             w * work.width,
             h * work.height,
         );
-        if ![rect.x, rect.y, rect.width, rect.height].iter().all(|v| v.is_finite()) {
+        if ![rect.x, rect.y, rect.width, rect.height]
+            .iter()
+            .all(|v| v.is_finite())
+        {
             return None;
         }
         let visible = outputs.iter().any(|(_, area)| {
-            intersection(rect, *area).is_some_and(|r| r.width * r.height >= rect.width * rect.height * 0.25)
+            intersection(rect, *area)
+                .is_some_and(|r| r.width * r.height >= rect.width * rect.height * 0.25)
         });
         visible.then_some(rect)
     }
@@ -169,8 +199,13 @@ struct SaveThread {
 }
 
 impl SaveThread {
-    fn start(mut persist: impl FnMut(&Path, &Memory) -> std::io::Result<()> + Send + 'static) -> std::io::Result<Self> {
-        let shared = std::sync::Arc::new((std::sync::Mutex::new(SaveState::default()), std::sync::Condvar::new()));
+    fn start(
+        mut persist: impl FnMut(&Path, &Memory) -> std::io::Result<()> + Send + 'static,
+    ) -> std::io::Result<Self> {
+        let shared = std::sync::Arc::new((
+            std::sync::Mutex::new(SaveState::default()),
+            std::sync::Condvar::new(),
+        ));
         let worker = shared.clone();
         let thread = std::thread::Builder::new()
             .name("floating-geometry-save".into())
@@ -355,7 +390,9 @@ pub fn snap_lines(raw: Rect, work: Rect, others: &[(u64, Rect)]) -> (Vec<SnapLin
         },
     ];
     for &(target, rect) in others {
-        if raw.y - SNAP_DISTANCE <= rect.y + rect.height && raw.y + raw.height + SNAP_DISTANCE >= rect.y {
+        if raw.y - SNAP_DISTANCE <= rect.y + rect.height
+            && raw.y + raw.height + SNAP_DISTANCE >= rect.y
+        {
             xs.extend([
                 SnapLine {
                     target,
@@ -367,7 +404,9 @@ pub fn snap_lines(raw: Rect, work: Rect, others: &[(u64, Rect)]) -> (Vec<SnapLin
                 },
             ]);
         }
-        if raw.x - SNAP_DISTANCE <= rect.x + rect.width && raw.x + raw.width + SNAP_DISTANCE >= rect.x {
+        if raw.x - SNAP_DISTANCE <= rect.x + rect.width
+            && raw.x + raw.width + SNAP_DISTANCE >= rect.x
+        {
             ys.extend([
                 SnapLine {
                     target,
@@ -420,7 +459,9 @@ mod tests {
             memory
         };
         worker.queue(PathBuf::from("unused"), snapshot("first"));
-        started_rx.recv_timeout(std::time::Duration::from_secs(2)).unwrap();
+        started_rx
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .unwrap();
         worker.queue(PathBuf::from("unused"), snapshot("superseded"));
         worker.queue(PathBuf::from("unused"), snapshot("last"));
         assert_eq!(*written.lock().unwrap(), vec!["first"]);
@@ -511,7 +552,10 @@ mod tests {
             };
             let placed = min_overlap(size, Rect::new(0., 0., 16., 16.), &others, (8., 8.)).unwrap();
             let brute = (0..=16 - size.0 as i32)
-                .flat_map(|x| (0..=16 - size.1 as i32).map(move |y| Rect::new(x as f64, y as f64, size.0, size.1)))
+                .flat_map(|x| {
+                    (0..=16 - size.1 as i32)
+                        .map(move |y| Rect::new(x as f64, y as f64, size.0, size.1))
+                })
                 .map(overlap)
                 .min_by(f64::total_cmp)
                 .unwrap();

@@ -77,7 +77,10 @@ pub(crate) struct Parent {
 }
 
 impl Parent {
-    pub(crate) fn attach(window: &dyn cosmic::iced::window::Window, parent: &str) -> Result<ParentAttachment, String> {
+    pub(crate) fn attach(
+        window: &dyn cosmic::iced::window::Window,
+        parent: &str,
+    ) -> Result<ParentAttachment, String> {
         use cosmic::iced::window::raw_window_handle::{RawDisplayHandle, RawWindowHandle};
         let handle = match classify_parent(parent) {
             ParentKind::None => {
@@ -87,7 +90,8 @@ impl Parent {
                 return Ok(ParentAttachment {
                     parent: None,
                     diagnostic: Some(
-                        "showing this dialog unparented: X11 parent windows are not supported yet".to_owned(),
+                        "showing this dialog unparented: X11 parent windows are not supported yet"
+                            .to_owned(),
                     ),
                 });
             }
@@ -104,8 +108,9 @@ impl Parent {
             return Err("Portal parenting requires Wayland".into());
         };
         // The window lends live handles; the borrowed backend never owns the display.
-        let backend =
-            unsafe { wayland_client::backend::Backend::from_foreign_display(display.display.as_ptr().cast()) };
+        let backend = unsafe {
+            wayland_client::backend::Backend::from_foreign_display(display.display.as_ptr().cast())
+        };
         let connection = Connection::from_backend(backend);
         let id = unsafe {
             wayland_client::backend::ObjectId::from_ptr(
@@ -114,15 +119,19 @@ impl Parent {
             )
         }
         .map_err(|error| error.to_string())?;
-        let surface = wl_surface::WlSurface::from_id(&connection, id).map_err(|error| error.to_string())?;
-        let (globals, mut queue) = registry_queue_init::<State>(&connection).map_err(|error| error.to_string())?;
+        let surface =
+            wl_surface::WlSurface::from_id(&connection, id).map_err(|error| error.to_string())?;
+        let (globals, mut queue) =
+            registry_queue_init::<State>(&connection).map_err(|error| error.to_string())?;
         let qh = queue.handle();
         let importer = globals
             .bind::<ZxdgImporterV2, _, _>(&qh, 1..=1, ())
             .map_err(|error| error.to_string())?;
         let imported = importer.import_toplevel(handle.into(), &qh, ());
         let mut state = State::default();
-        queue.roundtrip(&mut state).map_err(|error| error.to_string())?;
+        queue
+            .roundtrip(&mut state)
+            .map_err(|error| error.to_string())?;
         if state.invalid {
             imported.destroy();
             importer.destroy();
@@ -197,7 +206,9 @@ mod tests {
     #[test]
     fn an_x11_parent_is_never_reinterpreted_as_a_wayland_handle() {
         match classify_parent("x11:0x2400003") {
-            ParentKind::Wayland(handle) => panic!("an X11 parent must not become a Wayland handle: {handle}"),
+            ParentKind::Wayland(handle) => {
+                panic!("an X11 parent must not become a Wayland handle: {handle}")
+            }
             ParentKind::X11 => {}
             other => panic!("unexpected classification: {other:?}"),
         }

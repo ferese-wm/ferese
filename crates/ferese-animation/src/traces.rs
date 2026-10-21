@@ -25,7 +25,12 @@ impl FakeClock {
         }
     }
 
-    fn sample(&mut self, time: Duration, value: &mut AnimatedValue, config: SpringConfig) -> Sample {
+    fn sample(
+        &mut self,
+        time: Duration,
+        value: &mut AnimatedValue,
+        config: SpringConfig,
+    ) -> Sample {
         assert!(time >= self.now);
         self.now = time;
         let delta = time - self.last;
@@ -58,7 +63,8 @@ impl FakeClock {
 fn legacy_advance(value: &mut AnimatedValue, delta: Duration, config: SpringConfig) {
     let config = config.normalized();
     let settled = |v: &AnimatedValue| {
-        (v.current - v.target).abs() <= config.position_tolerance && v.velocity.abs() <= config.velocity_tolerance
+        (v.current - v.target).abs() <= config.position_tolerance
+            && v.velocity.abs() <= config.velocity_tolerance
     };
     if settled(value) {
         value.snap();
@@ -70,7 +76,8 @@ fn legacy_advance(value: &mut AnimatedValue, delta: Duration, config: SpringConf
     let dt = seconds / steps as f64;
     for _ in 0..steps {
         let old = value.current - value.target;
-        value.velocity += (-config.stiffness * old - config.damping * value.velocity) / config.mass * dt;
+        value.velocity +=
+            (-config.stiffness * old - config.damping * value.velocity) / config.mass * dt;
         value.current += value.velocity * dt;
         if old != 0.0 && old.signum() != (value.current - value.target).signum() {
             value.snap();
@@ -91,7 +98,11 @@ fn capture_old_golden_trace_and_retarget_policy() {
     let mut value = AnimatedValue::new(0.0);
     value.set_target(500.0);
     for i in 1..=18 {
-        legacy_advance(&mut value, Duration::from_secs_f64(1.0 / 60.0), SpringConfig::default());
+        legacy_advance(
+            &mut value,
+            Duration::from_secs_f64(1.0 / 60.0),
+            SpringConfig::default(),
+        );
         if [1, 3, 6, 12, 18].contains(&i) {
             println!("old normal {i}: {}, {}", value.current, value.velocity);
         }
@@ -99,7 +110,11 @@ fn capture_old_golden_trace_and_retarget_policy() {
 
     let mut value = AnimatedValue::new(0.0);
     value.set_target(1000.0);
-    legacy_advance(&mut value, Duration::from_millis(40), SpringConfig::default());
+    legacy_advance(
+        &mut value,
+        Duration::from_millis(40),
+        SpringConfig::default(),
+    );
     println!("old retarget before: {}, {}", value.current, value.velocity);
     let position = value.current;
     let velocity = value.velocity;
@@ -127,7 +142,11 @@ fn long_stall_uses_the_whole_elapsed_duration() {
     let sample = clock.sample(Duration::from_millis(416), &mut value, config);
     let t: f64 = 0.416;
     let decay = (-10.0 * t).exp();
-    close(sample.current, 500.0 - 500.0 * (1.0 + 10.0 * t) * decay, 1e-8);
+    close(
+        sample.current,
+        500.0 - 500.0 * (1.0 + 10.0 * t) * decay,
+        1e-8,
+    );
     close(sample.velocity, 50000.0 * t * decay, 1e-8);
     assert_eq!(sample.time, Duration::from_millis(416));
     assert_eq!(sample.target, 500.0);
@@ -147,13 +166,25 @@ fn fake_clock_pause_excludes_three_hundred_milliseconds() {
     let mut clock = FakeClock::new();
     let mut value = AnimatedValue::new(0.0);
     value.set_target(500.0);
-    clock.sample(Duration::from_millis(40), &mut value, SpringConfig::default());
+    clock.sample(
+        Duration::from_millis(40),
+        &mut value,
+        SpringConfig::default(),
+    );
     let frozen = value;
     clock.pause();
-    clock.sample(Duration::from_millis(340), &mut value, SpringConfig::default());
+    clock.sample(
+        Duration::from_millis(340),
+        &mut value,
+        SpringConfig::default(),
+    );
     assert_eq!(value, frozen);
     clock.resume(Duration::from_millis(340));
-    clock.sample(Duration::from_millis(356), &mut value, SpringConfig::default());
+    clock.sample(
+        Duration::from_millis(356),
+        &mut value,
+        SpringConfig::default(),
+    );
     let mut expected = frozen;
     expected.advance(Duration::from_millis(16), SpringConfig::default());
     assert_eq!(value, expected);
@@ -182,7 +213,10 @@ fn reference(x: f64, v: f64, target: f64, dt: f64, config: SpringConfig) -> (f64
         let b = (v + a * y) / w;
         let (s, c) = (w * dt).sin_cos();
         let e = (-a * dt).exp();
-        (target + e * (y * c + b * s), e * (v * c - (a * v + omega2 * y) / w * s))
+        (
+            target + e * (y * c + b * s),
+            e * (v * c - (a * v + omega2 * y) / w * s),
+        )
     } else {
         let q = d.sqrt();
         let r1 = -a + q;
@@ -197,7 +231,15 @@ fn reference(x: f64, v: f64, target: f64, dt: f64, config: SpringConfig) -> (f64
 
 #[test]
 fn solver_reference_regimes_initial_states_and_times() {
-    for damping in [0.0, 5.0, 20.0, 20.0 * (1.0 - 1e-9), 20.0 * (1.0 + 1e-9), 53.0, 2000.0] {
+    for damping in [
+        0.0,
+        5.0,
+        20.0,
+        20.0 * (1.0 - 1e-9),
+        20.0 * (1.0 + 1e-9),
+        53.0,
+        2000.0,
+    ] {
         let config = SpringConfig {
             stiffness: 100.0,
             damping,
@@ -256,7 +298,11 @@ fn normal_trace_records_the_old_numerical_error() {
     old.set_target(500.0);
     let mut max_error: f64 = 0.0;
     for i in 1..=18 {
-        legacy_advance(&mut old, Duration::from_secs_f64(1.0 / 60.0), SpringConfig::default());
+        legacy_advance(
+            &mut old,
+            Duration::from_secs_f64(1.0 / 60.0),
+            SpringConfig::default(),
+        );
         if let Some((_, x, v)) = gold.iter().find(|(n, _, _)| *n == i) {
             close(old.current, *x, 1e-9);
             close(old.velocity, *v, 1e-9);
@@ -303,7 +349,11 @@ fn gesture_flick_trace_crosses_once_and_settles_while_clamp_stops_at_crossing() 
     let mut crossings = 0;
     let mut previous_error: f64 = -100.0;
     for ms in 1..=1500 {
-        free.advance_with_policy(Duration::from_millis(1), config, CrossingPolicy::AllowOvershoot);
+        free.advance_with_policy(
+            Duration::from_millis(1),
+            config,
+            CrossingPolicy::AllowOvershoot,
+        );
         clamped.advance_with_policy(Duration::from_millis(1), config, CrossingPolicy::NoCrossing);
         let error = free.current - free.target;
         if error != 0.0 && previous_error.signum() != error.signum() {
@@ -332,17 +382,29 @@ fn rapid_retarget_trace_preserves_position_and_the_golden_policy() {
     let mut clock = FakeClock::new();
     let mut value = AnimatedValue::new(0.0);
     value.set_target(1000.0);
-    clock.sample(Duration::from_millis(40), &mut value, SpringConfig::default());
+    clock.sample(
+        Duration::from_millis(40),
+        &mut value,
+        SpringConfig::default(),
+    );
     let before = value;
     value.retarget_preserving_motion(2000.0);
     assert_eq!(value.current, before.current);
     assert_eq!(value.velocity, before.velocity);
-    clock.sample(Duration::from_millis(65), &mut value, SpringConfig::default());
+    clock.sample(
+        Duration::from_millis(65),
+        &mut value,
+        SpringConfig::default(),
+    );
     let before = value;
     value.retarget_preserving_motion(-500.0);
     assert_eq!(value.current, before.current);
     assert_eq!(value.velocity, before.velocity);
-    clock.sample(Duration::from_millis(81), &mut value, SpringConfig::default());
+    clock.sample(
+        Duration::from_millis(81),
+        &mut value,
+        SpringConfig::default(),
+    );
     assert_ne!(value.velocity, 0.0);
 
     // Apply the current policy to the exact old in-flight state too.
@@ -366,7 +428,11 @@ fn interrupted_resize_and_zoom_targets_preserve_position_and_velocity() {
     ] {
         let before = (geometry.visual.current, geometry.decorations);
         let velocity = geometry.visual.velocity;
-        geometry.set_presentation_mode(Rect::new(200., 100., 700., 500.), mode, Duration::from_millis(40));
+        geometry.set_presentation_mode(
+            Rect::new(200., 100., 700., 500.),
+            mode,
+            Duration::from_millis(40),
+        );
         assert_eq!((geometry.visual.current, geometry.decorations), before);
         assert_eq!(geometry.visual.velocity, velocity);
         geometry.advance(Duration::ZERO, SpringConfig::default(), true);
@@ -418,7 +484,10 @@ fn variable_cadence_traces_match_reference_at_every_absolute_timestamp() {
             reference_settle_us += 100;
         }
         let exact_settle = Duration::from_micros(reference_settle_us);
-        assert!(settled_at.abs_diff(exact_settle) <= Duration::from_micros(*schedule.iter().max().unwrap() + 100));
+        assert!(
+            settled_at.abs_diff(exact_settle)
+                <= Duration::from_micros(*schedule.iter().max().unwrap() + 100)
+        );
     }
 }
 
@@ -476,7 +545,10 @@ fn solver_is_finite_for_realistic_ranges_and_invalid_configuration_falls_back() 
                         ..SpringConfig::default()
                     };
                     let (x, v) = physical(-10000., 50000., 10000., dt, config);
-                    assert!(x.is_finite() && v.is_finite(), "{config:?} dt {dt}: {x} {v}");
+                    assert!(
+                        x.is_finite() && v.is_finite(),
+                        "{config:?} dt {dt}: {x} {v}"
+                    );
                 }
             }
         }
@@ -514,7 +586,10 @@ fn solver_is_finite_for_realistic_ranges_and_invalid_configuration_falls_back() 
 #[test]
 fn physical_zero_and_negative_time_do_not_move_state() {
     for dt in [0.0, -0.01] {
-        assert_eq!(physical(5.0, 100.0, 10.0, dt, SpringConfig::default()), (5.0, 100.0));
+        assert_eq!(
+            physical(5.0, 100.0, 10.0, dt, SpringConfig::default()),
+            (5.0, 100.0)
+        );
     }
 }
 
@@ -556,7 +631,11 @@ fn creation_clock_excludes_earlier_idle_time_and_records_all_sample_fields() {
     clock.resume(created);
     let mut value = AnimatedValue::new(0.0);
     value.set_target(500.0);
-    let first = clock.sample(created + Duration::from_millis(16), &mut value, SpringConfig::default());
+    let first = clock.sample(
+        created + Duration::from_millis(16),
+        &mut value,
+        SpringConfig::default(),
+    );
     let exact = reference(0.0, 0.0, 500.0, 0.016, SpringConfig::default());
     close(first.current, exact.0, 1e-8);
     close(first.velocity, exact.1, 1e-8);

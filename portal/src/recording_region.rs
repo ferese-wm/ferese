@@ -10,10 +10,17 @@ pub(crate) struct Region {
 
 impl Region {
     pub(crate) fn parse(value: &str) -> Result<Self, String> {
-        let (position, size) = value.trim().split_once(' ').ok_or("Invalid region selection")?;
+        let (position, size) = value
+            .trim()
+            .split_once(' ')
+            .ok_or("Invalid region selection")?;
         let (x, y) = position.split_once(',').ok_or("Invalid region position")?;
         let (width, height) = size.split_once('x').ok_or("Invalid region size")?;
-        let number = |value: &str| value.parse::<i32>().map_err(|_| "Invalid region coordinate".to_owned());
+        let number = |value: &str| {
+            value
+                .parse::<i32>()
+                .map_err(|_| "Invalid region coordinate".to_owned())
+        };
         let region = Self {
             x: number(x)?,
             y: number(y)?,
@@ -58,7 +65,8 @@ impl Region {
         let near = |value: i64, pixels: u32, logical: i32| {
             (value * i64::from(pixels) + i64::from(logical) - 1) / i64::from(logical)
         };
-        let far = |value: i64, pixels: u32, logical: i32| value * i64::from(pixels) / i64::from(logical);
+        let far =
+            |value: i64, pixels: u32, logical: i32| value * i64::from(pixels) / i64::from(logical);
         let left = near(x, physical.0, output.width);
         let top = near(y, physical.1, output.height);
         let end_x = far(end_x, physical.0, output.width);
@@ -119,7 +127,13 @@ mod tests {
 
     #[test]
     fn region_selection_rejects_empty_overflow_and_malformed_bounds() {
-        for value in ["", "1,2 0x20", "1,2 -1x20", "2147483647,0 2x20", "1,2 20x30 extra"] {
+        for value in [
+            "",
+            "1,2 0x20",
+            "1,2 -1x20",
+            "2147483647,0 2x20",
+            "1,2 20x30 extra",
+        ] {
             assert!(Region::parse(value).is_err(), "{value}");
         }
         assert!(

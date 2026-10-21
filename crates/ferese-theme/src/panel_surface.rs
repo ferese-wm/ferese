@@ -86,7 +86,12 @@ impl widget::Operation for Collect<'_> {
 }
 
 impl<M> Surface<'_, M> {
-    fn measure(&mut self, tree: &mut widget::Tree, layout: Layout<'_>, renderer: &cosmic::Renderer) {
+    fn measure(
+        &mut self,
+        tree: &mut widget::Tree,
+        layout: Layout<'_>,
+        renderer: &cosmic::Renderer,
+    ) {
         let mut collector = Collect {
             targets: &self.options.groups,
             origin: layout.bounds().position(),
@@ -94,17 +99,20 @@ impl<M> Surface<'_, M> {
             bounds_id: self.options.bounds.as_ref(),
             bounds: None,
         };
-        self.content
-            .as_widget_mut()
-            .operate(&mut tree.children[0], layout, renderer, &mut collector);
+        self.content.as_widget_mut().operate(
+            &mut tree.children[0],
+            layout,
+            renderer,
+            &mut collector,
+        );
         let size = layout.bounds().size();
         let scene = PixelGrid::new(self.options.scale)
             .and_then(|grid| {
                 ferese_panel::scene::derive(
                     self.options.parameters,
-                    collector
-                        .bounds
-                        .unwrap_or_else(|| ferese_layout::Rect::new(0., 0., size.width.into(), size.height.into())),
+                    collector.bounds.unwrap_or_else(|| {
+                        ferese_layout::Rect::new(0., 0., size.width.into(), size.height.into())
+                    }),
                     &collector.groups,
                     grid,
                 )
@@ -162,7 +170,9 @@ impl<M> Widget<M, Theme, cosmic::Renderer> for Surface<'_, M> {
         tree: &widget::Tree,
         cursor: mouse::Cursor,
     ) -> iced_accessibility::A11yTree {
-        self.content.as_widget().a11y_nodes(layout, &tree.children[0], cursor)
+        self.content
+            .as_widget()
+            .a11y_nodes(layout, &tree.children[0], cursor)
     }
     fn update(
         &mut self,
@@ -185,7 +195,10 @@ impl<M> Widget<M, Theme, cosmic::Renderer> for Surface<'_, M> {
             shell,
             viewport,
         );
-        if matches!(event, Event::Window(cosmic::iced::window::Event::RedrawRequested(_))) && !shell.is_layout_invalid()
+        if matches!(
+            event,
+            Event::Window(cosmic::iced::window::Event::RedrawRequested(_))
+        ) && !shell.is_layout_invalid()
         {
             self.measure(tree, layout, renderer);
             (self.present)(&tree.state.downcast_ref::<State>().scene);
@@ -250,7 +263,9 @@ impl<M> Widget<M, Theme, cosmic::Renderer> for Surface<'_, M> {
                             };
                             frame.stroke(
                                 &Path::line(Point::new(0., y), Point::new(bounds.width, y)),
-                                Stroke::default().with_color(self.options.border).with_width(width),
+                                Stroke::default()
+                                    .with_color(self.options.border)
+                                    .with_width(width),
                             );
                         } else if self.options.parameters.style == ferese_panel::PanelStyle::Notch
                             || (self.options.parameters.style == ferese_panel::PanelStyle::Morph
@@ -264,30 +279,45 @@ impl<M> Widget<M, Theme, cosmic::Renderer> for Surface<'_, M> {
                                 let border = Path::new(|builder| {
                                     for contour in contours {
                                         if let Some((first, rest)) = contour.split_first() {
-                                            builder.move_to(Point::new(first[0] as f32, first[1] as f32));
+                                            builder.move_to(Point::new(
+                                                first[0] as f32,
+                                                first[1] as f32,
+                                            ));
                                             for point in rest {
-                                                builder.line_to(Point::new(point[0] as f32, point[1] as f32));
+                                                builder.line_to(Point::new(
+                                                    point[0] as f32,
+                                                    point[1] as f32,
+                                                ));
                                             }
                                         }
                                     }
                                 });
                                 frame.stroke(
                                     &border,
-                                    Stroke::default().with_color(self.options.border).with_width(width),
+                                    Stroke::default()
+                                        .with_color(self.options.border)
+                                        .with_width(width),
                                 );
                             }
                         } else {
                             frame.stroke(
                                 &path,
-                                Stroke::default().with_color(self.options.border).with_width(width),
+                                Stroke::default()
+                                    .with_color(self.options.border)
+                                    .with_width(width),
                             );
                         }
                     }
                 }
                 for [x1, y1, x2, y2] in &state.scene.dividers {
                     frame.stroke(
-                        &Path::line(Point::new(*x1 as f32, *y1 as f32), Point::new(*x2 as f32, *y2 as f32)),
-                        Stroke::default().with_color(self.options.divider).with_width(hairline),
+                        &Path::line(
+                            Point::new(*x1 as f32, *y1 as f32),
+                            Point::new(*x2 as f32, *y2 as f32),
+                        ),
+                        Stroke::default()
+                            .with_color(self.options.divider)
+                            .with_width(hairline),
                     );
                 }
             });
@@ -300,9 +330,15 @@ impl<M> Widget<M, Theme, cosmic::Renderer> for Surface<'_, M> {
         // Keep content after cached vector geometry in the renderer's layer order.
         // Parent-layer text can otherwise be batched underneath the background.
         renderer.with_layer(*viewport, |renderer| {
-            self.content
-                .as_widget()
-                .draw(&tree.children[0], renderer, theme, style, layout, cursor, viewport);
+            self.content.as_widget().draw(
+                &tree.children[0],
+                renderer,
+                theme,
+                style,
+                layout,
+                cursor,
+                viewport,
+            );
         });
     }
     fn mouse_interaction(
@@ -313,9 +349,13 @@ impl<M> Widget<M, Theme, cosmic::Renderer> for Surface<'_, M> {
         viewport: &Rectangle,
         renderer: &cosmic::Renderer,
     ) -> mouse::Interaction {
-        self.content
-            .as_widget()
-            .mouse_interaction(&tree.children[0], layout, cursor, viewport, renderer)
+        self.content.as_widget().mouse_interaction(
+            &tree.children[0],
+            layout,
+            cursor,
+            viewport,
+            renderer,
+        )
     }
     fn operate(
         &mut self,
@@ -336,9 +376,13 @@ impl<M> Widget<M, Theme, cosmic::Renderer> for Surface<'_, M> {
         viewport: &Rectangle,
         translation: Vector,
     ) -> Option<cosmic::iced::advanced::overlay::Element<'a, M, Theme, cosmic::Renderer>> {
-        self.content
-            .as_widget_mut()
-            .overlay(&mut tree.children[0], layout, renderer, viewport, translation)
+        self.content.as_widget_mut().overlay(
+            &mut tree.children[0],
+            layout,
+            renderer,
+            viewport,
+            translation,
+        )
     }
 }
 
@@ -353,11 +397,9 @@ mod tests {
     fn shared_surface_publishes_layout_changes_and_leaves_native_fill_to_the_compositor() {
         use cosmic::iced::advanced::clipboard;
         use std::cell::RefCell;
-        let mut renderer = cosmic::iced::futures::executor::block_on(<cosmic::Renderer as Headless>::new(
-            Font::default(),
-            Pixels(14.),
-            Some("tiny-skia"),
-        ))
+        let mut renderer = cosmic::iced::futures::executor::block_on(
+            <cosmic::Renderer as Headless>::new(Font::default(), Pixels(14.), Some("tiny-skia")),
+        )
         .unwrap();
         let ids = [widget::Id::unique(), widget::Id::unique()];
         let mut tree = None;
@@ -379,7 +421,10 @@ mod tests {
             .spacing(20);
             let published = RefCell::new(Vec::new());
             let mut view = frame(
-                cosmic::widget::container(content).width(200).height(32).into(),
+                cosmic::widget::container(content)
+                    .width(200)
+                    .height(32)
+                    .into(),
                 Options {
                     parameters: Parameters {
                         style,
@@ -403,14 +448,18 @@ mod tests {
             );
             let tree = tree.get_or_insert_with(|| widget::Tree::new(&view));
             tree.diff(&mut view);
-            let node = view
-                .as_widget_mut()
-                .layout(tree, &renderer, &layout::Limits::new(Size::ZERO, viewport.size()));
+            let node = view.as_widget_mut().layout(
+                tree,
+                &renderer,
+                &layout::Limits::new(Size::ZERO, viewport.size()),
+            );
             let mut messages = Vec::new();
             for _ in 0..3 {
                 view.as_widget_mut().update(
                     tree,
-                    &Event::Window(cosmic::iced::window::Event::RedrawRequested(std::time::Instant::now())),
+                    &Event::Window(cosmic::iced::window::Event::RedrawRequested(
+                        std::time::Instant::now(),
+                    )),
                     Layout::new(&node),
                     mouse::Cursor::Unavailable,
                     &renderer,
@@ -425,9 +474,15 @@ mod tests {
                 usize::from(!(style == Style::Floating && width == 40. && native))
             );
             let scene = published.borrow()[0].clone();
-            assert_eq!(scene.input.len(), if style == Style::Floating { 2 } else { 1 });
+            assert_eq!(
+                scene.input.len(),
+                if style == Style::Floating { 2 } else { 1 }
+            );
             if style == Style::Floating {
-                assert!(scene.distance([width as f64 + 10., 16.]) > 0., "the gap stays empty");
+                assert!(
+                    scene.distance([width as f64 + 10., 16.]) > 0.,
+                    "the gap stays empty"
+                );
             }
             renderer.reset(viewport);
             view.as_widget().draw(
@@ -450,11 +505,9 @@ mod tests {
 
     #[test]
     fn border_coverage_tracks_physical_scale_and_high_contrast() {
-        let mut renderer = cosmic::iced::futures::executor::block_on(<cosmic::Renderer as Headless>::new(
-            Font::default(),
-            Pixels(14.),
-            Some("tiny-skia"),
-        ))
+        let mut renderer = cosmic::iced::futures::executor::block_on(
+            <cosmic::Renderer as Headless>::new(Font::default(), Pixels(14.), Some("tiny-skia")),
+        )
         .unwrap();
         for scale in [0.75, 1., 1.25, 1.5, 2.] {
             for high_contrast in [false, true] {
@@ -480,9 +533,11 @@ mod tests {
                 );
                 let mut tree = widget::Tree::new(&view);
                 let bounds = Rectangle::with_size(Size::new(64., 32.));
-                let node =
-                    view.as_widget_mut()
-                        .layout(&mut tree, &renderer, &layout::Limits::new(Size::ZERO, bounds.size()));
+                let node = view.as_widget_mut().layout(
+                    &mut tree,
+                    &renderer,
+                    &layout::Limits::new(Size::ZERO, bounds.size()),
+                );
                 renderer.reset(bounds);
                 view.as_widget().draw(
                     &tree,
@@ -500,7 +555,10 @@ mod tests {
                 let size = Size::new((64. * scale) as u32, (32. * scale) as u32);
                 let pixels = renderer.screenshot(size, scale as f32, Color::TRANSPARENT);
                 let coverage: f64 = (0..size.height)
-                    .map(|y| f64::from(pixels[((y * size.width + size.width / 2) * 4 + 3) as usize]) / 255.)
+                    .map(|y| {
+                        f64::from(pixels[((y * size.width + size.width / 2) * 4 + 3) as usize])
+                            / 255.
+                    })
                     .sum();
                 let expected = if high_contrast { scale.max(1.) } else { 1. };
                 assert!(
@@ -513,11 +571,9 @@ mod tests {
 
     #[test]
     fn the_surface_background_keeps_parent_layer_text_visible() {
-        let mut renderer = cosmic::iced::futures::executor::block_on(<cosmic::Renderer as Headless>::new(
-            Font::default(),
-            Pixels(14.),
-            Some("tiny-skia"),
-        ))
+        let mut renderer = cosmic::iced::futures::executor::block_on(
+            <cosmic::Renderer as Headless>::new(Font::default(), Pixels(14.), Some("tiny-skia")),
+        )
         .unwrap();
         for scale in [1., 1.25, 1.5] {
             let content = cosmic::widget::container(
@@ -547,9 +603,11 @@ mod tests {
             );
             let mut tree = widget::Tree::new(&view);
             let viewport = Rectangle::with_size(Size::new(150., 34.));
-            let node =
-                view.as_widget_mut()
-                    .layout(&mut tree, &renderer, &layout::Limits::new(Size::ZERO, viewport.size()));
+            let node = view.as_widget_mut().layout(
+                &mut tree,
+                &renderer,
+                &layout::Limits::new(Size::ZERO, viewport.size()),
+            );
             renderer.reset(viewport);
             view.as_widget().draw(
                 &tree,
@@ -569,7 +627,10 @@ mod tests {
                 scale as f32,
                 Color::BLACK,
             );
-            let ink = pixels.chunks_exact(4).filter(|pixel| pixel[0] > 128).count();
+            let ink = pixels
+                .chunks_exact(4)
+                .filter(|pixel| pixel[0] > 128)
+                .count();
             assert!(
                 ink > 25,
                 "clock text was covered by the surface background at scale {scale}"
@@ -605,9 +666,11 @@ mod tests {
                 let b = widget::Id::unique();
                 let content = cosmic::widget::container(cosmic::widget::row![
                     cosmic::widget::Space::new().width(4),
-                    cosmic::widget::container(cosmic::widget::Space::new().width(20).height(16)).id(a.clone()),
+                    cosmic::widget::container(cosmic::widget::Space::new().width(20).height(16))
+                        .id(a.clone()),
                     cosmic::widget::Space::new().width(4),
-                    cosmic::widget::container(cosmic::widget::Space::new().width(20).height(16)).id(b.clone()),
+                    cosmic::widget::container(cosmic::widget::Space::new().width(20).height(16))
+                        .id(b.clone()),
                 ])
                 .width(96)
                 .height(64)
@@ -640,9 +703,11 @@ mod tests {
                 );
                 let mut tree = widget::Tree::new(&view);
                 let bounds = Rectangle::new(Point::ORIGIN, Size::new(96., 64.));
-                let node =
-                    view.as_widget_mut()
-                        .layout(&mut tree, &renderer, &layout::Limits::new(Size::ZERO, bounds.size()));
+                let node = view.as_widget_mut().layout(
+                    &mut tree,
+                    &renderer,
+                    &layout::Limits::new(Size::ZERO, bounds.size()),
+                );
                 renderer.reset(bounds);
                 view.as_widget().draw(
                     &tree,

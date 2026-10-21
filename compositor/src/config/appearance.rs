@@ -6,21 +6,39 @@ impl Config {
         Ok(FocusEffectSettings {
             enabled: effect.enabled,
             blur: effect.blur,
-            active_opacity: unit_theme_value(effect.active_opacity, "appearance.focus_effect.active_opacity")?,
-            inactive_opacity: unit_theme_value(effect.inactive_opacity, "appearance.focus_effect.inactive_opacity")?,
-            inactive_dim: unit_theme_value(effect.inactive_dim, "appearance.focus_effect.inactive_dim")?,
-            duration_ms: nonnegative_theme_value(effect.duration_ms, "appearance.focus_effect.duration_ms")?,
+            active_opacity: unit_theme_value(
+                effect.active_opacity,
+                "appearance.focus_effect.active_opacity",
+            )?,
+            inactive_opacity: unit_theme_value(
+                effect.inactive_opacity,
+                "appearance.focus_effect.inactive_opacity",
+            )?,
+            inactive_dim: unit_theme_value(
+                effect.inactive_dim,
+                "appearance.focus_effect.inactive_dim",
+            )?,
+            duration_ms: nonnegative_theme_value(
+                effect.duration_ms,
+                "appearance.focus_effect.duration_ms",
+            )?,
         })
     }
 
     pub fn theme_settings(&self) -> Result<ThemeSettings, ConfigError> {
-        let border_width = nonnegative_theme_value(self.theme.geometry.border_width, "geometry.border_width")?;
-        let focus_ring_width =
-            nonnegative_theme_value(self.theme.geometry.focus_ring_width, "geometry.focus_ring_width")?;
-        let window_radius = nonnegative_theme_value(self.theme.geometry.window_radius, "geometry.window_radius")?;
-        let shadow_offset_y = finite_theme_value(self.theme.shadow.soft.offset_y, "shadow.soft.offset_y")?;
+        let border_width =
+            nonnegative_theme_value(self.theme.geometry.border_width, "geometry.border_width")?;
+        let focus_ring_width = nonnegative_theme_value(
+            self.theme.geometry.focus_ring_width,
+            "geometry.focus_ring_width",
+        )?;
+        let window_radius =
+            nonnegative_theme_value(self.theme.geometry.window_radius, "geometry.window_radius")?;
+        let shadow_offset_y =
+            finite_theme_value(self.theme.shadow.soft.offset_y, "shadow.soft.offset_y")?;
         let shadow_blur = nonnegative_theme_value(self.theme.shadow.soft.blur, "shadow.soft.blur")?;
-        let shadow_opacity = unit_theme_value(self.theme.shadow.soft.opacity, "shadow.soft.opacity")?;
+        let shadow_opacity =
+            unit_theme_value(self.theme.shadow.soft.opacity, "shadow.soft.opacity")?;
 
         let material_radius = nonnegative_theme_value(
             self.theme.geometry.shell_radius.unwrap_or(14.0),
@@ -30,13 +48,22 @@ impl Config {
             border_width,
             focus_ring_width,
             border_color: parse_color(&self.theme.colors.border, "colors.border")?,
-            text_primary_color: parse_color(&self.theme.colors.text_primary, "colors.text_primary")?,
+            text_primary_color: parse_color(
+                &self.theme.colors.text_primary,
+                "colors.text_primary",
+            )?,
             accent_color: parse_color(&self.theme.colors.accent, "colors.accent")?,
             border_gradient: self.theme.border.settings("border")?,
             focus_ring_gradient: self.theme.focus_ring.settings("focus_ring")?,
             shadow_color: parse_color(&self.theme.colors.shadow, "colors.shadow")?,
-            surface_base_color: parse_color(&self.theme.colors.surface_base, "colors.surface_base")?,
-            surface_raised_color: parse_color(&self.theme.colors.surface_raised, "colors.surface_raised")?,
+            surface_base_color: parse_color(
+                &self.theme.colors.surface_base,
+                "colors.surface_base",
+            )?,
+            surface_raised_color: parse_color(
+                &self.theme.colors.surface_raised,
+                "colors.surface_raised",
+            )?,
             bar_background_color: parse_color(
                 self.theme
                     .surface
@@ -52,8 +79,15 @@ impl Config {
             shadow_blur,
             shadow_opacity,
             material_style: self.theme.material.style,
-            backdrop_blur: nonnegative_theme_value(self.theme.material.blur_radius, "material.blur_radius")?.min(32.0),
-            material_tint_strength: unit_theme_value(self.theme.material.tint_strength, "material.tint_strength")?,
+            backdrop_blur: nonnegative_theme_value(
+                self.theme.material.blur_radius,
+                "material.blur_radius",
+            )?
+            .min(32.0),
+            material_tint_strength: unit_theme_value(
+                self.theme.material.tint_strength,
+                "material.tint_strength",
+            )?,
             material_radius,
             panel_radius: material_radius,
             reduce_transparency: false,
@@ -189,7 +223,11 @@ impl BorderPaintConfig {
                 "focus_ring.gradient.angle",
             )
         } else {
-            ("border.gradient.from", "border.gradient.to", "border.gradient.angle")
+            (
+                "border.gradient.from",
+                "border.gradient.to",
+                "border.gradient.angle",
+            )
         };
         let gradient = self
             .gradient

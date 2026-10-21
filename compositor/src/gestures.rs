@@ -49,7 +49,11 @@ impl Swipe {
         }
     }
 
-    pub fn finish_at(&mut self, cancelled: bool, time: std::time::Duration) -> Option<SwipeDirection> {
+    pub fn finish_at(
+        &mut self,
+        cancelled: bool,
+        time: std::time::Duration,
+    ) -> Option<SwipeDirection> {
         let Some(direction) = self.direction else {
             return self.finish(cancelled);
         };
@@ -76,11 +80,14 @@ impl Swipe {
         };
         // The preview is bounded. Its visible velocity is zero when pushing
         // farther beyond either endpoint, even if the fingers keep moving.
-        if (progress == 0.0 && self.release_velocity < 0.0) || (progress == 1.0 && self.release_velocity > 0.0) {
+        if (progress == 0.0 && self.release_velocity < 0.0)
+            || (progress == 1.0 && self.release_velocity > 0.0)
+        {
             self.release_velocity = 0.0;
         }
         self.delta = None;
-        (!cancelled && ferese_animation::gesture::project(progress, self.release_velocity, 0.997) >= 0.5)
+        (!cancelled
+            && ferese_animation::gesture::project(progress, self.release_velocity, 0.997) >= 0.5)
             .then_some(direction)
     }
 
@@ -139,7 +146,8 @@ impl Swipe {
         if cancelled {
             return None;
         }
-        dominant_direction(x, y, self.threshold).filter(|direction| Some(*direction) == self.direction)
+        dominant_direction(x, y, self.threshold)
+            .filter(|direction| Some(*direction) == self.direction)
     }
 }
 

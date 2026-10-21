@@ -1,16 +1,18 @@
 use super::{
-    Alignment, App, Element, Field, Kind, Length, Message, Page, button, column, container, row, schema, scrollable,
-    text_input, visuals, widget,
+    Alignment, App, Element, Field, Kind, Length, Message, Page, button, column, container, row,
+    schema, scrollable, text_input, visuals, widget,
 };
 
 pub(super) const SIDEBAR_BREAKPOINT: f32 = 960.;
 
 impl App {
     pub(super) fn page_view(&self) -> Element<'_, Message> {
-        cosmic::iced::widget::responsive(move |size| self.page_layout(size.width < SIDEBAR_BREAKPOINT, size.height))
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into()
+        cosmic::iced::widget::responsive(move |size| {
+            self.page_layout(size.width < SIDEBAR_BREAKPOINT, size.height)
+        })
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
     }
 
     fn page_layout(&self, compact: bool, height: f32) -> Element<'_, Message> {
@@ -53,27 +55,36 @@ impl App {
         let mut navigation = column([]).spacing(16);
         for (title, pages) in Page::NAVIGATION {
             let mut section = column([]).spacing(3).push(
-                container(self.label(title, 11.).class(cosmic::theme::Text::Color(palette.muted))).padding([0, 8]),
+                container(
+                    self.label(title, 11.)
+                        .class(cosmic::theme::Text::Color(palette.muted)),
+                )
+                .padding([0, 8]),
             );
             for &page in pages {
                 let selected = self.page.navigation_page() == page;
-                section = section.push(
-                    button::custom(
-                        row([])
-                            .spacing(8)
-                            .align_y(Alignment::Center)
-                            .push(visuals::icon(
-                                page,
-                                if selected { palette.accent } else { palette.muted },
-                            ))
-                            .push(self.label(page.title(), 13.)),
-                    )
-                    .width(Length::Fill)
-                    .padding([8, 8])
-                    .class(visuals::navigation_style(palette, selected))
-                    .name(page.title())
-                    .on_press(Message::Page(if selected { self.page } else { page })),
-                );
+                section =
+                    section.push(
+                        button::custom(
+                            row([])
+                                .spacing(8)
+                                .align_y(Alignment::Center)
+                                .push(visuals::icon(
+                                    page,
+                                    if selected {
+                                        palette.accent
+                                    } else {
+                                        palette.muted
+                                    },
+                                ))
+                                .push(self.label(page.title(), 13.)),
+                        )
+                        .width(Length::Fill)
+                        .padding([8, 8])
+                        .class(visuals::navigation_style(palette, selected))
+                        .name(page.title())
+                        .on_press(Message::Page(if selected { self.page } else { page })),
+                    );
             }
             navigation = navigation.push(section);
         }
@@ -169,7 +180,8 @@ impl App {
                     .flat_map(|(_, pages)| pages.iter().copied())
             };
             if !pages().any(|p| p.matches(&self.search)) {
-                body = body.push(self.note("No matching settings. Try wallpaper, keyboard, or motion."));
+                body = body
+                    .push(self.note("No matching settings. Try wallpaper, keyboard, or motion."));
             }
             for page in pages().filter(|p| p.matches(&self.search)) {
                 let destination = page.search_destination(&self.search);
@@ -188,13 +200,18 @@ impl App {
             }
         } else {
             if self.page == Page::Windows {
-                body = body.push(visuals::preview_resolved(&self.draft, &self.resolved.presented));
+                body = body.push(visuals::preview_resolved(
+                    &self.draft,
+                    &self.resolved.presented,
+                ));
             }
             if self.page == Page::Appearance {
                 let split = visuals::split(&self.draft);
                 if split {
-                    body = body.push(self.theme_gallery(Some(ferese_config::theme::Appearance::Light)));
-                    body = body.push(self.theme_gallery(Some(ferese_config::theme::Appearance::Dark)));
+                    body = body
+                        .push(self.theme_gallery(Some(ferese_config::theme::Appearance::Light)));
+                    body =
+                        body.push(self.theme_gallery(Some(ferese_config::theme::Appearance::Dark)));
                 } else {
                     body = body.push(self.theme_gallery(None));
                 }
@@ -213,7 +230,9 @@ impl App {
             if self.page == Page::Wallpaper {
                 body = body.push(self.wallpaper_controls());
             }
-            if self.page == Page::Bar && self.panel_page != crate::panel_controls::PanelPage::Arrange {
+            if self.page == Page::Bar
+                && self.panel_page != crate::panel_controls::PanelPage::Arrange
+            {
                 body = body.push(self.panel_controls());
             }
             let fields = if self.page == Page::Bar {
@@ -269,7 +288,11 @@ impl App {
                         group = group.push(self.theme_file_picker());
                     }
                 }
-                body = body.push(container(group).padding(4).class(visuals::surface(palette.card, 14.)));
+                body = body.push(
+                    container(group)
+                        .padding(4)
+                        .class(visuals::surface(palette.card, 14.)),
+                );
             }
 
             match self.page {
@@ -313,14 +336,21 @@ impl App {
                                 Kind::Toggle(true),
                             )))
                             .push(
-                                container(self.settings_icon_button(
-                                    "Remove login item",
-                                    "M4 6h16 M9 6V3h6v3 M6 6l1 15h10l1-15 M10 10v7 M14 10v7",
-                                    (!self.saving).then_some(Message::Remove("autostart".into(), index)),
-                                ))
+                                container(
+                                    self.settings_icon_button(
+                                        "Remove login item",
+                                        "M4 6h16 M9 6V3h6v3 M6 6l1 15h10l1-15 M10 10v7 M14 10v7",
+                                        (!self.saving)
+                                            .then_some(Message::Remove("autostart".into(), index)),
+                                    ),
+                                )
                                 .padding([7, 10]),
                             );
-                        body = body.push(container(group).padding(4).class(visuals::surface(palette.card, 14.)));
+                        body = body.push(
+                            container(group)
+                                .padding(4)
+                                .class(visuals::surface(palette.card, 14.)),
+                        );
                     }
                     body = body.push(
                         row([])
@@ -333,12 +363,15 @@ impl App {
                                     .style(visuals::input_style(palette))
                                     .on_input(Message::NewCommand),
                             )
-                            .push(self.settings_button(
-                                "Add login item",
-                                "M12 5v14 M5 12h14",
-                                (!self.saving && !self.new_command.trim().is_empty()).then_some(Message::AddCommand),
-                                false,
-                            )),
+                            .push(
+                                self.settings_button(
+                                    "Add login item",
+                                    "M12 5v14 M5 12h14",
+                                    (!self.saving && !self.new_command.trim().is_empty())
+                                        .then_some(Message::AddCommand),
+                                    false,
+                                ),
+                            ),
                     );
                 }
                 Page::Shortcuts => {
@@ -373,36 +406,37 @@ impl App {
                     body = body.push(gestures);
 
                     for index in 0..self.draft.records("bindings") {
-                        let content: Element<'static, Message> = if self.visible_rows.contains(&("bindings", index)) {
-                            let prefix = format!("bindings.{index}");
-                            let group = column([])
-                                .spacing(1)
-                                .push(self.field(schema::text(
-                                    format!("{prefix}.keys"),
-                                    "Shortcut",
-                                    "Keys or swipe, such as Super+Return",
-                                    "",
-                                )))
-                                .push(self.field(schema::text(
-                                    format!("{prefix}.action"),
-                                    "Action",
-                                    "Action name, such as spawn or focus",
-                                    "",
-                                )))
-                                .push(self.field(schema::text(
-                                    format!("{prefix}.argument"),
-                                    "Argument",
-                                    "Command, direction, or action argument",
-                                    "",
-                                )));
-                            container(group)
-                                .padding(4)
-                                .height(164)
-                                .class(visuals::surface(palette.card, 14.))
-                                .into()
-                        } else {
-                            widget::Space::new().height(164).width(Length::Fill).into()
-                        };
+                        let content: Element<'static, Message> =
+                            if self.visible_rows.contains(&("bindings", index)) {
+                                let prefix = format!("bindings.{index}");
+                                let group = column([])
+                                    .spacing(1)
+                                    .push(self.field(schema::text(
+                                        format!("{prefix}.keys"),
+                                        "Shortcut",
+                                        "Keys or swipe, such as Super+Return",
+                                        "",
+                                    )))
+                                    .push(self.field(schema::text(
+                                        format!("{prefix}.action"),
+                                        "Action",
+                                        "Action name, such as spawn or focus",
+                                        "",
+                                    )))
+                                    .push(self.field(schema::text(
+                                        format!("{prefix}.argument"),
+                                        "Argument",
+                                        "Command, direction, or action argument",
+                                        "",
+                                    )));
+                                container(group)
+                                    .padding(4)
+                                    .height(164)
+                                    .class(visuals::surface(palette.card, 14.))
+                                    .into()
+                            } else {
+                                widget::Space::new().height(164).width(Length::Fill).into()
+                            };
 
                         body = body.push(
                             cosmic::iced::widget::sensor(content)
@@ -481,14 +515,17 @@ impl App {
         } else {
             content = content.push(
                 scrollable(
-                    container(cosmic::iced::widget::keyed_column([(self.page as usize, body.into())]))
-                        .padding(cosmic::iced::Padding {
-                            top: 0.,
-                            right: 12.,
-                            bottom: 0.,
-                            left: 2.,
-                        })
-                        .width(Length::Fill),
+                    container(cosmic::iced::widget::keyed_column([(
+                        self.page as usize,
+                        body.into(),
+                    )]))
+                    .padding(cosmic::iced::Padding {
+                        top: 0.,
+                        right: 12.,
+                        bottom: 0.,
+                        left: 2.,
+                    })
+                    .width(Length::Fill),
                 )
                 .id(widget::Id::new("settings-content"))
                 .direction(cosmic::iced::widget::scrollable::Direction::Vertical(
@@ -511,7 +548,14 @@ impl App {
                     },
                     palette.muted,
                 ),
-                self.label(if self.saving { "Saving…" } else { &self.status }, 11.),
+                self.label(
+                    if self.saving {
+                        "Saving…"
+                    } else {
+                        &self.status
+                    },
+                    11.,
+                ),
                 widget::tooltip::Position::Top,
             ))
             .push(widget::Space::new().width(Length::Fill))
@@ -546,7 +590,11 @@ impl App {
                 row([])
                     .spacing(12)
                     .align_y(Alignment::Center)
-                    .push(self.note(if self.saving { "Saving…" } else { &self.status }))
+                    .push(self.note(if self.saving {
+                        "Saving…"
+                    } else {
+                        &self.status
+                    }))
                     .push(widget::Space::new().width(Length::Fill))
                     .push(self.settings_button(
                         "Undo",
@@ -577,16 +625,21 @@ impl App {
         };
         let view = row([]).push(sidebar).push(
             container(
-                container(column([]).push(content.height(Length::Fill)).push(footer).spacing(6))
-                    .padding(cosmic::iced::Padding {
-                        top: 20.,
-                        right: 20.,
-                        bottom: 8.,
-                        left: 20.,
-                    })
-                    .max_width(if self.page == Page::Bar { 1120 } else { 840 })
-                    .width(Length::Fill)
-                    .height(Length::Fill),
+                container(
+                    column([])
+                        .push(content.height(Length::Fill))
+                        .push(footer)
+                        .spacing(6),
+                )
+                .padding(cosmic::iced::Padding {
+                    top: 20.,
+                    right: 20.,
+                    bottom: 8.,
+                    left: 20.,
+                })
+                .max_width(if self.page == Page::Bar { 1120 } else { 840 })
+                .width(Length::Fill)
+                .height(Length::Fill),
             )
             .width(Length::Fill)
             .center_x(Length::Fill)
@@ -598,13 +651,28 @@ impl App {
         let mut view = widget::popover(view).modal(true);
         if let Some(sidebar) = drawer {
             let dismiss = widget::mouse_area(
-                container(widget::Space::new().width(Length::Fill).height(Length::Fill))
-                    .class(visuals::surface(cosmic::iced::Color::BLACK.scale_alpha(0.20), 0.)),
+                container(
+                    widget::Space::new()
+                        .width(Length::Fill)
+                        .height(Length::Fill),
+                )
+                .class(visuals::surface(
+                    cosmic::iced::Color::BLACK.scale_alpha(0.20),
+                    0.,
+                )),
             )
             .on_press(Message::Sidebar(false));
             view = view
-                .position(widget::popover::Position::Point(cosmic::iced::Point::ORIGIN))
-                .popup(row([]).push(sidebar).push(dismiss).width(Length::Fill).height(height));
+                .position(widget::popover::Position::Point(
+                    cosmic::iced::Point::ORIGIN,
+                ))
+                .popup(
+                    row([])
+                        .push(sidebar)
+                        .push(dismiss)
+                        .width(Length::Fill)
+                        .height(height),
+                );
         }
         let view: Element<'_, Message> = view.into();
         if self.profile_pages {

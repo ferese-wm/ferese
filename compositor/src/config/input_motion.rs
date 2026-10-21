@@ -57,11 +57,15 @@ impl Config {
     }
 
     pub fn spring_config(&self) -> Result<SpringConfig, ConfigError> {
-        self.animations.spring_config().map_err(ConfigError::Binding)
+        self.animations
+            .spring_config()
+            .map_err(ConfigError::Binding)
     }
 
     pub fn viewport_spring_config(&self) -> Result<SpringConfig, ConfigError> {
-        self.animations.viewport_config().map_err(ConfigError::Binding)
+        self.animations
+            .viewport_config()
+            .map_err(ConfigError::Binding)
     }
 }
 
@@ -156,7 +160,8 @@ mod tests {
     #[test]
     fn compositor_speed_uses_shared_motion_bounds() {
         for speed in [1e-100, 0.009, 101.0, 1e100] {
-            let config = Config::parse_source(&format!("animations {{ speed {speed:e}; }}")).unwrap();
+            let config =
+                Config::parse_source(&format!("animations {{ speed {speed:e}; }}")).unwrap();
             assert!(config.animation_speed().is_err());
         }
     }

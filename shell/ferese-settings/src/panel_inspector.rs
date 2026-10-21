@@ -18,7 +18,10 @@ impl App {
             .push(
                 widget::row([])
                     .align_y(Alignment::Center)
-                    .push(self.panel_heading(title.to_owned(), 16.).width(Length::Fill))
+                    .push(
+                        self.panel_heading(title.to_owned(), 16.)
+                            .width(Length::Fill),
+                    )
                     .push(self.settings_icon_button(
                         "Deselect",
                         "M6 6l12 12 M6 18L18 6",
@@ -33,7 +36,10 @@ impl App {
     pub(super) fn panel_divider(&self) -> Element<'static, Message> {
         let p = crate::visuals::Palette::from_resolved(&self.resolved.presented);
         widget::container(widget::Space::new().height(1).width(Length::Fill))
-            .class(crate::visuals::surface(ferese_theme::mix(p.card, p.text, 0.09), 0.))
+            .class(crate::visuals::surface(
+                ferese_theme::mix(p.card, p.text, 0.09),
+                0.,
+            ))
             .into()
     }
 
@@ -57,7 +63,9 @@ impl App {
                     cosmic::iced::widget::pick_list(
                         crate::panel_edit::destinations(panel),
                         Some(destination.clone()),
-                        move |destination| Message::PanelEdit(Action::Move(item_id.clone(), destination)),
+                        move |destination| {
+                            Message::PanelEdit(Action::Move(item_id.clone(), destination))
+                        },
                     )
                     .font(self.font)
                     .text_size(13)
@@ -68,7 +76,12 @@ impl App {
         );
         rows = rows.push(self.panel_field(
             item,
-            Field::new(format!("{path}.visible"), "Show item", "", Kind::Toggle(true)),
+            Field::new(
+                format!("{path}.visible"),
+                "Show item",
+                "",
+                Kind::Toggle(true),
+            ),
         ));
         rows = rows.push(self.panel_divider());
         if matches!(item.kind, ItemKind::Workspaces { .. }) {
@@ -83,14 +96,20 @@ impl App {
                 "Choose when to use the overflow menu.",
                 Kind::Choice {
                     default: "auto",
-                    choices: &[("never", "Keep visible"), ("auto", "When needed"), ("always", "Always")],
+                    choices: &[
+                        ("never", "Keep visible"),
+                        ("auto", "When needed"),
+                        ("always", "Always"),
+                    ],
                 },
             ),
         ));
         let representations = item.kind.representations();
         if representations.len() > 1 {
             let choices: &'static [(&'static str, &'static str)] = match representations {
-                [Representation::Wide, Representation::Icon] => &[("wide", "Full"), ("icon", "Icon")],
+                [Representation::Wide, Representation::Icon] => {
+                    &[("wide", "Full"), ("icon", "Icon")]
+                }
                 _ => &[("wide", "Full"), ("compact", "Compact"), ("icon", "Icon")],
             };
             rows = rows.push(self.panel_field(
@@ -128,12 +147,15 @@ impl App {
             .position(|candidate| candidate.id == item.id)
             .unwrap();
         rows.push(self.panel_divider())
-            .push(self.inspector_actions(
-                (index > 0).then(|| Message::PanelEdit(Action::Earlier(item.id.clone()))),
-                (index + 1 < group.items.len()).then(|| Message::PanelEdit(Action::Later(item.id.clone()))),
-                "Remove item",
-                Some(Message::PanelEdit(Action::Remove(item.id.clone()))),
-            ))
+            .push(
+                self.inspector_actions(
+                    (index > 0).then(|| Message::PanelEdit(Action::Earlier(item.id.clone()))),
+                    (index + 1 < group.items.len())
+                        .then(|| Message::PanelEdit(Action::Later(item.id.clone()))),
+                    "Remove item",
+                    Some(Message::PanelEdit(Action::Remove(item.id.clone()))),
+                ),
+            )
             .into()
     }
 
@@ -159,16 +181,24 @@ impl App {
                 .padding([8, 10])
                 .width(Length::Fill)
                 .class(crate::visuals::panel_button(palette, style == selected))
-                .on_press_maybe(
-                    (style != selected)
-                        .then(|| Message::PanelEdit(Action::Set(item.id.clone(), "style".into(), style.key().into()))),
-                ),
+                .on_press_maybe((style != selected).then(|| {
+                    Message::PanelEdit(Action::Set(
+                        item.id.clone(),
+                        "style".into(),
+                        style.key().into(),
+                    ))
+                })),
             );
         }
         choices.into()
     }
 
-    pub(super) fn group_inspector(&self, panel: &Panel, group: &Group, placement: Zone) -> Element<'static, Message> {
+    pub(super) fn group_inspector(
+        &self,
+        panel: &Panel,
+        group: &Group,
+        placement: Zone,
+    ) -> Element<'static, Message> {
         let palette = crate::visuals::Palette::from_resolved(&self.resolved.presented);
         let id = group.id.clone();
         let mut rows = widget::column([])
@@ -182,9 +212,11 @@ impl App {
                     .spacing(8)
                     .push(self.label("Placement", 13.))
                     .push(crate::visuals::panel_select(
-                        cosmic::iced::widget::pick_list(Zone::ALL.to_vec(), Some(placement), move |zone| {
-                            Message::PanelEdit(Action::MoveGroup(id.clone(), zone))
-                        })
+                        cosmic::iced::widget::pick_list(
+                            Zone::ALL.to_vec(),
+                            Some(placement),
+                            move |zone| Message::PanelEdit(Action::MoveGroup(id.clone(), zone)),
+                        )
                         .font(self.font)
                         .text_size(13)
                         .padding([8, 10])
@@ -196,16 +228,28 @@ impl App {
         let mut spacing = widget::column([]).spacing(12);
         for (name, label, value, maximum) in [
             ("spacing", "Item spacing", group.spacing, 64.),
-            ("padding_vertical", "Vertical padding", f32::from(group.padding[0]), 32.),
+            (
+                "padding_vertical",
+                "Vertical padding",
+                f32::from(group.padding[0]),
+                32.,
+            ),
             (
                 "padding_horizontal",
                 "Horizontal padding",
                 f32::from(group.padding[1]),
                 32.,
             ),
-            ("island_padding", "Island padding", group.island_padding, 32.),
+            (
+                "island_padding",
+                "Island padding",
+                group.island_padding,
+                32.,
+            ),
         ] {
-            if panel.group_surface() != ferese_panel::GroupSurface::Island && name == "island_padding" {
+            if panel.group_surface() != ferese_panel::GroupSurface::Island
+                && name == "island_padding"
+            {
                 continue;
             }
             let change = |value: f32| {
@@ -263,7 +307,8 @@ impl App {
             ),
         );
         if !group.items.is_empty() {
-            rows = rows.push(self.note("Move or remove this group’s items before removing the group."));
+            rows = rows
+                .push(self.note("Move or remove this group’s items before removing the group."));
         }
         rows.into()
     }
@@ -294,7 +339,10 @@ impl App {
         let values = serde_json::to_value(item).expect("serializable panel item");
         match field.kind {
             Kind::Choice { default, choices } => {
-                let value = values.get(&name).and_then(serde_json::Value::as_str).unwrap_or(default);
+                let value = values
+                    .get(&name)
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or(default);
                 if name == "overflow" {
                     let selected = choices
                         .iter()
@@ -311,7 +359,11 @@ impl App {
                                     .collect::<Vec<_>>(),
                                 selected,
                                 move |choice| {
-                                    Message::PanelEdit(Action::Set(id.clone(), name.clone(), choice.0.into()))
+                                    Message::PanelEdit(Action::Set(
+                                        id.clone(),
+                                        name.clone(),
+                                        choice.0.into(),
+                                    ))
                                 },
                             )
                             .font(self.font)
@@ -329,16 +381,23 @@ impl App {
                         .padding([8, 4])
                         .width(Length::Fill)
                         .class(crate::visuals::panel_button(p, value == key))
-                        .on_press(Message::PanelEdit(Action::Set(id.clone(), name.clone(), key.into())))
+                        .on_press(Message::PanelEdit(Action::Set(
+                            id.clone(),
+                            name.clone(),
+                            key.into(),
+                        )))
                         .into()
                 }))
                 .spacing(2)
                 .width(Length::Fill);
-                let mut rows = widget::column([]).spacing(8).push(self.label(field.label, 13.)).push(
-                    widget::container(options)
-                        .padding(3)
-                        .class(crate::visuals::surface(p.sidebar, 9.)),
-                );
+                let mut rows = widget::column([])
+                    .spacing(8)
+                    .push(self.label(field.label, 13.))
+                    .push(
+                        widget::container(options)
+                            .padding(3)
+                            .class(crate::visuals::surface(p.sidebar, 9.)),
+                    );
                 if !field.description.is_empty() {
                     rows = rows.push(self.note(&field.description));
                 }
@@ -355,7 +414,11 @@ impl App {
                     .push(self.label(field.label.clone(), 13.).width(Length::Fill))
                     .push(
                         ferese_theme::controls::switch(enabled, p)
-                            .name(format!("{}: {}", field.label, if enabled { "on" } else { "off" }))
+                            .name(format!(
+                                "{}: {}",
+                                field.label,
+                                if enabled { "on" } else { "off" }
+                            ))
                             .on_press(Message::PanelEdit(Action::Set(id, name, (!enabled).into()))),
                     )
                     .into()

@@ -102,7 +102,8 @@ mod tests {
     #[test]
     fn shrinking_commit_retains_the_previous_full_frame_geometry() {
         let source = Rectangle::new((4, 8).into(), (1200, 800).into());
-        let transaction = ResizeTransaction::new(1.into(), Duration::ZERO).with_source_geometry(source);
+        let transaction =
+            ResizeTransaction::new(1.into(), Duration::ZERO).with_source_geometry(source);
         assert_eq!(transaction.source_geometry(), Some(source));
     }
 }

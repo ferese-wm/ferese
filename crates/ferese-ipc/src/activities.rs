@@ -5,7 +5,10 @@ use serde::{Deserialize, Serialize};
 pub const VERSION: u32 = 1;
 
 pub fn now_ms() -> u64 {
-    let mut time = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    let mut time = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
     // SAFETY: time is a correctly sized writable timespec. CLOCK_BOOTTIME
     // includes suspend, unlike the renderer's animation clock.
     if unsafe { libc::clock_gettime(libc::CLOCK_BOOTTIME, &raw mut time) } != 0 {

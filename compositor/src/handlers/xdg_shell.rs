@@ -60,7 +60,9 @@ impl XdgShellHandler for Ferese {
     fn parent_changed(&mut self, surface: ToplevelSurface) {
         self.refresh_capture_privacy();
         self.refresh_idle_inhibition();
-        let parent = surface.parent().and_then(|parent| self.windows.id_for_surface(&parent));
+        let parent = surface
+            .parent()
+            .and_then(|parent| self.windows.id_for_surface(&parent));
         let child = self
             .windows
             .id_for_surface(surface.wl_surface())
@@ -95,7 +97,12 @@ impl XdgShellHandler for Ferese {
         }
     }
 
-    fn reposition_request(&mut self, surface: PopupSurface, positioner: PositionerState, token: u32) {
+    fn reposition_request(
+        &mut self,
+        surface: PopupSurface,
+        positioner: PositionerState,
+        token: u32,
+    ) {
         surface.with_pending_state(|state| {
             state.geometry = positioner.get_geometry();
             state.positioner = positioner;
@@ -252,7 +259,12 @@ impl XdgShellHandler for Ferese {
         };
 
         if let Some(pointer) = seat.get_pointer() {
-            pointer.set_grab(self, PopupPointerGrab::new(&popup_grab), serial, Focus::Keep);
+            pointer.set_grab(
+                self,
+                PopupPointerGrab::new(&popup_grab),
+                serial,
+                Focus::Keep,
+            );
         }
         if let Some(keyboard) = seat.get_keyboard() {
             keyboard.set_grab(self, PopupKeyboardGrab::new(&popup_grab), serial);
@@ -264,14 +276,21 @@ impl XdgShellHandler for Ferese {
     }
 }
 
-fn check_grab(seat: &Seat<Ferese>, surface: &WlSurface, serial: Serial) -> Option<GrabStartData<Ferese>> {
+fn check_grab(
+    seat: &Seat<Ferese>,
+    surface: &WlSurface,
+    serial: Serial,
+) -> Option<GrabStartData<Ferese>> {
     let pointer = seat.get_pointer()?;
     if !pointer.has_grab(serial) {
         return None;
     }
     let start_data = pointer.grab_start_data()?;
     let (focus, _) = start_data.focus.as_ref()?;
-    focus.id().same_client_as(&surface.id()).then_some(start_data)
+    focus
+        .id()
+        .same_client_as(&surface.id())
+        .then_some(start_data)
 }
 
 impl XdgDecorationHandler for Ferese {
@@ -325,12 +344,14 @@ pub(crate) fn validate_size_constraints(toplevel: &ToplevelSurface) -> bool {
         let mut cached = states.cached_state.get::<SurfaceCachedState>();
         let state = cached.current();
         let valid_axis = |min: i32, max: i32| min >= 0 && max >= 0 && (max == 0 || min <= max);
-        valid_axis(state.min_size.w, state.max_size.w) && valid_axis(state.min_size.h, state.max_size.h)
+        valid_axis(state.min_size.w, state.max_size.w)
+            && valid_axis(state.min_size.h, state.max_size.h)
     });
     if !valid {
-        toplevel
-            .xdg_toplevel()
-            .post_error(xdg_toplevel::Error::InvalidSize, "invalid minimum/maximum window size");
+        toplevel.xdg_toplevel().post_error(
+            xdg_toplevel::Error::InvalidSize,
+            "invalid minimum/maximum window size",
+        );
     }
 
     valid
@@ -359,7 +380,9 @@ pub fn handle_commit(state: &mut Ferese, surface: &WlSurface) {
     if let Some(PopupKind::Xdg(popup)) = state.popups.find_popup(surface)
         && !popup.is_initial_configure_sent()
     {
-        popup.send_configure().expect("initial popup configure is valid");
+        popup
+            .send_configure()
+            .expect("initial popup configure is valid");
     }
 }
 
@@ -415,10 +438,11 @@ impl Ferese {
         let Ok(root) = find_popup_root_surface(&PopupKind::Xdg(popup.clone())) else {
             return;
         };
-        let window = self
-            .space
-            .elements()
-            .find(|window| window.toplevel().is_some_and(|toplevel| toplevel.wl_surface() == &root));
+        let window = self.space.elements().find(|window| {
+            window
+                .toplevel()
+                .is_some_and(|toplevel| toplevel.wl_surface() == &root)
+        });
         let geometry = (|| {
             if let Some(window) = window {
                 let id = *self.windows.ids().get(window)?;
@@ -432,11 +456,14 @@ impl Ferese {
 
                 Some((output_geometry, location))
             } else {
-                let layer = self.space.layer_for_surface(&root, WindowSurfaceType::TOPLEVEL)?;
+                let layer = self
+                    .space
+                    .layer_for_surface(&root, WindowSurfaceType::TOPLEVEL)?;
 
                 self.space.outputs().find_map(|output| {
                     let output_geometry = self.space.output_geometry(output)?;
-                    let layer_geometry = smithay::desktop::layer_map_for_output(output).layer_geometry(&layer)?;
+                    let layer_geometry =
+                        smithay::desktop::layer_map_for_output(output).layer_geometry(&layer)?;
 
                     Some((output_geometry, output_geometry.loc + layer_geometry.loc))
                 })
@@ -490,7 +517,9 @@ impl Dispatch<xdg_toplevel::XdgToplevel, XdgShellSurfaceUserData> for Ferese {
             return;
         }
 
-        smithay::wayland::Dispatch2::request(data, state, client, resource, request, dhandle, data_init);
+        smithay::wayland::Dispatch2::request(
+            data, state, client, resource, request, dhandle, data_init,
+        );
     }
 
     fn destroyed(
@@ -524,7 +553,11 @@ fn size_limits_usable(
             (pending.max_size.w, pending.max_size.h),
         )
     });
-    let (min, max) = if minimum { (proposed, max) } else { (min, proposed) };
+    let (min, max) = if minimum {
+        (proposed, max)
+    } else {
+        (min, proposed)
+    };
     (max.0 == 0 || min.0 <= max.0) && (max.1 == 0 || min.1 <= max.1)
 }
 

@@ -51,7 +51,10 @@ impl Ferese {
             return bounds;
         };
         let map = layer_map_for_output(output);
-        for layer in map.layers().filter(|layer| layer.namespace() == "ferese-shell-top-bar") {
+        for layer in map
+            .layers()
+            .filter(|layer| layer.namespace() == "ferese-shell-top-bar")
+        {
             let policy = layer.cached_state();
             let ExclusiveZone::Exclusive(amount) = policy.exclusive_zone else {
                 continue;
@@ -126,7 +129,13 @@ impl Ferese {
             .tab_bars
             .values()
             .flatten()
-            .flat_map(|bar| bar.group.windows.iter().copied().filter(|id| *id != bar.group.active))
+            .flat_map(|bar| {
+                bar.group
+                    .windows
+                    .iter()
+                    .copied()
+                    .filter(|id| *id != bar.group.active)
+            })
             .collect();
         let windows = self
             .windows
@@ -149,7 +158,8 @@ impl Ferese {
             if inactive_tabs.contains(&id) {
                 // An inactive client must not hold its column's resize or viewport.
                 self.windows.clear_transaction(&id);
-                self.windows.update(id, |record| record.coupled_width = None);
+                self.windows
+                    .update(id, |record| record.coupled_width = None);
             }
             self.space.unmap_elem(&window);
         }
@@ -201,7 +211,8 @@ impl Ferese {
                 self.space
                     .outputs()
                     .filter(|output| {
-                        self.output_has_animations(output) || self.output_has_pending_visual_changes(output)
+                        self.output_has_animations(output)
+                            || self.output_has_pending_visual_changes(output)
                     })
                     .cloned(),
             );
@@ -210,7 +221,8 @@ impl Ferese {
         self.refresh_input_capture_zones();
         let visible_workspaces = self.visible_workspace_ids();
         self.reconcile_workspaces(&visible_workspaces);
-        self.tab_bars.retain(|id, _| visible_workspaces.contains(id));
+        self.tab_bars
+            .retain(|id, _| visible_workspaces.contains(id));
         if self.session_lock.active() {
             self.configure_lock_surfaces();
         }
@@ -234,7 +246,9 @@ impl Ferese {
                     id,
                     record
                         .resize
-                        .and_then(|transaction| transaction.column_width().map(|(source, _)| source))
+                        .and_then(|transaction| {
+                            transaction.column_width().map(|(source, _)| source)
+                        })
                         .or_else(|| {
                             // A sibling may have committed while this column is still
                             // held. Replacement configures must share that cohort's
@@ -252,9 +266,13 @@ impl Ferese {
                                                 || **sibling == column.windows[column.active]
                                         })
                                         .find_map(|sibling| {
-                                            self.windows.transaction(sibling).and_then(|transaction| {
-                                                transaction.column_width().map(|(source, _)| source)
-                                            })
+                                            self.windows.transaction(sibling).and_then(
+                                                |transaction| {
+                                                    transaction
+                                                        .column_width()
+                                                        .map(|(source, _)| source)
+                                                },
+                                            )
                                         })
                                 })
                         })
@@ -271,7 +289,11 @@ impl Ferese {
                     continue;
                 };
                 for column in layout.columns() {
-                    if !column.windows.iter().any(|id| pending_column_width_cycles.contains(id)) {
+                    if !column
+                        .windows
+                        .iter()
+                        .any(|id| pending_column_width_cycles.contains(id))
+                    {
                         continue;
                     }
                     // A cycle belongs to the column. Copy one presented motion
@@ -280,10 +302,9 @@ impl Ferese {
                     let mut rows = column.windows.iter().filter(|id| {
                         (column.display != ferese_layout::ColumnDisplay::Tabbed
                             || **id == column.windows[column.active])
-                            && self
-                                .windows
-                                .geometry(id)
-                                .is_some_and(|geometry| !geometry.is_zooming() && !geometry.is_fullscreen())
+                            && self.windows.geometry(id).is_some_and(|geometry| {
+                                !geometry.is_zooming() && !geometry.is_fullscreen()
+                            })
                     });
                     let source = rows
                         .clone()
@@ -353,7 +374,9 @@ impl Ferese {
             let workspace_focus = workspace.last_focused;
             let focused = self
                 .focused_window
-                .filter(|window| self.workspaces.workspace_for_window(*window) == Some(workspace_id))
+                .filter(|window| {
+                    self.workspaces.workspace_for_window(*window) == Some(workspace_id)
+                })
                 .or(workspace_focus);
             let Some(workspace) = self.workspaces.workspace_mut(workspace_id) else {
                 continue;
@@ -403,12 +426,15 @@ impl Ferese {
                     crate::handlers::set_surface_tree_output(toplevel.wl_surface(), &output);
                 }
 
-                let is_maximized =
-                    self.windows.record(*id).is_some_and(|w| w.maximized) && workspace_fullscreen != Some(*id);
+                let is_maximized = self.windows.record(*id).is_some_and(|w| w.maximized)
+                    && workspace_fullscreen != Some(*id);
                 let placement = self.workspaces.placement(*id);
                 let is_floating = matches!(placement, Some(WindowPlacement::Floating { .. }));
                 // Maximization cannot make an inactive tab visible again.
-                if !is_floating && workspace_fullscreen != Some(*id) && !layout.geometry.contains_key(id) {
+                if !is_floating
+                    && workspace_fullscreen != Some(*id)
+                    && !layout.geometry.contains_key(id)
+                {
                     continue;
                 }
                 let rect = if workspace_fullscreen == Some(*id) {
@@ -424,8 +450,10 @@ impl Ferese {
                             rect
                         }
                         Some(WindowPlacement::Floating { rect }) => {
-                            let constrained =
-                                constrained_floating_rect(rect, constraints.get(id).copied().unwrap_or_default());
+                            let constrained = constrained_floating_rect(
+                                rect,
+                                constraints.get(id).copied().unwrap_or_default(),
+                            );
                             if constrained != rect {
                                 let _ = self.workspaces.set_floating_rect(*id, constrained);
                             }
@@ -438,13 +466,14 @@ impl Ferese {
                 let is_fullscreen = workspace_fullscreen == Some(*id);
 
                 visible.insert(*id);
-                let scrolling = if !is_fullscreen && !is_floating && (!is_maximized || is_scrolling_layout) {
-                    viewport_target
-                        .zip(viewport_current)
-                        .map(|(target, current)| (workspace_id, rect.x + target, current))
-                } else {
-                    None
-                };
+                let scrolling =
+                    if !is_fullscreen && !is_floating && (!is_maximized || is_scrolling_layout) {
+                        viewport_target
+                            .zip(viewport_current)
+                            .map(|(target, current)| (workspace_id, rect.x + target, current))
+                    } else {
+                        None
+                    };
 
                 placements.push((
                     window.clone(),
@@ -465,7 +494,9 @@ impl Ferese {
 
         placements.sort_by_key(|(_, id, ..)| self.window_stack.rank(*id));
 
-        for (window, id, rect, is_fullscreen, is_maximized, is_floating, scrolling, couple_width) in placements {
+        for (window, id, rect, is_fullscreen, is_maximized, is_floating, scrolling, couple_width) in
+            placements
+        {
             let was_mapped = self.space.element_location(&window).is_some();
             let Some(record) = self.windows.record_mut(id) else {
                 continue;
@@ -476,7 +507,8 @@ impl Ferese {
                 record.coupled_width = None;
             }
 
-            let natural_pending = record.natural_floating_pending && is_floating && !is_fullscreen && !is_maximized;
+            let natural_pending =
+                record.natural_floating_pending && is_floating && !is_fullscreen && !is_maximized;
             let had_geometry = record.geometry.is_some();
             let geometry = record
                 .geometry
@@ -504,8 +536,12 @@ impl Ferese {
             }
 
             if let Some((workspace, world_x, viewport_x)) = scrolling {
-                let restored_world_x =
-                    restored_scrolling_world_x(had_geometry, geometry.visual.current.x, viewport_x, world_x);
+                let restored_world_x = restored_scrolling_world_x(
+                    had_geometry,
+                    geometry.visual.current.x,
+                    viewport_x,
+                    world_x,
+                );
                 let mut animated_world_x = previous_scrolling_world_x
                     .remove(&id)
                     .filter(|(previous_workspace, _)| *previous_workspace == workspace)
@@ -534,19 +570,19 @@ impl Ferese {
                 }
                 record.world_x = Some((workspace, animated_world_x));
 
-                let coupled = !geometry.is_zooming()
-                    && (couple_width
-                        || record
-                            .coupled_width
-                            .as_ref()
-                            .is_some_and(|(previous_workspace, _)| *previous_workspace == workspace));
+                let coupled =
+                    !geometry.is_zooming()
+                        && (couple_width
+                            || record.coupled_width.as_ref().is_some_and(
+                                |(previous_workspace, _)| *previous_workspace == workspace,
+                            ));
                 if coupled {
                     if let Some(source) = column_width_sources.get(&id) {
                         record.coupled_width = Some(*source);
                     }
-                    let width = record
-                        .coupled_width
-                        .get_or_insert_with(|| (workspace, AnimatedValue::new(geometry.visual.current.width)));
+                    let width = record.coupled_width.get_or_insert_with(|| {
+                        (workspace, AnimatedValue::new(geometry.visual.current.width))
+                    });
                     if width.0 != workspace {
                         *width = (workspace, AnimatedValue::new(geometry.visual.current.width));
                     }
@@ -628,7 +664,9 @@ impl Ferese {
                                     .workspace_for_window(id)
                                     .and_then(|workspace| self.workspaces.workspace(workspace))
                                     .and_then(|workspace| match &workspace.layout {
-                                        WorkspaceLayout::Scrolling(layout) => layout.allocated_column_width(id),
+                                        WorkspaceLayout::Scrolling(layout) => {
+                                            layout.allocated_column_width(id)
+                                        }
                                         _ => None,
                                     }),
                             ),
@@ -670,7 +708,9 @@ impl Ferese {
 
     pub(crate) fn sync_window_stacking(&mut self) {
         let revision = self.window_stack.revision();
-        let rebuild = self.stacking_cache.needs_rebuild(revision, self.space.elements().len());
+        let rebuild = self
+            .stacking_cache
+            .needs_rebuild(revision, self.space.elements().len());
 
         if !rebuild && !self.stacking_cache.needs_restore() {
             return;
@@ -681,30 +721,43 @@ impl Ferese {
             windows.sort_by_key(|window| {
                 let id = self.windows.ids().get(window).copied();
                 let geometry = id.and_then(|id| self.windows.geometry(&id));
-                let floating = id
-                    .is_some_and(|id| matches!(self.workspaces.placement(id), Some(WindowPlacement::Floating { .. })));
+                let floating = id.is_some_and(|id| {
+                    matches!(
+                        self.workspaces.placement(id),
+                        Some(WindowPlacement::Floating { .. })
+                    )
+                });
                 let priority = crate::stacking::layer_priority(
                     floating,
                     geometry.is_some_and(|geometry| geometry.is_zooming()),
                     geometry.is_some_and(|geometry| geometry.is_fullscreen()),
                     floating
                         && id.is_some_and(|id| {
-                            self.floating_above_fullscreen.get(&id).is_some_and(|parent| {
-                                self.workspaces
-                                    .workspace_for_window(id)
-                                    .and_then(|workspace| self.workspaces.workspace(workspace))
-                                    .is_some_and(|workspace| workspace.fullscreen == Some(*parent))
-                            })
+                            self.floating_above_fullscreen
+                                .get(&id)
+                                .is_some_and(|parent| {
+                                    self.workspaces
+                                        .workspace_for_window(id)
+                                        .and_then(|workspace| self.workspaces.workspace(workspace))
+                                        .is_some_and(|workspace| {
+                                            workspace.fullscreen == Some(*parent)
+                                        })
+                                })
                         }),
                 );
-                (priority, id.map_or(usize::MAX, |id| self.window_stack.rank(id)))
+                (
+                    priority,
+                    id.map_or(usize::MAX, |id| self.window_stack.rank(id)),
+                )
             });
             self.stacking_cache.replace(windows, revision);
         }
 
-        if !stacking_order_settled(self.space.elements(), self.stacking_cache.order(), |window| {
-            window.z_index()
-        }) {
+        if !stacking_order_settled(
+            self.space.elements(),
+            self.stacking_cache.order(),
+            |window| window.z_index(),
+        ) {
             for window in self.stacking_cache.order() {
                 self.space.raise_element(window, false);
             }
@@ -722,16 +775,17 @@ impl Ferese {
         self.stacking_cache.remapped();
     }
 
-    pub(super) fn tiled_layout(&mut self, bounds: Rect) -> Result<LayoutResult, ferese_layout::LayoutError> {
+    pub(super) fn tiled_layout(
+        &mut self,
+        bounds: Rect,
+    ) -> Result<LayoutResult, ferese_layout::LayoutError> {
         let constraints = self.window_constraints();
         let focused = self.focused_window;
         let bounds = self.workspace_layout_bounds(bounds, &self.workspaces.active().layout);
-        self.workspaces.active_mut().layout.resolve_geometry_with_constraints(
-            bounds,
-            self.gap_config,
-            &constraints,
-            focused,
-        )
+        self.workspaces
+            .active_mut()
+            .layout
+            .resolve_geometry_with_constraints(bounds, self.gap_config, &constraints, focused)
     }
 
     #[cfg(test)]
@@ -745,7 +799,10 @@ impl Ferese {
         let mut cache = self.workspace_previews.borrow_mut();
         let mut live = HashSet::new();
         let mut previews = HashMap::new();
-        for view in self.output_workspaces.workspace_views_iter(&self.workspaces) {
+        for view in self
+            .output_workspaces
+            .workspace_views_iter(&self.workspaces)
+        {
             let Some(workspace) = self.workspaces.workspace(view.id) else {
                 continue;
             };
@@ -799,19 +856,31 @@ impl Ferese {
                 // other shell metadata never invalidate geometry.
                 let mut layout = workspace.layout.clone();
                 let mut rectangles = layout
-                    .resolve_geometry_with_constraints(input.bounds, input.gaps, &constraints, input.focused)
+                    .resolve_geometry_with_constraints(
+                        input.bounds,
+                        input.gaps,
+                        &constraints,
+                        input.focused,
+                    )
                     .map(|resolved| resolved.geometry)
                     .unwrap_or_default();
                 for window in &input.windows {
                     if let Some(rect) = window.floating {
-                        rectangles.insert(window.id, constrained_floating_rect(rect, window.constraints));
+                        rectangles.insert(
+                            window.id,
+                            constrained_floating_rect(rect, window.constraints),
+                        );
                     }
                     if input.fullscreen == Some(window.id) {
                         rectangles.insert(window.id, input.fullscreen_bounds);
                     } else if window.maximized
-                        && (window.floating.is_some() || !matches!(workspace.layout, WorkspaceLayout::Scrolling(_)))
+                        && (window.floating.is_some()
+                            || !matches!(workspace.layout, WorkspaceLayout::Scrolling(_)))
                     {
-                        rectangles.insert(window.id, maximized_rect(input.maximized_bounds, input.gaps.outer));
+                        rectangles.insert(
+                            window.id,
+                            maximized_rect(input.maximized_bounds, input.gaps.outer),
+                        );
                     }
                 }
                 cache.entries.insert(
@@ -827,7 +896,12 @@ impl Ferese {
                     cache.resolutions += 1;
                 }
             }
-            previews.extend(cache.entries[&view.id].rectangles.iter().map(|(&id, &rect)| (id, rect)));
+            previews.extend(
+                cache.entries[&view.id]
+                    .rectangles
+                    .iter()
+                    .map(|(&id, &rect)| (id, rect)),
+            );
         }
         cache.entries.retain(|id, _| live.contains(id));
         previews
@@ -844,8 +918,11 @@ impl Ferese {
                     let state = cached.current();
                     (state.min_size, state.max_size)
                 });
-                let (minimum, maximum) =
-                    self.effective_size_constraints(window, (minimum.w, minimum.h), (maximum.w, maximum.h));
+                let (minimum, maximum) = self.effective_size_constraints(
+                    window,
+                    (minimum.w, minimum.h),
+                    (maximum.w, maximum.h),
+                );
 
                 Some((
                     *id,

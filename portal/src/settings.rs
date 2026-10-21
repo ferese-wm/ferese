@@ -25,7 +25,8 @@ struct Appearance {
 
 impl Appearance {
     fn from_resolved(theme: &ResolvedTheme) -> Self {
-        let accent = ferese_config::theme::rgba(&theme.tokens.colors.accent).expect("validated accent");
+        let accent =
+            ferese_config::theme::rgba(&theme.tokens.colors.accent).expect("validated accent");
         Self {
             scheme: if theme.appearance == ThemeAppearance::Light {
                 2
@@ -41,7 +42,10 @@ impl Appearance {
     fn values(self) -> HashMap<String, OwnedValue> {
         HashMap::from([
             ("color-scheme".into(), self.scheme.into()),
-            ("accent-color".into(), Value::from(self.accent).try_to_owned().unwrap()),
+            (
+                "accent-color".into(),
+                Value::from(self.accent).try_to_owned().unwrap(),
+            ),
             ("contrast".into(), self.contrast.into()),
             ("reduced-motion".into(), self.reduced_motion.into()),
         ])
@@ -57,7 +61,10 @@ impl Settings {
             .ok()
             .and_then(|mut connection| connection.get(ferese_config::families::builtins).ok())
             .map(|snapshot| snapshot.theme);
-        Self(Arc::new(RwLock::new(initial_appearance(theme.as_ref(), load_config))))
+        Self(Arc::new(RwLock::new(initial_appearance(
+            theme.as_ref(),
+            load_config,
+        ))))
     }
 
     async fn update_appearance(&self, next: Appearance, emitter: &SignalEmitter<'_>) {
@@ -160,7 +167,10 @@ fn matches_namespace(filters: &[String], namespace: &str) -> bool {
         })
 }
 
-fn initial_appearance(theme: Option<&ResolvedTheme>, load: impl FnOnce() -> Option<Appearance>) -> Appearance {
+fn initial_appearance(
+    theme: Option<&ResolvedTheme>,
+    load: impl FnOnce() -> Option<Appearance>,
+) -> Appearance {
     theme
         .map(Appearance::from_resolved)
         .or_else(load)
@@ -188,7 +198,9 @@ fn load_path(path: &Path) -> Result<Appearance, String> {
     let source = match read_source(path) {
         Ok(source) => source,
         Err(_) if !path.try_exists().map_err(|error| error.to_string())? => {
-            return Ok(Appearance::from_resolved(&ferese_config::theme::default_theme()));
+            return Ok(Appearance::from_resolved(
+                &ferese_config::theme::default_theme(),
+            ));
         }
         Err(error) => return Err(error),
     };
@@ -216,8 +228,13 @@ mod tests {
         std::fs::write(&path, source).unwrap();
         let appearance = initial_appearance(None, || load_path(&path).ok());
         let document = Document::parse(source).unwrap();
-        let expected =
-            ferese_config::theme::resolve(&document, root.path(), jiff::Timestamp::now(), read_source).unwrap();
+        let expected = ferese_config::theme::resolve(
+            &document,
+            root.path(),
+            jiff::Timestamp::now(),
+            read_source,
+        )
+        .unwrap();
         assert_eq!(appearance, Appearance::from_resolved(&expected.theme));
         assert_eq!(appearance.scheme, 2);
         assert_eq!(appearance.reduced_motion, 1);
@@ -227,7 +244,11 @@ mod tests {
             Appearance::from_resolved(&ferese_config::theme::default_theme()).accent
         );
 
-        std::fs::write(&path, r#"theme { mode "dark"; }; animations { enabled #false; }"#).unwrap();
+        std::fs::write(
+            &path,
+            r#"theme { mode "dark"; }; animations { enabled #false; }"#,
+        )
+        .unwrap();
         let next = load_path(&path).unwrap();
         assert_eq!(next.scheme, 1);
         assert_eq!(next.reduced_motion, 1);
@@ -268,7 +289,12 @@ mod tests {
 
     #[test]
     fn namespaces_support_only_trailing_section_wildcards() {
-        for filter in ["", "org.freedesktop.appearance", "org.freedesktop.*", "org.*"] {
+        for filter in [
+            "",
+            "org.freedesktop.appearance",
+            "org.freedesktop.*",
+            "org.*",
+        ] {
             assert!(matches_namespace(&[filter.into()], APPEARANCE));
         }
         for filter in [

@@ -31,11 +31,20 @@ impl<Node> Default for DeviceState<Node> {
 
 pub(super) fn device_identity(path: &Path) -> Option<PathBuf> {
     // The parent hardware identity survives cardN renumbering after unplug.
-    std::fs::canonicalize(Path::new("/sys/class/drm").join(path.file_name()?).join("device")).ok()
+    std::fs::canonicalize(
+        Path::new("/sys/class/drm")
+            .join(path.file_name()?)
+            .join("device"),
+    )
+    .ok()
 }
 
 impl<Node> DeviceState<Node> {
-    fn current_path<'a>(&self, original: &Path, observed: &'a [(PathBuf, Option<PathBuf>)]) -> Option<&'a Path> {
+    fn current_path<'a>(
+        &self,
+        original: &Path,
+        observed: &'a [(PathBuf, Option<PathBuf>)],
+    ) -> Option<&'a Path> {
         observed
             .iter()
             .find(|(path, identity)| match &self.identity {
@@ -48,7 +57,8 @@ impl<Node> DeviceState<Node> {
     pub fn failed(&mut self, now: Instant) {
         self.availability = Availability::Unavailable;
         self.failures = self.failures.saturating_add(1);
-        self.retry_at = Some(now + Duration::from_secs(1u64 << self.failures.saturating_sub(1).min(5)));
+        self.retry_at =
+            Some(now + Duration::from_secs(1u64 << self.failures.saturating_sub(1).min(5)));
     }
 
     pub fn ready(&mut self, node: Node) {
@@ -128,7 +138,8 @@ impl<Node: Copy + Eq + std::hash::Hash> Topology<Node> {
     ) -> HashSet<Node> {
         let mut retired = HashSet::new();
         for (key, slot) in &mut self.devices {
-            if let Availability::Ready(previous) | Availability::Degraded(previous) = slot.availability
+            if let Availability::Ready(previous) | Availability::Degraded(previous) =
+                slot.availability
                 && slot.current_path(key, observed).and_then(&node_for_path) != Some(previous)
             {
                 retired.insert(previous);
@@ -145,7 +156,12 @@ impl<Node: Copy + Eq + std::hash::Hash> Topology<Node> {
 
     pub fn retry_deadline(&self, active: bool) -> Option<Instant> {
         active
-            .then(|| self.devices.values().filter_map(|device| device.retry_at).min())
+            .then(|| {
+                self.devices
+                    .values()
+                    .filter_map(|device| device.retry_at)
+                    .min()
+            })
             .flatten()
     }
 }
@@ -166,7 +182,10 @@ pub(super) fn reconcile_outputs(state: &mut Ferese, reactivate: bool) {
     let Some(backend) = state.direct_backend.as_mut() else {
         return;
     };
-    if !backend.topology.request(backend.active && !backend.lid.pending()) {
+    if !backend
+        .topology
+        .request(backend.active && !backend.lid.pending())
+    {
         return;
     }
 
@@ -200,8 +219,11 @@ pub(super) fn reconcile_outputs(state: &mut Ferese, reactivate: bool) {
         .output_profiles
         .iter()
         .any(|profile| profile.outputs.iter().any(|output| output.auto_refresh));
-    backend.low_power =
-        automatic && super::super::power::low_power(backend.low_power, super::super::power::battery_percent());
+    backend.low_power = automatic
+        && super::super::power::low_power(
+            backend.low_power,
+            super::super::power::battery_percent(),
+        );
 
     if let Ok(observed) = &observed {
         backend.topology.observe_devices(observed);
@@ -230,7 +252,14 @@ pub(super) fn reconcile_outputs(state: &mut Ferese, reactivate: bool) {
             .and_then(|devices| slot.current_path(&path, devices));
         let existing = current_path
             .and_then(|path| DrmNode::from_path(path).ok())
-            .filter(|node| state.direct_backend.as_ref().unwrap().devices.contains_key(node));
+            .filter(|node| {
+                state
+                    .direct_backend
+                    .as_ref()
+                    .unwrap()
+                    .devices
+                    .contains_key(node)
+            });
         let previous = match slot.availability {
             Availability::Ready(node) | Availability::Degraded(node) => Some(node),
             _ => existing,
@@ -269,7 +298,13 @@ pub(super) fn reconcile_outputs(state: &mut Ferese, reactivate: bool) {
 
         let mut failed_outputs = Vec::new();
         let activation = if reactivate && existing.is_some() {
-            let device = state.direct_backend.as_mut().unwrap().devices.get_mut(&node).unwrap();
+            let device = state
+                .direct_backend
+                .as_mut()
+                .unwrap()
+                .devices
+                .get_mut(&node)
+                .unwrap();
             device.drm.activate(true).map(|()| {
                 for (crtc, output) in &mut device.outputs {
                     cancel_output_timers(&state.loop_handle, output);
@@ -333,7 +368,12 @@ pub(super) fn reconcile_outputs(state: &mut Ferese, reactivate: bool) {
         ready.push((path, node));
     }
 
-    let known_good = state.direct_backend.as_ref().unwrap().applied_outputs.clone();
+    let known_good = state
+        .direct_backend
+        .as_ref()
+        .unwrap()
+        .applied_outputs
+        .clone();
     if let Err(error) = refresh_monitor_policy(state).and_then(|()| {
         transaction::retire_disconnected(state);
         validate_desired_outputs(state)
@@ -353,7 +393,10 @@ pub(super) fn reconcile_outputs(state: &mut Ferese, reactivate: bool) {
                 .outputs
                 .iter()
                 .filter(|output| output.settings.enabled && output.key.starts_with(&prefix));
-            let logical_sources = desired.clone().filter(|output| output.mirror_source.is_none()).count();
+            let logical_sources = desired
+                .clone()
+                .filter(|output| output.mirror_source.is_none())
+                .count();
             std::cmp::Reverse((logical_sources, desired.count()))
         });
         let mut succeeded = Vec::new();
@@ -380,7 +423,13 @@ pub(super) fn reconcile_outputs(state: &mut Ferese, reactivate: bool) {
                 break;
             }
         }
-        if state.direct_backend.as_ref().unwrap().output_error.is_none() {
+        if state
+            .direct_backend
+            .as_ref()
+            .unwrap()
+            .output_error
+            .is_none()
+        {
             remember_applied_configuration(state);
         }
     }
@@ -390,7 +439,9 @@ pub(super) fn reconcile_outputs(state: &mut Ferese, reactivate: bool) {
     if std::mem::take(&mut state.direct_backend.as_mut().unwrap().topology.layout_dirty) {
         desktop_changes.layout = true;
         desktop_changes.shell = true;
-        desktop_changes.outputs.extend(state.space.outputs().cloned());
+        desktop_changes
+            .outputs
+            .extend(state.space.outputs().cloned());
     }
     let backend = state.direct_backend.as_mut().unwrap();
     backend.topology.reconciling = false;
@@ -453,7 +504,8 @@ fn publish_runtime_desktop(state: &mut Ferese) -> crate::state::DesktopChanges {
             });
             let mode = OutputMode::from(mode);
             let transform = output_transform(settings.transform);
-            let width = (transform.transform_size(mode.size).w as f64 / settings.scale).ceil() as i32;
+            let width =
+                (transform.transform_size(mode.size).w as f64 / settings.scale).ceil() as i32;
             right_edge = right_edge.max(position[0].saturating_add(width));
             crate::state::DesktopOutput {
                 output,
@@ -472,7 +524,8 @@ fn publish_runtime_desktop(state: &mut Ferese) -> crate::state::DesktopChanges {
         for output in device.outputs.values_mut() {
             if output.mirror_source.is_none() {
                 if output.global.is_none() {
-                    output.global = Some(output.output.create_global::<Ferese>(&state.display_handle));
+                    output.global =
+                        Some(output.output.create_global::<Ferese>(&state.display_handle));
                 }
             } else {
                 // Mirrors are physical scanouts, not workspace-owning outputs.
@@ -483,7 +536,9 @@ fn publish_runtime_desktop(state: &mut Ferese) -> crate::state::DesktopChanges {
                     None,
                 );
             }
-            output.surface.set_output_mode_source((&output.output).into());
+            output
+                .surface
+                .set_output_mode_source((&output.output).into());
         }
     }
     changes
@@ -542,7 +597,11 @@ mod tests {
         topology.devices.get_mut(&a).unwrap().ready(node);
         // A policy failure keeps the device open, so it must retain ownership
         // of its node until replacement retirement runs.
-        topology.devices.get_mut(&a).unwrap().degraded(node, Instant::now());
+        topology
+            .devices
+            .get_mut(&a)
+            .unwrap()
+            .degraded(node, Instant::now());
         let observed = [(card.clone(), Some(b.clone()))];
         topology.observe_devices(&observed);
         assert_eq!(
@@ -551,9 +610,16 @@ mod tests {
         );
         assert_eq!(topology.devices[&a].availability, Availability::Missing);
         assert_eq!(topology.devices[&a].current_path(&a, &observed), None);
-        assert_eq!(topology.devices[&b].current_path(&b, &observed), Some(card.as_path()));
+        assert_eq!(
+            topology.devices[&b].current_path(&b, &observed),
+            Some(card.as_path())
+        );
         topology.devices.get_mut(&b).unwrap().ready(node);
-        assert!(topology.retire_changed_devices(&observed, |_| Some(node)).is_empty());
+        assert!(
+            topology
+                .retire_changed_devices(&observed, |_| Some(node))
+                .is_empty()
+        );
     }
 
     #[test]
@@ -567,15 +633,28 @@ mod tests {
         let mut topology = Topology::<u64>::default();
         topology.observe_devices(&[(card0.clone(), Some(a.clone()))]);
         topology.devices.get_mut(&a).unwrap().ready(node0);
-        let observed = [(card0.clone(), Some(b.clone())), (card2.clone(), Some(a.clone()))];
+        let observed = [
+            (card0.clone(), Some(b.clone())),
+            (card2.clone(), Some(a.clone())),
+        ];
         for _ in 0..2 {
             topology.observe_devices(&observed);
         }
         assert_eq!(topology.devices.len(), 2);
-        assert_eq!(topology.devices[&a].current_path(&a, &observed), Some(card2.as_path()));
-        assert_eq!(topology.devices[&b].current_path(&b, &observed), Some(card0.as_path()));
         assert_eq!(
-            topology.retire_changed_devices(&observed, |path| Some(if path == card0 { node0 } else { node2 })),
+            topology.devices[&a].current_path(&a, &observed),
+            Some(card2.as_path())
+        );
+        assert_eq!(
+            topology.devices[&b].current_path(&b, &observed),
+            Some(card0.as_path())
+        );
+        assert_eq!(
+            topology.retire_changed_devices(&observed, |path| Some(if path == card0 {
+                node0
+            } else {
+                node2
+            })),
             HashSet::from([node0])
         );
     }
@@ -590,7 +669,10 @@ mod tests {
         topology.devices.get_mut(&card).unwrap().ready(node);
         topology.observe_devices(&[(card.clone(), Some(identity.clone()))]);
         assert_eq!(topology.devices.len(), 1);
-        assert_eq!(topology.devices[&identity].availability, Availability::Ready(node));
+        assert_eq!(
+            topology.devices[&identity].availability,
+            Availability::Ready(node)
+        );
     }
 
     #[test]
@@ -608,7 +690,10 @@ mod tests {
             topology.retire_changed_devices(&unknown, |_| Some(1)),
             HashSet::from([1])
         );
-        assert_eq!(topology.devices[&identity].availability, Availability::Missing);
+        assert_eq!(
+            topology.devices[&identity].availability,
+            Availability::Missing
+        );
         assert_eq!(
             topology.devices[&card].current_path(&card, &unknown),
             Some(card.as_path())
@@ -624,9 +709,17 @@ mod tests {
             Some(card.as_path())
         );
         // The reopened node is still valid and can be reused for this identity.
-        assert!(topology.retire_changed_devices(&known, |_| Some(1)).is_empty());
+        assert!(
+            topology
+                .retire_changed_devices(&known, |_| Some(1))
+                .is_empty()
+        );
         topology.devices.get_mut(&identity).unwrap().ready(1);
-        assert!(topology.retire_changed_devices(&known, |_| Some(1)).is_empty());
+        assert!(
+            topology
+                .retire_changed_devices(&known, |_| Some(1))
+                .is_empty()
+        );
     }
 
     #[test]
@@ -636,10 +729,16 @@ mod tests {
         let card0 = PathBuf::from("/dev/dri/card0");
         let card1 = PathBuf::from("/dev/dri/card1");
         let mut topology = Topology::<u64>::default();
-        topology.observe_devices(&[(card0.clone(), Some(a.clone())), (card1.clone(), Some(b.clone()))]);
+        topology.observe_devices(&[
+            (card0.clone(), Some(a.clone())),
+            (card1.clone(), Some(b.clone())),
+        ]);
         topology.devices.get_mut(&a).unwrap().ready(0);
         topology.devices.get_mut(&b).unwrap().ready(1);
-        let swapped = [(card0.clone(), Some(b.clone())), (card1.clone(), Some(a.clone()))];
+        let swapped = [
+            (card0.clone(), Some(b.clone())),
+            (card1.clone(), Some(a.clone())),
+        ];
         let node_for_path = |path: &Path| Some(u64::from(path == card1));
         topology.observe_devices(&swapped);
         assert_eq!(
@@ -650,7 +749,11 @@ mod tests {
         assert_eq!(topology.devices[&b].availability, Availability::Missing);
         topology.devices.get_mut(&a).unwrap().ready(1);
         topology.devices.get_mut(&b).unwrap().ready(0);
-        assert!(topology.retire_changed_devices(&swapped, node_for_path).is_empty());
+        assert!(
+            topology
+                .retire_changed_devices(&swapped, node_for_path)
+                .is_empty()
+        );
     }
 
     #[test]
@@ -693,12 +796,17 @@ mod tests {
     fn unavailable_devices_retry_independently_with_capped_backoff() {
         let now = Instant::now();
         let mut topology = Topology::<u64>::default();
-        topology.devices.insert("/dev/dri/card0".into(), DeviceState::default());
+        topology
+            .devices
+            .insert("/dev/dri/card0".into(), DeviceState::default());
         let healthy = 1;
         let mut second = DeviceState::default();
         second.ready(healthy);
         topology.devices.insert("/dev/dri/card1".into(), second);
-        let device = topology.devices.get_mut(Path::new("/dev/dri/card0")).unwrap();
+        let device = topology
+            .devices
+            .get_mut(Path::new("/dev/dri/card0"))
+            .unwrap();
         device.failed(now);
         assert_eq!(device.retry_at, Some(now + Duration::from_secs(1)));
         for _ in 0..20 {
@@ -710,8 +818,15 @@ mod tests {
             Availability::Ready(healthy)
         );
         assert!(topology.retry_deadline(false).is_none());
-        assert_eq!(topology.retry_deadline(true), Some(now + Duration::from_secs(32)));
-        topology.devices.get_mut(Path::new("/dev/dri/card0")).unwrap().missing();
+        assert_eq!(
+            topology.retry_deadline(true),
+            Some(now + Duration::from_secs(32))
+        );
+        topology
+            .devices
+            .get_mut(Path::new("/dev/dri/card0"))
+            .unwrap()
+            .missing();
         assert!(topology.retry_deadline(true).is_none());
     }
 }

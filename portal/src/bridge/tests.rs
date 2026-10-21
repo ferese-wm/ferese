@@ -9,7 +9,9 @@ fn pair() -> (Bridge, UnixStream) {
 
 fn pair_with_timeout(timeout: Duration) -> (Bridge, UnixStream) {
     let (client, server) = UnixStream::pair().unwrap();
-    server.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+    server
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
     (Bridge::from_stream(client, timeout).unwrap(), server)
 }
 
@@ -21,19 +23,29 @@ async fn valid_errors_preserve_connection_and_request_ids_are_unique() {
         write_frame(&mut server, &Response::error(first.id, "denied", "Denied")).unwrap();
         let second: Request = read_frame(&mut server).unwrap();
         assert_eq!(second.id, first.id + 1);
-        write_frame(&mut server, &Response::success(second.id, json!({"enabled":false}))).unwrap();
+        write_frame(
+            &mut server,
+            &Response::success(second.id, json!({"enabled":false})),
+        )
+        .unwrap();
         let third: Request = read_frame(&mut server).unwrap();
         assert_eq!(third.id, second.id + 1);
         write_frame(&mut server, &Response::success(third.id, Json::Null)).unwrap();
     });
-    assert_eq!(bridge.call("enable", json!({})).await.unwrap_err(), "Denied");
+    assert_eq!(
+        bridge.call("enable", json!({})).await.unwrap_err(),
+        "Denied"
+    );
     assert!(!bridge.is_closed());
     assert_eq!(
         bridge.call("disable", json!({})).await.unwrap(),
         json!({"enabled":false})
     );
     assert!(!bridge.is_closed());
-    assert_eq!(bridge.call("empty-result", json!({})).await.unwrap(), Json::Null);
+    assert_eq!(
+        bridge.call("empty-result", json!({})).await.unwrap(),
+        Json::Null
+    );
     peer.join().unwrap();
 }
 
@@ -44,7 +56,13 @@ async fn timeout_closes_stream_before_a_late_reply_can_be_reused() {
     let peer = std::thread::spawn(move || {
         let request: Request = read_frame(&mut server).unwrap();
         blocked.recv_timeout(Duration::from_secs(2)).unwrap();
-        assert!(write_frame(&mut server, &Response::success(request.id, json!({"enabled":true}))).is_err());
+        assert!(
+            write_frame(
+                &mut server,
+                &Response::success(request.id, json!({"enabled":true}))
+            )
+            .is_err()
+        );
         assert_eq!(server.read(&mut [0u8; 1]).unwrap(), 0);
     });
     assert!(bridge.call("enable", json!({})).await.is_err());
@@ -52,7 +70,13 @@ async fn timeout_closes_stream_before_a_late_reply_can_be_reused() {
     tokio::time::timeout(Duration::from_secs(1), bridge.terminated())
         .await
         .unwrap();
-    assert!(bridge.call("disable", json!({})).await.unwrap_err().contains("closed"));
+    assert!(
+        bridge
+            .call("disable", json!({}))
+            .await
+            .unwrap_err()
+            .contains("closed")
+    );
     release.send(()).unwrap();
     peer.join().unwrap();
 }
@@ -99,7 +123,10 @@ async fn malformed_or_mismatched_replies_poison_the_bridge() {
             }
             write_frame(&mut server, &response).unwrap();
         });
-        assert!(bridge.call("enable", json!({})).await.is_err(), "case {case}");
+        assert!(
+            bridge.call("enable", json!({})).await.is_err(),
+            "case {case}"
+        );
         assert!(bridge.is_closed(), "case {case}");
         assert!(bridge.call("disable", json!({})).await.is_err());
         peer.join().unwrap();

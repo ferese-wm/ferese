@@ -14,7 +14,9 @@ pub fn changes(path: &Path) -> impl Stream<Item = Message> + use<> {
         let path = match std::path::absolute(path) {
             Ok(path) => path,
             Err(error) => {
-                let _ = output.send(Message::ExternalConfig(Err(error.to_string()))).await;
+                let _ = output
+                    .send(Message::ExternalConfig(Err(error.to_string())))
+                    .await;
                 return;
             }
         };
@@ -31,7 +33,9 @@ pub fn changes(path: &Path) -> impl Stream<Item = Message> + use<> {
         let mut watcher = match watcher {
             Ok(watcher) => watcher,
             Err(error) => {
-                let _ = output.send(Message::ExternalConfig(Err(error.to_string()))).await;
+                let _ = output
+                    .send(Message::ExternalConfig(Err(error.to_string())))
+                    .await;
                 return;
             }
         };
@@ -46,7 +50,9 @@ pub fn changes(path: &Path) -> impl Stream<Item = Message> + use<> {
             .map_err(notify::Error::io)
             .and_then(|()| watcher.watch(directory, RecursiveMode::NonRecursive));
         if let Err(error) = watch {
-            let _ = output.send(Message::ExternalConfig(Err(error.to_string()))).await;
+            let _ = output
+                .send(Message::ExternalConfig(Err(error.to_string())))
+                .await;
             return;
         }
 
@@ -56,7 +62,11 @@ pub fn changes(path: &Path) -> impl Stream<Item = Message> + use<> {
             let snapshot = tokio::task::spawn_blocking(move || Snapshot::read(&file))
                 .await
                 .unwrap_or_else(|e| Err(e.to_string()));
-            if output.send(Message::ExternalConfig(snapshot)).await.is_err() {
+            if output
+                .send(Message::ExternalConfig(snapshot))
+                .await
+                .is_err()
+            {
                 return;
             }
             if events.recv().await.is_none() {
@@ -90,7 +100,10 @@ mod tests {
                 let path = directory.path().join("ferese/config.kdl");
                 let stream = changes(&path);
                 pin_mut!(stream);
-                assert!(matches!(stream.next().await, Some(Message::ExternalConfig(Ok(_)))));
+                assert!(matches!(
+                    stream.next().await,
+                    Some(Message::ExternalConfig(Ok(_)))
+                ));
                 std::fs::create_dir_all(path.parent().unwrap()).unwrap();
                 let source = "animations { speed 0.75; }";
                 std::fs::write(&path, source).unwrap();
@@ -117,7 +130,10 @@ mod tests {
                 std::fs::write(&path, "animations {\n    speed 1\n}\n").unwrap();
                 let stream = changes(&path);
                 pin_mut!(stream);
-                assert!(matches!(stream.next().await, Some(Message::ExternalConfig(Ok(_)))));
+                assert!(matches!(
+                    stream.next().await,
+                    Some(Message::ExternalConfig(Ok(_)))
+                ));
                 for source in ["bad [", "animations {\n    speed 0.75\n}\n"] {
                     let temporary = directory.path().join("replacement");
                     std::fs::write(&temporary, source).unwrap();

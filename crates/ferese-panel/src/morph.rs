@@ -180,7 +180,9 @@ impl Hub {
             pins.iter()
                 .any(|value| !value.is_finite() || !(0. ..=f64::from(f32::MAX)).contains(value))
         }) {
-            return Err("hub radius pins must be finite, nonnegative pixel values representable as f32");
+            return Err(
+                "hub radius pins must be finite, nonnegative pixel values representable as f32",
+            );
         }
         self.pins = pins;
         let mut target = self.motion.target();
@@ -221,7 +223,10 @@ impl Hub {
     }
 
     pub fn retarget(&mut self, mode: Mode, available: [f64; 2]) -> Result<(), &'static str> {
-        if available.iter().any(|value| !value.is_finite() || *value <= 0.) {
+        if available
+            .iter()
+            .any(|value| !value.is_finite() || *value <= 0.)
+        {
             return Err("hub requires a finite positive available area");
         }
         let [width, height] = self.profile.size(mode, self.height);
@@ -302,12 +307,14 @@ impl Hub {
 
     pub fn sample(&self) -> Sample {
         let fade = |elapsed: Duration| (elapsed.as_secs_f32() / FADE.as_secs_f32()).clamp(0., 1.);
-        let opacity =
-            self.initial_opacity + (1. - self.initial_opacity) * fade(self.elapsed.saturating_sub(CONTENT_DELAY));
+        let opacity = self.initial_opacity
+            + (1. - self.initial_opacity) * fade(self.elapsed.saturating_sub(CONTENT_DELAY));
         let mut geometry = self.motion.current();
         geometry.bounds.width = geometry.bounds.width.clamp(0., self.available[0]);
         geometry.bounds.height = geometry.bounds.height.clamp(0., self.available[1]);
-        geometry.radii = geometry.radii.map(|radius| radius.clamp(0., f64::from(f32::MAX)));
+        geometry.radii = geometry
+            .radii
+            .map(|radius| radius.clamp(0., f64::from(f32::MAX)));
         Sample {
             geometry,
             previous: self.previous,
@@ -352,7 +359,8 @@ mod tests {
     #[test]
     fn measured_height_preserves_fade_and_motion_and_caps_long_content() {
         let mut hub = Hub::new(Profile::default(), 34.).unwrap();
-        hub.retarget(Mode::Expanded(Content::Controls), [800., 600.]).unwrap();
+        hub.retarget(Mode::Expanded(Content::Controls), [800., 600.])
+            .unwrap();
         hub.advance(Duration::from_millis(180), false);
         let before = hub.sample();
         hub.fit_content_height(148.).unwrap();
@@ -363,7 +371,10 @@ mod tests {
         assert_eq!(hub.sample().geometry.bounds.height, 148.);
         assert_eq!(hub.sample().opacity, 1.);
         hub.fit_content_height(900.).unwrap();
-        assert_eq!(hub.target_size(), [340., Profile::default().controls_height]);
+        assert_eq!(
+            hub.target_size(),
+            [340., Profile::default().controls_height]
+        );
         hub.retarget(Mode::Idle, [800., 600.]).unwrap();
         hub.fit_content_height(100.).unwrap();
         assert_eq!(hub.target_size(), [150., 34.]);
@@ -372,7 +383,8 @@ mod tests {
     #[test]
     fn a_content_swap_fades_without_restarting_the_geometry() {
         let mut hub = Hub::new(Profile::default(), 34.).unwrap();
-        hub.retarget(Mode::Expanded(Content::Controls), [800., 600.]).unwrap();
+        hub.retarget(Mode::Expanded(Content::Controls), [800., 600.])
+            .unwrap();
         hub.advance(Duration::from_secs(2), false);
         hub.advance(Duration::from_secs(1), false);
         let geometry = hub.sample().geometry;
@@ -394,7 +406,8 @@ mod tests {
     fn content_swap_uses_a_fixed_delay_instead_of_waiting_for_spring_settlement() {
         let mut hub = Hub::new(Profile::default(), 34.).unwrap();
         assert!(!hub.active());
-        hub.retarget(Mode::Expanded(Content::Calendar), [800., 600.]).unwrap();
+        hub.retarget(Mode::Expanded(Content::Calendar), [800., 600.])
+            .unwrap();
         assert_eq!(hub.target_size(), [340., 230.]);
         hub.advance(Duration::from_millis(120), false);
         assert_eq!(hub.sample().opacity, 0.);
@@ -403,7 +416,10 @@ mod tests {
         assert!((hub.sample().opacity - 0.5).abs() < 0.001);
         hub.advance(Duration::from_millis(60), false);
         assert_eq!(hub.sample().opacity, 1.);
-        assert!(hub.active(), "content finishes while the shape is still settling");
+        assert!(
+            hub.active(),
+            "content finishes while the shape is still settling"
+        );
         for _ in 0..50 {
             hub.advance(Duration::from_millis(16), false);
         }
@@ -415,9 +431,11 @@ mod tests {
     #[test]
     fn an_interrupted_content_delay_never_reveals_the_cancelled_panel() {
         let mut hub = Hub::new(Profile::default(), 34.).unwrap();
-        hub.retarget(Mode::Expanded(Content::Media), [800., 600.]).unwrap();
+        hub.retarget(Mode::Expanded(Content::Media), [800., 600.])
+            .unwrap();
         hub.advance(Duration::from_millis(80), false);
-        hub.retarget(Mode::Expanded(Content::Calendar), [800., 600.]).unwrap();
+        hub.retarget(Mode::Expanded(Content::Calendar), [800., 600.])
+            .unwrap();
         for _ in 0..130 {
             hub.advance(Duration::from_millis(8), false);
             let sample = hub.sample();
@@ -431,7 +449,8 @@ mod tests {
     #[test]
     fn spring_overshoots_then_settles_within_its_reserved_surface() {
         let mut hub = Hub::new(Profile::default(), 34.).unwrap();
-        hub.retarget(Mode::Expanded(Content::Calendar), [800., 600.]).unwrap();
+        hub.retarget(Mode::Expanded(Content::Calendar), [800., 600.])
+            .unwrap();
         let allocation = hub.allocation_size();
         let mut peak = 340_f64;
         for _ in 0..200 {
@@ -450,7 +469,8 @@ mod tests {
     #[test]
     fn overshoot_is_clipped_to_small_outputs_and_reduced_motion_removes_all_fades() {
         let mut hub = Hub::new(Profile::default(), 34.).unwrap();
-        hub.retarget(Mode::Expanded(Content::Calendar), [240., 180.]).unwrap();
+        hub.retarget(Mode::Expanded(Content::Calendar), [240., 180.])
+            .unwrap();
         for _ in 0..60 {
             hub.advance(Duration::from_millis(8), false);
             let bounds = hub.sample().geometry.bounds;
@@ -467,7 +487,8 @@ mod tests {
     #[test]
     fn interrupted_expansion_keeps_the_presented_shape() {
         let mut hub = Hub::new(Profile::default(), 34.).unwrap();
-        hub.retarget(Mode::Expanded(Content::Media), [800., 600.]).unwrap();
+        hub.retarget(Mode::Expanded(Content::Media), [800., 600.])
+            .unwrap();
         hub.advance(Duration::from_millis(40), false);
         let before = hub.sample().geometry;
         hub.retarget(Mode::Idle, [800., 600.]).unwrap();
@@ -482,7 +503,8 @@ mod tests {
     #[test]
     fn narrow_outputs_and_reduced_motion_keep_the_hub_bounded() {
         let mut hub = Hub::new(Profile::default(), 30.).unwrap();
-        hub.retarget(Mode::Expanded(Content::Calendar), [240., 180.]).unwrap();
+        hub.retarget(Mode::Expanded(Content::Calendar), [240., 180.])
+            .unwrap();
         hub.advance(Duration::ZERO, true);
         assert_eq!(hub.sample().geometry.bounds, Rect::new(0., 0., 240., 180.));
         assert_eq!(hub.sample().opacity, 1.);

@@ -98,15 +98,16 @@ impl Runner {
         }
         if let Some(deadline) = deadline {
             let weak = Rc::downgrade(owner);
-            match state
-                .loop_handle
-                .insert_source(Timer::from_deadline(deadline), move |_, _, state| {
+            match state.loop_handle.insert_source(
+                Timer::from_deadline(deadline),
+                move |_, _, state| {
                     if let Some(owner) = weak.upgrade() {
                         owner.borrow_mut().2 = None;
                         Self::refresh(&owner, state);
                     }
                     TimeoutAction::Drop
-                }) {
+                },
+            ) {
                 Ok(token) => runner.2 = Some((token, deadline)),
                 Err(error) => tracing::warn!(%error, "could not arm daemon restart deadline"),
             }
@@ -119,7 +120,11 @@ impl Runner {
             .iter()
             .filter(|c| c.enabled && policy.allows_autostart(c.nested))
         {
-            if self.0.iter().any(|service| service.config.command == config.command) {
+            if self
+                .0
+                .iter()
+                .any(|service| service.config.command == config.command)
+            {
                 continue;
             }
             if let Some(index) = previous
@@ -187,7 +192,11 @@ impl Runner {
                 }
             }
             if !service.finished && now >= service.next_start {
-                service.child = spawn_client(state, service.config.command.iter(), ClientCapabilities::default());
+                service.child = spawn_client(
+                    state,
+                    service.config.command.iter(),
+                    ClientCapabilities::default(),
+                );
                 service.next_start = now + Duration::from_secs(5);
                 if service.child.is_none() && !service.config.restart {
                     service.finished = true;
@@ -225,14 +234,19 @@ mod tests {
         let mut events = smithay::reexports::calloop::EventLoop::<usize>::try_new().unwrap();
         events
             .handle()
-            .insert_source(Generic::new(fd, Interest::READ, Mode::Level), move |_, _, count| {
-                assert_eq!(child.wait().unwrap().code(), Some(7));
-                *count += 1;
-                Ok(PostAction::Remove)
-            })
+            .insert_source(
+                Generic::new(fd, Interest::READ, Mode::Level),
+                move |_, _, count| {
+                    assert_eq!(child.wait().unwrap().code(), Some(7));
+                    *count += 1;
+                    Ok(PostAction::Remove)
+                },
+            )
             .unwrap();
         let mut count = 0;
-        events.dispatch(Some(Duration::from_secs(2)), &mut count).unwrap();
+        events
+            .dispatch(Some(Duration::from_secs(2)), &mut count)
+            .unwrap();
         assert_eq!(count, 1);
         events.dispatch(Some(Duration::ZERO), &mut count).unwrap();
         assert_eq!(count, 1);
@@ -247,7 +261,12 @@ mod tests {
             nested: false,
         };
         let mut runner = Runner::new(&[config.clone()], SessionPolicy::Desktop);
-        runner.0[0].child = Some(std::process::Command::new("/bin/sleep").arg("30").spawn().unwrap());
+        runner.0[0].child = Some(
+            std::process::Command::new("/bin/sleep")
+                .arg("30")
+                .spawn()
+                .unwrap(),
+        );
         let pid = runner.0[0].child.as_ref().unwrap().id();
         config.restart = true;
         runner.reconcile(&[config.clone()], SessionPolicy::Desktop);
@@ -260,7 +279,10 @@ mod tests {
         assert!(runner.0.is_empty());
         let deadline = Instant::now() + Duration::from_secs(2);
         while unsafe { libc::kill(pid as i32, 0) } == 0 {
-            assert!(Instant::now() < deadline, "removed service was not stopped/reaped");
+            assert!(
+                Instant::now() < deadline,
+                "removed service was not stopped/reaped"
+            );
             std::thread::sleep(Duration::from_millis(10));
         }
     }

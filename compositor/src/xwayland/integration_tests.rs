@@ -46,18 +46,22 @@ impl Fixture {
             .expect("make the runtime directory private");
 
         if production_inputs {
-            crate::xwayland::test_hooks::allocator_root_in(PathBuf::from("/tmp/.X11-unix"), PathBuf::from("/tmp"));
+            crate::xwayland::test_hooks::allocator_root_in(
+                PathBuf::from("/tmp/.X11-unix"),
+                PathBuf::from("/tmp"),
+            );
         } else {
             // Owned inputs, so this fixture never allocates a real slot in `/tmp/.X11-unix`.
             let allocator = directory.join("x11");
             fs::create_dir_all(&allocator).expect("create the allocator directory");
-            fs::set_permissions(&allocator, fs::Permissions::from_mode(0o700)).expect("make the allocator private");
+            fs::set_permissions(&allocator, fs::Permissions::from_mode(0o700))
+                .expect("make the allocator private");
             crate::xwayland::test_hooks::allocator_root(allocator);
         }
 
         let reservation = Reservation::allocate().expect("reserve a display");
-        let authority =
-            AuthorityFile::create(&runtime_directory, reservation.display_number()).expect("create an authority file");
+        let authority = AuthorityFile::create(&runtime_directory, reservation.display_number())
+            .expect("create an authority file");
 
         Self {
             record: directory.join("starts.jsonl"),
@@ -70,8 +74,13 @@ impl Fixture {
     }
 
     fn script(&self, assignments: &[(&str, &str)]) -> &Self {
-        let fake = Path::new(env!("CARGO_MANIFEST_DIR")).join("../scripts/tests/fake-xwayland-satellite.py");
-        assert!(fake.exists(), "the fake Satellite must exist at {}", fake.display());
+        let fake = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../scripts/tests/fake-xwayland-satellite.py");
+        assert!(
+            fake.exists(),
+            "the fake Satellite must exist at {}",
+            fake.display()
+        );
         let record = self.record.display();
         let fake = fake.display();
 
@@ -84,7 +93,8 @@ impl Fixture {
         }
         body.push_str(&format!("exec '{fake}' \"$@\"\n"));
         fs::write(&self.wrapper, body).expect("write the wrapper script");
-        fs::set_permissions(&self.wrapper, fs::Permissions::from_mode(0o755)).expect("make the wrapper executable");
+        fs::set_permissions(&self.wrapper, fs::Permissions::from_mode(0o755))
+            .expect("make the wrapper executable");
         self
     }
 
@@ -113,7 +123,8 @@ impl Fixture {
     }
 
     fn spawn(&self, generation: u64) -> (Child, ReadinessSocket) {
-        let socket = ReadinessSocket::create(&self.runtime_directory, generation).expect("create a readiness socket");
+        let socket = ReadinessSocket::create(&self.runtime_directory, generation)
+            .expect("create a readiness socket");
         let notify = socket.path().to_owned();
         let spawned = child::spawn_satellite(
             &self.wrapper,
@@ -127,11 +138,13 @@ impl Fixture {
     }
 
     fn spawn_real(&self, generation: u64, executable: &Path) -> (Child, ReadinessSocket) {
-        let socket = ReadinessSocket::create(&self.runtime_directory, generation).expect("create a readiness socket");
+        let socket = ReadinessSocket::create(&self.runtime_directory, generation)
+            .expect("create a readiness socket");
         let notify = socket.path().to_owned();
         let mut environment = self.environment();
 
-        environment.wayland_display = std::env::var_os("WAYLAND_DISPLAY").expect("a live Wayland session is required");
+        environment.wayland_display =
+            std::env::var_os("WAYLAND_DISPLAY").expect("a live Wayland session is required");
         let spawned = child::spawn_satellite(
             executable,
             &environment,
@@ -167,7 +180,8 @@ fn run_isolated(test_path: &str) -> bool {
     ));
     let _ = fs::remove_dir_all(&directory);
     fs::create_dir_all(&directory).expect("create the isolated session directory");
-    fs::set_permissions(&directory, fs::Permissions::from_mode(0o700)).expect("make the session private");
+    fs::set_permissions(&directory, fs::Permissions::from_mode(0o700))
+        .expect("make the session private");
 
     let status = Command::new(std::env::current_exe().expect("the test binary"))
         .args(["--exact", test_path, "--nocapture"])
@@ -177,7 +191,11 @@ fn run_isolated(test_path: &str) -> bool {
         .env_remove("FERESE_SOCKET")
         .output()
         .expect("re-exec the test");
-    assert!(status.status.success(), "{}", String::from_utf8_lossy(&status.stderr));
+    assert!(
+        status.status.success(),
+        "{}",
+        String::from_utf8_lossy(&status.stderr)
+    );
     false
 }
 
@@ -239,7 +257,10 @@ fn satellite_receives_exactly_the_owned_listeners_and_no_extra_descriptors() {
     let record = fixture.starts().remove(0);
 
     assert_eq!(record["display"], fixture.reservation.display_name());
-    assert_eq!(record["authority"], fixture.authority.path().to_str().unwrap());
+    assert_eq!(
+        record["authority"],
+        fixture.authority.path().to_str().unwrap()
+    );
 
     let listenfds = record["listenfds"].as_array().expect("listenfds array");
     assert_eq!(listenfds.len(), fixture.reservation.listeners().len());
@@ -304,11 +325,17 @@ fn satellite_gets_the_session_environment_and_never_a_private_socket() {
     let environment = &record["env"];
 
     assert_eq!(environment["DISPLAY"], fixture.reservation.display_name());
-    assert_eq!(environment["XAUTHORITY"], fixture.authority.path().to_str().unwrap());
+    assert_eq!(
+        environment["XAUTHORITY"],
+        fixture.authority.path().to_str().unwrap()
+    );
     assert_eq!(environment["WAYLAND_DISPLAY"], "wayland-it");
 
     assert_eq!(environment["WAYLAND_SOCKET"], serde_json::Value::Null);
-    assert_eq!(environment["FERESE_SHELL_CONTROL_SOCKET"], serde_json::Value::Null);
+    assert_eq!(
+        environment["FERESE_SHELL_CONTROL_SOCKET"],
+        serde_json::Value::Null
+    );
 
     reap(satellite);
 }
@@ -329,10 +356,16 @@ fn a_valid_notification_from_the_service_pid_satisfies_readiness() {
 #[test]
 fn a_delayed_notification_is_still_accepted() {
     let fixture = Fixture::new("ready-delay");
-    fixture.script(&[("FAKE_SATELLITE_READY", "1"), ("FAKE_SATELLITE_READY_DELAY", "0.3")]);
+    fixture.script(&[
+        ("FAKE_SATELLITE_READY", "1"),
+        ("FAKE_SATELLITE_READY_DELAY", "0.3"),
+    ]);
     let (satellite, socket) = fixture.spawn(1);
     let pid = satellite.id();
-    assert!(read_ready(&socket, pid), "a delayed READY=1 must be accepted");
+    assert!(
+        read_ready(&socket, pid),
+        "a delayed READY=1 must be accepted"
+    );
     reap(satellite);
 }
 
@@ -343,7 +376,10 @@ fn a_notification_from_a_child_pid_is_rejected() {
     let (satellite, socket) = fixture.spawn(1);
     let pid = satellite.id();
 
-    assert!(!read_ready(&socket, pid), "a foreign PID's READY=1 must be rejected");
+    assert!(
+        !read_ready(&socket, pid),
+        "a foreign PID's READY=1 must be rejected"
+    );
     reap(satellite);
 }
 
@@ -354,7 +390,10 @@ fn malformed_and_truncated_notifications_are_rejected() {
         fixture.script(&[("FAKE_SATELLITE_READY", payload)]);
         let (satellite, socket) = fixture.spawn(1);
         let pid = satellite.id();
-        assert!(!read_ready(&socket, pid), "{payload} must not satisfy readiness");
+        assert!(
+            !read_ready(&socket, pid),
+            "{payload} must not satisfy readiness"
+        );
         reap(satellite);
     }
 }
@@ -368,7 +407,10 @@ fn a_service_that_exits_before_readiness_leaves_no_running_process() {
     ]);
     let (mut satellite, socket) = fixture.spawn(1);
     let pid = satellite.id();
-    assert!(!read_ready(&socket, pid), "an early exit must not satisfy readiness");
+    assert!(
+        !read_ready(&socket, pid),
+        "an early exit must not satisfy readiness"
+    );
     let status = wait_until_child(&mut satellite);
     assert_eq!(status.code(), Some(17));
     assert!(
@@ -404,7 +446,10 @@ fn shutdown_cleans_the_whole_owned_process_group() {
     ]);
     let (satellite, socket) = fixture.spawn(1);
     let pid = satellite.id();
-    assert!(read_ready(&socket, pid), "the group fixture must reach readiness first");
+    assert!(
+        read_ready(&socket, pid),
+        "the group fixture must reach readiness first"
+    );
 
     let group_children = process::group_members(pid);
     assert!(
@@ -414,10 +459,15 @@ fn shutdown_cleans_the_whole_owned_process_group() {
 
     // Ownership, not liveness: the group must hold the endpoints it was handed.
     let inodes = listener_inodes(&fixture.reservation);
-    assert!(!inodes.is_empty(), "the reserved listeners must be identifiable");
+    assert!(
+        !inodes.is_empty(),
+        "the reserved listeners must be identifiable"
+    );
     let holders_before = process::socket_holders(&inodes);
     assert!(
-        holders_before.iter().any(|holder| *holder != std::process::id()),
+        holders_before
+            .iter()
+            .any(|holder| *holder != std::process::id()),
         "a service descendant must hold the X11 listeners before shutdown: {holders_before:?}"
     );
 
@@ -447,7 +497,8 @@ fn listener_inodes(reservation: &Reservation) -> Vec<String> {
         .listeners()
         .iter()
         .filter_map(|listener| {
-            let target = std::fs::read_link(format!("/proc/self/fd/{}", listener.as_raw_fd())).ok()?;
+            let target =
+                std::fs::read_link(format!("/proc/self/fd/{}", listener.as_raw_fd())).ok()?;
             let text = target.to_string_lossy().into_owned();
             text.strip_prefix("socket:[")
                 .and_then(|rest| rest.strip_suffix(']'))
@@ -478,7 +529,10 @@ mod process {
                     continue;
                 };
                 let text = target.to_string_lossy();
-                let Some(number) = text.strip_prefix("socket:[").and_then(|rest| rest.strip_suffix(']')) else {
+                let Some(number) = text
+                    .strip_prefix("socket:[")
+                    .and_then(|rest| rest.strip_suffix(']'))
+                else {
                     continue;
                 };
                 if inodes.iter().any(|inode| inode == number) {
@@ -541,7 +595,10 @@ fn real_satellite_reports_verified_readiness_and_serves_authorized_x_clients() {
         }
     }
     let elapsed = started.elapsed();
-    assert!(accepted, "the installed Satellite never sent a usable READY=1");
+    assert!(
+        accepted,
+        "the installed Satellite never sent a usable READY=1"
+    );
     println!("real Satellite reported readiness in {elapsed:?} (production budget 10s)");
     assert!(
         elapsed <= Duration::from_secs(10),
@@ -578,7 +635,10 @@ fn real_satellite_reports_verified_readiness_and_serves_authorized_x_clients() {
         group.group_is_empty(),
         "the real service group must be empty after shutdown"
     );
-    assert!(wait_until(|| !process_exists(pid)), "the real Satellite must be gone");
+    assert!(
+        wait_until(|| !process_exists(pid)),
+        "the real Satellite must be gone"
+    );
 }
 
 /// Everything the live smoke test cannot supply for itself, declared up front.
@@ -598,17 +658,22 @@ fn live_dependencies() -> PathBuf {
     }
 
     let on_path = |program: &str| {
-        std::env::var_os("PATH")
-            .is_some_and(|paths| std::env::split_paths(&paths).any(|directory| directory.join(program).is_file()))
+        std::env::var_os("PATH").is_some_and(|paths| {
+            std::env::split_paths(&paths).any(|directory| directory.join(program).is_file())
+        })
     };
     if !on_path("xdpyinfo") {
-        panic!("dependency missing: xdpyinfo (x11-utils) is required to prove an X client can connect");
+        panic!(
+            "dependency missing: xdpyinfo (x11-utils) is required to prove an X client can connect"
+        );
     }
 
     match fs::symlink_metadata("/tmp/.X11-unix") {
         Ok(metadata) if metadata.is_dir() => {}
         Ok(_) => panic!("dependency missing: /tmp/.X11-unix exists but is not a directory"),
-        Err(error) => panic!("dependency missing: the shared X11 socket directory /tmp/.X11-unix: {error}"),
+        Err(error) => {
+            panic!("dependency missing: the shared X11 socket directory /tmp/.X11-unix: {error}")
+        }
     }
 
     executable
@@ -626,7 +691,8 @@ mod manager_loop {
     use smithay::reexports::wayland_server::Display;
 
     fn wrapper(directory: &Path, assignments: &[(&str, &str)]) -> PathBuf {
-        let fake = Path::new(env!("CARGO_MANIFEST_DIR")).join("../scripts/tests/fake-xwayland-satellite.py");
+        let fake = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../scripts/tests/fake-xwayland-satellite.py");
         let script = directory.join("fake-satellite");
         let mut body = String::from("#!/bin/sh\n");
         for (key, value) in assignments {
@@ -634,7 +700,8 @@ mod manager_loop {
         }
         body.push_str(&format!("exec '{}' \"$@\"\n", fake.display()));
         fs::write(&script, body).expect("write the wrapper");
-        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).expect("make the wrapper executable");
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o755))
+            .expect("make the wrapper executable");
         script
     }
 
@@ -646,11 +713,13 @@ mod manager_loop {
 
     /// A `Ferese` wired to a real event loop, ready to run the manager.
     fn session(directory: &Path, path: PathBuf) -> (EventLoop<'static, Ferese>, Ferese) {
-        let (_, runtime, _) = crate::config::prepare("xwayland { }", directory).expect("prepare configuration");
+        let (_, runtime, _) =
+            crate::config::prepare("xwayland { }", directory).expect("prepare configuration");
         // Owned inputs, so this test never competes for a real display slot.
         let allocator = directory.join("x11");
         fs::create_dir_all(&allocator).expect("create the allocator directory");
-        fs::set_permissions(&allocator, fs::Permissions::from_mode(0o700)).expect("make the allocator private");
+        fs::set_permissions(&allocator, fs::Permissions::from_mode(0o700))
+            .expect("make the allocator private");
         test_hooks::allocator_root(allocator);
         let mut event_loop = EventLoop::try_new().expect("create the event loop");
         let display = Display::new().expect("create the Wayland display");
@@ -690,14 +759,19 @@ mod manager_loop {
         ) {
             return;
         }
-        let directory = std::env::temp_dir().join(format!("ferese-manager-run-{}", std::process::id()));
+        let directory =
+            std::env::temp_dir().join(format!("ferese-manager-run-{}", std::process::id()));
         let _ = fs::remove_dir_all(&directory);
         fs::create_dir_all(&directory).expect("create the test directory");
 
-        let (mut event_loop, mut state) = session(&directory, wrapper(&directory, &[("FAKE_SATELLITE_LINGER", "60")]));
+        let (mut event_loop, mut state) = session(
+            &directory,
+            wrapper(&directory, &[("FAKE_SATELLITE_LINGER", "60")]),
+        );
         xwayland::initialize(&mut state);
 
-        let generation = xwayland::request_start(&mut state).expect("an on-demand service accepts a start request");
+        let generation = xwayland::request_start(&mut state)
+            .expect("an on-demand service accepts a start request");
         assert!(generation > 0);
 
         dispatch_until(&mut event_loop, &mut state, |state| {
@@ -711,12 +785,20 @@ mod manager_loop {
             "readiness is earned, not assumed"
         );
         assert_eq!(status.state, State::Running);
-        assert!(!status.restart_required, "the live service matches the configured one");
-        let pid = status.satellite_pid.expect("a running service reports its pid");
+        assert!(
+            !status.restart_required,
+            "the live service matches the configured one"
+        );
+        let pid = status
+            .satellite_pid
+            .expect("a running service reports its pid");
         assert!(process_exists(pid), "the service must be alive");
 
         xwayland::shutdown_after_loop(&mut state);
-        assert!(!process_exists(pid), "shutdown must stop and reap the service");
+        assert!(
+            !process_exists(pid),
+            "shutdown must stop and reap the service"
+        );
         let _ = fs::remove_dir_all(&directory);
     }
 
@@ -727,7 +809,8 @@ mod manager_loop {
         ) {
             return;
         }
-        let directory = std::env::temp_dir().join(format!("ferese-manager-crash-{}", std::process::id()));
+        let directory =
+            std::env::temp_dir().join(format!("ferese-manager-crash-{}", std::process::id()));
         let _ = fs::remove_dir_all(&directory);
         fs::create_dir_all(&directory).expect("create the test directory");
 
@@ -735,7 +818,10 @@ mod manager_loop {
             &directory,
             wrapper(
                 &directory,
-                &[("FAKE_SATELLITE_EXIT_AFTER_READY", "1"), ("FAKE_SATELLITE_LINGER", "0")],
+                &[
+                    ("FAKE_SATELLITE_EXIT_AFTER_READY", "1"),
+                    ("FAKE_SATELLITE_LINGER", "0"),
+                ],
             ),
         );
         xwayland::initialize(&mut state);
@@ -768,7 +854,10 @@ mod manager_loop {
 
         let status = xwayland::status_snapshot(&state);
         assert!(
-            matches!(status.state, State::Backoff | State::Stopped | State::Failed),
+            matches!(
+                status.state,
+                State::Backoff | State::Stopped | State::Failed
+            ),
             "a crash must land in a stopped phase, not {:?}",
             status.state
         );
@@ -796,7 +885,8 @@ mod manager_loop {
         test_hooks::reset();
         test_hooks::STARTUP_DEADLINE_MS.store(600, std::sync::atomic::Ordering::SeqCst);
 
-        let directory = std::env::temp_dir().join(format!("ferese-manager-timeout-{}", std::process::id()));
+        let directory =
+            std::env::temp_dir().join(format!("ferese-manager-timeout-{}", std::process::id()));
         let _ = fs::remove_dir_all(&directory);
         fs::create_dir_all(&directory).expect("create the test directory");
         let record = directory.join("starts.jsonl");
@@ -816,15 +906,16 @@ mod manager_loop {
             ),
         );
         xwayland::initialize(&mut state);
-        let first_generation =
-            xwayland::request_start(&mut state).expect("an on-demand service accepts a start request");
+        let first_generation = xwayland::request_start(&mut state)
+            .expect("an on-demand service accepts a start request");
 
         let display = xwayland::status_snapshot(&state)
             .display
             .expect("a display is reserved");
         let socket_path = x11_socket_path(&directory, &display);
         // The kernel queues the connection, so a re-enabled listener could claim it.
-        std::os::unix::net::UnixStream::connect(&socket_path).expect("the reserved socket accepts a queued connection");
+        std::os::unix::net::UnixStream::connect(&socket_path)
+            .expect("the reserved socket accepts a queued connection");
 
         let mut first_pid = None;
         let mut observed_pids = Vec::new();
@@ -856,7 +947,11 @@ mod manager_loop {
         }
 
         let status = xwayland::status_snapshot(&state);
-        assert_eq!(status.state, State::Failed, "three silent starts must open the circuit");
+        assert_eq!(
+            status.state,
+            State::Failed,
+            "three silent starts must open the circuit"
+        );
         assert!(
             status
                 .last_error
@@ -871,7 +966,9 @@ mod manager_loop {
             "the timed-out service leader must be reaped, pid {first_pid} still exists"
         );
         assert!(
-            observed_pids.iter().all(|pid| wait_until(|| !process_exists(*pid))),
+            observed_pids
+                .iter()
+                .all(|pid| wait_until(|| !process_exists(*pid))),
             "every generation started by the queued connection must be reaped"
         );
 
@@ -879,7 +976,10 @@ mod manager_loop {
             .expect("the fake recorded its start")
             .lines()
             .next()
-            .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("valid JSON")["holder_pid"].clone())
+            .map(|line| {
+                serde_json::from_str::<serde_json::Value>(line).expect("valid JSON")["holder_pid"]
+                    .clone()
+            })
             .and_then(|value| value.as_u64())
             .map(|pid| pid as u32)
             .expect("the fake reports the descriptor holder");
@@ -915,7 +1015,8 @@ mod manager_loop {
         }
         test_hooks::reset();
 
-        let directory = std::env::temp_dir().join(format!("ferese-manager-cleanup-{}", std::process::id()));
+        let directory =
+            std::env::temp_dir().join(format!("ferese-manager-cleanup-{}", std::process::id()));
         let _ = fs::remove_dir_all(&directory);
         fs::create_dir_all(&directory).expect("create the test directory");
         let record = directory.join("starts.jsonl");
@@ -960,7 +1061,9 @@ mod manager_loop {
 
         let parked = xwayland::status_snapshot(&state);
         let retired_pid = retired_pid.expect("a service was spawned");
-        let generation = parked.generation.expect("the parked generation is reported");
+        let generation = parked
+            .generation
+            .expect("the parked generation is reported");
         let display = parked.display.clone().expect("the display stays reserved");
         assert_eq!(
             parked.satellite_pid,
@@ -968,7 +1071,10 @@ mod manager_loop {
             "the cleanup record must stay owned while its group may still exist"
         );
         {
-            let manager = state.xwayland.as_ref().expect("the manager stays published");
+            let manager = state
+                .xwayland
+                .as_ref()
+                .expect("the manager stays published");
             assert!(
                 matches!(manager.lifecycle.phase, Phase::CleanupFailed { .. }),
                 "the expired deadline must park the stop, found {:?}",
@@ -984,7 +1090,8 @@ mod manager_loop {
             xwayland::request_start(&mut state).is_none(),
             "a parked cleanup must refuse a replacement generation"
         );
-        let error = xwayland::retry(&mut state).expect_err("a retry must be refused while cleanup is unconfirmed");
+        let error = xwayland::retry(&mut state)
+            .expect_err("a retry must be refused while cleanup is unconfirmed");
         assert!(
             error.contains("still holds the X11 display"),
             "the refusal must name what is still holding the display: {error}"
@@ -1019,7 +1126,8 @@ mod manager_loop {
         xwayland::retry(&mut state).expect("a confirmed cleanup makes a retry legal again");
         dispatch_until(&mut event_loop, &mut state, |state| {
             let status = xwayland::status_snapshot(state);
-            status.state == State::Running && status.generation.is_some_and(|value| value > generation)
+            status.state == State::Running
+                && status.generation.is_some_and(|value| value > generation)
         });
 
         let recovered = xwayland::status_snapshot(&state);
@@ -1052,7 +1160,10 @@ mod manager_loop {
         }
         test_hooks::reset();
 
-        let directory = std::env::temp_dir().join(format!("ferese-manager-cleanup-stop-{}", std::process::id()));
+        let directory = std::env::temp_dir().join(format!(
+            "ferese-manager-cleanup-stop-{}",
+            std::process::id()
+        ));
         let _ = fs::remove_dir_all(&directory);
         fs::create_dir_all(&directory).expect("create the test directory");
 
@@ -1060,7 +1171,10 @@ mod manager_loop {
             &directory,
             wrapper(
                 &directory,
-                &[("FAKE_SATELLITE_EXIT_AFTER_READY", "1"), ("FAKE_SATELLITE_LINGER", "0")],
+                &[
+                    ("FAKE_SATELLITE_EXIT_AFTER_READY", "1"),
+                    ("FAKE_SATELLITE_LINGER", "0"),
+                ],
             ),
         );
         xwayland::initialize(&mut state);
@@ -1091,7 +1205,10 @@ mod manager_loop {
             .display
             .expect("the display stays reserved");
         {
-            let manager = state.xwayland.as_ref().expect("the manager stays published");
+            let manager = state
+                .xwayland
+                .as_ref()
+                .expect("the manager stays published");
             assert!(
                 matches!(manager.lifecycle.phase, Phase::CleanupFailed { .. }),
                 "the stop must be parked as unconfirmed, found {:?}",
@@ -1128,15 +1245,15 @@ mod manager_loop {
 
     #[test]
     fn an_unavailable_pidfd_falls_back_to_the_bounded_exit_poll() {
-        const PATH: &str =
-            "xwayland::integration_tests::manager_loop::an_unavailable_pidfd_falls_back_to_the_bounded_exit_poll";
+        const PATH: &str = "xwayland::integration_tests::manager_loop::an_unavailable_pidfd_falls_back_to_the_bounded_exit_poll";
         if !run_isolated(PATH) {
             return;
         }
         test_hooks::reset();
         test_hooks::PIDFD_UNAVAILABLE.store(true, std::sync::atomic::Ordering::SeqCst);
 
-        let directory = std::env::temp_dir().join(format!("ferese-manager-poll-{}", std::process::id()));
+        let directory =
+            std::env::temp_dir().join(format!("ferese-manager-poll-{}", std::process::id()));
         let _ = fs::remove_dir_all(&directory);
         fs::create_dir_all(&directory).expect("create the test directory");
 
@@ -1181,23 +1298,29 @@ mod manager_loop {
             wait_until(|| !process_exists(pid)),
             "the observed service must be reaped without a pidfd"
         );
-        assert!(verified_readiness, "the service reported readiness before it exited");
+        assert!(
+            verified_readiness,
+            "the service reported readiness before it exited"
+        );
         let status = xwayland::status_snapshot(&state);
-        assert_eq!(status.satellite_pid, None, "cleanup released the process owner");
+        assert_eq!(
+            status.satellite_pid, None,
+            "cleanup released the process owner"
+        );
         test_hooks::reset();
         let _ = fs::remove_dir_all(&directory);
     }
 
     #[test]
     fn a_stale_exit_callback_cannot_stop_a_replacement_service() {
-        const PATH: &str =
-            "xwayland::integration_tests::manager_loop::a_stale_exit_callback_cannot_stop_a_replacement_service";
+        const PATH: &str = "xwayland::integration_tests::manager_loop::a_stale_exit_callback_cannot_stop_a_replacement_service";
         if !run_isolated(PATH) {
             return;
         }
         test_hooks::reset();
 
-        let directory = std::env::temp_dir().join(format!("ferese-manager-stale-{}", std::process::id()));
+        let directory =
+            std::env::temp_dir().join(format!("ferese-manager-stale-{}", std::process::id()));
         let _ = fs::remove_dir_all(&directory);
         fs::create_dir_all(&directory).expect("create the test directory");
 
@@ -1206,8 +1329,8 @@ mod manager_loop {
             wrapper(&directory, &[("FAKE_SATELLITE_EXIT_BEFORE_READY", "1")]),
         );
         xwayland::initialize(&mut state);
-        let first_generation =
-            xwayland::request_start(&mut state).expect("an on-demand service accepts a start request");
+        let first_generation = xwayland::request_start(&mut state)
+            .expect("an on-demand service accepts a start request");
 
         let mut retired_pid = None;
         let deadline = Instant::now() + Duration::from_secs(30);
@@ -1222,7 +1345,10 @@ mod manager_loop {
             if status.state == State::Failed {
                 break;
             }
-            assert!(Instant::now() < deadline, "the early failure never settled: {status:?}");
+            assert!(
+                Instant::now() < deadline,
+                "the early failure never settled: {status:?}"
+            );
         }
         let retired_pid = retired_pid.expect("the first generation was spawned");
         let retired_status = xwayland::status_snapshot(&state);
@@ -1238,8 +1364,13 @@ mod manager_loop {
         });
         let live = xwayland::status_snapshot(&state);
         let live_pid = live.satellite_pid.expect("the replacement reports its pid");
-        let live_generation = live.generation.expect("the replacement reports its generation");
-        assert_ne!(live_pid, retired_pid, "the replacement must be a different process");
+        let live_generation = live
+            .generation
+            .expect("the replacement reports its generation");
+        assert_ne!(
+            live_pid, retired_pid,
+            "the replacement must be a different process"
+        );
 
         let handle = state.loop_handle.clone();
         let stale_generation = first_generation;
@@ -1259,7 +1390,11 @@ mod manager_loop {
             State::Running,
             "a stale callback must not move the live service"
         );
-        assert_eq!(after.satellite_pid, Some(live_pid), "the live process must stay owned");
+        assert_eq!(
+            after.satellite_pid,
+            Some(live_pid),
+            "the live process must stay owned"
+        );
         assert_eq!(
             after.generation,
             Some(live_generation),
@@ -1274,18 +1409,20 @@ mod manager_loop {
 
     #[test]
     fn shutdown_while_starting_stops_the_service_it_owns() {
-        const PATH: &str =
-            "xwayland::integration_tests::manager_loop::shutdown_while_starting_stops_the_service_it_owns";
+        const PATH: &str = "xwayland::integration_tests::manager_loop::shutdown_while_starting_stops_the_service_it_owns";
         if !run_isolated(PATH) {
             return;
         }
         test_hooks::reset();
 
-        let directory = std::env::temp_dir().join(format!("ferese-manager-shutdown-{}", std::process::id()));
+        let directory =
+            std::env::temp_dir().join(format!("ferese-manager-shutdown-{}", std::process::id()));
         let _ = fs::remove_dir_all(&directory);
         fs::create_dir_all(&directory).expect("create the test directory");
-        let (mut event_loop, mut state) =
-            session(&directory, wrapper(&directory, &[("FAKE_SATELLITE_READY_DELAY", "30")]));
+        let (mut event_loop, mut state) = session(
+            &directory,
+            wrapper(&directory, &[("FAKE_SATELLITE_READY_DELAY", "30")]),
+        );
         xwayland::initialize(&mut state);
         xwayland::request_start(&mut state).expect("an on-demand service accepts a start request");
 
@@ -1332,7 +1469,8 @@ mod manager_loop {
         }
         test_hooks::reset();
 
-        let directory = std::env::temp_dir().join(format!("ferese-manager-rebind-{}", std::process::id()));
+        let directory =
+            std::env::temp_dir().join(format!("ferese-manager-rebind-{}", std::process::id()));
         let _ = fs::remove_dir_all(&directory);
         fs::create_dir_all(&directory).expect("create the test directory");
 
@@ -1341,8 +1479,8 @@ mod manager_loop {
             wrapper(&directory, &[("FAKE_SATELLITE_EXIT_BEFORE_READY", "1")]),
         );
         xwayland::initialize(&mut state);
-        let first_generation =
-            xwayland::request_start(&mut state).expect("an on-demand service accepts a start request");
+        let first_generation = xwayland::request_start(&mut state)
+            .expect("an on-demand service accepts a start request");
 
         let deadline = Instant::now() + Duration::from_secs(30);
         loop {
@@ -1356,7 +1494,8 @@ mod manager_loop {
         }
 
         test_hooks::FAIL_REBIND_AFTER.store(0, std::sync::atomic::Ordering::SeqCst);
-        let error = xwayland::retry(&mut state).expect_err("an injected rebind failure must be reported");
+        let error =
+            xwayland::retry(&mut state).expect_err("an injected rebind failure must be reported");
         assert!(
             error.contains("rebind X11 display"),
             "the reported error must name the rebind step: {error}"
@@ -1393,14 +1532,14 @@ mod manager_loop {
 
     #[test]
     fn a_listener_registration_failure_leaves_a_retryable_endpoint() {
-        const PATH: &str =
-            "xwayland::integration_tests::manager_loop::a_listener_registration_failure_leaves_a_retryable_endpoint";
+        const PATH: &str = "xwayland::integration_tests::manager_loop::a_listener_registration_failure_leaves_a_retryable_endpoint";
         if !run_isolated(PATH) {
             return;
         }
         test_hooks::reset();
 
-        let directory = std::env::temp_dir().join(format!("ferese-manager-register-{}", std::process::id()));
+        let directory =
+            std::env::temp_dir().join(format!("ferese-manager-register-{}", std::process::id()));
         let _ = fs::remove_dir_all(&directory);
         fs::create_dir_all(&directory).expect("create the test directory");
 
@@ -1411,7 +1550,10 @@ mod manager_loop {
         // Fail the second listener source: the first is already registered.
         test_hooks::FAIL_LISTENER_REGISTRATION_AFTER.store(1, std::sync::atomic::Ordering::SeqCst);
         xwayland::initialize(&mut state);
-        let diagnostic = state.x11_diagnostic.clone().expect("the failure must be visible");
+        let diagnostic = state
+            .x11_diagnostic
+            .clone()
+            .expect("the failure must be visible");
         assert!(
             diagnostic.contains("injected X11 listener registration failure"),
             "the diagnostic must name the failure: {diagnostic}"
@@ -1421,7 +1563,8 @@ mod manager_loop {
             "a half-registered endpoint must not be published"
         );
 
-        test_hooks::FAIL_LISTENER_REGISTRATION_AFTER.store(usize::MAX, std::sync::atomic::Ordering::SeqCst);
+        test_hooks::FAIL_LISTENER_REGISTRATION_AFTER
+            .store(usize::MAX, std::sync::atomic::Ordering::SeqCst);
         xwayland::retry(&mut state).expect("the service becomes available once registration works");
 
         let mut first_generation = None;
@@ -1437,7 +1580,10 @@ mod manager_loop {
             if status.state == State::Failed {
                 break;
             }
-            assert!(Instant::now() < deadline, "the service never became failed: {status:?}");
+            assert!(
+                Instant::now() < deadline,
+                "the service never became failed: {status:?}"
+            );
         }
         let first_generation = first_generation.expect("a generation was started");
 
@@ -1463,7 +1609,8 @@ mod manager_loop {
             "the half-registered listeners must be closed"
         );
 
-        test_hooks::FAIL_LISTENER_REGISTRATION_AFTER.store(usize::MAX, std::sync::atomic::Ordering::SeqCst);
+        test_hooks::FAIL_LISTENER_REGISTRATION_AFTER
+            .store(usize::MAX, std::sync::atomic::Ordering::SeqCst);
         wrapper(&directory, &[("FAKE_SATELLITE_LINGER", "60")]);
         xwayland::retry(&mut state).expect("the endpoint recovers once registration works");
         dispatch_until(&mut event_loop, &mut state, |state| {
@@ -1477,28 +1624,35 @@ mod manager_loop {
 
     #[test]
     fn an_eager_service_that_could_not_start_retries_exactly_once() {
-        const PATH: &str =
-            "xwayland::integration_tests::manager_loop::an_eager_service_that_could_not_start_retries_exactly_once";
+        const PATH: &str = "xwayland::integration_tests::manager_loop::an_eager_service_that_could_not_start_retries_exactly_once";
         if !run_isolated(PATH) {
             return;
         }
         test_hooks::reset();
 
-        let directory = std::env::temp_dir().join(format!("ferese-manager-eager-{}", std::process::id()));
+        let directory =
+            std::env::temp_dir().join(format!("ferese-manager-eager-{}", std::process::id()));
         let _ = fs::remove_dir_all(&directory);
         fs::create_dir_all(&directory).expect("create the test directory");
 
-        let (mut event_loop, mut state) = session(&directory, wrapper(&directory, &[("FAKE_SATELLITE_LINGER", "60")]));
+        let (mut event_loop, mut state) = session(
+            &directory,
+            wrapper(&directory, &[("FAKE_SATELLITE_LINGER", "60")]),
+        );
         state.xwayland_config.startup = XwaylandStartup::Eager;
 
         test_hooks::FAIL_LISTENER_REGISTRATION_AFTER.store(0, std::sync::atomic::Ordering::SeqCst);
         xwayland::initialize(&mut state);
-        assert!(state.xwayland.is_none(), "an unavailable service publishes no endpoint");
+        assert!(
+            state.xwayland.is_none(),
+            "an unavailable service publishes no endpoint"
+        );
         assert!(
             state.x11_diagnostic.is_some(),
             "the unavailable start must leave a diagnostic"
         );
-        test_hooks::FAIL_LISTENER_REGISTRATION_AFTER.store(usize::MAX, std::sync::atomic::Ordering::SeqCst);
+        test_hooks::FAIL_LISTENER_REGISTRATION_AFTER
+            .store(usize::MAX, std::sync::atomic::Ordering::SeqCst);
 
         // Eager startup must still issue exactly one start request.
         xwayland::retry(&mut state).expect("an eager retry of an unavailable service must succeed");
@@ -1516,24 +1670,31 @@ mod manager_loop {
             Some(1),
             "exactly one generation was requested: {status:?}"
         );
-        assert_eq!(status.readiness, Readiness::Verified, "readiness is earned: {status:?}");
+        assert_eq!(
+            status.readiness,
+            Readiness::Verified,
+            "readiness is earned: {status:?}"
+        );
         let _ = fs::remove_dir_all(&directory);
     }
 
     #[test]
     fn restart_required_tracks_desired_configuration_only() {
-        const PATH: &str =
-            "xwayland::integration_tests::manager_loop::restart_required_tracks_desired_configuration_only";
+        const PATH: &str = "xwayland::integration_tests::manager_loop::restart_required_tracks_desired_configuration_only";
         if !run_isolated(PATH) {
             return;
         }
         test_hooks::reset();
 
-        let directory = std::env::temp_dir().join(format!("ferese-manager-reload-{}", std::process::id()));
+        let directory =
+            std::env::temp_dir().join(format!("ferese-manager-reload-{}", std::process::id()));
         let _ = fs::remove_dir_all(&directory);
         fs::create_dir_all(&directory).expect("create the test directory");
 
-        let (mut event_loop, mut state) = session(&directory, wrapper(&directory, &[("FAKE_SATELLITE_LINGER", "60")]));
+        let (mut event_loop, mut state) = session(
+            &directory,
+            wrapper(&directory, &[("FAKE_SATELLITE_LINGER", "60")]),
+        );
         xwayland::initialize(&mut state);
         xwayland::request_start(&mut state).expect("an on-demand service accepts a start request");
         dispatch_until(&mut event_loop, &mut state, |state| {
@@ -1542,11 +1703,19 @@ mod manager_loop {
 
         let effective = xwayland::status_snapshot(&state);
         let display = effective.display.clone().expect("a display is reserved");
-        let pid = effective.satellite_pid.expect("a running service reports its pid");
+        let pid = effective
+            .satellite_pid
+            .expect("a running service reports its pid");
         let authority = state
             .xwayland
             .as_ref()
-            .and_then(|manager| manager.x11_environment().authority.to_str().map(str::to_owned))
+            .and_then(|manager| {
+                manager
+                    .x11_environment()
+                    .authority
+                    .to_str()
+                    .map(str::to_owned)
+            })
             .expect("an authority path is published");
         assert!(
             !effective.restart_required,
@@ -1578,13 +1747,26 @@ mod manager_loop {
                 Some(display.as_str()),
                 "the display must not move"
             );
-            assert_eq!(status.satellite_pid, Some(pid), "the service must not be restarted");
+            assert_eq!(
+                status.satellite_pid,
+                Some(pid),
+                "the service must not be restarted"
+            );
             let authority_now = state
                 .xwayland
                 .as_ref()
-                .and_then(|manager| manager.x11_environment().authority.to_str().map(str::to_owned))
+                .and_then(|manager| {
+                    manager
+                        .x11_environment()
+                        .authority
+                        .to_str()
+                        .map(str::to_owned)
+                })
                 .expect("an authority path is published");
-            assert_eq!(authority_now, authority, "the authority file must not be replaced");
+            assert_eq!(
+                authority_now, authority,
+                "the authority file must not be replaced"
+            );
         }
 
         // Reverting to the session configuration clears the indication.

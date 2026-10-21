@@ -21,11 +21,21 @@ pub(crate) struct Subscribers {
 }
 
 impl Subscribers {
-    pub(crate) fn subscribe(&mut self, owner: u64, sender: SyncSender<Arc<Event>>) -> Result<(), &'static str> {
+    pub(crate) fn subscribe(
+        &mut self,
+        owner: u64,
+        sender: SyncSender<Arc<Event>>,
+    ) -> Result<(), &'static str> {
         if self.subscribers.len() >= MAX_SUBSCRIBERS {
             return Err("Event subscriber limit reached");
         }
-        self.subscribers.insert(owner, Subscriber { sender, initial: true });
+        self.subscribers.insert(
+            owner,
+            Subscriber {
+                sender,
+                initial: true,
+            },
+        );
         Ok(())
     }
 
@@ -47,7 +57,12 @@ impl Subscribers {
             .as_ref()
             .map(|previous| snapshot.changes_since(previous))
             .unwrap_or_default();
-        if changes.is_empty() && !self.subscribers.values().any(|subscriber| subscriber.initial) {
+        if changes.is_empty()
+            && !self
+                .subscribers
+                .values()
+                .any(|subscriber| subscriber.initial)
+        {
             return;
         }
         self.generation = self.generation.wrapping_add(1);
@@ -65,19 +80,26 @@ impl Subscribers {
         if let Some(last) = events.last_mut() {
             Arc::get_mut(last).unwrap().last = true;
         }
-        let initial = self.subscribers.values().any(|subscriber| subscriber.initial).then(|| {
-            Arc::new(Event {
-                version: VERSION,
-                generation: self.generation,
-                last: true,
-                change: Change::Snapshot {
-                    desktop: Box::new(snapshot.clone()),
-                },
-            })
-        });
+        let initial = self
+            .subscribers
+            .values()
+            .any(|subscriber| subscriber.initial)
+            .then(|| {
+                Arc::new(Event {
+                    version: VERSION,
+                    generation: self.generation,
+                    last: true,
+                    change: Change::Snapshot {
+                        desktop: Box::new(snapshot.clone()),
+                    },
+                })
+            });
         self.subscribers.retain(|_, subscriber| {
             let delivered = if subscriber.initial {
-                subscriber.sender.try_send(initial.as_ref().unwrap().clone()).is_ok()
+                subscriber
+                    .sender
+                    .try_send(initial.as_ref().unwrap().clone())
+                    .is_ok()
             } else {
                 events
                     .iter()
@@ -137,7 +159,10 @@ mod tests {
         hub.subscribe(1, sender).unwrap();
         let mut state = snapshot();
         hub.publish(state.clone());
-        assert!(matches!(receive.try_recv().unwrap().change, Change::Snapshot { .. }));
+        assert!(matches!(
+            receive.try_recv().unwrap().change,
+            Change::Snapshot { .. }
+        ));
         hub.publish(state.clone());
         assert!(matches!(receive.try_recv(), Err(TryRecvError::Empty)));
         state.outputs = json!([{"id": 2}]);
@@ -146,7 +171,11 @@ mod tests {
         hub.publish(state);
         let events = receive.try_iter().collect::<Vec<_>>();
         assert_eq!(events.len(), 3);
-        assert!(events.iter().all(|event| event.generation == events[0].generation));
+        assert!(
+            events
+                .iter()
+                .all(|event| event.generation == events[0].generation)
+        );
         assert!(!events[0].last && !events[1].last && events[2].last);
     }
 
@@ -171,7 +200,10 @@ mod tests {
         ));
         assert_eq!(hub.subscribers.len(), 1);
         slow_receive.try_recv().unwrap();
-        assert!(matches!(slow_receive.try_recv(), Err(TryRecvError::Disconnected)));
+        assert!(matches!(
+            slow_receive.try_recv(),
+            Err(TryRecvError::Disconnected)
+        ));
         hub.remove(2);
         assert!(!hub.active());
         assert!(hub.previous.is_none());
@@ -209,7 +241,11 @@ mod tests {
         hub.publish(state);
         let events = receive.try_iter().collect::<Vec<_>>();
         assert_eq!(events.len(), 7);
-        assert!(events.iter().all(|event| event.generation == events[0].generation));
+        assert!(
+            events
+                .iter()
+                .all(|event| event.generation == events[0].generation)
+        );
         assert!(events[..6].iter().all(|event| !event.last));
         assert!(events[6].last);
     }
@@ -229,7 +265,8 @@ mod tests {
         let mut event_loop = EventLoop::try_new().unwrap();
         let mut config = crate::config::Config::default().runtime_config().unwrap();
         config.wallpaper.path = None;
-        let mut state = crate::Ferese::new(&mut event_loop, Display::new().unwrap(), config).unwrap();
+        let mut state =
+            crate::Ferese::new(&mut event_loop, Display::new().unwrap(), config).unwrap();
         let output = |name: &str, x| DesktopOutput {
             output: Output::new(
                 name.into(),
@@ -273,7 +310,11 @@ mod tests {
         state.publish_ipc_events();
         let events = receive.try_iter().collect::<Vec<_>>();
         assert!(events.last().unwrap().last);
-        assert!(events.iter().all(|event| event.generation == events[0].generation));
+        assert!(
+            events
+                .iter()
+                .all(|event| event.generation == events[0].generation)
+        );
         let final_state = state.ipc_event_snapshot();
         assert_eq!(final_state.outputs.as_array().unwrap().len(), 2);
         for workspace in final_state.workspaces.as_array().unwrap() {
@@ -336,7 +377,10 @@ mod tests {
             });
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
             while completion.try_recv().is_err() {
-                assert!(std::time::Instant::now() < deadline, "subscription worker timed out");
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "subscription worker timed out"
+                );
                 event_loop
                     .dispatch(std::time::Duration::from_millis(10), &mut state)
                     .unwrap();

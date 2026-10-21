@@ -31,7 +31,12 @@ impl Cache {
         self.read_at(action, Instant::now(), super::audio)
     }
 
-    fn read_at(&mut self, action: u64, now: Instant, read: impl FnOnce() -> Option<Audio>) -> Option<Audio> {
+    fn read_at(
+        &mut self,
+        action: u64,
+        now: Instant,
+        read: impl FnOnce() -> Option<Audio>,
+    ) -> Option<Audio> {
         let revision = self.signals.revision();
         // Without a live subscription, keep the old bounded polling fallback.
         // A missing default sink retries slowly, even if the server is connected.
@@ -66,7 +71,10 @@ mod tests {
 
     fn cache() -> Cache {
         Cache {
-            signals: Signals::test(Arc::new((Mutex::new((0, false, None, false, 0)), Condvar::new()))),
+            signals: Signals::test(Arc::new((
+                Mutex::new((0, false, None, false, 0)),
+                Condvar::new(),
+            ))),
             revision: 0,
             action: u64::MAX,
             value: None,
@@ -89,7 +97,9 @@ mod tests {
         assert_eq!(cache.read_at(0, now, sample).unwrap().volume, 48);
 
         for second in 1..=120 {
-            let audio = cache.read_at(0, now + Duration::from_secs(second), || panic!("idle query"));
+            let audio = cache.read_at(0, now + Duration::from_secs(second), || {
+                panic!("idle query")
+            });
             assert_eq!(audio.unwrap().volume, 48);
         }
     }
@@ -169,6 +179,10 @@ mod tests {
                 .read_at(0, now + Duration::from_secs(4), || panic!("early retry"))
                 .is_none()
         );
-        assert!(cache.read_at(0, now + Duration::from_secs(5), sample).is_some());
+        assert!(
+            cache
+                .read_at(0, now + Duration::from_secs(5), sample)
+                .is_some()
+        );
     }
 }

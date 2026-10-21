@@ -11,11 +11,14 @@ impl Ferese {
             && !self.overview.is_presenting()
             && self.workspaces.active_id() == swipe.workspace
             && self.focused_window == Some(swipe.from)
-            && self.workspaces.workspace(swipe.workspace).is_some_and(|workspace| {
-                workspace.fullscreen.is_none()
-                    && workspace.layout.contains(swipe.from)
-                    && workspace.layout.contains(swipe.to)
-            })
+            && self
+                .workspaces
+                .workspace(swipe.workspace)
+                .is_some_and(|workspace| {
+                    workspace.fullscreen.is_none()
+                        && workspace.layout.contains(swipe.from)
+                        && workspace.layout.contains(swipe.to)
+                })
     }
 
     pub(crate) fn preview_focus_swipe(
@@ -25,16 +28,28 @@ impl Ferese {
         progress: f64,
     ) {
         if self.focus_swipe().is_none() {
-            if self.swipe.preview_started() || !self.animations_enabled || self.overview.is_presenting() {
+            if self.swipe.preview_started()
+                || !self.animations_enabled
+                || self.overview.is_presenting()
+            {
                 return;
             }
-            let Some(from) = self.focused_window else { return };
-            let Some(bounds) = self.output_bounds() else { return };
+            let Some(from) = self.focused_window else {
+                return;
+            };
+            let Some(bounds) = self.output_bounds() else {
+                return;
+            };
             let workspace = self.workspaces.active();
-            if workspace.fullscreen.is_some() || !matches!(workspace.layout, WorkspaceLayout::Scrolling(_)) {
+            if workspace.fullscreen.is_some()
+                || !matches!(workspace.layout, WorkspaceLayout::Scrolling(_))
+            {
                 return;
             }
-            let Ok(neighbor) = workspace.layout.directional_neighbor(from, direction, bounds) else {
+            let Ok(neighbor) = workspace
+                .layout
+                .directional_neighbor(from, direction, bounds)
+            else {
                 return;
             };
             let to = neighbor.unwrap_or(from);
@@ -54,7 +69,12 @@ impl Ferese {
             }
             let layout_bounds = self.workspace_layout_bounds(bounds, &candidate);
             if candidate
-                .resolve_geometry_with_constraints(layout_bounds, self.gap_config, &self.window_constraints(), Some(to))
+                .resolve_geometry_with_constraints(
+                    layout_bounds,
+                    self.gap_config,
+                    &self.window_constraints(),
+                    Some(to),
+                )
                 .is_err()
             {
                 return;
@@ -86,7 +106,10 @@ impl Ferese {
             self.swipe.mark_preview_started();
         }
         if let Some(workspace) = self.focus_swipe().map(|swipe| swipe.workspace) {
-            self.viewports.get_mut(&workspace).unwrap().update_gesture(progress);
+            self.viewports
+                .get_mut(&workspace)
+                .unwrap()
+                .update_gesture(progress);
         }
 
         if let Some(output) = self
@@ -109,8 +132,10 @@ impl Ferese {
             .viewport_blocked(swipe.workspace, &self.windows);
         // Release from the last input position even if no frame rendered that update.
         let velocity = (current && !blocked).then(|| {
-            swipe.release_velocity(self.swipe.release_velocity, self.swipe.unbounded_release_velocity)
-                / self.animation_speed
+            swipe.release_velocity(
+                self.swipe.release_velocity,
+                self.swipe.unbounded_release_velocity,
+            ) / self.animation_speed
         });
         let workspace = swipe.workspace;
         let swipe = self
@@ -178,17 +203,23 @@ impl Ferese {
         let Some(window) = self.windows.window(next).cloned() else {
             return;
         };
-        let Some(surface) = window.toplevel().map(|toplevel| toplevel.wl_surface().clone()) else {
+        let Some(surface) = window
+            .toplevel()
+            .map(|toplevel| toplevel.wl_surface().clone())
+        else {
             return;
         };
 
         self.focused_window = Some(next);
         self.raise_window(&window, true);
-        self.seat.get_keyboard().expect("seat has a keyboard").set_focus(
-            self,
-            Some(surface),
-            smithay::utils::SERIAL_COUNTER.next_serial(),
-        );
+        self.seat
+            .get_keyboard()
+            .expect("seat has a keyboard")
+            .set_focus(
+                self,
+                Some(surface),
+                smithay::utils::SERIAL_COUNTER.next_serial(),
+            );
 
         for window in self.space.elements() {
             if let Some(toplevel) = window.toplevel() {
@@ -281,18 +312,22 @@ impl Ferese {
             return;
         };
         if self.workspaces.active().layout.mode() == LayoutMode::Tree {
-            if let Some(direction) = [Direction::Left, Direction::Right, Direction::Up, Direction::Down]
-                .into_iter()
-                .find(|direction| {
-                    self.workspaces
-                        .active()
-                        .layout
-                        .directional_neighbor(window, *direction, bounds)
-                        .ok()
-                        .flatten()
-                        .is_some()
-                })
-            {
+            if let Some(direction) = [
+                Direction::Left,
+                Direction::Right,
+                Direction::Up,
+                Direction::Down,
+            ]
+            .into_iter()
+            .find(|direction| {
+                self.workspaces
+                    .active()
+                    .layout
+                    .directional_neighbor(window, *direction, bounds)
+                    .ok()
+                    .flatten()
+                    .is_some()
+            }) {
                 self.join_tab(direction);
             }
             return;
@@ -343,9 +378,13 @@ impl Ferese {
             return;
         };
 
-        match self.workspaces.cycle_column_width(window, &self.column_width_presets) {
+        match self
+            .workspaces
+            .cycle_column_width(window, &self.column_width_presets)
+        {
             Ok(true) => {
-                self.windows.update(window, |w| w.column_width_pending = true);
+                self.windows
+                    .update(window, |w| w.column_width_pending = true);
                 self.relayout();
             }
             Ok(false) => {}
@@ -463,22 +502,26 @@ impl Ferese {
         let Some(output) = self.output_workspaces.focused_output() else {
             return;
         };
-        let Some(workspace) = self.output_workspaces.workspace_at(&self.workspaces, output, index) else {
+        let Some(workspace) = self
+            .output_workspaces
+            .workspace_at(&self.workspaces, output, index)
+        else {
             return;
         };
 
         let previous = self.output_workspaces.active_workspace(output);
-        let owner = match self
-            .output_workspaces
-            .select_workspace(output, workspace, auto_back_and_forth)
-        {
-            Ok(ferese_core::WorkspaceSwitch::Activated(output))
-            | Ok(ferese_core::WorkspaceSwitch::FocusedExisting(output)) => output,
-            Err(error) => {
-                tracing::error!(%error, index, "failed to assign workspace to output");
-                return;
-            }
-        };
+        let owner =
+            match self
+                .output_workspaces
+                .select_workspace(output, workspace, auto_back_and_forth)
+            {
+                Ok(ferese_core::WorkspaceSwitch::Activated(output))
+                | Ok(ferese_core::WorkspaceSwitch::FocusedExisting(output)) => output,
+                Err(error) => {
+                    tracing::error!(%error, index, "failed to assign workspace to output");
+                    return;
+                }
+            };
         let workspace = self
             .output_workspaces
             .active_workspace(owner)
@@ -490,7 +533,12 @@ impl Ferese {
         self.restore_keyboard_focus();
     }
 
-    pub(crate) fn preview_workspace_swipe(&mut self, next: bool, direction: SwipeDirection, progress: f64) {
+    pub(crate) fn preview_workspace_swipe(
+        &mut self,
+        next: bool,
+        direction: SwipeDirection,
+        progress: f64,
+    ) {
         if !self.animations_enabled || self.overview.is_presenting() {
             return;
         }
@@ -554,7 +602,10 @@ impl Ferese {
             && self.activate_managed_workspace_from_swipe(to, expected);
         if !committed {
             if let Some(slide) = self.workspace_slides.get_mut(&output) {
-                slide.release_with_velocity(false, self.swipe.release_velocity / self.animation_speed);
+                slide.release_with_velocity(
+                    false,
+                    self.swipe.release_velocity / self.animation_speed,
+                );
             }
             self.last_animation_tick = Instant::now();
             self.relayout();
@@ -562,7 +613,10 @@ impl Ferese {
         true
     }
 
-    pub(crate) fn workspace_slide_workspaces(&self, output: OutputId) -> impl Iterator<Item = WorkspaceId> + '_ {
+    pub(crate) fn workspace_slide_workspaces(
+        &self,
+        output: OutputId,
+    ) -> impl Iterator<Item = WorkspaceId> + '_ {
         self.workspace_slides
             .get(&output)
             .into_iter()
@@ -589,9 +643,9 @@ impl Ferese {
         }
         if owner == requested_output
             && let Some(slide) = previous_slide.as_mut()
-            && slide
-                .gesture
-                .is_some_and(|(_, to, direction)| to == workspace && Some(direction) == slide_direction)
+            && slide.gesture.is_some_and(|(_, to, direction)| {
+                to == workspace && Some(direction) == slide_direction
+            })
         {
             slide.release_with_velocity(true, self.swipe.release_velocity / self.animation_speed);
             self.last_animation_tick = Instant::now();
@@ -640,8 +694,18 @@ impl Ferese {
         }
     }
 
-    pub(crate) fn move_managed_window_to_workspace(&mut self, window: WindowId, destination: WorkspaceId) -> bool {
-        if self.session_lock.active() || self.windows.window(window).and_then(|w| w.toplevel()).is_none() {
+    pub(crate) fn move_managed_window_to_workspace(
+        &mut self,
+        window: WindowId,
+        destination: WorkspaceId,
+    ) -> bool {
+        if self.session_lock.active()
+            || self
+                .windows
+                .window(window)
+                .and_then(|w| w.toplevel())
+                .is_none()
+        {
             return false;
         }
         let Some(source) = self.workspaces.workspace_for_window(window) else {
@@ -661,7 +725,10 @@ impl Ferese {
         let axis = bounds
             .and_then(|bounds| {
                 let workspace = self.workspaces.workspace(destination)?;
-                workspace.layout.automatic_axis(workspace.last_focused, bounds).ok()
+                workspace
+                    .layout
+                    .automatic_axis(workspace.last_focused, bounds)
+                    .ok()
             })
             .unwrap_or(Axis::Horizontal);
         if self
@@ -686,18 +753,27 @@ impl Ferese {
         let Some(output) = self.output_workspaces.focused_output() else {
             return;
         };
-        let Some(destination) = self.output_workspaces.workspace_at(&self.workspaces, output, index) else {
+        let Some(destination) =
+            self.output_workspaces
+                .workspace_at(&self.workspaces, output, index)
+        else {
             return;
         };
         let axis = self
             .output_bounds()
             .and_then(|bounds| {
                 let target = self.workspaces.workspace(destination)?;
-                target.layout.automatic_axis(target.last_focused, bounds).ok()
+                target
+                    .layout
+                    .automatic_axis(target.last_focused, bounds)
+                    .ok()
             })
             .unwrap_or(Axis::Horizontal);
 
-        if let Err(error) = self.workspaces.move_window_to_workspace(window, destination, axis, 0.5) {
+        if let Err(error) = self
+            .workspaces
+            .move_window_to_workspace(window, destination, axis, 0.5)
+        {
             tracing::error!(%error, ?window, index, "failed to move window to workspace");
             return;
         }
@@ -725,10 +801,9 @@ impl Ferese {
                     .map(|toplevel| toplevel.wl_surface().clone())
             });
 
-        self.seat.get_keyboard().expect("seat has a keyboard").set_focus(
-            self,
-            surface,
-            smithay::utils::SERIAL_COUNTER.next_serial(),
-        );
+        self.seat
+            .get_keyboard()
+            .expect("seat has a keyboard")
+            .set_focus(self, surface, smithay::utils::SERIAL_COUNTER.next_serial());
     }
 }

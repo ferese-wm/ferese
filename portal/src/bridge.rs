@@ -49,7 +49,10 @@ impl Bridge {
     #[cfg(test)]
     pub(crate) fn test_pair() -> (Self, UnixStream) {
         let (stream, peer) = UnixStream::pair().unwrap();
-        (Self::from_stream(stream, Duration::from_secs(1)).unwrap(), peer)
+        (
+            Self::from_stream(stream, Duration::from_secs(1)).unwrap(),
+            peer,
+        )
     }
 
     pub(crate) async fn call(&self, command: &'static str, args: Json) -> Result<Json, String> {
@@ -86,7 +89,10 @@ impl Bridge {
                 return Err("Compositor connection is closed".to_owned());
             }
 
-            connection.id = connection.id.checked_add(1).ok_or("Compositor request IDs exhausted")?;
+            connection.id = connection
+                .id
+                .checked_add(1)
+                .ok_or("Compositor request IDs exhausted")?;
             let request = ferese_ipc::Request {
                 version: ferese_ipc::VERSION,
                 id: connection.id,
@@ -98,10 +104,13 @@ impl Bridge {
                 .stream
                 .set_read_timeout(if wait { None } else { Some(self.0.timeout) })
                 .map_err(|error| error.to_string())?;
-            ferese_ipc::write_frame(&mut connection.stream, &request).map_err(|error| error.to_string())?;
-            let value: Json = ferese_ipc::read_frame(&mut connection.stream).map_err(|error| error.to_string())?;
+            ferese_ipc::write_frame(&mut connection.stream, &request)
+                .map_err(|error| error.to_string())?;
+            let value: Json = ferese_ipc::read_frame(&mut connection.stream)
+                .map_err(|error| error.to_string())?;
             let has_result = value.get("result").is_some();
-            let response: ferese_ipc::Response = serde_json::from_value(value).map_err(|error| error.to_string())?;
+            let response: ferese_ipc::Response =
+                serde_json::from_value(value).map_err(|error| error.to_string())?;
             if response.id != request.id || response.version != ferese_ipc::VERSION {
                 return Err("Unexpected compositor response ID or protocol version".into());
             }
@@ -128,8 +137,12 @@ impl Bridge {
     }
 
     pub(crate) async fn capture_watch(&self, session: u64) -> Result<Json, String> {
-        self.request("input-capture-watch", serde_json::json!({"session":session}), true)
-            .await
+        self.request(
+            "input-capture-watch",
+            serde_json::json!({"session":session}),
+            true,
+        )
+        .await
     }
 
     pub(crate) fn is_closed(&self) -> bool {

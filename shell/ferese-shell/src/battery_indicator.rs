@@ -18,10 +18,15 @@ impl FereseShell {
         let foreground = color_with_opacity(theme.text_primary, opacity);
         let outline = if battery.is_some_and(|battery| {
             battery.percent < self.config.status.low_battery_threshold
-                && matches!(battery.status.as_str(), "Discharging" | "Pending discharge" | "Empty")
+                && matches!(
+                    battery.status.as_str(),
+                    "Discharging" | "Pending discharge" | "Empty"
+                )
         }) {
             palette.error.scale_alpha(opacity)
-        } else if battery.is_some_and(|battery| matches!(battery.status.as_str(), "Charging" | "Pending charge")) {
+        } else if battery
+            .is_some_and(|battery| matches!(battery.status.as_str(), "Charging" | "Pending charge"))
+        {
             palette.accent.scale_alpha(opacity)
         } else {
             foreground
@@ -66,15 +71,19 @@ impl FereseShell {
             },
             ..Default::default()
         }));
-        let terminal =
-            container(Space::new().width(1.5).height(4)).class(theme::Container::custom(move |_| container::Style {
+        let terminal = container(Space::new().width(1.5).height(4)).class(
+            theme::Container::custom(move |_| container::Style {
                 background: Some(Background::Color(outline)),
                 border: Border {
                     radius: 1.0.into(),
                     ..Default::default()
                 },
                 ..Default::default()
-            }));
-        row![body, terminal].spacing(1).align_y(Alignment::Center).into()
+            }),
+        );
+        row![body, terminal]
+            .spacing(1)
+            .align_y(Alignment::Center)
+            .into()
     }
 }

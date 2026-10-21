@@ -39,11 +39,12 @@ use cosmic::iced::platform_specific::runtime::wayland::layer_surface::{
     IcedMargin, IcedOutput, SctkLayerSurfaceSettings,
 };
 use cosmic::iced::platform_specific::shell::commands::layer_surface::{
-    Anchor, KeyboardInteractivity, Layer, destroy_layer_surface, set_anchor, set_exclusive_zone, set_input_zone,
-    set_margin, set_size,
+    Anchor, KeyboardInteractivity, Layer, destroy_layer_surface, set_anchor, set_exclusive_zone,
+    set_input_zone, set_margin, set_size,
 };
 use cosmic::iced::{
-    Background, Border, Color, ContentFit, Event, Length, Limits, Subscription, alignment, event, window,
+    Background, Border, Color, ContentFit, Event, Length, Limits, Subscription, alignment, event,
+    window,
 };
 use cosmic::widget::{button, container, icon, image, row};
 use cosmic::{Element, theme};
@@ -124,9 +125,12 @@ fn main() -> cosmic::iced::Result {
     let wallpaper = config.wallpaper.path.clone().map(|path| {
         let (sender, receiver) = cosmic::iced::futures::channel::oneshot::channel();
         std::thread::spawn(move || {
-            let result = cosmic::iced::advanced::graphics::image::load(&image::Handle::from_path(path))
-                .map(|pixels| image::Handle::from_rgba(pixels.width(), pixels.height(), pixels.into_raw()))
-                .map_err(|error| format!("{error:?}"));
+            let result =
+                cosmic::iced::advanced::graphics::image::load(&image::Handle::from_path(path))
+                    .map(|pixels| {
+                        image::Handle::from_rgba(pixels.width(), pixels.height(), pixels.into_raw())
+                    })
+                    .map_err(|error| format!("{error:?}"));
             let _ = sender.send(result);
         });
         receiver
@@ -143,7 +147,8 @@ fn main() -> cosmic::iced::Result {
     cosmic::app::run::<FereseShell>(settings, (config, wallpaper, startup_error, theme_snapshot))
 }
 
-type WallpaperLoad = cosmic::iced::futures::channel::oneshot::Receiver<Result<image::Handle, String>>;
+type WallpaperLoad =
+    cosmic::iced::futures::channel::oneshot::Receiver<Result<image::Handle, String>>;
 
 struct FereseShell {
     core: Core,
@@ -210,7 +215,11 @@ enum Message {
     HubWorkspaceHover(window::Id, Option<u64>),
     HubWorkspaceSelect(window::Id, u64),
     HubWorkspaceMove(window::Id, u64, u64),
-    HubWorkspaceFocus(window::Id, Option<u64>, Option<cosmic::iced::keyboard::key::Named>),
+    HubWorkspaceFocus(
+        window::Id,
+        Option<u64>,
+        Option<cosmic::iced::keyboard::key::Named>,
+    ),
     HubToastExpired(window::Id, Instant),
     HubWorkspaceFeedbackExpired(window::Id, Instant),
     HubIgnore,
@@ -223,7 +232,10 @@ enum Message {
     ThemeModeSet(Result<(), String>),
     WallpaperLoaded(Result<image::Handle, String>),
     Event(Event, window::Id),
-    NativeSurface(window::Id, Result<(Connection, wl_surface::WlSurface), String>),
+    NativeSurface(
+        window::Id,
+        Result<(Connection, wl_surface::WlSurface), String>,
+    ),
     ClockChanged(String),
     RecorderEvent(recording::Event),
     RecorderElapsed,
@@ -233,7 +245,10 @@ enum Message {
     MediaTick,
     ActivitiesUpdated(std::sync::Arc<ferese_ipc::activities::Snapshot>),
     ActivityTick,
-    Pomodoro(ferese_ipc::activities::PomodoroAction, Option<ferese_activities::Id>),
+    Pomodoro(
+        ferese_ipc::activities::PomodoroAction,
+        Option<ferese_activities::Id>,
+    ),
     PomodoroResult(Result<(), String>),
     ActivityHover(window::Id, bool),
     ActivityActivate(window::Id, ferese_activities::Id),
@@ -324,8 +339,13 @@ impl cosmic::Application for FereseShell {
             .ok();
         // The compositor reports the complete configuration error through its
         // accepted-theme snapshot. Use the local warning only when standalone.
-        let pending_config_error = if control.is_none() { startup_error } else { None };
-        let mut notification_center = notifications::Center::new(config.notifications.clone(), config.animations);
+        let pending_config_error = if control.is_none() {
+            startup_error
+        } else {
+            None
+        };
+        let mut notification_center =
+            notifications::Center::new(config.notifications.clone(), config.animations);
         notification_center.activity_bridge = config.activities.sources.notification_bridge;
         let app = Self {
             core,
@@ -366,7 +386,9 @@ impl cosmic::Application for FereseShell {
         let wallpaper_task = match wallpaper {
             Some(receiver) => cosmic::task::future(async move {
                 cosmic::Action::App(Message::WallpaperLoaded(
-                    receiver.await.unwrap_or_else(|error| Err(error.to_string())),
+                    receiver
+                        .await
+                        .unwrap_or_else(|error| Err(error.to_string())),
                 ))
             }),
             None => Task::none(),
@@ -378,46 +400,66 @@ impl cosmic::Application for FereseShell {
     fn subscription(&self) -> Subscription<Self::Message> {
         Subscription::batch([
             self.launcher_subscription(),
-            self.control.as_ref().map_or_else(Subscription::none, |control| {
-                control.subscription().map(|_| Message::ControlReady)
-            }),
-            ferese_theme_client::service::subscription().map(|snapshot| Message::ThemeChanged(Box::new(snapshot))),
-            self.notifications.subscription().map(Message::NotificationEvent),
+            self.control
+                .as_ref()
+                .map_or_else(Subscription::none, |control| {
+                    control.subscription().map(|_| Message::ControlReady)
+                }),
+            ferese_theme_client::service::subscription()
+                .map(|snapshot| Message::ThemeChanged(Box::new(snapshot))),
+            self.notifications
+                .subscription()
+                .map(Message::NotificationEvent),
             self.notifications
                 .tick_subscription()
                 .map(|_| Message::NotificationTick),
             event::listen_with(|event, status, id| match &event {
                 Event::Keyboard(cosmic::iced::keyboard::Event::KeyPressed {
-                    key: cosmic::iced::keyboard::Key::Named(cosmic::iced::keyboard::key::Named::Enter),
+                    key:
+                        cosmic::iced::keyboard::Key::Named(cosmic::iced::keyboard::key::Named::Enter),
                     modifiers,
                     ..
                 }) if status == cosmic::iced::event::Status::Captured => {
                     Some(Message::LauncherEnter(id, modifiers.alt()))
                 }
-                Event::PlatformSpecific(PlatformSpecific::Wayland(wayland::Event::Frame(..))) => EFFECT_FRAME_PENDING
-                    .load(Ordering::Relaxed)
-                    .then_some(Message::Event(event, id)),
+                Event::PlatformSpecific(PlatformSpecific::Wayland(wayland::Event::Frame(..))) => {
+                    EFFECT_FRAME_PENDING
+                        .load(Ordering::Relaxed)
+                        .then_some(Message::Event(event, id))
+                }
                 Event::Keyboard(_)
                 | Event::Mouse(
                     cosmic::iced::mouse::Event::ButtonPressed(_)
                     | cosmic::iced::mouse::Event::CursorLeft
                     | cosmic::iced::mouse::Event::CursorEntered,
                 )
-                | Event::Window(window::Event::Opened { .. } | window::Event::Closed | window::Event::Rescaled(_))
+                | Event::Window(
+                    window::Event::Opened { .. }
+                    | window::Event::Closed
+                    | window::Event::Rescaled(_),
+                )
                 | Event::PlatformSpecific(PlatformSpecific::Wayland(
-                    wayland::Event::Popup(..) | wayland::Event::Layer(..) | wayland::Event::Output(..),
+                    wayland::Event::Popup(..)
+                    | wayland::Event::Layer(..)
+                    | wayland::Event::Output(..),
                 )) => Some(Message::Event(event, id)),
                 _ => None,
             }),
-            clock::subscription(self.outputs.iter().any(|output| !output.hidden)).map(Message::ClockChanged),
+            clock::subscription(self.outputs.iter().any(|output| !output.hidden))
+                .map(Message::ClockChanged),
             activities::subscription::subscription().map(Message::ActivitiesUpdated),
-            self.activity_tick_subscription().map(|_| Message::ActivityTick),
+            self.activity_tick_subscription()
+                .map(|_| Message::ActivityTick),
             self.media.subscription().map(Message::MediaUpdated),
             self.media_tick_subscription().map(|_| Message::MediaTick),
             self.media.art.subscription().map(Message::MediaArt),
             self.recorder.subscription().map(Message::RecorderEvent),
-            self.recorder.elapsed_subscription().map(|_| Message::RecorderElapsed),
-            self.status_service.subscription().map(Message::StatusUpdated),
+            self.recorder
+                .elapsed_subscription()
+                .map(|_| Message::RecorderElapsed),
+            self.status_service
+                .subscription()
+                .map(Message::StatusUpdated),
         ])
     }
 
@@ -437,10 +479,16 @@ impl cosmic::Application for FereseShell {
             Message::HubOverview(id) => self.open_hub_overview(id),
             Message::HubWorkspaceHover(id, workspace) => self.hub_workspace_hover(id, workspace),
             Message::HubWorkspaceSelect(id, workspace) => self.hub_workspace_select(id, workspace),
-            Message::HubWorkspaceMove(id, window, workspace) => self.hub_workspace_move(id, window, workspace),
-            Message::HubWorkspaceFocus(id, focused, key) => self.hub_workspace_focus(id, focused, key),
+            Message::HubWorkspaceMove(id, window, workspace) => {
+                self.hub_workspace_move(id, window, workspace)
+            }
+            Message::HubWorkspaceFocus(id, focused, key) => {
+                self.hub_workspace_focus(id, focused, key)
+            }
             Message::HubToastExpired(id, revision) => self.hub_toast_expired(id, revision),
-            Message::HubWorkspaceFeedbackExpired(id, revision) => self.hub_workspace_feedback_expired(id, revision),
+            Message::HubWorkspaceFeedbackExpired(id, revision) => {
+                self.hub_workspace_feedback_expired(id, revision)
+            }
             Message::HubIgnore => Task::none(),
             Message::PanelResolved(id, resolution) => {
                 let allocation_changed = self
@@ -456,7 +504,8 @@ impl cosmic::Application for FereseShell {
                 let close_menu = self.menu.as_ref().is_some_and(|menu| {
                     menu.anchor.parent == id
                         && menu.anchor.item.is_some()
-                        && ((menu.kind == status_ui::Menu::Overflow && resolution.overflow.is_empty())
+                        && ((menu.kind == status_ui::Menu::Overflow
+                            && resolution.overflow.is_empty())
                             || allocation_changed)
                 });
                 if let Some(output) = self.outputs.iter_mut().find(|output| output.bar == id) {
@@ -487,7 +536,11 @@ impl cosmic::Application for FereseShell {
                 output.bar_regions = regions;
                 set_input_zone(
                     id,
-                    bar::input_region(ferese_panel::PanelSurface::None, output.hidden, &output.bar_regions),
+                    bar::input_region(
+                        ferese_panel::PanelSurface::None,
+                        output.hidden,
+                        &output.bar_regions,
+                    ),
                 )
             }
 
@@ -522,16 +575,14 @@ impl cosmic::Application for FereseShell {
                 self.sync_hub_activity()
             }
             Message::ActivityActivate(id, activity) => self.activate_activity(id, activity),
-            Message::ActivityNavigation(id, focused, key) => {
-                self.activity_navigation(id, focused, key).unwrap_or_else(Task::none)
-            }
+            Message::ActivityNavigation(id, focused, key) => self
+                .activity_navigation(id, focused, key)
+                .unwrap_or_else(Task::none),
             Message::MediaUpdated(snapshot) => {
                 self.media.receive(snapshot);
-                self.refresh_media_art(
-                    self.menu
-                        .as_ref()
-                        .is_some_and(|menu| menu.kind == status_ui::Menu::Media && !menu.motion.closing()),
-                );
+                self.refresh_media_art(self.menu.as_ref().is_some_and(|menu| {
+                    menu.kind == status_ui::Menu::Media && !menu.motion.closing()
+                }));
                 Task::none()
             }
             Message::MediaAction(args) => self.media.command(args),
@@ -554,8 +605,13 @@ impl cosmic::Application for FereseShell {
                 };
                 let mut args = self.media.action("seek");
                 args["position_us"] = serde_json::json!(position);
-                args["track_id"] =
-                    serde_json::json!(self.media.snapshot.selected.as_ref().and_then(|p| p.track_id.clone()));
+                args["track_id"] = serde_json::json!(
+                    self.media
+                        .snapshot
+                        .selected
+                        .as_ref()
+                        .and_then(|p| p.track_id.clone())
+                );
                 self.media.command(args)
             }
             Message::MediaArt(art) => {
@@ -577,7 +633,8 @@ impl cosmic::Application for FereseShell {
             }
             Message::ThemeMode(mode) => cosmic::task::future(async move {
                 let result = tokio::task::spawn_blocking(move || {
-                    let mut connection = ferese_ipc::Connection::connect().map_err(|e| e.to_string())?;
+                    let mut connection =
+                        ferese_ipc::Connection::connect().map_err(|e| e.to_string())?;
                     connection
                         .call("theme-set-mode", serde_json::json!({"mode": mode}))
                         .map(|_| ())
@@ -602,7 +659,9 @@ impl cosmic::Application for FereseShell {
             }
             Message::NativeSurface(id, result) => {
                 match result {
-                    Ok((_connection, surface)) if self.outputs.iter().any(|output| output.bar == id) => {
+                    Ok((_connection, surface))
+                        if self.outputs.iter().any(|output| output.bar == id) =>
+                    {
                         self.attach_effects(id, &surface)
                     }
                     Ok((_connection, surface)) => {
@@ -612,9 +671,16 @@ impl cosmic::Application for FereseShell {
                             && entry.id == id
                             && entry.effects.is_none()
                         {
-                            match EffectsBinding::attach_role(&mut self.effects_context, &surface, None, 1.0) {
+                            match EffectsBinding::attach_role(
+                                &mut self.effects_context,
+                                &surface,
+                                None,
+                                1.0,
+                            ) {
                                 Ok(binding) => entry.effects = Some(binding),
-                                Err(error) => eprintln!("ferese-shell: notification effects unavailable: {error}"),
+                                Err(error) => eprintln!(
+                                    "ferese-shell: notification effects unavailable: {error}"
+                                ),
                             }
                         }
 
@@ -786,10 +852,14 @@ impl cosmic::Application for FereseShell {
                 Task::none()
             }
             Message::OpenDisplays(output) => self.open_display_modal(output.as_deref()),
-            Message::DisplaysLoaded(generation, result) => self.finish_display_inventory(generation, result),
+            Message::DisplaysLoaded(generation, result) => {
+                self.finish_display_inventory(generation, result)
+            }
             Message::SelectDisplayMode(mode) => self.select_display_mode(mode, true),
             Message::ApplyDisplayMode => self.apply_display_mode(),
-            Message::DisplayModeCompleted(serial, close, result) => self.finish_display_mode(serial, close, result),
+            Message::DisplayModeCompleted(serial, close, result) => {
+                self.finish_display_mode(serial, close, result)
+            }
             Message::KeepDisplayMode => self.confirm_display_mode(true),
             Message::RevertDisplayMode => self.confirm_display_mode(false),
             Message::ExecutePower => self.execute_system_modal(),
@@ -810,7 +880,9 @@ impl cosmic::Application for FereseShell {
             }
             Message::CommitNightLightTemperature => {
                 if let Some(value) = self.night_light_temperature.take() {
-                    return self.update(Message::Control(status::Action::NightLightTemperature(value)));
+                    return self.update(Message::Control(status::Action::NightLightTemperature(
+                        value,
+                    )));
                 }
                 Task::none()
             }
@@ -820,7 +892,10 @@ impl cosmic::Application for FereseShell {
                 }
 
                 if let status::Action::PowerProfile(profile) = action {
-                    self.status_error = self.status_service.send(status::Action::PowerProfile(profile)).err();
+                    self.status_error = self
+                        .status_service
+                        .send(status::Action::PowerProfile(profile))
+                        .err();
 
                     if self.status_error.is_none()
                         && let Some(profiles) = &mut self.status.power_profiles
@@ -840,7 +915,10 @@ impl cosmic::Application for FereseShell {
                             return self.sync_hub_activity();
                         }
                         status::Action::Notifications => {
-                            return Task::batch([self.close_menu(), self.toggle_notification_history()]);
+                            return Task::batch([
+                                self.close_menu(),
+                                self.toggle_notification_history(),
+                            ]);
                         }
                         _ => {}
                     }
@@ -852,7 +930,10 @@ impl cosmic::Application for FereseShell {
                     self.optimistic_status(&action);
                 }
 
-                if matches!(action, status::Action::Notifications | status::Action::Settings) {
+                if matches!(
+                    action,
+                    status::Action::Notifications | status::Action::Settings
+                ) {
                     return self.close_menu();
                 }
 
@@ -905,7 +986,9 @@ impl cosmic::Application for FereseShell {
                         self.snapshot = snapshot;
                         reload_task = Task::batch([reload_task, self.refresh_launcher()]);
                         let mode = self.binding_mode_transition(mode_was_active);
-                        let feedback = self.sync_hub_workspace_feedback(overview_was_active || self.overview_active);
+                        let feedback = self.sync_hub_workspace_feedback(
+                            overview_was_active || self.overview_active,
+                        );
                         let mut tasks = vec![
                             reload_task,
                             mode,
@@ -930,7 +1013,10 @@ impl cosmic::Application for FereseShell {
 
                             tasks.push(set_exclusive_zone(
                                 entry.bar,
-                                entry.runtime.panel(&self.config.panels[0]).exclusive_zone(hidden),
+                                entry
+                                    .runtime
+                                    .panel(&self.config.panels[0])
+                                    .exclusive_zone(hidden),
                             ));
                             entry.hidden = hidden;
                             if hidden && entry.runtime.hub.is_some() {
@@ -944,7 +1030,11 @@ impl cosmic::Application for FereseShell {
                             }
                             tasks.push(set_input_zone(
                                 entry.bar,
-                                bar::input_region(ferese_panel::PanelSurface::None, hidden, &entry.bar_regions),
+                                bar::input_region(
+                                    ferese_panel::PanelSurface::None,
+                                    hidden,
+                                    &entry.bar_regions,
+                                ),
                             ));
                         }
                         for id in suspended_hubs {
@@ -971,14 +1061,26 @@ impl cosmic::Application for FereseShell {
                                 self.launcher_thumbnail(token, window, image);
                                 Task::none()
                             }
-                            control::ControlCommand::ToggleLauncher(output) => self.toggle_launcher(output),
-                            control::ControlCommand::ToggleDisplays(output) => self.open_display_modal(Some(&output)),
-                            control::ControlCommand::MonitorsChanged => self.load_display_inventory(),
-                            control::ControlCommand::ToggleGuide(output) => self.toggle_guide(output),
-                            control::ControlCommand::CancelLogout(serial) => self.cancel_logout_modal(serial),
-                            control::ControlCommand::Logout(serial, output) => {
-                                self.open_system_modal(system_modal::PowerAction::Logout(serial), Some(&output))
+                            control::ControlCommand::ToggleLauncher(output) => {
+                                self.toggle_launcher(output)
                             }
+                            control::ControlCommand::ToggleDisplays(output) => {
+                                self.open_display_modal(Some(&output))
+                            }
+                            control::ControlCommand::MonitorsChanged => {
+                                self.load_display_inventory()
+                            }
+                            control::ControlCommand::ToggleGuide(output) => {
+                                self.toggle_guide(output)
+                            }
+                            control::ControlCommand::CancelLogout(serial) => {
+                                self.cancel_logout_modal(serial)
+                            }
+                            control::ControlCommand::Logout(serial, output) => self
+                                .open_system_modal(
+                                    system_modal::PowerAction::Logout(serial),
+                                    Some(&output),
+                                ),
                         };
                         reload_task = Task::batch([reload_task, task]);
                     }
@@ -995,7 +1097,9 @@ impl cosmic::Application for FereseShell {
                 self.hover_workspace(bar, workspace, target, entered)
             }
             Message::WorkspaceTooltipDelay(serial) => self.locate_workspace_tooltip(serial),
-            Message::WorkspaceTooltipBounds(serial, bounds) => self.show_workspace_tooltip(serial, bounds),
+            Message::WorkspaceTooltipBounds(serial, bounds) => {
+                self.show_workspace_tooltip(serial, bounds)
+            }
             Message::WorkspaceIconsLoaded(result) => self.workspace_icons_loaded(result),
             Message::ToggleOverview => {
                 self.overview_active = !self.overview_active;
@@ -1082,9 +1186,11 @@ impl FereseShell {
         self.config = config;
         if composition_changed || geometry_changed {
             for entry in &mut self.outputs {
-                entry
-                    .runtime
-                    .reset(&self.config.panels[0], &self.snapshot, entry.name.as_deref());
+                entry.runtime.reset(
+                    &self.config.panels[0],
+                    &self.snapshot,
+                    entry.name.as_deref(),
+                );
             }
         } else {
             for entry in &mut self.outputs {
@@ -1101,14 +1207,21 @@ impl FereseShell {
                 // publishes its replacement through PanelResolved.
                 tasks.push(set_input_zone(
                     output.bar,
-                    bar::input_region(ferese_panel::PanelSurface::None, output.hidden, &output.bar_regions),
+                    bar::input_region(
+                        ferese_panel::PanelSurface::None,
+                        output.hidden,
+                        &output.bar_regions,
+                    ),
                 ));
             }
         }
 
         if !self.guide_load.manual
             && !self.config.status.keybinding_guide
-            && self.system_modal.as_ref().is_some_and(|modal| modal.is_guide())
+            && self
+                .system_modal
+                .as_ref()
+                .is_some_and(|modal| modal.is_guide())
         {
             tasks.push(self.destroy_system_modal(false));
         }
@@ -1117,11 +1230,20 @@ impl FereseShell {
             tasks.push(cosmic::command::set_theme(theme.palette().native_theme()));
         }
 
-        for entry in self.outputs.iter().filter(|_| geometry_changed || composition_changed) {
+        for entry in self
+            .outputs
+            .iter()
+            .filter(|_| geometry_changed || composition_changed)
+        {
             let panel = entry.runtime.panel(&self.config.panels[0]);
             let geometry = panel.resolved_geometry();
-            let (anchor, _) = surfaces::panel_placement(self.config.panels[0].edge, geometry.edge_margin, 0);
-            let hub_size = entry.runtime.hub.as_ref().map(|hub| hub.borrow().allocation);
+            let (anchor, _) =
+                surfaces::panel_placement(self.config.panels[0].edge, geometry.edge_margin, 0);
+            let hub_size = entry
+                .runtime
+                .hub
+                .as_ref()
+                .map(|hub| hub.borrow().allocation);
             tasks.push(set_anchor(
                 entry.bar,
                 if hub_size.is_some() {
@@ -1130,9 +1252,10 @@ impl FereseShell {
                     anchor | Anchor::LEFT | Anchor::RIGHT
                 },
             ));
-            let (width, height) = hub_size.map_or((None, Some(geometry.height.round() as u32)), |size| {
-                (Some(size[0]), Some(size[1]))
-            });
+            let (width, height) = hub_size
+                .map_or((None, Some(geometry.height.round() as u32)), |size| {
+                    (Some(size[0]), Some(size[1]))
+                });
             tasks.push(set_size(entry.bar, width, height));
             tasks.push(
                 cosmic::iced::platform_specific::shell::commands::layer_surface::set_keyboard_interactivity(
@@ -1140,14 +1263,19 @@ impl FereseShell {
                     KeyboardInteractivity::None,
                 ),
             );
-            tasks.push(set_exclusive_zone(entry.bar, panel.exclusive_zone(entry.hidden)));
+            tasks.push(set_exclusive_zone(
+                entry.bar,
+                panel.exclusive_zone(entry.hidden),
+            ));
         }
 
         let bars: Vec<_> = self.outputs.iter().map(|entry| entry.bar).collect();
         for bar in bars {
             tasks.push(self.update_panel_margin(
                 bar,
-                composition_changed || edge_changed || old_geometry.edge_margin != geometry.edge_margin,
+                composition_changed
+                    || edge_changed
+                    || old_geometry.edge_margin != geometry.edge_margin,
             ));
         }
         if geometry_changed || composition_changed {
@@ -1185,7 +1313,8 @@ impl FereseShell {
             return Task::none();
         }
         entry.bar_margin_horizontal = margin;
-        let (_, margin) = surfaces::panel_placement(self.config.panels[0].edge, geometry.edge_margin, margin);
+        let (_, margin) =
+            surfaces::panel_placement(self.config.panels[0].edge, geometry.edge_margin, margin);
         set_margin(bar, margin.top, margin.right, margin.bottom, margin.left)
     }
 }
@@ -1216,7 +1345,10 @@ mod tests {
         FereseShell {
             core: Core::default(),
             theme_snapshot: ferese_theme_client::service::fallback(),
-            notifications: notifications::Center::new(config.notifications.clone(), config.animations),
+            notifications: notifications::Center::new(
+                config.notifications.clone(),
+                config.animations,
+            ),
             notification_surface: None,
             status_service: status::Service::start(None),
             status: Default::default(),
@@ -1247,7 +1379,11 @@ mod tests {
             overview_active: false,
             clock: String::new(),
             outputs: vec![OutputSurfaces {
-                runtime: panel_runtime::Runtime::new(&panel::Panel::default(), &ShellSnapshot::default(), None),
+                runtime: panel_runtime::Runtime::new(
+                    &panel::Panel::default(),
+                    &ShellSnapshot::default(),
+                    None,
+                ),
                 scale: 1.,
                 output,
                 name: Some("test".into()),
@@ -1273,10 +1409,16 @@ mod tests {
         for gap in [0, 12] {
             let (anchor, margin) = surfaces::panel_placement(Edge::Top, gap, 32);
             assert_eq!(anchor, Anchor::TOP);
-            assert_eq!((margin.top, margin.right, margin.bottom, margin.left), (gap, 32, 0, 32));
+            assert_eq!(
+                (margin.top, margin.right, margin.bottom, margin.left),
+                (gap, 32, 0, 32)
+            );
             let (anchor, margin) = surfaces::panel_placement(Edge::Bottom, gap, 32);
             assert_eq!(anchor, Anchor::BOTTOM);
-            assert_eq!((margin.top, margin.right, margin.bottom, margin.left), (0, 32, gap, 32));
+            assert_eq!(
+                (margin.top, margin.right, margin.bottom, margin.left),
+                (0, 32, gap, 32)
+            );
         }
     }
 
@@ -1369,7 +1511,10 @@ mod tests {
         assert_eq!(shell.config.theme_mode, snapshot.mode);
         assert_eq!(shell.config.theme.appearance, snapshot.presented.appearance);
         assert_eq!(shell.config.theme.material_radius, 23.);
-        assert_eq!(shell.config.font_family.as_deref(), Some("Reload test font"));
+        assert_eq!(
+            shell.config.font_family.as_deref(),
+            Some("Reload test font")
+        );
         assert_eq!(shell.theme_snapshot, snapshot);
     }
 
@@ -1403,7 +1548,10 @@ mod tests {
             let edit = field;
             let mut document = ferese_config::Document::parse("").unwrap();
             document
-                .set("panels", serde_json::to_value(&shell.config.panels).unwrap())
+                .set(
+                    "panels",
+                    serde_json::to_value(&shell.config.panels).unwrap(),
+                )
                 .unwrap();
             document.set(&format!("panels.0.{field}"), value).unwrap();
             let source = document.to_string();
@@ -1427,12 +1575,21 @@ mod tests {
             minimum_width: 900.,
             ..Default::default()
         };
-        drop(shell.update(Message::PanelResolved(shell.outputs[0].bar, replacement.clone())));
-        assert_eq!(shell.outputs[0].panel_resolution.as_ref(), Some(&replacement));
+        drop(shell.update(Message::PanelResolved(
+            shell.outputs[0].bar,
+            replacement.clone(),
+        )));
+        assert_eq!(
+            shell.outputs[0].panel_resolution.as_ref(),
+            Some(&replacement)
+        );
         assert!(shell.outputs[0].bar_margin_horizontal < 240);
         let before = shell.outputs[0].bar_margin_horizontal;
         drop(shell.reload_config("panel broken {".into()));
-        assert_eq!(shell.outputs[0].panel_resolution.as_ref(), Some(&replacement));
+        assert_eq!(
+            shell.outputs[0].panel_resolution.as_ref(),
+            Some(&replacement)
+        );
         assert_eq!(shell.outputs[0].bar_margin_horizontal, before);
     }
 
@@ -1507,7 +1664,10 @@ mod tests {
                 "unchanged allocation must preserve the popup"
             );
             drop(shell.update(Message::PanelResolved(bar, after.clone())));
-            assert!(shell.menu.is_none(), "stale {kind:?} popup must be destroyed");
+            assert!(
+                shell.menu.is_none(),
+                "stale {kind:?} popup must be destroyed"
+            );
             assert_eq!(shell.outputs[0].panel_resolution.as_ref(), Some(after));
         }
     }
@@ -1569,9 +1729,16 @@ mod tests {
             text_muted: [255, 255, 255, 255],
             ..theme
         };
-        let before = ferese_theme::panel::group_border(color(theme.border), theme.material_radius.min(16.), true);
-        let after =
-            ferese_theme::panel::group_border(color(contrasted.border), contrasted.material_radius.min(16.), true);
+        let before = ferese_theme::panel::group_border(
+            color(theme.border),
+            theme.material_radius.min(16.),
+            true,
+        );
+        let after = ferese_theme::panel::group_border(
+            color(contrasted.border),
+            contrasted.material_radius.min(16.),
+            true,
+        );
         assert_eq!(before.border, after.border);
         assert_eq!(before.background, after.background);
         assert_eq!(before.border.color, color(theme.border));
@@ -1593,11 +1760,18 @@ mod tests {
     #[test]
     fn startup_surface_clear_is_transparent_and_bar_fallback_is_dark() {
         let theme = ShellTheme::default();
-        assert_eq!(shell_surface_style(theme).background_color, Color::TRANSPARENT);
+        assert_eq!(
+            shell_surface_style(theme).background_color,
+            Color::TRANSPARENT
+        );
         let background = color(theme.for_bar().bar_background);
         assert!(background.r < 0.15 && background.g < 0.15 && background.b < 0.20);
         assert!(background.a > 0.9);
-        assert!(theme.bar_text_primary[..3].iter().all(|channel| *channel > 220));
+        assert!(
+            theme.bar_text_primary[..3]
+                .iter()
+                .all(|channel| *channel > 220)
+        );
     }
 
     #[test]
@@ -1650,7 +1824,10 @@ mod tests {
     #[test]
     fn bar_title_tracks_focus_and_the_outputs_active_workspace() {
         let mut snapshot = snapshot_with_fullscreen_window(7);
-        assert_eq!(focused_bar_title(&snapshot, snapshot.outputs.first()), "Test");
+        assert_eq!(
+            focused_bar_title(&snapshot, snapshot.outputs.first()),
+            "Test"
+        );
         snapshot.windows[0].focused = false;
         assert_eq!(focused_bar_title(&snapshot, snapshot.outputs.first()), "");
         snapshot.windows[0].focused = true;

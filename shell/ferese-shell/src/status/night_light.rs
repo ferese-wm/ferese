@@ -51,19 +51,24 @@ impl Change {
     pub(super) fn save(self) -> Result<(), String> {
         let path = ferese_config::config_path().ok_or("No configuration directory")?;
         let file = ferese_config::file::ConfigFile::open(&path)?;
-        let mut document = ferese_config::Document::parse(file.source()).map_err(|e| e.to_string())?;
+        let mut document =
+            ferese_config::Document::parse(file.source()).map_err(|e| e.to_string())?;
         let (field, value) = match self {
             Self::Enabled(value) => ("night_light.enabled", json!(value)),
             Self::Temperature(value) => ("night_light.temperature", json!(value)),
         };
         document.set(field, value).map_err(|e| e.to_string())?;
         let settings: ferese_config::night_light::Settings =
-            serde_json::from_value(document.value()["night_light"].clone()).map_err(|e| e.to_string())?;
+            serde_json::from_value(document.value()["night_light"].clone())
+                .map_err(|e| e.to_string())?;
         settings.validate()?;
         file.replace(&document.to_string(), None, |staged| {
             run(
                 "ferese",
-                &["--check-config", staged.to_str().ok_or("Invalid configuration path")?],
+                &[
+                    "--check-config",
+                    staged.to_str().ok_or("Invalid configuration path")?,
+                ],
             )
             .map(|_| ())
         })?;

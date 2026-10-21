@@ -4,10 +4,14 @@ use std::f64::consts::{FRAC_PI_2, PI};
 pub type Contour = Vec<[f64; 2]>;
 
 fn arc(points: &mut Contour, center: [f64; 2], radius: f64, start: f64, tolerance: f64) {
-    let segments = ((FRAC_PI_2 / (8. * tolerance / radius.max(tolerance)).sqrt()).ceil() as usize).clamp(1, 128);
+    let segments = ((FRAC_PI_2 / (8. * tolerance / radius.max(tolerance)).sqrt()).ceil() as usize)
+        .clamp(1, 128);
     for i in 0..=segments {
         let angle = start + FRAC_PI_2 * i as f64 / segments as f64;
-        points.push([center[0] + radius * angle.cos(), center[1] + radius * angle.sin()]);
+        points.push([
+            center[0] + radius * angle.cos(),
+            center[1] + radius * angle.sin(),
+        ]);
     }
 }
 
@@ -66,20 +70,32 @@ pub fn contours(scene: &Scene, tolerance: f64) -> Result<Vec<Contour>, &'static 
         .collect();
     if scene.fusion > 0. {
         for zone in 1..=3 {
-            let shapes: Vec<_> = scene.paint.iter().filter(|p| p.blend_zone == zone).copied().collect();
+            let shapes: Vec<_> = scene
+                .paint
+                .iter()
+                .filter(|p| p.blend_zone == zone)
+                .copied()
+                .collect();
             if shapes.is_empty() {
                 continue;
             }
             // Fused rows share their vertical baseline. Each component is
             // vertically convex; solve its upper and lower boundary, rather
             // than sampling every pixel of a full-output bitmap.
-            let top = shapes.iter().map(|p| p.bounds.y).fold(f64::INFINITY, f64::min);
+            let top = shapes
+                .iter()
+                .map(|p| p.bounds.y)
+                .fold(f64::INFINITY, f64::min);
             let bottom = shapes
                 .iter()
                 .map(|p| p.bounds.y + p.bounds.height)
                 .fold(f64::NEG_INFINITY, f64::max);
             let mid = (top + bottom) * 0.5;
-            let left = shapes.iter().map(|p| p.bounds.x).fold(f64::INFINITY, f64::min) - scene.fusion;
+            let left = shapes
+                .iter()
+                .map(|p| p.bounds.x)
+                .fold(f64::INFINITY, f64::min)
+                - scene.fusion;
             let right = shapes
                 .iter()
                 .map(|p| p.bounds.x + p.bounds.width)
@@ -135,7 +151,11 @@ pub fn contours(scene: &Scene, tolerance: f64) -> Result<Vec<Contour>, &'static 
 
 /// Open border paths for screen-attached notches. Split shared straight edges
 /// before cancelling them, so the body and its fillets have one continuous rim.
-pub fn notch_border(scene: &Scene, tolerance: f64, edge: crate::Edge) -> Result<Vec<Contour>, &'static str> {
+pub fn notch_border(
+    scene: &Scene,
+    tolerance: f64,
+    edge: crate::Edge,
+) -> Result<Vec<Contour>, &'static str> {
     let contours = contours(scene, tolerance)?;
     let vertices: Vec<_> = contours.iter().flatten().copied().collect();
     let screen_edge = vertices.iter().map(|p| p[1]).fold(
@@ -144,13 +164,23 @@ pub fn notch_border(scene: &Scene, tolerance: f64, edge: crate::Edge) -> Result<
         } else {
             f64::NEG_INFINITY
         },
-        if edge == crate::Edge::Top { f64::min } else { f64::max },
+        if edge == crate::Edge::Top {
+            f64::min
+        } else {
+            f64::max
+        },
     );
     let close = |a: [f64; 2], b: [f64; 2]| (a[0] - b[0]).abs() < 1e-6 && (a[1] - b[1]).abs() < 1e-6;
     let mut segments: Vec<([f64; 2], [f64; 2])> = Vec::new();
     for contour in &contours {
-        for (&a, &b) in contour.iter().zip(contour.iter().cycle().skip(1)).take(contour.len()) {
-            if close(a, b) || ((a[1] - screen_edge).abs() < 1e-6 && (b[1] - screen_edge).abs() < 1e-6) {
+        for (&a, &b) in contour
+            .iter()
+            .zip(contour.iter().cycle().skip(1))
+            .take(contour.len())
+        {
+            if close(a, b)
+                || ((a[1] - screen_edge).abs() < 1e-6 && (b[1] - screen_edge).abs() < 1e-6)
+            {
                 continue;
             }
             let delta = [b[0] - a[0], b[1] - a[1]];
@@ -181,7 +211,10 @@ pub fn notch_border(scene: &Scene, tolerance: f64, edge: crate::Edge) -> Result<
     let mut paths = Vec::new();
     while let Some((a, b)) = segments.pop() {
         let mut path = vec![a, b];
-        while let Some(index) = segments.iter().position(|&(a, _)| close(a, *path.last().unwrap())) {
+        while let Some(index) = segments
+            .iter()
+            .position(|&(a, _)| close(a, *path.last().unwrap()))
+        {
             path.push(segments.swap_remove(index).1);
         }
         while let Some(index) = segments.iter().position(|&(_, b)| close(b, path[0])) {
@@ -202,7 +235,11 @@ mod tests {
     fn winding(contours: &[Contour], point: [f64; 2]) -> i32 {
         let mut winding = 0;
         for points in contours {
-            for (a, b) in points.iter().zip(points.iter().cycle().skip(1)).take(points.len()) {
+            for (a, b) in points
+                .iter()
+                .zip(points.iter().cycle().skip(1))
+                .take(points.len())
+            {
                 let cross = (b[0] - a[0]) * (point[1] - a[1]) - (point[0] - a[0]) * (b[1] - a[1]);
                 if a[1] <= point[1] && b[1] > point[1] && cross > 0. {
                     winding += 1;
@@ -241,14 +278,22 @@ mod tests {
                 let screen_y = if edge == crate::Edge::Top { 0. } else { 44. };
                 assert!((path.first().unwrap()[1] - screen_y).abs() < 1e-6);
                 assert!((path.last().unwrap()[1] - screen_y).abs() < 1e-6);
-                let body = scene.paint.iter().find(|p| p.operation == 0).unwrap().bounds;
+                let body = scene
+                    .paint
+                    .iter()
+                    .find(|p| p.operation == 0)
+                    .unwrap()
+                    .bounds;
                 assert!(path.iter().any(|p| p[0] < body.x));
                 assert!(path.iter().any(|p| p[0] > body.x + body.width));
                 for segment in path.windows(2) {
                     let [a, b] = [segment[0], segment[1]];
                     assert!((a[1] - screen_y).abs() > 1e-6 || (b[1] - screen_y).abs() > 1e-6);
                     let mid = [(a[0] + b[0]) / 2., (a[1] + b[1]) / 2.];
-                    assert!(scene.distance(mid).abs() < 0.12 / scale, "off outline: {mid:?}");
+                    assert!(
+                        scene.distance(mid).abs() < 0.12 / scale,
+                        "off outline: {mid:?}"
+                    );
                     // A shared body/fillet seam has fill on both sides, unlike a visible rim.
                     let delta = [b[0] - a[0], b[1] - a[1]];
                     let length = delta[0].hypot(delta[1]);
@@ -266,7 +311,9 @@ mod tests {
     fn attached_morph_rim_follows_animated_body_at_fractional_scales() {
         for scale in [1., 1.25, 1.5, 2.] {
             for edge in [crate::Edge::Top, crate::Edge::Bottom] {
-                for (width, height, radius) in [(150., 34., 17.), (218.3, 41.7, 20.85), (340., 230., 26.)] {
+                for (width, height, radius) in
+                    [(150., 34., 17.), (218.3, 41.7, 20.85), (340., 230., 26.)]
+                {
                     let scene = derive(
                         Parameters {
                             style: Style::Morph,
@@ -283,7 +330,11 @@ mod tests {
                     .unwrap();
                     let body = scene.paint[0];
                     assert_eq!(scene.paint.len(), 3);
-                    assert_eq!(scene.input.len(), 1, "decorative shoulders must not take pointer input");
+                    assert_eq!(
+                        scene.input.len(),
+                        1,
+                        "decorative shoulders must not take pointer input"
+                    );
                     let screen_y = if edge == crate::Edge::Top {
                         body.bounds.y
                     } else {
@@ -299,7 +350,10 @@ mod tests {
                     assert!((path.first().unwrap()[1] - screen_y).abs() < 1e-6);
                     assert!((path.last().unwrap()[1] - screen_y).abs() < 1e-6);
                     assert!(path.iter().any(|p| p[0] < body.bounds.x));
-                    assert!(path.iter().any(|p| p[0] > body.bounds.x + body.bounds.width));
+                    assert!(
+                        path.iter()
+                            .any(|p| p[0] > body.bounds.x + body.bounds.width)
+                    );
                     for segment in path.windows(2) {
                         let [a, b] = [segment[0], segment[1]];
                         assert!(

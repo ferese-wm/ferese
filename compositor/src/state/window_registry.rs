@@ -76,9 +76,14 @@ impl<W: Eq + Hash> WindowRegistry<W> {
         W: Clone,
     {
         assert!(!self.ids.contains_key(&window), "window already registered");
-        assert!(!self.records.contains_key(&id), "window ID already registered");
+        assert!(
+            !self.records.contains_key(&id),
+            "window ID already registered"
+        );
 
-        let index = self.overview_order.partition_point(|existing| existing.0 < id.0);
+        let index = self
+            .overview_order
+            .partition_point(|existing| existing.0 < id.0);
         self.overview_order.insert(index, id);
         self.by_id.insert(id, window.clone());
         self.ids.insert(window, id);
@@ -92,7 +97,10 @@ impl<W: Eq + Hash> WindowRegistry<W> {
     /// Overview render and hit order, with the newest ID in front. Normal
     /// stacking changes do not affect this independent presentation order.
     pub fn overview_windows(&self) -> impl DoubleEndedIterator<Item = &W> {
-        self.overview_order.iter().rev().filter_map(|id| self.by_id.get(id))
+        self.overview_order
+            .iter()
+            .rev()
+            .filter_map(|id| self.by_id.get(id))
     }
 
     pub fn window(&self, id: WindowId) -> Option<&W> {
@@ -174,14 +182,21 @@ impl<W: Eq + Hash> WindowRegistry<W> {
 
     pub fn expire_transactions(&mut self, now: std::time::Duration) {
         for (id, record) in &mut self.records {
-            if record.resize.is_some_and(|transaction| transaction.expired(now)) {
+            if record
+                .resize
+                .is_some_and(|transaction| transaction.expired(now))
+            {
                 tracing::warn!(?id, "resize presentation deadline reached");
                 record.resize = None;
             }
         }
     }
 
-    pub fn update<R>(&mut self, id: WindowId, update: impl FnOnce(&mut WindowRecord) -> R) -> Option<R> {
+    pub fn update<R>(
+        &mut self,
+        id: WindowId,
+        update: impl FnOnce(&mut WindowRecord) -> R,
+    ) -> Option<R> {
         self.records.get_mut(&id).map(update)
     }
 
@@ -205,14 +220,18 @@ impl<W: Eq + Hash> WindowRegistry<W> {
     pub fn take_column_width_requests(&mut self) -> HashSet<WindowId> {
         self.records
             .iter_mut()
-            .filter_map(|(id, record)| std::mem::take(&mut record.column_width_pending).then_some(*id))
+            .filter_map(|(id, record)| {
+                std::mem::take(&mut record.column_width_pending).then_some(*id)
+            })
             .collect()
     }
 }
 
 impl WindowRegistry<Window> {
     pub fn register_window(&mut self, window: Window, id: WindowId) {
-        let surface = window.toplevel().map(|toplevel| toplevel.wl_surface().clone());
+        let surface = window
+            .toplevel()
+            .map(|toplevel| toplevel.wl_surface().clone());
         self.register(window, id);
 
         if let Some(surface) = surface {
@@ -228,7 +247,12 @@ impl WindowRegistry<Window> {
         };
         let record = self.records.get_mut(&id).unwrap();
         with_states(surface, |states| {
-            let attributes = states.data_map.get::<XdgToplevelSurfaceData>().unwrap().lock().unwrap();
+            let attributes = states
+                .data_map
+                .get::<XdgToplevelSurfaceData>()
+                .unwrap()
+                .lock()
+                .unwrap();
             let app_id = attributes.app_id.as_deref().unwrap_or_default();
             let title = attributes.title.as_deref().unwrap_or_default();
             let changed = record.app_id != app_id || record.title != title;
@@ -292,7 +316,10 @@ mod tests {
         assert_eq!(std::rc::Rc::strong_count(&handle), 3);
 
         for _ in 0..100 {
-            assert!(std::rc::Rc::ptr_eq(windows.overview_windows().next().unwrap(), &handle));
+            assert!(std::rc::Rc::ptr_eq(
+                windows.overview_windows().next().unwrap(),
+                &handle
+            ));
             assert_eq!(std::rc::Rc::strong_count(&handle), 3);
         }
 
@@ -323,7 +350,11 @@ mod tests {
         assert_eq!(windows.remove(&"surface"), Some(id));
         assert_eq!(windows.remove(&"surface"), None);
         assert!(windows.record(id).is_none());
-        assert!(windows.update(id, |record| record.maximized = true).is_none());
+        assert!(
+            windows
+                .update(id, |record| record.maximized = true)
+                .is_none()
+        );
 
         windows.set_geometry(id, geometry);
         windows.set_transaction(id, resize);
@@ -367,7 +398,10 @@ mod tests {
 
         windows.remove(&"first");
 
-        assert_eq!(windows.take_column_width_requests(), HashSet::from([second]));
+        assert_eq!(
+            windows.take_column_width_requests(),
+            HashSet::from([second])
+        );
         assert!(windows.take_column_width_requests().is_empty());
         assert!(windows.record(second).is_some());
     }
@@ -383,12 +417,25 @@ mod tests {
             windows.set_transaction(id, ResizeTransaction::new(serial.into(), now));
             windows.expire_transactions(now);
             assert!(windows.transaction(&id).is_some());
-            assert!(!windows.transaction(&id).unwrap().accepts(Some((serial - 1).into())));
+            assert!(
+                !windows
+                    .transaction(&id)
+                    .unwrap()
+                    .accepts(Some((serial - 1).into()))
+            );
         }
         windows.expire_transactions(Duration::from_millis(300));
         assert!(windows.transaction(&id).is_none());
-        windows.set_transaction(id, ResizeTransaction::new(31.into(), Duration::from_millis(400)));
-        assert!(!windows.transaction(&id).unwrap().expired(Duration::from_millis(699)));
+        windows.set_transaction(
+            id,
+            ResizeTransaction::new(31.into(), Duration::from_millis(400)),
+        );
+        assert!(
+            !windows
+                .transaction(&id)
+                .unwrap()
+                .expired(Duration::from_millis(699))
+        );
         windows.expire_transactions(Duration::from_millis(700));
         assert!(windows.transaction(&id).is_none());
     }
@@ -405,13 +452,24 @@ mod tests {
         let geometry = WindowGeometry::new(Rect::new(0., 0., 800., 600.), None);
         windows.set_geometry(first, geometry);
         windows.set_transaction(first, ResizeTransaction::new(1.into(), Duration::ZERO));
-        windows.set_transaction(second, ResizeTransaction::new(2.into(), Duration::from_millis(100)));
+        windows.set_transaction(
+            second,
+            ResizeTransaction::new(2.into(), Duration::from_millis(100)),
+        );
 
         windows.expire_transactions(Duration::from_millis(300));
 
         assert_eq!(windows.geometry(&first), Some(&geometry));
         assert!(windows.transaction(&first).is_none());
-        assert!(windows.transaction(&second).unwrap().accepts(Some(2.into())));
-        assert_eq!(windows.resizing().copied().collect::<Vec<_>>(), vec![second]);
+        assert!(
+            windows
+                .transaction(&second)
+                .unwrap()
+                .accepts(Some(2.into()))
+        );
+        assert_eq!(
+            windows.resizing().copied().collect::<Vec<_>>(),
+            vec![second]
+        );
     }
 }

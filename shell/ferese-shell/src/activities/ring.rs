@@ -45,14 +45,21 @@ impl Default for RingState {
     }
 }
 impl RingState {
-    fn advance(&mut self, progress: Option<f32>, animate: bool, reduced: bool, now: Instant) -> bool {
-        let elapsed = self
-            .sampled
-            .map_or(Duration::ZERO, |before| now.saturating_duration_since(before));
+    fn advance(
+        &mut self,
+        progress: Option<f32>,
+        animate: bool,
+        reduced: bool,
+        now: Instant,
+    ) -> bool {
+        let elapsed = self.sampled.map_or(Duration::ZERO, |before| {
+            now.saturating_duration_since(before)
+        });
         let initial = self.sampled.is_none();
         self.sampled = Some(now);
         self.elapsed = self.elapsed.saturating_add(elapsed);
-        self.value.retarget_preserving_motion(f64::from(progress.unwrap_or(0.)));
+        self.value
+            .retarget_preserving_motion(f64::from(progress.unwrap_or(0.)));
         if initial || reduced || !animate {
             self.value.snap();
         } else {
@@ -114,7 +121,10 @@ impl canvas::Program<cosmic::Action<Message>, Theme, cosmic::Renderer> for Ring 
                 .clamp(0., 1.),
             )
         } else if self.animate && !self.reduced {
-            (state.elapsed.as_secs_f32() / 3. * std::f32::consts::TAU, 0.23)
+            (
+                state.elapsed.as_secs_f32() / 3. * std::f32::consts::TAU,
+                0.23,
+            )
         } else {
             (0., 0.)
         };
@@ -151,7 +161,12 @@ mod tests {
         state.value.retarget_preserving_motion(0.9);
         assert_eq!(state.value.velocity, velocity);
         for frame in 1..=200 {
-            state.advance(Some(0.9), true, false, now + Duration::from_millis(50 + frame * 16));
+            state.advance(
+                Some(0.9),
+                true,
+                false,
+                now + Duration::from_millis(50 + frame * 16),
+            );
         }
         assert!(!state.value.is_animating());
         assert!(!state.advance(None, false, false, now + Duration::from_secs(5)));

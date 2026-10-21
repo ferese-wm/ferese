@@ -38,15 +38,32 @@ async fn request<B: serde::Serialize + zbus::zvariant::DynamicType>(
     body: &B,
     stop: &mut watch::Receiver<bool>,
 ) -> Result<Option<Options>, String> {
-    let sender = connection.unique_name().ok_or("No D-Bus identity")?.as_str()[1..].replace('.', "_");
+    let sender = connection
+        .unique_name()
+        .ok_or("No D-Bus identity")?
+        .as_str()[1..]
+        .replace('.', "_");
     let path = format!("{DESKTOP_PATH}/request/{sender}/{token}");
-    let request = Proxy::new(connection, DESKTOP, path.as_str(), "org.freedesktop.portal.Request")
+    let request = Proxy::new(
+        connection,
+        DESKTOP,
+        path.as_str(),
+        "org.freedesktop.portal.Request",
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    let mut responses = request
+        .receive_signal("Response")
         .await
         .map_err(|e| e.to_string())?;
-    let mut responses = request.receive_signal("Response").await.map_err(|e| e.to_string())?;
-    let portal = Proxy::new(connection, DESKTOP, DESKTOP_PATH, "org.freedesktop.portal.ScreenCast")
-        .await
-        .map_err(|e| e.to_string())?;
+    let portal = Proxy::new(
+        connection,
+        DESKTOP,
+        DESKTOP_PATH,
+        "org.freedesktop.portal.ScreenCast",
+    )
+    .await
+    .map_err(|e| e.to_string())?;
     let returned: OwnedObjectPath = portal
         .call(method, body)
         .await
@@ -78,7 +95,14 @@ async fn request<B: serde::Serialize + zbus::zvariant::DynamicType>(
 pub async fn run() -> Result<(), String> {
     gst::init().map_err(|e| e.to_string())?;
 
-    for factory in ["pipewiresrc", "queue", "videoconvert", "vp8enc", "webmmux", "fdsink"] {
+    for factory in [
+        "pipewiresrc",
+        "queue",
+        "videoconvert",
+        "vp8enc",
+        "webmmux",
+        "fdsink",
+    ] {
         if gst::ElementFactory::find(factory).is_none() {
             return Err(format!(
                 "Recording needs the GStreamer {factory} plugin. See the recording installation guide."
@@ -112,10 +136,13 @@ pub async fn run() -> Result<(), String> {
         return Ok(());
     };
 
-    let handle = created.get("session_handle").ok_or("Portal returned no session")?;
+    let handle = created
+        .get("session_handle")
+        .ok_or("Portal returned no session")?;
     // The public portal historically returns this path as a D-Bus string.
     let handle = OwnedObjectPath::try_from(
-        String::try_from(handle.try_clone().map_err(|e| e.to_string())?).map_err(|e| e.to_string())?,
+        String::try_from(handle.try_clone().map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())?,
     )
     .map_err(|e| e.to_string())?;
     // Older/foreign backends keep their normal sharing indicator. Only Ferese
@@ -129,16 +156,32 @@ pub async fn run() -> Result<(), String> {
                 "org.ferese.ScreenRecorder",
             )
             .await?;
-            control.call::<_, _, ()>("UseBarControls", &(handle.clone(),)).await
+            control
+                .call::<_, _, ()>("UseBarControls", &(handle.clone(),))
+                .await
         })
         .await,
         Ok(Ok(()))
     );
 
-    let session = Proxy::new(&connection, DESKTOP, handle.as_str(), "org.freedesktop.portal.Session")
-        .await
-        .map_err(|e| e.to_string())?;
-    let result = record_session(&connection, &session, &handle, &token, &output, &mut stop, native).await;
+    let session = Proxy::new(
+        &connection,
+        DESKTOP,
+        handle.as_str(),
+        "org.freedesktop.portal.Session",
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    let result = record_session(
+        &connection,
+        &session,
+        &handle,
+        &token,
+        &output,
+        &mut stop,
+        native,
+    )
+    .await;
     let _: Result<(), _> = session.call("Close", &()).await;
 
     match result {
@@ -158,7 +201,10 @@ async fn record_session(
     stop: &mut watch::Receiver<bool>,
     native: bool,
 ) -> Result<Option<PathBuf>, String> {
-    let mut closed = session.receive_signal("Closed").await.map_err(|e| e.to_string())?;
+    let mut closed = session
+        .receive_signal("Closed")
+        .await
+        .map_err(|e| e.to_string())?;
 
     if request(
         connection,
@@ -187,7 +233,11 @@ async fn record_session(
         connection,
         "Start",
         &token(2),
-        &(handle, "", HashMap::from([("handle_token", option_string(token(2)))])),
+        &(
+            handle,
+            "",
+            HashMap::from([("handle_token", option_string(token(2)))]),
+        ),
         stop,
     )
     .await?
@@ -216,21 +266,30 @@ async fn record_session(
         )
         .await
         .map_err(|e| e.to_string())?;
-        let options: String =
-            tokio::time::timeout(Duration::from_secs(3), control.call("RecordingOptions", &(handle,)))
-                .await
-                .map_err(|_| "Recording options timed out")?
-                .map_err(|e| {
-                    format!("Cannot read recording options; update the Ferese portal and recorder together: {e}")
-                })?;
+        let options: String = tokio::time::timeout(
+            Duration::from_secs(3),
+            control.call("RecordingOptions", &(handle,)),
+        )
+        .await
+        .map_err(|_| "Recording options timed out")?
+        .map_err(|e| {
+            format!(
+                "Cannot read recording options; update the Ferese portal and recorder together: {e}"
+            )
+        })?;
         serde_json::from_str::<Recording>(&options).map_err(|e| e.to_string())?
     } else {
         Recording::default()
     };
 
-    let portal = Proxy::new(connection, DESKTOP, DESKTOP_PATH, "org.freedesktop.portal.ScreenCast")
-        .await
-        .map_err(|e| e.to_string())?;
+    let portal = Proxy::new(
+        connection,
+        DESKTOP,
+        DESKTOP_PATH,
+        "org.freedesktop.portal.ScreenCast",
+    )
+    .await
+    .map_err(|e| e.to_string())?;
     let remote: OwnedFd = portal
         .call("OpenPipeWireRemote", &(handle, Options::new()))
         .await
@@ -281,7 +340,8 @@ fn output_directory() -> Result<PathBuf, String> {
 }
 
 fn recording_file(directory: &Path) -> Result<(File, PathBuf, PathBuf), String> {
-    std::fs::create_dir_all(directory).map_err(|e| format!("Cannot create recording folder: {e}"))?;
+    std::fs::create_dir_all(directory)
+        .map_err(|e| format!("Cannot create recording folder: {e}"))?;
 
     let name = format!(
         "Recording-{}-{}",
@@ -392,7 +452,8 @@ fn encode(
             gst::Element::link_many([&source, &queue, &filter, &convert, &encoder, &mux, &sink])
                 .map_err(|e| e.to_string())?;
         } else {
-            gst::Element::link_many([&source, &queue, &convert, &encoder, &mux, &sink]).map_err(|e| e.to_string())?;
+            gst::Element::link_many([&source, &queue, &convert, &encoder, &mux, &sink])
+                .map_err(|e| e.to_string())?;
         }
 
         let mut audio_inputs = Vec::new();
@@ -463,13 +524,17 @@ fn encode(
             .static_pad("src")
             .ok_or("Capture has no video output")?
             .add_probe(gst::PadProbeType::BUFFER, move |_, info| {
-                if info.buffer().is_some_and(|b| b.size() > 0) && !notice.swap(true, Ordering::Relaxed) {
+                if info.buffer().is_some_and(|b| b.size() > 0)
+                    && !notice.swap(true, Ordering::Relaxed)
+                {
                     event("recording", None, None);
                 }
                 gst::PadProbeReturn::Ok
             });
 
-        pipeline.set_state(gst::State::Playing).map_err(|e| e.to_string())?;
+        pipeline
+            .set_state(gst::State::Playing)
+            .map_err(|e| e.to_string())?;
 
         let bus = pipeline.bus().ok_or("Encoder has no message bus")?;
         let mut finishing = None;
@@ -545,7 +610,8 @@ fn encode(
     result.map_err(|e| format!("{e}. Incomplete file: {}", partial.display()))?;
     file.sync_all()
         .map_err(|e| format!("Cannot finish saving {}: {e}", partial.display()))?;
-    std::fs::rename(&partial, &destination).map_err(|e| format!("Cannot finish saving {}: {e}", partial.display()))?;
+    std::fs::rename(&partial, &destination)
+        .map_err(|e| format!("Cannot finish saving {}: {e}", partial.display()))?;
 
     Ok(destination)
 }
@@ -560,7 +626,10 @@ mod tests {
         let (_, second, _) = recording_file(directory.path()).unwrap();
         assert_ne!(first, second);
         use std::os::unix::fs::PermissionsExt;
-        assert_eq!(std::fs::metadata(first).unwrap().permissions().mode() & 0o777, 0o600);
+        assert_eq!(
+            std::fs::metadata(first).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
     }
     #[test]
     #[ignore = "requires an explicitly provided temporary PipeWire test node"]
@@ -629,16 +698,31 @@ mod tests {
     fn encoder_captures_isolated_system_and_microphone_audio() {
         // The isolated fixture plays 440 Hz on the default output and 660 Hz
         // on the default microphone. Both tones must survive combined capture.
-        let server = std::env::var("FERESE_TEST_RECORD_PULSE_SERVER").expect("isolated audio server required");
+        let server = std::env::var("FERESE_TEST_RECORD_PULSE_SERVER")
+            .expect("isolated audio server required");
         assert_eq!(std::env::var("PULSE_SERVER").unwrap(), server);
-        let socket = Path::new(server.strip_prefix("unix:").expect("explicit Unix socket required"));
+        let socket = Path::new(
+            server
+                .strip_prefix("unix:")
+                .expect("explicit Unix socket required"),
+        );
         assert!(socket.starts_with(std::env::temp_dir()));
-        for audio in [Audio::System, Audio::Microphone, Audio::Both, Audio::Both, Audio::Both] {
+        for audio in [
+            Audio::System,
+            Audio::Microphone,
+            Audio::Both,
+            Audio::Both,
+            Audio::Both,
+        ] {
             assert_cropped_audio_recording(false, 0, Some(audio));
         }
     }
 
-    fn assert_cropped_audio_recording(video_eos: bool, audio_count: usize, selected_audio: Option<Audio>) {
+    fn assert_cropped_audio_recording(
+        video_eos: bool,
+        audio_count: usize,
+        selected_audio: Option<Audio>,
+    ) {
         use crate::recording::Crop;
         use std::sync::Mutex;
         gst::init().unwrap();
@@ -706,9 +790,12 @@ mod tests {
             .set_property("location", path.to_str().unwrap());
         let geometry = Arc::new(Mutex::new(None));
         let observed = geometry.clone();
-        decoder.by_name("video").unwrap().static_pad("sink").unwrap().add_probe(
-            gst::PadProbeType::BUFFER,
-            move |pad, _| {
+        decoder
+            .by_name("video")
+            .unwrap()
+            .static_pad("sink")
+            .unwrap()
+            .add_probe(gst::PadProbeType::BUFFER, move |pad, _| {
                 let caps = pad.current_caps().unwrap();
                 let structure = caps.structure(0).unwrap();
                 *observed.lock().unwrap() = Some((
@@ -716,13 +803,15 @@ mod tests {
                     structure.get::<i32>("height").unwrap(),
                 ));
                 gst::PadProbeReturn::Ok
-            },
-        );
+            });
         let samples = Arc::new(Mutex::new(Vec::new()));
         let observed = samples.clone();
-        decoder.by_name("audio").unwrap().static_pad("sink").unwrap().add_probe(
-            gst::PadProbeType::BUFFER,
-            move |_, info| {
+        decoder
+            .by_name("audio")
+            .unwrap()
+            .static_pad("sink")
+            .unwrap()
+            .add_probe(gst::PadProbeType::BUFFER, move |_, info| {
                 let buffer = info.buffer().unwrap();
                 let data = buffer.map_readable().unwrap();
                 observed.lock().unwrap().extend(
@@ -731,8 +820,7 @@ mod tests {
                         .map(|sample| i16::from_le_bytes([sample[0], sample[1]])),
                 );
                 gst::PadProbeReturn::Ok
-            },
-        );
+            });
         decoder.set_state(gst::State::Playing).unwrap();
         let result = decoder.bus().unwrap().timed_pop_filtered(
             gst::ClockTime::from_seconds(5),
@@ -740,7 +828,10 @@ mod tests {
         );
         decoder.set_state(gst::State::Null).unwrap();
         assert!(
-            matches!(result.as_ref().map(|m| m.view()), Some(gst::MessageView::Eos(_))),
+            matches!(
+                result.as_ref().map(|m| m.view()),
+                Some(gst::MessageView::Eos(_))
+            ),
             "Saved recording did not decode: {result:?}"
         );
         assert_eq!(*geometry.lock().unwrap(), Some((201, 129)));
@@ -751,7 +842,9 @@ mod tests {
             Some(Audio::Microphone) => vec![660.],
             Some(Audio::Both) => vec![440., 660.],
             Some(Audio::Off) => unreachable!("These tests require audio"),
-            None => (0..audio_count).map(|index| 440. + index as f64 * 220.).collect(),
+            None => (0..audio_count)
+                .map(|index| 440. + index as f64 * 220.)
+                .collect(),
         };
         for frequency in frequencies {
             let amplitude = tone_amplitude(&samples, frequency);
@@ -770,7 +863,8 @@ mod tests {
         let mut imaginary = 0.;
         let mut weight = 0.;
         for (index, sample) in samples.iter().enumerate() {
-            let window = 0.5 - 0.5 * (std::f64::consts::TAU * index as f64 / (samples.len() - 1) as f64).cos();
+            let window = 0.5
+                - 0.5 * (std::f64::consts::TAU * index as f64 / (samples.len() - 1) as f64).cos();
             let angle = std::f64::consts::TAU * frequency * index as f64 / 48_000.;
             let sample = *sample as f64 / i16::MAX as f64 * window;
             real += sample * angle.cos();
@@ -785,13 +879,19 @@ mod tests {
         let tone = |frequency: f64| {
             (0..24_000)
                 .map(|index| {
-                    (0.2 * i16::MAX as f64 * (std::f64::consts::TAU * frequency * index as f64 / 48_000.).sin()) as i16
+                    (0.2 * i16::MAX as f64
+                        * (std::f64::consts::TAU * frequency * index as f64 / 48_000.).sin())
+                        as i16
                 })
                 .collect::<Vec<_>>()
         };
         let system = tone(440.);
         let microphone = tone(660.);
-        let both = system.iter().zip(&microphone).map(|(a, b)| a + b).collect::<Vec<_>>();
+        let both = system
+            .iter()
+            .zip(&microphone)
+            .map(|(a, b)| a + b)
+            .collect::<Vec<_>>();
         assert!(tone_amplitude(&both, 440.) > 0.05);
         assert!(tone_amplitude(&both, 660.) > 0.05);
         assert!(tone_amplitude(&microphone, 440.) < 0.01);
@@ -819,7 +919,10 @@ mod tests {
             "Invalid saved duration: {duration:?}"
         );
         assert!(
-            matches!(message.as_ref().map(|m| m.view()), Some(gst::MessageView::Eos(_))),
+            matches!(
+                message.as_ref().map(|m| m.view()),
+                Some(gst::MessageView::Eos(_))
+            ),
             "Saved video did not decode: {message:?}"
         );
     }

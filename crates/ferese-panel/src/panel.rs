@@ -220,9 +220,12 @@ impl<'de> Deserialize<'de> for Item {
                 return Err(serde::de::Error::unknown_field(key, OPTIONS));
             }
         }
-        if fields.contains_key("style") && fields.get("kind").and_then(serde_json::Value::as_str) != Some("workspaces")
+        if fields.contains_key("style")
+            && fields.get("kind").and_then(serde_json::Value::as_str) != Some("workspaces")
         {
-            return Err(serde::de::Error::custom("style is only supported by Workspaces items"));
+            return Err(serde::de::Error::custom(
+                "style is only supported by Workspaces items",
+            ));
         }
         if fields.contains_key("percentage")
             && fields.get("kind").and_then(serde_json::Value::as_str) != Some("battery")
@@ -447,7 +450,10 @@ pub fn validate(panels: &[Panel]) -> Result<(), String> {
     let mut panel_ids = HashSet::new();
     for panel in panels {
         if !PanelStyle::AVAILABLE.contains(&panel.style) {
-            return Err(format!("panel style {} is not available yet", panel.style.key()));
+            return Err(format!(
+                "panel style {} is not available yet",
+                panel.style.key()
+            ));
         }
         panel.geometry.validate()?;
         panel.morph.validate()?;
@@ -497,7 +503,10 @@ pub fn validate(panels: &[Panel]) -> Result<(), String> {
                         return Err("panel item priority must be 0..100 and gaps 0..64".into());
                     }
                     if item.kind == ItemKind::Overflow {
-                        return Err("overflow is supplied by the panel; it cannot be configured as an item".into());
+                        return Err(
+                            "overflow is supplied by the panel; it cannot be configured as an item"
+                                .into(),
+                        );
                     }
                 }
             }
@@ -538,7 +547,11 @@ impl Panel {
     }
 
     pub fn zone_spacing(&self, zone: &Zone) -> f32 {
-        if self.style.connected() { 0. } else { zone.spacing }
+        if self.style.connected() {
+            0.
+        } else {
+            zone.spacing
+        }
     }
 
     pub fn shape_parameters(&self) -> crate::scene::Parameters {
@@ -606,7 +619,8 @@ impl Panel {
     }
 
     pub fn resolved_radius(&self, shell_radius: f32) -> CornerRadii {
-        self.corner_radius.unwrap_or_else(|| CornerRadii::uniform(shell_radius))
+        self.corner_radius
+            .unwrap_or_else(|| CornerRadii::uniform(shell_radius))
     }
 
     /// The overflow trigger is generated, never persisted as a configured item.
@@ -629,7 +643,9 @@ impl Panel {
                 .end
                 .groups
                 .first()
-                .map_or(crate::default_island_padding(), |group| group.island_padding),
+                .map_or(crate::default_island_padding(), |group| {
+                    group.island_padding
+                }),
         }
     }
 
@@ -685,7 +701,12 @@ impl Panel {
                 let mut controls = controls;
                 controls.extend([clock, display]);
                 (
-                    vec![Group::new("navigation", vec![overview, workspaces], [2, 3], padding)],
+                    vec![Group::new(
+                        "navigation",
+                        vec![overview, workspaces],
+                        [2, 3],
+                        padding,
+                    )],
                     Group::new("title", vec![title], [0, 0], padding),
                     vec![Group::new("status", controls, [2, 3], padding)],
                 )
@@ -703,7 +724,11 @@ impl Panel {
             corner_radius: Option::None,
             start: Zone {
                 groups: start,
-                spacing: if preset == PanelStyle::Floating { 8.0 } else { 3.0 },
+                spacing: if preset == PanelStyle::Floating {
+                    8.0
+                } else {
+                    3.0
+                },
             },
             center: Zone {
                 groups: vec![center],
@@ -821,7 +846,9 @@ mod tests {
                 battery: true,
                 external_display: true
             }),
-            all.iter().map(|item| item.id.0.as_str()).collect::<Vec<_>>()
+            all.iter()
+                .map(|item| item.id.0.as_str())
+                .collect::<Vec<_>>()
         );
         assert_eq!(items(&panel).len(), 13);
     }
@@ -842,7 +869,10 @@ mod tests {
         {
             group.island_padding = 13.;
         }
-        assert_eq!(panel.center.groups[0].items[0].kind, ItemKind::FocusedWindow);
+        assert_eq!(
+            panel.center.groups[0].items[0].kind,
+            ItemKind::FocusedWindow
+        );
         assert!(!panel.center.groups[0].items[0].visible);
         let all = items(&panel);
         assert_eq!(
@@ -854,7 +884,13 @@ mod tests {
                 assert_eq!(group.island_padding, 13.0);
             }
         }
-        assert_eq!(all.iter().find(|item| item.id.0 == "clock").unwrap().gap_before, None);
+        assert_eq!(
+            all.iter()
+                .find(|item| item.id.0 == "clock")
+                .unwrap()
+                .gap_before,
+            None
+        );
     }
 
     #[test]

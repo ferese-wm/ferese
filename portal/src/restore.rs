@@ -33,7 +33,9 @@ pub(crate) fn persist_mode(options: &Options) -> zbus::fdo::Result<u32> {
         .map_err(|_| zbus::fdo::Error::InvalidArgs("Invalid persistence option".into()))?
         .unwrap_or(0);
     if mode > 2 {
-        return Err(zbus::fdo::Error::InvalidArgs("Unsupported persistence mode".into()));
+        return Err(zbus::fdo::Error::InvalidArgs(
+            "Unsupported persistence mode".into(),
+        ));
     }
     Ok(mode)
 }
@@ -43,7 +45,9 @@ fn identity<'a>(outputs: &'a Json, name: &str) -> Option<&'a str> {
         (output["name"].as_str() == Some(name) && output["enabled"] == true)
             .then(|| output["identity"].as_str())
             .flatten()
-            .filter(|identity| !identity.is_empty() && identity.len() <= 512 && identity.starts_with("drm-edid:"))
+            .filter(|identity| {
+                !identity.is_empty() && identity.len() <= 512 && identity.starts_with("drm-edid:")
+            })
     })
 }
 
@@ -52,15 +56,14 @@ pub(crate) fn selection_unchanged(sources: &[Source], before: &Json, after: &Jso
         outputs
             .as_array()
             .and_then(|outputs| {
-                outputs
-                    .iter()
-                    .find(|output| output["name"].as_str() == Some(name) && output["enabled"] == true)
+                outputs.iter().find(|output| {
+                    output["name"].as_str() == Some(name) && output["enabled"] == true
+                })
             })
             .map(|output| (output["identity"].clone(), output["id"].clone()))
     };
-    sources
-        .iter()
-        .all(|source| match (find(before, &source.name), find(after, &source.name)) {
+    sources.iter().all(
+        |source| match (find(before, &source.name), find(after, &source.name)) {
             (Some((identity, id)), Some((current_identity, current_id))) => {
                 if identity.is_null() {
                     id.as_u64().is_some() && id == current_id && current_identity.is_null()
@@ -69,7 +72,8 @@ pub(crate) fn selection_unchanged(sources: &[Source], before: &Json, after: &Jso
                 }
             }
             _ => false,
-        })
+        },
+    )
 }
 
 impl Restore {
@@ -123,13 +127,29 @@ impl Restore {
             {
                 return None;
             }
-            selected.push(sources.iter().find(|source| source.name == monitor.name)?.clone());
+            selected.push(
+                sources
+                    .iter()
+                    .find(|source| source.name == monitor.name)?
+                    .clone(),
+            );
         }
         Some(selected)
     }
 
-    pub(crate) fn create(app: &str, cursor: bool, sources: &[Source], outputs: &Json, mode: u32) -> Option<Self> {
-        if app.is_empty() || app.len() > 512 || sources.is_empty() || sources.len() > 16 || !(1..=2).contains(&mode) {
+    pub(crate) fn create(
+        app: &str,
+        cursor: bool,
+        sources: &[Source],
+        outputs: &Json,
+        mode: u32,
+    ) -> Option<Self> {
+        if app.is_empty()
+            || app.len() > 512
+            || sources.is_empty()
+            || sources.len() > 16
+            || !(1..=2).contains(&mode)
+        {
             return None;
         }
         let monitors = sources
@@ -178,7 +198,8 @@ mod tests {
 
     #[test]
     fn restore_is_bound_to_app_capture_options_and_display_identity() {
-        let outputs = serde_json::json!([{"name":"DP-1", "identity":"drm-edid:123", "enabled":true}]);
+        let outputs =
+            serde_json::json!([{"name":"DP-1", "identity":"drm-edid:123", "enabled":true}]);
         let sources = [source()];
         let saved = Restore::create("org.test.App", true, &sources, &outputs, 2).unwrap();
         let options = Options::from([("restore_data".into(), saved.value().unwrap())]);
@@ -198,14 +219,20 @@ mod tests {
                 .resolve("org.test.App", false, false, &sources, &outputs)
                 .is_none()
         );
-        assert!(restored.resolve("org.test.App", true, false, &[], &outputs).is_none());
-        let changed = serde_json::json!([{"name":"DP-1", "identity":"drm-edid:456", "enabled":true}]);
+        assert!(
+            restored
+                .resolve("org.test.App", true, false, &[], &outputs)
+                .is_none()
+        );
+        let changed =
+            serde_json::json!([{"name":"DP-1", "identity":"drm-edid:456", "enabled":true}]);
         assert!(
             restored
                 .resolve("org.test.App", true, false, &sources, &changed)
                 .is_none()
         );
-        let disabled = serde_json::json!([{"name":"DP-1", "identity":"drm-edid:123", "enabled":false}]);
+        let disabled =
+            serde_json::json!([{"name":"DP-1", "identity":"drm-edid:123", "enabled":false}]);
         assert!(
             restored
                 .resolve("org.test.App", true, false, &sources, &disabled)
@@ -215,9 +242,14 @@ mod tests {
 
     #[test]
     fn transient_permission_cannot_be_upgraded_without_new_consent() {
-        let outputs = serde_json::json!([{"name":"DP-1", "identity":"drm-edid:123", "enabled":true}]);
+        let outputs =
+            serde_json::json!([{"name":"DP-1", "identity":"drm-edid:123", "enabled":true}]);
         let saved = Restore::create("org.test.App", false, &[source()], &outputs, 1).unwrap();
-        let restored = Restore::read(&Options::from([("restore_data".into(), saved.value().unwrap())])).unwrap();
+        let restored = Restore::read(&Options::from([(
+            "restore_data".into(),
+            saved.value().unwrap(),
+        )]))
+        .unwrap();
         assert_eq!(restored.effective_mode(2), 1);
         assert_eq!(restored.effective_mode(0), 0);
         let weak = serde_json::json!([{"name":"DP-1", "identity":"drm:DP-1", "enabled":true}]);
@@ -229,7 +261,8 @@ mod tests {
     fn anonymous_nested_selection_has_lifetime_checks_without_saved_grants() {
         let outputs = serde_json::json!([{"name":"DP-1", "id":1, "identity":null, "enabled":true}]);
         assert!(selection_unchanged(&[source()], &outputs, &outputs));
-        let replacement = serde_json::json!([{"name":"DP-1", "id":2, "identity":null, "enabled":true}]);
+        let replacement =
+            serde_json::json!([{"name":"DP-1", "id":2, "identity":null, "enabled":true}]);
         assert!(!selection_unchanged(&[source()], &outputs, &replacement));
         assert!(Restore::create("org.test.App", false, &[source()], &outputs, 2).is_none());
     }
@@ -257,7 +290,11 @@ mod tests {
                 .is_none()
         );
         saved.monitors[1] = saved.monitors[0].clone();
-        assert!(saved.resolve("org.test.App", false, true, &sources, &outputs).is_none());
+        assert!(
+            saved
+                .resolve("org.test.App", false, true, &sources, &outputs)
+                .is_none()
+        );
     }
 
     #[test]

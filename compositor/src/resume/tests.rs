@@ -8,12 +8,18 @@ use super::*;
 #[test]
 fn warning_suppression_resets_at_subscription_not_at_next_resume() {
     let mut recovery = Recovery::default();
-    assert!(!recovery.subscribed(), "startup is not a recovery or a resume");
+    assert!(
+        !recovery.subscribed(),
+        "startup is not a recovery or a resume"
+    );
     assert!(recovery.unavailable());
     assert!(!recovery.unavailable(), "one warning per outage");
     assert!(recovery.subscribed());
     assert!(!recovery.subscribed(), "one reconciliation per recovery");
-    assert!(recovery.unavailable(), "another outage must warn even without a resume");
+    assert!(
+        recovery.unavailable(),
+        "another outage must warn even without a resume"
+    );
     assert!(!recovery.unavailable());
 }
 
@@ -25,7 +31,10 @@ fn stop_and_join(mut monitor: Monitor) {
         std::thread::sleep(Duration::from_millis(2));
     }
 
-    assert!(worker.is_finished(), "cancellation did not stop the worker promptly");
+    assert!(
+        worker.is_finished(),
+        "cancellation did not stop the worker promptly"
+    );
     worker.join().unwrap();
 }
 
@@ -130,7 +139,9 @@ fn confirm_subscription(manager: &zbus::blocking::Connection, events: &Receiver<
 
 #[test]
 fn reconnect_reconciles_a_resume_missed_during_the_outage() {
-    if !crate::startup_tests::private_runtime("resume::tests::reconnect_reconciles_a_resume_missed_during_the_outage") {
+    if !crate::startup_tests::private_runtime(
+        "resume::tests::reconnect_reconciles_a_resume_missed_during_the_outage",
+    ) {
         return;
     }
 
@@ -159,18 +170,26 @@ fn reconnect_reconciles_a_resume_missed_during_the_outage() {
     let manager = replacement.manager();
     signal(&manager, false); // No listener can receive this resume.
     *address.lock().unwrap() = replacement.address.clone();
-    assert_eq!(events.recv_timeout(Duration::from_secs(2)).unwrap(), Refresh::Reconcile);
+    assert_eq!(
+        events.recv_timeout(Duration::from_secs(2)).unwrap(),
+        Refresh::Reconcile
+    );
     assert!(events.recv_timeout(Duration::from_millis(80)).is_err());
     signal(&manager, true);
     assert!(events.recv_timeout(Duration::from_millis(40)).is_err());
     signal(&manager, false);
-    assert_eq!(events.recv_timeout(Duration::from_secs(1)).unwrap(), Refresh::Resumed);
+    assert_eq!(
+        events.recv_timeout(Duration::from_secs(1)).unwrap(),
+        Refresh::Resumed
+    );
     stop_and_join(monitor);
 }
 
 #[test]
 fn shutdown_interrupts_a_healthy_signal_wait() {
-    if !crate::startup_tests::private_runtime("resume::tests::shutdown_interrupts_a_healthy_signal_wait") {
+    if !crate::startup_tests::private_runtime(
+        "resume::tests::shutdown_interrupts_a_healthy_signal_wait",
+    ) {
         return;
     }
 
@@ -190,7 +209,9 @@ fn shutdown_interrupts_a_healthy_signal_wait() {
 
 #[test]
 fn logind_replacement_reconciles_without_a_bus_disconnect() {
-    if !crate::startup_tests::private_runtime("resume::tests::logind_replacement_reconciles_without_a_bus_disconnect") {
+    if !crate::startup_tests::private_runtime(
+        "resume::tests::logind_replacement_reconciles_without_a_bus_disconnect",
+    ) {
         return;
     }
 
@@ -211,15 +232,23 @@ fn logind_replacement_reconciles_without_a_bus_disconnect() {
         "absent logind is not recovery"
     );
     let replacement = bus.manager();
-    assert_eq!(events.recv_timeout(Duration::from_secs(2)).unwrap(), Refresh::Reconcile);
+    assert_eq!(
+        events.recv_timeout(Duration::from_secs(2)).unwrap(),
+        Refresh::Reconcile
+    );
     signal(&replacement, false);
-    assert_eq!(events.recv_timeout(Duration::from_secs(1)).unwrap(), Refresh::Resumed);
+    assert_eq!(
+        events.recv_timeout(Duration::from_secs(1)).unwrap(),
+        Refresh::Resumed
+    );
     stop_and_join(monitor);
 }
 
 #[test]
 fn shutdown_interrupts_connection_authentication() {
-    if !crate::startup_tests::private_runtime("resume::tests::shutdown_interrupts_connection_authentication") {
+    if !crate::startup_tests::private_runtime(
+        "resume::tests::shutdown_interrupts_connection_authentication",
+    ) {
         return;
     }
 

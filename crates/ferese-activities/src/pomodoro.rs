@@ -131,7 +131,11 @@ impl Session {
         if let Some(phase) = phase {
             self.phase = phase;
             self.remaining_ms = self.settings.duration(phase);
-            self.status = if running { Status::Running } else { Status::Ready };
+            self.status = if running {
+                Status::Running
+            } else {
+                Status::Ready
+            };
             if running {
                 self.deadline = Some(now.saturating_add(self.remaining_ms));
             }
@@ -210,7 +214,13 @@ mod tests {
         ] {
             let deadline = session.deadline.unwrap();
             assert!(session.advance(deadline - 1).is_none());
-            assert_eq!(session.advance(deadline), Some(Completion { phase: finished, next }));
+            assert_eq!(
+                session.advance(deadline),
+                Some(Completion {
+                    phase: finished,
+                    next
+                })
+            );
             assert_eq!(session.completed_work, count);
             assert!(session.advance(deadline + 99_000_000).is_none());
             if next.is_some() {

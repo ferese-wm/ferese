@@ -17,7 +17,12 @@ pub struct OutputGeometry {
 
 impl OutputGeometry {
     pub const fn new(x: i32, y: i32, width: i32, height: i32) -> Self {
-        Self { x, y, width, height }
+        Self {
+            x,
+            y,
+            width,
+            height,
+        }
     }
 
     fn center(self) -> (i64, i64) {
@@ -33,7 +38,10 @@ pub enum OutputError {
     AlreadyConnected(OutputId),
     UnknownOutput(OutputId),
     InvalidGeometry(OutputId),
-    WorkspaceAlreadyAssigned { workspace: WorkspaceId, output: OutputId },
+    WorkspaceAlreadyAssigned {
+        workspace: WorkspaceId,
+        output: OutputId,
+    },
 }
 
 impl fmt::Display for OutputError {
@@ -41,9 +49,14 @@ impl fmt::Display for OutputError {
         match self {
             Self::AlreadyConnected(output) => write!(formatter, "output {output:?} is connected"),
             Self::UnknownOutput(output) => write!(formatter, "unknown output {output:?}"),
-            Self::InvalidGeometry(output) => write!(formatter, "invalid geometry for output {output:?}"),
+            Self::InvalidGeometry(output) => {
+                write!(formatter, "invalid geometry for output {output:?}")
+            }
             Self::WorkspaceAlreadyAssigned { workspace, output } => {
-                write!(formatter, "workspace {workspace:?} is assigned to {output:?}")
+                write!(
+                    formatter,
+                    "workspace {workspace:?} is assigned to {output:?}"
+                )
             }
         }
     }
@@ -68,7 +81,10 @@ struct OutputState {
 impl OutputState {
     fn activate(&mut self, workspace: WorkspaceId) {
         if self.active != workspace {
-            self.previous = self.workspaces.contains(&self.active).then_some(self.active);
+            self.previous = self
+                .workspaces
+                .contains(&self.active)
+                .then_some(self.active);
             self.active = workspace;
         }
     }
@@ -148,12 +164,17 @@ impl OutputWorkspaceMap {
                 .copied()
                 .filter(|workspace| {
                     outputs.output_for_workspace(*workspace).is_none()
-                        && outputs.home_output(*workspace).is_none_or(|home| home == id)
+                        && outputs
+                            .home_output(*workspace)
+                            .is_none_or(|home| home == id)
                 })
                 .min()
                 .unwrap_or_else(|| {
                     let workspace = next_workspace;
-                    next_workspace.0 = next_workspace.0.checked_add(1).expect("workspace IDs exhausted");
+                    next_workspace.0 = next_workspace
+                        .0
+                        .checked_add(1)
+                        .expect("workspace IDs exhausted");
                     created_workspaces.push(workspace);
                     workspace
                 });
@@ -202,7 +223,10 @@ impl OutputWorkspaceMap {
         })
     }
 
-    pub fn assigned_workspaces(&self, output: OutputId) -> impl DoubleEndedIterator<Item = WorkspaceId> + '_ {
+    pub fn assigned_workspaces(
+        &self,
+        output: OutputId,
+    ) -> impl DoubleEndedIterator<Item = WorkspaceId> + '_ {
         self.outputs
             .get(&output)
             .into_iter()
@@ -230,7 +254,11 @@ impl OutputWorkspaceMap {
     }
 
     pub fn forget_workspace(&mut self, workspace: WorkspaceId) -> bool {
-        if self.outputs.values().any(|output| output.active == workspace) {
+        if self
+            .outputs
+            .values()
+            .any(|output| output.active == workspace)
+        {
             return false;
         }
         if let Some(owner) = self.assignments.remove(&workspace)
@@ -247,7 +275,9 @@ impl OutputWorkspaceMap {
             self.orphaned_focus = None;
         }
         self.evacuations.retain(|_, record| {
-            record.workspaces.retain(|entry| entry.workspace != workspace);
+            record
+                .workspaces
+                .retain(|entry| entry.workspace != workspace);
             if record.active == workspace {
                 if let Some(entry) = record.workspaces.first() {
                     record.active = entry.workspace;
@@ -282,7 +312,11 @@ impl OutputWorkspaceMap {
                 .assignments
                 .get(&evacuated.workspace)
                 .copied()
-                .or_else(|| evacuated.target.filter(|target| self.outputs.contains_key(target)));
+                .or_else(|| {
+                    evacuated
+                        .target
+                        .filter(|target| self.outputs.contains_key(target))
+                });
             let assignment_matches = self.homes.get(&evacuated.workspace) == Some(&output);
             let revision_matches = self.revision(evacuated.workspace) == evacuated.revision;
 
@@ -296,7 +330,10 @@ impl OutputWorkspaceMap {
                 // the reconnecting monitor can use its fresh fallback.
                 if target
                     .and_then(|target| self.outputs.get(&target))
-                    .is_some_and(|state| state.workspaces.len() == 1 && state.workspaces.contains(&evacuated.workspace))
+                    .is_some_and(|state| {
+                        state.workspaces.len() == 1
+                            && state.workspaces.contains(&evacuated.workspace)
+                    })
                 {
                     continue;
                 }
@@ -344,7 +381,12 @@ impl OutputWorkspaceMap {
         let active = record
             .as_ref()
             .and_then(|record| reclaimed.contains(&record.active).then_some(record.active))
-            .or_else(|| reclaimed.iter().copied().min_by_key(|workspace| workspace.0));
+            .or_else(|| {
+                reclaimed
+                    .iter()
+                    .copied()
+                    .min_by_key(|workspace| workspace.0)
+            });
         let mut active = match active {
             Some(active) => active,
             None => {
@@ -398,7 +440,10 @@ impl OutputWorkspaceMap {
     }
 
     pub fn disconnect(&mut self, output: OutputId) -> Result<Option<OutputId>, OutputError> {
-        let removed = self.outputs.remove(&output).ok_or(OutputError::UnknownOutput(output))?;
+        let removed = self
+            .outputs
+            .remove(&output)
+            .ok_or(OutputError::UnknownOutput(output))?;
         let target = self.evacuate(output, removed);
         debug_assert!(self.validate());
         Ok(target)
@@ -483,7 +528,10 @@ impl OutputWorkspaceMap {
         }
 
         let reassigned = self.assignments.insert(workspace, output) != Some(output);
-        let state = self.outputs.get_mut(&output).expect("output was checked above");
+        let state = self
+            .outputs
+            .get_mut(&output)
+            .expect("output was checked above");
         state.workspaces.insert(workspace);
         state.activate(workspace);
         self.focused = Some(output);
@@ -510,7 +558,11 @@ impl OutputWorkspaceMap {
         self.switch_workspace(output, workspace)
     }
 
-    pub fn assign_workspace(&mut self, output: OutputId, workspace: WorkspaceId) -> Result<OutputId, OutputError> {
+    pub fn assign_workspace(
+        &mut self,
+        output: OutputId,
+        workspace: WorkspaceId,
+    ) -> Result<OutputId, OutputError> {
         if !self.outputs.contains_key(&output) {
             return Err(OutputError::UnknownOutput(output));
         }
@@ -545,7 +597,10 @@ impl OutputWorkspaceMap {
         if let Some(owner) = self.assignments.get(&workspace).copied()
             && owner != output
         {
-            let donor = self.outputs.get_mut(&owner).expect("assigned owner is connected");
+            let donor = self
+                .outputs
+                .get_mut(&owner)
+                .expect("assigned owner is connected");
             if donor.workspaces.len() == 1 {
                 if let Some(assigned) = self.assignments.get(&donor_fallback) {
                     return Err(OutputError::WorkspaceAlreadyAssigned {
@@ -570,13 +625,21 @@ impl OutputWorkspaceMap {
         }
         self.assignments.insert(workspace, output);
         self.homes.insert(workspace, output);
-        self.outputs.get_mut(&output).unwrap().workspaces.insert(workspace);
+        self.outputs
+            .get_mut(&output)
+            .unwrap()
+            .workspaces
+            .insert(workspace);
         self.bump_revision(workspace);
         debug_assert!(self.validate());
         Ok(())
     }
 
-    fn migration_target(&self, removed: OutputId, removed_geometry: OutputGeometry) -> Option<OutputId> {
+    fn migration_target(
+        &self,
+        removed: OutputId,
+        removed_geometry: OutputGeometry,
+    ) -> Option<OutputId> {
         if let Some(focused) = self.focused
             && focused != removed
             && self.outputs.contains_key(&focused)
@@ -606,7 +669,10 @@ impl OutputWorkspaceMap {
     }
 
     fn validate(&self) -> bool {
-        if self.focused.is_some_and(|focused| !self.outputs.contains_key(&focused)) {
+        if self
+            .focused
+            .is_some_and(|focused| !self.outputs.contains_key(&focused))
+        {
             return false;
         }
 
@@ -614,10 +680,9 @@ impl OutputWorkspaceMap {
             if !state.workspaces.contains(&state.active) {
                 return false;
             }
-            if state
-                .previous
-                .is_some_and(|previous| previous == state.active || !state.workspaces.contains(&previous))
-            {
+            if state.previous.is_some_and(|previous| {
+                previous == state.active || !state.workspaces.contains(&previous)
+            }) {
                 return false;
             }
             for workspace in &state.workspaces {
@@ -662,8 +727,14 @@ mod tests {
         assert!(!unchanged.focus_changed);
         let removed = plan(&second.outputs, &[1]);
         assert_eq!(removed.outputs.focused_output(), Some(OutputId(1)));
-        assert_eq!(removed.outputs.active_workspace(OutputId(1)), Some(WorkspaceId(1)));
-        assert_eq!(removed.outputs.output_for_workspace(WorkspaceId(2)), Some(OutputId(1)));
+        assert_eq!(
+            removed.outputs.active_workspace(OutputId(1)),
+            Some(WorkspaceId(1))
+        );
+        assert_eq!(
+            removed.outputs.output_for_workspace(WorkspaceId(2)),
+            Some(OutputId(1))
+        );
     }
 
     #[test]
@@ -672,7 +743,10 @@ mod tests {
         before.focus_output(OutputId(2)).unwrap();
         let after = plan(&before, &[4]);
         assert_eq!(after.outputs.focused_output(), Some(OutputId(4)));
-        assert_eq!(after.outputs.active_workspace(OutputId(4)), Some(WorkspaceId(2)));
+        assert_eq!(
+            after.outputs.active_workspace(OutputId(4)),
+            Some(WorkspaceId(2))
+        );
         for workspace in 1..=3 {
             assert_eq!(
                 after.outputs.output_for_workspace(WorkspaceId(workspace)),
@@ -695,7 +769,10 @@ mod tests {
         let before = plan(&OutputWorkspaceMap::default(), &[1, 2]).outputs;
         let mut evacuated = plan(&before, &[1]).outputs;
         let restored = plan(&evacuated, &[1, 2]);
-        assert_eq!(restored.outputs.output_for_workspace(WorkspaceId(2)), Some(OutputId(2)));
+        assert_eq!(
+            restored.outputs.output_for_workspace(WorkspaceId(2)),
+            Some(OutputId(2))
+        );
         evacuated
             .reassign_workspace(OutputId(1), WorkspaceId(2), WorkspaceId(9))
             .unwrap();
@@ -711,11 +788,16 @@ mod tests {
         let mut before = plan(&OutputWorkspaceMap::default(), &[1, 2, 3]).outputs;
         before.focus_output(OutputId(2)).unwrap();
         before.disconnect(OutputId(1)).unwrap();
-        before.switch_workspace(OutputId(2), WorkspaceId(1)).unwrap();
+        before
+            .switch_workspace(OutputId(2), WorkspaceId(1))
+            .unwrap();
         assert!(before.forget_workspace(WorkspaceId(2)));
         before.focus_output(OutputId(3)).unwrap();
         let after = plan(&before, &[1, 3]).outputs;
-        assert_eq!(after.output_for_workspace(WorkspaceId(1)), Some(OutputId(1)));
+        assert_eq!(
+            after.output_for_workspace(WorkspaceId(1)),
+            Some(OutputId(1))
+        );
         assert_eq!(after.active_workspace(OutputId(1)), Some(WorkspaceId(1)));
         assert_eq!(after.focused_output(), Some(OutputId(3)));
     }
@@ -735,7 +817,11 @@ mod tests {
         );
         assert!(
             before
-                .plan_desktop(&[(OutputId(3), OutputGeometry::new(0, 0, 0, 800))], &[], WorkspaceId(3))
+                .plan_desktop(
+                    &[(OutputId(3), OutputGeometry::new(0, 0, 0, 800))],
+                    &[],
+                    WorkspaceId(3)
+                )
                 .is_err()
         );
         assert_eq!(before, saved);
@@ -749,9 +835,15 @@ mod tests {
         assert_eq!(headless.focused_output(), None);
         assert!(headless.assignments.is_empty());
         let recovered = plan(&headless, &[3]).outputs;
-        assert_eq!(recovered.active_workspace(OutputId(3)), Some(WorkspaceId(2)));
+        assert_eq!(
+            recovered.active_workspace(OutputId(3)),
+            Some(WorkspaceId(2))
+        );
         for id in [1, 2] {
-            assert_eq!(recovered.output_for_workspace(WorkspaceId(id)), Some(OutputId(3)));
+            assert_eq!(
+                recovered.output_for_workspace(WorkspaceId(id)),
+                Some(OutputId(3))
+            );
         }
     }
 
@@ -761,7 +853,9 @@ mod tests {
         let mut seed = 0x5eed_u64;
         for step in 0..512 {
             seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
-            let ids = (1..=4).filter(|id| seed & (1 << id) != 0).collect::<Vec<_>>();
+            let ids = (1..=4)
+                .filter(|id| seed & (1 << id) != 0)
+                .collect::<Vec<_>>();
             let next = plan(&map, &ids);
             assert!(next.outputs.validate(), "step {step}");
             assert_eq!(plan(&next.outputs, &ids).outputs, next.outputs);
@@ -793,7 +887,10 @@ mod tests {
                 .filter(|id| seed & (1 << id) != 0)
                 .map(|id| (OutputId(id), geometry(id as i32 * 800)))
                 .collect::<Vec<_>>();
-            let ids = workspaces.iter().map(|workspace| workspace.id).collect::<Vec<_>>();
+            let ids = workspaces
+                .iter()
+                .map(|workspace| workspace.id)
+                .collect::<Vec<_>>();
             let plan = outputs
                 .plan_desktop(&inventory, &ids, workspaces.next_workspace_id())
                 .unwrap();
@@ -803,7 +900,9 @@ mod tests {
             outputs = plan.outputs;
             outputs.reconcile_workspaces(&mut workspaces, &Default::default());
             let window = WindowId(step);
-            workspaces.insert_window(window, Axis::Horizontal, 0.5).unwrap();
+            workspaces
+                .insert_window(window, Axis::Horizontal, 0.5)
+                .unwrap();
             windows.insert(window);
             if let Some((output, _)) = inventory.last() {
                 outputs.focus_output(*output).unwrap();
@@ -817,10 +916,22 @@ mod tests {
             workspaces.validate().unwrap();
             let actual = workspaces
                 .iter()
-                .flat_map(|workspace| workspace.layout.window_ids().chain(workspace.floating.iter().copied()))
+                .flat_map(|workspace| {
+                    workspace
+                        .layout
+                        .window_ids()
+                        .chain(workspace.floating.iter().copied())
+                })
                 .collect::<Vec<_>>();
-            assert_eq!(actual.len(), windows.len(), "duplicate or lost window at {step}");
-            assert_eq!(actual.into_iter().collect::<std::collections::HashSet<_>>(), windows);
+            assert_eq!(
+                actual.len(),
+                windows.len(),
+                "duplicate or lost window at {step}"
+            );
+            assert_eq!(
+                actual.into_iter().collect::<std::collections::HashSet<_>>(),
+                windows
+            );
             for workspace in workspaces.iter().filter(|workspace| !workspace.is_empty()) {
                 assert_eq!(
                     outputs.output_for_workspace(workspace.id).is_some(),
@@ -833,13 +944,19 @@ mod tests {
     #[test]
     fn reconnect_cannot_reclaim_the_donor_monitors_only_workspace() {
         let mut outputs = OutputWorkspaceMap::default();
-        outputs.connect(OutputId(1), geometry(0), WorkspaceId(1)).unwrap();
-        outputs.connect(OutputId(2), geometry(1920), WorkspaceId(2)).unwrap();
+        outputs
+            .connect(OutputId(1), geometry(0), WorkspaceId(1))
+            .unwrap();
+        outputs
+            .connect(OutputId(2), geometry(1920), WorkspaceId(2))
+            .unwrap();
         outputs.focus_output(OutputId(2)).unwrap();
         outputs.disconnect(OutputId(2)).unwrap();
         assert!(outputs.forget_workspace(WorkspaceId(1)));
 
-        outputs.connect(OutputId(2), geometry(1920), WorkspaceId(3)).unwrap();
+        outputs
+            .connect(OutputId(2), geometry(1920), WorkspaceId(3))
+            .unwrap();
 
         assert_eq!(outputs.active_workspace(OutputId(1)), Some(WorkspaceId(2)));
         assert_eq!(outputs.active_workspace(OutputId(2)), Some(WorkspaceId(3)));
@@ -859,7 +976,9 @@ mod tests {
         assert!(outputs.forget_workspace(first));
         assert_eq!(outputs.output_for_workspace(first), None);
         outputs.disconnect(display).unwrap();
-        outputs.connect(display, geometry, super::WorkspaceId(3)).unwrap();
+        outputs
+            .connect(display, geometry, super::WorkspaceId(3))
+            .unwrap();
         assert_eq!(outputs.active_workspace(display), Some(second));
         assert_eq!(outputs.output_for_workspace(first), None);
         assert!(outputs.validate());
@@ -888,14 +1007,20 @@ mod tests {
     fn history_tracks_actual_switches_and_toggles_without_replacing_it_on_a_noop() {
         let mut outputs = OutputWorkspaceMap::default();
         let display = OutputId(1);
-        outputs.connect(display, geometry(0), WorkspaceId(1)).unwrap();
+        outputs
+            .connect(display, geometry(0), WorkspaceId(1))
+            .unwrap();
         assert_eq!(outputs.previous_workspace(display), None);
-        outputs.select_workspace(display, WorkspaceId(1), true).unwrap();
+        outputs
+            .select_workspace(display, WorkspaceId(1), true)
+            .unwrap();
         assert_eq!(outputs.previous_workspace(display), None);
         outputs.switch_workspace(display, WorkspaceId(2)).unwrap();
         outputs.switch_workspace(display, WorkspaceId(2)).unwrap();
         assert_eq!(outputs.previous_workspace(display), Some(WorkspaceId(1)));
-        outputs.select_workspace(display, WorkspaceId(2), false).unwrap();
+        outputs
+            .select_workspace(display, WorkspaceId(2), false)
+            .unwrap();
         assert_eq!(outputs.active_workspace(display), Some(WorkspaceId(2)));
         for expected in [WorkspaceId(1), WorkspaceId(2), WorkspaceId(1)] {
             let current = outputs.active_workspace(display).unwrap();
@@ -912,7 +1037,9 @@ mod tests {
         let left = OutputId(1);
         let right = OutputId(2);
         outputs.connect(left, geometry(0), WorkspaceId(1)).unwrap();
-        outputs.connect(right, geometry(1920), WorkspaceId(2)).unwrap();
+        outputs
+            .connect(right, geometry(1920), WorkspaceId(2))
+            .unwrap();
         outputs.switch_workspace(left, WorkspaceId(3)).unwrap();
         outputs.switch_workspace(right, WorkspaceId(4)).unwrap();
         assert_eq!(
@@ -935,13 +1062,17 @@ mod tests {
         let left = OutputId(1);
         let right = OutputId(2);
         outputs.connect(left, geometry(0), WorkspaceId(1)).unwrap();
-        outputs.connect(right, geometry(1920), WorkspaceId(2)).unwrap();
+        outputs
+            .connect(right, geometry(1920), WorkspaceId(2))
+            .unwrap();
         outputs.focus_output(right).unwrap();
         outputs.disconnect(right).unwrap();
         assert_eq!(outputs.previous_workspace(left), Some(WorkspaceId(1)));
         outputs.switch_workspace(left, WorkspaceId(1)).unwrap();
         assert_eq!(outputs.previous_workspace(left), Some(WorkspaceId(2)));
-        outputs.connect(right, geometry(1920), WorkspaceId(3)).unwrap();
+        outputs
+            .connect(right, geometry(1920), WorkspaceId(3))
+            .unwrap();
         assert_eq!(outputs.previous_workspace(left), None);
         assert_eq!(outputs.previous_workspace(right), None);
         assert!(outputs.validate());
@@ -951,11 +1082,15 @@ mod tests {
     fn forgetting_a_previous_workspace_clears_its_history() {
         let mut outputs = OutputWorkspaceMap::default();
         let display = OutputId(1);
-        outputs.connect(display, geometry(0), WorkspaceId(1)).unwrap();
+        outputs
+            .connect(display, geometry(0), WorkspaceId(1))
+            .unwrap();
         outputs.switch_workspace(display, WorkspaceId(2)).unwrap();
         assert!(outputs.forget_workspace(WorkspaceId(1)));
         assert_eq!(outputs.previous_workspace(display), None);
-        outputs.select_workspace(display, WorkspaceId(2), true).unwrap();
+        outputs
+            .select_workspace(display, WorkspaceId(2), true)
+            .unwrap();
         assert_eq!(outputs.active_workspace(display), Some(WorkspaceId(2)));
         assert_eq!(
             outputs.select_workspace(OutputId(99), WorkspaceId(2), true),
@@ -975,28 +1110,47 @@ mod tests {
             outputs.connect(OutputId(2), geometry(1_920), WorkspaceId(2)),
             Ok(WorkspaceId(2))
         );
-        assert_eq!(outputs.output_for_workspace(WorkspaceId(1)), Some(OutputId(1)));
-        assert_eq!(outputs.output_for_workspace(WorkspaceId(2)), Some(OutputId(2)));
+        assert_eq!(
+            outputs.output_for_workspace(WorkspaceId(1)),
+            Some(OutputId(1))
+        );
+        assert_eq!(
+            outputs.output_for_workspace(WorkspaceId(2)),
+            Some(OutputId(2))
+        );
     }
 
     #[test]
     fn removal_prefers_a_remaining_focused_output_without_replacing_its_workspace() {
         let mut outputs = OutputWorkspaceMap::default();
-        outputs.connect(OutputId(1), geometry(0), WorkspaceId(1)).unwrap();
-        outputs.connect(OutputId(2), geometry(1_920), WorkspaceId(2)).unwrap();
+        outputs
+            .connect(OutputId(1), geometry(0), WorkspaceId(1))
+            .unwrap();
+        outputs
+            .connect(OutputId(2), geometry(1_920), WorkspaceId(2))
+            .unwrap();
         outputs.focus_output(OutputId(1)).unwrap();
 
         assert_eq!(outputs.disconnect(OutputId(2)), Ok(Some(OutputId(1))));
         assert_eq!(outputs.active_workspace(OutputId(1)), Some(WorkspaceId(1)));
-        assert_eq!(outputs.output_for_workspace(WorkspaceId(2)), Some(OutputId(1)));
+        assert_eq!(
+            outputs.output_for_workspace(WorkspaceId(2)),
+            Some(OutputId(1))
+        );
     }
 
     #[test]
     fn removing_the_focused_output_activates_its_workspace_on_the_nearest_output() {
         let mut outputs = OutputWorkspaceMap::default();
-        outputs.connect(OutputId(1), geometry(0), WorkspaceId(1)).unwrap();
-        outputs.connect(OutputId(2), geometry(1_920), WorkspaceId(2)).unwrap();
-        outputs.connect(OutputId(3), geometry(3_840), WorkspaceId(3)).unwrap();
+        outputs
+            .connect(OutputId(1), geometry(0), WorkspaceId(1))
+            .unwrap();
+        outputs
+            .connect(OutputId(2), geometry(1_920), WorkspaceId(2))
+            .unwrap();
+        outputs
+            .connect(OutputId(3), geometry(3_840), WorkspaceId(3))
+            .unwrap();
         outputs.focus_output(OutputId(2)).unwrap();
 
         assert_eq!(outputs.disconnect(OutputId(2)), Ok(Some(OutputId(1))));
@@ -1007,8 +1161,12 @@ mod tests {
     #[test]
     fn reconnect_reclaims_automatically_evacuated_workspaces() {
         let mut outputs = OutputWorkspaceMap::default();
-        outputs.connect(OutputId(1), geometry(0), WorkspaceId(1)).unwrap();
-        outputs.connect(OutputId(2), geometry(1_920), WorkspaceId(2)).unwrap();
+        outputs
+            .connect(OutputId(1), geometry(0), WorkspaceId(1))
+            .unwrap();
+        outputs
+            .connect(OutputId(2), geometry(1_920), WorkspaceId(2))
+            .unwrap();
         outputs.focus_output(OutputId(1)).unwrap();
         outputs.disconnect(OutputId(2)).unwrap();
 
@@ -1016,20 +1174,29 @@ mod tests {
             outputs.connect(OutputId(2), geometry(1_920), WorkspaceId(3)),
             Ok(WorkspaceId(2))
         );
-        assert_eq!(outputs.output_for_workspace(WorkspaceId(2)), Some(OutputId(2)));
+        assert_eq!(
+            outputs.output_for_workspace(WorkspaceId(2)),
+            Some(OutputId(2))
+        );
         assert_eq!(outputs.active_workspace(OutputId(2)), Some(WorkspaceId(2)));
     }
 
     #[test]
     fn reconnect_restores_the_migration_targets_remaining_workspace() {
         let mut outputs = OutputWorkspaceMap::default();
-        outputs.connect(OutputId(1), geometry(0), WorkspaceId(1)).unwrap();
-        outputs.connect(OutputId(2), geometry(1_920), WorkspaceId(2)).unwrap();
+        outputs
+            .connect(OutputId(1), geometry(0), WorkspaceId(1))
+            .unwrap();
+        outputs
+            .connect(OutputId(2), geometry(1_920), WorkspaceId(2))
+            .unwrap();
         outputs.focus_output(OutputId(2)).unwrap();
         outputs.disconnect(OutputId(2)).unwrap();
         assert_eq!(outputs.active_workspace(OutputId(1)), Some(WorkspaceId(2)));
 
-        outputs.connect(OutputId(2), geometry(1_920), WorkspaceId(3)).unwrap();
+        outputs
+            .connect(OutputId(2), geometry(1_920), WorkspaceId(3))
+            .unwrap();
 
         assert_eq!(outputs.active_workspace(OutputId(1)), Some(WorkspaceId(1)));
         assert_eq!(outputs.active_workspace(OutputId(2)), Some(WorkspaceId(2)));
@@ -1038,24 +1205,37 @@ mod tests {
     #[test]
     fn using_an_evacuated_workspace_does_not_prevent_automatic_return() {
         let mut outputs = OutputWorkspaceMap::default();
-        outputs.connect(OutputId(1), geometry(0), WorkspaceId(1)).unwrap();
-        outputs.connect(OutputId(2), geometry(1_920), WorkspaceId(2)).unwrap();
+        outputs
+            .connect(OutputId(1), geometry(0), WorkspaceId(1))
+            .unwrap();
+        outputs
+            .connect(OutputId(2), geometry(1_920), WorkspaceId(2))
+            .unwrap();
         outputs.focus_output(OutputId(1)).unwrap();
         outputs.disconnect(OutputId(2)).unwrap();
-        outputs.switch_workspace(OutputId(1), WorkspaceId(2)).unwrap();
+        outputs
+            .switch_workspace(OutputId(1), WorkspaceId(2))
+            .unwrap();
 
         assert_eq!(
             outputs.connect(OutputId(2), geometry(1_920), WorkspaceId(3)),
             Ok(WorkspaceId(2))
         );
-        assert_eq!(outputs.output_for_workspace(WorkspaceId(2)), Some(OutputId(2)));
+        assert_eq!(
+            outputs.output_for_workspace(WorkspaceId(2)),
+            Some(OutputId(2))
+        );
     }
 
     #[test]
     fn repeated_lid_and_monitor_handoffs_restore_both_workspace_owners() {
         let mut outputs = OutputWorkspaceMap::default();
-        outputs.connect(OutputId(1), geometry(0), WorkspaceId(1)).unwrap();
-        outputs.connect(OutputId(2), geometry(1920), WorkspaceId(2)).unwrap();
+        outputs
+            .connect(OutputId(1), geometry(0), WorkspaceId(1))
+            .unwrap();
+        outputs
+            .connect(OutputId(2), geometry(1920), WorkspaceId(2))
+            .unwrap();
         for removed in [OutputId(1), OutputId(2), OutputId(1), OutputId(2)] {
             let remaining = if removed == OutputId(1) {
                 OutputId(2)
@@ -1064,8 +1244,14 @@ mod tests {
             };
             outputs.focus_output(removed).unwrap();
             outputs.disconnect(removed).unwrap();
-            assert_eq!(outputs.output_for_workspace(WorkspaceId(1)), Some(remaining));
-            assert_eq!(outputs.output_for_workspace(WorkspaceId(2)), Some(remaining));
+            assert_eq!(
+                outputs.output_for_workspace(WorkspaceId(1)),
+                Some(remaining)
+            );
+            assert_eq!(
+                outputs.output_for_workspace(WorkspaceId(2)),
+                Some(remaining)
+            );
             // Switching between handed-off workspaces is normal use, not an
             // explicit change of their home output.
             outputs.switch_workspace(remaining, WorkspaceId(1)).unwrap();
@@ -1077,8 +1263,14 @@ mod tests {
                     WorkspaceId(3),
                 )
                 .unwrap();
-            assert_eq!(outputs.output_for_workspace(WorkspaceId(1)), Some(OutputId(1)));
-            assert_eq!(outputs.output_for_workspace(WorkspaceId(2)), Some(OutputId(2)));
+            assert_eq!(
+                outputs.output_for_workspace(WorkspaceId(1)),
+                Some(OutputId(1))
+            );
+            assert_eq!(
+                outputs.output_for_workspace(WorkspaceId(2)),
+                Some(OutputId(2))
+            );
             assert_eq!(outputs.active_workspace(OutputId(1)), Some(WorkspaceId(1)));
             assert_eq!(outputs.active_workspace(OutputId(2)), Some(WorkspaceId(2)));
         }
@@ -1087,8 +1279,12 @@ mod tests {
     #[test]
     fn selecting_a_workspace_owned_by_another_output_focuses_that_output() {
         let mut outputs = OutputWorkspaceMap::default();
-        outputs.connect(OutputId(1), geometry(0), WorkspaceId(1)).unwrap();
-        outputs.connect(OutputId(2), geometry(1_920), WorkspaceId(2)).unwrap();
+        outputs
+            .connect(OutputId(1), geometry(0), WorkspaceId(1))
+            .unwrap();
+        outputs
+            .connect(OutputId(2), geometry(1_920), WorkspaceId(2))
+            .unwrap();
 
         assert_eq!(
             outputs.switch_workspace(OutputId(1), WorkspaceId(2)),
@@ -1100,11 +1296,19 @@ mod tests {
     #[test]
     fn assigning_an_unused_workspace_does_not_change_the_active_workspace() {
         let mut outputs = OutputWorkspaceMap::default();
-        outputs.connect(OutputId(1), geometry(0), WorkspaceId(1)).unwrap();
+        outputs
+            .connect(OutputId(1), geometry(0), WorkspaceId(1))
+            .unwrap();
 
-        assert_eq!(outputs.assign_workspace(OutputId(1), WorkspaceId(2)), Ok(OutputId(1)));
+        assert_eq!(
+            outputs.assign_workspace(OutputId(1), WorkspaceId(2)),
+            Ok(OutputId(1))
+        );
         assert_eq!(outputs.active_workspace(OutputId(1)), Some(WorkspaceId(1)));
-        assert_eq!(outputs.output_for_workspace(WorkspaceId(2)), Some(OutputId(1)));
+        assert_eq!(
+            outputs.output_for_workspace(WorkspaceId(2)),
+            Some(OutputId(1))
+        );
     }
     #[test]
     fn two_hop_evacuation_restores_original_home() {
@@ -1117,51 +1321,94 @@ mod tests {
         outputs.focus_output(OutputId(2)).unwrap();
         outputs.disconnect(OutputId(1)).unwrap();
         outputs.disconnect(OutputId(2)).unwrap();
-        assert_eq!(outputs.output_for_workspace(WorkspaceId(1)), Some(OutputId(3)));
+        assert_eq!(
+            outputs.output_for_workspace(WorkspaceId(1)),
+            Some(OutputId(3))
+        );
         assert_eq!(outputs.home_output(WorkspaceId(1)), Some(OutputId(1)));
-        outputs.connect(OutputId(1), geometry(0), WorkspaceId(4)).unwrap();
-        assert_eq!(outputs.output_for_workspace(WorkspaceId(1)), Some(OutputId(1)));
+        outputs
+            .connect(OutputId(1), geometry(0), WorkspaceId(4))
+            .unwrap();
+        assert_eq!(
+            outputs.output_for_workspace(WorkspaceId(1)),
+            Some(OutputId(1))
+        );
         assert!(outputs.active_workspace(OutputId(3)).is_some());
     }
 
     #[test]
     fn explicit_reassignment_after_evacuation_prevents_home_steal_back() {
         let mut outputs = OutputWorkspaceMap::default();
-        outputs.connect(OutputId(1), geometry(0), WorkspaceId(1)).unwrap();
-        outputs.connect(OutputId(2), geometry(1920), WorkspaceId(2)).unwrap();
+        outputs
+            .connect(OutputId(1), geometry(0), WorkspaceId(1))
+            .unwrap();
+        outputs
+            .connect(OutputId(2), geometry(1920), WorkspaceId(2))
+            .unwrap();
         outputs.disconnect(OutputId(1)).unwrap();
         outputs
             .reassign_workspace(OutputId(2), WorkspaceId(1), WorkspaceId(9))
             .unwrap();
-        outputs.connect(OutputId(1), geometry(0), WorkspaceId(3)).unwrap();
-        assert_eq!(outputs.output_for_workspace(WorkspaceId(1)), Some(OutputId(2)));
+        outputs
+            .connect(OutputId(1), geometry(0), WorkspaceId(3))
+            .unwrap();
+        assert_eq!(
+            outputs.output_for_workspace(WorkspaceId(1)),
+            Some(OutputId(2))
+        );
         assert_eq!(outputs.home_output(WorkspaceId(1)), Some(OutputId(2)));
     }
 
     #[test]
     fn reassigning_last_workspace_supplies_donor_fallback() {
         let mut outputs = OutputWorkspaceMap::default();
-        outputs.connect(OutputId(1), geometry(0), WorkspaceId(1)).unwrap();
-        outputs.connect(OutputId(2), geometry(1920), WorkspaceId(2)).unwrap();
+        outputs
+            .connect(OutputId(1), geometry(0), WorkspaceId(1))
+            .unwrap();
+        outputs
+            .connect(OutputId(2), geometry(1920), WorkspaceId(2))
+            .unwrap();
         outputs
             .reassign_workspace(OutputId(2), WorkspaceId(1), WorkspaceId(3))
             .unwrap();
         assert_eq!(outputs.active_workspace(OutputId(1)), Some(WorkspaceId(3)));
-        assert_eq!(outputs.output_for_workspace(WorkspaceId(1)), Some(OutputId(2)));
+        assert_eq!(
+            outputs.output_for_workspace(WorkspaceId(1)),
+            Some(OutputId(2))
+        );
     }
     #[test]
     fn final_output_replacement_keeps_all_workspaces_reachable_without_changing_homes() {
         let mut outputs = OutputWorkspaceMap::default();
-        outputs.connect(OutputId(1), geometry(0), WorkspaceId(1)).unwrap();
-        outputs.assign_workspace(OutputId(1), WorkspaceId(2)).unwrap();
-        outputs.switch_workspace(OutputId(1), WorkspaceId(2)).unwrap();
+        outputs
+            .connect(OutputId(1), geometry(0), WorkspaceId(1))
+            .unwrap();
+        outputs
+            .assign_workspace(OutputId(1), WorkspaceId(2))
+            .unwrap();
+        outputs
+            .switch_workspace(OutputId(1), WorkspaceId(2))
+            .unwrap();
         outputs.disconnect(OutputId(1)).unwrap();
-        outputs.connect(OutputId(3), geometry(0), WorkspaceId(3)).unwrap();
+        outputs
+            .connect(OutputId(3), geometry(0), WorkspaceId(3))
+            .unwrap();
         assert_eq!(outputs.active_workspace(OutputId(3)), Some(WorkspaceId(2)));
-        assert_eq!(outputs.output_for_workspace(WorkspaceId(1)), Some(OutputId(3)));
+        assert_eq!(
+            outputs.output_for_workspace(WorkspaceId(1)),
+            Some(OutputId(3))
+        );
         assert_eq!(outputs.home_output(WorkspaceId(1)), Some(OutputId(1)));
-        outputs.connect(OutputId(1), geometry(1920), WorkspaceId(4)).unwrap();
-        assert_eq!(outputs.output_for_workspace(WorkspaceId(1)), Some(OutputId(1)));
-        assert_eq!(outputs.output_for_workspace(WorkspaceId(2)), Some(OutputId(1)));
+        outputs
+            .connect(OutputId(1), geometry(1920), WorkspaceId(4))
+            .unwrap();
+        assert_eq!(
+            outputs.output_for_workspace(WorkspaceId(1)),
+            Some(OutputId(1))
+        );
+        assert_eq!(
+            outputs.output_for_workspace(WorkspaceId(2)),
+            Some(OutputId(1))
+        );
     }
 }

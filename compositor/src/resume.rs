@@ -109,9 +109,11 @@ pub(crate) fn init(event_loop: &mut EventLoop<'static, Ferese>) -> Result<Monito
         }
     })?;
 
-    match start(zbus::connection::Builder::system, RETRY_DELAY, move |event| {
-        sender.send(event).is_ok()
-    }) {
+    match start(
+        zbus::connection::Builder::system,
+        RETRY_DELAY,
+        move |event| sender.send(event).is_ok(),
+    ) {
         Ok(mut monitor) => {
             monitor.source = Some((handle, token));
             Ok(monitor)
@@ -255,7 +257,10 @@ async fn listen(
 
 // Owner changes queued during subscription setup are already reflected in the
 // GetNameOwner reply. Only a later change interrupts this recovered listener.
-async fn owner_changed_after(owners: &mut zbus::proxy::OwnerChangedStream<'_>, baseline: zbus::message::Sequence) {
+async fn owner_changed_after(
+    owners: &mut zbus::proxy::OwnerChangedStream<'_>,
+    baseline: zbus::message::Sequence,
+) {
     use zbus::export::ordered_stream::OrderedStreamExt;
     while let Some((sequence, _)) = owners.next_before(None).await.into_tuple() {
         if sequence > baseline {

@@ -44,7 +44,10 @@ pub(crate) struct DesktopChanges {
 
 impl Ferese {
     pub(crate) fn begin_desktop_transition(&mut self) {
-        assert!(self.desktop_transition.is_none(), "nested desktop transition");
+        assert!(
+            self.desktop_transition.is_none(),
+            "nested desktop transition"
+        );
         self.desktop_transition = Some(DesktopTransition::default());
     }
 
@@ -57,12 +60,23 @@ impl Ferese {
         assert!(self.desktop_transition.is_some());
         let inventory = runtime
             .iter()
-            .map(|output| (self.ensure_output_identity(&output.identity), output.geometry()))
+            .map(|output| {
+                (
+                    self.ensure_output_identity(&output.identity),
+                    output.geometry(),
+                )
+            })
             .collect::<Vec<_>>();
-        let workspaces = self.workspaces.iter().map(|workspace| workspace.id).collect::<Vec<_>>();
-        let plan = self
-            .output_workspaces
-            .plan_desktop(&inventory, &workspaces, self.workspaces.next_workspace_id())?;
+        let workspaces = self
+            .workspaces
+            .iter()
+            .map(|workspace| workspace.id)
+            .collect::<Vec<_>>();
+        let plan = self.output_workspaces.plan_desktop(
+            &inventory,
+            &workspaces,
+            self.workspaces.next_workspace_id(),
+        )?;
         let mut changes = DesktopChanges {
             layout: !plan.affected_outputs.is_empty(),
             focus: plan.focus_changed,
@@ -83,8 +97,13 @@ impl Ferese {
                 let old_owner = self.output_workspaces.output_for_workspace(workspace);
                 let old = old_owner.and_then(|owner| self.output_workspaces.geometry(owner));
                 (old_owner != Some(destination) || old != Some(new)).then(|| {
-                    let bounds = |g: OutputGeometry| Rect::new(g.x as f64, g.y as f64, g.width as f64, g.height as f64);
-                    (*id, moved_floating_rect(rect, bounds(old.unwrap_or(new)), bounds(new)))
+                    let bounds = |g: OutputGeometry| {
+                        Rect::new(g.x as f64, g.y as f64, g.width as f64, g.height as f64)
+                    };
+                    (
+                        *id,
+                        moved_floating_rect(rect, bounds(old.unwrap_or(new)), bounds(new)),
+                    )
                 })
             })
             .collect::<Vec<_>>();
@@ -94,7 +113,10 @@ impl Ferese {
         for id in plan.created_workspaces {
             assert_eq!(self.workspaces.create_workspace(), id);
         }
-        let surviving = runtime.iter().map(|output| output.output.clone()).collect::<Vec<_>>();
+        let surviving = runtime
+            .iter()
+            .map(|output| output.output.clone())
+            .collect::<Vec<_>>();
         let old_outputs = self.output_ids.keys().cloned().collect::<Vec<_>>();
         for output in old_outputs {
             if !surviving.contains(&output) {
@@ -111,10 +133,16 @@ impl Ferese {
         for (output, (id, geometry)) in runtime.into_iter().zip(inventory) {
             let state_changed = output.output.current_mode() != Some(output.mode)
                 || output.output.current_transform() != output.transform
-                || output.output.current_scale().fractional_scale() != output.scale.fractional_scale()
-                || self.space.output_geometry(&output.output).is_none_or(|old| {
-                    old.loc != output.position || old.size.w != geometry.width || old.size.h != geometry.height
-                });
+                || output.output.current_scale().fractional_scale()
+                    != output.scale.fractional_scale()
+                || self
+                    .space
+                    .output_geometry(&output.output)
+                    .is_none_or(|old| {
+                        old.loc != output.position
+                            || old.size.w != geometry.width
+                            || old.size.h != geometry.height
+                    });
             if state_changed {
                 output.output.change_current_state(
                     Some(output.mode),
@@ -168,7 +196,8 @@ impl Ferese {
         self.desktop_transition.as_mut().unwrap().publishing = true;
         let activity_output = self.space.outputs().next().map(|output| output.name());
         if let Some(output) = activity_output
-            && (self.activities.store.attach_output(&output) | self.activities.pomodoro_attach_output(&output))
+            && (self.activities.store.attach_output(&output)
+                | self.activities.pomodoro_attach_output(&output))
         {
             self.activities.changed();
         }
@@ -190,13 +219,17 @@ impl Ferese {
         }
         changes.outputs.retain(|output| {
             self.output_ids.contains_key(output)
-                || self
-                    .direct_backend
-                    .as_ref()
-                    .is_some_and(|backend| backend.physical_outputs().any(|physical| physical == output))
+                || self.direct_backend.as_ref().is_some_and(|backend| {
+                    backend
+                        .physical_outputs()
+                        .any(|physical| physical == output)
+                })
         });
         if !changes.outputs.is_empty() {
-            crate::backends::direct::render_on(self, &changes.outputs.into_iter().collect::<Vec<_>>());
+            crate::backends::direct::render_on(
+                self,
+                &changes.outputs.into_iter().collect::<Vec<_>>(),
+            );
         }
     }
 }
@@ -241,7 +274,10 @@ mod tests {
         }
     }
 
-    fn window(state: &mut Ferese, event_loop: &mut EventLoop<'static, Ferese>) -> (Window, UnixStream) {
+    fn window(
+        state: &mut Ferese,
+        event_loop: &mut EventLoop<'static, Ferese>,
+    ) -> (Window, UnixStream) {
         use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_wm_base::XdgWmBase;
         use smithay::reexports::wayland_server::protocol::wl_compositor::WlCompositor;
         use smithay::wayland::shell::xdg::XdgWmBaseUserData;
@@ -258,12 +294,18 @@ mod tests {
             )
             .unwrap();
         let shell = client
-            .create_resource::<XdgWmBase, XdgWmBaseUserData, Ferese>(&state.display_handle, 6, Default::default())
+            .create_resource::<XdgWmBase, XdgWmBaseUserData, Ferese>(
+                &state.display_handle,
+                6,
+                Default::default(),
+            )
             .unwrap();
         request(&mut wire, compositor.id().protocol_id(), 0, &[2]);
         request(&mut wire, shell.id().protocol_id(), 2, &[3, 2]);
         request(&mut wire, 3, 1, &[4]);
-        event_loop.dispatch(Duration::from_millis(10), state).unwrap();
+        event_loop
+            .dispatch(Duration::from_millis(10), state)
+            .unwrap();
         let window = state
             .space
             .elements()
@@ -410,7 +452,10 @@ mod tests {
         events(&mut state, &mut shell_wire);
         let before_serial = state.shell_snapshot_serial;
         let spare = state.workspaces.create_workspace();
-        state.output_workspaces.assign_workspace(b_id, spare).unwrap();
+        state
+            .output_workspaces
+            .assign_workspace(b_id, spare)
+            .unwrap();
         state.workspace_slides.insert(
             b_id,
             WorkspaceSlide::new(None, spare, b_workspace, SwipeDirection::Right),
@@ -423,14 +468,20 @@ mod tests {
             state.workspaces.placement(slow_id),
             Some(WindowPlacement::Floating { rect: initial })
         );
-        assert_eq!(state.output_workspaces.output_for_workspace(b_workspace), Some(b_id));
+        assert_eq!(
+            state.output_workspaces.output_for_workspace(b_workspace),
+            Some(b_id)
+        );
         state.send_shell_snapshots();
         assert!(events(&mut state, &mut shell_wire).is_empty());
         let mut runtime = state.current_desktop_outputs();
         runtime.retain(|entry| entry.output == a_handle);
         runtime[0].mode.size = (500, 400).into();
         let changes = state.publish_desktop(runtime).unwrap();
-        assert_eq!(state.output_workspaces.output_for_workspace(b_workspace), Some(a_id));
+        assert_eq!(
+            state.output_workspaces.output_for_workspace(b_workspace),
+            Some(a_id)
+        );
         assert_eq!(state.focused_window, Some(slow_id));
         assert!(!state.workspace_slides.contains_key(&b_id));
         state.send_shell_snapshots();
@@ -442,9 +493,27 @@ mod tests {
             .iter()
             .filter(|(id, _, _)| *id == shell.id().protocol_id())
             .collect::<Vec<_>>();
-        assert_eq!(shell_events.iter().filter(|(_, opcode, _)| *opcode == 0).count(), 1);
-        assert_eq!(shell_events.iter().filter(|(_, opcode, _)| *opcode == 4).count(), 1);
-        assert_eq!(shell_events.iter().filter(|(_, opcode, _)| *opcode == 2).count(), 1);
+        assert_eq!(
+            shell_events
+                .iter()
+                .filter(|(_, opcode, _)| *opcode == 0)
+                .count(),
+            1
+        );
+        assert_eq!(
+            shell_events
+                .iter()
+                .filter(|(_, opcode, _)| *opcode == 4)
+                .count(),
+            1
+        );
+        assert_eq!(
+            shell_events
+                .iter()
+                .filter(|(_, opcode, _)| *opcode == 2)
+                .count(),
+            1
+        );
         for (_, opcode, args) in &shell_events {
             if *opcode == 3 {
                 assert_eq!(args[3], a_id.0 as u32);
@@ -460,16 +529,27 @@ mod tests {
                 assert_eq!(args[3], b_workspace.0 as u32);
             }
         }
-        let WindowPlacement::Floating { rect } = state.workspaces.placement(slow_id).unwrap() else {
+        let WindowPlacement::Floating { rect } = state.workspaces.placement(slow_id).unwrap()
+        else {
             panic!()
         };
-        assert!(rect.x >= 0.0 && rect.y >= 0.0 && rect.x + rect.width <= 500.0 && rect.y + rect.height <= 400.0);
+        assert!(
+            rect.x >= 0.0
+                && rect.y >= 0.0
+                && rect.x + rect.width <= 500.0
+                && rect.y + rect.height <= 400.0
+        );
         assert!(
             state.windows.transaction(&slow_id).is_some(),
             "topology commit must not await XDG acknowledgement"
         );
         assert_eq!(
-            state.windows.geometry(&slow_id).unwrap().client.committed_size,
+            state
+                .windows
+                .geometry(&slow_id)
+                .unwrap()
+                .client
+                .committed_size,
             Some(ClientSize::from_rect(initial))
         );
 
@@ -506,7 +586,10 @@ mod tests {
         }
         assert_eq!(state.output_workspaces, before);
         assert!(events(&mut state, &mut shell_wire).is_empty());
-        assert_eq!(state.workspaces.workspace_for_window(slow_id), Some(b_workspace));
+        assert_eq!(
+            state.workspaces.workspace_for_window(slow_id),
+            Some(b_workspace)
+        );
 
         let unfocused = state.outputs_by_id[&c_id].clone();
         let focused = state.focused_window;
@@ -531,7 +614,9 @@ mod tests {
             )
             .unwrap();
         request(&mut lock_wire, lock.id().protocol_id(), 1, &[2]);
-        event_loop.dispatch(Duration::from_millis(10), &mut state).unwrap();
+        event_loop
+            .dispatch(Duration::from_millis(10), &mut state)
+            .unwrap();
         assert!(state.session_lock.active());
         state.begin_desktop_transition();
         for output in state.output_ids.keys().cloned().collect::<Vec<_>>() {
@@ -545,11 +630,17 @@ mod tests {
         assert!(state.focused_window.is_none());
         assert!(state.workspace_slides.is_empty());
         assert!(state.seat.get_keyboard().unwrap().current_focus().is_none());
-        assert_eq!(state.workspaces.workspace_for_window(slow_id), Some(b_workspace));
+        assert_eq!(
+            state.workspaces.workspace_for_window(slow_id),
+            Some(b_workspace)
+        );
         state.begin_desktop_transition();
         let changes = state.publish_desktop(vec![output("a", 0, 1200)]).unwrap();
         state.finish_desktop_transition(changes);
-        assert_eq!(state.output_workspaces.output_for_workspace(b_workspace), Some(a_id));
+        assert_eq!(
+            state.output_workspaces.output_for_workspace(b_workspace),
+            Some(a_id)
+        );
         assert!(state.session_lock.active());
         assert!(state.surface_under((20.0, 20.0).into()).is_none());
     }

@@ -64,7 +64,8 @@ impl Lockdown {
         connection: &Connection,
         header: Option<Header<'_>>,
     ) -> zbus::fdo::Result<()> {
-        let header = header.ok_or_else(|| zbus::fdo::Error::AccessDenied("Missing policy caller".into()))?;
+        let header =
+            header.ok_or_else(|| zbus::fdo::Error::AccessDenied("Missing policy caller".into()))?;
         crate::backend::authorize(connection, &header).await?;
         let mut current = self.0.write().await;
         store(index, value).map_err(zbus::fdo::Error::Failed)?;
@@ -224,7 +225,8 @@ fn store(index: usize, value: bool) -> Result<(), String> {
 
 fn store_path(path: &Path, index: usize, value: bool) -> Result<(), String> {
     let file = ferese_config::file::ConfigFile::open(path)?;
-    let mut document = ferese_config::Document::parse(file.source()).map_err(|error| error.to_string())?;
+    let mut document =
+        ferese_config::Document::parse(file.source()).map_err(|error| error.to_string())?;
     if values(&document).is_none() {
         return Err("Invalid lockdown policy".into());
     }
@@ -246,14 +248,23 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("config.kdl");
         let settings = ferese_config::file::ConfigFile::open(&path).unwrap();
-        assert!(store_path(&path, 4, true).unwrap_err().contains("another app"));
+        assert!(
+            store_path(&path, 4, true)
+                .unwrap_err()
+                .contains("another app")
+        );
         assert!(!path.exists());
-        settings.replace("theme \"light\"\n", None, |_| Ok(())).unwrap();
+        settings
+            .replace("theme \"light\"\n", None, |_| Ok(()))
+            .unwrap();
 
         store_path(&path, 4, true).unwrap();
         let source = std::fs::read_to_string(&path).unwrap();
         let document = ferese_config::Document::parse(&source).unwrap();
-        assert_eq!(document.get("theme").and_then(|value| value.as_str()), Some("light"));
+        assert_eq!(
+            document.get("theme").and_then(|value| value.as_str()),
+            Some("light")
+        );
         assert!(load_path(&path).unwrap()[4]);
     }
 
@@ -264,7 +275,10 @@ mod tests {
         for size in [ferese_config::file::LIMIT, ferese_config::file::LIMIT + 1] {
             let source = format!("//{}\n", "x".repeat(size - 3));
             std::fs::write(&path, &source).unwrap();
-            assert_eq!(load_path(&path).is_some(), size == ferese_config::file::LIMIT);
+            assert_eq!(
+                load_path(&path).is_some(),
+                size == ferese_config::file::LIMIT
+            );
             assert!(store_path(&path, 4, true).unwrap_err().contains("60 KiB"));
             assert_eq!(std::fs::read_to_string(&path).unwrap(), source);
         }
@@ -276,7 +290,10 @@ mod tests {
         let path = directory.path().join("config.kdl");
         let source = "portals { lockdown { disable-camera \"yes\"; }; }";
         std::fs::write(&path, source).unwrap();
-        assert_eq!(store_path(&path, 4, true).unwrap_err(), "Invalid lockdown policy");
+        assert_eq!(
+            store_path(&path, 4, true).unwrap_err(),
+            "Invalid lockdown policy"
+        );
         assert_eq!(std::fs::read_to_string(&path).unwrap(), source);
         assert!(ferese_config::file::ConfigFile::open(&path).is_ok());
     }
@@ -292,7 +309,9 @@ mod tests {
         let values = values(&enabled).unwrap();
         assert!(values[1] && values[4]);
         assert!(!values[0]);
-        let invalid = ferese_config::Document::parse("portals { lockdown { disable-camera \"yes\"; }; }").unwrap();
+        let invalid =
+            ferese_config::Document::parse("portals { lockdown { disable-camera \"yes\"; }; }")
+                .unwrap();
         assert!(super::values(&invalid).is_none());
         for source in ["portals #false", "portals { lockdown \"bad\"; }"] {
             let invalid = ferese_config::Document::parse(source).unwrap();

@@ -60,7 +60,14 @@ pub(crate) fn spawn_satellite(
         ));
     }
 
-    satellite_command(executable, environment, reservation, authority, notify_socket).spawn()
+    satellite_command(
+        executable,
+        environment,
+        reservation,
+        authority,
+        notify_socket,
+    )
+    .spawn()
 }
 
 fn satellite_command(
@@ -70,7 +77,11 @@ fn satellite_command(
     authority: &Path,
     notify_socket: Option<&Path>,
 ) -> std::process::Command {
-    let inherited: Vec<_> = reservation.listeners().iter().map(AsRawFd::as_raw_fd).collect();
+    let inherited: Vec<_> = reservation
+        .listeners()
+        .iter()
+        .map(AsRawFd::as_raw_fd)
+        .collect();
     if inherited.is_empty() {
         panic!("cannot build a Satellite command without reserved listening sockets");
     }
@@ -260,7 +271,10 @@ impl OwnedProcessGroup {
         self.reaped
     }
 
-    pub fn terminate(&mut self, grace: std::time::Duration) -> Result<Option<std::process::ExitStatus>, String> {
+    pub fn terminate(
+        &mut self,
+        grace: std::time::Duration,
+    ) -> Result<Option<std::process::ExitStatus>, String> {
         self.signal_group(libc::SIGTERM);
 
         let deadline = std::time::Instant::now() + grace;
@@ -371,7 +385,11 @@ mod tests {
         .unwrap_err();
 
         assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
-        assert!(error.to_string().contains("without reserved listening sockets"));
+        assert!(
+            error
+                .to_string()
+                .contains("without reserved listening sockets")
+        );
     }
 
     #[test]
@@ -397,10 +415,15 @@ mod tests {
 
         assert!(!process.group_is_empty());
         process.signal_group(libc::SIGTERM);
-        let status = process.terminate(Duration::from_secs(5)).expect("terminate");
+        let status = process
+            .terminate(Duration::from_secs(5))
+            .expect("terminate");
 
         assert!(status.is_some());
-        assert!(process.group_is_empty(), "a reaped group has no members left");
+        assert!(
+            process.group_is_empty(),
+            "a reaped group has no members left"
+        );
         assert_eq!(process.cleanup_error(), None);
     }
 
@@ -423,7 +446,9 @@ mod tests {
             "the surviving descendant keeps the group non-empty"
         );
 
-        process.terminate(Duration::from_secs(5)).expect("terminate");
+        process
+            .terminate(Duration::from_secs(5))
+            .expect("terminate");
 
         assert!(
             process.group_is_empty(),
@@ -463,7 +488,10 @@ mod tests {
             .terminate(Duration::from_secs(5))
             .expect("terminating a reaped owner must not fail");
 
-        assert_eq!(status, None, "there is no leader left to report a status for");
+        assert_eq!(
+            status, None,
+            "there is no leader left to report a status for"
+        );
         assert_eq!(
             test_hook::group_signals(),
             before,
@@ -537,9 +565,17 @@ mod tests {
             let key = key.to_string_lossy();
             if matches!(
                 key.as_ref(),
-                "LISTEN_PID" | "LISTEN_FDS" | "LISTEN_FDNAMES" | "WATCHDOG_PID" | "WATCHDOG_USEC" | "NOTIFY_SOCKET"
+                "LISTEN_PID"
+                    | "LISTEN_FDS"
+                    | "LISTEN_FDNAMES"
+                    | "WATCHDOG_PID"
+                    | "WATCHDOG_USEC"
+                    | "NOTIFY_SOCKET"
             ) {
-                assert_eq!(value, None, "{key} must not be inherited from the launching service");
+                assert_eq!(
+                    value, None,
+                    "{key} must not be inherited from the launching service"
+                );
             }
             if key.as_ref() == "WAYLAND_SOCKET" {
                 assert_eq!(

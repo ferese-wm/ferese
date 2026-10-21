@@ -45,7 +45,8 @@ impl IdleSettings {
     }
 
     fn next_deadline(self, elapsed: Duration, fade_duration: Duration) -> Option<Duration> {
-        if self.sleep_after_seconds != 0 && elapsed >= Duration::from_secs(self.sleep_after_seconds) {
+        if self.sleep_after_seconds != 0 && elapsed >= Duration::from_secs(self.sleep_after_seconds)
+        {
             return None;
         }
         let dim_at = Duration::from_secs(self.dim_after_seconds);
@@ -65,14 +66,16 @@ impl IdleSettings {
     }
 
     fn appearance(self, elapsed: Duration, fade_duration: Duration) -> (f32, bool) {
-        let sleeping = self.sleep_after_seconds != 0 && elapsed >= Duration::from_secs(self.sleep_after_seconds);
+        let sleeping = self.sleep_after_seconds != 0
+            && elapsed >= Duration::from_secs(self.sleep_after_seconds);
         let dim_at = Duration::from_secs(self.dim_after_seconds);
         let dim = if self.dim_after_seconds == 0 || elapsed < dim_at {
             0.0
         } else if fade_duration.is_zero() {
             0.65
         } else {
-            (elapsed.saturating_sub(dim_at).as_secs_f32() / fade_duration.as_secs_f32()).min(1.0) * 0.65
+            (elapsed.saturating_sub(dim_at).as_secs_f32() / fade_duration.as_secs_f32()).min(1.0)
+                * 0.65
         };
         (if sleeping { 1.0 } else { dim }, sleeping)
     }
@@ -110,7 +113,8 @@ pub(crate) struct Lock {
     idle_since: Option<Instant>,
     pub(crate) idle_opacity: f32,
     pub(crate) sleeping: bool,
-    pub(crate) idle_overlays: HashMap<Output, smithay::backend::renderer::element::solid::SolidColorBuffer>,
+    pub(crate) idle_overlays:
+        HashMap<Output, smithay::backend::renderer::element::solid::SolidColorBuffer>,
     idle_timer: Option<(RegistrationToken, Instant)>,
 }
 
@@ -133,7 +137,10 @@ impl Lock {
     }
 
     fn ready_for_idle<'a>(&self, outputs: impl Iterator<Item = &'a Output>) -> bool {
-        self.active() && outputs.into_iter().all(|output| self.presented.contains(output))
+        self.active()
+            && outputs
+                .into_iter()
+                .all(|output| self.presented.contains(output))
     }
 
     pub(crate) fn output_added(&mut self, output: &Output) {
@@ -253,7 +260,8 @@ impl Ferese {
         let (opacity, sleeping) = self
             .lock_idle
             .appearance(now.saturating_duration_since(*since), fade_duration);
-        let changed = opacity != self.session_lock.idle_opacity || sleeping != self.session_lock.sleeping;
+        let changed =
+            opacity != self.session_lock.idle_opacity || sleeping != self.session_lock.sleeping;
         let was_sleeping = self.session_lock.sleeping;
         self.session_lock.idle_opacity = opacity;
         self.session_lock.sleeping = sleeping;
@@ -298,12 +306,16 @@ impl Ferese {
             let lock_click = pointer
                 .with_grab(|_, grab| {
                     grab.is::<smithay::input::pointer::ClickGrab<Ferese>>()
-                        && grab.start_data().focus.as_ref().is_some_and(|(surface, _)| {
-                            self.session_lock
-                                .surfaces
-                                .values()
-                                .any(|lock| lock.alive() && lock.wl_surface() == surface)
-                        })
+                        && grab
+                            .start_data()
+                            .focus
+                            .as_ref()
+                            .is_some_and(|(surface, _)| {
+                                self.session_lock
+                                    .surfaces
+                                    .values()
+                                    .any(|lock| lock.alive() && lock.wl_surface() == surface)
+                            })
                 })
                 .unwrap_or(false);
             if pointer.is_grabbed() && !lock_click {
@@ -408,7 +420,12 @@ impl Ferese {
 
     pub(crate) fn lock_frame_callbacks(&self, output: &Output) {
         let eligible = self.callback_outputs();
-        if let Some(surface) = self.session_lock.surfaces.get(output).filter(|surface| surface.alive()) {
+        if let Some(surface) = self
+            .session_lock
+            .surfaces
+            .get(output)
+            .filter(|surface| surface.alive())
+        {
             smithay::desktop::utils::send_frames_surface_tree(
                 surface.wl_surface(),
                 output,
@@ -452,7 +469,10 @@ impl SessionLockHandler for Ferese {
         // already encoding has no pending capture left, so it is terminated
         // here and its staged file is discarded when the worker reports back.
         for request in self.screenshot.terminate_all() {
-            tracing::debug!(request, "cancelled an in-flight screenshot for the session lock");
+            tracing::debug!(
+                request,
+                "cancelled an in-flight screenshot for the session lock"
+            );
         }
         self.set_overview_active(false);
         let serial = SERIAL_COUNTER.next_serial();
@@ -503,8 +523,9 @@ impl SessionLockHandler for Ferese {
         if let Some(output) = Output::from_resource(&output)
             && let Some(geometry) = self.space.output_geometry(&output)
         {
-            surface
-                .with_pending_state(|state| state.size = Some((geometry.size.w as u32, geometry.size.h as u32).into()));
+            surface.with_pending_state(|state| {
+                state.size = Some((geometry.size.w as u32, geometry.size.h as u32).into())
+            });
             crate::handlers::set_surface_tree_output(surface.wl_surface(), &output);
             self.session_lock.surfaces.insert(output, surface);
             self.focus_lock_surface();
@@ -535,10 +556,15 @@ impl Dispatch<ExtSessionLockV1, SessionLockState> for Ferese {
             return;
         }
         if matches!(request, ext_session_lock_v1::Request::GetLockSurface { .. }) && !owner {
-            lock.post_error(ext_session_lock_v1::Error::InvalidUnlock, "not the active lock owner");
+            lock.post_error(
+                ext_session_lock_v1::Error::InvalidUnlock,
+                "not the active lock owner",
+            );
             return;
         }
-        smithay::wayland::Dispatch2::request(data, state, client, lock, request, display, data_init);
+        smithay::wayland::Dispatch2::request(
+            data, state, client, lock, request, display, data_init,
+        );
     }
 
     fn destroyed(

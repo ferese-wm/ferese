@@ -42,7 +42,12 @@ impl BindingSet {
         alt: bool,
         shift: bool,
     ) -> Option<&Binding> {
-        let modifiers = BindingModifiers { logo, ctrl, alt, shift };
+        let modifiers = BindingModifiers {
+            logo,
+            ctrl,
+            alt,
+            shift,
+        };
         let physical = self.keyboard.get(&BindingIdentity {
             modifiers,
             match_mode: BindingMatch::Physical,
@@ -96,7 +101,10 @@ mod tests {
         let code = Keycode::new(38);
         let bindings = vec![
             binding_for(BindingTrigger::Keysym(keysyms::KEY_b), BindingAction::Close),
-            binding_for(BindingTrigger::Physical(code), BindingAction::ToggleFloating),
+            binding_for(
+                BindingTrigger::Physical(code),
+                BindingAction::ToggleFloating,
+            ),
             binding_for(BindingTrigger::Keysym(keysyms::KEY_a), BindingAction::Exit),
             binding_for(BindingTrigger::Keysym(keysyms::KEY_b), BindingAction::None),
         ];
@@ -125,7 +133,10 @@ mod tests {
         let config = Config::default();
         let mut bindings = config.bindings(&config.input_settings().unwrap()).unwrap();
         bindings.extend([
-            binding_for(BindingTrigger::Physical(Keycode::new(38)), BindingAction::None),
+            binding_for(
+                BindingTrigger::Physical(Keycode::new(38)),
+                BindingAction::None,
+            ),
             binding_for(BindingTrigger::Keysym(keysyms::KEY_a), BindingAction::Close),
             binding_for(
                 BindingTrigger::Swipe {
@@ -138,7 +149,8 @@ mod tests {
         let index = BindingSet::from(bindings);
 
         for bits in 0..16 {
-            let (logo, ctrl, alt, shift) = (bits & 1 != 0, bits & 2 != 0, bits & 4 != 0, bits & 8 != 0);
+            let (logo, ctrl, alt, shift) =
+                (bits & 1 != 0, bits & 2 != 0, bits & 4 != 0, bits & 8 != 0);
 
             for code in 8..100 {
                 for symbols in [
@@ -164,7 +176,10 @@ mod tests {
     #[test]
     fn replacing_bindings_discards_old_index_entries() {
         let code = Keycode::new(38);
-        let mut bindings = BindingSet::from(vec![binding_for(BindingTrigger::Physical(code), BindingAction::Close)]);
+        let mut bindings = BindingSet::from(vec![binding_for(
+            BindingTrigger::Physical(code),
+            BindingAction::Close,
+        )]);
         assert_eq!(
             bindings.action_for_key(code, &[], false, false, false, false),
             Some(&BindingAction::Close)
@@ -173,7 +188,10 @@ mod tests {
             BindingTrigger::Keysym(keysyms::KEY_b),
             BindingAction::None,
         )]);
-        assert_eq!(bindings.action_for_key(code, &[], false, false, false, false), None);
+        assert_eq!(
+            bindings.action_for_key(code, &[], false, false, false, false),
+            None
+        );
         assert_eq!(
             bindings.action_for_key(code, &[keysyms::KEY_b], false, false, false, false),
             Some(&BindingAction::None)
@@ -182,9 +200,11 @@ mod tests {
 
     #[test]
     fn cloning_spawn_actions_shares_the_command_storage() {
-        let action = BindingAction::Spawn(vec!["foot".into(), "--app-id".into(), "work".into()].into());
+        let action =
+            BindingAction::Spawn(vec!["foot".into(), "--app-id".into(), "work".into()].into());
         let cloned = action.clone();
-        let (BindingAction::Spawn(original), BindingAction::Spawn(cloned)) = (&action, cloned) else {
+        let (BindingAction::Spawn(original), BindingAction::Spawn(cloned)) = (&action, cloned)
+        else {
             unreachable!();
         };
         assert!(Arc::ptr_eq(original, &cloned));

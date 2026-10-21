@@ -65,8 +65,19 @@ pub(crate) fn contains(rect: Rect, p: Point<f64, Logical>) -> bool {
 }
 
 impl IndicatorGeometry {
-    pub fn new(content: Rect, output: Rect, left_boundary: f64, count: usize, c: TabIndicatorSettings) -> Option<Self> {
-        if count < 2 || content.width <= 0.0 || content.height <= 0.0 || output.width <= 0.0 || output.height <= 0.0 {
+    pub fn new(
+        content: Rect,
+        output: Rect,
+        left_boundary: f64,
+        count: usize,
+        c: TabIndicatorSettings,
+    ) -> Option<Self> {
+        if count < 2
+            || content.width <= 0.0
+            || content.height <= 0.0
+            || output.width <= 0.0
+            || output.height <= 0.0
+        {
             return None;
         }
         let left = content.x.max(output.x);
@@ -83,19 +94,23 @@ impl IndicatorGeometry {
             left
         }
         .clamp(output.x, (right - c.width).max(output.x));
-        let natural = count as f64 * c.segment_height + count.saturating_sub(1) as f64 * c.segment_gap;
+        let natural =
+            count as f64 * c.segment_height + count.saturating_sub(1) as f64 * c.segment_gap;
         let fit = ((bottom - top) / natural).min(1.0);
         let height = (natural * fit).min(bottom - top);
         let rail = Rect::new(x, top + (bottom - top - height) * 0.5, c.width, height);
         let hit_width = c.hit_width.min(output.width);
         let hit = Rect::new(
-            (x + c.width * 0.5 - hit_width * 0.5).clamp(output.x, output.x + output.width - hit_width),
+            (x + c.width * 0.5 - hit_width * 0.5)
+                .clamp(output.x, output.x + output.width - hit_width),
             rail.y,
             hit_width,
             rail.height,
         );
         let padding = c.padding.min(output.height * 0.1).min(output.width * 0.1);
-        let row_height = c.row_height.min((output.height - 2.0 * padding).max(f64::EPSILON));
+        let row_height = c
+            .row_height
+            .min((output.height - 2.0 * padding).max(f64::EPSILON));
         let rows = (((output.height - 2.0 * padding) / row_height).floor() as usize)
             .max(1)
             .min(count);
@@ -110,7 +125,8 @@ impl IndicatorGeometry {
         };
         let list = Rect::new(
             x,
-            (rail.y + rail.height * 0.5 - list_height * 0.5).clamp(output.y, output.y + output.height - list_height),
+            (rail.y + rail.height * 0.5 - list_height * 0.5)
+                .clamp(output.y, output.y + output.height - list_height),
             list_width,
             list_height,
         );
@@ -175,7 +191,12 @@ impl Ferese {
         }
         let output = self.outputs_by_id.get(&output_id)?;
         let g = self.space.output_geometry(output)?;
-        let bounds = Rect::new(g.loc.x as f64, g.loc.y as f64, g.size.w as f64, g.size.h as f64);
+        let bounds = Rect::new(
+            g.loc.x as f64,
+            g.loc.y as f64,
+            g.size.w as f64,
+            g.size.h as f64,
+        );
         let mut boundary = bounds.x;
         // Measure the current visible gap, including animated column positions.
         for window in self.space.elements() {
@@ -215,7 +236,9 @@ impl Ferese {
             || self.input_capture.active()
             || self.overview.is_presenting()
             || self.seat.get_pointer().is_some_and(|p| p.is_grabbed())
-            || self.layer_surface_under(p, &[Layer::Overlay, Layer::Top]).is_some()
+            || self
+                .layer_surface_under(p, &[Layer::Overlay, Layer::Top])
+                .is_some()
         {
             return false;
         }
@@ -228,7 +251,10 @@ impl Ferese {
             if id == active {
                 break;
             }
-            if self.presented_window_rect(id).is_some_and(|r| contains(r, p)) {
+            if self
+                .presented_window_rect(id)
+                .is_some_and(|r| contains(r, p))
+            {
                 return false;
             }
         }
@@ -282,11 +308,19 @@ impl Ferese {
                     .first_row
                     .min(bar.group.windows.len().saturating_sub(g.rows));
                 let index = ((p.y - g.list.y - g.padding).max(0.0) / g.row_height).floor() as usize;
-                return bar.group.windows.get(first + index.min(g.rows - 1)).copied();
+                return bar
+                    .group
+                    .windows
+                    .get(first + index.min(g.rows - 1))
+                    .copied();
             }
             if contains(g.hit, p) {
                 let index = ((p.y - g.rail.y) / g.pitch).floor() as usize;
-                return bar.group.windows.get(index.min(bar.group.windows.len() - 1)).copied();
+                return bar
+                    .group
+                    .windows
+                    .get(index.min(bar.group.windows.len() - 1))
+                    .copied();
             }
             if expanded && g.hover_contains(p) {
                 return Some(bar.group.active);
@@ -314,13 +348,24 @@ impl Ferese {
         }
         self.advance_animations(Instant::now());
         if let Some(anchor) = anchor {
-            let same = self.tab_indicator.hover.as_ref().is_some_and(|h| h.anchor == anchor);
+            let same = self
+                .tab_indicator
+                .hover
+                .as_ref()
+                .is_some_and(|h| h.anchor == anchor);
             if !same {
                 let selected = self
                     .scrolling_tab_bar(anchor)
                     .and_then(|bar| {
-                        let g = self.tab_indicator_geometry(bar, self.presented_window_rect(bar.group.active)?)?;
-                        let selected = bar.group.windows.iter().position(|id| *id == bar.group.active)?;
+                        let g = self.tab_indicator_geometry(
+                            bar,
+                            self.presented_window_rect(bar.group.active)?,
+                        )?;
+                        let selected = bar
+                            .group
+                            .windows
+                            .iter()
+                            .position(|id| *id == bar.group.active)?;
                         Some(
                             selected
                                 .saturating_sub(g.rows / 2)
@@ -420,7 +465,10 @@ impl Ferese {
         let WorkspaceLayout::Scrolling(layout) = &workspace.layout else {
             return;
         };
-        let Some(group) = layout.tab_group(current).filter(|g| g.windows.contains(&previous)) else {
+        let Some(group) = layout
+            .tab_group(current)
+            .filter(|g| g.windows.contains(&previous))
+        else {
             return;
         };
         if self.tab_indicator_settings.flash_duration.is_zero() {
@@ -430,7 +478,12 @@ impl Ferese {
         if let Some(token) = self.tab_indicator.timer.take() {
             self.loop_handle.remove(token);
         }
-        if let Some(flash) = self.tab_indicator.flash.as_mut().filter(|f| f.anchor == anchor) {
+        if let Some(flash) = self
+            .tab_indicator
+            .flash
+            .as_mut()
+            .filter(|f| f.anchor == anchor)
+        {
             flash.opacity.retarget_preserving_motion(1.0);
         } else {
             let mut opacity = AnimatedValue::new(0.0);
@@ -466,7 +519,10 @@ impl Ferese {
     }
 
     pub(crate) fn reconcile_tab_indicator(&mut self) {
-        if self.session_lock.active() || self.input_capture.active() || self.overview.is_presenting() {
+        if self.session_lock.active()
+            || self.input_capture.active()
+            || self.overview.is_presenting()
+        {
             self.clear_tab_indicator();
             return;
         }
@@ -571,9 +627,17 @@ mod tests {
         state.hover.as_mut().unwrap().opacity.set_target(1.);
         state.advance(Duration::from_millis(30), SpringConfig::default(), true);
         let before = state.hover.as_ref().unwrap().opacity;
-        state.hover.as_mut().unwrap().opacity.retarget_preserving_motion(0.);
+        state
+            .hover
+            .as_mut()
+            .unwrap()
+            .opacity
+            .retarget_preserving_motion(0.);
         let after = state.hover.as_ref().unwrap().opacity;
-        assert_eq!((before.current, before.velocity), (after.current, after.velocity));
+        assert_eq!(
+            (before.current, before.velocity),
+            (after.current, after.velocity)
+        );
         for _ in 0..300 {
             state.advance(Duration::from_millis(16), SpringConfig::default(), true);
         }

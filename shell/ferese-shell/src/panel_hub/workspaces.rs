@@ -40,7 +40,10 @@ fn select(mut workspaces: Vec<&WorkspaceSnapshot>, active: u64, budget: f32) -> 
     workspaces.sort_by_key(|workspace| (workspace.index, workspace.id));
     let count = workspaces.len();
     if count == 0 || (count <= LIMIT && count as f32 * SLOT + ACTIVE_EXTRA - DOT_INSET <= budget) {
-        return Selection { workspaces, hidden: 0 };
+        return Selection {
+            workspaces,
+            hidden: 0,
+        };
     }
     let overflow_width = 6. + (count.to_string().len() + 1) as f32 * 7.;
     let visible = (((budget - overflow_width - ACTIVE_EXTRA + DOT_INSET) / SLOT)
@@ -127,7 +130,9 @@ impl FereseShell {
                 .and_then(|entry| entry.size),
         );
         select(
-            self.snapshot.workspaces_for_output(Some(output.id)).collect(),
+            self.snapshot
+                .workspaces_for_output(Some(output.id))
+                .collect(),
             output.active_workspace,
             // Keep the compact strip within its existing width budget.
             (panel.morph.expanded_width.min(available) - 28. - 5. * 32. - 4.).max(0.) as f32,
@@ -148,7 +153,9 @@ impl FereseShell {
                 let width = if width > 0. { width + 10. } else { 0. };
                 let mut runtime = runtime.borrow_mut();
                 if runtime.observed_workspace.is_none() {
-                    runtime.observed_workspace = self.output_for_bar(entry.bar).map(|output| output.active_workspace);
+                    runtime.observed_workspace = self
+                        .output_for_bar(entry.bar)
+                        .map(|output| output.active_workspace);
                 }
                 if runtime.workspace_width == width {
                     return None;
@@ -157,7 +164,11 @@ impl FereseShell {
                 matches!(runtime.hub.mode(), Mode::Idle).then_some(entry.bar)
             })
             .collect();
-        Task::batch(changes.into_iter().map(|id| self.transition_hub(id, Event::Resize)))
+        Task::batch(
+            changes
+                .into_iter()
+                .map(|id| self.transition_hub(id, Event::Resize)),
+        )
     }
 
     pub(crate) fn open_hub_overview(&mut self, id: window::Id) -> Task<Message> {
@@ -183,11 +194,18 @@ impl FereseShell {
                 .then_some(entry.bar)
             })
             .collect();
-        Task::batch(changed.into_iter().map(|id| self.show_hub_workspace_feedback(id)))
+        Task::batch(
+            changed
+                .into_iter()
+                .map(|id| self.show_hub_workspace_feedback(id)),
+        )
     }
 
     fn show_hub_workspace_feedback(&mut self, id: window::Id) -> Task<Message> {
-        if self.bar_hidden(id) || self.hub_workspace_width(id) == 0. || self.hub_priority().is_some() {
+        if self.bar_hidden(id)
+            || self.hub_workspace_width(id) == 0.
+            || self.hub_priority().is_some()
+        {
             return Task::none();
         }
         let Some(runtime) = self
@@ -218,11 +236,19 @@ impl FereseShell {
         ])
     }
 
-    pub(crate) fn hub_workspace_feedback_expired(&mut self, id: window::Id, revision: Instant) -> Task<Message> {
+    pub(crate) fn hub_workspace_feedback_expired(
+        &mut self,
+        id: window::Id,
+        revision: Instant,
+    ) -> Task<Message> {
         self.transition_hub(id, Event::WorkspacesExpired(revision))
     }
 
-    pub(crate) fn scroll_hub_workspaces(&mut self, id: window::Id, delta: ScrollDelta) -> Task<Message> {
+    pub(crate) fn scroll_hub_workspaces(
+        &mut self,
+        id: window::Id,
+        delta: ScrollDelta,
+    ) -> Task<Message> {
         if self.bar_hidden(id) || self.hub_workspace_width(id) == 0. {
             return Task::none();
         }
@@ -234,14 +260,21 @@ impl FereseShell {
         else {
             return Task::none();
         };
-        let Some(direction) = runtime.borrow_mut().workspace_scroll.step(delta, Instant::now()) else {
+        let Some(direction) = runtime
+            .borrow_mut()
+            .workspace_scroll
+            .step(delta, Instant::now())
+        else {
             return Task::none();
         };
         let Some(output) = self.output_for_bar(id) else {
             return Task::none();
         };
         // Include the trailing empty workspace so scrolling can create a new working space.
-        let mut workspaces: Vec<_> = self.snapshot.workspaces_for_output(Some(output.id)).collect();
+        let mut workspaces: Vec<_> = self
+            .snapshot
+            .workspaces_for_output(Some(output.id))
+            .collect();
         workspaces.sort_by_key(|workspace| (workspace.index, workspace.id));
         if let Some(position) = workspaces
             .iter()
@@ -256,7 +289,11 @@ impl FereseShell {
         self.dismiss_workspace_tooltip_for_bar(id)
     }
 
-    pub(crate) fn hub_workspaces(&self, id: window::Id, opacity: f32) -> Element<'_, cosmic::Action<Message>> {
+    pub(crate) fn hub_workspaces(
+        &self,
+        id: window::Id,
+        opacity: f32,
+    ) -> Element<'_, cosmic::Action<Message>> {
         let selection = self.hub_workspace_selection(id);
         let width = selection.width();
         let output = self.output_for_bar(id);
@@ -297,7 +334,9 @@ impl FereseShell {
             if urgent {
                 label.push_str(&format!(" · Workspace {} needs attention", workspace.index));
             }
-            let transition = self.workspace_ui.transition(workspace.id, workspace.id == active);
+            let transition = self
+                .workspace_ui
+                .transition(workspace.id, workspace.id == active);
             dots = dots.push(motion::geometry_driven(
                 transition.revision(),
                 move |now| {
@@ -395,7 +434,12 @@ mod tests {
             .collect();
         for active in [1, 8, 20] {
             let selection = select(workspaces.iter().collect(), active, 200.);
-            assert!(selection.workspaces.iter().any(|workspace| workspace.id == active));
+            assert!(
+                selection
+                    .workspaces
+                    .iter()
+                    .any(|workspace| workspace.id == active)
+            );
             assert!(
                 selection
                     .workspaces
@@ -406,7 +450,12 @@ mod tests {
             assert_eq!(selection.hidden, if active == 20 { 16 } else { 15 });
             let narrow = select(workspaces.iter().collect(), active, 148.);
             assert!(narrow.width() <= 148.);
-            assert!(narrow.workspaces.iter().any(|workspace| workspace.id == active));
+            assert!(
+                narrow
+                    .workspaces
+                    .iter()
+                    .any(|workspace| workspace.id == active)
+            );
         }
     }
 
@@ -416,11 +465,29 @@ mod tests {
         let start = Instant::now();
         let pixels = |y| ScrollDelta::Pixels { x: 0., y };
         assert_eq!(scroll.step(pixels(-20.), start), None);
-        assert_eq!(scroll.step(pixels(-20.), start + Duration::from_millis(10)), Some(1));
-        assert_eq!(scroll.step(pixels(-100.), start + Duration::from_millis(20)), None);
-        assert_eq!(scroll.step(pixels(20.), start + Duration::from_millis(200)), None);
-        assert_eq!(scroll.step(pixels(20.), start + Duration::from_millis(500)), None);
-        assert_eq!(scroll.step(pixels(20.), start + Duration::from_millis(510)), Some(-1));
-        assert_eq!(scroll.step(pixels(f32::NAN), start + Duration::from_secs(1)), None);
+        assert_eq!(
+            scroll.step(pixels(-20.), start + Duration::from_millis(10)),
+            Some(1)
+        );
+        assert_eq!(
+            scroll.step(pixels(-100.), start + Duration::from_millis(20)),
+            None
+        );
+        assert_eq!(
+            scroll.step(pixels(20.), start + Duration::from_millis(200)),
+            None
+        );
+        assert_eq!(
+            scroll.step(pixels(20.), start + Duration::from_millis(500)),
+            None
+        );
+        assert_eq!(
+            scroll.step(pixels(20.), start + Duration::from_millis(510)),
+            Some(-1)
+        );
+        assert_eq!(
+            scroll.step(pixels(f32::NAN), start + Duration::from_secs(1)),
+            None
+        );
     }
 }

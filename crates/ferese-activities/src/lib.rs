@@ -28,7 +28,12 @@ pub struct Id {
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
-#[serde(tag = "kind", content = "value", rename_all = "kebab-case", deny_unknown_fields)]
+#[serde(
+    tag = "kind",
+    content = "value",
+    rename_all = "kebab-case",
+    deny_unknown_fields
+)]
 pub enum Value {
     Indeterminate,
     Progress(f32),
@@ -51,7 +56,12 @@ impl Value {
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
-#[serde(tag = "kind", content = "data", rename_all = "kebab-case", deny_unknown_fields)]
+#[serde(
+    tag = "kind",
+    content = "data",
+    rename_all = "kebab-case",
+    deny_unknown_fields
+)]
 pub enum Template {
     Progress,
     Timer,
@@ -96,20 +106,39 @@ pub struct Data {
 impl Data {
     pub fn validate(&mut self, now: Time) -> Result<(), &'static str> {
         text(&self.title)?;
-        if self.output.as_ref().is_some_and(|output| text(output).is_err()) {
+        if self
+            .output
+            .as_ref()
+            .is_some_and(|output| text(output).is_err())
+        {
             return Err("invalid output name");
         }
-        if self.icon.len() > 64 || !self.icon.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
+        if self.icon.len() > 64
+            || !self
+                .icon
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+        {
             return Err("icon must be a symbolic name");
         }
         if !matches!(
             self.icon.as_str(),
-            "hammer" | "timer" | "download" | "media" | "microphone" | "camera" | "call" | "notification" | "ferese"
+            "hammer"
+                | "timer"
+                | "download"
+                | "media"
+                | "microphone"
+                | "camera"
+                | "call"
+                | "notification"
+                | "ferese"
         ) {
             self.icon = "ferese".into();
         }
         match &mut self.value {
-            Value::Progress(progress) if !progress.is_finite() || !(0.0..=1.0).contains(progress) => {
+            Value::Progress(progress)
+                if !progress.is_finite() || !(0.0..=1.0).contains(progress) =>
+            {
                 return Err("progress must be finite and between zero and one");
             }
             Value::Text(value) => text(value)?,
@@ -128,15 +157,28 @@ impl Data {
             _ => {}
         }
         match &self.template {
-            Template::Timer if !matches!(self.value, Value::Countdown { .. } | Value::PausedCountdown { .. }) => {
+            Template::Timer
+                if !matches!(
+                    self.value,
+                    Value::Countdown { .. } | Value::PausedCountdown { .. }
+                ) =>
+            {
                 return Err("timer requires a countdown");
             }
-            Template::Progress if matches!(self.value, Value::Countdown { .. } | Value::PausedCountdown { .. }) => {
+            Template::Progress
+                if matches!(
+                    self.value,
+                    Value::Countdown { .. } | Value::PausedCountdown { .. }
+                ) =>
+            {
                 return Err("countdown requires timer template");
             }
             Template::Media { artist, .. } => {
                 text(artist)?;
-                if !matches!(self.value, Value::Text(_) | Value::Indeterminate | Value::Progress(_)) {
+                if !matches!(
+                    self.value,
+                    Value::Text(_) | Value::Indeterminate | Value::Progress(_)
+                ) {
                     return Err("invalid media value");
                 }
             }
@@ -211,7 +253,9 @@ impl Activity {
         now >= self.eligible_at
             && match self.state {
                 State::Running => self.lease_deadline.is_none_or(|deadline| now < deadline),
-                State::Done | State::Failed => !dnd && self.result_deadline.is_some_and(|deadline| now < deadline),
+                State::Done | State::Failed => {
+                    !dnd && self.result_deadline.is_some_and(|deadline| now < deadline)
+                }
                 State::Cancelled => false,
             }
     }
@@ -258,7 +302,9 @@ impl Store {
     }
 
     pub fn resolve(&self, owner: Owner, local: &str) -> Option<&Id> {
-        self.entries.keys().find(|id| id.owner == owner && id.local == local)
+        self.entries
+            .keys()
+            .find(|id| id.owner == owner && id.local == local)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -290,7 +336,10 @@ impl Store {
         if self.entries.keys().filter(|id| id.owner == owner).count() >= 3 {
             return Err("owner activity quota exceeded");
         }
-        self.generation = self.generation.checked_add(1).ok_or("generation exhausted")?;
+        self.generation = self
+            .generation
+            .checked_add(1)
+            .ok_or("generation exhausted")?;
         let id = Id {
             owner,
             local,
@@ -351,7 +400,8 @@ impl Store {
             validate_lease(Some(ms), true)?;
             entry.lease_deadline = Some(now.saturating_add(ms));
         } else if let Some(deadline) = entry.lease_deadline {
-            entry.lease_deadline = Some(now.saturating_add(deadline.saturating_sub(entry.refreshed_at)));
+            entry.lease_deadline =
+                Some(now.saturating_add(deadline.saturating_sub(entry.refreshed_at)));
         }
         entry.refreshed_at = now;
         Ok(())
@@ -380,7 +430,10 @@ impl Store {
                 Err("terminal result already accepted")
             };
         }
-        if state == State::Cancelled || now < entry.eligible_at || (state == State::Failed && !entry.flash_on_fail) {
+        if state == State::Cancelled
+            || now < entry.eligible_at
+            || (state == State::Failed && !entry.flash_on_fail)
+        {
             self.entries.remove(id);
             return Ok(());
         }
@@ -409,7 +462,11 @@ impl Store {
 
     pub fn attach_output(&mut self, output: &str) -> bool {
         let mut changed = false;
-        for entry in self.entries.values_mut().filter(|entry| entry.data.output.is_none()) {
+        for entry in self
+            .entries
+            .values_mut()
+            .filter(|entry| entry.data.output.is_none())
+        {
             entry.data.output = Some(output.into());
             changed = true;
         }
@@ -433,9 +490,11 @@ impl Store {
                     Some(entry.eligible_at.saturating_add(BOOST_MS)),
                     entry.lease_deadline,
                     entry.result_deadline,
-                    entry
-                        .result_deadline
-                        .map(|deadline| deadline.saturating_sub(entry.result_flash_ms).saturating_add(400)),
+                    entry.result_deadline.map(|deadline| {
+                        deadline
+                            .saturating_sub(entry.result_flash_ms)
+                            .saturating_add(400)
+                    }),
                 ]
             })
             .flatten()
@@ -497,7 +556,13 @@ impl Selection {
     pub fn override_pin(&mut self) {
         self.pinned = None;
     }
-    pub fn select(&mut self, ranked: &[&Activity], limits: Limits, dnd: bool, protected_slots: usize) {
+    pub fn select(
+        &mut self,
+        ranked: &[&Activity],
+        limits: Limits,
+        dnd: bool,
+        protected_slots: usize,
+    ) {
         let policy = (dnd, protected_slots, limits.max_visible);
         if self.policy != Some(policy) {
             self.override_pin();
@@ -557,7 +622,9 @@ pub fn reconcile_focus(focus: &mut Option<Id>, previous: &[Id], current: &[Id]) 
         .as_ref()
         .and_then(|id| previous.iter().position(|old| old == id))
         .unwrap_or(0);
-    *focus = current.get(index.min(current.len().saturating_sub(1))).cloned();
+    *focus = current
+        .get(index.min(current.len().saturating_sub(1)))
+        .cloned();
 }
 
 #[cfg(test)]

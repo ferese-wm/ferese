@@ -1,14 +1,22 @@
 use super::*;
 
 impl Ferese {
-    pub(super) fn adjust_floating_direction(&mut self, id: WindowId, direction: Direction, resize: bool) {
+    pub(super) fn adjust_floating_direction(
+        &mut self,
+        id: WindowId,
+        direction: Direction,
+        resize: bool,
+    ) {
         const STEP: f64 = 32.0;
         let workspace = self.workspaces.active();
         if self.session_lock.active()
             || self.input_capture.captures(1)
             || self.workspaces.workspace_for_window(id) != Some(workspace.id)
             || workspace.fullscreen == Some(id)
-            || self.windows.record(id).is_some_and(|record| record.maximized)
+            || self
+                .windows
+                .record(id)
+                .is_some_and(|record| record.maximized)
         {
             return;
         }
@@ -32,7 +40,10 @@ impl Ferese {
         if resize {
             destination = constrained_floating_rect(
                 destination,
-                self.window_constraints().get(&id).copied().unwrap_or_default(),
+                self.window_constraints()
+                    .get(&id)
+                    .copied()
+                    .unwrap_or_default(),
             );
         }
         destination = crate::floating::clamp_to_work(destination, work);
@@ -91,7 +102,10 @@ impl Ferese {
             .automatic_axis(Some(window), bounds)
             .unwrap_or(Axis::Horizontal);
 
-        if let Err(error) = self.workspaces.toggle_floating(window, floating_rect, axis, 0.5) {
+        if let Err(error) = self
+            .workspaces
+            .toggle_floating(window, floating_rect, axis, 0.5)
+        {
             tracing::error!(%error, ?window, "failed to toggle floating window");
             return;
         }
@@ -142,7 +156,11 @@ impl Ferese {
                 && let WorkspaceLayout::Scrolling(layout) = &mut workspace.layout
             {
                 if enabled {
-                    if let Some(column) = layout.columns().iter().find(|column| column.windows.contains(&window)) {
+                    if let Some(column) = layout
+                        .columns()
+                        .iter()
+                        .find(|column| column.windows.contains(&window))
+                    {
                         self.windows.update(window, |w| {
                             w.maximized_column_width.get_or_insert(column.width);
                         });
@@ -177,7 +195,12 @@ impl Ferese {
         layer != Layer::Top || !self.output_has_fullscreen(output)
     }
 
-    pub(crate) fn layer_visible_for_frame(&self, output: &Output, layer: Layer, overview: bool) -> bool {
+    pub(crate) fn layer_visible_for_frame(
+        &self,
+        output: &Output,
+        layer: Layer,
+        overview: bool,
+    ) -> bool {
         layer != Layer::Top || !self.output_has_fullscreen_for_frame(output, overview)
     }
 
@@ -208,7 +231,9 @@ impl Ferese {
         let Some(id) = self.windows.ids().get(window).copied() else {
             return;
         };
-        self.windows.update(id, |w| w.resize_anchor.take()).flatten();
+        self.windows
+            .update(id, |w| w.resize_anchor.take())
+            .flatten();
         let rect = Rect::new(
             location.x as f64,
             location.y as f64,
@@ -224,8 +249,11 @@ impl Ferese {
         // Direct manipulation follows the pointer, including while the client is
         // still drawing its next buffer. Rendering and hit testing share this rect.
         #[cfg(feature = "resize-metrics")]
-        self.resize_metrics
-            .end(id, self.start_time.elapsed(), crate::resize_metrics::End::Cancelled);
+        self.resize_metrics.end(
+            id,
+            self.start_time.elapsed(),
+            crate::resize_metrics::End::Cancelled,
+        );
         self.windows.clear_transaction(&id);
         self.render.clear_snapshot(&id);
         let Some(record) = self.windows.record_mut(id) else {
@@ -248,7 +276,8 @@ impl Ferese {
             toplevel.send_pending_configure();
         }
         self.windows.update(id, |record| record.world_x = None);
-        self.windows.update(id, |record| record.coupled_width = None);
+        self.windows
+            .update(id, |record| record.coupled_width = None);
         self.map_window_geometry(window.clone(), location);
         self.sync_window_stacking();
         // Move/resize/cancel callbacks run with Smithay's pointer mutex held.
@@ -268,14 +297,19 @@ impl Ferese {
     }
 
     pub(super) fn output_bounds(&self) -> Option<Rect> {
-        let output = self.focused_output().or_else(|| self.space.outputs().next())?;
+        let output = self
+            .focused_output()
+            .or_else(|| self.space.outputs().next())?;
         self.output_bounds_for(output)
     }
 
     pub(super) fn floating_outputs(&self) -> Vec<(String, Rect)> {
         self.space
             .outputs()
-            .filter_map(|output| self.output_bounds_for(output).map(|work| (output.name(), work)))
+            .filter_map(|output| {
+                self.output_bounds_for(output)
+                    .map(|work| (output.name(), work))
+            })
             .collect()
     }
 
@@ -294,7 +328,11 @@ impl Ferese {
             .unwrap_or_default()
     }
 
-    pub(super) fn floating_obstacles(&self, exclude: Option<WindowId>, work: Rect) -> Vec<(u64, Rect)> {
+    pub(super) fn floating_obstacles(
+        &self,
+        exclude: Option<WindowId>,
+        work: Rect,
+    ) -> Vec<(u64, Rect)> {
         self.space
             .elements()
             .filter_map(|window| {
@@ -312,7 +350,10 @@ impl Ferese {
                     .workspace(workspace)?
                     .fullscreen
                     .is_some_and(|full| full != id)
-                    && !matches!(self.workspaces.placement(id), Some(WindowPlacement::Floating { .. }))
+                    && !matches!(
+                        self.workspaces.placement(id),
+                        Some(WindowPlacement::Floating { .. })
+                    )
                 {
                     return None;
                 }
@@ -347,7 +388,11 @@ impl Ferese {
             .and_then(|rect| intersection(rect, work));
         let dialog = crate::window_rules::is_native_dialog(app.as_deref());
         let remembered = id
-            .and_then(|id| self.windows.record(id).and_then(|w| w.floating_memory.as_ref()))
+            .and_then(|id| {
+                self.windows
+                    .record(id)
+                    .and_then(|w| w.floating_memory.as_ref())
+            })
             .or_else(|| {
                 if parent.is_none() {
                     app.as_deref().and_then(|app| self.floating_memory.get(app))
@@ -384,7 +429,12 @@ impl Ferese {
             size
         };
         let sized = constrained_floating_rect(
-            Rect::new(0., 0., width.unwrap_or(stored_size.0), height.unwrap_or(stored_size.1)),
+            Rect::new(
+                0.,
+                0.,
+                width.unwrap_or(stored_size.0),
+                height.unwrap_or(stored_size.1),
+            ),
             constraints,
         );
         let dimensions = (sized.width, sized.height);
@@ -438,7 +488,9 @@ impl Ferese {
             .floating_outputs()
             .into_iter()
             .max_by(|(_, a), (_, b)| {
-                let area = |work| crate::floating::intersection(rect, work).map_or(0., |r| r.width * r.height);
+                let area = |work| {
+                    crate::floating::intersection(rect, work).map_or(0., |r| r.width * r.height)
+                };
                 area(*a).total_cmp(&area(*b))
             })
             .filter(|(_, work)| crate::floating::intersection(rect, *work).is_some())
@@ -446,7 +498,8 @@ impl Ferese {
             return;
         };
         let entry = crate::floating::Remembered::new(output, rect, work);
-        self.windows.update(id, |w| w.floating_memory = Some(entry.clone()));
+        self.windows
+            .update(id, |w| w.floating_memory = Some(entry.clone()));
         if let Some(app) = app {
             self.floating_memory.save(app, entry);
         }
@@ -462,13 +515,18 @@ impl Ferese {
         &self,
         window: &Window,
         raw: Rect,
-    ) -> (Vec<crate::floating::SnapLine>, Vec<crate::floating::SnapLine>) {
+    ) -> (
+        Vec<crate::floating::SnapLine>,
+        Vec<crate::floating::SnapLine>,
+    ) {
         let id = self.windows.ids().get(window).copied();
         let work = self
             .floating_outputs()
             .into_iter()
             .max_by(|(_, a), (_, b)| {
-                let area = |work| crate::floating::intersection(raw, work).map_or(0., |r| r.width * r.height);
+                let area = |work| {
+                    crate::floating::intersection(raw, work).map_or(0., |r| r.width * r.height)
+                };
                 area(*a).total_cmp(&area(*b))
             })
             .filter(|(_, work)| crate::floating::intersection(raw, *work).is_some())

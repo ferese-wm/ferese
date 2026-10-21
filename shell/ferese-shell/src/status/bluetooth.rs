@@ -37,7 +37,10 @@ pub(super) fn read(connection: &Connection) -> zbus::Result<Option<Bluetooth>> {
             return Ok(None);
         };
         let Some((path, _)) = adapters.iter().find(|(_, properties)| {
-            properties.get("Address").and_then(|value| <&str>::try_from(value).ok()) == Some(address)
+            properties
+                .get("Address")
+                .and_then(|value| <&str>::try_from(value).ok())
+                == Some(address)
         }) else {
             return Ok(None);
         };
@@ -93,9 +96,24 @@ mod tests {
             );
         }
         for (path, adapter, connected, alias) in [
-            ("/org/bluez/hci0/dev_a", "/org/bluez/hci0", true, "Headphones"),
-            ("/org/bluez/hci0/dev_b", "/org/bluez/hci0", false, "Keyboard"),
-            ("/org/bluez/hci1/dev_a", "/org/bluez/hci1", true, "Other adapter"),
+            (
+                "/org/bluez/hci0/dev_a",
+                "/org/bluez/hci0",
+                true,
+                "Headphones",
+            ),
+            (
+                "/org/bluez/hci0/dev_b",
+                "/org/bluez/hci0",
+                false,
+                "Keyboard",
+            ),
+            (
+                "/org/bluez/hci1/dev_a",
+                "/org/bluez/hci1",
+                true,
+                "Other adapter",
+            ),
         ] {
             graph.insert(
                 OwnedObjectPath::try_from(path).unwrap(),

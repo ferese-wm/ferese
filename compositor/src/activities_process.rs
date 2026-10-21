@@ -27,13 +27,20 @@ impl Watcher {
         std::thread::Builder::new()
             .name("ferese-activity-processes".into())
             .spawn(move || {
-                let mut observed =
-                    BTreeMap::<Owner, (Arc<std::os::fd::OwnedFd>, ferese_config::activities::Matched)>::new();
+                let mut observed = BTreeMap::<
+                    Owner,
+                    (
+                        Arc<std::os::fd::OwnedFd>,
+                        ferese_config::activities::Matched,
+                    ),
+                >::new();
                 while !worker_stop.load(Ordering::Acquire) {
                     let rules = rules.read().expect("activity rules").clone();
                     let dead: Vec<_> = observed
                         .iter()
-                        .filter_map(|(owner, (fd, _))| crate::ipc::activity_owner::exited(fd).then_some(*owner))
+                        .filter_map(|(owner, (fd, _))| {
+                            crate::ipc::activity_owner::exited(fd).then_some(*owner)
+                        })
                         .collect();
                     for owner in dead {
                         observed.remove(&owner);
@@ -54,21 +61,30 @@ impl Watcher {
                             if worker_stop.load(Ordering::Acquire) || observed.len() >= 128 {
                                 break;
                             }
-                            let Some(pid) = process.file_name().to_str().and_then(|name| name.parse::<u32>().ok())
+                            let Some(pid) = process
+                                .file_name()
+                                .to_str()
+                                .and_then(|name| name.parse::<u32>().ok())
                             else {
                                 continue;
                             };
-                            let Ok((owner, fd, parents)) = crate::ipc::activity_owner::inspect(pid) else {
+                            let Ok((owner, fd, parents)) = crate::ipc::activity_owner::inspect(pid)
+                            else {
                                 continue;
                             };
-                            if observed.contains_key(&owner) || parents.iter().any(|parent| parent == "feresectl") {
+                            if observed.contains_key(&owner)
+                                || parents.iter().any(|parent| parent == "feresectl")
+                            {
                                 continue;
                             }
-                            let Ok(file) = std::fs::File::open(process.path().join("cmdline")) else {
+                            let Ok(file) = std::fs::File::open(process.path().join("cmdline"))
+                            else {
                                 continue;
                             };
                             let mut bytes = Vec::new();
-                            if file.take(4_097).read_to_end(&mut bytes).is_err() || bytes.len() > 4_096 {
+                            if file.take(4_097).read_to_end(&mut bytes).is_err()
+                                || bytes.len() > 4_096
+                            {
                                 continue;
                             }
                             let Ok(command) = String::from_utf8(bytes) else {
@@ -79,14 +95,19 @@ impl Watcher {
                                 continue;
                             };
                             let cwd = cwd.to_string_lossy();
-                            let Some(matched) = rules.matcher.matches(&command, &cwd, &parents) else {
+                            let Some(matched) = rules.matcher.matches(&command, &cwd, &parents)
+                            else {
                                 continue;
                             };
                             let fd = Arc::new(fd);
                             // Keep the inspected process identity alive through dispatch.
                             // No raw command, cwd or environment crosses the dispatcher.
                             if sender
-                                .try_send(IpcEvent::ActivityDetected(owner, Box::new(matched.clone()), fd.clone()))
+                                .try_send(IpcEvent::ActivityDetected(
+                                    owner,
+                                    Box::new(matched.clone()),
+                                    fd.clone(),
+                                ))
                                 .is_ok()
                             {
                                 observed.insert(owner, (fd, matched));

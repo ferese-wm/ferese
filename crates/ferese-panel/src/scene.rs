@@ -17,7 +17,12 @@ pub struct Primitive {
 
 impl Primitive {
     pub fn packet(self) -> [f32; 10] {
-        let Rect { x, y, width, height } = self.bounds;
+        let Rect {
+            x,
+            y,
+            width,
+            height,
+        } = self.bounds;
         let [tl, tr, br, bl] = self.radii.0;
         [
             x as f32,
@@ -34,7 +39,9 @@ impl Primitive {
     }
 
     pub fn from_packet(values: [f32; 10]) -> Result<Self, &'static str> {
-        if !values.into_iter().all(|v| v.is_finite() && v.abs() <= 32768.)
+        if !values
+            .into_iter()
+            .all(|v| v.is_finite() && v.abs() <= 32768.)
             || values[2] <= 0.
             || values[3] <= 0.
             || values[4..8].iter().any(|v| *v < 0.)
@@ -46,8 +53,14 @@ impl Primitive {
             return Err("invalid panel shape primitive");
         }
         Ok(Self {
-            bounds: Rect::new(values[0].into(), values[1].into(), values[2].into(), values[3].into()),
-            radii: CornerRadii([values[4], values[5], values[6], values[7]]).normalized(values[2], values[3]),
+            bounds: Rect::new(
+                values[0].into(),
+                values[1].into(),
+                values[2].into(),
+                values[3].into(),
+            ),
+            radii: CornerRadii([values[4], values[5], values[6], values[7]])
+                .normalized(values[2], values[3]),
             operation: values[8] as u8,
             blend_zone: values[9] as u8,
         })
@@ -63,7 +76,8 @@ impl Primitive {
                 4 => [b.x + b.width, b.y],
                 _ => [b.x, b.y],
             };
-            return rect.max(b.width.min(b.height) - (point[0] - center[0]).hypot(point[1] - center[1]));
+            return rect
+                .max(b.width.min(b.height) - (point[0] - center[0]).hypot(point[1] - center[1]));
         }
         let b = self.bounds;
         let (x, y) = (point[0] - b.x, point[1] - b.y);
@@ -150,12 +164,21 @@ impl Scene {
             let bottom = ((b.y + b.height) * scale).ceil() as i32;
             for y in top..bottom {
                 let mut first = left;
-                while first < right && !shape.contains([(f64::from(first) + 0.5) / scale, (f64::from(y) + 0.5) / scale])
+                while first < right
+                    && !shape.contains([
+                        (f64::from(first) + 0.5) / scale,
+                        (f64::from(y) + 0.5) / scale,
+                    ])
                 {
                     first += 1;
                 }
                 let mut last = right;
-                while last > first && !shape.contains([(f64::from(last) - 0.5) / scale, (f64::from(y) + 0.5) / scale]) {
+                while last > first
+                    && !shape.contains([
+                        (f64::from(last) - 0.5) / scale,
+                        (f64::from(y) + 0.5) / scale,
+                    ])
+                {
                     last -= 1;
                 }
                 if first == last {
@@ -328,8 +351,18 @@ pub fn derive(
         Style::CornerWrap => {
             let h = parameters.height.min(bounds.height);
             let w = parameters.wrap_width.min(bounds.width);
-            let horizontal = Rect::new(bounds.x, bounds.y, parameters.wrap_size[0].min(bounds.width), h);
-            let vertical = Rect::new(bounds.x, bounds.y, w, parameters.wrap_size[1].min(bounds.height));
+            let horizontal = Rect::new(
+                bounds.x,
+                bounds.y,
+                parameters.wrap_size[0].min(bounds.width),
+                h,
+            );
+            let vertical = Rect::new(
+                bounds.x,
+                bounds.y,
+                w,
+                parameters.wrap_size[1].min(bounds.height),
+            );
             add(
                 &mut scene,
                 grid,
@@ -338,7 +371,14 @@ pub fn derive(
                 true,
                 0,
             )?;
-            add(&mut scene, grid, vertical, CornerRadii([0., 0., 14., 0.]), true, 0)?;
+            add(
+                &mut scene,
+                grid,
+                vertical,
+                CornerRadii([0., 0., 14., 0.]),
+                true,
+                0,
+            )?;
             // Capture the union once: overlapping translucent captures darken the elbow.
             scene.damage = vec![
                 horizontal,
@@ -388,8 +428,12 @@ pub fn derive(
                     // One material capture owns the body and both shoulders. Separate
                     // captures overlap after logical rounding at fractional scales,
                     // painting translucent joins twice as the spring settles.
-                    scene.damage =
-                        vec![grid.rect(Rect::new(bounds.x - r, bounds.y, bounds.width + 2. * r, bounds.height))?];
+                    scene.damage = vec![grid.rect(Rect::new(
+                        bounds.x - r,
+                        bounds.y,
+                        bounds.width + 2. * r,
+                        bounds.height,
+                    ))?];
                 }
             }
         }
@@ -406,7 +450,10 @@ pub fn derive(
                     continue;
                 }
                 if style.connected() {
-                    let x = occupied.iter().map(|g| g.bounds.x).fold(f64::INFINITY, f64::min);
+                    let x = occupied
+                        .iter()
+                        .map(|g| g.bounds.x)
+                        .fold(f64::INFINITY, f64::min);
                     let end = occupied
                         .iter()
                         .map(|g| g.bounds.x + g.bounds.width)
@@ -440,9 +487,12 @@ pub fn derive(
                     add(&mut scene, grid, body, radii, true, 0)?;
                     for group in occupied.iter().take(occupied.len() - 1) {
                         let seam = grid.snap(group.bounds.x + group.bounds.width);
-                        scene
-                            .dividers
-                            .push([seam, bounds.y + 8., seam, bounds.y + bounds.height - 8.]);
+                        scene.dividers.push([
+                            seam,
+                            bounds.y + 8.,
+                            seam,
+                            bounds.y + bounds.height - 8.,
+                        ]);
                     }
                     if style == Style::Notch && zone == ZonePosition::Center {
                         let r = parameters
@@ -469,7 +519,8 @@ pub fn derive(
                     }
                 } else {
                     for group in occupied {
-                        let body = Rect::new(group.bounds.x, bounds.y, group.bounds.width, bounds.height);
+                        let body =
+                            Rect::new(group.bounds.x, bounds.y, group.bounds.width, bounds.height);
                         let radii = parameters
                             .radius
                             .map_or(CornerRadii::uniform((bounds.height / 2.) as f32), |r| {
@@ -500,7 +551,8 @@ pub fn derive(
                     if let Some(first) = shapes.next() {
                         let mut region = first.bounds;
                         for shape in shapes {
-                            let right = (region.x + region.width).max(shape.bounds.x + shape.bounds.width);
+                            let right =
+                                (region.x + region.width).max(shape.bounds.x + shape.bounds.width);
                             region.x = region.x.min(shape.bounds.x);
                             region.width = right - region.x;
                         }
@@ -510,7 +562,9 @@ pub fn derive(
             }
         }
     }
-    if parameters.edge == Edge::Bottom && matches!(parameters.style, Style::Frame | Style::CornerWrap) {
+    if parameters.edge == Edge::Bottom
+        && matches!(parameters.style, Style::Frame | Style::CornerWrap)
+    {
         let mirror = |mut r: Rect| {
             r.y = 2. * bounds.y + bounds.height - r.y - r.height;
             r
@@ -529,7 +583,8 @@ pub fn derive(
         }
         for input in &mut scene.input {
             let [tl, tr, br, bl] = input.radii().0;
-            *input = RoundedSurface::new(mirror(input.bounds()), CornerRadii([bl, br, tr, tl]), grid)?;
+            *input =
+                RoundedSurface::new(mirror(input.bounds()), CornerRadii([bl, br, tr, tl]), grid)?;
         }
         for damage in &mut scene.damage {
             *damage = mirror(*damage);
@@ -629,7 +684,12 @@ mod tests {
         assert!(!scene.contains([38., 38.])); // the decorative elbow is not input
         for (i, a) in scene.damage.iter().enumerate() {
             for b in &scene.damage[i + 1..] {
-                assert!(a.x + a.width <= b.x || b.x + b.width <= a.x || a.y + a.height <= b.y || b.y + b.height <= a.y);
+                assert!(
+                    a.x + a.width <= b.x
+                        || b.x + b.width <= a.x
+                        || a.y + a.height <= b.y
+                        || b.y + b.height <= a.y
+                );
             }
         }
         for x in (0..800).step_by(3) {

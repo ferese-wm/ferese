@@ -30,7 +30,11 @@ impl Ramp {
 
     pub(crate) fn at_temperature(&self, temperature: u16) -> Self {
         let mut ramp = self.clone();
-        for (channel, gain) in ramp.0.chunks_exact_mut(self.size()).zip(temperature_gains(temperature)) {
+        for (channel, gain) in ramp
+            .0
+            .chunks_exact_mut(self.size())
+            .zip(temperature_gains(temperature))
+        {
             for value in channel {
                 *value = (f64::from(*value) * gain).round() as u16;
             }
@@ -45,14 +49,18 @@ impl Ramp {
             self.0
                 .iter()
                 .zip(&target.0)
-                .map(|(&from, &to)| (f64::from(from) + (f64::from(to) - f64::from(from)) * progress).round() as u16)
+                .map(|(&from, &to)| {
+                    (f64::from(from) + (f64::from(to) - f64::from(from)) * progress).round() as u16
+                })
                 .collect(),
         )
     }
 
     pub(crate) fn read(file: File, size: usize) -> io::Result<Self> {
         let metadata = file.metadata()?;
-        let length = size.checked_mul(6).filter(|_| size > 0 && size <= MAX_GAMMA_SIZE);
+        let length = size
+            .checked_mul(6)
+            .filter(|_| size > 0 && size <= MAX_GAMMA_SIZE);
         let Some(length) = length else {
             return Err(io::ErrorKind::InvalidData.into());
         };
@@ -73,7 +81,11 @@ impl Ramp {
 
     pub(crate) fn channels(&self) -> (&[u16], &[u16], &[u16]) {
         let size = self.0.len() / 3;
-        (&self.0[..size], &self.0[size..2 * size], &self.0[2 * size..])
+        (
+            &self.0[..size],
+            &self.0[size..2 * size],
+            &self.0[2 * size..],
+        )
     }
 }
 
@@ -89,5 +101,9 @@ fn temperature_gains(kelvin: u16) -> [f64; 3] {
         }
     };
     let temperature = f64::from(kelvin.clamp(1000, 6500)) / 100.;
-    [1., green(temperature) / green(65.), blue(temperature) / blue(65.)]
+    [
+        1.,
+        green(temperature) / green(65.),
+        blue(temperature) / blue(65.),
+    ]
 }

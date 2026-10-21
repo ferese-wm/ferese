@@ -129,13 +129,18 @@ struct Bound {
     _proxy: Box<dyn ProxyT>,
 }
 
-fn parameter_events(state: Arc<State>) -> impl Fn(i32, ParamType, u32, u32, Option<&pw::spa::pod::Pod>) {
+fn parameter_events(
+    state: Arc<State>,
+) -> impl Fn(i32, ParamType, u32, u32, Option<&pw::spa::pod::Pod>) {
     let values = RefCell::new(HashMap::<u32, Vec<u8>>::new());
     move |_, _, index, _, param| {
         let bytes = param.map_or(&[][..], pw::spa::pod::Pod::as_bytes);
         let mut values = values.borrow_mut();
 
-        if values.get(&index).is_none_or(|previous| previous.as_slice() != bytes) {
+        if values
+            .get(&index)
+            .is_none_or(|previous| previous.as_slice() != bytes)
+        {
             values.insert(index, bytes.to_vec());
             state.changed();
         }
@@ -165,20 +170,28 @@ fn bind(
         }
         ObjectType::Device if class == Some("Audio/Device") => {
             let device: pw::device::Device = registry.bind(object)?;
-            let listener = device.add_listener_local().param(parameter_events(state)).register();
+            let listener = device
+                .add_listener_local()
+                .param(parameter_events(state))
+                .register();
             device.subscribe_params(&[ParamType::Route]);
             Bound {
                 _listener: Box::new(listener),
                 _proxy: Box::new(device),
             }
         }
-        ObjectType::Metadata if object.props.and_then(|props| props.get("metadata.name")) == Some("default") => {
+        ObjectType::Metadata
+            if object.props.and_then(|props| props.get("metadata.name")) == Some("default") =>
+        {
             let metadata: pw::metadata::Metadata = registry.bind(object)?;
             let listener = metadata
                 .add_listener_local()
                 .property(move |subject, key, _, _| {
                     if subject == 0
-                        && matches!(key, None | Some("default.audio.sink" | "default.configured.audio.sink"))
+                        && matches!(
+                            key,
+                            None | Some("default.audio.sink" | "default.configured.audio.sink")
+                        )
                     {
                         state.changed();
                     }
@@ -199,7 +212,8 @@ fn bind(
 fn monitor(state: Arc<State>, stop: &Stop, remote: Option<&str>) -> Result<(), pw::Error> {
     let mainloop = pw::main_loop::MainLoopRc::new(None)?;
     let context = pw::context::ContextRc::new(&mainloop, None)?;
-    let properties = remote.map(|remote| pw::properties::properties! { *pw::keys::REMOTE_NAME => remote });
+    let properties =
+        remote.map(|remote| pw::properties::properties! { *pw::keys::REMOTE_NAME => remote });
     let core = context.connect_rc(properties)?;
     let registry = core.get_registry_rc()?;
     let objects = Rc::new(RefCell::new(HashMap::new()));
@@ -324,12 +338,19 @@ context.objects = [
         let mut server = Server(command.spawn().unwrap());
         wait_for(|| root.path().join("pipewire-0").exists());
         let wake = Arc::new((Mutex::new((0, false, None, false, 0)), Condvar::new()));
-        let signals = Signals::start_remote(wake, Some(root.path().join("pipewire-0").to_str().unwrap().into()));
+        let signals = Signals::start_remote(
+            wake,
+            Some(root.path().join("pipewire-0").to_str().unwrap().into()),
+        );
         wait_for(|| signals.alive());
         std::thread::sleep(Duration::from_millis(500));
         let revision = signals.revision();
         std::thread::sleep(Duration::from_secs(2));
-        assert_eq!(signals.revision(), revision, "idle audio emitted repeated updates");
+        assert_eq!(
+            signals.revision(),
+            revision,
+            "idle audio emitted repeated updates"
+        );
         let run = |program: &str, args: &[&str]| {
             let output = Command::new(program)
                 .args(args)
@@ -337,12 +358,22 @@ context.objects = [
                 .env("XDG_RUNTIME_DIR", root.path())
                 .output()
                 .unwrap();
-            assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
             output.stdout
         };
         run(
             "pw-metadata",
-            &["-n", "default", "0", "default.audio.sink", r#"{"name":"test-sink"}"#],
+            &[
+                "-n",
+                "default",
+                "0",
+                "default.audio.sink",
+                r#"{"name":"test-sink"}"#,
+            ],
         );
         wait_for(|| signals.revision() > revision);
         let graph: serde_json::Value = serde_json::from_slice(&run("pw-dump", &[])).unwrap();
@@ -375,7 +406,12 @@ context.objects = [
         let revision = signals.revision();
         run(
             "pw-cli",
-            &["set-param", &id, "Props", "{ channelVolumes = [ 0.125 0.125 ] }"],
+            &[
+                "set-param",
+                &id,
+                "Props",
+                "{ channelVolumes = [ 0.125 0.125 ] }",
+            ],
         );
         wait_for(|| signals.revision() > revision);
         let revision = signals.revision();

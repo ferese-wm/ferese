@@ -42,7 +42,8 @@ pub const BATTERY_75: &[u8] = include_bytes!("../assets/icons/status/battery-75.
 pub const BATTERY_CHARGING: &[u8] = include_bytes!("../assets/icons/status/battery-charging.svg");
 pub const BATTERY_EMPTY: &[u8] = include_bytes!("../assets/icons/status/battery-empty.svg");
 pub const BATTERY_FULL: &[u8] = include_bytes!("../assets/icons/status/battery-full.svg");
-pub const BLUETOOTH_CONNECTED: &[u8] = include_bytes!("../assets/icons/status/bluetooth-connected.svg");
+pub const BLUETOOTH_CONNECTED: &[u8] =
+    include_bytes!("../assets/icons/status/bluetooth-connected.svg");
 pub const BLUETOOTH_OFF: &[u8] = include_bytes!("../assets/icons/status/bluetooth-off.svg");
 pub const BLUETOOTH_ON: &[u8] = include_bytes!("../assets/icons/status/bluetooth-on.svg");
 pub const BRIGHTNESS: &[u8] = include_bytes!("../assets/icons/status/brightness.svg");
@@ -95,7 +96,10 @@ pub fn tinted(source: &'static [u8], size: u16, foreground: Color) -> icon::Icon
 }
 
 pub fn symbolic(source: &'static [u8], size: u16) -> icon::Icon {
-    icon::from_svg_bytes(source).symbolic(true).icon().size(size)
+    icon::from_svg_bytes(source)
+        .symbolic(true)
+        .icon()
+        .size(size)
 }
 
 const TINT_CACHE_ENTRIES: usize = 64;
@@ -141,7 +145,8 @@ impl TintCache {
         let bytes = svg.capacity();
         let handle = icon::from_svg_bytes(svg).symbolic(false);
         if bytes <= TINT_CACHE_BYTES {
-            while self.entries.len() >= TINT_CACHE_ENTRIES || self.bytes + bytes > TINT_CACHE_BYTES {
+            while self.entries.len() >= TINT_CACHE_ENTRIES || self.bytes + bytes > TINT_CACHE_BYTES
+            {
                 self.bytes -= self.entries.pop_front().unwrap().bytes;
             }
             self.bytes += bytes;
@@ -176,8 +181,8 @@ pub fn accented(source: &'static [u8], size: u16, foreground: Color, accent: Col
         .size(size)
         .width(Length::Fixed(f32::from(size) * aspect))
         .content_fit(ContentFit::Contain)
-        .class(theme::Svg::custom(move |_| cosmic::iced::widget::svg::Style {
-            color: None,
+        .class(theme::Svg::custom(move |_| {
+            cosmic::iced::widget::svg::Style { color: None }
         }))
 }
 
@@ -232,10 +237,22 @@ mod tests {
         };
         let first = cache.get(super::BATTERY_50, foreground, accent);
         let second = cache.get(super::BATTERY_50, foreground, accent);
-        assert_eq!(bytes(&first), bytes(&second), "rebuilds must reuse the same allocation");
-        let changed_accent = cache.get(super::BATTERY_50, foreground, Color::from_rgb8(42, 90, 180));
+        assert_eq!(
+            bytes(&first),
+            bytes(&second),
+            "rebuilds must reuse the same allocation"
+        );
+        let changed_accent =
+            cache.get(super::BATTERY_50, foreground, Color::from_rgb8(42, 90, 180));
         assert_ne!(bytes(&first), bytes(&changed_accent));
-        let translucent = cache.get(super::BATTERY_50, Color { a: 0.5, ..foreground }, accent);
+        let translucent = cache.get(
+            super::BATTERY_50,
+            Color {
+                a: 0.5,
+                ..foreground
+            },
+            accent,
+        );
         assert_ne!(bytes(&first), bytes(&translucent));
         assert_eq!(cache.entries.len(), 3);
     }
@@ -252,7 +269,10 @@ mod tests {
             assert!(cache.entries.len() <= super::TINT_CACHE_ENTRIES);
             assert!(cache.bytes <= super::TINT_CACHE_BYTES);
         }
-        assert_eq!(cache.entries.back().unwrap().colors[3], (511_f32 / 512.).to_bits());
+        assert_eq!(
+            cache.entries.back().unwrap().colors[3],
+            (511_f32 / 512.).to_bits()
+        );
     }
 
     #[test]

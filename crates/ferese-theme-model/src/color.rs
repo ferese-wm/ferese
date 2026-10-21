@@ -1,14 +1,18 @@
 use crate::{Gradient, Paint, PaintStyle, ResolvedTheme};
 
 pub fn rgba(s: &str) -> Result<[f64; 4], String> {
-    let hex = s.strip_prefix('#').ok_or_else(|| format!("Invalid color: {s}"))?;
+    let hex = s
+        .strip_prefix('#')
+        .ok_or_else(|| format!("Invalid color: {s}"))?;
     if !hex.is_ascii() || !matches!(hex.len(), 6 | 8) {
         return Err(format!("Invalid color: {s}"));
     }
     let mut out = [1.; 4];
     for (i, c) in out.iter_mut().enumerate().take(hex.len() / 2) {
-        *c = f64::from(u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).map_err(|_| format!("Invalid color: {s}"))?)
-            / 255.;
+        *c = f64::from(
+            u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16)
+                .map_err(|_| format!("Invalid color: {s}"))?,
+        ) / 255.;
     }
     Ok(out)
 }
@@ -74,7 +78,11 @@ pub fn readable(preferred: [f64; 4], background: [f64; 4], minimum: f64) -> [f64
     target
 }
 
-pub fn readable_across(mut preferred: [f64; 4], backgrounds: &[[f64; 4]], minimum: f64) -> [f64; 4] {
+pub fn readable_across(
+    mut preferred: [f64; 4],
+    backgrounds: &[[f64; 4]],
+    minimum: f64,
+) -> [f64; 4] {
     preferred[3] = 1.;
     let score = |color| {
         backgrounds
@@ -87,7 +95,11 @@ pub fn readable_across(mut preferred: [f64; 4], backgrounds: &[[f64; 4]], minimu
     }
     let black = [0., 0., 0., 1.];
     let white = [1.; 4];
-    let target = if score(black) > score(white) { black } else { white };
+    let target = if score(black) > score(white) {
+        black
+    } else {
+        white
+    };
     for step in 1..=100 {
         let color = rgba(&hex(blend(preferred, target, f64::from(step) / 100.))).unwrap();
         if score(color) >= minimum {
@@ -99,7 +111,10 @@ pub fn readable_across(mut preferred: [f64; 4], backgrounds: &[[f64; 4]], minimu
 
 pub fn material_bounds(mut surface: [f64; 4], opacity: f64) -> [[f64; 4]; 2] {
     surface[3] = opacity;
-    [composite(surface, [0., 0., 0., 1.]), composite(surface, [1.; 4])]
+    [
+        composite(surface, [0., 0., 0., 1.]),
+        composite(surface, [1.; 4]),
+    ]
 }
 
 fn material_foreground(preferred: [f64; 4], backgrounds: [[f64; 4]; 2]) -> [f64; 4] {
@@ -111,7 +126,8 @@ fn material_foreground(preferred: [f64; 4], backgrounds: [[f64; 4]; 2]) -> [f64;
         (white, backgrounds[1])
     };
     let result = readable(preferred, worst, 4.5);
-    let outside = luminance(result) < luminance(backgrounds[0]) || luminance(result) > luminance(backgrounds[1]);
+    let outside = luminance(result) < luminance(backgrounds[0])
+        || luminance(result) > luminance(backgrounds[1]);
     if outside
         && backgrounds
             .iter()
@@ -189,8 +205,14 @@ impl ResolvedTheme {
         let p = p * p * (3. - 2. * p);
         let mut frame = to.clone();
         let mix = |a: &str, b: &str| hex(blend(rgba(a).unwrap(), rgba(b).unwrap(), p));
-        frame.tokens.colors.surface_base = mix(&self.tokens.colors.surface_base, &to.tokens.colors.surface_base);
-        frame.tokens.colors.surface_raised = mix(&self.tokens.colors.surface_raised, &to.tokens.colors.surface_raised);
+        frame.tokens.colors.surface_base = mix(
+            &self.tokens.colors.surface_base,
+            &to.tokens.colors.surface_base,
+        );
+        frame.tokens.colors.surface_raised = mix(
+            &self.tokens.colors.surface_raised,
+            &to.tokens.colors.surface_raised,
+        );
         frame.tokens.colors.application_background = mix(
             &self.tokens.colors.application_background,
             &to.tokens.colors.application_background,
@@ -212,14 +234,16 @@ impl ResolvedTheme {
             &to.tokens.colors.border,
             p,
         );
-        frame.tokens.surface.bar.background =
-            mix(&self.tokens.surface.bar.background, &to.tokens.surface.bar.background);
-        frame.tokens.material.opacity =
-            self.tokens.material.opacity + (to.tokens.material.opacity - self.tokens.material.opacity) * p;
+        frame.tokens.surface.bar.background = mix(
+            &self.tokens.surface.bar.background,
+            &to.tokens.surface.bar.background,
+        );
+        frame.tokens.material.opacity = self.tokens.material.opacity
+            + (to.tokens.material.opacity - self.tokens.material.opacity) * p;
         frame.tokens.material.tint_strength = self.tokens.material.tint_strength
             + (to.tokens.material.tint_strength - self.tokens.material.tint_strength) * p;
-        frame.tokens.shadow.soft.opacity =
-            self.tokens.shadow.soft.opacity + (to.tokens.shadow.soft.opacity - self.tokens.shadow.soft.opacity) * p;
+        frame.tokens.shadow.soft.opacity = self.tokens.shadow.soft.opacity
+            + (to.tokens.shadow.soft.opacity - self.tokens.shadow.soft.opacity) * p;
         let preferred = if p < 0.5 { self } else { to };
         frame.appearance = preferred.appearance;
         if self.appearance == to.appearance {
@@ -228,7 +252,11 @@ impl ResolvedTheme {
                 rgba(&frame.tokens.colors.surface_raised).unwrap(),
                 rgba(&frame.tokens.colors.application_background).unwrap(),
             ];
-            let minimum = if to.accessibility.increase_contrast { 7.0 } else { 4.5 };
+            let minimum = if to.accessibility.increase_contrast {
+                7.0
+            } else {
+                4.5
+            };
             frame.tokens.colors.text_primary = hex(readable_across(
                 rgba(&preferred.tokens.colors.text_primary).unwrap(),
                 &body,
@@ -264,7 +292,10 @@ impl ResolvedTheme {
             .into_iter()
             .map(luminance)
             .fold(f64::INFINITY, f64::min);
-        let maximum = [base, raised, app].into_iter().map(luminance).fold(0., f64::max);
+        let maximum = [base, raised, app]
+            .into_iter()
+            .map(luminance)
+            .fold(0., f64::max);
         if ((minimum + 0.05) / 0.05).max(1.05 / (maximum + 0.05)) < 4.5 {
             frame.tokens.colors.surface_raised = frame.tokens.colors.surface_base.clone();
             frame.tokens.colors.application_background = frame.tokens.colors.surface_base.clone();

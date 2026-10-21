@@ -155,7 +155,11 @@ pub struct ResolvedTheme {
 }
 
 /// Accessibility takes precedence over a panel's authored opacity.
-pub fn effective_panel_opacity(inherited: f32, custom: Option<f32>, reduce_transparency: bool) -> f32 {
+pub fn effective_panel_opacity(
+    inherited: f32,
+    custom: Option<f32>,
+    reduce_transparency: bool,
+) -> f32 {
     if reduce_transparency {
         1.0
     } else {

@@ -49,7 +49,10 @@ impl Snapshot {
     }
 
     pub fn string(&self, path: &str, fallback: &str) -> String {
-        self.item(path).and_then(Value::as_str).unwrap_or(fallback).to_owned()
+        self.item(path)
+            .and_then(Value::as_str)
+            .unwrap_or(fallback)
+            .to_owned()
     }
 
     pub fn number(&self, path: &str, fallback: f64) -> f64 {
@@ -61,7 +64,9 @@ impl Snapshot {
     }
 
     pub fn records(&self, path: &str) -> usize {
-        self.item(path).and_then(Value::as_array).map_or(0, |a| a.len())
+        self.item(path)
+            .and_then(Value::as_array)
+            .map_or(0, |a| a.len())
     }
 
     pub fn argv(&self, path: &str) -> String {
@@ -129,7 +134,9 @@ pub fn pick_file(title: &str, filter: &str) -> Result<Option<String>, String> {
         .arg(format!("--file-filter={filter}"))
         .arg("--file-filter=All files | *")
         .output()
-        .map_err(|e| format!("Could not open the file chooser: {e}. Install zenity to choose files."))?;
+        .map_err(|e| {
+            format!("Could not open the file chooser: {e}. Install zenity to choose files.")
+        })?;
     if output.status.code() == Some(1) {
         return Ok(None);
     }
@@ -139,7 +146,8 @@ pub fn pick_file(title: &str, filter: &str) -> Result<Option<String>, String> {
             String::from_utf8_lossy(&output.stderr).trim()
         ));
     }
-    let path = String::from_utf8(output.stdout).map_err(|_| "The file path is not valid UTF-8.".to_owned())?;
+    let path = String::from_utf8(output.stdout)
+        .map_err(|_| "The file path is not valid UTF-8.".to_owned())?;
     let path = path.trim_end_matches(['\r', '\n']);
     Ok((!path.is_empty()).then(|| path.to_owned()))
 }
@@ -204,7 +212,11 @@ fn save_with(
     if file.source() != expected {
         return Err("Your config changed in another app. Reload settings before saving.".into());
     }
-    file.replace(desired, Some(&path.with_extension("kdl.settings-backup")), validate)?;
+    file.replace(
+        desired,
+        Some(&path.with_extension("kdl.settings-backup")),
+        validate,
+    )?;
     Ok(snapshot)
 }
 
@@ -332,11 +344,17 @@ window-rule app-id="mine" floating=#true
 
     #[test]
     fn nested_array_edits_and_login_items_roundtrip() {
-        let mut snapshot =
-            Snapshot::parse("output-profile name=\"desk\" {\n    output match=\"HDMI-A-1\" scale=1.5\n}\n".into())
-                .unwrap();
-        snapshot.edit(&set("output_profiles.0.outputs.0.scale", 1.75)).unwrap();
-        assert_eq!(snapshot.number("output_profiles.0.outputs.0.scale", 1.), 1.75);
+        let mut snapshot = Snapshot::parse(
+            "output-profile name=\"desk\" {\n    output match=\"HDMI-A-1\" scale=1.5\n}\n".into(),
+        )
+        .unwrap();
+        snapshot
+            .edit(&set("output_profiles.0.outputs.0.scale", 1.75))
+            .unwrap();
+        assert_eq!(
+            snapshot.number("output_profiles.0.outputs.0.scale", 1.),
+            1.75
+        );
         snapshot
             .edit(&Edit::Add(
                 "autostart".into(),
@@ -366,12 +384,17 @@ window-rule app-id="mine" floating=#true
     #[ignore = "requires a built compositor; run with FERESE_TEST_BINARY=target/debug/ferese"]
     fn all_gui_controls_and_presets_pass_compositor_validation() {
         let binary = std::env::var_os("FERESE_TEST_BINARY").expect("Set FERESE_TEST_BINARY");
-        let initial = Snapshot::parse(include_str!("../../../packaging/config.kdl").into()).unwrap();
+        let initial =
+            Snapshot::parse(include_str!("../../../packaging/config.kdl").into()).unwrap();
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("config.kdl");
         let validate = |snapshot: &Snapshot| {
             fs::write(&path, &snapshot.source).unwrap();
-            let result = Command::new(&binary).arg("--check-config").arg(&path).output().unwrap();
+            let result = Command::new(&binary)
+                .arg("--check-config")
+                .arg(&path)
+                .output()
+                .unwrap();
             assert!(
                 result.status.success(),
                 "{}\n{}",
@@ -385,7 +408,9 @@ window-rule app-id="mine" floating=#true
                 use crate::schema::Kind;
                 let values: Vec<Value> = match field.kind {
                     Kind::Toggle(_) => vec![true.into(), false.into()],
-                    Kind::Range { min, max, integer, .. } => {
+                    Kind::Range {
+                        min, max, integer, ..
+                    } => {
                         if integer {
                             vec![(min as i64).into(), (max as i64).into()]
                         } else {
@@ -393,7 +418,9 @@ window-rule app-id="mine" floating=#true
                         }
                     }
                     Kind::Text { default, .. } => vec![default.into()],
-                    Kind::Choice { choices, .. } => choices.iter().map(|(v, _)| (*v).into()).collect(),
+                    Kind::Choice { choices, .. } => {
+                        choices.iter().map(|(v, _)| (*v).into()).collect()
+                    }
                 };
                 for value in values {
                     let mut snapshot = initial.clone();

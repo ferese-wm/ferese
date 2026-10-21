@@ -28,7 +28,9 @@ use smithay::wayland::keyboard_shortcuts_inhibit::{
     KeyboardShortcutsInhibitorSeat,
 };
 use smithay::wayland::output::OutputHandler;
-use smithay::wayland::pointer_constraints::{PointerConstraint, PointerConstraintsHandler, with_pointer_constraint};
+use smithay::wayland::pointer_constraints::{
+    PointerConstraint, PointerConstraintsHandler, with_pointer_constraint,
+};
 use smithay::wayland::selection::SelectionHandler;
 use smithay::wayland::selection::data_device::{
     DataDeviceHandler, DataDeviceState, WaylandDndGrabHandler, set_data_device_focus,
@@ -54,12 +56,17 @@ impl SeatHandler for Ferese {
         if let CursorImageStatus::Named(icon) = &image
             && !self.named_cursors.contains_key(icon)
         {
-            self.cursor_loader.request(*icon, self.cursor_animation.buffer_scale);
+            self.cursor_loader
+                .request(*icon, self.cursor_animation.buffer_scale);
         }
         self.cursor_animation.reset |= match (&self.cursor_status, &image) {
-            (CursorImageStatus::Named(previous), CursorImageStatus::Named(next)) => previous != next,
+            (CursorImageStatus::Named(previous), CursorImageStatus::Named(next)) => {
+                previous != next
+            }
             (CursorImageStatus::Hidden, CursorImageStatus::Hidden) => false,
-            (CursorImageStatus::Surface(previous), CursorImageStatus::Surface(next)) => previous != next,
+            (CursorImageStatus::Surface(previous), CursorImageStatus::Surface(next)) => {
+                previous != next
+            }
             _ => true,
         };
         self.cursor_status = image;
@@ -74,7 +81,10 @@ impl SeatHandler for Ferese {
         self.pending_layer_focus = None;
         // Smithay has already sent enter. last_enter uses a separate mutex;
         // querying current_focus here would reenter the held keyboard lock.
-        if let Some(serial) = seat.get_keyboard().and_then(|keyboard| keyboard.last_enter()) {
+        if let Some(serial) = seat
+            .get_keyboard()
+            .and_then(|keyboard| keyboard.last_enter())
+        {
             self.record_activation_input(serial, focused.cloned());
         }
 
@@ -86,7 +96,9 @@ impl SeatHandler for Ferese {
         {
             inhibitor.inactivate();
         }
-        if let Some(inhibitor) = focused.and_then(|surface| seat.keyboard_shortcuts_inhibitor_for_surface(surface)) {
+        if let Some(inhibitor) =
+            focused.and_then(|surface| seat.keyboard_shortcuts_inhibitor_for_surface(surface))
+        {
             inhibitor.activate();
             self.active_shortcuts_inhibitor = Some(inhibitor);
         }
@@ -136,7 +148,10 @@ impl KeyboardShortcutsInhibitHandler for Ferese {
     }
 
     fn new_inhibitor(&mut self, inhibitor: KeyboardShortcutsInhibitor) {
-        let focused = self.seat.get_keyboard().and_then(|keyboard| keyboard.current_focus());
+        let focused = self
+            .seat
+            .get_keyboard()
+            .and_then(|keyboard| keyboard.current_focus());
 
         if focused.as_ref() == Some(inhibitor.wl_surface()) {
             inhibitor.activate();
@@ -216,7 +231,9 @@ impl Ferese {
         let output = output
             .or_else(|| self.focused_output())
             .or_else(|| self.space.outputs().next());
-        with_states(surface, |states| set_surface_preferences(surface, states, output));
+        with_states(surface, |states| {
+            set_surface_preferences(surface, states, output)
+        });
     }
 }
 
@@ -226,9 +243,18 @@ fn set_surface_preferences(
     output: Option<&smithay::output::Output>,
 ) {
     let scale = output.map_or(1.0, |output| output.current_scale().fractional_scale());
-    let transform = output.map_or(smithay::utils::Transform::Normal, |output| output.current_transform());
-    smithay::wayland::compositor::send_surface_state(surface, states, scale.ceil() as i32, transform);
-    with_fractional_scale(states, |surface_scale| surface_scale.set_preferred_scale(scale));
+    let transform = output.map_or(smithay::utils::Transform::Normal, |output| {
+        output.current_transform()
+    });
+    smithay::wayland::compositor::send_surface_state(
+        surface,
+        states,
+        scale.ceil() as i32,
+        transform,
+    );
+    with_fractional_scale(states, |surface_scale| {
+        surface_scale.set_preferred_scale(scale)
+    });
 }
 
 pub(crate) fn set_surface_tree_output(surface: &WlSurface, output: &smithay::output::Output) {
@@ -337,13 +363,17 @@ impl PrimarySelectionHandler for Ferese {
 }
 
 impl smithay::wayland::selection::wlr_data_control::DataControlHandler for Ferese {
-    fn data_control_state(&mut self) -> &mut smithay::wayland::selection::wlr_data_control::DataControlState {
+    fn data_control_state(
+        &mut self,
+    ) -> &mut smithay::wayland::selection::wlr_data_control::DataControlState {
         &mut self.wlr_data_control_state
     }
 }
 
 impl smithay::wayland::selection::ext_data_control::DataControlHandler for Ferese {
-    fn data_control_state(&mut self) -> &mut smithay::wayland::selection::ext_data_control::DataControlState {
+    fn data_control_state(
+        &mut self,
+    ) -> &mut smithay::wayland::selection::ext_data_control::DataControlState {
         &mut self.ext_data_control_state
     }
 }

@@ -12,7 +12,10 @@ impl Ferese {
         if workspace.fullscreen.is_some() {
             return;
         }
-        let Ok(Some(target)) = workspace.layout.directional_neighbor(window, direction, bounds) else {
+        let Ok(Some(target)) = workspace
+            .layout
+            .directional_neighbor(window, direction, bounds)
+        else {
             return;
         };
         if let WorkspaceLayout::Scrolling(layout) = &mut self.workspaces.active_mut().layout {
@@ -71,24 +74,38 @@ impl Ferese {
         if self.workspaces.active().fullscreen.is_some() {
             return;
         }
-        if let Some(target) = self.workspaces.active().layout.adjacent_tab(window, previous)
+        if let Some(target) = self
+            .workspaces
+            .active()
+            .layout
+            .adjacent_tab(window, previous)
             && self.activate_managed_window(target)
         {
             self.flash_tab_switch(window, target);
         }
     }
 
-    pub(crate) fn visible_tab_bars(&self, workspace: WorkspaceId) -> impl Iterator<Item = &ferese_layout::TabBar> {
-        self.tab_bars.get(&workspace).into_iter().flatten().filter(move |bar| {
-            self.workspaces
-                .workspace(workspace)
-                .is_some_and(|ws| ws.fullscreen.is_none())
-                && self.windows.record(bar.group.active).is_some_and(|w| !w.maximized)
-                && self
-                    .windows
-                    .window(bar.group.active)
-                    .is_some_and(|w| self.space.element_location(w).is_some())
-        })
+    pub(crate) fn visible_tab_bars(
+        &self,
+        workspace: WorkspaceId,
+    ) -> impl Iterator<Item = &ferese_layout::TabBar> {
+        self.tab_bars
+            .get(&workspace)
+            .into_iter()
+            .flatten()
+            .filter(move |bar| {
+                self.workspaces
+                    .workspace(workspace)
+                    .is_some_and(|ws| ws.fullscreen.is_none())
+                    && self
+                        .windows
+                        .record(bar.group.active)
+                        .is_some_and(|w| !w.maximized)
+                    && self
+                        .windows
+                        .window(bar.group.active)
+                        .is_some_and(|w| self.space.element_location(w).is_some())
+            })
     }
 
     pub(crate) fn tab_at(&self, position: Point<f64, Logical>) -> Option<WindowId> {
@@ -114,7 +131,12 @@ impl Ferese {
         }
         self.visible_tab_bars(workspace).find_map(|bar| {
             let content = self.presented_window_rect(bar.group.active)?;
-            let rect = Rect::new(content.x, content.y - bar.rect.height, content.width, bar.rect.height);
+            let rect = Rect::new(
+                content.x,
+                content.y - bar.rect.height,
+                content.width,
+                bar.rect.height,
+            );
             tab_hit(&bar.group.windows, rect, position.x, position.y)
         })
     }

@@ -112,7 +112,11 @@ impl Launcher {
     }
 }
 impl FereseShell {
-    pub(super) fn attach_launcher_effects(&mut self, id: window::Id, surface: &wl_surface::WlSurface) {
+    pub(super) fn attach_launcher_effects(
+        &mut self,
+        id: window::Id,
+        surface: &wl_surface::WlSurface,
+    ) {
         let Some(launcher) = self.launcher.as_mut().filter(|launcher| launcher.id == id) else {
             return;
         };
@@ -218,7 +222,9 @@ impl FereseShell {
                         .map(Arc::new)
                         .unwrap_or_else(|_| Arc::new(apps::Apps::empty()))
                 },
-                move |apps| cosmic::Action::App(super::Message::Launcher(Message::Loaded(id, apps))),
+                move |apps| {
+                    cosmic::Action::App(super::Message::Launcher(Message::Loaded(id, apps)))
+                },
             ),
         ])
     }
@@ -266,7 +272,9 @@ impl FereseShell {
         let Some(launcher) = &self.launcher else {
             return Subscription::none();
         };
-        let interval = if launcher.progress.is_animating() || launcher.height.needs_update(launcher.target_height()) {
+        let interval = if launcher.progress.is_animating()
+            || launcher.height.needs_update(launcher.target_height())
+        {
             16
         } else if launcher.category == Some(Category::Windows) && launcher.query.is_empty() {
             500
@@ -275,7 +283,8 @@ impl FereseShell {
         } else {
             return Subscription::none();
         };
-        cosmic::iced::time::every(Duration::from_millis(interval)).map(|_| super::Message::Launcher(Message::Tick))
+        cosmic::iced::time::every(Duration::from_millis(interval))
+            .map(|_| super::Message::Launcher(Message::Tick))
     }
     pub(super) fn refresh_launcher(&mut self) -> Task<super::Message> {
         self.merge_launcher_windows(false)
@@ -286,18 +295,26 @@ impl FereseShell {
         };
         if launcher.closing
             || (launcher.query.is_empty() && launcher.category.is_none())
-            || !launcher.category.is_none_or(|category| category == Category::Windows)
+            || !launcher
+                .category
+                .is_none_or(|category| category == Category::Windows)
         {
             return Task::none();
         }
-        let changed = launcher
-            .windows
-            .sync(&self.snapshot, launcher.apps.as_deref(), &launcher.query);
+        let changed =
+            launcher
+                .windows
+                .sync(&self.snapshot, launcher.apps.as_deref(), &launcher.query);
         if !changed && !force {
             return Task::none();
         }
-        let selected = launcher.rows.get(launcher.selected).map(|row| row.id.clone());
-        launcher.rows.retain(|row| !matches!(row.target, Target::Window(_)));
+        let selected = launcher
+            .rows
+            .get(launcher.selected)
+            .map(|row| row.id.clone());
+        launcher
+            .rows
+            .retain(|row| !matches!(row.target, Target::Window(_)));
         launcher.rows.extend(launcher.windows.rows().cloned());
         sources::rank(&mut launcher.rows);
         if launcher.category.is_none() {
@@ -312,7 +329,10 @@ impl FereseShell {
         let Some(launcher) = &mut self.launcher else {
             return Task::none();
         };
-        if launcher.running || launcher.closing || (launcher.query.is_empty() && launcher.category.is_none()) {
+        if launcher.running
+            || launcher.closing
+            || (launcher.query.is_empty() && launcher.category.is_none())
+        {
             return Task::none();
         }
         let Some(apps) = launcher.apps.clone() else {
@@ -362,14 +382,17 @@ impl FereseShell {
                 .unwrap_or_else(|e| (Vec::new(), files::Status::Unavailable(e.to_string())))
             },
             move |(rows, status)| {
-                cosmic::Action::App(super::Message::Launcher(Message::Results(id, revision, rows, status)))
+                cosmic::Action::App(super::Message::Launcher(Message::Results(
+                    id, revision, rows, status,
+                )))
             },
         )
     }
     pub(super) fn update_launcher(&mut self, message: Message) -> Task<super::Message> {
         if let Message::Finished(result) = message {
             if let Err(error) = result {
-                self.notifications.service_error("Launcher action failed", &error);
+                self.notifications
+                    .service_error("Launcher action failed", &error);
             }
             return Task::none();
         }
@@ -379,11 +402,13 @@ impl FereseShell {
         match message {
             Message::Dismiss(id) if id == launcher.id => self.close_launcher(),
             Message::AppsScrolled(id, first) if id == launcher.id && launcher.apps_browse() => {
-                launcher.apps_first_row = first.min(launcher.rows.len().div_ceil(4).saturating_sub(1));
+                launcher.apps_first_row =
+                    first.min(launcher.rows.len().div_ceil(4).saturating_sub(1));
                 Task::none()
             }
             Message::Input(id, query) if id == launcher.id && !launcher.closing => {
-                launcher.ghost_visible = launcher.query.starts_with(&query) || query.starts_with(&launcher.query);
+                launcher.ghost_visible =
+                    launcher.query.starts_with(&query) || query.starts_with(&launcher.query);
                 launcher.query = query;
                 launcher.alternatives = false;
                 launcher.changed();
@@ -399,7 +424,11 @@ impl FereseShell {
                 Task::batch([focus, self.query_launcher()])
             }
             Message::ActivateRow(id, row) if id == launcher.id && !launcher.closing => {
-                let Some(index) = launcher.rows.iter().position(|candidate| candidate.id == row) else {
+                let Some(index) = launcher
+                    .rows
+                    .iter()
+                    .position(|candidate| candidate.id == row)
+                else {
                     return Task::none();
                 };
                 launcher.selected = index;
@@ -415,10 +444,12 @@ impl FereseShell {
                 if revision != launcher.revision {
                     return self.query_launcher();
                 }
-                let selected = launcher
-                    .preferred_result
-                    .take()
-                    .or_else(|| launcher.rows.get(launcher.selected).map(|row| row.id.clone()));
+                let selected = launcher.preferred_result.take().or_else(|| {
+                    launcher
+                        .rows
+                        .get(launcher.selected)
+                        .map(|row| row.id.clone())
+                });
                 launcher.rows = rows;
                 launcher.file_status = status;
                 let task = self.merge_launcher_windows(true);
@@ -485,13 +516,18 @@ impl FereseShell {
             _ => Task::none(),
         }
     }
-    pub(super) fn launcher_event(&mut self, event: &Event, id: window::Id) -> Option<Task<super::Message>> {
+    pub(super) fn launcher_event(
+        &mut self,
+        event: &Event,
+        id: window::Id,
+    ) -> Option<Task<super::Message>> {
         let launcher = self.launcher.as_mut().filter(|l| l.id == id)?;
         if let Event::Window(window::Event::Opened { .. }) = event {
             return Some(Task::batch([
                 cosmic::widget::text_input::focus(launcher.input.clone()),
-                window::run(id, native_wayland_surface)
-                    .map(move |surface| cosmic::Action::App(super::Message::NativeSurface(id, surface))),
+                window::run(id, native_wayland_surface).map(move |surface| {
+                    cosmic::Action::App(super::Message::NativeSurface(id, surface))
+                }),
             ]));
         }
         if matches!(
@@ -509,11 +545,16 @@ impl FereseShell {
         if launcher.closing {
             return Some(Task::none());
         }
-        if matches!(event, Event::Mouse(cosmic::iced::mouse::Event::ButtonPressed(_))) {
+        if matches!(
+            event,
+            Event::Mouse(cosmic::iced::mouse::Event::ButtonPressed(_))
+        ) {
             launcher.ghost_visible = false;
         }
 
-        let Event::Keyboard(cosmic::iced::keyboard::Event::KeyPressed { key, modifiers, .. }) = event else {
+        let Event::Keyboard(cosmic::iced::keyboard::Event::KeyPressed { key, modifiers, .. }) =
+            event
+        else {
             return None;
         };
         if launcher.query.is_empty() && launcher.category.is_none() {
@@ -571,7 +612,8 @@ impl FereseShell {
             }
             Key::Named(Named::ArrowDown) => {
                 if launcher.alternatives || launcher.query.is_empty() {
-                    launcher.selected = (launcher.selected + 1).min(launcher.rows.len().saturating_sub(1));
+                    launcher.selected =
+                        (launcher.selected + 1).min(launcher.rows.len().saturating_sub(1));
                 }
                 launcher.alternatives = true;
                 Task::none()
@@ -583,7 +625,8 @@ impl FereseShell {
             Key::Named(Named::ArrowRight)
                 if launcher.query.is_empty() && launcher.category == Some(Category::Windows) =>
             {
-                launcher.selected = (launcher.selected + 1).min(launcher.rows.len().saturating_sub(1));
+                launcher.selected =
+                    (launcher.selected + 1).min(launcher.rows.len().saturating_sub(1));
                 Task::none()
             }
             Key::Named(Named::ArrowLeft)
@@ -624,7 +667,8 @@ impl FereseShell {
             return Task::none();
         }
         if launcher.query.is_empty() && launcher.category.is_none() && launcher.category_focused {
-            let category = [Category::Apps, Category::Files, Category::Windows][launcher.selected.min(2)];
+            let category =
+                [Category::Apps, Category::Files, Category::Windows][launcher.selected.min(2)];
             let id = launcher.id;
             return self.update_launcher(Message::Browse(id, category));
         }
@@ -681,7 +725,9 @@ impl FereseShell {
                     .await
                     .unwrap_or_else(|e| Err(e.to_string()))
             },
-            move |result| cosmic::Action::App(super::Message::Launcher(Message::Launched(id, result))),
+            move |result| {
+                cosmic::Action::App(super::Message::Launcher(Message::Launched(id, result)))
+            },
         )
     }
 }

@@ -20,7 +20,10 @@ pub(crate) fn read_source(path: &Path) -> Result<String, String> {
     Ok(source)
 }
 
-pub(crate) fn prepare(source: &str, directory: &Path) -> Result<(Config, RuntimeConfig, Candidate), String> {
+pub(crate) fn prepare(
+    source: &str,
+    directory: &Path,
+) -> Result<(Config, RuntimeConfig, Candidate), String> {
     let document = Document::parse(source).map_err(|e| e.to_string())?;
     prepare_document(&document, directory)
 }
@@ -68,9 +71,11 @@ pub(crate) fn prepare_document(
 ) -> Result<(Config, RuntimeConfig, Candidate), String> {
     let candidate = crate::theme::resolve_candidate(document, directory)?;
     let config: Config =
-        serde_json::from_value(document.with_theme(&candidate.theme).value().clone()).map_err(|e| e.to_string())?;
+        serde_json::from_value(document.with_theme(&candidate.theme).value().clone())
+            .map_err(|e| e.to_string())?;
     let mut runtime = config.runtime_config().map_err(|e| e.to_string())?;
-    runtime.theme_settings = Config::resolved_theme_settings(&candidate.theme).map_err(|e| e.to_string())?;
+    runtime.theme_settings =
+        Config::resolved_theme_settings(&candidate.theme).map_err(|e| e.to_string())?;
     Ok((config, runtime, candidate))
 }
 
@@ -119,7 +124,10 @@ mod tests {
         let valid = startup(Some(&path)).unwrap();
         assert!(valid.error.is_none());
         assert_eq!(valid.source.as_deref(), Some(source));
-        assert_eq!(valid.runtime.panel_style, ferese_panel::PanelStyle::Floating);
+        assert_eq!(
+            valid.runtime.panel_style,
+            ferese_panel::PanelStyle::Floating
+        );
         assert_eq!(
             Document::parse(valid.source.as_deref().unwrap())
                 .unwrap()

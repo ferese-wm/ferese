@@ -8,7 +8,8 @@ pub(super) fn inject(mode: &str) -> bool {
     use std::sync::LazyLock;
     use std::sync::atomic::{AtomicBool, Ordering};
 
-    static MODE: LazyLock<Option<String>> = LazyLock::new(|| std::env::var("FERESE_TEST_DRM_FAILURE").ok());
+    static MODE: LazyLock<Option<String>> =
+        LazyLock::new(|| std::env::var("FERESE_TEST_DRM_FAILURE").ok());
     static USED: AtomicBool = AtomicBool::new(false);
     MODE.as_deref() == Some(mode) && !USED.swap(true, Ordering::AcqRel)
 }
@@ -57,31 +58,38 @@ pub(super) fn arm_completion(
     }
 
     let identity = output.output.clone();
-    match handle.insert_source(Timer::from_duration(COMPLETION_TIMEOUT), move |_, _, state| {
-        let Some(output) = state
-            .direct_backend
-            .as_mut()
-            .and_then(|backend| backend.devices.get_mut(&node))
-            .and_then(|device| device.outputs.get_mut(&crtc))
-            .filter(|output| output.output == identity)
-        else {
-            return TimeoutAction::Drop;
-        };
+    match handle.insert_source(
+        Timer::from_duration(COMPLETION_TIMEOUT),
+        move |_, _, state| {
+            let Some(output) = state
+                .direct_backend
+                .as_mut()
+                .and_then(|backend| backend.devices.get_mut(&node))
+                .and_then(|device| device.outputs.get_mut(&crtc))
+                .filter(|output| output.output == identity)
+            else {
+                return TimeoutAction::Drop;
+            };
 
-        if let Some(remaining) = output.completion.remaining(Instant::now()) {
-            if !remaining.is_zero() {
-                return TimeoutAction::ToDuration(remaining);
+            if let Some(remaining) = output.completion.remaining(Instant::now()) {
+                if !remaining.is_zero() {
+                    return TimeoutAction::ToDuration(remaining);
+                }
+
+                output.completion_timer = None;
+                tracing::error!(
+                    ?node,
+                    ?crtc,
+                    "DRM frame completion timed out; reconciling device"
+                );
+                reconcile_device(state, node);
+            } else {
+                output.completion_timer = None;
             }
 
-            output.completion_timer = None;
-            tracing::error!(?node, ?crtc, "DRM frame completion timed out; reconciling device");
-            reconcile_device(state, node);
-        } else {
-            output.completion_timer = None;
-        }
-
-        TimeoutAction::Drop
-    }) {
+            TimeoutAction::Drop
+        },
+    ) {
         Ok(token) => {
             output.completion_timer = Some(token);
             true
@@ -106,10 +114,12 @@ pub(super) fn reconcile_device(state: &mut Ferese, node: DrmNode) {
     // sessions retain the invalidation for fresh enumeration on activation.
     let active = backend.active;
     if active {
-        match state.loop_handle.insert_source(Timer::immediate(), |_, _, state| {
-            reconcile_outputs(state, false);
-            TimeoutAction::Drop
-        }) {
+        match state
+            .loop_handle
+            .insert_source(Timer::immediate(), |_, _, state| {
+                reconcile_outputs(state, false);
+                TimeoutAction::Drop
+            }) {
             Ok(_) => (),
             Err(error) => tracing::error!(%error, "could not schedule DRM device recovery"),
         }
@@ -125,10 +135,14 @@ mod tests {
         let now = Instant::now();
         let mut completion = Completion::default();
         completion.queued(now);
-        let (feedback, retired, error) = retirement::<(), _>(Err("injected KMS retirement failure"));
+        let (feedback, retired, error) =
+            retirement::<(), _>(Err("injected KMS retirement failure"));
         assert_eq!(feedback, None);
         assert!(!retired);
-        assert!(error.is_some(), "the production handler must reconcile the device");
+        assert!(
+            error.is_some(),
+            "the production handler must reconcile the device"
+        );
         assert_eq!(completion.remaining(now), Some(COMPLETION_TIMEOUT));
         assert_eq!(retirement::<(), &str>(Ok(None)), (None, false, None));
         assert_eq!(retirement::<(), &str>(Ok(Some(()))), (Some(()), true, None));
@@ -148,7 +162,10 @@ mod tests {
             Some(Duration::from_millis(1))
         );
         // A timeout observes uncertainty; it never frees the current buffer.
-        assert_eq!(completion.remaining(now + COMPLETION_TIMEOUT), Some(Duration::ZERO));
+        assert_eq!(
+            completion.remaining(now + COMPLETION_TIMEOUT),
+            Some(Duration::ZERO)
+        );
         assert_eq!(
             completion.remaining(now + COMPLETION_TIMEOUT + Duration::from_secs(1)),
             Some(Duration::ZERO)

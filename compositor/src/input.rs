@@ -1,13 +1,14 @@
 use ferese_layout::Direction;
 use smithay::backend::input::{
-    AbsolutePositionEvent, Axis, AxisSource, ButtonState, Event, GestureBeginEvent, GestureEndEvent,
-    GestureSwipeUpdateEvent as _, InputBackend, InputEvent, KeyState, KeyboardKeyEvent, PointerAxisEvent,
-    PointerButtonEvent, PointerMotionEvent, Switch, SwitchState, SwitchToggleEvent, TouchEvent,
+    AbsolutePositionEvent, Axis, AxisSource, ButtonState, Event, GestureBeginEvent,
+    GestureEndEvent, GestureSwipeUpdateEvent as _, InputBackend, InputEvent, KeyState,
+    KeyboardKeyEvent, PointerAxisEvent, PointerButtonEvent, PointerMotionEvent, Switch,
+    SwitchState, SwitchToggleEvent, TouchEvent,
 };
 use smithay::input::keyboard::{FilterResult, keysyms};
 use smithay::input::pointer::{
-    AxisFrame, ButtonEvent, Focus, GestureSwipeBeginEvent, GestureSwipeEndEvent, GestureSwipeUpdateEvent,
-    GrabStartData, MotionEvent, PointerHandle, RelativeMotionEvent,
+    AxisFrame, ButtonEvent, Focus, GestureSwipeBeginEvent, GestureSwipeEndEvent,
+    GestureSwipeUpdateEvent, GrabStartData, MotionEvent, PointerHandle, RelativeMotionEvent,
 };
 use smithay::input::touch::{DownEvent, MotionEvent as TouchMotionEvent, UpEvent};
 use smithay::reexports::wayland_server::Resource;
@@ -63,7 +64,8 @@ impl Ferese {
             let layers = smithay::desktop::layer_map_for_output(output);
 
             for layer in layers.layers() {
-                let Some(local) = surface_tree_position(layer.wl_surface(), surface, (0, 0).into()) else {
+                let Some(local) = surface_tree_position(layer.wl_surface(), surface, (0, 0).into())
+                else {
                     continue;
                 };
                 let geometry = layers.layer_geometry(layer)?;
@@ -135,7 +137,9 @@ impl Ferese {
 
         if !matches!(
             &event,
-            InputEvent::DeviceAdded { .. } | InputEvent::DeviceRemoved { .. } | InputEvent::SwitchToggle { .. }
+            InputEvent::DeviceAdded { .. }
+                | InputEvent::DeviceRemoved { .. }
+                | InputEvent::SwitchToggle { .. }
         ) {
             self.lock_input_activity();
         }
@@ -221,32 +225,39 @@ impl Ferese {
                             }
                             BindingAction::Focus(focus @ (Direction::Left | Direction::Right)) => {
                                 self.swipe.mark_momentum_navigation();
-                                let raw = self.swipe.unbounded_preview().map_or(progress, |(_, value)| value);
+                                let raw = self
+                                    .swipe
+                                    .unbounded_preview()
+                                    .map_or(progress, |(_, value)| value);
                                 self.preview_focus_swipe(focus, direction, raw);
                             }
                             _ => {}
                         }
                     }
                 } else {
-                    seat.get_pointer().expect("seat has a pointer").gesture_swipe_update(
-                        self,
-                        &GestureSwipeUpdateEvent {
-                            time: event.time(),
-                            delta: event.delta(),
-                        },
-                    );
+                    seat.get_pointer()
+                        .expect("seat has a pointer")
+                        .gesture_swipe_update(
+                            self,
+                            &GestureSwipeUpdateEvent {
+                                time: event.time(),
+                                delta: event.delta(),
+                            },
+                        );
                 }
             }
             InputEvent::GestureSwipeEnd { event } => {
                 if self.swipe.active() {
                     let fingers = self.swipe.fingers();
                     let cancelled = event.cancelled() || self.swipe_navigation_blocked();
-                    let direction = self
-                        .swipe
-                        .finish_at(cancelled, std::time::Duration::from_micros(event.time().micros()));
+                    let direction = self.swipe.finish_at(
+                        cancelled,
+                        std::time::Duration::from_micros(event.time().micros()),
+                    );
                     let workspace_handled = self.finish_workspace_swipe(direction);
                     let focus_handled = self.finish_focus_swipe(direction);
-                    let handled = workspace_handled || focus_handled || self.swipe.preview_started();
+                    let handled =
+                        workspace_handled || focus_handled || self.swipe.preview_started();
                     if !handled
                         && let Some(direction) = direction
                         && let Some(action) = self
@@ -256,7 +267,9 @@ impl Ferese {
                             .map(|binding| binding.action.clone())
                     {
                         match action {
-                            BindingAction::Focus(direction @ (Direction::Left | Direction::Right)) => {
+                            BindingAction::Focus(
+                                direction @ (Direction::Left | Direction::Right),
+                            ) => {
                                 self.focus_direction_from_swipe(direction);
                             }
                             BindingAction::SwitchRelativeWorkspace(next) => {
@@ -266,14 +279,16 @@ impl Ferese {
                         }
                     }
                 } else {
-                    seat.get_pointer().expect("seat has a pointer").gesture_swipe_end(
-                        self,
-                        &GestureSwipeEndEvent {
-                            serial: SERIAL_COUNTER.next_serial(),
-                            time: event.time(),
-                            cancelled: event.cancelled(),
-                        },
-                    );
+                    seat.get_pointer()
+                        .expect("seat has a pointer")
+                        .gesture_swipe_end(
+                            self,
+                            &GestureSwipeEndEvent {
+                                serial: SERIAL_COUNTER.next_serial(),
+                                time: event.time(),
+                                cancelled: event.cancelled(),
+                            },
+                        );
                 }
             }
             InputEvent::SwitchToggle { event } if event.switch() == Some(Switch::Lid) => {
@@ -544,7 +559,8 @@ impl Ferese {
                     focus,
                     &RelativeMotionEvent {
                         delta: (delta.x / scale_x, delta.y / scale_y).into(),
-                        delta_unaccel: (delta_unaccel.x / scale_x, delta_unaccel.y / scale_y).into(),
+                        delta_unaccel: (delta_unaccel.x / scale_x, delta_unaccel.y / scale_y)
+                            .into(),
                         time: event.time(),
                     },
                 );
@@ -574,7 +590,8 @@ impl Ferese {
                     }
                     return;
                 }
-                if event.state() == ButtonState::Released && self.consumed_pointer_buttons.remove(&event.button_code())
+                if event.state() == ButtonState::Released
+                    && self.consumed_pointer_buttons.remove(&event.button_code())
                 {
                     return;
                 }
@@ -733,12 +750,12 @@ impl Ferese {
             InputEvent::PointerAxis { event, .. } => {
                 self.last_pointer_time = event.time();
                 let source = event.source();
-                let horizontal = event
-                    .amount(Axis::Horizontal)
-                    .unwrap_or_else(|| event.amount_v120(Axis::Horizontal).unwrap_or(0.0) * 15.0 / 120.0);
-                let vertical = event
-                    .amount(Axis::Vertical)
-                    .unwrap_or_else(|| event.amount_v120(Axis::Vertical).unwrap_or(0.0) * 15.0 / 120.0);
+                let horizontal = event.amount(Axis::Horizontal).unwrap_or_else(|| {
+                    event.amount_v120(Axis::Horizontal).unwrap_or(0.0) * 15.0 / 120.0
+                });
+                let vertical = event.amount(Axis::Vertical).unwrap_or_else(|| {
+                    event.amount_v120(Axis::Vertical).unwrap_or(0.0) * 15.0 / 120.0
+                });
                 if self.input_capture.active() {
                     if self.input_capture.captures(2) {
                         self.input_capture.push(serde_json::json!({"type":"scroll", "x":horizontal, "y":vertical, "v120_x":event.amount_v120(Axis::Horizontal), "v120_y":event.amount_v120(Axis::Vertical), "stop_x":source == AxisSource::Finger && event.amount(Axis::Horizontal) == Some(0.0), "stop_y":source == AxisSource::Finger && event.amount(Axis::Vertical) == Some(0.0)}));
@@ -748,13 +765,21 @@ impl Ferese {
                 let pointer = self.seat.get_pointer().expect("seat has a pointer");
                 if self.scroll_tab_indicator(
                     pointer.current_location(),
-                    if vertical != 0.0 { vertical } else { horizontal },
+                    if vertical != 0.0 {
+                        vertical
+                    } else {
+                        horizontal
+                    },
                 ) {
                     return;
                 }
                 if self.scroll_overview_strip(
                     pointer.current_location(),
-                    if horizontal != 0.0 { horizontal } else { vertical },
+                    if horizontal != 0.0 {
+                        horizontal
+                    } else {
+                        vertical
+                    },
                 ) {
                     return;
                 }
@@ -791,7 +816,8 @@ impl Ferese {
                 let Some(location) = self.absolute_event_position(&event) else {
                     return;
                 };
-                if !self.consumed_touch_slots.is_empty() || self.dismiss_launcher_outside(location) {
+                if !self.consumed_touch_slots.is_empty() || self.dismiss_launcher_outside(location)
+                {
                     self.consumed_touch_slots.insert(event.slot());
                     return;
                 }
@@ -800,7 +826,10 @@ impl Ferese {
                 let serial = SERIAL_COUNTER.next_serial();
 
                 if !touch.is_grabbed() {
-                    self.record_activation_input(serial, self.surface_under(location).map(|(surface, _)| surface));
+                    self.record_activation_input(
+                        serial,
+                        self.surface_under(location).map(|(surface, _)| surface),
+                    );
                 }
 
                 touch.down(
@@ -865,7 +894,11 @@ impl Ferese {
         if self.session_lock.active() || self.input_capture.active() {
             return false;
         }
-        let Some(surface) = self.seat.get_keyboard().and_then(|keyboard| keyboard.current_focus()) else {
+        let Some(surface) = self
+            .seat
+            .get_keyboard()
+            .and_then(|keyboard| keyboard.current_focus())
+        else {
             return false;
         };
         if self
@@ -890,7 +923,12 @@ impl Ferese {
         true
     }
 
-    fn start_floating_pointer_grab(&mut self, pointer: &PointerHandle<Self>, button: u32, serial: Serial) -> bool {
+    fn start_floating_pointer_grab(
+        &mut self,
+        pointer: &PointerHandle<Self>,
+        button: u32,
+        serial: Serial,
+    ) -> bool {
         if self.session_lock.active()
             || pointer.is_grabbed()
             || !matches!(button, BTN_LEFT | BTN_RIGHT)
@@ -956,7 +994,9 @@ impl Ferese {
         I: InputBackend,
         E: AbsolutePositionEvent<I>,
     {
-        let output = self.focused_output().or_else(|| self.space.outputs().next())?;
+        let output = self
+            .focused_output()
+            .or_else(|| self.space.outputs().next())?;
         let geometry = self.space.output_geometry(output)?;
 
         Some(event.position_transformed(geometry.size) + geometry.loc.to_f64())
@@ -965,8 +1005,14 @@ impl Ferese {
     fn swipe_navigation_blocked(&self) -> bool {
         self.session_lock.active()
             || self.active_shortcuts_inhibitor.is_some()
-            || self.seat.get_pointer().is_some_and(|pointer| pointer.is_grabbed())
-            || self.seat.get_keyboard().is_some_and(|keyboard| keyboard.is_grabbed())
+            || self
+                .seat
+                .get_pointer()
+                .is_some_and(|pointer| pointer.is_grabbed())
+            || self
+                .seat
+                .get_keyboard()
+                .is_some_and(|keyboard| keyboard.is_grabbed())
     }
 
     fn switch_relative_workspace(&mut self, next: bool, slide: Option<SwipeDirection>) {
@@ -982,7 +1028,9 @@ impl Ferese {
     pub(crate) fn relative_workspace_target(&self, next: bool) -> Option<ferese_core::WorkspaceId> {
         let output = self.output_workspaces.focused_output()?;
         let current = self.output_workspaces.active_workspace(output)?;
-        let candidates = self.output_workspaces.ordered_workspaces(&self.workspaces, output);
+        let candidates = self
+            .output_workspaces
+            .ordered_workspaces(&self.workspaces, output);
         let index = candidates.iter().position(|id| *id == current)?;
         let neighbor = if next {
             index.checked_add(1)?
@@ -1009,7 +1057,9 @@ impl Ferese {
         if self.session_lock.active() {
             // Repeats retain press ownership and never run configurable commands
             // on the lock screen, including keys held before locking.
-            if let Some(step) = raw_symbols.iter().find_map(|symbol| locked_brightness_step(*symbol))
+            if let Some(step) = raw_symbols
+                .iter()
+                .find_map(|symbol| locked_brightness_step(*symbol))
                 && let Some(child) = spawn_client(
                     self,
                     ["brightnessctl", "set", step],
@@ -1087,7 +1137,8 @@ impl Ferese {
             {
                 // The client may enable OnDemand only after receiving this
                 // opening press. Touch does not establish pointer focus.
-                self.pending_layer_focus = Some((layer.wl_surface().clone(), std::time::Instant::now()));
+                self.pending_layer_focus =
+                    Some((layer.wl_surface().clone(), std::time::Instant::now()));
             }
             return;
         }
@@ -1183,7 +1234,11 @@ impl Ferese {
         }
     }
 
-    fn focus_window_under_pointer(&mut self, pointer: &PointerHandle<Self>, position: Point<f64, Logical>) {
+    fn focus_window_under_pointer(
+        &mut self,
+        pointer: &PointerHandle<Self>,
+        position: Point<f64, Logical>,
+    ) {
         if self.session_lock.active() {
             return;
         }
@@ -1193,7 +1248,10 @@ impl Ferese {
         }
         // Keep the explicitly selected window focused until Overview's exit
         // animation settles. Moving previews must not steal focus on pointer jitter.
-        if self.overview.is_presenting() || !self.input_settings.focus_follows_mouse || pointer.is_grabbed() {
+        if self.overview.is_presenting()
+            || !self.input_settings.focus_follows_mouse
+            || pointer.is_grabbed()
+        {
             return;
         }
         if self.layer_under(position).is_some() {
@@ -1323,9 +1381,11 @@ impl Ferese {
             BindingAction::None => {}
             BindingAction::BindingMode(name) => self.set_binding_mode(&name),
             BindingAction::Spawn(argv) => {
-                if let Some(child) =
-                    spawn_client(self, argv.iter(), crate::private_client::ClientCapabilities::default())
-                {
+                if let Some(child) = spawn_client(
+                    self,
+                    argv.iter(),
+                    crate::private_client::ClientCapabilities::default(),
+                ) {
                     crate::process::watch_client_exit(&self.loop_handle, child);
                 }
             }
@@ -1337,7 +1397,9 @@ impl Ferese {
             BindingAction::FocusMru(reverse) => self.cycle_focus(reverse, false),
             BindingAction::Move(direction) => self.move_direction(direction),
             BindingAction::Resize(direction) => self.resize_direction(direction),
-            BindingAction::SwitchRelativeWorkspace(next) => self.switch_relative_workspace(next, None),
+            BindingAction::SwitchRelativeWorkspace(next) => {
+                self.switch_relative_workspace(next, None)
+            }
             BindingAction::WorkspaceBackAndForth => self.workspace_back_and_forth(),
             BindingAction::SwitchWorkspace(workspace) => {
                 self.switch_workspace_from_binding(u32::from(workspace));
@@ -1359,7 +1421,10 @@ impl Ferese {
             BindingAction::ToggleFloating => self.toggle_focused_floating(),
             BindingAction::ToggleOverview => self.toggle_overview(),
             BindingAction::Media(action) => {
-                if let Err(error) = self.media_engine.action(serde_json::json!({"action": action}), None) {
+                if let Err(error) = self
+                    .media_engine
+                    .action(serde_json::json!({"action": action}), None)
+                {
                     tracing::debug!(%error, "media action unavailable");
                 }
             }
@@ -1474,17 +1539,25 @@ mod tests {
 
     #[test]
     fn binding_commands_are_reaped_while_the_compositor_runs() {
-        if !crate::startup_tests::private_runtime("input::tests::binding_commands_are_reaped_while_the_compositor_runs")
-        {
+        if !crate::startup_tests::private_runtime(
+            "input::tests::binding_commands_are_reaped_while_the_compositor_runs",
+        ) {
             return;
         }
 
         let mut events = smithay::reexports::calloop::EventLoop::try_new().unwrap();
         let mut state = crate::startup_tests::state(&mut events);
         let children_path = format!("/proc/self/task/{}/children", unsafe { libc::gettid() });
-        assert!(std::fs::read_to_string(&children_path).unwrap().trim().is_empty());
+        assert!(
+            std::fs::read_to_string(&children_path)
+                .unwrap()
+                .trim()
+                .is_empty()
+        );
         for _ in 0..24 {
-            state.execute_binding(crate::config::BindingAction::Spawn(vec!["/bin/true".into()].into()));
+            state.execute_binding(crate::config::BindingAction::Spawn(
+                vec!["/bin/true".into()].into(),
+            ));
         }
 
         let children: Vec<i32> = std::fs::read_to_string(&children_path)
@@ -1494,8 +1567,15 @@ mod tests {
             .collect();
         assert_eq!(children.len(), 24);
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
-        while !std::fs::read_to_string(&children_path).unwrap().trim().is_empty() {
-            assert!(std::time::Instant::now() < deadline, "binding children were not reaped");
+        while !std::fs::read_to_string(&children_path)
+            .unwrap()
+            .trim()
+            .is_empty()
+        {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "binding children were not reaped"
+            );
             events
                 .dispatch(Some(std::time::Duration::from_millis(20)), &mut state)
                 .unwrap();
@@ -1504,8 +1584,14 @@ mod tests {
 
         for pid in children {
             let mut status = 0;
-            assert_eq!(unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) }, -1);
-            assert_eq!(std::io::Error::last_os_error().raw_os_error(), Some(libc::ECHILD));
+            assert_eq!(
+                unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) },
+                -1
+            );
+            assert_eq!(
+                std::io::Error::last_os_error().raw_os_error(),
+                Some(libc::ECHILD)
+            );
         }
     }
 

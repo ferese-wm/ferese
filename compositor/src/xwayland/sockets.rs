@@ -60,7 +60,10 @@ impl Drop for CreatedPath {
 fn validate_shared_directory(path: &Path) -> io::Result<()> {
     let metadata = fs::symlink_metadata(path)?;
     let uid = unsafe { libc::geteuid() };
-    if !metadata.is_dir() || metadata.file_type().is_symlink() || (metadata.uid() != 0 && metadata.uid() != uid) {
+    if !metadata.is_dir()
+        || metadata.file_type().is_symlink()
+        || (metadata.uid() != 0 && metadata.uid() != uid)
+    {
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
             format!("untrusted X11 directory: {}", path.display()),
@@ -93,10 +96,11 @@ impl Reservation {
         {
             // Owned inputs, so an ordinary test never competes for a real slot in
             // `/tmp/.X11-unix` nor depends on that directory existing.
-            let (sockets, locks) = crate::xwayland::test_hooks::allocator_root_for_reservation().unwrap_or_else(|| {
-                let root = crate::xwayland::test_hooks::default_allocator_root();
-                (root.clone(), root)
-            });
+            let (sockets, locks) = crate::xwayland::test_hooks::allocator_root_for_reservation()
+                .unwrap_or_else(|| {
+                    let root = crate::xwayland::test_hooks::default_allocator_root();
+                    (root.clone(), root)
+                });
             Self::allocate_in(&sockets, &locks, 0..64)
         }
 
@@ -104,7 +108,11 @@ impl Reservation {
         Self::allocate_in(Path::new("/tmp/.X11-unix"), Path::new("/tmp"), 0..64)
     }
 
-    fn allocate_in(socket_directory: &Path, lock_directory: &Path, candidates: Range<u32>) -> io::Result<Self> {
+    fn allocate_in(
+        socket_directory: &Path,
+        lock_directory: &Path,
+        candidates: Range<u32>,
+    ) -> io::Result<Self> {
         validate_shared_directory(socket_directory)?;
         validate_shared_directory(lock_directory)?;
 
@@ -124,7 +132,9 @@ impl Reservation {
             };
 
             let lock_path = CreatedPath::record(path, &file.metadata()?);
-            if let Err(error) = writeln!(file, "{:>10}", std::process::id()).and_then(|()| file.flush()) {
+            if let Err(error) =
+                writeln!(file, "{:>10}", std::process::id()).and_then(|()| file.flush())
+            {
                 drop(file);
                 drop(lock_path);
                 return Err(error);
@@ -227,7 +237,10 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
 
     fn shared_root(name: &str) -> PathBuf {
-        let root = std::env::temp_dir().join(format!("ferese-xwayland-alloc-{name}-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!(
+            "ferese-xwayland-alloc-{name}-{}",
+            std::process::id()
+        ));
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).unwrap();
         for directory in ["sockets", "locks"] {
@@ -240,10 +253,13 @@ mod tests {
     #[test]
     fn allocates_a_display_with_two_listener_transports() {
         let root = shared_root("two-transports");
-        let reservation = Reservation::allocate_in(&root.join("sockets"), &root.join("locks"), 0..64).unwrap();
+        let reservation =
+            Reservation::allocate_in(&root.join("sockets"), &root.join("locks"), 0..64).unwrap();
 
         assert!(reservation.listeners().len() >= 2);
-        let socket = root.join("sockets").join(format!("X{}", reservation.display_number()));
+        let socket = root
+            .join("sockets")
+            .join(format!("X{}", reservation.display_number()));
         assert!(socket.exists(), "conventional socket path must exist");
         assert!(
             root.join("locks")
@@ -276,14 +292,23 @@ mod tests {
         fs::write(&stale, b"9999\n").unwrap();
 
         let reservation = Reservation::allocate_in(&root.join("sockets"), &locks, 0..64).unwrap();
-        assert_ne!(reservation.display_number(), 3, "occupied number must be skipped");
-        assert_eq!(fs::read(&stale).unwrap(), b"9999\n", "stale lock must not be reclaimed");
+        assert_ne!(
+            reservation.display_number(),
+            3,
+            "occupied number must be skipped"
+        );
+        assert_eq!(
+            fs::read(&stale).unwrap(),
+            b"9999\n",
+            "stale lock must not be reclaimed"
+        );
     }
 
     #[test]
     fn cleanup_removes_paths_this_process_created() {
         let root = shared_root("cleanup");
-        let reservation = Reservation::allocate_in(&root.join("sockets"), &root.join("locks"), 0..64).unwrap();
+        let reservation =
+            Reservation::allocate_in(&root.join("sockets"), &root.join("locks"), 0..64).unwrap();
         let display = reservation.display_number();
         let socket = root.join("sockets").join(format!("X{display}"));
         let lock = root.join("locks").join(format!(".X{display}-lock"));
@@ -297,20 +322,26 @@ mod tests {
     #[test]
     fn close_listeners_keeps_the_display_lock_owned() {
         let root = shared_root("close-listeners");
-        let mut reservation = Reservation::allocate_in(&root.join("sockets"), &root.join("locks"), 0..64).unwrap();
+        let mut reservation =
+            Reservation::allocate_in(&root.join("sockets"), &root.join("locks"), 0..64).unwrap();
         let display = reservation.display_number();
 
         reservation.close_listeners();
 
         assert!(reservation.listeners().is_empty());
-        assert!(root.join("locks").join(format!(".X{display}-lock")).exists());
+        assert!(
+            root.join("locks")
+                .join(format!(".X{display}-lock"))
+                .exists()
+        );
         assert!(!root.join("sockets").join(format!("X{display}")).exists());
     }
 
     #[test]
     fn retry_rebinds_the_same_display_number() {
         let root = shared_root("retry");
-        let mut reservation = Reservation::allocate_in(&root.join("sockets"), &root.join("locks"), 0..64).unwrap();
+        let mut reservation =
+            Reservation::allocate_in(&root.join("sockets"), &root.join("locks"), 0..64).unwrap();
         let display = reservation.display_number();
         reservation.close_listeners();
 
@@ -324,7 +355,8 @@ mod tests {
     #[test]
     fn binding_twice_is_rejected() {
         let root = shared_root("double-bind");
-        let mut reservation = Reservation::allocate_in(&root.join("sockets"), &root.join("locks"), 0..64).unwrap();
+        let mut reservation =
+            Reservation::allocate_in(&root.join("sockets"), &root.join("locks"), 0..64).unwrap();
         reservation.close_listeners();
         reservation.bind_same_display().unwrap();
 
@@ -334,7 +366,8 @@ mod tests {
 
     #[test]
     fn an_untrusted_socket_directory_is_rejected() {
-        let root = std::env::temp_dir().join(format!("ferese-xwayland-untrusted-{}", std::process::id()));
+        let root =
+            std::env::temp_dir().join(format!("ferese-xwayland-untrusted-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).unwrap();
 
@@ -352,7 +385,8 @@ mod tests {
     #[test]
     fn a_missing_socket_directory_is_an_actionable_error() {
         let root = shared_root("missing-dir");
-        let error = Reservation::allocate_in(&root.join("absent"), &root.join("locks"), 0..64).unwrap_err();
+        let error =
+            Reservation::allocate_in(&root.join("absent"), &root.join("locks"), 0..64).unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::NotFound);
     }
 

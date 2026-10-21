@@ -38,11 +38,14 @@ pub fn tile<M: Clone + 'static>(
         .or(family.dark.as_ref())
         .map(|palette| crate::parse_color(&palette.text).unwrap())
         .unwrap_or(palette.text);
-    let mut caption = row([]).spacing(6).align_y(cosmic::iced::Alignment::Center).push(
-        crate::text(family.name.clone(), font)
-            .size(12)
-            .class(cosmic::theme::Text::Color(label_color)),
-    );
+    let mut caption = row([])
+        .spacing(6)
+        .align_y(cosmic::iced::Alignment::Center)
+        .push(
+            crate::text(family.name.clone(), font)
+                .size(12)
+                .class(cosmic::theme::Text::Color(label_color)),
+        );
     if family.light.is_none() || family.dark.is_none() {
         caption = caption.push(
             crate::text(
@@ -129,14 +132,21 @@ fn preview_with_radius(
     radius: f32,
 ) -> cosmic::widget::icon::Icon {
     use cosmic::widget::icon;
-    let key = format!("{}/{variant:?}/{active:?}/{selected}/{}", family.id, radius.to_bits());
-    static CACHE: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, (Family, icon::Handle)>>> =
-        std::sync::OnceLock::new();
+    let key = format!(
+        "{}/{variant:?}/{active:?}/{selected}/{}",
+        family.id,
+        radius.to_bits()
+    );
+    static CACHE: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<String, (Family, icon::Handle)>>,
+    > = std::sync::OnceLock::new();
     let cache = CACHE.get_or_init(Default::default);
     let mut cache = cache.lock().unwrap();
     if cache.get(&key).is_none_or(|(cached, _)| cached != family) {
-        let handle = icon::from_svg_bytes(svg_with_radius(family, variant, active, selected, radius).into_bytes())
-            .symbolic(false);
+        let handle = icon::from_svg_bytes(
+            svg_with_radius(family, variant, active, selected, radius).into_bytes(),
+        )
+        .symbolic(false);
         cache.insert(key.clone(), (family.clone(), handle));
     }
     let handle = cache[&key].1.clone();
@@ -164,7 +174,12 @@ fn desktop(p: &Palette) -> String {
     )
 }
 
-pub fn svg(family: &Family, variant: Option<Appearance>, active: Option<Appearance>, selected: bool) -> String {
+pub fn svg(
+    family: &Family,
+    variant: Option<Appearance>,
+    active: Option<Appearance>,
+    selected: bool,
+) -> String {
     svg_with_radius(family, variant, active, selected, 10.)
 }
 
@@ -180,9 +195,12 @@ fn svg_with_radius(
 <clipPath id="light"><rect width="100" height="126"/></clipPath><clipPath id="dark"><rect x="100" width="100" height="126"/></clipPath>
 <pattern id="missing" width="8" height="8" patternUnits="userSpaceOnUse"><rect width="8" height="8" fill="#D9DDE2"/><path d="M-2 2l4-4M0 8l8-8M6 10l4-4" stroke="#C4C9D1"/></pattern>"##,
     );
-    let outline =
-        cosmic::iced::border::Outline::new([0., 0., 200., 126.], [f64::from(radius); 4], BorderShape::Continuous)
-            .expect("finite preview dimensions");
+    let outline = cosmic::iced::border::Outline::new(
+        [0., 0., 200., 126.],
+        [f64::from(radius); 4],
+        BorderShape::Continuous,
+    )
+    .expect("finite preview dimensions");
     // Rasterized once per cached preview; no shaped rendering layer per tile.
     let points = outline.polygon(0.02).expect("positive contour tolerance");
     result.push_str("<clipPath id=\"preview\"><polygon points=\"");
@@ -338,7 +356,11 @@ fn radio_with_tab_stop<'a, M: Clone + 'a>(
     })
 }
 
-pub fn group<'a, M: Clone + 'a>(content: impl Into<Element<'a, M>>, id: Id, label: &str) -> Element<'a, M> {
+pub fn group<'a, M: Clone + 'a>(
+    content: impl Into<Element<'a, M>>,
+    id: Id,
+    label: &str,
+) -> Element<'a, M> {
     Element::new(Radio {
         content: content.into(),
         id,
@@ -366,18 +388,36 @@ impl<M: Clone> Widget<M, Theme, Renderer> for Radio<'_, M> {
     fn size(&self) -> Size<Length> {
         self.content.as_widget().size()
     }
-    fn layout(&mut self, tree: &mut Tree, renderer: &Renderer, limits: &layout::Limits) -> layout::Node {
+    fn layout(
+        &mut self,
+        tree: &mut Tree,
+        renderer: &Renderer,
+        limits: &layout::Limits,
+    ) -> layout::Node {
         self.content
             .as_widget_mut()
             .layout(&mut tree.children[0], renderer, limits)
     }
-    fn operate(&mut self, tree: &mut Tree, layout: Layout<'_>, renderer: &Renderer, operation: &mut dyn Operation<()>) {
+    fn operate(
+        &mut self,
+        tree: &mut Tree,
+        layout: Layout<'_>,
+        renderer: &Renderer,
+        operation: &mut dyn Operation<()>,
+    ) {
         if self.group {
-            self.content
-                .as_widget_mut()
-                .operate(&mut tree.children[0], layout, renderer, operation);
+            self.content.as_widget_mut().operate(
+                &mut tree.children[0],
+                layout,
+                renderer,
+                operation,
+            );
         } else if self.tab_stop {
-            operation.focusable(Some(&self.id), layout.bounds(), tree.state.downcast_mut::<Focus>());
+            operation.focusable(
+                Some(&self.id),
+                layout.bounds(),
+                tree.state.downcast_mut::<Focus>(),
+            );
         } else {
             tree.state.downcast_mut::<Focus>().0 = false;
         }
@@ -398,19 +438,25 @@ impl<M: Clone> Widget<M, Theme, Renderer> for Radio<'_, M> {
                 if !iced_accessibility::IdEq::eq(&id.0, &self.id.0) {
                     return;
                 }
-                if matches!(request.action, accesskit::Action::Focus | accesskit::Action::Click)
-                    && let Some(message) = self
-                        .navigate
-                        .as_ref()
-                        .and_then(|navigate| navigate(&keyboard::key::Named::Enter))
+                if matches!(
+                    request.action,
+                    accesskit::Action::Focus | accesskit::Action::Click
+                ) && let Some(message) = self
+                    .navigate
+                    .as_ref()
+                    .and_then(|navigate| navigate(&keyboard::key::Named::Enter))
                 {
                     shell.publish(message);
                     shell.capture_event();
                     return;
                 }
             }
-            if matches!(event, Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))) {
-                tree.state.downcast_mut::<Focus>().0 = self.tab_stop && cursor.is_over(layout.bounds());
+            if matches!(
+                event,
+                Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
+            ) {
+                tree.state.downcast_mut::<Focus>().0 =
+                    self.tab_stop && cursor.is_over(layout.bounds());
             }
         }
         if !self.group && self.tab_stop && tree.state.downcast_ref::<Focus>().0 {
@@ -460,9 +506,15 @@ impl<M: Clone> Widget<M, Theme, Renderer> for Radio<'_, M> {
         cursor: mouse::Cursor,
         viewport: &Rectangle,
     ) {
-        self.content
-            .as_widget()
-            .draw(&tree.children[0], renderer, theme, style, layout, cursor, viewport);
+        self.content.as_widget().draw(
+            &tree.children[0],
+            renderer,
+            theme,
+            style,
+            layout,
+            cursor,
+            viewport,
+        );
         if !self.group && self.tab_stop && tree.state.downcast_ref::<Focus>().0 {
             use renderer::Renderer as _;
             renderer.fill_quad(
@@ -489,16 +541,26 @@ impl<M: Clone> Widget<M, Theme, Renderer> for Radio<'_, M> {
         viewport: &Rectangle,
         renderer: &Renderer,
     ) -> mouse::Interaction {
-        self.content
-            .as_widget()
-            .mouse_interaction(&tree.children[0], layout, cursor, viewport, renderer)
+        self.content.as_widget().mouse_interaction(
+            &tree.children[0],
+            layout,
+            cursor,
+            viewport,
+            renderer,
+        )
     }
     fn a11y_nodes(&self, layout: Layout<'_>, tree: &Tree, cursor: mouse::Cursor) -> A11yTree {
-        let children = self.content.as_widget().a11y_nodes(layout, &tree.children[0], cursor);
+        let children = self
+            .content
+            .as_widget()
+            .a11y_nodes(layout, &tree.children[0], cursor);
         if self.group {
             let mut node = accesskit::Node::new(accesskit::Role::RadioGroup);
             node.set_label(self.label.clone());
-            A11yTree::node_with_child_tree(iced_accessibility::A11yNode::new(node, self.id.clone()), children)
+            A11yTree::node_with_child_tree(
+                iced_accessibility::A11yNode::new(node, self.id.clone()),
+                children,
+            )
         } else {
             let mut children = children;
             for node in children.root_mut() {

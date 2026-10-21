@@ -25,8 +25,16 @@ impl GeometryIntent {
                 Morph => 34.,
                 _ => 36.,
             }),
-            edge_margin: if flush { 0 } else { self.edge_margin.unwrap_or(8) },
-            side_margins: if flush { 0 } else { self.side_margins.unwrap_or(8) },
+            edge_margin: if flush {
+                0
+            } else {
+                self.edge_margin.unwrap_or(8)
+            },
+            side_margins: if flush {
+                0
+            } else {
+                self.side_margins.unwrap_or(8)
+            },
             window_clearance: self.window_clearance.unwrap_or(0),
             inner_padding: self.inner_padding.unwrap_or(12.),
         }
@@ -74,7 +82,10 @@ impl PanelGeometry {
                 .into_iter()
                 .any(|value| !(0..=4096).contains(&value))
         {
-            return Err("panel height must be 24..128, inner padding 0..64, and margins/clearance 0..4096".into());
+            return Err(
+                "panel height must be 24..128, inner padding 0..64, and margins/clearance 0..4096"
+                    .into(),
+            );
         }
         Ok(())
     }
@@ -101,7 +112,13 @@ mod tests {
         assert_eq!(pins.resolve(Flat).side_margins, 0);
         assert_eq!(pins.resolve(Floating).side_margins, 18);
         assert_eq!(pins.resolve(Notch).edge_margin, 0);
-        assert!(serde_json::to_value(intent).unwrap().as_object().unwrap().is_empty());
+        assert!(
+            serde_json::to_value(intent)
+                .unwrap()
+                .as_object()
+                .unwrap()
+                .is_empty()
+        );
         assert!(
             GeometryIntent {
                 edge_margin: Some(-1),

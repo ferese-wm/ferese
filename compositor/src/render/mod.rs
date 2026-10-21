@@ -19,14 +19,17 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-pub(crate) use capture::{capture_resize_snapshot, capture_window_buffer, capture_window_frame, convert_window_pixels};
+pub(crate) use capture::{
+    capture_resize_snapshot, capture_window_buffer, capture_window_frame, convert_window_pixels,
+};
 use decorations::*;
 use materials::*;
 use overview::*;
 pub(crate) use resources::RenderResources;
 use scene::cursor_elements;
 pub(crate) use scene::{
-    animated_window_elements, capture_output_elements, frame_effect_metrics, layer_surfaces, sampled_output_elements,
+    animated_window_elements, capture_output_elements, frame_effect_metrics, layer_surfaces,
+    sampled_output_elements,
 };
 pub(crate) use shader::SharedPixelShaderElement;
 use smithay::backend::allocator::Fourcc;
@@ -36,40 +39,50 @@ use smithay::backend::renderer::element::surface::{
     WaylandSurfaceRenderElement, WaylandSurfaceTexture, render_elements_from_surface_tree,
 };
 use smithay::backend::renderer::element::utils::{
-    ConstrainAlign, ConstrainScaleBehavior, CropRenderElement, Relocate, RelocateRenderElement, RescaleRenderElement,
-    constrain_render_elements,
+    ConstrainAlign, ConstrainScaleBehavior, CropRenderElement, Relocate, RelocateRenderElement,
+    RescaleRenderElement, constrain_render_elements,
 };
 use smithay::backend::renderer::element::{
     Element, Id, Kind as RenderElementKind, RenderElement, UnderlyingStorage, render_elements,
 };
 use smithay::backend::renderer::gles::{
-    GlesError, GlesFrame, GlesPixelProgram, GlesRenderer, GlesTexProgram, GlesTexture, Uniform, UniformName,
-    UniformType,
+    GlesError, GlesFrame, GlesPixelProgram, GlesRenderer, GlesTexProgram, GlesTexture, Uniform,
+    UniformName, UniformType,
 };
-use smithay::backend::renderer::utils::{CommitCounter, DamageSet, OpaqueRegions, draw_render_elements};
-use smithay::backend::renderer::{Bind, Color32F, ErasedContextId, ExportMem, Frame, Offscreen, Renderer, Texture};
+use smithay::backend::renderer::utils::{
+    CommitCounter, DamageSet, OpaqueRegions, draw_render_elements,
+};
+use smithay::backend::renderer::{
+    Bind, Color32F, ErasedContextId, ExportMem, Frame, Offscreen, Renderer, Texture,
+};
 use smithay::desktop::space::{ConstrainBehavior, ConstrainReference, constrain_space_element};
 use smithay::desktop::{LayerSurface, PopupManager, layer_map_for_output};
 use smithay::input::pointer::{CursorImageStatus, CursorImageSurfaceData};
 use smithay::output::Output;
 use smithay::reexports::wayland_server::Resource;
-use smithay::utils::{Buffer, Logical, Physical, Point, Rectangle, Scale as RenderScale, Size, Transform};
+use smithay::utils::{
+    Buffer, Logical, Physical, Point, Rectangle, Scale as RenderScale, Size, Transform,
+};
 use smithay::wayland::compositor::with_states;
 use smithay::wayland::shell::wlr_layer::Layer;
 
 use crate::Ferese;
 use crate::metrics::FrameEffectMetrics;
 use crate::presentation::{
-    CornerShape, NativeTextureElement, PhysicalShaderElement, RoundedRect, clamp_radius, corner_extent, physical_rect,
+    CornerShape, NativeTextureElement, PhysicalShaderElement, RoundedRect, clamp_radius,
+    corner_extent, physical_rect,
 };
 
-type SurfaceRenderElement =
-    CropRenderElement<RelocateRenderElement<RescaleRenderElement<WaylandSurfaceRenderElement<GlesRenderer>>>>;
+type SurfaceRenderElement = CropRenderElement<
+    RelocateRenderElement<RescaleRenderElement<WaylandSurfaceRenderElement<GlesRenderer>>>,
+>;
 
-type WindowRenderElement = CropRenderElement<RelocateRenderElement<RescaleRenderElement<WindowContentRenderElement>>>;
+type WindowRenderElement =
+    CropRenderElement<RelocateRenderElement<RescaleRenderElement<WindowContentRenderElement>>>;
 
-type MemoryRenderElement =
-    CropRenderElement<RelocateRenderElement<RescaleRenderElement<MemoryRenderBufferRenderElement<GlesRenderer>>>>;
+type MemoryRenderElement = CropRenderElement<
+    RelocateRenderElement<RescaleRenderElement<MemoryRenderBufferRenderElement<GlesRenderer>>>,
+>;
 
 render_elements! {
     pub(crate) AnimatedWindowRenderElement<=GlesRenderer>;
@@ -127,7 +140,9 @@ fn corner_shader(source: &str) -> String {
 
 fn corner_shader_for(source: &str, shape: CornerShape) -> String {
     match shape {
-        CornerShape::Circular => source.replace("//_CORNERS_", include_str!("shaders/corners.glsl")),
+        CornerShape::Circular => {
+            source.replace("//_CORNERS_", include_str!("shaders/corners.glsl"))
+        }
         CornerShape::Continuous => source
             .replace(
                 "//_CORNERS_",
@@ -138,7 +153,10 @@ fn corner_shader_for(source: &str, shape: CornerShape) -> String {
             )
             .replace("precision mediump float;", "precision highp float;"),
     }
-    .replace("//_MATERIAL_CORNERS_", include_str!("shaders/material_corners.glsl"))
+    .replace(
+        "//_MATERIAL_CORNERS_",
+        include_str!("shaders/material_corners.glsl"),
+    )
     .replace("//_PANEL_MASK_", include_str!("shaders/panel_mask.glsl"))
 }
 
@@ -216,7 +234,11 @@ impl Element for BlurRenderElement {
         self.geometry.to_physical_precise_round(scale)
     }
 
-    fn damage_since(&self, scale: RenderScale<f64>, commit: Option<CommitCounter>) -> DamageSet<i32, Physical> {
+    fn damage_since(
+        &self,
+        scale: RenderScale<f64>,
+        commit: Option<CommitCounter>,
+    ) -> DamageSet<i32, Physical> {
         blur_damage(self.geometry(scale).size, self.current_commit(), commit)
     }
 
@@ -517,7 +539,11 @@ impl Element for RoundedSurfaceRenderElement {
         self.inner.src()
     }
 
-    fn damage_since(&self, scale: RenderScale<f64>, commit: Option<CommitCounter>) -> DamageSet<i32, Physical> {
+    fn damage_since(
+        &self,
+        scale: RenderScale<f64>,
+        commit: Option<CommitCounter>,
+    ) -> DamageSet<i32, Physical> {
         clipped_surface_damage(self.inner.geometry(scale).size, self.clip_changed, || {
             self.inner.damage_since(scale, commit)
         })
@@ -634,8 +660,8 @@ mod tests {
     use smithay::utils::{Buffer, Logical, Physical, Rectangle, Scale, Transform};
 
     use super::{
-        border_gradient_line, color_with_alpha, framebuffer_clip_rect, resize_content_behavior, rounded_visual_rect,
-        scaled_visual_rect, shadow_bounds,
+        border_gradient_line, color_with_alpha, framebuffer_clip_rect, resize_content_behavior,
+        rounded_visual_rect, scaled_visual_rect, shadow_bounds,
     };
 
     #[test]
@@ -643,9 +669,14 @@ mod tests {
     fn solid_corner_mask_preserves_premultiplied_color() {
         use smithay::backend::allocator::Fourcc;
         use smithay::backend::egl::{EGLContext, EGLDevice, EGLDisplay};
-        use smithay::backend::renderer::gles::{GlesRenderer, GlesTexture, Uniform, UniformName, UniformType};
+        use smithay::backend::renderer::gles::{
+            GlesRenderer, GlesTexture, Uniform, UniformName, UniformType,
+        };
         use smithay::backend::renderer::{Bind, Color32F, ExportMem, Frame, Offscreen, Renderer};
-        let device = EGLDevice::enumerate().unwrap().last().expect("an EGL device");
+        let device = EGLDevice::enumerate()
+            .unwrap()
+            .last()
+            .expect("an EGL device");
         let display = unsafe { EGLDisplay::new(device).unwrap() };
         let context = EGLContext::new(&display).unwrap();
         let mut renderer = unsafe { GlesRenderer::new(context).unwrap() };
@@ -662,7 +693,9 @@ mod tests {
         let size = (32, 32).into();
         let mut texture: GlesTexture = renderer.create_buffer(Fourcc::Abgr8888, size).unwrap();
         let rect = Rectangle::<i32, Physical>::from_size((32, 32).into());
-        for (radius, corner_alpha, inset) in [(12.0f32, 0u8, 0.0f32), (0.0, 64, 0.0), (0.0, 48, 0.25)] {
+        for (radius, corner_alpha, inset) in
+            [(12.0f32, 0u8, 0.0f32), (0.0, 64, 0.0), (0.0, 48, 0.25)]
+        {
             let mut target = renderer.bind(&mut texture).unwrap();
             {
                 let mut frame = renderer
@@ -678,7 +711,10 @@ mod tests {
                         Some(&[rect]),
                         0.5,
                         &[
-                            Uniform::new("clip_rect", [inset, inset, 32.0 - 2.0 * inset, 32.0 - 2.0 * inset]),
+                            Uniform::new(
+                                "clip_rect",
+                                [inset, inset, 32.0 - 2.0 * inset, 32.0 - 2.0 * inset],
+                            ),
                             Uniform::new("radius", radius),
                             Uniform::new("color", [0.5f32, 0.0, 0.0, 0.5]),
                         ],
@@ -702,7 +738,10 @@ mod tests {
     fn shared_corner_shaders_compile() {
         use smithay::backend::egl::{EGLContext, EGLDevice, EGLDisplay};
         use smithay::backend::renderer::gles::GlesRenderer;
-        let device = EGLDevice::enumerate().unwrap().last().expect("an EGL device");
+        let device = EGLDevice::enumerate()
+            .unwrap()
+            .last()
+            .expect("an EGL device");
         let display = unsafe { EGLDisplay::new(device).unwrap() };
         let context = EGLContext::new(&display).unwrap();
         let mut renderer = unsafe { GlesRenderer::new(context).unwrap() };
@@ -729,22 +768,33 @@ mod tests {
         use smithay::backend::allocator::Fourcc;
         use smithay::backend::egl::{EGLContext, EGLDevice, EGLDisplay};
         use smithay::backend::renderer::gles::{GlesRenderer, GlesTexture, Uniform};
-        use smithay::backend::renderer::{Bind, Color32F, ExportMem, Frame, ImportMem, Offscreen, Renderer};
+        use smithay::backend::renderer::{
+            Bind, Color32F, ExportMem, Frame, ImportMem, Offscreen, Renderer,
+        };
 
-        let device = EGLDevice::enumerate().unwrap().last().expect("an EGL device");
+        let device = EGLDevice::enumerate()
+            .unwrap()
+            .last()
+            .expect("an EGL device");
         let display = unsafe { EGLDisplay::new(device).unwrap() };
         let context = EGLContext::new(&display).unwrap();
         let mut renderer = unsafe { GlesRenderer::new(context).unwrap() };
         let program = renderer
-            .compile_custom_texture_shader(super::corner_shader(super::BLUR_SHADER), &super::blur_uniform_names())
+            .compile_custom_texture_shader(
+                super::corner_shader(super::BLUR_SHADER),
+                &super::blur_uniform_names(),
+            )
             .unwrap();
         let size = (32, 32).into();
         let mut pixels = vec![128u8; 32 * 32 * 4];
         for pixel in pixels.as_chunks_mut::<4>().0 {
             pixel[3] = 255;
         }
-        let blurred = renderer.import_memory(&pixels, Fourcc::Abgr8888, size, false).unwrap();
-        let mut target_texture: GlesTexture = renderer.create_buffer(Fourcc::Abgr8888, size).unwrap();
+        let blurred = renderer
+            .import_memory(&pixels, Fourcc::Abgr8888, size, false)
+            .unwrap();
+        let mut target_texture: GlesTexture =
+            renderer.create_buffer(Fourcc::Abgr8888, size).unwrap();
         let damage = Rectangle::<i32, Physical>::from_size((32, 32).into());
 
         for (opacity, strength, tint) in [
@@ -768,7 +818,9 @@ mod tests {
                 let mut frame = renderer
                     .render(&mut target, (32, 32).into(), Transform::Normal)
                     .unwrap();
-                frame.clear(Color32F::new(0.0, 0.0, 0.0, 1.0), &[damage]).unwrap();
+                frame
+                    .clear(Color32F::new(0.0, 0.0, 0.0, 1.0), &[damage])
+                    .unwrap();
                 frame
                     .draw_solid(
                         Rectangle::new((0, 0).into(), (16, 32).into()),
@@ -801,7 +853,8 @@ mod tests {
                 left.abs_diff(right) <= 2,
                 "opacity {opacity} leaked the original backdrop: {left} versus {right}"
             );
-            let expected = (128.0 * (1.0 - strength * opacity) + tint * 255.0 * strength * opacity).round() as u8;
+            let expected = (128.0 * (1.0 - strength * opacity) + tint * 255.0 * strength * opacity)
+                .round() as u8;
             assert!(
                 left.abs_diff(expected) <= 2,
                 "opacity {opacity} failed to control tint: {left} versus {expected}"
@@ -823,7 +876,8 @@ mod tests {
             Transform::Flipped270,
         ] {
             let area = transform.transform_size(mode).to_f64();
-            let rect: Rectangle<i32, Physical> = Rectangle::new((110, 60).into(), (800, 600).into());
+            let rect: Rectangle<i32, Physical> =
+                Rectangle::new((110, 60).into(), (800, 600).into());
             for (angle, first, last) in [
                 (0.0, (110.0, 360.0), (910.0, 360.0)),
                 (90.0, (510.0, 60.0), (510.0, 660.0)),
@@ -836,8 +890,14 @@ mod tests {
                     (point.x - f64::from(line[0])) * f64::from(line[2])
                         + (point.y - f64::from(line[1])) * f64::from(line[3])
                 };
-                assert!(progress(first.into()).abs() < 0.00001, "{transform:?}, {angle}");
-                assert!((progress(last.into()) - 1.0).abs() < 0.00001, "{transform:?}, {angle}");
+                assert!(
+                    progress(first.into()).abs() < 0.00001,
+                    "{transform:?}, {angle}"
+                );
+                assert!(
+                    (progress(last.into()) - 1.0).abs() < 0.00001,
+                    "{transform:?}, {angle}"
+                );
             }
         }
     }
@@ -888,7 +948,12 @@ mod tests {
         }
 
         fn src(&self) -> Rectangle<f64, Buffer> {
-            Rectangle::from_size(self.geometry.size.to_f64().to_buffer(1.0, Transform::Normal))
+            Rectangle::from_size(
+                self.geometry
+                    .size
+                    .to_f64()
+                    .to_buffer(1.0, Transform::Normal),
+            )
         }
 
         fn geometry(&self, scale: Scale<f64>) -> Rectangle<i32, Physical> {
@@ -904,9 +969,9 @@ mod tests {
                 if commit == Some(self.current_commit()) {
                     smithay::backend::renderer::utils::DamageSet::default()
                 } else {
-                    smithay::backend::renderer::utils::DamageSet::from_slice(&[Rectangle::from_size(
-                        self.geometry(scale).size,
-                    )])
+                    smithay::backend::renderer::utils::DamageSet::from_slice(&[
+                        Rectangle::from_size(self.geometry(scale).size),
+                    ])
                 }
             })
         }
@@ -933,7 +998,12 @@ mod tests {
             element.clip_changed = resources.thumbnail_corner_changed(window, output, shape);
             assert_eq!(element.commit, client_commit);
             assert!(element.clip_changed);
-            let damage = tracker.damage_output(1, &[&element]).unwrap().0.cloned().unwrap();
+            let damage = tracker
+                .damage_output(1, &[&element])
+                .unwrap()
+                .0
+                .cloned()
+                .unwrap();
             assert!(damage.iter().any(|rect| rect.contains((100, 100))));
             assert!(damage.iter().any(|rect| rect.contains((299, 259))));
             element.clip_changed = resources.thumbnail_corner_changed(window, output, shape);
@@ -949,7 +1019,9 @@ mod tests {
 
     #[test]
     fn resize_keeps_source_pixels_native_when_growing_and_shrinking() {
-        use smithay::backend::renderer::element::utils::{ConstrainAlign, constrain_render_elements};
+        use smithay::backend::renderer::element::utils::{
+            ConstrainAlign, constrain_render_elements,
+        };
         for scale in [1.0, 1.5, 1.8, 2.0] {
             for width in [300, 600, 1200] {
                 let source = Rectangle::<i32, Logical>::from_size((600, 800).into());
@@ -1020,14 +1092,18 @@ mod tests {
                 Transform::Flipped180,
                 Transform::Flipped270,
             ] {
-                let output_size =
-                    smithay::utils::Size::<i32, Physical>::from(((1280.0 * scale) as i32, (800.0 * scale) as i32));
+                let output_size = smithay::utils::Size::<i32, Physical>::from((
+                    (1280.0 * scale) as i32,
+                    (800.0 * scale) as i32,
+                ));
                 let element_size = transform.transform_size(output_size);
                 let logical_height = f64::from(element_size.h) / scale;
                 // Bar and exclusion end at 40; the 10px outer gap ends at 50.
-                let geometry =
-                    Rectangle::<f64, Logical>::new((10.0, 50.0).into(), (400.0, logical_height - 60.0).into())
-                        .to_physical_precise_round(scale);
+                let geometry = Rectangle::<f64, Logical>::new(
+                    (10.0, 50.0).into(),
+                    (400.0, logical_height - 60.0).into(),
+                )
+                .to_physical_precise_round(scale);
                 let clip = framebuffer_clip_rect(geometry, output_size, transform);
                 // Independently reproduce GlesFrame's orthographic projection,
                 // transform matrix, GL flip, and viewport mapping for each corner.
@@ -1048,7 +1124,10 @@ mod tests {
                 let max_x = xs.iter().copied().fold(f32::NEG_INFINITY, f32::max);
                 let min_y = ys.iter().copied().fold(f32::INFINITY, f32::min);
                 let max_y = ys.iter().copied().fold(f32::NEG_INFINITY, f32::max);
-                for (actual, expected) in clip.into_iter().zip([min_x, min_y, max_x - min_x, max_y - min_y]) {
+                for (actual, expected) in
+                    clip.into_iter()
+                        .zip([min_x, min_y, max_x - min_x, max_y - min_y])
+                {
                     assert!(
                         (actual - expected).abs() < 0.001,
                         "{transform:?}, scale={scale}: {actual} != {expected}"
@@ -1077,11 +1156,17 @@ mod tests {
         let old_window = Rectangle::<i32, Logical>::new((100, 80).into(), (400, 300).into());
         let new_window = Rectangle::<i32, Logical>::new((300, 180).into(), (400, 300).into());
         let mut shadow = DamageElement::new(shadow_bounds(old_window, 4.0, 18.0));
-        let mut tracker = OutputDamageTracker::new((1_000, 800), Scale::from(1.0), Transform::Normal);
+        let mut tracker =
+            OutputDamageTracker::new((1_000, 800), Scale::from(1.0), Transform::Normal);
 
         tracker.damage_output(0, &[&shadow]).unwrap();
         shadow.geometry = shadow_bounds(new_window, 4.0, 18.0);
-        let damage = tracker.damage_output(1, &[&shadow]).unwrap().0.cloned().unwrap();
+        let damage = tracker
+            .damage_output(1, &[&shadow])
+            .unwrap()
+            .0
+            .cloned()
+            .unwrap();
 
         assert!(damage.iter().any(|rect| rect.contains((64, 48))));
         assert!(damage.iter().any(|rect| rect.contains((735, 519))));
@@ -1098,13 +1183,22 @@ mod tests {
     #[test]
     fn translucent_materials_blur_at_full_opacity() {
         use crate::config::MaterialStyle;
-        assert_eq!(super::material_blur_radius(MaterialStyle::Translucent, 0.0, 18.0), 0.0);
-        assert_eq!(super::material_blur_radius(MaterialStyle::Translucent, 1.0, 18.0), 18.0);
+        assert_eq!(
+            super::material_blur_radius(MaterialStyle::Translucent, 0.0, 18.0),
+            0.0
+        );
+        assert_eq!(
+            super::material_blur_radius(MaterialStyle::Translucent, 1.0, 18.0),
+            18.0
+        );
         assert_eq!(
             super::material_blur_radius(MaterialStyle::Translucent, 0.79, 18.0),
             18.0
         );
-        assert_eq!(super::material_blur_radius(MaterialStyle::Solid, 0.79, 18.0), 0.0);
+        assert_eq!(
+            super::material_blur_radius(MaterialStyle::Solid, 0.79, 18.0),
+            0.0
+        );
     }
 
     #[test]
@@ -1120,7 +1214,10 @@ mod tests {
 
     #[test]
     fn close_opacity_only_changes_the_alpha_channel() {
-        assert_eq!(color_with_alpha([0.2, 0.4, 0.6, 0.8], 0.5), [0.2, 0.4, 0.6, 0.4]);
+        assert_eq!(
+            color_with_alpha([0.2, 0.4, 0.6, 0.8], 0.5),
+            [0.2, 0.4, 0.6, 0.4]
+        );
     }
 
     #[test]
@@ -1134,7 +1231,10 @@ mod tests {
 
         for tenth in 0..=10 {
             let left = 100.0 + f64::from(tenth) / 10.0;
-            let frame = rounded_visual_rect(ferese_layout::Rect::new(left, 50.0, 500.0 - left, 300.0), (0, 0).into());
+            let frame = rounded_visual_rect(
+                ferese_layout::Rect::new(left, 50.0, 500.0 - left, 300.0),
+                (0, 0).into(),
+            );
 
             assert_eq!(frame.loc.x + frame.size.w, 500);
         }

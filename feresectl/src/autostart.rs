@@ -33,14 +33,20 @@ pub(crate) fn run() -> Result<(), Box<dyn std::error::Error>> {
     if system_directories.is_empty() {
         system_directories.push(PathBuf::from("/etc/xdg"));
     }
-    let directories = std::iter::once(home).chain(system_directories).collect::<Vec<_>>();
+    let directories = std::iter::once(home)
+        .chain(system_directories)
+        .collect::<Vec<_>>();
     let mut entries = BTreeMap::new();
     for directory in directories {
         let Ok(files) = fs::read_dir(directory.join("autostart")) else {
             continue;
         };
         for file in files.flatten() {
-            if file.path().extension().is_some_and(|extension| extension == "desktop") {
+            if file
+                .path()
+                .extension()
+                .is_some_and(|extension| extension == "desktop")
+            {
                 entries.entry(file.file_name()).or_insert(file.path());
             }
         }
@@ -100,7 +106,9 @@ fn read_entry(path: &Path) -> Option<BTreeMap<String, String>> {
         return None;
     }
     let mut source = String::new();
-    file.take(1024 * 1024 + 1).read_to_string(&mut source).ok()?;
+    file.take(1024 * 1024 + 1)
+        .read_to_string(&mut source)
+        .ok()?;
     if source.len() > 1024 * 1024 {
         return None;
     }
@@ -142,12 +150,15 @@ fn enabled(entry: &BTreeMap<String, String>, desktop: &str) -> bool {
 fn available(program: &str) -> bool {
     use std::os::unix::fs::PermissionsExt;
     let executable = |path: &Path| {
-        fs::metadata(path).is_ok_and(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
+        fs::metadata(path)
+            .is_ok_and(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
     };
     if program.contains('/') {
         executable(Path::new(program))
     } else {
-        env::var_os("PATH").is_some_and(|paths| env::split_paths(&paths).any(|path| executable(&path.join(program))))
+        env::var_os("PATH").is_some_and(|paths| {
+            env::split_paths(&paths).any(|path| executable(&path.join(program)))
+        })
     }
 }
 

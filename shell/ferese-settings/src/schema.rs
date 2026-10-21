@@ -18,7 +18,10 @@ pub enum Page {
 impl Page {
     pub const NAVIGATION: [(&'static str, &'static [Self]); 3] = [
         ("Desktop", &[Self::Appearance, Self::Wallpaper, Self::Bar]),
-        ("Interaction", &[Self::Windows, Self::Keyboard, Self::Accessibility]),
+        (
+            "Interaction",
+            &[Self::Windows, Self::Keyboard, Self::Accessibility],
+        ),
         (
             "System",
             &[
@@ -43,7 +46,10 @@ impl Page {
     pub fn subpages(self) -> &'static [(Self, &'static str)] {
         match self.navigation_page() {
             Self::Windows => &[(Self::Windows, "Windows"), (Self::Motion, "Motion")],
-            Self::Keyboard => &[(Self::Keyboard, "Keyboard & mouse"), (Self::Shortcuts, "Shortcuts")],
+            Self::Keyboard => &[
+                (Self::Keyboard, "Keyboard & mouse"),
+                (Self::Shortcuts, "Shortcuts"),
+            ],
             _ => &[],
         }
     }
@@ -114,7 +120,9 @@ impl Page {
 
     pub fn icon(self) -> &'static str {
         match self {
-            Self::Accessibility => "M12 3a2 2 0 1 0 0 4a2 2 0 1 0 0-4 M4 9h16 M12 9v6 M12 15l-5 6 M12 15l5 6",
+            Self::Accessibility => {
+                "M12 3a2 2 0 1 0 0 4a2 2 0 1 0 0-4 M4 9h16 M12 9v6 M12 15l-5 6 M12 15l5 6"
+            }
             Self::Appearance => {
                 "M12 3a9 9 0 1 0 0 18h1a2 2 0 0 0 0-4h-1a1 1 0 0 1 0-2h3a6 6 0 0 0 0-12z M7 9h.01 M10 6h.01 M15 6h.01 M18 10h.01"
             }
@@ -132,12 +140,18 @@ impl Page {
             }
             Self::Startup => "M12 3v9 M7 5a9 9 0 1 0 10 0",
             Self::Displays => "M3 4h18v13H3z M12 17v4 M8 21h8",
-            Self::Connections => "M2 8a16 16 0 0 1 20 0 M5 12a11 11 0 0 1 14 0 M8 16a6 6 0 0 1 8 0 M12 20h.01",
+            Self::Connections => {
+                "M2 8a16 16 0 0 1 20 0 M5 12a11 11 0 0 1 14 0 M8 16a6 6 0 0 1 8 0 M12 20h.01"
+            }
         }
     }
 
     pub fn matches(self, query: &str) -> bool {
-        self.matches_own(query) || self.subpages().iter().any(|(page, _)| page.matches_own(query))
+        self.matches_own(query)
+            || self
+                .subpages()
+                .iter()
+                .any(|(page, _)| page.matches_own(query))
     }
 
     fn matches_own(self, query: &str) -> bool {
@@ -182,7 +196,12 @@ pub struct Field {
 }
 
 impl Field {
-    pub fn new(path: impl Into<String>, label: impl Into<String>, description: impl Into<String>, kind: Kind) -> Self {
+    pub fn new(
+        path: impl Into<String>,
+        label: impl Into<String>,
+        description: impl Into<String>,
+        kind: Kind,
+    ) -> Self {
         Self {
             path: path.into(),
             label: label.into(),
@@ -241,7 +260,15 @@ pub fn text(
     description: impl Into<String>,
     default: &'static str,
 ) -> Field {
-    Field::new(path, label, description, Kind::Text { default, argv: false })
+    Field::new(
+        path,
+        label,
+        description,
+        Kind::Text {
+            default,
+            argv: false,
+        },
+    )
 }
 
 pub fn choice(

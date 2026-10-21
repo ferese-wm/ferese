@@ -101,12 +101,18 @@ fn security(flags: u32, wpa: u32, rsn: u32) -> Security {
 
 pub(crate) async fn read(connection: &Connection) -> Result<Wifi, String> {
     let root = proxy(connection, NM, ROOT, NM).await?;
-    let enabled = root.get_property("WirelessEnabled").await.map_err(|e| e.to_string())?;
+    let enabled = root
+        .get_property("WirelessEnabled")
+        .await
+        .map_err(|e| e.to_string())?;
     let hardware_enabled = root
         .get_property("WirelessHardwareEnabled")
         .await
         .map_err(|e| e.to_string())?;
-    let devices: Vec<OwnedObjectPath> = root.call("GetDevices", &()).await.map_err(|e| e.to_string())?;
+    let devices: Vec<OwnedObjectPath> = root
+        .call("GetDevices", &())
+        .await
+        .map_err(|e| e.to_string())?;
     let saved = profiles(connection).await?;
     let mut result = Wifi {
         enabled,
@@ -120,7 +126,10 @@ pub(crate) async fn read(connection: &Connection) -> Result<Wifi, String> {
         if device.get_property::<u32>("DeviceType").await.unwrap_or(0) != 2 {
             continue;
         }
-        let name: String = device.get_property("Interface").await.map_err(|e| e.to_string())?;
+        let name: String = device
+            .get_property("Interface")
+            .await
+            .map_err(|e| e.to_string())?;
         result.radios.push(Radio {
             path: path.to_string(),
             name,
@@ -128,7 +137,10 @@ pub(crate) async fn read(connection: &Connection) -> Result<Wifi, String> {
         if !enabled {
             continue;
         }
-        let state: u32 = device.get_property("State").await.map_err(|e| e.to_string())?;
+        let state: u32 = device
+            .get_property("State")
+            .await
+            .map_err(|e| e.to_string())?;
         let wireless = proxy(connection, NM, path.as_str(), WIRELESS).await?;
         let active: OwnedObjectPath = wireless
             .get_property("ActiveAccessPoint")
@@ -144,10 +156,19 @@ pub(crate) async fn read(connection: &Connection) -> Result<Wifi, String> {
             if ssid.is_empty() {
                 continue;
             }
-            let strength = ap.get_property("Strength").await.map_err(|e| e.to_string())?;
+            let strength = ap
+                .get_property("Strength")
+                .await
+                .map_err(|e| e.to_string())?;
             let flags: u32 = ap.get_property("Flags").await.map_err(|e| e.to_string())?;
-            let wpa: u32 = ap.get_property("WpaFlags").await.map_err(|e| e.to_string())?;
-            let rsn: u32 = ap.get_property("RsnFlags").await.map_err(|e| e.to_string())?;
+            let wpa: u32 = ap
+                .get_property("WpaFlags")
+                .await
+                .map_err(|e| e.to_string())?;
+            let rsn: u32 = ap
+                .get_property("RsnFlags")
+                .await
+                .map_err(|e| e.to_string())?;
             let auth = security(flags, wpa, rsn);
             let saved = result
                 .saved
@@ -187,17 +208,31 @@ fn compatible(saved: Security, advertised: Security, auth: u32) -> bool {
 
 fn insert_network(networks: &mut BTreeMap<(Vec<u8>, Security, String), Network>, network: Network) {
     // Keep adapters separate, and prefer the active AP over a stronger same-SSID AP.
-    let key = (network.ssid.clone(), network.security, network.device.clone());
+    let key = (
+        network.ssid.clone(),
+        network.security,
+        network.device.clone(),
+    );
     if networks.get(&key).is_none_or(|old| {
-        (network.connected, network.connecting, network.strength) > (old.connected, old.connecting, old.strength)
+        (network.connected, network.connecting, network.strength)
+            > (old.connected, old.connecting, old.strength)
     }) {
         networks.insert(key, network);
     }
 }
 
 async fn profiles(connection: &Connection) -> Result<Vec<Saved>, String> {
-    let settings = proxy(connection, NM, "/org/freedesktop/NetworkManager/Settings", SETTINGS).await?;
-    let paths: Vec<OwnedObjectPath> = settings.call("ListConnections", &()).await.map_err(|e| e.to_string())?;
+    let settings = proxy(
+        connection,
+        NM,
+        "/org/freedesktop/NetworkManager/Settings",
+        SETTINGS,
+    )
+    .await?;
+    let paths: Vec<OwnedObjectPath> = settings
+        .call("ListConnections", &())
+        .await
+        .map_err(|e| e.to_string())?;
     let mut saved = Vec::new();
     for path in paths {
         let profile = proxy(connection, NM, path.as_str(), PROFILE).await?;
@@ -252,7 +287,10 @@ pub(crate) async fn power(connection: &Connection, enabled: bool) -> Result<(), 
 
 pub(crate) async fn scan(connection: &Connection) -> Result<(), String> {
     let root = proxy(connection, NM, ROOT, NM).await?;
-    let devices: Vec<OwnedObjectPath> = root.call("GetDevices", &()).await.map_err(|e| e.to_string())?;
+    let devices: Vec<OwnedObjectPath> = root
+        .call("GetDevices", &())
+        .await
+        .map_err(|e| e.to_string())?;
     let mut found = false;
     for path in devices {
         let device = proxy(connection, NM, path.as_str(), DEVICE).await?;
@@ -331,7 +369,11 @@ fn settings<'a>(
     Ok(settings)
 }
 
-pub(crate) async fn connect(connection: &Connection, network: &Network, password: &str) -> Result<(), String> {
+pub(crate) async fn connect(
+    connection: &Connection,
+    network: &Network,
+    password: &str,
+) -> Result<(), String> {
     let root = proxy(connection, NM, ROOT, NM).await?;
     let device = OwnedObjectPath::try_from(network.device.as_str()).map_err(|e| e.to_string())?;
     let ap = OwnedObjectPath::try_from(network.ap.as_str()).map_err(|e| e.to_string())?;
@@ -341,7 +383,10 @@ pub(crate) async fn connect(connection: &Connection, network: &Network, password
                 return Err("Invalid network password.".into());
             }
             let profile = proxy(connection, NM, saved, PROFILE).await?;
-            let previous: Settings = profile.call("GetSettings", &()).await.map_err(|e| e.to_string())?;
+            let previous: Settings = profile
+                .call("GetSettings", &())
+                .await
+                .map_err(|e| e.to_string())?;
             let mut values: HashMap<String, HashMap<String, Value<'_>>> = previous
                 .into_iter()
                 .map(|(section, values)| {
@@ -383,9 +428,17 @@ pub(crate) async fn connect(connection: &Connection, network: &Network, password
     )
     .await?;
     for _ in 0..90 {
-        match active.get_property::<u32>("State").await.map_err(|e| e.to_string())? {
+        match active
+            .get_property::<u32>("State")
+            .await
+            .map_err(|e| e.to_string())?
+        {
             2 => return Ok(()),
-            3 | 4 => return Err("The network connection failed. Check the password and try again.".into()),
+            3 | 4 => {
+                return Err(
+                    "The network connection failed. Check the password and try again.".into(),
+                );
+            }
             _ => tokio::time::sleep(std::time::Duration::from_secs(1)).await,
         }
     }
@@ -464,10 +517,17 @@ mod tests {
         let mut network = network();
         network.hidden = true;
         let values = settings(&network, "password").unwrap();
-        assert_eq!(values["802-11-wireless-security"]["psk"], Value::from("password"));
+        assert_eq!(
+            values["802-11-wireless-security"]["psk"],
+            Value::from("password")
+        );
         assert_eq!(values["802-11-wireless"]["hidden"], Value::from(true));
         network.security = Security::Open;
-        assert!(!settings(&network, "").unwrap().contains_key("802-11-wireless-security"));
+        assert!(
+            !settings(&network, "")
+                .unwrap()
+                .contains_key("802-11-wireless-security")
+        );
         network.security = Security::Enterprise;
         assert!(settings(&network, "password").is_err());
     }

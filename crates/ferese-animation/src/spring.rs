@@ -2,7 +2,13 @@ use super::SpringConfig;
 
 /// Solve m y'' + c y' + k y = 0, with y = current - target.
 /// No settling tolerance or crossing clamp is applied here.
-pub(super) fn solve(current: f64, velocity: f64, target: f64, dt: f64, config: SpringConfig) -> (f64, f64) {
+pub(super) fn solve(
+    current: f64,
+    velocity: f64,
+    target: f64,
+    dt: f64,
+    config: SpringConfig,
+) -> (f64, f64) {
     if dt <= 0.0 || !dt.is_finite() {
         return (current, velocity);
     }
@@ -20,7 +26,8 @@ pub(super) fn solve(current: f64, velocity: f64, target: f64, dt: f64, config: S
     // rather than replacing a neighborhood with the critical solution.
     if z2.abs() < 0.01 {
         let c = 1.0 + z2 * (0.5 + z2 * (1.0 / 24.0 + z2 * (1.0 / 720.0 + z2 / 40320.0)));
-        let s = dt * (1.0 + z2 * (1.0 / 6.0 + z2 * (1.0 / 120.0 + z2 * (1.0 / 5040.0 + z2 / 362880.0))));
+        let s = dt
+            * (1.0 + z2 * (1.0 / 6.0 + z2 * (1.0 / 120.0 + z2 * (1.0 / 5040.0 + z2 / 362880.0))));
         let e = (-a * dt).exp();
         return (
             target + e * (y * c + (velocity + a * y) * s),
@@ -46,13 +53,22 @@ pub(super) fn solve(current: f64, velocity: f64, target: f64, dt: f64, config: S
         let fast_coefficient = (slow * y - velocity) / (2.0 * q);
         let slow_term = slow_coefficient * (slow * dt).exp();
         let fast_term = fast_coefficient * (fast * dt).exp();
-        (target + slow_term + fast_term, slow * slow_term + fast * fast_term)
+        (
+            target + slow_term + fast_term,
+            slow * slow_term + fast * fast_term,
+        )
     }
 }
 
 /// True if the physical trajectory reaches equilibrium anywhere in (0, dt].
 /// Endpoint-only tests miss an even number of crossings after a long stall.
-pub(super) fn crosses(current: f64, velocity: f64, target: f64, dt: f64, config: SpringConfig) -> bool {
+pub(super) fn crosses(
+    current: f64,
+    velocity: f64,
+    target: f64,
+    dt: f64,
+    config: SpringConfig,
+) -> bool {
     if dt <= 0.0 {
         return false;
     }
@@ -70,7 +86,11 @@ pub(super) fn crosses(current: f64, velocity: f64, target: f64, dt: f64, config:
     let crossing = if d < 0.0 {
         let w = (-d).sqrt();
         let phase = (-y * w).atan2(b).rem_euclid(std::f64::consts::PI);
-        let phase = if phase == 0.0 { std::f64::consts::PI } else { phase };
+        let phase = if phase == 0.0 {
+            std::f64::consts::PI
+        } else {
+            phase
+        };
         phase / w
     } else if y == 0.0 || b == 0.0 {
         return false;

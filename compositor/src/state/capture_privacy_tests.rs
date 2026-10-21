@@ -22,7 +22,13 @@ use smithay::wayland::shell::xdg::{XdgShellHandler, XdgToplevelSurfaceData, XdgW
 use crate::Ferese;
 use crate::state::{ClientState, DesktopOutput};
 
-pub(crate) fn request(wire: &mut UnixStream, object: u32, opcode: u32, args: &[u32], fd: Option<RawFd>) {
+pub(crate) fn request(
+    wire: &mut UnixStream,
+    object: u32,
+    opcode: u32,
+    args: &[u32],
+    fd: Option<RawFd>,
+) {
     let bytes = [object, (((args.len() + 2) * 4) as u32) << 16 | opcode]
         .into_iter()
         .chain(args.iter().copied())
@@ -47,7 +53,10 @@ pub(crate) fn request(wire: &mut UnixStream, object: u32, opcode: u32, args: &[u
             (*header).cmsg_type = libc::SCM_RIGHTS;
             (*header).cmsg_len = libc::CMSG_LEN(std::mem::size_of::<RawFd>() as u32) as usize;
             libc::CMSG_DATA(header).cast::<RawFd>().write(fd);
-            assert_eq!(libc::sendmsg(wire.as_raw_fd(), &msg, 0), bytes.len() as isize);
+            assert_eq!(
+                libc::sendmsg(wire.as_raw_fd(), &msg, 0),
+                bytes.len() as isize
+            );
         }
     } else {
         wire.write_all(&bytes).unwrap();
@@ -70,7 +79,9 @@ pub(crate) fn ack_configure(wire: &mut UnixStream, xdg: u32) -> u32 {
         let object = u32::from_ne_bytes(bytes[offset..offset + 4].try_into().unwrap());
         let header = u32::from_ne_bytes(bytes[offset + 4..offset + 8].try_into().unwrap());
         if object == xdg && header & 0xffff == 0 {
-            serial = Some(u32::from_ne_bytes(bytes[offset + 8..offset + 12].try_into().unwrap()));
+            serial = Some(u32::from_ne_bytes(
+                bytes[offset + 8..offset + 12].try_into().unwrap(),
+            ));
         }
         offset += (header >> 16) as usize;
     }
@@ -79,7 +90,11 @@ pub(crate) fn ack_configure(wire: &mut UnixStream, xdg: u32) -> u32 {
     serial.unwrap()
 }
 
-pub(crate) fn window(state: &mut Ferese, events: &mut EventLoop<'static, Ferese>, color: u32) -> (Window, UnixStream) {
+pub(crate) fn window(
+    state: &mut Ferese,
+    events: &mut EventLoop<'static, Ferese>,
+    color: u32,
+) -> (Window, UnixStream) {
     let (server, mut wire) = UnixStream::pair().unwrap();
     let client = state
         .display_handle
@@ -93,7 +108,11 @@ pub(crate) fn window(state: &mut Ferese, events: &mut EventLoop<'static, Ferese>
         )
         .unwrap();
     let shell = client
-        .create_resource::<XdgWmBase, XdgWmBaseUserData, Ferese>(&state.display_handle, 6, Default::default())
+        .create_resource::<XdgWmBase, XdgWmBaseUserData, Ferese>(
+            &state.display_handle,
+            6,
+            Default::default(),
+        )
         .unwrap();
     let shm = client
         .create_resource::<WlShm, smithay::wayland::GlobalData, Ferese>(
@@ -109,7 +128,8 @@ pub(crate) fn window(state: &mut Ferese, events: &mut EventLoop<'static, Ferese>
     dispatch(events, state);
     ack_configure(&mut wire, 3);
     let mut file = tempfile::tempfile().unwrap();
-    file.write_all(&color.to_ne_bytes().repeat(64 * 48)).unwrap();
+    file.write_all(&color.to_ne_bytes().repeat(64 * 48))
+        .unwrap();
     request(
         &mut wire,
         shm.id().protocol_id(),
@@ -169,7 +189,11 @@ fn attach_children(
     request(wire, 7, 6, &[], None);
     request(wire, 2, 6, &[], None);
     let shell = client
-        .create_resource::<XdgWmBase, XdgWmBaseUserData, Ferese>(&state.display_handle, 6, Default::default())
+        .create_resource::<XdgWmBase, XdgWmBaseUserData, Ferese>(
+            &state.display_handle,
+            6,
+            Default::default(),
+        )
         .unwrap();
     request(wire, compositor.id().protocol_id(), 0, &[9], None);
     request(wire, shell.id().protocol_id(), 2, &[10, 9], None);
@@ -185,7 +209,8 @@ fn attach_children(
     request(wire, 9, 6, &[], None);
     dispatch(events, state);
     assert_eq!(
-        smithay::desktop::PopupManager::popups_for_surface(window.toplevel().unwrap().wl_surface()).count(),
+        smithay::desktop::PopupManager::popups_for_surface(window.toplevel().unwrap().wl_surface())
+            .count(),
         1
     );
 }
@@ -224,7 +249,13 @@ fn pixels(
                 Rectangle::from_size((320, 240).into()),
             ));
         let mut target = Some(texture.clone());
-        crate::backends::direct::capture::capture_output(state, renderer, &mut target, output, &scene);
+        crate::backends::direct::capture::capture_output(
+            state,
+            renderer,
+            &mut target,
+            output,
+            &scene,
+        );
         let mut result = receiver.try_recv().unwrap().result.unwrap().pixels;
         for pixel in result.chunks_exact_mut(4) {
             pixel.swap(0, 2);
@@ -235,7 +266,11 @@ fn pixels(
     let mut target = renderer.bind(texture).unwrap();
     crate::render::redraw_output(renderer, &mut target, output, &elements).unwrap();
     let mapping = renderer
-        .copy_framebuffer(&target, Rectangle::from_size((320, 240).into()), Fourcc::Abgr8888)
+        .copy_framebuffer(
+            &target,
+            Rectangle::from_size((320, 240).into()),
+            Fourcc::Abgr8888,
+        )
         .unwrap();
     renderer.map_texture(&mapping).unwrap().to_vec()
 }
@@ -300,28 +335,47 @@ fn lock_scene_draws_the_pointer_and_delivers_client_cursor_frames() {
         smithay::input::pointer::CursorIcon::Default,
         crate::cursor::fallback_cursor(),
     );
-    state.seat.get_pointer().unwrap().set_location((20.0, 20.0).into());
+    state
+        .seat
+        .get_pointer()
+        .unwrap()
+        .set_location((20.0, 20.0).into());
 
     let device = EGLDevice::enumerate().unwrap().last().expect("EGL device");
     let display = unsafe { EGLDisplay::new(device).unwrap() };
     let mut renderer = unsafe { GlesRenderer::new(EGLContext::new(&display).unwrap()).unwrap() };
     let mut texture =
-        Offscreen::<GlesTexture>::create_buffer(&mut renderer, Fourcc::Abgr8888, (320, 240).into()).unwrap();
+        Offscreen::<GlesTexture>::create_buffer(&mut renderer, Fourcc::Abgr8888, (320, 240).into())
+            .unwrap();
 
     for scale in [1.0, 1.75] {
         output.change_current_state(None, None, Some(Scale::Fractional(scale)), None);
         for include_cursor in [false, true] {
             let scene = state.sample_frame(&output, Duration::ZERO);
-            let elements =
-                crate::render::sampled_output_elements(&mut state, &mut renderer, &output, include_cursor, &scene);
+            let elements = crate::render::sampled_output_elements(
+                &mut state,
+                &mut renderer,
+                &output,
+                include_cursor,
+                &scene,
+            );
             let mut target = renderer.bind(&mut texture).unwrap();
             crate::render::redraw_output(&mut renderer, &mut target, &output, &elements).unwrap();
             let mapping = renderer
-                .copy_framebuffer(&target, Rectangle::from_size((320, 240).into()), Fourcc::Abgr8888)
+                .copy_framebuffer(
+                    &target,
+                    Rectangle::from_size((320, 240).into()),
+                    Fourcc::Abgr8888,
+                )
                 .unwrap();
             let bytes = renderer.map_texture(&mapping).unwrap();
-            let white = bytes.chunks_exact(4).any(|pixel| pixel == [255, 255, 255, 255]);
-            assert_eq!(white, include_cursor, "cursor above the dim overlay at scale {scale}");
+            let white = bytes
+                .chunks_exact(4)
+                .any(|pixel| pixel == [255, 255, 255, 255]);
+            assert_eq!(
+                white, include_cursor,
+                "cursor above the dim overlay at scale {scale}"
+            );
             assert!(
                 bytes
                     .chunks_exact(4)
@@ -349,15 +403,25 @@ fn lock_scene_draws_the_pointer_and_delivers_client_cursor_frames() {
     let seat = state.seat.clone();
     state.cursor_image(&seat, CursorImageStatus::Surface(cursor.clone()));
     let scene = state.sample_frame(&output, Duration::ZERO);
-    let elements = crate::render::sampled_output_elements(&mut state, &mut renderer, &output, true, &scene);
+    let elements =
+        crate::render::sampled_output_elements(&mut state, &mut renderer, &output, true, &scene);
     let mut target = renderer.bind(&mut texture).unwrap();
     let mut tracker = OutputDamageTracker::from_output(&output);
     let rendered = tracker
-        .render_output(&mut renderer, &mut target, 0, &elements, [0.0, 0.0, 0.0, 1.0])
+        .render_output(
+            &mut renderer,
+            &mut target,
+            0,
+            &elements,
+            [0.0, 0.0, 0.0, 1.0],
+        )
         .unwrap();
     state.display_presentation.queued(&output, &rendered.states);
     state.display_presentation.presented(&output);
-    assert_eq!(state.callback_outputs().get(&(&cursor).into()), Some(&output));
+    assert_eq!(
+        state.callback_outputs().get(&(&cursor).into()),
+        Some(&output)
+    );
     state.lock_frame_callbacks(&output);
     state.display_handle.flush_clients().unwrap();
     wire.set_nonblocking(true).unwrap();
@@ -371,7 +435,10 @@ fn lock_scene_draws_the_pointer_and_delivers_client_cursor_frames() {
         callback_done |= object == 9 && header & 0xffff == 0;
         offset += (header >> 16) as usize;
     }
-    assert!(callback_done, "the lock owner's cursor must receive its next frame");
+    assert!(
+        callback_done,
+        "the lock owner's cursor must receive its next frame"
+    );
 }
 
 #[test]
@@ -443,9 +510,11 @@ fn capture_privacy_pixels_and_policy_transitions() {
     let context = EGLContext::new(&display).unwrap();
     let mut renderer = unsafe { GlesRenderer::new(context).unwrap() };
     let mut display_texture =
-        Offscreen::<GlesTexture>::create_buffer(&mut renderer, Fourcc::Abgr8888, (320, 240).into()).unwrap();
+        Offscreen::<GlesTexture>::create_buffer(&mut renderer, Fourcc::Abgr8888, (320, 240).into())
+            .unwrap();
     let mut capture_texture =
-        Offscreen::<GlesTexture>::create_buffer(&mut renderer, Fourcc::Abgr8888, (320, 240).into()).unwrap();
+        Offscreen::<GlesTexture>::create_buffer(&mut renderer, Fourcc::Abgr8888, (320, 240).into())
+            .unwrap();
     let has_red = |bytes: &[u8]| bytes.chunks_exact(4).any(|pixel| pixel == [255, 0, 0, 255]);
     assert!(has_red(&pixels(
         &mut state,
@@ -475,11 +544,23 @@ fn capture_privacy_pixels_and_policy_transitions() {
     assert!(!state.capture_window_allowed(id, epoch));
     crate::handlers::window_capture::tests::check_deferred_snapshot(&state, &secret, epoch, false);
     assert!(
-        !has_red(&pixels(&mut state, &mut renderer, &output, true, &mut capture_texture)),
+        !has_red(&pixels(
+            &mut state,
+            &mut renderer,
+            &output,
+            true,
+            &mut capture_texture
+        )),
         "reused capture target leaked previous pixels"
     );
     assert!(
-        has_red(&pixels(&mut state, &mut renderer, &output, false, &mut display_texture)),
+        has_red(&pixels(
+            &mut state,
+            &mut renderer,
+            &output,
+            false,
+            &mut display_texture
+        )),
         "display lost protected content"
     );
     app_id(&mut state, &secret, "ordinary");
@@ -496,11 +577,12 @@ fn capture_privacy_pixels_and_policy_transitions() {
         true,
         &mut capture_texture
     )));
-    let rules =
-        crate::config::Config::parse_source("window-rule app-id=\"ordinary\" block-out-from-screencasts=#true\n")
-            .unwrap()
-            .window_rules()
-            .unwrap();
+    let rules = crate::config::Config::parse_source(
+        "window-rule app-id=\"ordinary\" block-out-from-screencasts=#true\n",
+    )
+    .unwrap()
+    .window_rules()
+    .unwrap();
     state.window_rules = rules;
     state.refresh_capture_privacy();
     assert!(state.capture_protected(&secret));
@@ -522,18 +604,40 @@ fn capture_privacy_pixels_and_policy_transitions() {
         Transform::Flipped270,
     ] {
         for scale in [1.0, 1.25] {
-            output.change_current_state(None, Some(transform), Some(Scale::Fractional(scale)), None);
+            output.change_current_state(
+                None,
+                Some(transform),
+                Some(Scale::Fractional(scale)),
+                None,
+            );
             assert!(
-                has_red(&pixels(&mut state, &mut renderer, &output, false, &mut display_texture)),
+                has_red(&pixels(
+                    &mut state,
+                    &mut renderer,
+                    &output,
+                    false,
+                    &mut display_texture
+                )),
                 "display {transform:?}/{scale}"
             );
             assert!(
-                !has_red(&pixels(&mut state, &mut renderer, &output, true, &mut capture_texture)),
+                !has_red(&pixels(
+                    &mut state,
+                    &mut renderer,
+                    &output,
+                    true,
+                    &mut capture_texture
+                )),
                 "capture {transform:?}/{scale}"
             );
         }
     }
-    output.change_current_state(None, Some(Transform::Normal), Some(Scale::Fractional(1.0)), None);
+    output.change_current_state(
+        None,
+        Some(Transform::Normal),
+        Some(Scale::Fractional(1.0)),
+        None,
+    );
     // An otherwise unprotected child still inherits its parent's protection.
     let (child, _child_wire) = window(&mut state, &mut events, 0xff00ff00);
     with_states(child.toplevel().unwrap().wl_surface(), |states| {
@@ -547,14 +651,34 @@ fn capture_privacy_pixels_and_policy_transitions() {
     });
     state.parent_changed(child.toplevel().unwrap().clone());
     assert!(state.capture_protected(&child));
-    let captured = pixels(&mut state, &mut renderer, &output, true, &mut capture_texture);
+    let captured = pixels(
+        &mut state,
+        &mut renderer,
+        &output,
+        true,
+        &mut capture_texture,
+    );
     assert!(!has_red(&captured));
-    assert!(!captured.chunks_exact(4).any(|pixel| pixel == [0, 255, 0, 255]));
+    assert!(
+        !captured
+            .chunks_exact(4)
+            .any(|pixel| pixel == [0, 255, 0, 255])
+    );
 
     state.set_overview_active(true);
-    let overview = pixels(&mut state, &mut renderer, &output, true, &mut capture_texture);
+    let overview = pixels(
+        &mut state,
+        &mut renderer,
+        &output,
+        true,
+        &mut capture_texture,
+    );
     assert!(!has_red(&overview));
-    assert!(!overview.chunks_exact(4).any(|pixel| pixel == [0, 255, 0, 255]));
+    assert!(
+        !overview
+            .chunks_exact(4)
+            .any(|pixel| pixel == [0, 255, 0, 255])
+    );
     state.set_overview_active(false);
 
     // Region requests go through the same filtered output readback.
@@ -628,19 +752,37 @@ fn capture_privacy_pixels_and_policy_transitions() {
     state.windows.set_geometry(child_id, geometry);
     state.space.map_element(child.clone(), (440, 40), false);
     assert!(
-        pixels(&mut state, &mut renderer, &second, false, &mut display_texture)
-            .chunks_exact(4)
-            .any(|pixel| pixel == [0, 255, 0, 255])
+        pixels(
+            &mut state,
+            &mut renderer,
+            &second,
+            false,
+            &mut display_texture
+        )
+        .chunks_exact(4)
+        .any(|pixel| pixel == [0, 255, 0, 255])
     );
     assert!(
-        !pixels(&mut state, &mut renderer, &second, true, &mut capture_texture)
-            .chunks_exact(4)
-            .any(|pixel| pixel == [0, 255, 0, 255])
+        !pixels(
+            &mut state,
+            &mut renderer,
+            &second,
+            true,
+            &mut capture_texture
+        )
+        .chunks_exact(4)
+        .any(|pixel| pixel == [0, 255, 0, 255])
     );
 
     // Unprotected content still captures, including translucent pixels.
     let (public, mut public_wire) = window(&mut state, &mut events, 0x80000080);
-    let captured = pixels(&mut state, &mut renderer, &output, true, &mut capture_texture);
+    let captured = pixels(
+        &mut state,
+        &mut renderer,
+        &output,
+        true,
+        &mut capture_texture,
+    );
     assert!(captured.chunks_exact(4).any(|pixel| pixel[2] > 100));
     assert!(!has_red(&captured));
 
@@ -650,7 +792,13 @@ fn capture_privacy_pixels_and_policy_transitions() {
     let manager = client
         .create_resource::<FereseMaterialManagerV1, (), Ferese>(&state.display_handle, 1, ())
         .unwrap();
-    request(&mut public_wire, manager.id().protocol_id(), 1, &[7, 2], None);
+    request(
+        &mut public_wire,
+        manager.id().protocol_id(),
+        1,
+        &[7, 2],
+        None,
+    );
     dispatch(&mut events, &mut state);
     state.theme_settings.material_style = crate::config::MaterialStyle::Translucent;
     state.theme_settings.backdrop_blur = 12.0;
@@ -658,17 +806,49 @@ fn capture_privacy_pixels_and_policy_transitions() {
     let public_id = state.windows.ids()[&public];
     let secret_geometry = *state.windows.geometry(&id).unwrap();
     state.windows.set_geometry(public_id, secret_geometry);
-    state
-        .space
-        .map_element(public.clone(), state.space.element_location(&secret).unwrap(), true);
-    let before = pixels(&mut state, &mut renderer, &output, false, &mut display_texture);
-    let protected = pixels(&mut state, &mut renderer, &output, true, &mut capture_texture);
+    state.space.map_element(
+        public.clone(),
+        state.space.element_location(&secret).unwrap(),
+        true,
+    );
+    let before = pixels(
+        &mut state,
+        &mut renderer,
+        &output,
+        false,
+        &mut display_texture,
+    );
+    let protected = pixels(
+        &mut state,
+        &mut renderer,
+        &output,
+        true,
+        &mut capture_texture,
+    );
     state.space.unmap_elem(&secret);
     state.space.unmap_elem(&child);
-    let absent = pixels(&mut state, &mut renderer, &output, true, &mut capture_texture);
-    assert_eq!(protected, absent, "protected content leaked through a cached material");
-    let without = pixels(&mut state, &mut renderer, &output, false, &mut display_texture);
-    assert_ne!(before, without, "fixture must place protected content behind glass");
+    let absent = pixels(
+        &mut state,
+        &mut renderer,
+        &output,
+        true,
+        &mut capture_texture,
+    );
+    assert_eq!(
+        protected, absent,
+        "protected content leaked through a cached material"
+    );
+    let without = pixels(
+        &mut state,
+        &mut renderer,
+        &output,
+        false,
+        &mut display_texture,
+    );
+    assert_ne!(
+        before, without,
+        "fixture must place protected content behind glass"
+    );
 
     // A stationary client's cursor is a separate surface and can outlive its
     // protected toplevel. Never reveal that retained image after an opt-out or close.
@@ -682,7 +862,13 @@ fn capture_privacy_pixels_and_policy_transitions() {
             smithay::wayland::GlobalData,
         )
         .unwrap();
-    request(&mut secret_wire, compositor.id().protocol_id(), 0, &[13], None);
+    request(
+        &mut secret_wire,
+        compositor.id().protocol_id(),
+        0,
+        &[13],
+        None,
+    );
     request(&mut secret_wire, 13, 1, &[6, 0, 0], None);
     request(&mut secret_wire, 13, 6, &[], None);
     dispatch(&mut events, &mut state);
@@ -708,7 +894,9 @@ fn capture_privacy_pixels_and_policy_transitions() {
     .unwrap();
     state.remove_tiled_window(&secret);
     assert!(state.capture_cursor_protected());
-    assert!(matches!(&state.cursor_status, CursorImageStatus::Surface(current) if current == &cursor));
+    assert!(
+        matches!(&state.cursor_status, CursorImageStatus::Surface(current) if current == &cursor)
+    );
     state.cursor_image(&seat, CursorImageStatus::Hidden);
     assert!(!state.capture_cursor_protected());
     assert!(!state.has_capture_exclusions());
@@ -825,14 +1013,19 @@ fn resize_dependencies_protocol_and_pixels() {
         else {
             panic!()
         };
-        layout.set_column_width(id, ColumnWidth::Fixed(width)).unwrap();
+        layout
+            .set_column_width(id, ColumnWidth::Fixed(width))
+            .unwrap();
         state.relayout();
         state.display_handle.flush_clients().unwrap();
     };
     set_width(&mut state, b_id, 240.0);
     let b_serial = ack_configure(&mut b_wire, 3);
     dispatch(&mut events, &mut state);
-    assert!(state.windows.transaction(&b_id).is_some(), "ack alone must not release");
+    assert!(
+        state.windows.transaction(&b_id).is_some(),
+        "ack alone must not release"
+    );
     // This target uses the first column, independently of the pending later width.
     let bounds = Rect::new(0.0, 0.0, 320.0, 240.0);
     state
@@ -849,21 +1042,43 @@ fn resize_dependencies_protocol_and_pixels() {
         before,
         "independent viewport stalled before delayed buffer commit"
     );
-    assert_eq!(state.windows.geometry(&b_id).unwrap().visual.current.width, held_size);
-    assert_eq!(state.windows.record(b_id).unwrap().world_x.unwrap().1, held_world);
+    assert_eq!(
+        state.windows.geometry(&b_id).unwrap().visual.current.width,
+        held_size
+    );
+    assert_eq!(
+        state.windows.record(b_id).unwrap().world_x.unwrap().1,
+        held_world
+    );
     // BASELINE_REPRO_END: the stage above also runs against the reviewed base.
     assert!(
         !state
             .presentation_dependencies
             .viewport_blocked(workspace, &state.windows)
     );
-    assert!(state.presentation_dependencies.reflow_blocked(b_id, &state.windows));
-    assert!(state.presentation_dependencies.reflow_blocked(c_id, &state.windows));
-    assert!(!state.presentation_dependencies.reflow_blocked(a_id, &state.windows));
+    assert!(
+        state
+            .presentation_dependencies
+            .reflow_blocked(b_id, &state.windows)
+    );
+    assert!(
+        state
+            .presentation_dependencies
+            .reflow_blocked(c_id, &state.windows)
+    );
+    assert!(
+        !state
+            .presentation_dependencies
+            .reflow_blocked(a_id, &state.windows)
+    );
     let geometry = *state.windows.geometry(&b_id).unwrap();
     let position = state.space.element_location(&b).unwrap();
     assert_eq!(position.x, geometry.visual.current.x.round() as i32);
-    let point = (geometry.visual.current.x + 5.0, geometry.visual.current.y + 5.0).into();
+    let point = (
+        geometry.visual.current.x + 5.0,
+        geometry.visual.current.y + 5.0,
+    )
+        .into();
     let (hit, origin) = state.window_surface_under(point).unwrap();
     assert_eq!(hit, *b.toplevel().unwrap().wl_surface());
     assert!((origin.x - geometry.visual.current.x).abs() < 0.001);
@@ -894,28 +1109,52 @@ fn resize_dependencies_protocol_and_pixels() {
     let context = EGLContext::new(&display).unwrap();
     let mut renderer = unsafe { GlesRenderer::new(context).unwrap() };
     let mut display_texture =
-        Offscreen::<GlesTexture>::create_buffer(&mut renderer, Fourcc::Abgr8888, (320, 240).into()).unwrap();
+        Offscreen::<GlesTexture>::create_buffer(&mut renderer, Fourcc::Abgr8888, (320, 240).into())
+            .unwrap();
     let mut capture_texture =
-        Offscreen::<GlesTexture>::create_buffer(&mut renderer, Fourcc::Abgr8888, (320, 240).into()).unwrap();
+        Offscreen::<GlesTexture>::create_buffer(&mut renderer, Fourcc::Abgr8888, (320, 240).into())
+            .unwrap();
     // Offscreen fixture explicitly captures the existing native frame; production
     // capture-before-commit is exercised separately in the privacy regression.
-    let snapshot =
-        crate::render::capture_resize_snapshot(&mut renderer, &b, b.geometry(), 1.0, 16 * 1024 * 1024).unwrap();
-    state.render.set_snapshot(b_id, snapshot.expect("native snapshot"));
+    let snapshot = crate::render::capture_resize_snapshot(
+        &mut renderer,
+        &b,
+        b.geometry(),
+        1.0,
+        16 * 1024 * 1024,
+    )
+    .unwrap();
+    state
+        .render
+        .set_snapshot(b_id, snapshot.expect("native snapshot"));
     app_id(&mut state, &b, "resize.secret");
     state.refresh_capture_privacy();
     state.advance_animations_at(Duration::from_millis(16), Duration::from_millis(16));
     let actual = state.windows.geometry(&b_id).unwrap().visual.current;
-    let displayed = pixels(&mut state, &mut renderer, &output, false, &mut display_texture);
+    let displayed = pixels(
+        &mut state,
+        &mut renderer,
+        &output,
+        false,
+        &mut display_texture,
+    );
     let at = ((actual.y.round() as usize + 5) * 320 + actual.x.round() as usize + 5) * 4;
     assert_eq!(
         &displayed[at..at + 4],
         &[0, 255, 0, 255],
         "live/snapshot pixels did not translate with geometry"
     );
-    let captured = pixels(&mut state, &mut renderer, &output, true, &mut capture_texture);
+    let captured = pixels(
+        &mut state,
+        &mut renderer,
+        &output,
+        true,
+        &mut capture_texture,
+    );
     assert!(
-        !captured.chunks_exact(4).any(|pixel| pixel == [0, 255, 0, 255]),
+        !captured
+            .chunks_exact(4)
+            .any(|pixel| pixel == [0, 255, 0, 255]),
         "translated protected snapshot leaked into capture"
     );
     assert!(state.render.snapshot(&b_id).is_some());
@@ -983,7 +1222,9 @@ fn resize_dependencies_protocol_and_pixels() {
         )
         .unwrap();
     let mut resized = tempfile::tempfile().unwrap();
-    resized.write_all(&0xff00ff00u32.to_ne_bytes().repeat(32 * 48)).unwrap();
+    resized
+        .write_all(&0xff00ff00u32.to_ne_bytes().repeat(32 * 48))
+        .unwrap();
     request(
         &mut b_wire,
         shm.id().protocol_id(),
@@ -1008,11 +1249,21 @@ fn resize_dependencies_protocol_and_pixels() {
     // A hidden workspace must not impose its viewport wait on its replacement.
     let other = state.workspaces.create_workspace();
     let output_id = state.output_id(&output).unwrap();
-    state.output_workspaces.assign_workspace(output_id, other).unwrap();
+    state
+        .output_workspaces
+        .assign_workspace(output_id, other)
+        .unwrap();
     state.workspaces.activate(other).unwrap();
     state.relayout();
-    assert!(!state.presentation_dependencies.viewport_blocked(other, &state.windows));
-    state.output_workspaces.assign_workspace(output_id, workspace).unwrap();
+    assert!(
+        !state
+            .presentation_dependencies
+            .viewport_blocked(other, &state.windows)
+    );
+    state
+        .output_workspaces
+        .assign_workspace(output_id, workspace)
+        .unwrap();
     state.workspaces.activate(workspace).unwrap();
     state.focused_window = Some(a_id);
     state.relayout();
@@ -1090,7 +1341,9 @@ fn resize_dependencies_protocol_and_pixels() {
     set_width(&mut state, d_id, 64.0);
     state.focused_window = Some(d_id);
     {
-        let WorkspaceLayout::Scrolling(layout) = &mut state.workspaces.workspace_mut(workspace).unwrap().layout else {
+        let WorkspaceLayout::Scrolling(layout) =
+            &mut state.workspaces.workspace_mut(workspace).unwrap().layout
+        else {
             panic!()
         };
         layout.set_focus_strategy(ViewportFocusStrategy::Paged);
@@ -1130,7 +1383,9 @@ fn resize_dependencies_protocol_and_pixels() {
     state.animations_enabled = false;
     state.advance_animations_at(Duration::ZERO, Duration::from_secs(10));
     {
-        let WorkspaceLayout::Scrolling(layout) = &mut state.workspaces.workspace_mut(workspace).unwrap().layout else {
+        let WorkspaceLayout::Scrolling(layout) =
+            &mut state.workspaces.workspace_mut(workspace).unwrap().layout
+        else {
             panic!()
         };
         layout.move_into_column(d_id, b_id).unwrap();
@@ -1165,7 +1420,10 @@ fn resize_dependencies_protocol_and_pixels() {
     );
     let before = state.windows.geometry(&d_id).unwrap().visual.current;
     state.advance_animations_at(Duration::from_millis(16), Duration::from_millis(10016));
-    assert_eq!(state.windows.geometry(&d_id).unwrap().visual.current, before);
+    assert_eq!(
+        state.windows.geometry(&d_id).unwrap().visual.current,
+        before
+    );
 
     request(&mut d_wire, 2, 1, &[6, 0, 0], None);
     request(&mut d_wire, 2, 6, &[], None);
@@ -1178,7 +1436,11 @@ fn resize_dependencies_protocol_and_pixels() {
         state.windows.transaction(&b_id).is_some(),
         "other tile must still be pending"
     );
-    assert!(!state.presentation_dependencies.reflow_blocked(d_id, &state.windows));
+    assert!(
+        !state
+            .presentation_dependencies
+            .reflow_blocked(d_id, &state.windows)
+    );
     assert!(state.windows.geometry(&d_id).unwrap().is_zooming());
     // Consume the release tick without charging the preceding client wait.
     state.advance_animations_at(Duration::ZERO, Duration::from_millis(10016));
@@ -1199,8 +1461,15 @@ fn resize_dependencies_protocol_and_pixels() {
     dispatch(&mut events, &mut state);
     assert!(state.windows.transaction(&d_id).is_none());
     assert!(state.windows.transaction(&b_id).is_some());
-    assert!(state.presentation_dependencies.reflow_blocked(d_id, &state.windows));
+    assert!(
+        state
+            .presentation_dependencies
+            .reflow_blocked(d_id, &state.windows)
+    );
     let returning = state.windows.geometry(&d_id).unwrap().visual.current;
     state.advance_animations_at(Duration::from_millis(16), Duration::from_millis(10048));
-    assert_eq!(state.windows.geometry(&d_id).unwrap().visual.current, returning);
+    assert_eq!(
+        state.windows.geometry(&d_id).unwrap().visual.current,
+        returning
+    );
 }

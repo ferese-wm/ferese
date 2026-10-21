@@ -41,7 +41,10 @@ impl Write for DeadlineIo<'_> {
     }
 }
 
-pub(super) fn read_request(stream: &UnixStream, idle: Option<Duration>) -> Result<Request, FrameError> {
+pub(super) fn read_request(
+    stream: &UnixStream,
+    idle: Option<Duration>,
+) -> Result<Request, FrameError> {
     read_request_with_budget(stream, idle, FRAME_TIMEOUT)
 }
 
@@ -60,7 +63,10 @@ fn read_request_with_budget(
     ferese_ipc::read_frame(&mut first.as_slice().chain(reader))
 }
 
-pub(super) fn write_response(stream: &UnixStream, value: &impl serde::Serialize) -> Result<(), FrameError> {
+pub(super) fn write_response(
+    stream: &UnixStream,
+    value: &impl serde::Serialize,
+) -> Result<(), FrameError> {
     // Tests may install a tighter socket timeout.
     let previous = stream.write_timeout()?;
     let budget = previous.unwrap_or(WRITE_TIMEOUT).min(WRITE_TIMEOUT);
@@ -88,7 +94,8 @@ mod tests {
         assert!(read_request_with_budget(&server, Some(short), short).is_err());
 
         let (mut client, server) = UnixStream::pair().unwrap();
-        let worker = std::thread::spawn(move || read_request_with_budget(&server, None, short).unwrap());
+        let worker =
+            std::thread::spawn(move || read_request_with_budget(&server, None, short).unwrap());
         std::thread::sleep(short * 3);
         let request = Request {
             version: 1,
@@ -112,8 +119,12 @@ mod tests {
                 std::thread::sleep(Duration::from_millis(30));
             }
         });
-        let error =
-            read_request_with_budget(&server, Some(Duration::from_secs(1)), Duration::from_millis(70)).unwrap_err();
+        let error = read_request_with_budget(
+            &server,
+            Some(Duration::from_secs(1)),
+            Duration::from_millis(70),
+        )
+        .unwrap_err();
         assert!(
             matches!(error, FrameError::Io(error) if matches!(error.kind(), io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock))
         );

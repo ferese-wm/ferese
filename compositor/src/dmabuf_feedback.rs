@@ -22,7 +22,11 @@ impl FeedbackManager {
         self.globals.insert(global, render);
     }
 
-    pub fn new_surface(&mut self, surface: &WlSurface, global: DmabufGlobal) -> Option<DmabufFeedback> {
+    pub fn new_surface(
+        &mut self,
+        surface: &WlSurface,
+        global: DmabufGlobal,
+    ) -> Option<DmabufFeedback> {
         let fallback = self.globals.get(&global)?.clone();
         self.surfaces.insert(
             surface.clone(),
@@ -35,7 +39,9 @@ impl FeedbackManager {
     }
 
     pub fn requested(&self) -> impl Iterator<Item = (&WlSurface, DmabufGlobal)> {
-        self.surfaces.iter().map(|(surface, record)| (surface, record.global))
+        self.surfaces
+            .iter()
+            .map(|(surface, record)| (surface, record.global))
     }
 
     pub fn refresh(&mut self, preferred: &HashMap<WlSurface, DmabufFeedback>) {
@@ -57,7 +63,11 @@ impl FeedbackManager {
 
     pub fn remove(&mut self, global: DmabufGlobal) {
         self.globals.remove(&global);
-        for (surface, record) in self.surfaces.iter().filter(|(_, record)| record.global == global) {
+        for (surface, record) in self
+            .surfaces
+            .iter()
+            .filter(|(_, record)| record.global == global)
+        {
             // V4 requires a main-device tranche. Retain last-known render
             // capabilities, withdraw scanout hints and retire the global. Bound
             // resources cannot import through the retired global or another GPU.

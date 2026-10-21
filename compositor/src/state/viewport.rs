@@ -107,7 +107,9 @@ impl ViewportPresentation {
     pub(super) fn reconcile_hold(&mut self, blocked: bool, release_tick: bool) {
         let mode = std::mem::replace(&mut self.mode, ViewportMode::Running(ViewportOwner::Spring));
         self.mode = match mode {
-            ViewportMode::Running(owner) | ViewportMode::Resuming(owner) if blocked => ViewportMode::Held(owner),
+            ViewportMode::Running(owner) | ViewportMode::Resuming(owner) if blocked => {
+                ViewportMode::Held(owner)
+            }
             ViewportMode::Held(owner) if !blocked && !release_tick => ViewportMode::Running(owner),
             mode => mode,
         };
@@ -130,7 +132,8 @@ impl ViewportPresentation {
 
     #[cfg(feature = "resize-metrics")]
     pub(super) fn spring_is_moving(&self) -> bool {
-        self.gesture().is_none() && (self.motion.current != self.motion.target || self.motion.velocity != 0.0)
+        self.gesture().is_none()
+            && (self.motion.current != self.motion.target || self.motion.velocity != 0.0)
     }
 
     // Prediction and authoritative ticks evaluate the same motion step. The
@@ -153,12 +156,14 @@ impl ViewportPresentation {
                 motion.velocity = 0.0;
                 true
             }
-            ViewportMode::Running(ViewportOwner::Spring) | ViewportMode::Resuming(ViewportOwner::Spring)
+            ViewportMode::Running(ViewportOwner::Spring)
+            | ViewportMode::Resuming(ViewportOwner::Spring)
                 if animations =>
             {
                 motion.advance(delta, spring)
             }
-            ViewportMode::Running(ViewportOwner::Spring) | ViewportMode::Resuming(ViewportOwner::Spring) => {
+            ViewportMode::Running(ViewportOwner::Spring)
+            | ViewportMode::Resuming(ViewportOwner::Spring) => {
                 motion.snap();
                 false
             }
@@ -167,16 +172,28 @@ impl ViewportPresentation {
         (motion, active)
     }
 
-    pub(super) fn advance(&mut self, delta: Duration, spring: SpringConfig, animations: bool, blocked: bool) -> bool {
+    pub(super) fn advance(
+        &mut self,
+        delta: Duration,
+        spring: SpringConfig,
+        animations: bool,
+        blocked: bool,
+    ) -> bool {
         let (motion, active) = self.step_motion(delta, spring, animations, blocked);
         self.motion = motion;
         let mode = std::mem::replace(&mut self.mode, ViewportMode::Running(ViewportOwner::Spring));
         self.mode = match mode {
-            ViewportMode::Running(owner) | ViewportMode::Held(owner) | ViewportMode::Resuming(owner) if blocked => {
+            ViewportMode::Running(owner)
+            | ViewportMode::Held(owner)
+            | ViewportMode::Resuming(owner)
+                if blocked =>
+            {
                 ViewportMode::Held(owner)
             }
             ViewportMode::Held(owner) => ViewportMode::Resuming(owner),
-            ViewportMode::Running(owner) | ViewportMode::Resuming(owner) => ViewportMode::Running(owner),
+            ViewportMode::Running(owner) | ViewportMode::Resuming(owner) => {
+                ViewportMode::Running(owner)
+            }
         };
         active
     }
@@ -198,7 +215,9 @@ impl ViewportPresentation {
 
 impl Ferese {
     pub(super) fn focus_swipe(&self) -> Option<&FocusSwipe> {
-        self.viewports.values().find_map(ViewportPresentation::gesture)
+        self.viewports
+            .values()
+            .find_map(ViewportPresentation::gesture)
     }
 }
 
@@ -261,7 +280,10 @@ mod tests {
         viewport.retarget(700.0, true);
         assert_eq!(viewport.motion.current, position);
         assert_eq!(viewport.motion.velocity, velocity);
-        assert!(matches!(viewport.mode, ViewportMode::Running(ViewportOwner::Spring)));
+        assert!(matches!(
+            viewport.mode,
+            ViewportMode::Running(ViewportOwner::Spring)
+        ));
         let mut expected = viewport.motion;
         expected.advance(TICK, SpringConfig::default());
         viewport.advance(TICK, SpringConfig::default(), true, false);
@@ -349,7 +371,10 @@ mod tests {
         viewport.reconcile_hold(true, false);
         viewport.end_gesture(None).unwrap();
         viewport.retarget(700.0, true);
-        assert!(matches!(viewport.mode, ViewportMode::Held(ViewportOwner::Spring)));
+        assert!(matches!(
+            viewport.mode,
+            ViewportMode::Held(ViewportOwner::Spring)
+        ));
         assert_eq!(viewport.motion.current, frozen.current);
         assert_eq!(viewport.motion.velocity, frozen.velocity);
     }
@@ -374,7 +399,10 @@ mod tests {
                     let mut advanced = state.clone();
                     advanced.advance(horizon, SpringConfig::default(), true, blocked);
                     assert_eq!(sample, advanced.presented_motion());
-                    assert!(state == original, "prediction changed authoritative mode or motion");
+                    assert!(
+                        state == original,
+                        "prediction changed authoritative mode or motion"
+                    );
                 }
             }
         }
@@ -402,7 +430,12 @@ mod tests {
             ));
             world.velocity = before.velocity.x + motion.velocity;
             world.set_target(geometry.logical.x + motion.target);
-            super::super::animation::sync_scrolling_coordinates(&mut geometry, &mut world, &motion, false);
+            super::super::animation::sync_scrolling_coordinates(
+                &mut geometry,
+                &mut world,
+                &motion,
+                false,
+            );
             assert!((geometry.visual.current.x - before.current.x).abs() < 1e-6);
             assert!((geometry.visual.velocity.x - before.velocity.x).abs() < 1e-6);
             assert_eq!(geometry.logical.x, world.target - motion.target);

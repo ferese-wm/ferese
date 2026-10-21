@@ -273,7 +273,9 @@ impl Command {
             Self::CycleColumnWidth => ("cycle-column-width", json!({})),
             Self::CenterColumn => ("center-column", json!({})),
             Self::ToggleColumnTabbed => ("toggle-column-tabbed", json!({})),
-            Self::JoinTab { direction } => ("join-tab", json!({"direction": value_name(direction)})),
+            Self::JoinTab { direction } => {
+                ("join-tab", json!({"direction": value_name(direction)}))
+            }
             Self::LeaveTab => ("leave-tab", json!({})),
             Self::NextTab => ("next-tab", json!({})),
             Self::PreviousTab => ("previous-tab", json!({})),
@@ -297,9 +299,14 @@ impl Command {
             Self::Resize { direction } => ("resize", json!({"direction": value_name(direction)})),
             Self::Workspace { index } => ("workspace", json!({"index": index})),
             Self::MoveToWorkspace { index } => ("move-to-workspace", json!({"index": index})),
-            Self::OutputLayout { layout } => ("output-layout", json!({"layout": value_name(layout)})),
+            Self::OutputLayout { layout } => {
+                ("output-layout", json!({"layout": value_name(layout)}))
+            }
             Self::OutputProfile { name } => ("output-profile", json!({"name": name})),
-            Self::OutputInternal { state } => ("output-internal", json!({"enabled": matches!(state, Switch::On)})),
+            Self::OutputInternal { state } => (
+                "output-internal",
+                json!({"enabled": matches!(state, Switch::On)}),
+            ),
             Self::Screenshot {
                 geometry: Some(geometry),
             } => ("screenshot", json!({"geometry": geometry})),
@@ -315,11 +322,17 @@ impl Command {
             Self::Media {
                 action: None | Some(MediaAction::Get),
             } => ("media-get", json!({})),
-            Self::Media { action: Some(action) } => {
+            Self::Media {
+                action: Some(action),
+            } => {
                 let args = match action {
                     MediaAction::Pin { player } => json!({"action": "pin", "player": player}),
-                    MediaAction::Ignore { player } => json!({"action": "ignore", "player": player, "ignored": true}),
-                    MediaAction::Unignore { player } => json!({"action": "ignore", "player": player, "ignored": false}),
+                    MediaAction::Ignore { player } => {
+                        json!({"action": "ignore", "player": player, "ignored": true})
+                    }
+                    MediaAction::Unignore { player } => {
+                        json!({"action": "ignore", "player": player, "ignored": false})
+                    }
                     MediaAction::PlayPause => json!({"action": "play-pause"}),
                     MediaAction::Next => json!({"action": "next"}),
                     MediaAction::Previous => json!({"action": "previous"}),

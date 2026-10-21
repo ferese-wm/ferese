@@ -19,9 +19,11 @@ use status::{Action, Snapshot};
 
 use super::*;
 
-type MenuHeading<'a> = cosmic::widget::Row<'a, cosmic::Action<Message>, cosmic::Theme, cosmic::Renderer>;
+type MenuHeading<'a> =
+    cosmic::widget::Row<'a, cosmic::Action<Message>, cosmic::Theme, cosmic::Renderer>;
 
-type MenuRows<'a> = cosmic::widget::Column<'a, cosmic::Action<Message>, cosmic::Theme, cosmic::Renderer>;
+type MenuRows<'a> =
+    cosmic::widget::Column<'a, cosmic::Action<Message>, cosmic::Theme, cosmic::Renderer>;
 
 #[derive(Clone, Copy)]
 struct MenuStyle {
@@ -59,7 +61,10 @@ impl Menu {
                 ) | (Self::Network, Action::Wifi(_))
                     | (Self::Bluetooth, Action::Bluetooth(_))
                     | (Self::Audio, Action::Volume(_) | Action::Mute(_))
-                    | (Self::Battery, Action::Brightness(_) | Action::PowerProfile(_))
+                    | (
+                        Self::Battery,
+                        Action::Brightness(_) | Action::PowerProfile(_)
+                    )
                     | (Self::Notifications, Action::Dnd(_) | Action::Notifications)
             );
         relevant.then_some(error.message.as_str())
@@ -132,10 +137,9 @@ pub(crate) struct PopoverAnchor {
 impl PopoverAnchor {
     pub(crate) fn belongs_to(&self, panel: &crate::panel::Panel) -> bool {
         self.panel == panel.id
-            && self
-                .item
-                .as_ref()
-                .is_none_or(|id| id.0 == "_overflow" || panel.item(id).is_some_and(|item| item.visible))
+            && self.item.as_ref().is_none_or(|id| {
+                id.0 == "_overflow" || panel.item(id).is_some_and(|item| item.visible)
+            })
     }
 
     pub fn same_item(&self, other: &Self) -> bool {
@@ -176,7 +180,11 @@ impl OpenMenu {
 }
 
 impl FereseShell {
-    pub(crate) fn view_hub_menu(&self, kind: Menu, opacity: f32) -> Element<'_, cosmic::Action<Message>> {
+    pub(crate) fn view_hub_menu(
+        &self,
+        kind: Menu,
+        opacity: f32,
+    ) -> Element<'_, cosmic::Action<Message>> {
         let theme = self.config.theme;
         let style = MenuStyle {
             theme,
@@ -216,7 +224,12 @@ impl FereseShell {
             Menu::Bluetooth => bluetooth::view(self, rows, style, true),
             Menu::Audio => audio::view(self, rows, style, false),
             Menu::Battery => battery::view(self, rows, style),
-            Menu::Calendar => rows.push(calendar::hub(self.render, self.calendar_offset, theme, opacity)),
+            Menu::Calendar => rows.push(calendar::hub(
+                self.render,
+                self.calendar_offset,
+                theme,
+                opacity,
+            )),
             Menu::Media => media::hub(self, rows, style),
             Menu::Notifications => {
                 let mut rows = notification_controls(self, rows, style, true);
@@ -305,8 +318,17 @@ impl FereseShell {
                     .class(theme::Text::Color(style.muted)),
             );
         }
-        if let Some(error) = self.status_error.as_ref().and_then(|error| kind.action_error(error)) {
-            rows = rows.push(self.render.text(error).size(12).class(theme::Text::Color(style.muted)));
+        if let Some(error) = self
+            .status_error
+            .as_ref()
+            .and_then(|error| kind.action_error(error))
+        {
+            rows = rows.push(
+                self.render
+                    .text(error)
+                    .size(12)
+                    .class(theme::Text::Color(style.muted)),
+            );
         }
         container(rows)
             .width(Length::Fill)
@@ -377,7 +399,12 @@ impl FereseShell {
             .width(Length::Fixed(22.))
             .into()
         };
-        let badge = ferese_theme::menus::badge(heading_icon, color(theme.accent), p, self.render.radius(20.));
+        let badge = ferese_theme::menus::badge(
+            heading_icon,
+            color(theme.accent),
+            p,
+            self.render.radius(20.),
+        );
         let mut heading = ferese_theme::menus::heading(badge, kind.title(), self.render.font);
         let style = MenuStyle {
             theme,
@@ -402,7 +429,9 @@ impl FereseShell {
             Menu::Bluetooth => bluetooth::view(self, rows, style, false),
             Menu::Audio => audio::view(self, rows, style, false),
             Menu::Battery => battery::view(self, rows, style),
-            Menu::Calendar => rows.push(calendar::view(self.render, self.calendar_offset, theme, p)),
+            Menu::Calendar => {
+                rows.push(calendar::view(self.render, self.calendar_offset, theme, p))
+            }
             Menu::Notifications => notification_controls(self, rows, style, false),
             Menu::Activities => rows.push(self.activity_list(menu.anchor.parent, p)),
             Menu::Recording | Menu::Workspaces => rows,
@@ -423,25 +452,34 @@ impl FereseShell {
             .as_ref()
             .and_then(|error| menu.kind.action_error(error))
         {
-            rows = rows.push(self.render.text(error).size(12).class(theme::Text::Color(Color {
-                a: p,
-                ..Color::from_rgb8(230, 172, 90)
-            })));
+            rows = rows.push(
+                self.render
+                    .text(error)
+                    .size(12)
+                    .class(theme::Text::Color(Color {
+                        a: p,
+                        ..Color::from_rgb8(230, 172, 90)
+                    })),
+            );
         }
 
         let compositor_material = menu.effects.is_some();
-        let body: Element<'_, cosmic::Action<Message>> = if matches!(kind, Menu::Overflow | Menu::Activities) {
-            cosmic::widget::scrollable(rows).height(Length::Shrink).into()
-        } else {
-            rows.into()
-        };
+        let body: Element<'_, cosmic::Action<Message>> =
+            if matches!(kind, Menu::Overflow | Menu::Activities) {
+                cosmic::widget::scrollable(rows)
+                    .height(Length::Shrink)
+                    .into()
+            } else {
+                rows.into()
+            };
         let panel = container(body)
             .id("ferese-blur-card")
             .width(kind.width())
             .padding(16)
             .class(theme::Container::custom(move |_| container::Style {
-                background: (!compositor_material)
-                    .then_some(Background::Color(color_with_opacity(theme.surface_popover, p))),
+                background: (!compositor_material).then_some(Background::Color(
+                    color_with_opacity(theme.surface_popover, p),
+                )),
                 text_color: Some(primary),
                 icon_color: Some(primary),
                 border: Border {
@@ -488,7 +526,14 @@ fn notification_controls<'a>(
         opacity: p,
     } = style;
     if let Some(n) = &shell.status.notifications {
-        let toggle = toggle_row(shell.render, "Do Not Disturb", n.dnd, Action::Dnd(!n.dnd), theme, p);
+        let toggle = toggle_row(
+            shell.render,
+            "Do Not Disturb",
+            n.dnd,
+            Action::Dnd(!n.dnd),
+            theme,
+            p,
+        );
         rows = rows.push(if combined {
             control_card(shell.render, toggle, primary, p)
         } else {
@@ -528,7 +573,9 @@ mod tests {
 
     #[test]
     fn activity_popups_scroll_to_the_last_row_in_regular_panels() {
-        use cosmic::iced::advanced::{Layout, Shell, clipboard, layout, renderer::Headless, widget};
+        use cosmic::iced::advanced::{
+            Layout, Shell, clipboard, layout, renderer::Headless, widget,
+        };
         use cosmic::iced::{Event, Rectangle, Size, Vector, mouse};
         use ferese_activities::{Data, Owner, Source, Store, Template, Value};
         #[derive(Default)]
@@ -575,7 +622,10 @@ mod tests {
             for n in 0..24 {
                 store
                     .start(
-                        Owner { pid: n + 1, birth: 1 },
+                        Owner {
+                            pid: n + 1,
+                            birth: 1,
+                        },
                         n.to_string(),
                         Data {
                             source: Source::Publisher,

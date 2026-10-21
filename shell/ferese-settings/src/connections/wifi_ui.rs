@@ -8,7 +8,10 @@ use super::{Command, Security};
 use crate::{App, Message, visuals};
 
 impl App {
-    pub(super) fn wifi_view(&self, result: &Result<super::wifi::Wifi, String>) -> Element<'_, Message> {
+    pub(super) fn wifi_view(
+        &self,
+        result: &Result<super::wifi::Wifi, String>,
+    ) -> Element<'_, Message> {
         let s = &self.connections;
         let p = visuals::Palette::from_resolved(&self.resolved.presented);
         let ready = s.busy.is_none();
@@ -46,8 +49,10 @@ impl App {
                         ferese_theme::controls::switch(wifi.enabled, p)
                             .name("Wi-Fi power")
                             .on_press_maybe(
-                                (ready && (wifi.hardware_enabled || wifi.enabled) && !wifi.radios.is_empty())
-                                    .then(|| message(Input::Run(Command::WifiPower(!wifi.enabled)))),
+                                (ready
+                                    && (wifi.hardware_enabled || wifi.enabled)
+                                    && !wifi.radios.is_empty())
+                                .then(|| message(Input::Run(Command::WifiPower(!wifi.enabled)))),
                             ),
                     ),
             ),
@@ -62,7 +67,8 @@ impl App {
                 .push(self.connection_button("Scan", Input::Run(Command::WifiScan), ready, false)),
         );
         if wifi.networks.is_empty() {
-            body = body.push(self.connection_note("No networks found. Scan to look for nearby networks."));
+            body = body
+                .push(self.connection_note("No networks found. Scan to look for nearby networks."));
         }
         for network in &wifi.networks {
             let radio = wifi
@@ -98,20 +104,33 @@ impl App {
                     ready,
                     false,
                 ));
-            } else if network.saved.is_some() || !network.security.password() && network.security.can_create() {
+            } else if network.saved.is_some()
+                || !network.security.password() && network.security.can_create()
+            {
                 controls = controls.push(self.connection_button(
                     "Connect",
-                    Input::Run(Command::WifiConnect(network.clone(), Zeroizing::new(String::new()))),
+                    Input::Run(Command::WifiConnect(
+                        network.clone(),
+                        Zeroizing::new(String::new()),
+                    )),
                     ready,
                     false,
                 ));
             } else {
-                controls =
-                    controls.push(self.connection_button("Connect…", Input::Select(network.clone()), ready, false));
+                controls = controls.push(self.connection_button(
+                    "Connect…",
+                    Input::Select(network.clone()),
+                    ready,
+                    false,
+                ));
             }
             if network.saved.is_some() && network.security.password() {
-                controls =
-                    controls.push(self.connection_button("Password…", Input::Select(network.clone()), ready, false));
+                controls = controls.push(self.connection_button(
+                    "Password…",
+                    Input::Select(network.clone()),
+                    ready,
+                    false,
+                ));
             }
             body = body.push(
                 self.connection_card(
@@ -140,7 +159,12 @@ impl App {
                 body = body.push(self.wifi_credentials());
             }
         }
-        body = body.push(self.connection_button("Join a hidden network…", Input::Hidden(true), ready, false));
+        body = body.push(self.connection_button(
+            "Join a hidden network…",
+            Input::Hidden(true),
+            ready,
+            false,
+        ));
         if s.hidden {
             body = body.push(self.wifi_credentials());
         }
@@ -152,7 +176,10 @@ impl App {
                         row([])
                             .spacing(8)
                             .align_y(Alignment::Center)
-                            .push(visuals::action_icon(crate::schema::Page::Connections.icon(), p.muted))
+                            .push(visuals::action_icon(
+                                crate::schema::Page::Connections.icon(),
+                                p.muted,
+                            ))
                             .push(
                                 column([])
                                     .spacing(2)
@@ -183,7 +210,10 @@ impl App {
             } else {
                 format!(
                     "Join {}",
-                    s.selected.as_ref().map(|n| n.name.as_str()).unwrap_or("network")
+                    s.selected
+                        .as_ref()
+                        .map(|n| n.name.as_str())
+                        .unwrap_or("network")
                 )
             },
             16.,
@@ -198,7 +228,12 @@ impl App {
                     .on_input(|name| message(Input::HiddenName(name))),
             );
             let mut choices = row([]).spacing(6);
-            for security in [Security::Personal, Security::Sae, Security::Open, Security::Owe] {
+            for security in [
+                Security::Personal,
+                Security::Sae,
+                Security::Open,
+                Security::Owe,
+            ] {
                 choices = choices.push(self.connection_button(
                     security.label(),
                     Input::HiddenSecurity(security),
@@ -208,7 +243,10 @@ impl App {
             }
             body = body.push(choices);
         }
-        let security = target.as_ref().map(|n| n.security).unwrap_or(s.hidden_security);
+        let security = target
+            .as_ref()
+            .map(|n| n.security)
+            .unwrap_or(s.hidden_security);
         if security.password() {
             body = body.push(
                 text_input("Network password", s.password.as_str())

@@ -114,13 +114,19 @@ impl Matcher {
             return None;
         }
         for (rule, regex) in &self.rules {
-            if parents.iter().any(|parent| rule.ignore_parents.contains(parent)) {
+            if parents
+                .iter()
+                .any(|parent| rule.ignore_parents.contains(parent))
+            {
                 continue;
             }
             if let Some(captures) = regex.captures(command) {
                 let mut title = rule.title.clone();
                 for index in 0..captures.len() {
-                    title = title.replace(&format!("{{{index}}}"), captures.get(index).map_or("", |m| m.as_str()));
+                    title = title.replace(
+                        &format!("{{{index}}}"),
+                        captures.get(index).map_or("", |m| m.as_str()),
+                    );
                 }
                 if title.len() > 256 || title.chars().any(char::is_control) {
                     return None;
@@ -149,14 +155,22 @@ fn validate_rule(rule: &Rule, regex: &Regex) -> Result<(), String> {
     if rule.pattern.len() > 2_048
         || rule.min_duration_ms > 60_000
         || !matches!(rule.progress.as_str(), "indeterminate" | "cargo-json")
-        || rule.dedupe_by.as_deref().is_some_and(|value| value != "cwd")
+        || rule
+            .dedupe_by
+            .as_deref()
+            .is_some_and(|value| value != "cwd")
     {
         return Err("invalid rule duration, progress adapter or dedupe policy".into());
     }
     if rule.ignore_parents.len() > 16 || rule.ignore_parents.iter().any(|name| name.len() > 128) {
         return Err("too many or too long parent names".into());
     }
-    if rule.icon.len() > 64 || !rule.icon.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
+    if rule.icon.len() > 64
+        || !rule
+            .icon
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+    {
         return Err("invalid symbolic icon".into());
     }
     let capture = Regex::new(r"\{([^}]+)\}").expect("static pattern");
@@ -201,7 +215,10 @@ impl Settings {
 }
 
 fn diagnostic(node: &KdlNode, message: impl std::fmt::Display) -> Error {
-    Error(format!("activities at byte {}: {message}", node.span().offset()))
+    Error(format!(
+        "activities at byte {}: {message}",
+        node.span().offset()
+    ))
 }
 
 pub(crate) fn parse(node: &KdlNode) -> Result<Value, Error> {
@@ -241,7 +258,12 @@ pub(crate) fn parse(node: &KdlNode) -> Result<Value, Error> {
                 }
                 let key = name.replace('-', "_");
                 let parsed = if name == "ignore-parents" {
-                    if property.entries().iter().any(|entry| entry.name().is_some()) || property.entries().is_empty() {
+                    if property
+                        .entries()
+                        .iter()
+                        .any(|entry| entry.name().is_some())
+                        || property.entries().is_empty()
+                    {
                         return Err(diagnostic(property, "ignore-parents requires names"));
                     }
                     Value::Array(
@@ -252,7 +274,8 @@ pub(crate) fn parse(node: &KdlNode) -> Result<Value, Error> {
                             .collect::<Result<_, _>>()?,
                     )
                 } else {
-                    crate::node_value(property, &key, "rule").map_err(|error| diagnostic(property, error))?
+                    crate::node_value(property, &key, "rule")
+                        .map_err(|error| diagnostic(property, error))?
                 };
                 if value.insert(key, parsed).is_some() {
                     return Err(diagnostic(property, "duplicate rule setting"));
@@ -268,12 +291,15 @@ pub(crate) fn parse(node: &KdlNode) -> Result<Value, Error> {
             value
                 .entry("result")
                 .or_insert(json!({"ok":"Finished","fail":"Command failed"}));
-            let rule: Rule = serde_json::from_value(Value::Object(value)).map_err(|error| diagnostic(child, error))?;
+            let rule: Rule = serde_json::from_value(Value::Object(value))
+                .map_err(|error| diagnostic(child, error))?;
             let settings = Settings {
                 rules: vec![rule.clone()],
                 ..Default::default()
             };
-            settings.validate().map_err(|error| diagnostic(child, error))?;
+            settings
+                .validate()
+                .map_err(|error| diagnostic(child, error))?;
             rules.push(rule);
         } else {
             if !matches!(
@@ -290,16 +316,24 @@ pub(crate) fn parse(node: &KdlNode) -> Result<Value, Error> {
                 return Err(diagnostic(child, "unknown activity node"));
             }
             let field = key.replace('-', "_");
-            let value = crate::node_value(child, &field, "activities").map_err(|error| diagnostic(child, error))?;
+            let value = crate::node_value(child, &field, "activities")
+                .map_err(|error| diagnostic(child, error))?;
             if values.insert(field, value).is_some() {
                 return Err(diagnostic(child, "duplicate activity setting"));
             }
         }
     }
-    rules.extend(builtins().into_iter().filter(|rule| !names.contains(&rule.name)));
+    rules.extend(
+        builtins()
+            .into_iter()
+            .filter(|rule| !names.contains(&rule.name)),
+    );
     values.insert("rules".into(), serde_json::to_value(rules).unwrap());
-    let settings: Settings = serde_json::from_value(Value::Object(values)).map_err(|error| diagnostic(node, error))?;
-    settings.validate().map_err(|error| diagnostic(node, error))?;
+    let settings: Settings =
+        serde_json::from_value(Value::Object(values)).map_err(|error| diagnostic(node, error))?;
+    settings
+        .validate()
+        .map_err(|error| diagnostic(node, error))?;
     Ok(serde_json::to_value(settings).unwrap())
 }
 fn builtins() -> Vec<Rule> {
@@ -371,7 +405,8 @@ mod tests {
             "work-minuts 20",
         ] {
             assert!(
-                crate::Document::parse(&format!("activities {{ pomodoro {{ {invalid}; }}; }}")).is_err(),
+                crate::Document::parse(&format!("activities {{ pomodoro {{ {invalid}; }}; }}"))
+                    .is_err(),
                 "{invalid}"
             );
         }

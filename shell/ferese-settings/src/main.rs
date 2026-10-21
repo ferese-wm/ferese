@@ -54,8 +54,12 @@ fn main() -> cosmic::iced::Result {
             }
             Some("--page") => {
                 initial_page = match args.next().as_deref().and_then(|s| s.to_str()) {
-                    Some("connections" | "wifi") => Some(InitialPage::Connections(connections::Tab::Wifi)),
-                    Some("bluetooth") => Some(InitialPage::Connections(connections::Tab::Bluetooth)),
+                    Some("connections" | "wifi") => {
+                        Some(InitialPage::Connections(connections::Tab::Wifi))
+                    }
+                    Some("bluetooth") => {
+                        Some(InitialPage::Connections(connections::Tab::Bluetooth))
+                    }
                     Some("wallpaper") => Some(InitialPage::Wallpaper),
                     Some("bar") => Some(InitialPage::Bar),
                     _ => {
@@ -65,7 +69,9 @@ fn main() -> cosmic::iced::Result {
                 };
             }
             _ => {
-                eprintln!("Usage: ferese-settings [--config PATH] [--page connections|wifi|bluetooth|wallpaper|bar]");
+                eprintln!(
+                    "Usage: ferese-settings [--config PATH] [--page connections|wifi|bluetooth|wallpaper|bar]"
+                );
                 return Ok(());
             }
         }
@@ -144,7 +150,10 @@ enum Message {
     WallpaperTarget(wallpaper_controls::Target),
     UseDefaultWallpaper(ferese_config::theme::Appearance),
     RestoreDefaultWallpapers,
-    DefaultWallpaperThumbnail(ferese_config::theme::Appearance, Result<widget::image::Handle, String>),
+    DefaultWallpaperThumbnail(
+        ferese_config::theme::Appearance,
+        Result<widget::image::Handle, String>,
+    ),
     PreviewLock,
     LockPreviewStarted(Result<(), String>),
     WallpaperPicked(wallpaper_controls::Target, Result<Option<String>, String>),
@@ -295,7 +304,13 @@ impl cosmic::Application for App {
             native_palette,
             gallery_focus: None,
             family_sections,
-            family_ids: std::sync::Arc::new(resolved.families.iter().map(|family| family.id.clone()).collect()),
+            family_ids: std::sync::Arc::new(
+                resolved
+                    .families
+                    .iter()
+                    .map(|family| family.id.clone())
+                    .collect(),
+            ),
             resolved,
             undo_revision: 0,
             auto_details: false,
@@ -352,7 +367,8 @@ impl cosmic::Application for App {
                     .displays
                     .iter()
                     .find(|d| d.connector == matcher || d.identity == matcher)
-                    && let Some((mode, automatic)) = displays::change_resolution(display, &configured, size, automatic)
+                    && let Some((mode, automatic)) =
+                        displays::change_resolution(display, &configured, size, automatic)
                 {
                     self.inputs.remove(&format!("{prefix}.mode"));
                     return self.edit_many(displays::edits(&prefix, mode, automatic));
@@ -371,18 +387,26 @@ impl cosmic::Application for App {
                 return self.edit_many(displays::edits(&prefix, mode, automatic));
             }
             Message::ThemeChanged(snapshot) => {
-                let wallpaper_changed =
-                    self.resolved.presented.tokens.background.path != snapshot.presented.tokens.background.path;
+                let wallpaper_changed = self.resolved.presented.tokens.background.path
+                    != snapshot.presented.tokens.background.path;
                 let font_changed = self.resolved.presented.tokens.typography.font_family
                     != snapshot.presented.tokens.typography.font_family;
                 if self.resolved.families != snapshot.families {
-                    self.family_ids =
-                        std::sync::Arc::new(snapshot.families.iter().map(|family| family.id.clone()).collect());
-                    self.family_sections = theme_controls::FamilySections::new(&snapshot.families, &self.draft);
+                    self.family_ids = std::sync::Arc::new(
+                        snapshot
+                            .families
+                            .iter()
+                            .map(|family| family.id.clone())
+                            .collect(),
+                    );
+                    self.family_sections =
+                        theme_controls::FamilySections::new(&snapshot.families, &self.draft);
                 }
                 self.resolved = *snapshot;
                 if font_changed {
-                    self.font = fonts::interface_font(&self.resolved.presented.tokens.typography.font_family);
+                    self.font = fonts::interface_font(
+                        &self.resolved.presented.tokens.typography.font_family,
+                    );
                 }
 
                 let theme = self.update_theme();
@@ -393,16 +417,28 @@ impl cosmic::Application for App {
                 };
             }
             Message::ExternalConfig(result) => match result {
-                Ok(snapshot) if snapshot.source == self.current.source || snapshot.source == self.draft.source => {}
+                Ok(snapshot)
+                    if snapshot.source == self.current.source
+                        || snapshot.source == self.draft.source => {}
                 Ok(snapshot) => {
-                    if self.saving || !self.inputs.is_empty() || !self.ranges.is_empty() || !self.pending.is_empty() {
-                        self.status = "Config changed externally · Reload when your edits are finished".into();
+                    if self.saving
+                        || !self.inputs.is_empty()
+                        || !self.ranges.is_empty()
+                        || !self.pending.is_empty()
+                    {
+                        self.status =
+                            "Config changed externally · Reload when your edits are finished"
+                                .into();
                     } else {
                         self.current = snapshot.clone();
                         self.draft = snapshot;
-                        self.family_sections =
-                            theme_controls::FamilySections::new(&self.resolved.families, &self.draft);
-                        self.font = fonts::interface_font(&self.resolved.presented.tokens.typography.font_family);
+                        self.family_sections = theme_controls::FamilySections::new(
+                            &self.resolved.families,
+                            &self.draft,
+                        );
+                        self.font = fonts::interface_font(
+                            &self.resolved.presented.tokens.typography.font_family,
+                        );
                         self.undo = None;
                         self.error = None;
                         self.status = "Updated from your config".into();
@@ -442,7 +478,9 @@ impl cosmic::Application for App {
             Message::Sidebar(open) => {
                 self.sidebar_open = open;
                 if open {
-                    return cosmic::iced::widget::operation::focus(widget::Id::new("settings-search"));
+                    return cosmic::iced::widget::operation::focus(widget::Id::new(
+                        "settings-search",
+                    ));
                 }
             }
             Message::Page(page) => {
@@ -504,7 +542,9 @@ impl cosmic::Application for App {
                     {
                         let (id, appearance) = self.gallery_focus.take().unwrap();
                         return cosmic::iced::advanced::widget::operate(
-                            cosmic::iced::advanced::widget::operation::focusable::focus(gallery_id(&id, appearance)),
+                            cosmic::iced::advanced::widget::operation::focusable::focus(
+                                gallery_id(&id, appearance),
+                            ),
                         )
                         .map(cosmic::Action::App);
                     }
@@ -532,12 +572,17 @@ impl cosmic::Application for App {
             Message::Release(field) => {
                 if let Some(value) = self.ranges.remove(&field.path) {
                     if field.path == "panels.0.background_opacity" {
-                        return self.update(Message::PanelEdit(panel_edit::Action::SetOpacity(value as f32 / 100.)));
+                        return self.update(Message::PanelEdit(panel_edit::Action::SetOpacity(
+                            value as f32 / 100.,
+                        )));
                     }
                     if let Some(index) = field.path.strip_prefix("panels.0.corner_radius.")
                         && let Ok(index) = index.parse()
                     {
-                        return self.update(Message::PanelEdit(panel_edit::Action::SetCorner(index, value as f32)));
+                        return self.update(Message::PanelEdit(panel_edit::Action::SetCorner(
+                            index,
+                            value as f32,
+                        )));
                     }
                     let integer = matches!(field.kind, Kind::Range { integer: true, .. });
                     if let Some(key) = field.path.strip_prefix("panels.0.geometry.") {
@@ -546,7 +591,10 @@ impl cosmic::Application for App {
                         } else {
                             value.into()
                         };
-                        return self.update(Message::PanelEdit(panel_edit::Action::SetGeometry(key.into(), value)));
+                        return self.update(Message::PanelEdit(panel_edit::Action::SetGeometry(
+                            key.into(),
+                            value,
+                        )));
                     }
                     return self.change(if integer {
                         set(&field.path, value.round() as i64)
@@ -575,7 +623,9 @@ impl cosmic::Application for App {
                         match shlex::split(&value).filter(|v| !v.is_empty()) {
                             Some(args) => set(
                                 &field.path,
-                                args.into_iter().map(serde_json::Value::from).collect::<Vec<_>>(),
+                                args.into_iter()
+                                    .map(serde_json::Value::from)
+                                    .collect::<Vec<_>>(),
                             ),
                             None => {
                                 self.error = Some("Enter a program and arguments with balanced quotes. Commands are not run through a shell.".into());
@@ -618,7 +668,9 @@ impl cosmic::Application for App {
                 self.panel_group_selection = None;
             }
             Message::PanelPreviewResolved(resolution) => self.panel_preview_resolution = resolution,
-            Message::PanelPreviewOverflow => self.panel_preview_overflow = !self.panel_preview_overflow,
+            Message::PanelPreviewOverflow => {
+                self.panel_preview_overflow = !self.panel_preview_overflow
+            }
             Message::PanelPage(tab) => {
                 self.panel_page = tab;
                 return cosmic::iced::widget::scrollable::snap_to(
@@ -632,13 +684,20 @@ impl cosmic::Application for App {
                     self.ranges.retain(|path, _| !path.starts_with("panels."));
                     let task = self.edit_many(edits);
                     if let Ok(panel) = self.preview_panel() {
-                        if self.panel_selection.as_ref().is_some_and(|id| panel.item(id).is_none()) {
+                        if self
+                            .panel_selection
+                            .as_ref()
+                            .is_some_and(|id| panel.item(id).is_none())
+                        {
                             self.panel_selection = None;
                         }
                         if self.panel_group_selection.as_ref().is_some_and(|id| {
-                            !panel_edit::Zone::ALL
-                                .into_iter()
-                                .any(|zone| zone.definition(&panel).groups.iter().any(|group| &group.id == id))
+                            !panel_edit::Zone::ALL.into_iter().any(|zone| {
+                                zone.definition(&panel)
+                                    .groups
+                                    .iter()
+                                    .any(|group| &group.id == id)
+                            })
                         }) {
                             self.panel_group_selection = None;
                         }
@@ -661,7 +720,9 @@ impl cosmic::Application for App {
                     Ok((snapshot, live)) => {
                         self.undo = Some(std::mem::take(&mut self.saving_previous));
                         self.current = snapshot;
-                        self.font = fonts::interface_font(&self.resolved.presented.tokens.typography.font_family);
+                        self.font = fonts::interface_font(
+                            &self.resolved.presented.tokens.typography.font_family,
+                        );
                         self.draft = self.current.clone();
 
                         for edit in &self.pending {
@@ -670,8 +731,10 @@ impl cosmic::Application for App {
                             }
                         }
 
-                        self.family_sections =
-                            theme_controls::FamilySections::new(&self.resolved.families, &self.draft);
+                        self.family_sections = theme_controls::FamilySections::new(
+                            &self.resolved.families,
+                            &self.draft,
+                        );
                         self.status = if live {
                             "Saved · desktop updated"
                         } else if self.path != store::config_path() {
@@ -687,7 +750,12 @@ impl cosmic::Application for App {
                             tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                             Message::ExpireUndo(revision)
                         });
-                        return Task::batch([self.update_theme(), self.flush(), self.load_thumbnail(), expire]);
+                        return Task::batch([
+                            self.update_theme(),
+                            self.flush(),
+                            self.load_thumbnail(),
+                            expire,
+                        ]);
                     }
                     Err(error) => {
                         self.error = Some(error);
@@ -701,8 +769,11 @@ impl cosmic::Application for App {
                 Ok(snapshot) => {
                     self.current = snapshot.clone();
                     self.draft = snapshot;
-                    self.family_sections = theme_controls::FamilySections::new(&self.resolved.families, &self.draft);
-                    self.font = fonts::interface_font(&self.resolved.presented.tokens.typography.font_family);
+                    self.family_sections =
+                        theme_controls::FamilySections::new(&self.resolved.families, &self.draft);
+                    self.font = fonts::interface_font(
+                        &self.resolved.presented.tokens.typography.font_family,
+                    );
                     self.pending.clear();
                     self.inputs.clear();
                     self.ranges.clear();
@@ -735,7 +806,9 @@ impl cosmic::Application for App {
                 let edits = visuals::choose_family(&id, appearance);
                 let focus = if self.gallery_focus.is_none() {
                     cosmic::iced::advanced::widget::operate(
-                        cosmic::iced::advanced::widget::operation::focusable::focus(gallery_id(&id, appearance)),
+                        cosmic::iced::advanced::widget::operation::focusable::focus(gallery_id(
+                            &id, appearance,
+                        )),
                     )
                     .map(cosmic::Action::App)
                 } else {
@@ -748,7 +821,8 @@ impl cosmic::Application for App {
             Message::AutoAppearance(enabled) => {
                 let mode = if enabled {
                     "auto"
-                } else if self.resolved.theme.appearance == ferese_config::theme::Appearance::Light {
+                } else if self.resolved.theme.appearance == ferese_config::theme::Appearance::Light
+                {
                     "light"
                 } else {
                     "dark"
@@ -780,7 +854,8 @@ impl cosmic::Application for App {
                 let directory = self.path.parent().map(ToOwned::to_owned);
                 return cosmic::task::future(async move {
                     let result = tokio::task::spawn_blocking(move || -> Result<_, String> {
-                        let Some(path) = store::pick_file("Import theme", "KDL themes | *.kdl")? else {
+                        let Some(path) = store::pick_file("Import theme", "KDL themes | *.kdl")?
+                        else {
                             return Ok(None);
                         };
                         let mut snapshot = Snapshot::parse(source)?;
@@ -796,18 +871,26 @@ impl cosmic::Application for App {
                             .collect();
                         let mut id = format!("custom-{stem}");
                         let mut suffix = 2;
-                        while snapshot.item(&format!("theme.custom_themes.{id}")).is_some() {
+                        while snapshot
+                            .item(&format!("theme.custom_themes.{id}"))
+                            .is_some()
+                        {
                             id = format!("custom-{stem}-{suffix}");
                             suffix += 1;
                         }
-                        snapshot.edit(&set(&format!("theme.custom_themes.{id}.file"), path.as_str()))?;
-                        let mut connection = ferese_ipc::Connection::connect().map_err(|e| e.to_string())?;
+                        snapshot.edit(&set(
+                            &format!("theme.custom_themes.{id}.file"),
+                            path.as_str(),
+                        ))?;
+                        let mut connection =
+                            ferese_ipc::Connection::connect().map_err(|e| e.to_string())?;
                         let value = connection.call(
                             "theme-preview",
                             serde_json::json!({"source": snapshot.source, "directory": directory}),
                         )?;
                         let _: Vec<ferese_config::families::Family> =
-                            serde_json::from_value(value["families"].clone()).map_err(|e| e.to_string())?;
+                            serde_json::from_value(value["families"].clone())
+                                .map_err(|e| e.to_string())?;
                         Ok(Some((id, path)))
                     })
                     .await
@@ -857,7 +940,9 @@ impl cosmic::Application for App {
                 return self.apply_wallpaper_edits(wallpaper_controls::restore_defaults());
             }
             Message::NewCommand(value) => self.new_command = value,
-            Message::AddCommand if !self.saving => match shlex::split(&self.new_command).filter(|a| !a.is_empty()) {
+            Message::AddCommand if !self.saving => match shlex::split(&self.new_command)
+                .filter(|a| !a.is_empty())
+            {
                 Some(args) => {
                     self.new_command.clear();
                     return self.change(Edit::Add(
@@ -865,14 +950,19 @@ impl cosmic::Application for App {
                         vec![
                             (
                                 "command".into(),
-                                args.into_iter().map(serde_json::Value::from).collect::<Vec<_>>().into(),
+                                args.into_iter()
+                                    .map(serde_json::Value::from)
+                                    .collect::<Vec<_>>()
+                                    .into(),
                             ),
                             ("enabled".into(), true.into()),
                             ("restart".into(), true.into()),
                         ],
                     ));
                 }
-                None => self.error = Some("Enter a program and arguments with balanced quotes.".into()),
+                None => {
+                    self.error = Some("Enter a program and arguments with balanced quotes.".into())
+                }
             },
             Message::AddSwipe(keys) if !self.saving => {
                 let (action, argument) = match keys {
@@ -881,7 +971,10 @@ impl cosmic::Application for App {
                     "Swipe3Left" => ("focus", Some("right")),
                     _ => ("focus", Some("left")),
                 };
-                let mut fields = vec![("keys".into(), keys.into()), ("action".into(), action.into())];
+                let mut fields = vec![
+                    ("keys".into(), keys.into()),
+                    ("action".into(), action.into()),
+                ];
 
                 if let Some(argument) = argument {
                     fields.push(("argument".into(), argument.into()));
@@ -908,18 +1001,23 @@ impl cosmic::Application for App {
                 cosmic::iced::Event::Window(cosmic::iced::window::Event::Rescaled(scale)) => {
                     Some(Message::RenderScale(scale))
                 }
-                cosmic::iced::Event::PlatformSpecific(cosmic::iced::event::PlatformSpecific::Wayland(
-                    cosmic::iced::event::wayland::Event::Output(
-                        cosmic::iced::event::wayland::OutputEvent::InfoUpdate(_),
-                        _,
+                cosmic::iced::Event::PlatformSpecific(
+                    cosmic::iced::event::PlatformSpecific::Wayland(
+                        cosmic::iced::event::wayland::Event::Output(
+                            cosmic::iced::event::wayland::OutputEvent::InfoUpdate(_),
+                            _,
+                        ),
                     ),
-                )) => Some(Message::ReadRenderScale(id)),
+                ) => Some(Message::ReadRenderScale(id)),
                 _ => None,
             }),
             if self.sidebar_open {
                 cosmic::iced::event::listen_with(|event, _, _| match event {
                     cosmic::iced::Event::Keyboard(cosmic::iced::keyboard::Event::KeyPressed {
-                        key: cosmic::iced::keyboard::Key::Named(cosmic::iced::keyboard::key::Named::Escape),
+                        key:
+                            cosmic::iced::keyboard::Key::Named(
+                                cosmic::iced::keyboard::key::Named::Escape,
+                            ),
                         ..
                     }) => Some(Message::Sidebar(false)),
                     cosmic::iced::Event::Window(cosmic::iced::window::Event::Resized(size))
@@ -933,9 +1031,11 @@ impl cosmic::Application for App {
                 cosmic::iced::Subscription::none()
             },
             cosmic::iced::Subscription::run_with(self.path.clone(), |path| watch::changes(path)),
-            ferese_theme_client::service::subscription().map(|snapshot| Message::ThemeChanged(Box::new(snapshot))),
+            ferese_theme_client::service::subscription()
+                .map(|snapshot| Message::ThemeChanged(Box::new(snapshot))),
             if matches!(self.page, Page::Displays | Page::Bar) {
-                cosmic::iced::time::every(std::time::Duration::from_secs(2)).map(|_| Message::RefreshDisplays)
+                cosmic::iced::time::every(std::time::Duration::from_secs(2))
+                    .map(|_| Message::RefreshDisplays)
             } else {
                 cosmic::iced::Subscription::none()
             },
@@ -993,7 +1093,10 @@ impl App {
 
     fn change(&mut self, edit: Edit) -> Task<Message> {
         if let Edit::Set(path, value) = &edit
-            && matches!(path.as_str(), "theme.background.path" | "theme.background.mode")
+            && matches!(
+                path.as_str(),
+                "theme.background.path" | "theme.background.mode"
+            )
         {
             return self.apply_wallpaper_edits(wallpaper_controls::edits(
                 wallpaper_controls::Target::Both,
@@ -1093,7 +1196,8 @@ mod tests {
         let mut app = app();
         app.core.set_main_window_id(None);
         assert_eq!(app.update(Message::DragWindow).units(), 0);
-        app.core.set_main_window_id(Some(cosmic::iced::window::Id::unique()));
+        app.core
+            .set_main_window_id(Some(cosmic::iced::window::Id::unique()));
         assert_eq!(app.update(Message::DragWindow).units(), 1);
     }
 
@@ -1115,7 +1219,12 @@ mod tests {
     #[test]
     fn corner_sliders_hold_changes_until_release_and_preserve_other_corners() {
         let mut app = app();
-        for edit in panel_edit::plan(&app.draft, panel_edit::Action::SetRadius("4px 8px 12px 16px".into())).unwrap() {
+        for edit in panel_edit::plan(
+            &app.draft,
+            panel_edit::Action::SetRadius("4px 8px 12px 16px".into()),
+        )
+        .unwrap()
+        {
             app.draft.edit(&edit).unwrap();
         }
         app.draft = Snapshot::parse(app.draft.source.clone()).unwrap();
@@ -1139,7 +1248,8 @@ mod tests {
         assert_eq!(app.draft.source, before);
         let _ = app.update(Message::Release(field));
         let radii: ferese_panel::CornerRadii =
-            serde_json::from_value(app.draft.item("panels.0.corner_radius").unwrap().clone()).unwrap();
+            serde_json::from_value(app.draft.item("panels.0.corner_radius").unwrap().clone())
+                .unwrap();
         assert_eq!(radii.0, [4., 8., 23., 16.]);
         assert!(app.ranges.is_empty());
         assert_eq!(app.current.source, before);
@@ -1150,7 +1260,9 @@ mod tests {
         use ferese_panel::{GroupId, ItemId};
         let mut app = app();
         let mut initial = Snapshot::parse(String::new()).unwrap();
-        initial.edit(&panel_controls::initialize(&initial).unwrap()).unwrap();
+        initial
+            .edit(&panel_controls::initialize(&initial).unwrap())
+            .unwrap();
         app.current = initial.clone();
         app.draft = initial.clone();
         app.saving = true; // An earlier save has not completed yet.
@@ -1183,7 +1295,12 @@ mod tests {
             panels[0].start.groups[1].items[1].overflow,
             ferese_panel::OverflowPolicy::Always
         );
-        assert!(!panels[0].end.groups[0].items.iter().any(|item| item.id == id));
+        assert!(
+            !panels[0].end.groups[0]
+                .items
+                .iter()
+                .any(|item| item.id == id)
+        );
     }
 
     #[test]
@@ -1232,7 +1349,9 @@ mod tests {
         use ferese_panel::GroupId;
         let mut app = app();
         let mut initial = Snapshot::parse(String::new()).unwrap();
-        initial.edit(&panel_controls::initialize(&initial).unwrap()).unwrap();
+        initial
+            .edit(&panel_controls::initialize(&initial).unwrap())
+            .unwrap();
         app.current = initial.clone();
         app.draft = initial.clone();
         app.saving = true;
@@ -1253,7 +1372,10 @@ mod tests {
         assert!(app.pending.is_empty());
         assert_eq!(app.draft.doc.value(), &expected);
         assert_eq!(app.panel_group_selection, Some(id));
-        assert_eq!(app.draft.number("panels.0.start.groups.2.padding.1", 0.), 12.);
+        assert_eq!(
+            app.draft.number("panels.0.start.groups.2.padding.1", 0.),
+            12.
+        );
         let _ = app.page_view();
     }
 
@@ -1272,7 +1394,10 @@ mod tests {
     fn panel_pages_do_not_save_and_selection_opens_the_items_inspector() {
         let mut app = app();
         app.page = Page::Bar;
-        for tab in [panel_controls::PanelPage::Arrange, panel_controls::PanelPage::Panels] {
+        for tab in [
+            panel_controls::PanelPage::Arrange,
+            panel_controls::PanelPage::Panels,
+        ] {
             let _ = app.update(Message::PanelPage(tab));
             let _ = app.page_view();
             assert_eq!(app.panel_page, tab);
@@ -1283,7 +1408,9 @@ mod tests {
         let _ = app.update(Message::PanelSelect(ferese_panel::ItemId("clock".into())));
         assert_eq!(app.panel_page, panel_controls::PanelPage::Arrange);
         assert!(app.panel_group_selection.is_none());
-        let _ = app.update(Message::PanelGroupSelect(ferese_panel::GroupId("status".into())));
+        let _ = app.update(Message::PanelGroupSelect(ferese_panel::GroupId(
+            "status".into(),
+        )));
         assert!(app.panel_selection.is_none());
         assert_eq!(app.panel_page, panel_controls::PanelPage::Arrange);
     }
@@ -1293,7 +1420,9 @@ mod tests {
         use ferese_panel::{GroupId, ItemId};
         let mut app = app();
         let mut initial = Snapshot::parse(String::new()).unwrap();
-        initial.edit(&panel_controls::initialize(&initial).unwrap()).unwrap();
+        initial
+            .edit(&panel_controls::initialize(&initial).unwrap())
+            .unwrap();
         app.current = initial.clone();
         app.draft = initial.clone();
         app.saving = true;
@@ -1314,22 +1443,30 @@ mod tests {
         let _ = app.update(Message::Saved(Ok((initial, false))));
         assert_eq!(app.draft.doc.value(), &expected);
         assert!(app.saving && app.pending.is_empty());
-        assert_eq!(app.draft.string("panels.0.center.groups.1.items.0.id", ""), "network");
-        assert_eq!(app.draft.string("panels.0.center.groups.1.items.1.id", ""), "clock");
+        assert_eq!(
+            app.draft.string("panels.0.center.groups.1.items.0.id", ""),
+            "network"
+        );
+        assert_eq!(
+            app.draft.string("panels.0.center.groups.1.items.1.id", ""),
+            "clock"
+        );
     }
 
     #[test]
     fn wallpaper_preview_uses_presented_state_and_tracks_mode_changes() {
         let mut app = app();
         app.path = store::config_path();
-        app.current = Snapshot::parse("theme { background { path \"/saved.png\"; }; }".into()).unwrap();
+        app.current =
+            Snapshot::parse("theme { background { path \"/saved.png\"; }; }".into()).unwrap();
         app.resolved.presented.tokens.background.path = Some("/active.png".into());
         assert_eq!(app.active_wallpaper_path(), "/active.png");
 
         app.page = Page::Wallpaper;
         let mut snapshot = app.resolved.clone();
-        snapshot.presented.tokens.background.path =
-            Some(ferese_config::default_wallpaper_for(ferese_config::theme::Appearance::Light).into());
+        snapshot.presented.tokens.background.path = Some(
+            ferese_config::default_wallpaper_for(ferese_config::theme::Appearance::Light).into(),
+        );
         let task = app.update(Message::ThemeChanged(Box::new(snapshot)));
         assert!(task.units() > 0);
         assert_eq!(
@@ -1353,16 +1490,26 @@ mod tests {
         let mut app = app();
         app.saving = true;
         app.wallpaper.target = wallpaper_controls::Target::Light;
-        app.draft = Snapshot::parse("theme { dark { background { path \"/custom-dark.png\"; }; }; }".into()).unwrap();
-        app.inputs
-            .insert("theme.light.background.path".into(), "/unfinished.png".into());
-        let _ = app.update(Message::UseDefaultWallpaper(ferese_config::theme::Appearance::Light));
+        app.draft = Snapshot::parse(
+            "theme { dark { background { path \"/custom-dark.png\"; }; }; }".into(),
+        )
+        .unwrap();
+        app.inputs.insert(
+            "theme.light.background.path".into(),
+            "/unfinished.png".into(),
+        );
+        let _ = app.update(Message::UseDefaultWallpaper(
+            ferese_config::theme::Appearance::Light,
+        ));
         assert!(!app.inputs.contains_key("theme.light.background.path"));
         assert_eq!(
             app.draft.string("theme.light.background.path", ""),
             ferese_config::default_wallpaper_for(ferese_config::theme::Appearance::Light)
         );
-        assert_eq!(app.draft.string("theme.dark.background.path", ""), "/custom-dark.png");
+        assert_eq!(
+            app.draft.string("theme.dark.background.path", ""),
+            "/custom-dark.png"
+        );
     }
 
     #[test]
@@ -1374,14 +1521,18 @@ mod tests {
             wallpaper_controls::Target::Light,
             Ok(Some("/chosen.png".into())),
         ));
-        assert_eq!(app.draft.string("theme.light.background.path", ""), "/chosen.png");
+        assert_eq!(
+            app.draft.string("theme.light.background.path", ""),
+            "/chosen.png"
+        );
         assert!(app.draft.item("theme.dark.background.path").is_none());
     }
 
     #[test]
     fn shortcuts_build_controls_only_for_mounted_rows() {
         let mut app = shortcuts(100);
-        app.visible_rows.extend((0..4).map(|index| ("bindings", index)));
+        app.visible_rows
+            .extend((0..4).map(|index| ("bindings", index)));
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -1406,20 +1557,32 @@ mod tests {
             tree_nodes(&tree)
         };
         let visible = nodes(&app);
-        app.visible_rows.extend((0..100).map(|index| ("bindings", index)));
+        app.visible_rows
+            .extend((0..100).map(|index| ("bindings", index)));
         let eager = nodes(&app);
-        assert!(eager > visible + 96 * 10, "visible={visible}, eager={eager}");
+        assert!(
+            eager > visible + 96 * 10,
+            "visible={visible}, eager={eager}"
+        );
     }
 
     #[test]
     fn virtual_rows_keep_unsaved_text_mounted_until_unfocus() {
         let mut app = shortcuts(10);
         let _ = app.update(Message::RowVisibility("bindings", 5, true));
-        let _ = app.update(Message::Draft("bindings.5.argument".into(), "my command".into()));
+        let _ = app.update(Message::Draft(
+            "bindings.5.argument".into(),
+            "my command".into(),
+        ));
         let _ = app.update(Message::RowVisibility("bindings", 5, false));
         assert!(app.visible_rows.contains(&("bindings", 5)));
         assert_eq!(app.inputs["bindings.5.argument"], "my command");
-        let _ = app.update(Message::Commit(schema::text("bindings.5.argument", "Argument", "", "")));
+        let _ = app.update(Message::Commit(schema::text(
+            "bindings.5.argument",
+            "Argument",
+            "",
+            "",
+        )));
         assert!(!app.visible_rows.contains(&("bindings", 5)));
         assert_eq!(app.draft.string("bindings.5.argument", ""), "my command");
     }
@@ -1484,7 +1647,8 @@ mod tests {
             let registrations = (0..7)
                 .map(|index| format!("personal-{index} {{ file \"unused.kdl\"; }}\n"))
                 .collect::<String>();
-            app.draft = Snapshot::parse(format!("theme {{ custom-themes {{ {registrations} }} }}")).unwrap();
+            app.draft = Snapshot::parse(format!("theme {{ custom-themes {{ {registrations} }} }}"))
+                .unwrap();
             let mut snapshot = app.resolved.clone();
             for index in 0..7 {
                 let mut family = snapshot.families[0].clone();
@@ -1503,7 +1667,10 @@ mod tests {
                 2,
                 true,
             ));
-            assert!(app.gallery_focus.is_some(), "built-in row must not claim custom focus");
+            assert!(
+                app.gallery_focus.is_some(),
+                "built-in row must not claim custom focus"
+            );
             let task = app.update(Message::RowVisibility(list, 2, true));
             assert!(task.units() > 0);
             assert!(app.gallery_focus.is_none());
@@ -1536,7 +1703,9 @@ mod tests {
                 for _ in 0..100 {
                     let started = std::time::Instant::now();
                     let view = app.page_view();
-                    std::hint::black_box(cosmic::iced::advanced::widget::Tree::new(view.as_widget()));
+                    std::hint::black_box(cosmic::iced::advanced::widget::Tree::new(
+                        view.as_widget(),
+                    ));
                     samples.push(started.elapsed());
                 }
                 samples.sort_unstable();
@@ -1553,7 +1722,9 @@ mod tests {
     #[ignore = "release scroll/render sample; requires both renderer backends"]
     fn profile_dense_pages_on_both_renderers() {
         use cosmic::iced::advanced::renderer::{Headless, Renderer as _};
-        use cosmic::iced::advanced::{Layout, Shell, clipboard, layout, mouse, renderer, widget::Tree};
+        use cosmic::iced::advanced::{
+            Layout, Shell, clipboard, layout, mouse, renderer, widget::Tree,
+        };
         use cosmic::iced::{Color, Event, Font, Pixels, Point, Rectangle, Size};
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -1589,9 +1760,11 @@ mod tests {
                     let mut view = app.page_view();
                     let tree = tree.get_or_insert_with(|| Tree::new(view.as_widget()));
                     tree.diff(view.as_widget_mut());
-                    let node =
-                        view.as_widget_mut()
-                            .layout(tree, &renderer, &layout::Limits::new(Size::ZERO, bounds.size()));
+                    let node = view.as_widget_mut().layout(
+                        tree,
+                        &renderer,
+                        &layout::Limits::new(Size::ZERO, bounds.size()),
+                    );
                     view.as_widget_mut().update(
                         tree,
                         &Event::Mouse(mouse::Event::WheelScrolled {
@@ -1626,7 +1799,12 @@ mod tests {
                     let draw_elapsed = draw_started.elapsed();
                     drop(view);
                     let render_started = std::time::Instant::now();
-                    let pixels = Headless::screenshot(&mut renderer, size, scale, theme.cosmic().bg_color().into());
+                    let pixels = Headless::screenshot(
+                        &mut renderer,
+                        size,
+                        scale,
+                        theme.cosmic().bg_color().into(),
+                    );
                     std::hint::black_box(pixels);
                     let render_elapsed = render_started.elapsed();
 
@@ -1643,7 +1821,8 @@ mod tests {
                     }
                 }
 
-                for (stage, index) in [("layout", 0), ("draw_queue", 1), ("render_and_readback", 2)] {
+                for (stage, index) in [("layout", 0), ("draw_queue", 1), ("render_and_readback", 2)]
+                {
                     let mut times = samples
                         .iter()
                         .map(|sample| match index {
@@ -1722,7 +1901,8 @@ mod tests {
         let _ = app.update(Message::ExternalConfig(Ok(external.clone())));
         assert_eq!(app.current.source, external.source);
         assert_eq!(app.draft.number("animations.speed", 0.), 0.5);
-        app.inputs.insert("theme.colors.accent".into(), "#ffffff".into());
+        app.inputs
+            .insert("theme.colors.accent".into(), "#ffffff".into());
         let newer = Snapshot::parse("animations {\n    speed 0.8\n}\n".into()).unwrap();
         let _ = app.update(Message::ExternalConfig(Ok(newer)));
         assert_eq!(app.current.source, external.source);

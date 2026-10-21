@@ -7,7 +7,11 @@ use super::{MenuRows, MenuStyle};
 use crate::status::Action;
 use crate::{FereseShell, Message, ShellTheme, bar_icon, color_with_opacity, motion};
 
-pub(super) fn view<'a>(shell: &'a FereseShell, mut rows: MenuRows<'a>, style: MenuStyle) -> MenuRows<'a> {
+pub(super) fn view<'a>(
+    shell: &'a FereseShell,
+    mut rows: MenuRows<'a>,
+    style: MenuStyle,
+) -> MenuRows<'a> {
     let MenuStyle {
         theme,
         primary: _,
@@ -37,9 +41,17 @@ pub(super) fn view<'a>(shell: &'a FereseShell, mut rows: MenuRows<'a>, style: Me
     if let Some(profiles) = &shell.status.power_profiles {
         let mut modes = row::with_capacity(3).spacing(6).width(Length::Fill);
         for (index, (label, icon, profile)) in [
-            ("Power saver", ferese_theme::icons::POWER_SAVER, "power-saver"),
+            (
+                "Power saver",
+                ferese_theme::icons::POWER_SAVER,
+                "power-saver",
+            ),
             ("Balanced", ferese_theme::icons::POWER_BALANCED, "balanced"),
-            ("Performance", ferese_theme::icons::POWER_PERFORMANCE, "performance"),
+            (
+                "Performance",
+                ferese_theme::icons::POWER_PERFORMANCE,
+                "performance",
+            ),
         ]
         .into_iter()
         .enumerate()
@@ -89,18 +101,33 @@ pub(super) fn view<'a>(shell: &'a FereseShell, mut rows: MenuRows<'a>, style: Me
         ),
     ] {
         if enabled {
-            power = power.push(power_tile_action(shell.render, label, icon, action, theme, p));
+            power = power.push(power_tile_action(
+                shell.render,
+                label,
+                icon,
+                action,
+                theme,
+                p,
+            ));
         }
     }
 
     if shell.status.reboot || shell.status.poweroff || shell.status.suspend {
-        rows = rows.push(ferese_theme::menus::section_label("Power", shell.render.font, muted));
+        rows = rows.push(ferese_theme::menus::section_label(
+            "Power",
+            shell.render.font,
+            muted,
+        ));
         rows = rows.push(power);
     }
     rows
 }
 
-pub(super) fn brightness<'a>(shell: &'a FereseShell, mut rows: MenuRows<'a>, style: MenuStyle) -> MenuRows<'a> {
+pub(super) fn brightness<'a>(
+    shell: &'a FereseShell,
+    mut rows: MenuRows<'a>,
+    style: MenuStyle,
+) -> MenuRows<'a> {
     let MenuStyle {
         theme,
         primary,
@@ -135,7 +162,14 @@ fn power_tile<'a>(
     theme: ShellTheme,
     opacity: f32,
 ) -> Element<'a, cosmic::Action<Message>> {
-    let foreground = color_with_opacity(if selected { theme.accent } else { theme.text_primary }, opacity);
+    let foreground = color_with_opacity(
+        if selected {
+            theme.accent
+        } else {
+            theme.text_primary
+        },
+        opacity,
+    );
     let tile = container(
         column![bar_icon(icon, 19, foreground), render.text(label).size(11)]
             .spacing(3)
@@ -146,7 +180,9 @@ fn power_tile<'a>(
     let btn = button::custom(tile)
         .width(Length::FillPortion(1))
         .padding([8, 2])
-        .on_press(cosmic::Action::App(Message::Control(Action::PowerProfile(profile))));
+        .on_press(cosmic::Action::App(Message::Control(Action::PowerProfile(
+            profile,
+        ))));
 
     motion::button(render, btn, foreground, selected, opacity)
 }

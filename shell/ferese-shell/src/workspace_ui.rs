@@ -30,7 +30,8 @@ impl FereseShell {
                     }
                 )
         });
-        self.workspace_ui.update(&self.snapshot, self.config.animations);
+        self.workspace_ui
+            .update(&self.snapshot, self.config.animations);
         let icons = self.workspace_ui.load_icons(&self.snapshot, needs_icons);
         let tooltip = if self.workspace_ui.hovered.as_ref().is_some_and(|hover| {
             !self
@@ -46,7 +47,10 @@ impl FereseShell {
         Task::batch([icons, tooltip, self.sync_hub_workspaces()])
     }
 
-    pub(super) fn workspace_icons_loaded(&mut self, result: Result<IconIndex, String>) -> Task<Message> {
+    pub(super) fn workspace_icons_loaded(
+        &mut self,
+        result: Result<IconIndex, String>,
+    ) -> Task<Message> {
         self.workspace_ui.icons_loading = false;
         match result {
             Ok(index) => {
@@ -93,7 +97,9 @@ fn discover_icons(entries: Option<Arc<Vec<fde::DesktopEntry>>>, app_ids: Vec<Str
                 icon::from_name(source)
                     .prefer_svg(true)
                     .size(32)
-                    .fallback(Some(icon::IconFallback::Names(vec!["application-x-executable".into()])))
+                    .fallback(Some(icon::IconFallback::Names(vec![
+                        "application-x-executable".into(),
+                    ])))
                     .handle()
             };
             (app_id, handle)
@@ -162,7 +168,12 @@ impl Operation<Option<Rectangle>> for FindBounds {
 
 impl FereseShell {
     pub(super) fn dismiss_workspace_tooltip_for_bar(&mut self, bar: window::Id) -> Task<Message> {
-        if self.workspace_ui.hovered.as_ref().is_some_and(|hover| hover.bar == bar) {
+        if self
+            .workspace_ui
+            .hovered
+            .as_ref()
+            .is_some_and(|hover| hover.bar == bar)
+        {
             self.dismiss_workspace_tooltip()
         } else {
             Task::none()
@@ -172,9 +183,14 @@ impl FereseShell {
     pub(super) fn dismiss_workspace_tooltip(&mut self) -> Task<Message> {
         self.workspace_ui.serial = self.workspace_ui.serial.wrapping_add(1);
         self.workspace_ui.hovered = None;
-        self.workspace_ui.tooltip.take().map_or_else(Task::none, |id| {
-            cosmic::task::message(cosmic::Action::Surface(cosmic::surface::action::destroy_popup(id)))
-        })
+        self.workspace_ui
+            .tooltip
+            .take()
+            .map_or_else(Task::none, |id| {
+                cosmic::task::message(cosmic::Action::Surface(
+                    cosmic::surface::action::destroy_popup(id),
+                ))
+            })
     }
 
     pub(super) fn hover_workspace(
@@ -229,8 +245,14 @@ impl FereseShell {
         .map(move |bounds| cosmic::Action::App(Message::WorkspaceTooltipBounds(serial, bounds)))
     }
 
-    pub(super) fn show_workspace_tooltip(&mut self, serial: u64, bounds: Option<Rectangle>) -> Task<Message> {
-        use cosmic::iced::platform_specific::runtime::wayland::popup::{SctkPopupSettings, SctkPositioner};
+    pub(super) fn show_workspace_tooltip(
+        &mut self,
+        serial: u64,
+        bounds: Option<Rectangle>,
+    ) -> Task<Message> {
+        use cosmic::iced::platform_specific::runtime::wayland::popup::{
+            SctkPopupSettings, SctkPositioner,
+        };
         let Some(hover) = self
             .workspace_ui
             .hovered
@@ -245,7 +267,11 @@ impl FereseShell {
         if self.workspace_ui.tooltip.is_some() {
             return Task::none();
         }
-        if self.bar_hidden(hover.bar) || self.menu.is_some() || self.system_modal.is_some() || self.overview_active {
+        if self.bar_hidden(hover.bar)
+            || self.menu.is_some()
+            || self.system_modal.is_some()
+            || self.overview_active
+        {
             return self.dismiss_workspace_tooltip();
         }
         if !self
@@ -322,7 +348,9 @@ impl FereseShell {
                     .ellipsize(cosmic::iced::widget::text::Ellipsize::End(
                         cosmic::iced::advanced::text::EllipsizeHeightLimit::Lines(1),
                     ))
-                    .class(cosmic::theme::Text::Color(crate::color(self.config.theme.text_primary))),
+                    .class(cosmic::theme::Text::Color(crate::color(
+                        self.config.theme.text_primary,
+                    ))),
             )
             .padding([8, 10])
             .class(ferese_theme::controls::surface(
@@ -350,7 +378,9 @@ impl Transition {
             return self.to;
         }
 
-        let t = (now.saturating_duration_since(self.started).as_secs_f32() / self.duration.as_secs_f32()).min(1.);
+        let t = (now.saturating_duration_since(self.started).as_secs_f32()
+            / self.duration.as_secs_f32())
+        .min(1.);
         self.from + (self.to - self.from) * t * t * (3. - 2. * t)
     }
 
@@ -375,14 +405,17 @@ impl WorkspaceUi {
             Duration::ZERO
         };
 
-        self.transitions
-            .retain(|id, _| snapshot.workspaces.iter().any(|workspace| workspace.id == *id));
+        self.transitions.retain(|id, _| {
+            snapshot
+                .workspaces
+                .iter()
+                .any(|workspace| workspace.id == *id)
+        });
 
         for workspace in &snapshot.workspaces {
-            let active = snapshot
-                .outputs
-                .iter()
-                .any(|output| Some(output.id) == workspace.output && output.active_workspace == workspace.id);
+            let active = snapshot.outputs.iter().any(|output| {
+                Some(output.id) == workspace.output && output.active_workspace == workspace.id
+            });
             let target = if active { 1. } else { 0. };
             let transition = self.transitions.entry(workspace.id).or_insert(Transition {
                 from: target,
@@ -438,12 +471,15 @@ impl WorkspaceUi {
     }
 
     pub(super) fn transition(&self, workspace: u64, active: bool) -> Transition {
-        self.transitions.get(&workspace).copied().unwrap_or(Transition {
-            from: if active { 1. } else { 0. },
-            to: if active { 1. } else { 0. },
-            started: Instant::now(),
-            duration: Duration::ZERO,
-        })
+        self.transitions
+            .get(&workspace)
+            .copied()
+            .unwrap_or(Transition {
+                from: if active { 1. } else { 0. },
+                to: if active { 1. } else { 0. },
+                started: Instant::now(),
+                duration: Duration::ZERO,
+            })
     }
 
     pub(super) fn apps(&self, workspace: u64, snapshot: &ShellSnapshot) -> Vec<icon::Handle> {
@@ -521,8 +557,15 @@ mod tests {
         assert!(!ui.icons_loading);
         assert_eq!(ui.load_icons(&snapshot, true).units(), 1);
         assert!(ui.icons_loading);
-        assert!(ui.entries.is_none(), "scheduling must not perform filesystem discovery");
-        assert_eq!(ui.apps(1, &snapshot).len(), 1, "new apps have a bundled placeholder");
+        assert!(
+            ui.entries.is_none(),
+            "scheduling must not perform filesystem discovery"
+        );
+        assert_eq!(
+            ui.apps(1, &snapshot).len(),
+            1,
+            "new apps have a bundled placeholder"
+        );
         assert_eq!(ui.load_icons(&snapshot, true).units(), 0);
         assert!(ui.entries.is_none());
         assert!(ui.icons.is_empty());
@@ -535,8 +578,10 @@ mod tests {
         add_window(&mut snapshot, "running");
         ui.entries = Some(Arc::new(Vec::new()));
         for id in ["running", "closed"] {
-            ui.icons
-                .insert(id.into(), icon::from_svg_bytes(ferese_theme::icons::APPLICATION));
+            ui.icons.insert(
+                id.into(),
+                icon::from_svg_bytes(ferese_theme::icons::APPLICATION),
+            );
         }
         assert_eq!(ui.load_icons(&snapshot, true).units(), 0);
         assert!(ui.icons.contains_key("running"));
@@ -547,7 +592,10 @@ mod tests {
         assert!(ui.icons.is_empty());
         assert_eq!(ui.icons.capacity(), 0);
         assert!(ui.entries.is_none());
-        assert!(ui.icons_loading, "an in-flight worker still owns its discovery request");
+        assert!(
+            ui.icons_loading,
+            "an in-flight worker still owns its discovery request"
+        );
     }
 
     #[test]
@@ -565,10 +613,10 @@ mod tests {
         shell.snapshot = snapshot(1);
         add_window(&mut shell.snapshot, "existing");
         add_window(&mut shell.snapshot, "discovered");
-        shell
-            .workspace_ui
-            .icons
-            .insert("existing".into(), icon::from_svg_bytes(ferese_theme::icons::SETTINGS));
+        shell.workspace_ui.icons.insert(
+            "existing".into(),
+            icon::from_svg_bytes(ferese_theme::icons::SETTINGS),
+        );
         use std::hash::{Hash, Hasher};
         let identity = |handle: &icon::Handle| {
             let mut hash = std::collections::hash_map::DefaultHasher::new();
@@ -582,7 +630,10 @@ mod tests {
         add_window(&mut shell.snapshot, "arrived-during-discovery");
         drop(shell.workspace_icons_loaded(Ok(IconIndex {
             entries: Arc::new(Vec::new()),
-            icons: HashMap::from([("discovered".into(), icon::from_svg_bytes(ferese_theme::icons::OVERVIEW))]),
+            icons: HashMap::from([(
+                "discovered".into(),
+                icon::from_svg_bytes(ferese_theme::icons::OVERVIEW),
+            )]),
         })));
         assert_eq!(identity(&shell.workspace_ui.icons["existing"]), existing);
         assert!(shell.workspace_ui.icons.contains_key("discovered"));
@@ -609,7 +660,8 @@ mod tests {
         assert_eq!(ui.transition(1, true).progress(midpoint), 0.5);
         assert_eq!(ui.transition(2, false).progress(midpoint), 0.5);
         assert_eq!(
-            ui.transition(1, true).progress(midpoint + Duration::from_millis(160)),
+            ui.transition(1, true)
+                .progress(midpoint + Duration::from_millis(160)),
             1.
         );
         ui.update_at(
@@ -623,7 +675,10 @@ mod tests {
         assert_eq!(ui.transition(1, false).progress(midpoint), 0.);
         assert_eq!(ui.transition(2, true).progress(midpoint), 1.);
         assert!(!ui.transition(2, true).active(midpoint));
-        assert!(ui.entries.is_none(), "other styles must not scan desktop applications");
+        assert!(
+            ui.entries.is_none(),
+            "other styles must not scan desktop applications"
+        );
         ui.update_at(&ShellSnapshot::default(), settings, midpoint);
         assert!(ui.transitions.is_empty());
     }
@@ -733,18 +788,26 @@ mod tests {
             let viewport = Rectangle::with_size(Size::new(1200., 36.));
             let mut view = app.view_layer(bar);
             tree.diff(view.as_widget_mut());
-            let node = view
-                .as_widget_mut()
-                .layout(tree, renderer, &layout::Limits::new(Size::ZERO, viewport.size()));
+            let node = view.as_widget_mut().layout(
+                tree,
+                renderer,
+                &layout::Limits::new(Size::ZERO, viewport.size()),
+            );
             let mut find = FindBounds {
                 target,
                 bar,
                 window: Some(bar),
                 found: None,
             };
-            view.as_widget_mut()
-                .operate(tree, Layout::new(&node), renderer, &mut operation::black_box(&mut find));
-            let bounds = find.found.expect("the real panel must contain the workspace target");
+            view.as_widget_mut().operate(
+                tree,
+                Layout::new(&node),
+                renderer,
+                &mut operation::black_box(&mut find),
+            );
+            let bounds = find
+                .found
+                .expect("the real panel must contain the workspace target");
             let inside = Point::new(bounds.center_x(), bounds.center_y());
             let (event, cursor) = match pointer {
                 Pointer::Inside | Pointer::Beside => {
@@ -758,8 +821,14 @@ mod tests {
                         mouse::Cursor::Available(position),
                     )
                 }
-                Pointer::LeaveAvailable => (Event::Mouse(mouse::Event::CursorLeft), mouse::Cursor::Available(inside)),
-                Pointer::LeaveUnavailable => (Event::Mouse(mouse::Event::CursorLeft), mouse::Cursor::Unavailable),
+                Pointer::LeaveAvailable => (
+                    Event::Mouse(mouse::Event::CursorLeft),
+                    mouse::Cursor::Available(inside),
+                ),
+                Pointer::LeaveUnavailable => (
+                    Event::Mouse(mouse::Event::CursorLeft),
+                    mouse::Cursor::Unavailable,
+                ),
             };
             let mut messages = Vec::new();
             let mut shell = Shell::new(&mut messages);
@@ -787,7 +856,9 @@ mod tests {
             (bounds, hover_messages)
         }
 
-        let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
         let renderer = runtime
             .block_on(<cosmic::Renderer as Headless>::new(
                 Font::default(),
@@ -821,8 +892,12 @@ mod tests {
                         }
                     }
                     let mut tree = widget::Tree::empty();
-                    let (bounds, messages) = send_pointer(&mut app, &renderer, &mut tree, Pointer::Inside, false);
-                    assert!(messages > 0, "{style:?} must enter its actual workspace widget");
+                    let (bounds, messages) =
+                        send_pointer(&mut app, &renderer, &mut tree, Pointer::Inside, false);
+                    assert!(
+                        messages > 0,
+                        "{style:?} must enter its actual workspace widget"
+                    );
                     assert!(app.workspace_ui.hovered.is_some());
                     let serial = app.workspace_ui.serial;
                     if visible {
@@ -881,7 +956,10 @@ mod tests {
                 shell.workspace_ui.hovered.is_some(),
                 "leaving another surface must not cancel this hover"
             );
-            drop(shell.handle_event(cosmic::iced::Event::Mouse(cosmic::iced::mouse::Event::CursorLeft), bar));
+            drop(shell.handle_event(
+                cosmic::iced::Event::Mouse(cosmic::iced::mouse::Event::CursorLeft),
+                bar,
+            ));
             assert!(shell.workspace_ui.hovered.is_none());
             assert!(shell.workspace_ui.tooltip.is_none());
             drop(shell.show_workspace_tooltip(serial, bounds));
@@ -945,7 +1023,10 @@ mod tests {
         let _ = shell.hover_workspace(bar, 2, second, true);
         let current = shell.workspace_ui.serial;
         let _ = shell.show_workspace_tooltip(current, bounds);
-        shell.snapshot.workspaces.retain(|workspace| workspace.id != 2);
+        shell
+            .snapshot
+            .workspaces
+            .retain(|workspace| workspace.id != 2);
         let _ = shell.update_workspace_ui();
         assert!(shell.workspace_ui.tooltip.is_none());
         assert!(shell.workspace_ui.hovered.is_none());

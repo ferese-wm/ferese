@@ -27,7 +27,11 @@ enum Region {
     Empty(Zone),
 }
 
-pub(super) fn frame<'a>(content: Element<'a, Message>, panel: &Panel, accent: Color) -> Element<'a, Message> {
+pub(super) fn frame<'a>(
+    content: Element<'a, Message>,
+    panel: &Panel,
+    accent: Color,
+) -> Element<'a, Message> {
     let mut regions = Vec::new();
     for zone in Zone::ALL {
         if zone.definition(panel).groups.is_empty() {
@@ -40,7 +44,10 @@ pub(super) fn frame<'a>(content: Element<'a, Message>, panel: &Panel, accent: Co
             };
             regions.push((group_id(&group.id), Region::Group(destination.clone())));
             for item in &group.items {
-                regions.push((item_id(&item.id), Region::Item(item.id.clone(), destination.clone())));
+                regions.push((
+                    item_id(&item.id),
+                    Region::Item(item.id.clone(), destination.clone()),
+                ));
                 regions.push((grip_id(&item.id), Region::Grip(item.id.clone())));
             }
         }
@@ -84,7 +91,9 @@ impl Target {
     fn action(self, item: ItemId) -> Action {
         match self {
             Self::Group {
-                destination, before, ..
+                destination,
+                before,
+                ..
             } => Action::Place(item, destination, before),
             Self::Empty(zone, _) => Action::PlaceInZone(item, zone),
         }
@@ -111,7 +120,11 @@ impl widget::Operation for Bounds<'_> {
     }
 }
 
-fn target_at(regions: &[(Region, Rectangle)], cursor: Point, viewport: &Rectangle) -> Option<Target> {
+fn target_at(
+    regions: &[(Region, Rectangle)],
+    cursor: Point,
+    viewport: &Rectangle,
+) -> Option<Target> {
     if !viewport.contains(cursor) {
         return None;
     }
@@ -125,12 +138,15 @@ fn target_at(regions: &[(Region, Rectangle)], cursor: Point, viewport: &Rectangl
                 let items: Vec<_> = regions
                     .iter()
                     .filter_map(|(region, bounds)| match region {
-                        Region::Item(id, group) if group.group == destination.group => Some((id, *bounds)),
+                        Region::Item(id, group) if group.group == destination.group => {
+                            Some((id, *bounds))
+                        }
                         _ => None,
                     })
                     .collect();
                 let next = items.iter().find(|(_, item)| {
-                    cursor.y < item.y || cursor.y <= item.y + item.height && cursor.x < item.center_x()
+                    cursor.y < item.y
+                        || cursor.y <= item.y + item.height && cursor.x < item.center_x()
                 });
                 let (before, marker) = next.map_or((None, *bounds), |(id, item)| {
                     (
@@ -171,13 +187,24 @@ impl Widget<Message, Theme, Renderer> for Editor<'_> {
     fn size(&self) -> Size<Length> {
         self.content.as_widget().size()
     }
-    fn layout(&mut self, tree: &mut widget::Tree, renderer: &Renderer, limits: &layout::Limits) -> layout::Node {
-        if tree.state.downcast_ref::<State>().drag.as_ref().is_some_and(|drag| {
-            !self
-                .regions
-                .iter()
-                .any(|(_, region)| matches!(region, Region::Grip(id) if id == &drag.item))
-        }) {
+    fn layout(
+        &mut self,
+        tree: &mut widget::Tree,
+        renderer: &Renderer,
+        limits: &layout::Limits,
+    ) -> layout::Node {
+        if tree
+            .state
+            .downcast_ref::<State>()
+            .drag
+            .as_ref()
+            .is_some_and(|drag| {
+                !self
+                    .regions
+                    .iter()
+                    .any(|(_, region)| matches!(region, Region::Grip(id) if id == &drag.item))
+            })
+        {
             tree.state.downcast_mut::<State>().drag = None;
         }
         self.content
@@ -220,10 +247,10 @@ impl Widget<Message, Theme, Renderer> for Editor<'_> {
         match event {
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                 if let Some(cursor) = cursor.position().filter(|point| viewport.contains(*point))
-                    && let Some((Region::Grip(item), _)) = bounds
-                        .found
-                        .iter()
-                        .find(|(region, bounds)| matches!(region, Region::Grip(_)) && bounds.contains(cursor))
+                    && let Some((Region::Grip(item), _)) =
+                        bounds.found.iter().find(|(region, bounds)| {
+                            matches!(region, Region::Grip(_)) && bounds.contains(cursor)
+                        })
                 {
                     let source = bounds
                         .found
@@ -261,7 +288,9 @@ impl Widget<Message, Theme, Renderer> for Editor<'_> {
                 shell.request_redraw();
                 return;
             }
-            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) if state.drag.is_some() => {
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left))
+                if state.drag.is_some() =>
+            {
                 let drag = state.drag.take().unwrap();
                 if drag.moved {
                     if let Some(target) = cursor
@@ -304,9 +333,15 @@ impl Widget<Message, Theme, Renderer> for Editor<'_> {
         viewport: &Rectangle,
     ) {
         use cosmic::iced::advanced::Renderer as _;
-        self.content
-            .as_widget()
-            .draw(&tree.children[0], renderer, theme, style, layout, cursor, viewport);
+        self.content.as_widget().draw(
+            &tree.children[0],
+            renderer,
+            theme,
+            style,
+            layout,
+            cursor,
+            viewport,
+        );
         if let Some(drag) = tree
             .state
             .downcast_ref::<State>()
@@ -327,7 +362,10 @@ impl Widget<Message, Theme, Renderer> for Editor<'_> {
                             },
                             ..renderer::Quad::default()
                         },
-                        Color { a: 0.12, ..self.accent },
+                        Color {
+                            a: 0.12,
+                            ..self.accent
+                        },
                     );
                 }
                 let ghost = Rectangle {
@@ -346,7 +384,10 @@ impl Widget<Message, Theme, Renderer> for Editor<'_> {
                         },
                         ..renderer::Quad::default()
                     },
-                    Color { a: 0.12, ..self.accent },
+                    Color {
+                        a: 0.12,
+                        ..self.accent
+                    },
                 );
             });
         }
@@ -362,9 +403,13 @@ impl Widget<Message, Theme, Renderer> for Editor<'_> {
         if tree.state.downcast_ref::<State>().drag.is_some() {
             mouse::Interaction::Grabbing
         } else {
-            self.content
-                .as_widget()
-                .mouse_interaction(&tree.children[0], layout, cursor, viewport, renderer)
+            self.content.as_widget().mouse_interaction(
+                &tree.children[0],
+                layout,
+                cursor,
+                viewport,
+                renderer,
+            )
         }
     }
     fn a11y_nodes(
@@ -373,7 +418,9 @@ impl Widget<Message, Theme, Renderer> for Editor<'_> {
         tree: &widget::Tree,
         cursor: mouse::Cursor,
     ) -> iced_accessibility::A11yTree {
-        self.content.as_widget().a11y_nodes(layout, &tree.children[0], cursor)
+        self.content
+            .as_widget()
+            .a11y_nodes(layout, &tree.children[0], cursor)
     }
     fn operate(
         &mut self,
@@ -394,9 +441,13 @@ impl Widget<Message, Theme, Renderer> for Editor<'_> {
         viewport: &Rectangle,
         translation: Vector,
     ) -> Option<cosmic::iced::advanced::overlay::Element<'a, Message, Theme, Renderer>> {
-        self.content
-            .as_widget_mut()
-            .overlay(&mut tree.children[0], layout, renderer, viewport, translation)
+        self.content.as_widget_mut().overlay(
+            &mut tree.children[0],
+            layout,
+            renderer,
+            viewport,
+            translation,
+        )
     }
 }
 
@@ -418,7 +469,12 @@ mod tests {
                 let items = group.items.iter().map(|item| {
                     container(
                         row([])
-                            .push(container(text("::")).width(20).height(32).id(grip_id(&item.id)))
+                            .push(
+                                container(text("::"))
+                                    .width(20)
+                                    .height(32)
+                                    .id(grip_id(&item.id)),
+                            )
                             .push(
                                 button::custom(text(item.id.0.clone()))
                                     .width(60)
@@ -489,12 +545,19 @@ mod tests {
         let mut view = view(&panel);
         let mut tree = widget::Tree::new(&view);
         let viewport = Rectangle::with_size(Size::new(500., 200.));
-        let node = view
-            .as_widget_mut()
-            .layout(&mut tree, &renderer, &layout::Limits::new(Size::ZERO, viewport.size()));
+        let node = view.as_widget_mut().layout(
+            &mut tree,
+            &renderer,
+            &layout::Limits::new(Size::ZERO, viewport.size()),
+        );
         let mut snapshot = Snapshot::parse(String::new()).unwrap();
-        snapshot.edit(&set("panels", serde_json::json!([panel]))).unwrap();
-        for (destination, empty) in [(Point::new(332., 20.), false), (Point::new(180., 20.), true)] {
+        snapshot
+            .edit(&set("panels", serde_json::json!([panel])))
+            .unwrap();
+        for (destination, empty) in [
+            (Point::new(332., 20.), false),
+            (Point::new(180., 20.), true),
+        ] {
             let mut messages = Vec::new();
             send(
                 &mut view,
@@ -510,7 +573,9 @@ mod tests {
                 &mut tree,
                 &node,
                 &renderer,
-                Event::Mouse(mouse::Event::CursorMoved { position: destination }),
+                Event::Mouse(mouse::Event::CursorMoved {
+                    position: destination,
+                }),
                 destination,
                 &mut messages,
             );
@@ -550,9 +615,11 @@ mod tests {
         let mut view = view(&panel);
         let mut tree = widget::Tree::new(&view);
         let viewport = Rectangle::with_size(Size::new(500., 200.));
-        let node = view
-            .as_widget_mut()
-            .layout(&mut tree, &renderer, &layout::Limits::new(Size::ZERO, viewport.size()));
+        let node = view.as_widget_mut().layout(
+            &mut tree,
+            &renderer,
+            &layout::Limits::new(Size::ZERO, viewport.size()),
+        );
         for cancel in [true, false] {
             let mut messages = Vec::new();
             let outside = Point::new(600., 20.);
@@ -624,7 +691,9 @@ mod tests {
                 &mut tree,
                 &node,
                 &renderer,
-                Event::Mouse(mouse::Event::CursorMoved { position: destination }),
+                Event::Mouse(mouse::Event::CursorMoved {
+                    position: destination,
+                }),
                 destination,
                 &mut messages,
             );
@@ -646,7 +715,10 @@ mod tests {
                 destination,
                 &mut messages,
             );
-            assert!(messages.is_empty(), "cancellation must not save a valid drop");
+            assert!(
+                messages.is_empty(),
+                "cancellation must not save a valid drop"
+            );
         }
         for point in [Point::new(12., 20.), Point::new(60., 20.)] {
             let mut messages = Vec::new();

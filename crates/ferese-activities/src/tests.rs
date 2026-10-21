@@ -1,7 +1,10 @@
 use super::*;
 
 fn owner() -> Owner {
-    Owner { pid: 42, birth: 100 }
+    Owner {
+        pid: 42,
+        birth: 100,
+    }
 }
 fn data(priority: u8) -> Data {
     Data {
@@ -84,9 +87,21 @@ fn fast_failures_cancel_and_suppressed_failure_never_flash() {
     }
     let mut store = Store::new(1);
     let id = store
-        .start(owner(), "a".into(), data(100), 0, 0, None, true, false, None)
+        .start(
+            owner(),
+            "a".into(),
+            data(100),
+            0,
+            0,
+            None,
+            true,
+            false,
+            None,
+        )
         .unwrap();
-    store.finish(owner(), &id, State::Failed, None, 300).unwrap();
+    store
+        .finish(owner(), &id, State::Failed, None, 300)
+        .unwrap();
     assert_eq!(store.entries().count(), 0);
 }
 
@@ -98,7 +113,9 @@ fn result_retry_and_owner_exit_preserve_original_deadline() {
         .finish(owner(), &id, State::Failed, Some("Failed".into()), 300)
         .unwrap();
     assert_eq!(store.entries().next().unwrap().score(300, 255), 385);
-    store.finish(owner(), &id, State::Failed, None, 1_000).unwrap();
+    store
+        .finish(owner(), &id, State::Failed, None, 1_000)
+        .unwrap();
     store.owner_exit(owner());
     assert_eq!(store.entries().next().unwrap().result_deadline, Some(1_800));
     assert!(!store.advance(1_799));
@@ -110,7 +127,17 @@ fn result_retry_and_owner_exit_preserve_original_deadline() {
 fn leases_refresh_but_abandonment_never_claims_a_result() {
     let mut store = Store::new(1);
     let id = store
-        .start(owner(), "a".into(), data(100), 0, 0, Some(500), false, true, None)
+        .start(
+            owner(),
+            "a".into(),
+            data(100),
+            0,
+            0,
+            Some(500),
+            false,
+            true,
+            None,
+        )
         .unwrap();
     store.update(owner(), &id, None, None, 499).unwrap();
     assert_eq!(store.entries().next().unwrap().lease_deadline, Some(999));
@@ -132,7 +159,10 @@ fn leases_refresh_but_abandonment_never_claims_a_result() {
 fn owner_session_generation_and_quotas_are_independent_of_connections() {
     let mut store = Store::new(12);
     let id = start(&mut store, "a", 0, 100);
-    let other = Owner { pid: 42, birth: 101 };
+    let other = Owner {
+        pid: 42,
+        birth: 101,
+    };
     assert!(store.update(other, &id, None, None, 0).is_err());
     let mut stale = id.clone();
     stale.session = 11;
@@ -149,7 +179,9 @@ fn owner_session_generation_and_quotas_are_independent_of_connections() {
             .start(owner(), "d".into(), data(100), 0, 0, None, true, true, None)
             .is_err()
     );
-    store.finish(owner(), &id, State::Cancelled, None, 0).unwrap();
+    store
+        .finish(owner(), &id, State::Cancelled, None, 0)
+        .unwrap();
     let replacement = start(&mut store, "a", 0, 100);
     assert_ne!(replacement.generation, id.generation);
     assert!(store.update(owner(), &id, None, None, 0).is_err());
@@ -215,7 +247,10 @@ fn dnd_protected_slots_and_output_routing() {
     assert_eq!(selection.hidden, 2);
     store.remove_output("one", Some("two"));
     assert!(ranked(store.entries(), 300, store.limits, "one", false).is_empty());
-    assert_eq!(ranked(store.entries(), 300, store.limits, "two", false).len(), 2);
+    assert_eq!(
+        ranked(store.entries(), 300, store.limits, "two", false).len(),
+        2
+    );
 }
 
 #[test]
@@ -280,9 +315,21 @@ fn notification_boost_cannot_outrank_ordinary_and_grouped_lifetimes_remain_indep
     let mut notification = data(255);
     notification.source = Source::Notification;
     let notice = store
-        .start(owner(), "notice".into(), notification, 0, 0, None, true, true, None)
+        .start(
+            owner(),
+            "notice".into(),
+            notification,
+            0,
+            0,
+            None,
+            true,
+            true,
+            None,
+        )
         .unwrap();
-    store.finish(owner(), &notice, State::Failed, None, 300).unwrap();
+    store
+        .finish(owner(), &notice, State::Failed, None, 300)
+        .unwrap();
     let entries = ranked(store.entries(), 300, store.limits, "one", false);
     assert_eq!(entries.last().unwrap().id, notice);
     let mut selection = Selection::default();
@@ -298,14 +345,27 @@ fn notification_boost_cannot_outrank_ordinary_and_grouped_lifetimes_remain_indep
     );
     store.remove_output("one", None);
     assert!(store.attach_output("two"));
-    assert_eq!(ranked(store.entries(), 301, store.limits, "two", false).len(), 3);
+    assert_eq!(
+        ranked(store.entries(), 301, store.limits, "two", false).len(),
+        3
+    );
 }
 
 #[test]
 fn invalid_updates_are_atomic_and_suspend_aware_eligibility_hides_expired_records() {
     let mut store = Store::new(1);
     let id = store
-        .start(owner(), "atomic".into(), data(100), 0, 0, Some(1_000), true, true, None)
+        .start(
+            owner(),
+            "atomic".into(),
+            data(100),
+            0,
+            0,
+            Some(1_000),
+            true,
+            true,
+            None,
+        )
         .unwrap();
     assert!(
         store

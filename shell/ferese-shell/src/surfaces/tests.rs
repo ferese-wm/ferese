@@ -147,8 +147,11 @@ fn effects_lifecycle(advertise: bool) {
         }
     });
     let connection = wayland_client::Connection::from_socket(client).unwrap();
-    let (globals, queue) = wayland_client::globals::registry_queue_init::<super::EffectsState>(&connection).unwrap();
-    let compositor = globals.bind::<WlCompositor, _, _>(&queue.handle(), 1..=1, ()).unwrap();
+    let (globals, queue) =
+        wayland_client::globals::registry_queue_init::<super::EffectsState>(&connection).unwrap();
+    let compositor = globals
+        .bind::<WlCompositor, _, _>(&queue.handle(), 1..=1, ())
+        .unwrap();
     let mut context = None;
     let mut first = None;
     for _ in 0..20 {
@@ -157,7 +160,9 @@ fn effects_lifecycle(advertise: bool) {
         // Match window::run: each native callback lends the same display through
         // a fresh borrowed backend. Neither wrapper owns the actual display.
         let borrowed = wayland_client::Connection::from_backend(unsafe {
-            wayland_client::backend::Backend::from_foreign_display(connection.backend().display_ptr())
+            wayland_client::backend::Backend::from_foreign_display(
+                connection.backend().display_ptr(),
+            )
         });
         assert_ne!(borrowed, connection);
         let id = unsafe {
@@ -167,7 +172,8 @@ fn effects_lifecycle(advertise: bool) {
             )
         }
         .unwrap();
-        let borrowed_surface = wayland_client::protocol::wl_surface::WlSurface::from_id(&borrowed, id).unwrap();
+        let borrowed_surface =
+            wayland_client::protocol::wl_surface::WlSurface::from_id(&borrowed, id).unwrap();
         let binding = super::EffectsBinding::attach_role(&mut context, &borrowed_surface, None, 1.);
         assert_eq!(binding.is_ok(), advertise);
         if let Some(first) = &first {
@@ -190,7 +196,10 @@ fn effects_lifecycle(advertise: bool) {
     drop(first);
     drop(context);
     connection.roundtrip().unwrap();
-    assert_eq!(counts.lock().unwrap().manager_destroys, usize::from(advertise));
+    assert_eq!(
+        counts.lock().unwrap().manager_destroys,
+        usize::from(advertise)
+    );
     drop(stop);
     worker.join().unwrap();
 }

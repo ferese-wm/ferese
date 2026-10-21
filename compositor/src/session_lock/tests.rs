@@ -5,20 +5,29 @@ fn dim_fade_respects_speed_without_changing_idle_deadlines() {
     let policy = IdleSettings::default();
     for (duration, half_at) in [(250, 30_125), (1000, 30_500)] {
         let fade = Duration::from_millis(duration);
-        assert_eq!(policy.appearance(Duration::from_secs(29), fade), (0.0, false));
+        assert_eq!(
+            policy.appearance(Duration::from_secs(29), fade),
+            (0.0, false)
+        );
         let halfway = policy.appearance(Duration::from_millis(half_at), fade);
         assert!((halfway.0 - 0.325).abs() < 0.001 && !halfway.1);
         assert_eq!(
             policy.next_deadline(Duration::from_millis(half_at), fade),
             Some(Duration::from_millis(16))
         );
-        assert_eq!(policy.appearance(Duration::from_secs(120), fade), (1.0, true));
+        assert_eq!(
+            policy.appearance(Duration::from_secs(120), fade),
+            (1.0, true)
+        );
     }
     assert_eq!(
         policy.appearance(Duration::from_secs(30), Duration::ZERO),
         (0.65, false)
     );
-    assert_eq!(policy.appearance(Duration::from_secs(120), Duration::ZERO), (1.0, true));
+    assert_eq!(
+        policy.appearance(Duration::from_secs(120), Duration::ZERO),
+        (1.0, true)
+    );
 }
 
 #[test]
@@ -54,7 +63,10 @@ fn idle_policy_fades_then_sleeps_and_activity_resets_it() {
         policy.next_deadline(Duration::from_secs(30), Duration::ZERO),
         Some(Duration::from_secs(90))
     );
-    assert_eq!(policy.next_deadline(Duration::from_secs(120), Duration::ZERO), None);
+    assert_eq!(
+        policy.next_deadline(Duration::from_secs(120), Duration::ZERO),
+        None
+    );
     assert_eq!(
         IdleSettings {
             dim_after_seconds: 0,
@@ -215,7 +227,9 @@ impl Fixture {
     }
 
     fn dispatch(&mut self) {
-        self.events.dispatch(Duration::from_millis(5), &mut self.state).unwrap();
+        self.events
+            .dispatch(Duration::from_millis(5), &mut self.state)
+            .unwrap();
         crate::after_dispatch(&mut self.state);
     }
 
@@ -282,11 +296,16 @@ impl Locker {
     }
 
     fn expect_locked(&mut self) {
-        self.wire.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
+        self.wire
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .unwrap();
         let mut event = [0u8; 8];
         self.wire.read_exact(&mut event).unwrap();
         assert_eq!(u32::from_ne_bytes(event[..4].try_into().unwrap()), 2);
-        assert_eq!(u32::from_ne_bytes(event[4..].try_into().unwrap()), 8u32 << 16);
+        assert_eq!(
+            u32::from_ne_bytes(event[4..].try_into().unwrap()),
+            8u32 << 16
+        );
     }
 
     fn surface(&mut self, fixture: &mut Fixture, output: &Output) -> LockSurface {
@@ -304,10 +323,13 @@ impl Locker {
             let object = u32::from_ne_bytes(events[offset..offset + 4].try_into().unwrap());
             let header = u32::from_ne_bytes(events[offset + 4..offset + 8].try_into().unwrap());
             if object == registry && header & 0xffff == 0 {
-                let len = u32::from_ne_bytes(events[offset + 12..offset + 16].try_into().unwrap()) as usize;
+                let len = u32::from_ne_bytes(events[offset + 12..offset + 16].try_into().unwrap())
+                    as usize;
                 if &events[offset + 16..offset + 16 + len] == b"wl_output\0" {
-                    let name = u32::from_ne_bytes(events[offset + 8..offset + 12].try_into().unwrap());
-                    output_name = Some(output_name.map_or(name, |previous: u32| previous.max(name)));
+                    let name =
+                        u32::from_ne_bytes(events[offset + 8..offset + 12].try_into().unwrap());
+                    output_name =
+                        Some(output_name.map_or(name, |previous: u32| previous.max(name)));
                 }
             }
 
@@ -332,7 +354,12 @@ impl Locker {
             )
             .unwrap();
         let surface_id = self.id();
-        request(&mut self.wire, compositor.id().protocol_id(), 0, &[surface_id]);
+        request(
+            &mut self.wire,
+            compositor.id().protocol_id(),
+            0,
+            &[surface_id],
+        );
         let lock_surface = self.id();
         request(&mut self.wire, 2, 1, &[lock_surface, surface_id, output_id]);
         fixture.dispatch();
@@ -357,9 +384,9 @@ fn request(wire: &mut UnixStream, object: u32, opcode: u32, args: &[u32]) {
 
 #[test]
 fn locking_exits_binding_modes_and_retains_consumed_release_ownership() {
-    let Some(mut fixture) =
-        Fixture::new("session_lock::tests::locking_exits_binding_modes_and_retains_consumed_release_ownership")
-    else {
+    let Some(mut fixture) = Fixture::new(
+        "session_lock::tests::locking_exits_binding_modes_and_retains_consumed_release_ownership",
+    ) else {
         return;
     };
     fixture
@@ -382,9 +409,9 @@ fn locking_exits_binding_modes_and_retains_consumed_release_ownership() {
 
 #[test]
 fn acquiring_lock_revokes_activity_and_media_subscriptions() {
-    let Some(mut fixture) =
-        Fixture::new("session_lock::tests::acquiring_lock_revokes_activity_and_media_subscriptions")
-    else {
+    let Some(mut fixture) = Fixture::new(
+        "session_lock::tests::acquiring_lock_revokes_activity_and_media_subscriptions",
+    ) else {
         return;
     };
     fixture.output("pending");
@@ -392,10 +419,18 @@ fn acquiring_lock_revokes_activity_and_media_subscriptions() {
     let (activities, activity_reply) = std::sync::mpsc::sync_channel(1);
     let (media, media_reply) = std::sync::mpsc::sync_channel(1);
     fixture.state.activities.watch(1, 11, revision, activities);
-    let media_revision = fixture.state.media_engine.value()["revision"].as_u64().unwrap();
-    fixture.state.media_engine.watch(2, 22, media_revision, media);
+    let media_revision = fixture.state.media_engine.value()["revision"]
+        .as_u64()
+        .unwrap();
+    fixture
+        .state
+        .media_engine
+        .watch(2, 22, media_revision, media);
     let _locker = fixture.acquire();
-    assert!(matches!(fixture.state.session_lock.lifecycle, Lifecycle::Acquiring(_)));
+    assert!(matches!(
+        fixture.state.session_lock.lifecycle,
+        Lifecycle::Acquiring(_)
+    ));
     for (id, receiver) in [(11, activity_reply), (22, media_reply)] {
         let response = receiver.recv_timeout(Duration::from_secs(1)).unwrap();
         assert_eq!(response.id, id);
@@ -406,37 +441,57 @@ fn acquiring_lock_revokes_activity_and_media_subscriptions() {
 
 #[test]
 fn lock_confirms_without_outputs() {
-    let Some(mut fixture) = Fixture::new("session_lock::tests::lock_confirms_without_outputs") else {
+    let Some(mut fixture) = Fixture::new("session_lock::tests::lock_confirms_without_outputs")
+    else {
         return;
     };
     let epoch = fixture.state.capture_epoch;
     let mut locker = fixture.acquire();
-    assert!(matches!(fixture.state.session_lock.lifecycle, Lifecycle::Locked(_)));
-    assert_ne!(fixture.state.capture_epoch, epoch, "lock revokes deferred snapshots");
+    assert!(matches!(
+        fixture.state.session_lock.lifecycle,
+        Lifecycle::Locked(_)
+    ));
+    assert_ne!(
+        fixture.state.capture_epoch, epoch,
+        "lock revokes deferred snapshots"
+    );
     locker.expect_locked();
 }
 
 #[test]
 fn lock_waits_for_each_output_before_confirmation() {
-    let Some(mut fixture) = Fixture::new("session_lock::tests::lock_waits_for_each_output_before_confirmation") else {
+    let Some(mut fixture) =
+        Fixture::new("session_lock::tests::lock_waits_for_each_output_before_confirmation")
+    else {
         return;
     };
     let first = fixture.output("first");
     let second = fixture.output("second");
     let mut locker = fixture.acquire();
-    assert!(matches!(fixture.state.session_lock.lifecycle, Lifecycle::Acquiring(_)));
+    assert!(matches!(
+        fixture.state.session_lock.lifecycle,
+        Lifecycle::Acquiring(_)
+    ));
     fixture.state.lock_frame_presented(&first);
-    assert!(matches!(fixture.state.session_lock.lifecycle, Lifecycle::Acquiring(_)));
+    assert!(matches!(
+        fixture.state.session_lock.lifecycle,
+        Lifecycle::Acquiring(_)
+    ));
     assert!(fixture.state.session_lock.idle_timer.is_none());
     fixture.state.lock_frame_presented(&second);
-    assert!(matches!(fixture.state.session_lock.lifecycle, Lifecycle::Locked(_)));
+    assert!(matches!(
+        fixture.state.session_lock.lifecycle,
+        Lifecycle::Locked(_)
+    ));
     fixture.dispatch();
     locker.expect_locked();
 }
 
 #[test]
 fn live_owner_rejects_competitor_unlock() {
-    let Some(mut fixture) = Fixture::new("session_lock::tests::live_owner_rejects_competitor_unlock") else {
+    let Some(mut fixture) =
+        Fixture::new("session_lock::tests::live_owner_rejects_competitor_unlock")
+    else {
         return;
     };
     let _owner_wire = fixture.acquire();
@@ -451,22 +506,31 @@ fn live_owner_rejects_competitor_unlock() {
 
 #[test]
 fn pending_owner_cannot_unlock_before_confirmation() {
-    let Some(mut fixture) = Fixture::new("session_lock::tests::pending_owner_cannot_unlock_before_confirmation") else {
+    let Some(mut fixture) =
+        Fixture::new("session_lock::tests::pending_owner_cannot_unlock_before_confirmation")
+    else {
         return;
     };
     fixture.output("pending");
     let mut pending = fixture.acquire();
-    assert!(matches!(fixture.state.session_lock.lifecycle, Lifecycle::Acquiring(_)));
+    assert!(matches!(
+        fixture.state.session_lock.lifecycle,
+        Lifecycle::Acquiring(_)
+    ));
     request(&mut pending.wire, 2, 2, &[]);
     fixture.dispatch();
     assert!(fixture.state.session_lock.active());
     fixture.dispatch();
-    assert!(matches!(fixture.state.session_lock.lifecycle, Lifecycle::Orphaned));
+    assert!(matches!(
+        fixture.state.session_lock.lifecycle,
+        Lifecycle::Orphaned
+    ));
 }
 
 #[test]
 fn owner_disconnect_stays_locked_and_allows_replacement() {
-    let Some(mut fixture) = Fixture::new("session_lock::tests::owner_disconnect_stays_locked_and_allows_replacement")
+    let Some(mut fixture) =
+        Fixture::new("session_lock::tests::owner_disconnect_stays_locked_and_allows_replacement")
     else {
         return;
     };
@@ -474,31 +538,46 @@ fn owner_disconnect_stays_locked_and_allows_replacement() {
     let owner = fixture.state.session_lock.lifecycle.owner().cloned();
     drop(owner_wire);
     fixture.dispatch();
-    assert!(matches!(fixture.state.session_lock.lifecycle, Lifecycle::Orphaned));
+    assert!(matches!(
+        fixture.state.session_lock.lifecycle,
+        Lifecycle::Orphaned
+    ));
     assert!(fixture.state.session_lock.active());
     let mut replacement = fixture.acquire();
-    assert!(matches!(fixture.state.session_lock.lifecycle, Lifecycle::Locked(_)));
+    assert!(matches!(
+        fixture.state.session_lock.lifecycle,
+        Lifecycle::Locked(_)
+    ));
     assert_ne!(fixture.state.session_lock.lifecycle.owner(), owner.as_ref());
     replacement.expect_locked();
 }
 
 #[test]
 fn removing_last_output_confirms_pending_lock() {
-    let Some(mut fixture) = Fixture::new("session_lock::tests::removing_last_output_confirms_pending_lock") else {
+    let Some(mut fixture) =
+        Fixture::new("session_lock::tests::removing_last_output_confirms_pending_lock")
+    else {
         return;
     };
     let output = fixture.output("last");
     let mut pending = fixture.acquire();
-    assert!(matches!(fixture.state.session_lock.lifecycle, Lifecycle::Acquiring(_)));
+    assert!(matches!(
+        fixture.state.session_lock.lifecycle,
+        Lifecycle::Acquiring(_)
+    ));
     fixture.state.unregister_output(&output);
-    assert!(matches!(fixture.state.session_lock.lifecycle, Lifecycle::Locked(_)));
+    assert!(matches!(
+        fixture.state.session_lock.lifecycle,
+        Lifecycle::Locked(_)
+    ));
     fixture.dispatch();
     pending.expect_locked();
 }
 
 #[test]
 fn refresh_after_removal_confirms_and_starts_idle_timer() {
-    let Some(mut fixture) = Fixture::new("session_lock::tests::refresh_after_removal_confirms_and_starts_idle_timer")
+    let Some(mut fixture) =
+        Fixture::new("session_lock::tests::refresh_after_removal_confirms_and_starts_idle_timer")
     else {
         return;
     };
@@ -506,9 +585,15 @@ fn refresh_after_removal_confirms_and_starts_idle_timer() {
     let mut pending = fixture.acquire();
     fixture.state.space.unmap_output(&output);
     fixture.state.session_lock.output_removed(&output);
-    assert!(matches!(fixture.state.session_lock.lifecycle, Lifecycle::Acquiring(_)));
+    assert!(matches!(
+        fixture.state.session_lock.lifecycle,
+        Lifecycle::Acquiring(_)
+    ));
     fixture.state.refresh_lock_outputs();
-    assert!(matches!(fixture.state.session_lock.lifecycle, Lifecycle::Locked(_)));
+    assert!(matches!(
+        fixture.state.session_lock.lifecycle,
+        Lifecycle::Locked(_)
+    ));
     assert!(fixture.state.session_lock.idle_timer.is_some());
     fixture.dispatch();
     pending.expect_locked();
@@ -516,9 +601,9 @@ fn refresh_after_removal_confirms_and_starts_idle_timer() {
 
 #[test]
 fn activity_reuses_timer_and_expired_timer_rechecks_latest_activity() {
-    let Some(mut fixture) =
-        Fixture::new("session_lock::tests::activity_reuses_timer_and_expired_timer_rechecks_latest_activity")
-    else {
+    let Some(mut fixture) = Fixture::new(
+        "session_lock::tests::activity_reuses_timer_and_expired_timer_rechecks_latest_activity",
+    ) else {
         return;
     };
     fixture.state.session_lock.lifecycle = Lifecycle::Orphaned;
@@ -556,9 +641,9 @@ fn activity_reuses_timer_and_expired_timer_rechecks_latest_activity() {
 
 #[test]
 fn earlier_policy_replaces_timer_and_sleeping_activity_arms_one() {
-    let Some(mut fixture) =
-        Fixture::new("session_lock::tests::earlier_policy_replaces_timer_and_sleeping_activity_arms_one")
-    else {
+    let Some(mut fixture) = Fixture::new(
+        "session_lock::tests::earlier_policy_replaces_timer_and_sleeping_activity_arms_one",
+    ) else {
         return;
     };
     fixture.state.session_lock.lifecycle = Lifecycle::Orphaned;
@@ -585,9 +670,9 @@ fn earlier_policy_replaces_timer_and_sleeping_activity_arms_one() {
 
 #[test]
 fn dead_preferred_surface_uses_live_fallback_in_stable_output_order() {
-    let Some(mut fixture) =
-        Fixture::new("session_lock::tests::dead_preferred_surface_uses_live_fallback_in_stable_output_order")
-    else {
+    let Some(mut fixture) = Fixture::new(
+        "session_lock::tests::dead_preferred_surface_uses_live_fallback_in_stable_output_order",
+    ) else {
         return;
     };
     let preferred = fixture.output("preferred");
@@ -598,12 +683,25 @@ fn dead_preferred_surface_uses_live_fallback_in_stable_output_order() {
     let fallback = locker.surface(&mut fixture, &second);
     let later = locker.surface(&mut fixture, &third);
     let preferred_id = fixture.state.output_id(&preferred).unwrap();
-    fixture.state.output_workspaces.focus_output(preferred_id).unwrap();
-    request(&mut locker.wire, dead.wl_surface().id().protocol_id(), 0, &[]);
+    fixture
+        .state
+        .output_workspaces
+        .focus_output(preferred_id)
+        .unwrap();
+    request(
+        &mut locker.wire,
+        dead.wl_surface().id().protocol_id(),
+        0,
+        &[],
+    );
     fixture.dispatch();
     assert!(!dead.alive());
     // Exercise the defensive path even though destruction normally removes it.
-    fixture.state.session_lock.surfaces.insert(preferred.clone(), dead);
+    fixture
+        .state
+        .session_lock
+        .surfaces
+        .insert(preferred.clone(), dead);
     for _ in 0..5 {
         fixture.state.session_lock.surfaces.remove(&second);
         fixture
@@ -611,7 +709,11 @@ fn dead_preferred_surface_uses_live_fallback_in_stable_output_order() {
             .session_lock
             .surfaces
             .insert(second.clone(), fallback.clone());
-        fixture.state.session_lock.surfaces.insert(third.clone(), later.clone());
+        fixture
+            .state
+            .session_lock
+            .surfaces
+            .insert(third.clone(), later.clone());
         fixture.state.focus_lock_surface();
         assert_eq!(
             fixture.state.seat.get_keyboard().unwrap().current_focus(),
@@ -622,14 +724,18 @@ fn dead_preferred_surface_uses_live_fallback_in_stable_output_order() {
 
 #[test]
 fn output_removed_clears_all_lock_resources() {
-    let Some(mut fixture) = Fixture::new("session_lock::tests::output_removed_clears_all_lock_resources") else {
+    let Some(mut fixture) =
+        Fixture::new("session_lock::tests::output_removed_clears_all_lock_resources")
+    else {
         return;
     };
     let output = fixture.output("removed");
     let mut locker = fixture.acquire();
     locker.surface(&mut fixture, &output);
-    let background =
-        smithay::backend::renderer::element::solid::SolidColorBuffer::new((800, 600), [0.0, 0.0, 0.0, 1.0]);
+    let background = smithay::backend::renderer::element::solid::SolidColorBuffer::new(
+        (800, 600),
+        [0.0, 0.0, 0.0, 1.0],
+    );
     fixture
         .state
         .session_lock
@@ -652,7 +758,8 @@ fn output_removed_clears_all_lock_resources() {
 
 #[test]
 fn confirmed_owner_can_unlock_and_cancel_idle_timer() {
-    let Some(mut fixture) = Fixture::new("session_lock::tests::confirmed_owner_can_unlock_and_cancel_idle_timer")
+    let Some(mut fixture) =
+        Fixture::new("session_lock::tests::confirmed_owner_can_unlock_and_cancel_idle_timer")
     else {
         return;
     };
@@ -661,37 +768,52 @@ fn confirmed_owner_can_unlock_and_cancel_idle_timer() {
     assert!(fixture.state.session_lock.idle_timer.is_some());
     request(&mut locker.wire, 2, 2, &[]);
     fixture.dispatch();
-    assert!(matches!(fixture.state.session_lock.lifecycle, Lifecycle::Unlocked));
+    assert!(matches!(
+        fixture.state.session_lock.lifecycle,
+        Lifecycle::Unlocked
+    ));
     assert!(fixture.state.session_lock.idle_timer.is_none());
 }
 
 #[test]
 fn acquiring_owner_disconnect_keeps_lock_and_replacement_waits_for_frame() {
-    let Some(mut fixture) =
-        Fixture::new("session_lock::tests::acquiring_owner_disconnect_keeps_lock_and_replacement_waits_for_frame")
-    else {
+    let Some(mut fixture) = Fixture::new(
+        "session_lock::tests::acquiring_owner_disconnect_keeps_lock_and_replacement_waits_for_frame",
+    ) else {
         return;
     };
     let output = fixture.output("pending");
     let pending = fixture.acquire();
-    assert!(matches!(fixture.state.session_lock.lifecycle, Lifecycle::Acquiring(_)));
+    assert!(matches!(
+        fixture.state.session_lock.lifecycle,
+        Lifecycle::Acquiring(_)
+    ));
     drop(pending);
     fixture.dispatch();
-    assert!(matches!(fixture.state.session_lock.lifecycle, Lifecycle::Orphaned));
+    assert!(matches!(
+        fixture.state.session_lock.lifecycle,
+        Lifecycle::Orphaned
+    ));
     assert!(fixture.state.session_lock.active());
     let mut replacement = fixture.acquire();
-    assert!(matches!(fixture.state.session_lock.lifecycle, Lifecycle::Acquiring(_)));
+    assert!(matches!(
+        fixture.state.session_lock.lifecycle,
+        Lifecycle::Acquiring(_)
+    ));
     fixture.state.lock_frame_presented(&output);
     fixture.dispatch();
-    assert!(matches!(fixture.state.session_lock.lifecycle, Lifecycle::Locked(_)));
+    assert!(matches!(
+        fixture.state.session_lock.lifecycle,
+        Lifecycle::Locked(_)
+    ));
     replacement.expect_locked();
 }
 
 #[test]
 fn lock_input_preserves_owner_click_grabs_and_rejects_retired_surfaces() {
-    let Some(mut fixture) =
-        Fixture::new("session_lock::tests::lock_input_preserves_owner_click_grabs_and_rejects_retired_surfaces")
-    else {
+    let Some(mut fixture) = Fixture::new(
+        "session_lock::tests::lock_input_preserves_owner_click_grabs_and_rejects_retired_surfaces",
+    ) else {
         return;
     };
     let output = fixture.output("lock-pointer");
@@ -745,16 +867,22 @@ fn lock_input_preserves_owner_click_grabs_and_rejects_retired_surfaces() {
     assert!(pointer.is_grabbed());
     fixture.state.session_lock.surfaces.clear();
     fixture.state.prepare_lock_input();
-    assert!(!pointer.is_grabbed(), "a retired surface cannot keep a lock grab");
+    assert!(
+        !pointer.is_grabbed(),
+        "a retired surface cannot keep a lock grab"
+    );
     assert_eq!(pointer.current_focus(), None);
-    assert_eq!(fixture.state.seat.get_keyboard().unwrap().current_focus(), None);
+    assert_eq!(
+        fixture.state.seat.get_keyboard().unwrap().current_focus(),
+        None
+    );
 }
 
 #[test]
 fn ipc_events_follow_lock_lifecycle_without_exposing_desktop_objects() {
-    let Some(mut fixture) =
-        Fixture::new("session_lock::tests::ipc_events_follow_lock_lifecycle_without_exposing_desktop_objects")
-    else {
+    let Some(mut fixture) = Fixture::new(
+        "session_lock::tests::ipc_events_follow_lock_lifecycle_without_exposing_desktop_objects",
+    ) else {
         return;
     };
     let output = fixture.output("lock-events");

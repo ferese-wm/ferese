@@ -16,7 +16,10 @@ pub(crate) struct WindowFrame {
 }
 
 impl Ferese {
-    pub(crate) fn current_window_presentation(&self, id: WindowId) -> Option<crate::presentation::WindowPresentation> {
+    pub(crate) fn current_window_presentation(
+        &self,
+        id: WindowId,
+    ) -> Option<crate::presentation::WindowPresentation> {
         let geometry = *self.windows.geometry(&id)?;
         Some(self.compose_window_presentation(
             id,
@@ -27,7 +30,12 @@ impl Ferese {
         ))
     }
 
-    fn window_focus_effect(&self, id: WindowId, delta: Duration, overview_opacity: f32) -> (f32, f64) {
+    fn window_focus_effect(
+        &self,
+        id: WindowId,
+        delta: Duration,
+        overview_opacity: f32,
+    ) -> (f32, f64) {
         let target = crate::focus_effect::target(self.focus_effect, self.focused_window, id);
         let mut focus = self
             .windows
@@ -43,8 +51,11 @@ impl Ferese {
                 0.0
             },
         );
-        self.focus_effect
-            .resolve(focus.current, self.focused_window.is_some(), overview_opacity)
+        self.focus_effect.resolve(
+            focus.current,
+            self.focused_window.is_some(),
+            overview_opacity,
+        )
     }
 
     fn compose_window_presentation(
@@ -55,9 +66,15 @@ impl Ferese {
         offset: (f64, f64),
         delta: Duration,
     ) -> crate::presentation::WindowPresentation {
-        let record = self.windows.record(id).expect("presentation has a window record");
+        let record = self
+            .windows
+            .record(id)
+            .expect("presentation has a window record");
         let mut visual = geometry.visual;
-        if self.presentation_dependencies.reflow_blocked(id, &self.windows) {
+        if self
+            .presentation_dependencies
+            .reflow_blocked(id, &self.windows)
+        {
             let predicted_x_velocity = visual.velocity.x;
             visual.velocity = Default::default();
             if !geometry.is_zooming()
@@ -115,12 +132,18 @@ impl Ferese {
                     ..self.spring_config
                 },
             );
-            emphasis.advance(delta, crate::presentation::emphasis_spring(self.spring_config));
-            shadow.advance(delta, crate::presentation::shadow_spring(self.spring_config));
+            emphasis.advance(
+                delta,
+                crate::presentation::emphasis_spring(self.spring_config),
+            );
+            shadow.advance(
+                delta,
+                crate::presentation::shadow_spring(self.spring_config),
+            );
         }
         let presence_scale = 0.97 + 0.03 * opacity.current;
-        let native_size =
-            (!overview.is_presenting() && presence_scale != 1.0).then(|| ClientSize::from_rect(bounds.current));
+        let native_size = (!overview.is_presenting() && presence_scale != 1.0)
+            .then(|| ClientSize::from_rect(bounds.current));
         bounds.velocity = crate::presentation::scaled_visual_velocity(
             bounds.current,
             bounds.velocity,
@@ -161,7 +184,10 @@ impl Ferese {
                         Some((
                             id,
                             self.windows.record(id)?,
-                            block_resizes && self.presentation_dependencies.reflow_blocked(id, &self.windows),
+                            block_resizes
+                                && self
+                                    .presentation_dependencies
+                                    .reflow_blocked(id, &self.windows),
                         ))
                     })
             })
@@ -173,20 +199,21 @@ impl Ferese {
         } else {
             self.focused_window
         };
-        self.output_window_records(output, false).any(|(id, record, _)| {
-            self.window_belongs_to_output(id, output)
-                && (record
-                    .focus
-                    .as_ref()
-                    .is_some_and(|focus| focus.needs_update(if selected == Some(id) { 1.0 } else { 0.0 }))
-                    || record
-                        .shadow
-                        .as_ref()
-                        .is_some_and(|shadow| shadow.needs_update(if selected == Some(id) { 1.0 } else { 0.0 }))
-                    || record.focus_transition.as_ref().is_some_and(|transition| {
-                        transition.needs_update(crate::focus_effect::target(self.focus_effect, self.focused_window, id))
+        self.output_window_records(output, false)
+            .any(|(id, record, _)| {
+                self.window_belongs_to_output(id, output)
+                    && (record.focus.as_ref().is_some_and(|focus| {
+                        focus.needs_update(if selected == Some(id) { 1.0 } else { 0.0 })
+                    }) || record.shadow.as_ref().is_some_and(|shadow| {
+                        shadow.needs_update(if selected == Some(id) { 1.0 } else { 0.0 })
+                    }) || record.focus_transition.as_ref().is_some_and(|transition| {
+                        transition.needs_update(crate::focus_effect::target(
+                            self.focus_effect,
+                            self.focused_window,
+                            id,
+                        ))
                     }))
-        })
+            })
     }
 
     pub(crate) fn output_resize_deadline(&self, output: &Output) -> Option<Duration> {
@@ -212,7 +239,8 @@ impl Ferese {
     }
 
     fn snapshot_is_waiting(&self, id: WindowId, geometry: &WindowGeometry) -> bool {
-        self.presentation_dependencies.reflow_blocked(id, &self.windows)
+        self.presentation_dependencies
+            .reflow_blocked(id, &self.windows)
             || geometry.client.committed_size.is_some_and(|size| {
                 crate::presentation::resize_needs_old_frame(
                     geometry.visual.current,
@@ -247,48 +275,58 @@ impl Ferese {
             return true;
         }
 
-        self.output_window_records(output, true).any(|(id, record, blocked)| {
-            let Some(mut geometry) = record.geometry else {
-                return false;
-            };
+        self.output_window_records(output, true)
+            .any(|(id, record, blocked)| {
+                let Some(mut geometry) = record.geometry else {
+                    return false;
+                };
 
-            if !self.window_belongs_to_output(id, output) {
-                return false;
-            }
+                if !self.window_belongs_to_output(id, output) {
+                    return false;
+                }
 
-            if record.opening.is_some()
-                || (self.render.snapshot(&id).is_some() && !self.snapshot_is_waiting(id, &geometry))
-                || record.focus.as_ref().is_some_and(|focus| focus.is_animating())
-                || record.shadow.as_ref().is_some_and(|shadow| shadow.is_animating())
-                || record
-                    .focus_transition
-                    .as_ref()
-                    .is_some_and(|transition| transition.is_animating())
-            {
-                return true;
-            }
+                if record.opening.is_some()
+                    || (self.render.snapshot(&id).is_some()
+                        && !self.snapshot_is_waiting(id, &geometry))
+                    || record
+                        .focus
+                        .as_ref()
+                        .is_some_and(|focus| focus.is_animating())
+                    || record
+                        .shadow
+                        .as_ref()
+                        .is_some_and(|shadow| shadow.is_animating())
+                    || record
+                        .focus_transition
+                        .as_ref()
+                        .is_some_and(|transition| transition.is_animating())
+                {
+                    return true;
+                }
 
-            if !blocked && geometry.advance(Duration::ZERO, self.spring_config, self.animations_enabled) {
-                return true;
-            }
+                if !blocked
+                    && geometry.advance(Duration::ZERO, self.spring_config, self.animations_enabled)
+                {
+                    return true;
+                }
 
-            let Some(workspace) = self.workspaces.workspace_for_window(id) else {
-                return false;
-            };
+                let Some(workspace) = self.workspaces.workspace_for_window(id) else {
+                    return false;
+                };
 
-            (!self
-                .presentation_dependencies
-                .viewport_blocked(workspace, &self.windows)
-                && self
-                    .viewports
-                    .get(&workspace)
-                    .is_some_and(ViewportPresentation::needs_tick))
-                || (!blocked
-                    && record.coupled_width.as_ref().is_some_and(|(_, width)| {
-                        let mut width = *width;
-                        width.advance(Duration::ZERO, self.viewport_spring_config)
-                    }))
-        })
+                (!self
+                    .presentation_dependencies
+                    .viewport_blocked(workspace, &self.windows)
+                    && self
+                        .viewports
+                        .get(&workspace)
+                        .is_some_and(ViewportPresentation::needs_tick))
+                    || (!blocked
+                        && record.coupled_width.as_ref().is_some_and(|(_, width)| {
+                            let mut width = *width;
+                            width.advance(Duration::ZERO, self.viewport_spring_config)
+                        }))
+            })
     }
 
     pub(crate) fn sample_frame(&self, output: &Output, horizon: Duration) -> FrameScene {
@@ -300,15 +338,17 @@ impl Ferese {
         };
 
         let overview = self.overview.sample(delta, self.spring_config);
-        let predicted_slide_offsets =
-            (!delta.is_zero()).then(|| self.sample_workspace_slide_offsets(self.output_id(output), delta));
+        let predicted_slide_offsets = (!delta.is_zero())
+            .then(|| self.sample_workspace_slide_offsets(self.output_id(output), delta));
         let slide_offsets = predicted_slide_offsets
             .as_ref()
             .unwrap_or(&self.workspace_slide_offsets);
         let mut windows = HashMap::new();
 
         for (id, record, blocked) in self.output_window_records(output, !delta.is_zero()) {
-            let Some(original) = record.geometry else { continue };
+            let Some(original) = record.geometry else {
+                continue;
+            };
 
             // The workspace strip also draws inactive workspaces on this output.
             // Keep their samples through the overview exit transition; the main
@@ -350,8 +390,15 @@ impl Ferese {
                 .workspace_for_window(id)
                 .and_then(|workspace| slide_offsets.get(&workspace).copied())
                 .unwrap_or_default();
-            let presentation = self.compose_window_presentation(id, geometry, &overview, offset, delta);
-            windows.insert(id, WindowFrame { geometry, presentation });
+            let presentation =
+                self.compose_window_presentation(id, geometry, &overview, offset, delta);
+            windows.insert(
+                id,
+                WindowFrame {
+                    geometry,
+                    presentation,
+                },
+            );
         }
 
         FrameScene {
@@ -446,7 +493,10 @@ mod tests {
         state.space.map_output(&output, (0, 0));
         state.register_output(&output, "resize-idle".into());
         let id = WindowId(1);
-        state.workspaces.insert_window(id, Axis::Horizontal, 0.5).unwrap();
+        state
+            .workspaces
+            .insert_window(id, Axis::Horizontal, 0.5)
+            .unwrap();
         let settled = WindowGeometry::new(Rect::new(0., 0., 400., 300.), None);
         state.windows.records.insert(
             id,
@@ -460,7 +510,10 @@ mod tests {
             crate::resize_transaction::ResizeTransaction::new(9.into(), Duration::ZERO),
         );
         state.rebuild_presentation_dependencies();
-        assert_eq!(state.output_resize_deadline(&output), Some(Duration::from_millis(300)));
+        assert_eq!(
+            state.output_resize_deadline(&output),
+            Some(Duration::from_millis(300))
+        );
         let mut held = settled;
         held.visual.set_target(Rect::new(100., 0., 400., 300.));
         state.windows.set_geometry(id, held);
@@ -500,13 +553,18 @@ mod tests {
         state.release_presentation_dependencies();
         assert_eq!(state.output_resize_deadline(&output), None);
         assert!(state.output_has_animations(&output));
-        state.windows.geometry_mut(&id).unwrap().client.request_size(
-            ClientSize {
-                width: 800,
-                height: 300,
-            },
-            Duration::ZERO,
-        );
+        state
+            .windows
+            .geometry_mut(&id)
+            .unwrap()
+            .client
+            .request_size(
+                ClientSize {
+                    width: 800,
+                    height: 300,
+                },
+                Duration::ZERO,
+            );
         assert_eq!(
             state.output_resize_deadline(&output),
             None,
@@ -594,14 +652,26 @@ mod tests {
         let first = WindowId(1);
         let second = WindowId(2);
         state.focused_window = Some(first);
-        assert_eq!(state.current_window_presentation(first).unwrap().alpha(), 0.9);
-        assert_eq!(state.current_window_presentation(second).unwrap().alpha(), 0.6);
+        assert_eq!(
+            state.current_window_presentation(first).unwrap().alpha(),
+            0.9
+        );
+        assert_eq!(
+            state.current_window_presentation(second).unwrap().alpha(),
+            0.6
+        );
         // Only emphasis follows overview selection; activation and its fade remain unchanged.
         state.set_overview_active(true);
         state.overview.select_window(second);
         assert_eq!(state.focused_window, Some(first));
-        assert_eq!(state.current_window_presentation(first).unwrap().alpha(), 0.9);
-        assert_eq!(state.current_window_presentation(second).unwrap().alpha(), 0.6);
+        assert_eq!(
+            state.current_window_presentation(first).unwrap().alpha(),
+            0.9
+        );
+        assert_eq!(
+            state.current_window_presentation(second).unwrap().alpha(),
+            0.6
+        );
         state.set_overview_active(false);
         state.focused_window = Some(second);
         let transition = state
@@ -640,8 +710,14 @@ mod tests {
         );
         assert!(state.windows.transaction(&first).is_some());
         state.animations_enabled = false;
-        assert_eq!(state.current_window_presentation(first).unwrap().alpha(), 0.6);
-        assert_eq!(state.current_window_presentation(second).unwrap().alpha(), 0.9);
+        assert_eq!(
+            state.current_window_presentation(first).unwrap().alpha(),
+            0.6
+        );
+        assert_eq!(
+            state.current_window_presentation(second).unwrap().alpha(),
+            0.9
+        );
     }
 
     #[test]
@@ -680,7 +756,10 @@ mod tests {
         let output_id = state.output_id(&output).unwrap();
         let from = state.output_workspaces.active_workspace(output_id).unwrap();
         let to = state.workspaces.create_workspace();
-        state.output_workspaces.assign_workspace(output_id, to).unwrap();
+        state
+            .output_workspaces
+            .assign_workspace(output_id, to)
+            .unwrap();
         for (id, workspace) in [(WindowId(1), from), (WindowId(2), to)] {
             let normal = Rect::new(100., 160., 640., 480.);
             state
@@ -697,7 +776,11 @@ mod tests {
         }
         state.set_overview_active(true);
         state.advance_animations_by(Duration::from_secs(10));
-        let old = state.current_window_presentation(WindowId(1)).unwrap().bounds.current;
+        let old = state
+            .current_window_presentation(WindowId(1))
+            .unwrap()
+            .bounds
+            .current;
         let cards = state.overview_workspace_cards(&output);
         let card = cards.iter().find(|card| card.workspace == to).unwrap();
         assert!(
@@ -711,15 +794,37 @@ mod tests {
         );
         assert!(state.workspace_slides.contains_key(&output_id));
         assert!(state.window_belongs_to_output(WindowId(1), &output));
-        let incoming = state.current_window_presentation(WindowId(2)).unwrap().bounds.current;
+        let incoming = state
+            .current_window_presentation(WindowId(2))
+            .unwrap()
+            .bounds
+            .current;
         assert_eq!(incoming.width, old.width);
         assert_eq!(incoming.height, old.height);
         assert!(incoming.x > old.x + 1000.);
         let predicted = state.sample_frame(&output, Duration::from_millis(60));
-        assert!(predicted.windows[&WindowId(1)].presentation.bounds.current.x < old.x);
-        assert!(predicted.windows[&WindowId(2)].presentation.bounds.current.x < incoming.x);
+        assert!(
+            predicted.windows[&WindowId(1)]
+                .presentation
+                .bounds
+                .current
+                .x
+                < old.x
+        );
+        assert!(
+            predicted.windows[&WindowId(2)]
+                .presentation
+                .bounds
+                .current
+                .x
+                < incoming.x
+        );
         assert_eq!(
-            predicted.windows[&WindowId(2)].presentation.bounds.current.width,
+            predicted.windows[&WindowId(2)]
+                .presentation
+                .bounds
+                .current
+                .width,
             incoming.width
         );
         // Activation can add a trailing empty workspace. Once that layout is
@@ -745,7 +850,10 @@ mod tests {
             assert_eq!(item.velocity, after.velocity);
         }
         // Finish on the selected workspace and retire all outgoing previews.
-        state.output_workspaces.switch_workspace(output_id, from).unwrap();
+        state
+            .output_workspaces
+            .switch_workspace(output_id, from)
+            .unwrap();
         state.retarget_overview();
         state.advance_animations_by(Duration::from_secs(10));
         assert!(state.workspace_slides.is_empty());
@@ -802,7 +910,10 @@ mod tests {
         state.space.map_output(&output, (0, 0));
         state.register_output(&output, "forecast-test".into());
         let id = WindowId(1);
-        state.workspaces.insert_window(id, Axis::Horizontal, 0.5).unwrap();
+        state
+            .workspaces
+            .insert_window(id, Axis::Horizontal, 0.5)
+            .unwrap();
         let mut geometry = WindowGeometry::new(Rect::new(0., 0., 400., 300.), None);
         geometry.visual.set_target(Rect::new(600., 0., 400., 300.));
         // This test isolates frame sampling from the protocol client fixture.
@@ -821,7 +932,9 @@ mod tests {
         ] {
             {
                 let forecast = state.sample_frame(&output, horizon);
-                assert!(forecast.windows[&id].geometry.visual.current.x > geometry.visual.current.x);
+                assert!(
+                    forecast.windows[&id].geometry.visual.current.x > geometry.visual.current.x
+                );
                 assert!(forecast.animating);
             }
 
@@ -898,7 +1011,10 @@ mod tests {
         let output_id = state.output_id(&output).unwrap();
         let from = state.workspaces.workspace_for_window(id).unwrap();
         let to = state.workspaces.create_workspace();
-        state.output_workspaces.assign_workspace(output_id, to).unwrap();
+        state
+            .output_workspaces
+            .assign_workspace(output_id, to)
+            .unwrap();
         let mut slide = WorkspaceSlide::new(None, from, to, SwipeDirection::Left);
         slide.held_progress = Some(0.25);
         state.workspace_slides.insert(output_id, slide);
@@ -907,12 +1023,16 @@ mod tests {
         assert_eq!(offsets[&from].0, -480.0);
         assert_eq!(offsets[&to].0, 1440.0);
         assert_eq!(
-            state.sample_frame(&output, Duration::from_millis(8)).windows[&id]
+            state
+                .sample_frame(&output, Duration::from_millis(8))
+                .windows[&id]
                 .presentation
                 .bounds
                 .current
                 .x,
-            state.sample_frame(&output, Duration::from_millis(8)).windows[&id]
+            state
+                .sample_frame(&output, Duration::from_millis(8))
+                .windows[&id]
                 .geometry
                 .visual
                 .current
@@ -970,7 +1090,10 @@ mod tests {
         );
 
         let inactive = state.workspaces.create_workspace();
-        state.output_workspaces.assign_workspace(output_id, inactive).unwrap();
+        state
+            .output_workspaces
+            .assign_workspace(output_id, inactive)
+            .unwrap();
         let preview_id = WindowId(3);
         state
             .workspaces
@@ -1061,7 +1184,8 @@ mod tests {
         width.set_target(500.);
         let spring = SpringConfig::default();
         let delta = Duration::from_millis(10);
-        let sampled_viewport = ViewportPresentation::from_motion(viewport).sample(delta, spring, true, false);
+        let sampled_viewport =
+            ViewportPresentation::from_motion(viewport).sample(delta, spring, true, false);
         let predicted = predict_geometry(
             geometry,
             delta,

@@ -190,11 +190,15 @@ impl Model {
     }
 
     pub fn external_connected(&self) -> bool {
-        self.inventory.as_ref().is_some_and(Inventory::external_connected)
+        self.inventory
+            .as_ref()
+            .is_some_and(Inventory::external_connected)
     }
 
     pub fn pending(&self) -> bool {
-        self.inventory.as_ref().is_some_and(|inventory| inventory.pending)
+        self.inventory
+            .as_ref()
+            .is_some_and(|inventory| inventory.pending)
     }
 
     fn update(&mut self, inventory: Inventory) {
@@ -249,7 +253,11 @@ impl FereseShell {
         Task::none()
     }
 
-    pub(super) fn select_display_mode(&mut self, mode: Mode, preserve_focus: bool) -> Task<Message> {
+    pub(super) fn select_display_mode(
+        &mut self,
+        mode: Mode,
+        preserve_focus: bool,
+    ) -> Task<Message> {
         if !self.display_mode.busy
             && !self.display_mode.pending()
             && self
@@ -268,10 +276,12 @@ impl FereseShell {
 
             // Arrow/number selection leaves Enter for the default action,
             // rather than activating a previously clicked or tabbed mode.
-            return cosmic::iced::advanced::widget::operate(cosmic::iced::advanced::widget::operation::scoped(
-                cosmic::iced::advanced::widget::Id::new("ferese-system-modal-controls"),
-                cosmic::iced::advanced::widget::operation::focusable::unfocus(),
-            ));
+            return cosmic::iced::advanced::widget::operate(
+                cosmic::iced::advanced::widget::operation::scoped(
+                    cosmic::iced::advanced::widget::Id::new("ferese-system-modal-controls"),
+                    cosmic::iced::advanced::widget::operation::focusable::unfocus(),
+                ),
+            );
         }
 
         Task::none()
@@ -289,7 +299,9 @@ impl FereseShell {
                 .ok()
                 .filter(|number| (1..=4).contains(number))
                 .map(|number| Mode::ALL[number - 1]),
-            Key::Named(Named::ArrowLeft | Named::ArrowUp | Named::ArrowRight | Named::ArrowDown) => {
+            Key::Named(
+                Named::ArrowLeft | Named::ArrowUp | Named::ArrowRight | Named::ArrowDown,
+            ) => {
                 let backwards = matches!(key, Key::Named(Named::ArrowLeft | Named::ArrowUp));
                 (1..=4)
                     .map(|step| Mode::ALL[(current + if backwards { 4 - step } else { step }) % 4])
@@ -329,7 +341,12 @@ impl FereseShell {
         }
 
         self.display_operation(true, move || {
-            compositor_ipc::call(if keep { "output-confirm" } else { "output-revert" }).map(|_| ())
+            compositor_ipc::call(if keep {
+                "output-confirm"
+            } else {
+                "output-revert"
+            })
+            .map(|_| ())
         })
     }
 
@@ -383,11 +400,16 @@ impl FereseShell {
         }
     }
 
-    pub(super) fn display_mode_rows(&self) -> cosmic::widget::Column<'_, cosmic::Action<Message>, cosmic::Theme> {
+    pub(super) fn display_mode_rows(
+        &self,
+    ) -> cosmic::widget::Column<'_, cosmic::Action<Message>, cosmic::Theme> {
         let palette = self.config.theme.palette();
         let material_opacity = self.config.theme.material_opacity();
         let model = &self.display_mode;
-        let focus_visible = self.system_modal.as_ref().is_some_and(|modal| modal.focus_visible);
+        let focus_visible = self
+            .system_modal
+            .as_ref()
+            .is_some_and(|modal| modal.focus_visible);
         let pending = model.pending();
         let mut header = row![
             self.render.text("Display mode").size(17),
@@ -441,17 +463,24 @@ impl FereseShell {
                         material_opacity,
                         focus_visible,
                     ))
-                    .on_press_maybe(available.then_some(cosmic::Action::App(Message::SelectDisplayMode(mode)))),
+                    .on_press_maybe(
+                        available.then_some(cosmic::Action::App(Message::SelectDisplayMode(mode))),
+                    ),
             );
         }
 
         let mut rows = cosmic::widget::column![header, cards].spacing(14);
         if let Some(inventory) = &model.inventory {
-            let mut displays = cosmic::widget::column::with_capacity(inventory.displays.len()).spacing(6);
+            let mut displays =
+                cosmic::widget::column::with_capacity(inventory.displays.len()).spacing(6);
             for display in &inventory.displays {
                 displays = displays.push(
                     row![
-                        ferese_theme::icons::tinted(ferese_theme::icons::DISPLAY, 16, palette.muted),
+                        ferese_theme::icons::tinted(
+                            ferese_theme::icons::DISPLAY,
+                            16,
+                            palette.muted
+                        ),
                         self.render
                             .text(&display.label)
                             .size(12)
@@ -476,7 +505,11 @@ impl FereseShell {
                 .inventory
                 .as_ref()
                 .map_or(15, |inventory| inventory.timeout)
-                .saturating_sub(model.confirmation_since.map_or(0, |since| since.elapsed().as_secs()));
+                .saturating_sub(
+                    model
+                        .confirmation_since
+                        .map_or(0, |since| since.elapsed().as_secs()),
+                );
             format!("Keep this configuration? Reverts in {remaining}s.")
         } else {
             "Arrow keys or 1–4 to choose. Enter to apply.".to_owned()
@@ -497,43 +530,48 @@ impl FereseShell {
                     .inventory
                     .as_ref()
                     .is_some_and(|inventory| inventory.available(model.selected)));
-        rows.push(self.render.text(hint).size(12).class(theme::Text::Color(palette.muted)))
-            .push(
-                container(
-                    row![
-                        cosmic::iced::widget::Space::new().width(Length::Fill),
-                        ferese_theme::controls::text_button(
-                            if pending { "Revert" } else { "Cancel" },
-                            self.render.font,
-                            palette,
-                            false
-                        )
-                        .class(ferese_theme::controls::material_button_style_with_focus(
-                            palette,
-                            false,
-                            material_opacity,
-                            focus_visible
-                        ))
-                        .id("ferese-modal-cancel".into())
-                        .on_press_maybe((!model.busy).then_some(cosmic::Action::App(cancel))),
-                        ferese_theme::controls::text_button(
-                            if pending { "Keep" } else { "Apply" },
-                            self.render.font,
-                            palette,
-                            true
-                        )
-                        .class(ferese_theme::controls::button_style_with_focus(
-                            palette,
-                            true,
-                            focus_visible
-                        ))
-                        .id("ferese-display-apply".into())
-                        .on_press_maybe(can_apply.then_some(cosmic::Action::App(apply))),
-                    ]
-                    .spacing(10),
-                )
-                .id("ferese-display-modal-actions"),
+        rows.push(
+            self.render
+                .text(hint)
+                .size(12)
+                .class(theme::Text::Color(palette.muted)),
+        )
+        .push(
+            container(
+                row![
+                    cosmic::iced::widget::Space::new().width(Length::Fill),
+                    ferese_theme::controls::text_button(
+                        if pending { "Revert" } else { "Cancel" },
+                        self.render.font,
+                        palette,
+                        false
+                    )
+                    .class(ferese_theme::controls::material_button_style_with_focus(
+                        palette,
+                        false,
+                        material_opacity,
+                        focus_visible
+                    ))
+                    .id("ferese-modal-cancel".into())
+                    .on_press_maybe((!model.busy).then_some(cosmic::Action::App(cancel))),
+                    ferese_theme::controls::text_button(
+                        if pending { "Keep" } else { "Apply" },
+                        self.render.font,
+                        palette,
+                        true
+                    )
+                    .class(ferese_theme::controls::button_style_with_focus(
+                        palette,
+                        true,
+                        focus_visible
+                    ))
+                    .id("ferese-display-apply".into())
+                    .on_press_maybe(can_apply.then_some(cosmic::Action::App(apply))),
+                ]
+                .spacing(10),
             )
+            .id("ferese-display-modal-actions"),
+        )
     }
 }
 
@@ -555,17 +593,26 @@ mod tests {
     fn disabled_and_mirrored_external_monitors_keep_the_bar_trigger() {
         for mirror in [false, true] {
             let inventory = Inventory::parse(
-                json!([output(true, true, true, false), output(false, mirror, true, mirror)]),
+                json!([
+                    output(true, true, true, false),
+                    output(false, mirror, true, mirror)
+                ]),
                 json!({}),
             )
             .unwrap();
             assert!(inventory.external_connected());
-            assert_eq!(inventory.current(), if mirror { Mode::Mirror } else { Mode::Internal });
+            assert_eq!(
+                inventory.current(),
+                if mirror { Mode::Mirror } else { Mode::Internal }
+            );
             assert!(Mode::ALL.into_iter().all(|mode| inventory.available(mode)));
         }
 
         let removed = Inventory::parse(
-            json!([output(true, true, true, false), output(false, false, false, false)]),
+            json!([
+                output(true, true, true, false),
+                output(false, false, false, false)
+            ]),
             json!({}),
         )
         .unwrap();
@@ -579,7 +626,10 @@ mod tests {
     #[test]
     fn confirmation_tracks_backend_state_and_profile_timeout() {
         let mut model = Model::default();
-        let outputs = json!([output(true, true, true, false), output(false, true, true, false)]);
+        let outputs = json!([
+            output(true, true, true, false),
+            output(false, true, true, false)
+        ]);
         model.update(
             Inventory::parse(
                 outputs.clone(),
@@ -591,7 +641,9 @@ mod tests {
         assert_eq!(model.selected, Mode::Extend);
         assert_eq!(model.inventory.as_ref().unwrap().timeout, 7);
         let since = model.confirmation_since;
-        model.update(Inventory::parse(outputs.clone(), json!({"confirmation_pending": true})).unwrap());
+        model.update(
+            Inventory::parse(outputs.clone(), json!({"confirmation_pending": true})).unwrap(),
+        );
         assert_eq!(
             model.confirmation_since, since,
             "inventory refresh must not restart the countdown"

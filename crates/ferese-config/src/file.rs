@@ -28,7 +28,10 @@ impl ConfigFile {
                 .join(path.file_name().ok_or("Invalid configuration path")?),
             Err(error) => return Err(error.to_string()),
         };
-        let mut lock_name = path.file_name().ok_or("Invalid configuration path")?.to_os_string();
+        let mut lock_name = path
+            .file_name()
+            .ok_or("Invalid configuration path")?
+            .to_os_string();
         lock_name.push(".lock");
 
         let lock = OpenOptions::new()
@@ -40,7 +43,9 @@ impl ConfigFile {
             .open(path.with_file_name(lock_name))
             .map_err(|e| e.to_string())?;
         lock.try_lock().map_err(|error| match error {
-            fs::TryLockError::WouldBlock => "Configuration is being saved by another app. Please try again.".into(),
+            fs::TryLockError::WouldBlock => {
+                "Configuration is being saved by another app. Please try again.".into()
+            }
             fs::TryLockError::Error(error) => error.to_string(),
         })?;
 
@@ -77,7 +82,9 @@ impl ConfigFile {
                 .map_err(|e| e.to_string())?;
         }
 
-        staged.write_all(desired.as_bytes()).map_err(|e| e.to_string())?;
+        staged
+            .write_all(desired.as_bytes())
+            .map_err(|e| e.to_string())?;
         staged.as_file().sync_all().map_err(|e| e.to_string())?;
         validate(staged.path())?;
 
@@ -86,8 +93,11 @@ impl ConfigFile {
         }
 
         if let Some(path) = backup {
-            let mut previous = tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
-            previous.write_all(self.source.as_bytes()).map_err(|e| e.to_string())?;
+            let mut previous =
+                tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
+            previous
+                .write_all(self.source.as_bytes())
+                .map_err(|e| e.to_string())?;
             previous.as_file().sync_all().map_err(|e| e.to_string())?;
             previous.persist(path).map_err(|e| e.to_string())?;
         }
@@ -187,7 +197,10 @@ mod tests {
         let path = directory.path().join("config.kdl");
         fs::write(&path, "// initial").unwrap();
         let file = ConfigFile::open(&path).unwrap();
-        assert!(file.replace("// rejected", None, |_| Err("invalid".into())).is_err());
+        assert!(
+            file.replace("// rejected", None, |_| Err("invalid".into()))
+                .is_err()
+        );
         assert_eq!(ConfigFile::open(&path).unwrap().source(), "// initial");
     }
 }

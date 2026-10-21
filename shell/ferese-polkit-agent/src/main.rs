@@ -94,10 +94,21 @@ struct Agent {
 impl Agent {
     async fn vendor(&self, action_id: &str) -> (String, String) {
         let lookup = async {
-            let authority = zbus::Proxy::new(&self.connection, AUTHORITY, AUTHORITY_PATH, AUTHORITY_INTERFACE).await?;
+            let authority = zbus::Proxy::new(
+                &self.connection,
+                AUTHORITY,
+                AUTHORITY_PATH,
+                AUTHORITY_INTERFACE,
+            )
+            .await?;
             let locale = std::env::var("LANG").unwrap_or_default();
-            let actions: Vec<ActionDescription> = authority.call("EnumerateActions", &(locale,)).await?;
-            Ok::<_, zbus::Error>(actions.into_iter().find(|action| action.action_id == action_id))
+            let actions: Vec<ActionDescription> =
+                authority.call("EnumerateActions", &(locale,)).await?;
+            Ok::<_, zbus::Error>(
+                actions
+                    .into_iter()
+                    .find(|action| action.action_id == action_id),
+            )
         };
         // Missing metadata must never prevent authentication or cancellation.
         match tokio::time::timeout(std::time::Duration::from_secs(2), lookup).await {
@@ -119,8 +130,9 @@ impl Agent {
         identities: Vec<Identity>,
     ) -> zbus::fdo::Result<()> {
         let allowed = available_identities(&identities);
-        let uid = choose_identity(&allowed)
-            .ok_or_else(|| zbus::fdo::Error::Failed("No supported authentication identity".into()))?;
+        let uid = choose_identity(&allowed).ok_or_else(|| {
+            zbus::fdo::Error::Failed("No supported authentication identity".into())
+        })?;
         let cancelled = Arc::new(AtomicBool::new(false));
 
         {
@@ -176,7 +188,11 @@ fn available_identities(identities: &[Identity]) -> Vec<u32> {
     for uid in identities
         .iter()
         .filter(|(kind, _)| kind == "unix-user")
-        .filter_map(|(_, details)| details.get("uid").and_then(|uid| u32::try_from(uid.clone()).ok()))
+        .filter_map(|(_, details)| {
+            details
+                .get("uid")
+                .and_then(|uid| u32::try_from(uid.clone()).ok())
+        })
         .filter(|uid| *uid <= i32::MAX as u32)
     {
         if !available.contains(&uid) {
@@ -212,7 +228,10 @@ fn process_subject() -> Result<(String, HashMap<String, Value<'static>>), String
         .map_err(|error| error.to_string())?;
     let mut details = HashMap::new();
     details.insert("pid".to_owned(), Value::from(std::process::id()));
-    details.insert("uid".to_owned(), Value::from(unsafe { libc::geteuid() } as i32));
+    details.insert(
+        "uid".to_owned(),
+        Value::from(unsafe { libc::geteuid() } as i32),
+    );
     details.insert("start-time".to_owned(), Value::from(started));
     Ok(("unix-process".into(), details))
 }
@@ -233,7 +252,10 @@ async fn session_subject(
         "org.freedesktop.login1.Manager",
     )
     .await?;
-    let path: zbus::zvariant::OwnedObjectPath = match manager.call("GetSessionByPID", &(std::process::id(),)).await {
+    let path: zbus::zvariant::OwnedObjectPath = match manager
+        .call("GetSessionByPID", &(std::process::id(),))
+        .await
+    {
         Ok(path) => path,
         Err(error) => {
             // A launcher in the user manager can be outside the session cgroup
@@ -273,11 +295,15 @@ async fn run_agent() -> Result<(), Box<dyn std::error::Error>> {
         )
         .await?;
     let subject = session_subject(&connection).await?;
-    let authority = zbus::Proxy::new(&connection, AUTHORITY, AUTHORITY_PATH, AUTHORITY_INTERFACE).await?;
+    let authority =
+        zbus::Proxy::new(&connection, AUTHORITY, AUTHORITY_PATH, AUTHORITY_INTERFACE).await?;
     let locale = std::env::var("LANG").unwrap_or_default();
 
     authority
-        .call::<_, _, ()>("RegisterAuthenticationAgent", &(subject, locale, AGENT_PATH))
+        .call::<_, _, ()>(
+            "RegisterAuthenticationAgent",
+            &(subject, locale, AGENT_PATH),
+        )
         .await?;
     std::future::pending::<()>().await;
 
@@ -343,9 +369,10 @@ mod tests {
 
     #[test]
     fn prompt_protocol_keeps_selection_response_and_echo_fields() {
-        let selection: PromptEvent =
-            serde_json::from_str(r#"{"type":"select_identity","generation":{"selection":2,"attempt":0},"uid":1001}"#)
-                .unwrap();
+        let selection: PromptEvent = serde_json::from_str(
+            r#"{"type":"select_identity","generation":{"selection":2,"attempt":0},"uid":1001}"#,
+        )
+        .unwrap();
         assert!(matches!(
             selection,
             PromptEvent::SelectIdentity {
@@ -498,9 +525,15 @@ mod tests {
             agent.vendor("test.action").await,
             ("Test vendor".into(), "https://example.test/vendor".into())
         );
-        assert_eq!(agent.vendor("missing.action").await, (String::new(), String::new()));
+        assert_eq!(
+            agent.vendor("missing.action").await,
+            (String::new(), String::new())
+        );
         server.close().await.unwrap();
-        assert_eq!(agent.vendor("test.action").await, (String::new(), String::new()));
+        assert_eq!(
+            agent.vendor("test.action").await,
+            (String::new(), String::new())
+        );
     }
 
     #[test]
@@ -516,7 +549,10 @@ mod tests {
         let (kind, details) = process_subject().unwrap();
         assert_eq!(kind, "unix-process");
         assert_eq!(details["pid"], Value::from(std::process::id()));
-        assert_eq!(details["uid"], Value::from(unsafe { libc::geteuid() } as i32));
+        assert_eq!(
+            details["uid"],
+            Value::from(unsafe { libc::geteuid() } as i32)
+        );
         assert!(u64::try_from(details["start-time"].clone()).unwrap() > 0);
     }
 

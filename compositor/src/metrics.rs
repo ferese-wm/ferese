@@ -108,8 +108,14 @@ impl RenderMetrics {
             .unwrap_or(0);
         self.frame_times.make_contiguous().sort_unstable();
         let percentile = |percent: usize| {
-            let index = (self.frame_times.len() * percent).div_ceil(100).saturating_sub(1);
-            self.frame_times.get(index).copied().unwrap_or_default().as_micros()
+            let index = (self.frame_times.len() * percent)
+                .div_ceil(100)
+                .saturating_sub(1);
+            self.frame_times
+                .get(index)
+                .copied()
+                .unwrap_or_default()
+                .as_micros()
         };
         tracing::info!(
             target: "ferese::render",
@@ -145,7 +151,8 @@ impl RenderMetrics {
 }
 
 fn rectangle_area(rectangle: &Rectangle<i32, Physical>) -> u64 {
-    u64::try_from(rectangle.size.w.max(0)).unwrap_or(0) * u64::try_from(rectangle.size.h.max(0)).unwrap_or(0)
+    u64::try_from(rectangle.size.w.max(0)).unwrap_or(0)
+        * u64::try_from(rectangle.size.h.max(0)).unwrap_or(0)
 }
 
 #[cfg(test)]
@@ -240,8 +247,14 @@ mod tests {
         for micros in 0..600 {
             metrics.record_frame(Duration::from_micros(micros), &[], 0, FrameEffectMetrics);
         }
-        assert_eq!(metrics.frame_times.front(), Some(&Duration::from_micros(88)));
-        assert_eq!(metrics.frame_times.back(), Some(&Duration::from_micros(599)));
+        assert_eq!(
+            metrics.frame_times.front(),
+            Some(&Duration::from_micros(88))
+        );
+        assert_eq!(
+            metrics.frame_times.back(),
+            Some(&Duration::from_micros(599))
+        );
         assert!(
             metrics
                 .frame_times

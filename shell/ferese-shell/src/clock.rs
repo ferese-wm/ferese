@@ -28,11 +28,13 @@ fn stream(_: &()) -> impl futures::Stream<Item = String> + use<> {
     let (send, receive) = tokio::sync::mpsc::channel(1);
     let stop = match UnixStream::pair() {
         Ok((stop, cancel)) => {
-            match std::thread::Builder::new().name("ferese-clock".into()).spawn(move || {
-                if let Err(error) = watch(send, cancel) {
-                    eprintln!("ferese-shell: clock subscription: {error}");
-                }
-            }) {
+            match std::thread::Builder::new()
+                .name("ferese-clock".into())
+                .spawn(move || {
+                    if let Err(error) = watch(send, cancel) {
+                        eprintln!("ferese-shell: clock subscription: {error}");
+                    }
+                }) {
                 Ok(_) => Some(stop),
                 Err(error) => {
                     eprintln!("ferese-shell: clock worker: {error}");
@@ -52,8 +54,9 @@ fn stream(_: &()) -> impl futures::Stream<Item = String> + use<> {
 }
 
 fn watch(send: tokio::sync::mpsc::Sender<String>, cancel: UnixStream) -> io::Result<()> {
-    let timer =
-        owned_fd(unsafe { libc::timerfd_create(libc::CLOCK_REALTIME, libc::TFD_CLOEXEC | libc::TFD_NONBLOCK) })?;
+    let timer = owned_fd(unsafe {
+        libc::timerfd_create(libc::CLOCK_REALTIME, libc::TFD_CLOEXEC | libc::TFD_NONBLOCK)
+    })?;
     let (mut system, mut paths) = zones();
     let mut timezone = ZoneWatch::new(&paths)?;
     let mut previous = None;
@@ -119,7 +122,10 @@ fn owned_fd(fd: libc::c_int) -> io::Result<OwnedFd> {
 
 fn arm(timer: &OwnedFd, deadline: i128) -> io::Result<bool> {
     let spec = libc::itimerspec {
-        it_interval: libc::timespec { tv_sec: 0, tv_nsec: 0 },
+        it_interval: libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        },
         it_value: libc::timespec {
             tv_sec: deadline.div_euclid(SECOND) as _,
             tv_nsec: deadline.rem_euclid(SECOND) as _,
@@ -146,7 +152,10 @@ fn read_timer(timer: &OwnedFd) -> io::Result<()> {
         let error = io::Error::last_os_error();
         // A wall-clock adjustment cancels the timer. Recompute labels/deadline
         // just as after expiration; CLOCK_REALTIME also advances during suspend.
-        if !matches!(error.raw_os_error(), Some(libc::ECANCELED | libc::EAGAIN | libc::EINTR)) {
+        if !matches!(
+            error.raw_os_error(),
+            Some(libc::ECANCELED | libc::EAGAIN | libc::EINTR)
+        ) {
             return Err(error);
         }
     }
@@ -154,12 +163,19 @@ fn read_timer(timer: &OwnedFd) -> io::Result<()> {
 }
 
 fn zones() -> (TimeZone, Vec<PathBuf>) {
-    let mut paths = vec![PathBuf::from("/etc/localtime"), PathBuf::from("/etc/timezone")];
+    let mut paths = vec![
+        PathBuf::from("/etc/localtime"),
+        PathBuf::from("/etc/timezone"),
+    ];
     // Load the file directly: Jiff's system timezone cache lasts five minutes.
     let system = match std::env::var("TZ") {
         Ok(zone) if zone.is_empty() => TimeZone::UTC,
-        Ok(zone) => named_zone(zone.trim_start_matches(':'), &mut paths).unwrap_or_else(TimeZone::system),
-        Err(_) => file_zone(Path::new("/etc/localtime"), &mut paths).unwrap_or_else(TimeZone::system),
+        Ok(zone) => {
+            named_zone(zone.trim_start_matches(':'), &mut paths).unwrap_or_else(TimeZone::system)
+        }
+        Err(_) => {
+            file_zone(Path::new("/etc/localtime"), &mut paths).unwrap_or_else(TimeZone::system)
+        }
     };
     (system, paths)
 }
@@ -169,7 +185,11 @@ fn named_zone(name: &str, paths: &mut Vec<PathBuf>) -> Option<TimeZone> {
     if name.eq_ignore_ascii_case("UTC") {
         return Some(TimeZone::UTC);
     }
-    for root in ["/usr/share/zoneinfo", "/usr/share/lib/zoneinfo", "/etc/zoneinfo"] {
+    for root in [
+        "/usr/share/zoneinfo",
+        "/usr/share/lib/zoneinfo",
+        "/etc/zoneinfo",
+    ] {
         let path = Path::new(root).join(name);
         if let Some(zone) = file_zone(&path, paths) {
             return Some(zone);
@@ -208,7 +228,9 @@ fn zone_deadline(now: &Zoned) -> i128 {
     now.time_zone()
         .following(now.timestamp())
         .next()
-        .map_or(next, |transition| next.min(transition.timestamp().as_nanosecond()))
+        .map_or(next, |transition| {
+            next.min(transition.timestamp().as_nanosecond())
+        })
 }
 
 struct ZoneWatch {
@@ -246,7 +268,13 @@ impl ZoneWatch {
         let mut buffer = [0u8; 8192];
         let mut changed = false;
         loop {
-            let size = unsafe { libc::read(self.fd.as_raw_fd(), buffer.as_mut_ptr().cast(), buffer.len()) };
+            let size = unsafe {
+                libc::read(
+                    self.fd.as_raw_fd(),
+                    buffer.as_mut_ptr().cast(),
+                    buffer.len(),
+                )
+            };
             if size < 0 {
                 let error = io::Error::last_os_error();
                 if error.kind() == io::ErrorKind::WouldBlock {
@@ -262,16 +290,24 @@ impl ZoneWatch {
             }
             let mut offset = 0;
             while offset + std::mem::size_of::<libc::inotify_event>() <= size as usize {
-                let event = unsafe { (buffer.as_ptr().add(offset) as *const libc::inotify_event).read_unaligned() };
+                let event = unsafe {
+                    (buffer.as_ptr().add(offset) as *const libc::inotify_event).read_unaligned()
+                };
                 offset += std::mem::size_of::<libc::inotify_event>();
                 let end = offset + event.len as usize;
                 if end > size as usize {
                     break;
                 }
                 let name = &buffer[offset..end];
-                let name = &name[..name.iter().position(|byte| *byte == 0).unwrap_or(name.len())];
+                let name = &name[..name
+                    .iter()
+                    .position(|byte| *byte == 0)
+                    .unwrap_or(name.len())];
                 changed |= event.mask
-                    & (libc::IN_Q_OVERFLOW | libc::IN_IGNORED | libc::IN_MOVE_SELF | libc::IN_DELETE_SELF)
+                    & (libc::IN_Q_OVERFLOW
+                        | libc::IN_IGNORED
+                        | libc::IN_MOVE_SELF
+                        | libc::IN_DELETE_SELF)
                     != 0
                     || self
                         .names
@@ -354,19 +390,33 @@ mod tests {
         }
         let zone = TimeZone::get("America/New_York").unwrap();
         for (stamp, expected, label) in [
-            ("2026-03-08T06:59:59Z", "2026-03-08T07:00:00Z", "8 mar, 3:00 am"),
-            ("2026-11-01T05:59:59Z", "2026-11-01T06:00:00Z", "1 nov, 1:00 am"),
+            (
+                "2026-03-08T06:59:59Z",
+                "2026-03-08T07:00:00Z",
+                "8 mar, 3:00 am",
+            ),
+            (
+                "2026-11-01T05:59:59Z",
+                "2026-11-01T06:00:00Z",
+                "1 nov, 1:00 am",
+            ),
         ] {
             let now: Timestamp = stamp.parse().unwrap();
             let expected: Timestamp = expected.parse().unwrap();
-            assert_eq!(zone_deadline(&now.to_zoned(zone.clone())), expected.as_nanosecond());
+            assert_eq!(
+                zone_deadline(&now.to_zoned(zone.clone())),
+                expected.as_nanosecond()
+            );
             assert_eq!(labels(expected, &zone), label);
         }
         let zone = TimeZone::fixed(jiff::tz::Offset::from_seconds(30).unwrap());
         let now: Timestamp = "2026-10-04T12:34:20Z".parse().unwrap();
         assert_eq!(
             zone_deadline(&now.to_zoned(zone)),
-            "2026-10-04T12:34:30Z".parse::<Timestamp>().unwrap().as_nanosecond()
+            "2026-10-04T12:34:30Z"
+                .parse::<Timestamp>()
+                .unwrap()
+                .as_nanosecond()
         );
     }
 
@@ -389,9 +439,10 @@ mod tests {
 
     #[test]
     fn absolute_timer_and_subscription_drop_wake_without_recurring_poll() {
-        let timer =
-            owned_fd(unsafe { libc::timerfd_create(libc::CLOCK_REALTIME, libc::TFD_CLOEXEC | libc::TFD_NONBLOCK) })
-                .unwrap();
+        let timer = owned_fd(unsafe {
+            libc::timerfd_create(libc::CLOCK_REALTIME, libc::TFD_CLOEXEC | libc::TFD_NONBLOCK)
+        })
+        .unwrap();
         arm(&timer, Timestamp::now().as_nanosecond() - SECOND).unwrap();
         let mut poll = libc::pollfd {
             fd: timer.as_raw_fd(),
@@ -411,7 +462,10 @@ mod tests {
         });
         assert!(receive.blocking_recv().is_some());
         drop(stop);
-        done_receive.recv_timeout(Duration::from_secs(2)).unwrap().unwrap();
+        done_receive
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap()
+            .unwrap();
         assert!(receive.blocking_recv().is_none());
     }
 }

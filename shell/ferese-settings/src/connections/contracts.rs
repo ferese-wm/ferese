@@ -142,7 +142,11 @@ impl Wireless {
 
     #[zbus(property)]
     fn active_access_point(&self) -> OwnedObjectPath {
-        path(if self.0.lock().unwrap().activated { "/ap" } else { "/" })
+        path(if self.0.lock().unwrap().activated {
+            "/ap"
+        } else {
+            "/"
+        })
     }
 }
 
@@ -162,7 +166,11 @@ impl NetworkDevice {
 
     #[zbus(property)]
     fn state(&self) -> u32 {
-        if self.0.lock().unwrap().activated { 100 } else { 30 }
+        if self.0.lock().unwrap().activated {
+            100
+        } else {
+            30
+        }
     }
 
     fn disconnect(&self) {
@@ -227,7 +235,8 @@ impl Profile {
                 "802-11-wireless".into(),
                 HashMap::from([(
                     "ssid".into(),
-                    OwnedValue::try_from(zbus::zvariant::Value::from(b"Test network".as_slice())).unwrap(),
+                    OwnedValue::try_from(zbus::zvariant::Value::from(b"Test network".as_slice()))
+                        .unwrap(),
                 )]),
             ),
             (
@@ -263,14 +272,26 @@ async fn network_service(bus: &Bus, state: &Arc<Mutex<NetworkState>>) -> Connect
     server.request_name(NM).await.unwrap();
     let objects = server.object_server();
     objects.at(ROOT, Manager(state.clone())).await.unwrap();
-    objects.at("/device", Wireless(state.clone())).await.unwrap();
-    objects.at("/device", NetworkDevice(state.clone())).await.unwrap();
-    objects.at("/ap", AccessPoint).await.unwrap();
     objects
-        .at("/org/freedesktop/NetworkManager/Settings", Profiles(state.clone()))
+        .at("/device", Wireless(state.clone()))
         .await
         .unwrap();
-    objects.at("/profile", Profile(state.clone())).await.unwrap();
+    objects
+        .at("/device", NetworkDevice(state.clone()))
+        .await
+        .unwrap();
+    objects.at("/ap", AccessPoint).await.unwrap();
+    objects
+        .at(
+            "/org/freedesktop/NetworkManager/Settings",
+            Profiles(state.clone()),
+        )
+        .await
+        .unwrap();
+    objects
+        .at("/profile", Profile(state.clone()))
+        .await
+        .unwrap();
     objects.at("/active", Active).await.unwrap();
     server
 }
@@ -303,20 +324,30 @@ async fn wifi_controls_and_missing_bluetooth_are_independent() {
         assert_eq!(state.updates, 1);
         assert_eq!(state.scans, 1);
         assert_eq!(
-            <&str>::try_from(&state.received.as_ref().unwrap()["802-11-wireless-security"]["psk"]).unwrap(),
+            <&str>::try_from(&state.received.as_ref().unwrap()["802-11-wireless-security"]["psk"])
+                .unwrap(),
             "updated-password"
         );
     }
     assert!(client.snapshot().await.wifi.unwrap().networks[0].connected);
-    client.execute(Action::WifiDisconnect("/device".into())).await.unwrap();
+    client
+        .execute(Action::WifiDisconnect("/device".into()))
+        .await
+        .unwrap();
     assert!(!client.snapshot().await.wifi.unwrap().networks[0].connected);
     let mut unsaved = wifi.networks[0].clone();
     unsaved.saved = None;
     client
-        .execute(Action::WifiConnect(unsaved, Zeroizing::new("new-password".into())))
+        .execute(Action::WifiConnect(
+            unsaved,
+            Zeroizing::new("new-password".into()),
+        ))
         .await
         .unwrap();
-    client.execute(Action::WifiForget("/profile".into())).await.unwrap();
+    client
+        .execute(Action::WifiForget("/profile".into()))
+        .await
+        .unwrap();
     assert!(client.snapshot().await.wifi.unwrap().saved.is_empty());
 }
 
@@ -446,7 +477,12 @@ struct AgentManager(Arc<Mutex<BluetoothState>>);
 
 #[zbus::interface(name = "org.bluez.AgentManager1")]
 impl AgentManager {
-    fn register_agent(&self, agent: OwnedObjectPath, capability: String, #[zbus(header)] header: Header<'_>) {
+    fn register_agent(
+        &self,
+        agent: OwnedObjectPath,
+        capability: String,
+        #[zbus(header)] header: Header<'_>,
+    ) {
         assert_eq!(capability, "KeyboardDisplay");
         self.0.lock().unwrap().agent = Some((header.sender().unwrap().to_string(), agent));
     }
@@ -457,9 +493,15 @@ async fn bluetooth_service(bus: &Bus, state: &Arc<Mutex<BluetoothState>>) -> Con
     server.request_name("org.bluez").await.unwrap();
     let objects = server.object_server();
     objects.at("/", zbus::fdo::ObjectManager).await.unwrap();
-    objects.at("/org/bluez", AgentManager(state.clone())).await.unwrap();
+    objects
+        .at("/org/bluez", AgentManager(state.clone()))
+        .await
+        .unwrap();
     objects.at(ADAPTER, Adapter(state.clone())).await.unwrap();
-    objects.at(DEVICE, BluetoothDevice(state.clone())).await.unwrap();
+    objects
+        .at(DEVICE, BluetoothDevice(state.clone()))
+        .await
+        .unwrap();
     server
 }
 
@@ -496,8 +538,14 @@ async fn bluetooth_pairing_controls_and_close_cleanup() {
         .execute(Action::BluetoothPower(ADAPTER.into(), true))
         .await
         .unwrap();
-    client.execute(Action::BluetoothScan(ADAPTER.into())).await.unwrap();
-    client.execute(Action::BluetoothScan(ADAPTER.into())).await.unwrap();
+    client
+        .execute(Action::BluetoothScan(ADAPTER.into()))
+        .await
+        .unwrap();
+    client
+        .execute(Action::BluetoothScan(ADAPTER.into()))
+        .await
+        .unwrap();
     assert_eq!(state.lock().unwrap().starts, 1);
     let snapshot = client.snapshot().await;
     assert!(snapshot.wifi.is_err());
@@ -505,7 +553,8 @@ async fn bluetooth_pairing_controls_and_close_cleanup() {
     assert!(bluetooth.adapters[0].powered);
     assert_eq!(bluetooth.devices[0].name, "Headphones");
     let other = client.clone();
-    let pairing = tokio::spawn(async move { other.execute(Action::BluetoothPair(DEVICE.into())).await });
+    let pairing =
+        tokio::spawn(async move { other.execute(Action::BluetoothPair(DEVICE.into())).await });
     let prompt = wait_for_prompt(&client).await;
     assert_eq!(prompt.kind, Kind::Confirm(123456));
     client.reply(prompt.id, Some(Zeroizing::new(String::new())));
@@ -523,20 +572,31 @@ async fn bluetooth_pairing_controls_and_close_cleanup() {
         .await
         .unwrap();
     assert!(!state.lock().unwrap().trusted);
-    client.execute(Action::BluetoothConnect(DEVICE.into())).await.unwrap();
+    client
+        .execute(Action::BluetoothConnect(DEVICE.into()))
+        .await
+        .unwrap();
     client
         .execute(Action::BluetoothForget(ADAPTER.into(), DEVICE.into()))
         .await
         .unwrap();
     assert!(state.lock().unwrap().removed);
     let other = client.clone();
-    let pairing = tokio::spawn(async move { other.execute(Action::BluetoothPair(DEVICE.into())).await });
+    let pairing =
+        tokio::spawn(async move { other.execute(Action::BluetoothPair(DEVICE.into())).await });
     wait_for_prompt(&client).await;
     // Window destruction happens on a UI thread outside Tokio's context.
     let closing = client.clone();
-    std::thread::spawn(move || closing.shutdown()).join().unwrap();
+    std::thread::spawn(move || closing.shutdown())
+        .join()
+        .unwrap();
     assert!(pairing.await.unwrap().is_err());
-    assert!(client.execute(Action::BluetoothConnect(DEVICE.into())).await.is_err());
+    assert!(
+        client
+            .execute(Action::BluetoothConnect(DEVICE.into()))
+            .await
+            .is_err()
+    );
     assert!(client.prompt().is_none());
     tokio::time::timeout(Duration::from_secs(3), async {
         while state.lock().unwrap().discovering {
@@ -556,7 +616,8 @@ async fn bluetooth_agent_recovers_after_service_restart() {
     let old_server = bluetooth_service(&bus, &state).await;
     let client = Client::with_connection(bus.connect().await);
     let other = client.clone();
-    let pairing = tokio::spawn(async move { other.execute(Action::BluetoothPair(DEVICE.into())).await });
+    let pairing =
+        tokio::spawn(async move { other.execute(Action::BluetoothPair(DEVICE.into())).await });
     let prompt = wait_for_prompt(&client).await;
     client.reply(prompt.id, Some(Zeroizing::new(String::new())));
     pairing.await.unwrap().unwrap();
@@ -564,7 +625,8 @@ async fn bluetooth_agent_recovers_after_service_restart() {
     let new_state = Arc::new(Mutex::new(BluetoothState::default()));
     let _server = bluetooth_service(&bus, &new_state).await;
     let other = client.clone();
-    let pairing = tokio::spawn(async move { other.execute(Action::BluetoothPair(DEVICE.into())).await });
+    let pairing =
+        tokio::spawn(async move { other.execute(Action::BluetoothPair(DEVICE.into())).await });
     let prompt = wait_for_prompt(&client).await;
     client.reply(prompt.id, Some(Zeroizing::new(String::new())));
     pairing.await.unwrap().unwrap();

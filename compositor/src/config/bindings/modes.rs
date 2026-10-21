@@ -75,16 +75,24 @@ impl Config {
                 if configured.disabled
                     || identity.match_mode == BindingMatch::Swipe
                     || !identities.insert(identity.clone())
-                    || (identity.match_mode == BindingMatch::Keysym && identity.key == keysyms::KEY_Escape)
+                    || (identity.match_mode == BindingMatch::Keysym
+                        && identity.key == keysyms::KEY_Escape)
                     || (identity.match_mode == BindingMatch::Physical
-                        && (0..keymap.num_layouts_for_key(Keycode::new(identity.key))).any(|layout| {
-                            (0..keymap.num_levels_for_key(Keycode::new(identity.key), layout)).any(|level| {
-                                keymap
-                                    .key_get_syms_by_level(Keycode::new(identity.key), layout, level)
-                                    .iter()
-                                    .any(|symbol| symbol.raw() == keysyms::KEY_Escape)
-                            })
-                        }))
+                        && (0..keymap.num_layouts_for_key(Keycode::new(identity.key))).any(
+                            |layout| {
+                                (0..keymap.num_levels_for_key(Keycode::new(identity.key), layout))
+                                    .any(|level| {
+                                        keymap
+                                            .key_get_syms_by_level(
+                                                Keycode::new(identity.key),
+                                                layout,
+                                                level,
+                                            )
+                                            .iter()
+                                            .any(|symbol| symbol.raw() == keysyms::KEY_Escape)
+                                    })
+                            },
+                        ))
                 {
                     return Err(ConfigError::Binding(format!(
                         "invalid, duplicate or reserved mode binding {:?}",
@@ -95,12 +103,17 @@ impl Config {
             }
             modes.maps.insert(mode.name.clone(), bindings.into());
         }
-        for binding in default.iter().chain(modes.maps.values().flat_map(|map| map.iter())) {
+        for binding in default
+            .iter()
+            .chain(modes.maps.values().flat_map(|map| map.iter()))
+        {
             if let BindingAction::BindingMode(name) = &binding.action
                 && name != "default"
                 && !modes.maps.contains_key(name)
             {
-                return Err(ConfigError::Binding(format!("unknown binding mode {name:?}")));
+                return Err(ConfigError::Binding(format!(
+                    "unknown binding mode {name:?}"
+                )));
             }
         }
         Ok(modes)
@@ -131,7 +144,14 @@ mod tests {
         assert!(modes.set("resize"));
         let selected = modes.bindings(&default);
         assert_eq!(
-            selected.action_for_key(Keycode::new(43), &[keysyms::KEY_h], false, false, false, false),
+            selected.action_for_key(
+                Keycode::new(43),
+                &[keysyms::KEY_h],
+                false,
+                false,
+                false,
+                false
+            ),
             Some(&BindingAction::Resize(Direction::Left))
         );
         assert_eq!(
@@ -139,11 +159,25 @@ mod tests {
             Some(&BindingAction::Resize(Direction::Up))
         );
         assert_eq!(
-            selected.action_for_key(Keycode::new(43), &[keysyms::KEY_h], true, false, false, false),
+            selected.action_for_key(
+                Keycode::new(43),
+                &[keysyms::KEY_h],
+                true,
+                false,
+                false,
+                false
+            ),
             None
         );
         assert_eq!(
-            selected.action_for_key(Keycode::new(36), &[keysyms::KEY_Return], true, false, false, false),
+            selected.action_for_key(
+                Keycode::new(36),
+                &[keysyms::KEY_Return],
+                true,
+                false,
+                false,
+                false
+            ),
             None
         );
         assert!(!modes.set("missing"));

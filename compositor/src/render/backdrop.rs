@@ -39,7 +39,10 @@ impl Backdrop {
                 continue;
             }
 
-            let previous = self.sources.iter().find(|source| &source.id == element.id());
+            let previous = self
+                .sources
+                .iter()
+                .find(|source| &source.id == element.id());
             changed |= previous.is_none_or(|source| {
                 source.geometry != geometry
                     || source.alpha != element.alpha()
@@ -48,10 +51,13 @@ impl Backdrop {
                     || source.visible != visible
             });
             if let Some(previous) = previous {
-                changed |= element.damage_since(scale, Some(previous.commit)).iter().any(|damage| {
-                    let damage = Rectangle::new(damage.loc + geometry.loc, damage.size);
-                    visible.iter().any(|rect| rect.overlaps(damage))
-                });
+                changed |= element
+                    .damage_since(scale, Some(previous.commit))
+                    .iter()
+                    .any(|damage| {
+                        let damage = Rectangle::new(damage.loc + geometry.loc, damage.size);
+                        visible.iter().any(|rect| rect.overlaps(damage))
+                    });
             }
 
             sources.push(Source {
@@ -163,7 +169,9 @@ mod tests {
         }
         fn current_commit(&self) -> CommitCounter {
             if let Some(backdrop) = &self.probe {
-                let _guard = backdrop.try_lock().expect("backdrop lock held during an element query");
+                let _guard = backdrop
+                    .try_lock()
+                    .expect("backdrop lock held during an element query");
             }
             self.commit
         }
@@ -173,7 +181,11 @@ mod tests {
         fn geometry(&self, _: RenderScale<f64>) -> Rectangle<i32, Physical> {
             self.rect
         }
-        fn damage_since(&self, _: RenderScale<f64>, commit: Option<CommitCounter>) -> DamageSet<i32, Physical> {
+        fn damage_since(
+            &self,
+            _: RenderScale<f64>,
+            commit: Option<CommitCounter>,
+        ) -> DamageSet<i32, Physical> {
             if commit == Some(self.commit) {
                 DamageSet::default()
             } else {
@@ -209,13 +221,31 @@ mod tests {
 
         // Open: ignore a repeated instance of the cached popup material, and
         // allow dependencies to query backdrop state without a nested lock.
-        assert!(update_shared(&backdrop, &elements, &owner, region, 1.0.into()));
+        assert!(update_shared(
+            &backdrop,
+            &elements,
+            &owner,
+            region,
+            1.0.into()
+        ));
         assert_eq!(backdrop.lock().unwrap().sources.len(), 1);
-        assert!(!update_shared(&backdrop, &elements, &owner, region, 1.0.into()));
+        assert!(!update_shared(
+            &backdrop,
+            &elements,
+            &owner,
+            region,
+            1.0.into()
+        ));
 
         // Update both content and bounds while the popup remains visible.
         elements[1].repaint(vec![rect(10, 10, 5, 5)]);
-        assert!(update_shared(&backdrop, &elements, &owner, region, 1.0.into()));
+        assert!(update_shared(
+            &backdrop,
+            &elements,
+            &owner,
+            region,
+            1.0.into()
+        ));
         assert!(update_shared(
             &backdrop,
             &elements,
@@ -225,10 +255,28 @@ mod tests {
         ));
 
         // Close and reopen: dependencies disappear, then are tracked again.
-        assert!(update_shared::<TestElement>(&backdrop, &[], &owner, region, 1.0.into()));
+        assert!(update_shared::<TestElement>(
+            &backdrop,
+            &[],
+            &owner,
+            region,
+            1.0.into()
+        ));
         assert!(backdrop.lock().unwrap().sources.is_empty());
-        assert!(update_shared(&backdrop, &elements, &owner, region, 1.0.into()));
-        assert!(!update_shared(&backdrop, &elements, &owner, region, 1.0.into()));
+        assert!(update_shared(
+            &backdrop,
+            &elements,
+            &owner,
+            region,
+            1.0.into()
+        ));
+        assert!(!update_shared(
+            &backdrop,
+            &elements,
+            &owner,
+            region,
+            1.0.into()
+        ));
     }
 
     #[test]

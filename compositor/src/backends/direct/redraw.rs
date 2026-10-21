@@ -13,7 +13,13 @@ impl AnimationFallback {
         self.orphaned_since.is_some()
     }
 
-    pub fn deadline(&mut self, now: Instant, interval: Duration, active: bool, chained: bool) -> Option<Instant> {
+    pub fn deadline(
+        &mut self,
+        now: Instant,
+        interval: Duration,
+        active: bool,
+        chained: bool,
+    ) -> Option<Instant> {
         if !active || chained {
             self.orphaned_since = None;
             return None;
@@ -55,12 +61,21 @@ impl SchedulingMetrics {
         }
     }
 
-    pub fn redraw(&mut self, source: &'static Location<'static>, global: bool, requested: usize, connected: usize) {
+    pub fn redraw(
+        &mut self,
+        source: &'static Location<'static>,
+        global: bool,
+        requested: usize,
+        connected: usize,
+    ) {
         if !self.enabled {
             return;
         }
 
-        let count = self.redraws.entry((source.file(), source.line(), global)).or_default();
+        let count = self
+            .redraws
+            .entry((source.file(), source.line(), global))
+            .or_default();
         count.calls += 1;
         count.requested_outputs += requested as u64;
         count.connected_outputs += connected as u64;
@@ -119,8 +134,11 @@ pub(super) fn cursor_on_output(state: &crate::Ferese, output: &smithay::output::
                     .map(|attributes| attributes.lock().unwrap().hotspot)
                     .unwrap_or_default()
             });
-            smithay::desktop::utils::bbox_from_surface_tree(surface, (location - hotspot.to_f64()).to_i32_round())
-                .to_f64()
+            smithay::desktop::utils::bbox_from_surface_tree(
+                surface,
+                (location - hotspot.to_f64()).to_i32_round(),
+            )
+            .to_f64()
         }
 
         CursorImageStatus::Named(_) => {
@@ -135,7 +153,11 @@ pub(super) fn cursor_on_output(state: &crate::Ferese, output: &smithay::output::
     // One logical pixel covers physical rounding at fractional scales.
     let bounds = Rectangle::<f64, Logical>::new(
         (f64::from(bounds.loc.x) - 1.0, f64::from(bounds.loc.y) - 1.0).into(),
-        (f64::from(bounds.size.w) + 2.0, f64::from(bounds.size.h) + 2.0).into(),
+        (
+            f64::from(bounds.size.w) + 2.0,
+            f64::from(bounds.size.h) + 2.0,
+        )
+            .into(),
     );
     rect.overlaps(bounds)
 }
@@ -152,7 +174,10 @@ mod tests {
         let mut idle_fast = AnimationFallback::default();
         let mut moving_slow = AnimationFallback::default();
         assert_eq!(idle_fast.deadline(now, fast, false, false), None);
-        assert_eq!(moving_slow.deadline(now, slow, true, false), Some(now + slow * 2));
+        assert_eq!(
+            moving_slow.deadline(now, slow, true, false),
+            Some(now + slow * 2)
+        );
         assert_eq!(
             moving_slow.deadline(now + slow, slow, true, false),
             Some(now + slow * 2)
@@ -166,7 +191,10 @@ mod tests {
         let interval = Duration::from_millis(16);
         let mut output = AnimationFallback::default();
         output.deadline(now, interval, true, false);
-        assert_eq!(output.deadline(now + interval, interval, false, false), None);
+        assert_eq!(
+            output.deadline(now + interval, interval, false, false),
+            None
+        );
         let reconnected = now + Duration::from_secs(1);
         assert_eq!(
             output.deadline(reconnected, interval, true, false),
@@ -192,7 +220,10 @@ mod tests {
                 last_tick_us = now_us;
             }
 
-            assert_eq!(policy.deadline(start, Duration::from_micros(16_667), true, true), None);
+            assert_eq!(
+                policy.deadline(start, Duration::from_micros(16_667), true, true),
+                None
+            );
         }
 
         assert_eq!(old_wakes, 60);
@@ -210,9 +241,17 @@ mod tests {
         assert_eq!(fallback.deadline(start, interval, true, true), None);
         let plan = scheduler.begin().unwrap();
         assert_eq!(plan, scheduled);
-        scheduler.rendered(plan, Duration::from_millis(2), Duration::from_millis(2), true);
+        scheduler.rendered(
+            plan,
+            Duration::from_millis(2),
+            Duration::from_millis(2),
+            true,
+        );
         assert_eq!(scheduler.plan(interval), None);
-        assert_eq!(fallback.deadline(start + interval, interval, true, true), None);
+        assert_eq!(
+            fallback.deadline(start + interval, interval, true, true),
+            None
+        );
         scheduler.presented(interval);
         assert_eq!(
             fallback.deadline(start + interval, interval, true, false),
@@ -220,7 +259,10 @@ mod tests {
         );
         scheduler.request(interval);
         assert!(scheduler.plan(interval).is_some());
-        assert_eq!(fallback.deadline(start + interval, interval, true, true), None);
+        assert_eq!(
+            fallback.deadline(start + interval, interval, true, true),
+            None
+        );
     }
 
     #[test]
@@ -237,13 +279,17 @@ mod tests {
         assert!(scheduler.has_pending_request());
         let deadline = fallback.deadline(start, interval, true, false).unwrap();
         let animation_active = false;
-        let needs_final_frame = animation_active || (fallback.waiting_for_frame() && scheduler.has_pending_request());
+        let needs_final_frame =
+            animation_active || (fallback.waiting_for_frame() && scheduler.has_pending_request());
         assert_eq!(
             fallback.deadline(deadline, interval, needs_final_frame, false),
             Some(deadline)
         );
         // A successful retry installs the normal timer and cancels fallback.
-        assert_eq!(fallback.deadline(deadline, interval, needs_final_frame, true), None);
+        assert_eq!(
+            fallback.deadline(deadline, interval, needs_final_frame, true),
+            None
+        );
         scheduler.begin().unwrap();
         assert!(!scheduler.has_pending_request());
     }
@@ -296,7 +342,11 @@ mod tests {
                     refresh,
                 }),
                 None,
-                Some(smithay::output::Scale::Fractional(if index == 0 { 2.0 } else { 1.0 })),
+                Some(smithay::output::Scale::Fractional(if index == 0 {
+                    2.0
+                } else {
+                    1.0
+                })),
                 Some(((index as i32) * 1920, 0).into()),
             );
             state.space.map_output(&output, ((index as i32) * 1920, 0));
@@ -342,7 +392,10 @@ mod tests {
             },
         );
         assert!(cursor_on_output(&state, &outputs[0]));
-        assert!(cursor_on_output(&state, &outputs[1]), "cursor image straddles the seam");
+        assert!(
+            cursor_on_output(&state, &outputs[1]),
+            "cursor image straddles the seam"
+        );
         if let Some(cursor) = state.named_cursor_frame() {
             let x = 1920.0 - f64::from(cursor.size.w) / f64::from(cursor.buffer_scale) * 0.75
                 + f64::from(cursor.hotspot.x) / f64::from(cursor.buffer_scale);

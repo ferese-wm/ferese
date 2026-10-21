@@ -7,9 +7,15 @@ use super::{Menu, MenuRows, MenuStyle};
 use crate::FereseShell;
 use crate::status::Action;
 
-pub(super) fn view<'a>(shell: &'a FereseShell, mut rows: MenuRows<'a>, style: MenuStyle) -> MenuRows<'a> {
+pub(super) fn view<'a>(
+    shell: &'a FereseShell,
+    mut rows: MenuRows<'a>,
+    style: MenuStyle,
+) -> MenuRows<'a> {
     let MenuStyle {
-        primary, opacity: p, ..
+        primary,
+        opacity: p,
+        ..
     } = style;
     if let Some(n) = &shell.status.network {
         let connected = n.enabled && n.connection.is_some();
@@ -42,7 +48,11 @@ pub(super) fn view<'a>(shell: &'a FereseShell, mut rows: MenuRows<'a>, style: Me
             rows = rows.push(
                 column![
                     row![
-                        shell.render.text("Signal strength").size(12).width(Length::Fill),
+                        shell
+                            .render
+                            .text("Signal strength")
+                            .size(12)
+                            .width(Length::Fill),
                         shell.render.text(strength).size(12)
                     ],
                     level_meter(shell.render, n.signal, primary, p),
@@ -59,7 +69,9 @@ pub(super) fn heading<'a>(
     mut heading: super::MenuHeading<'a>,
     style: MenuStyle,
 ) -> super::MenuHeading<'a> {
-    let MenuStyle { theme, opacity: p, .. } = style;
+    let MenuStyle {
+        theme, opacity: p, ..
+    } = style;
     if let Some(network) = &shell.status.network {
         heading = heading.push(shell_switch(
             shell.render,

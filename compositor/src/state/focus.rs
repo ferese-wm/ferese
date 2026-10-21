@@ -56,9 +56,17 @@ impl Ferese {
             .find(|id| {
                 self.workspaces.workspace_for_window(*id) == Some(workspace)
                     && matches!(
-                        (self.workspaces.placement(current), self.workspaces.placement(*id)),
-                        (Some(WindowPlacement::Tiled), Some(WindowPlacement::Floating { .. }))
-                            | (Some(WindowPlacement::Floating { .. }), Some(WindowPlacement::Tiled))
+                        (
+                            self.workspaces.placement(current),
+                            self.workspaces.placement(*id)
+                        ),
+                        (
+                            Some(WindowPlacement::Tiled),
+                            Some(WindowPlacement::Floating { .. })
+                        ) | (
+                            Some(WindowPlacement::Floating { .. }),
+                            Some(WindowPlacement::Tiled)
+                        )
                     )
             });
         if let Some(id) = target {
@@ -74,7 +82,9 @@ impl Ferese {
         let available = self.focus_candidates();
         if !preview {
             self.cancel_focus_cycle();
-            let order = self.focus_history.candidates(self.focused_window, &available);
+            let order = self
+                .focus_history
+                .candidates(self.focused_window, &available);
             let mut cycle = ferese_core::FocusCycle::new(order, self.focused_window);
             if let Some(id) = cycle.advance(reverse, &available) {
                 self.activate_managed_window(id);
@@ -82,7 +92,9 @@ impl Ferese {
             return;
         }
         if self.focus_cycle.is_none() {
-            let order = self.focus_history.candidates(self.focused_window, &available);
+            let order = self
+                .focus_history
+                .candidates(self.focused_window, &available);
             if order.len() < 2 {
                 return;
             }
@@ -194,7 +206,10 @@ mod tests {
         }
 
         fn placements(&self) -> Vec<Option<WindowPlacement>> {
-            self.ids.iter().map(|id| self.state.workspaces.placement(*id)).collect()
+            self.ids
+                .iter()
+                .map(|id| self.state.workspaces.placement(*id))
+                .collect()
         }
 
         fn press(&mut self, expected: usize) {
@@ -228,7 +243,10 @@ mod tests {
 
     #[test]
     fn tiled_focuses_most_recently_focused_float() {
-        let Some(mut f) = fixture("tiled_focuses_most_recently_focused_float", &[false, true, true]) else {
+        let Some(mut f) = fixture(
+            "tiled_focuses_most_recently_focused_float",
+            &[false, true, true],
+        ) else {
             return;
         };
         f.focus(1);
@@ -238,7 +256,10 @@ mod tests {
 
     #[test]
     fn floating_focuses_most_recently_focused_tile() {
-        let Some(mut f) = fixture("floating_focuses_most_recently_focused_tile", &[false, false, true]) else {
+        let Some(mut f) = fixture(
+            "floating_focuses_most_recently_focused_tile",
+            &[false, false, true],
+        ) else {
             return;
         };
         f.focus(0);
@@ -248,7 +269,10 @@ mod tests {
 
     #[test]
     fn multiple_floaters_do_not_cycle_or_wrap() {
-        let Some(mut f) = fixture("multiple_floaters_do_not_cycle_or_wrap", &[false, true, true, true]) else {
+        let Some(mut f) = fixture(
+            "multiple_floaters_do_not_cycle_or_wrap",
+            &[false, true, true, true],
+        ) else {
             return;
         };
         f.focus(2);
@@ -336,7 +360,10 @@ mod tests {
 
     #[test]
     fn focus_floating_preserves_all_window_placements() {
-        let Some(mut f) = fixture("focus_floating_preserves_all_window_placements", &[false, true, true]) else {
+        let Some(mut f) = fixture(
+            "focus_floating_preserves_all_window_placements",
+            &[false, true, true],
+        ) else {
             return;
         };
         let placements = f.placements();
@@ -351,7 +378,10 @@ mod tests {
         use ferese_ipc::{Request, Response, VERSION, read_frame, write_frame};
         use std::sync::mpsc;
         use std::time::{Duration, Instant};
-        let Some(mut f) = fixture("ipc_focus_floating_uses_the_managed_activation_path", &[false, true]) else {
+        let Some(mut f) = fixture(
+            "ipc_focus_floating_uses_the_managed_activation_path",
+            &[false, true],
+        ) else {
             return;
         };
         f.focus(0);
@@ -361,7 +391,9 @@ mod tests {
         let (send, receive) = mpsc::channel();
         let worker = std::thread::spawn(move || {
             let mut socket = UnixStream::connect(path).unwrap();
-            socket.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(3)))
+                .unwrap();
             write_frame(
                 &mut socket,
                 &Request {
@@ -373,7 +405,8 @@ mod tests {
                 },
             )
             .unwrap();
-            send.send(read_frame::<Response>(&mut socket).unwrap()).unwrap();
+            send.send(read_frame::<Response>(&mut socket).unwrap())
+                .unwrap();
         });
         let deadline = Instant::now() + Duration::from_secs(3);
         let response = loop {
@@ -381,7 +414,9 @@ mod tests {
                 break response;
             }
             assert!(Instant::now() < deadline, "IPC focus action timed out");
-            f.events.dispatch(Duration::from_millis(1), &mut f.state).unwrap();
+            f.events
+                .dispatch(Duration::from_millis(1), &mut f.state)
+                .unwrap();
         };
         worker.join().unwrap();
         assert!(response.error.is_none(), "{:?}", response.error);

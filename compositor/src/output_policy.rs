@@ -16,7 +16,9 @@ pub(crate) struct Monitor {
 
 impl Monitor {
     pub fn matches(&self, selector: &str) -> bool {
-        selector == self.connector || selector == self.identity || self.aliases.iter().any(|alias| alias == selector)
+        selector == self.connector
+            || selector == self.identity
+            || self.aliases.iter().any(|alias| alias == selector)
     }
 }
 
@@ -59,9 +61,9 @@ impl ManualOverride {
             self.layout = None;
         }
         if self.profile.as_ref().is_some_and(|name| {
-            !profiles
-                .iter()
-                .any(|profile| profile.name == *name && profile_matches(profile, monitors, lid_closed))
+            !profiles.iter().any(|profile| {
+                profile.name == *name && profile_matches(profile, monitors, lid_closed)
+            })
         }) {
             self.profile = None;
         }
@@ -79,7 +81,9 @@ fn profile_matches(profile: &OutputProfile, monitors: &[Monitor], lid_closed: bo
     }) {
         return false;
     }
-    profile.lid_closed.is_none_or(|required| required == lid_closed)
+    profile
+        .lid_closed
+        .is_none_or(|required| required == lid_closed)
         && profile
             .outputs
             .iter()
@@ -119,9 +123,9 @@ pub(crate) fn select_profile(
         .profile
         .as_ref()
         .and_then(|name| {
-            profiles
-                .iter()
-                .find(|profile| profile.name == *name && profile_matches(profile, monitors, lid_closed))
+            profiles.iter().find(|profile| {
+                profile.name == *name && profile_matches(profile, monitors, lid_closed)
+            })
         })
         .or_else(|| {
             profiles
@@ -130,7 +134,11 @@ pub(crate) fn select_profile(
                 .filter(|(_, profile)| profile_matches(profile, monitors, lid_closed))
                 .max_by_key(|(index, profile)| {
                     (
-                        profile.outputs.iter().filter(|output| output.required).count(),
+                        profile
+                            .outputs
+                            .iter()
+                            .filter(|output| output.required)
+                            .count(),
                         std::cmp::Reverse(*index),
                     )
                 })
@@ -140,7 +148,9 @@ pub(crate) fn select_profile(
         .layout
         .unwrap_or_else(|| selected.map_or(OutputLayout::Extend, |profile| profile.layout));
     let manage_lid = selected.is_none_or(|profile| profile.lid_policy == LidPolicy::DockOrSuspend);
-    let external = monitors.iter().any(|monitor| monitor.usable && !monitor.internal);
+    let external = monitors
+        .iter()
+        .any(|monitor| monitor.usable && !monitor.internal);
     let mut outputs = monitors
         .iter()
         .map(|monitor| {
@@ -229,7 +239,11 @@ pub(crate) fn restore_configuration(
         .outputs
         .retain(|output| monitors.iter().any(|monitor| monitor.key == output.key));
     for monitor in monitors {
-        if !restored.outputs.iter().any(|output| output.key == monitor.key) {
+        if !restored
+            .outputs
+            .iter()
+            .any(|output| output.key == monitor.key)
+        {
             let mut settings = defaults(monitor.identity.clone());
             settings.enabled = false;
             restored.outputs.push(DesiredOutput {
@@ -254,7 +268,11 @@ pub(crate) fn restore_configuration(
             output.mirror_source = None;
         }
     }
-    if !restored.outputs.iter().any(|output| output.settings.enabled) {
+    if !restored
+        .outputs
+        .iter()
+        .any(|output| output.settings.enabled)
+    {
         return select_profile(monitors, false, &[], &ManualOverride::default());
     }
     restored
@@ -278,7 +296,8 @@ pub(crate) fn changed_outputs<'a>(
             let next = new.outputs.iter().find(|candidate| candidate.key == key);
             let same = match (previous, next) {
                 (Some(previous), Some(next)) => {
-                    previous.settings.same_configuration(&next.settings) && previous.mirror_source == next.mirror_source
+                    previous.settings.same_configuration(&next.settings)
+                        && previous.mirror_source == next.mirror_source
                 }
                 (None, None) => true,
                 _ => false,
@@ -294,7 +313,11 @@ pub(crate) struct Debouncer {
 }
 
 impl Debouncer {
-    pub fn request(&mut self, now: std::time::Duration, active: bool) -> Option<std::time::Duration> {
+    pub fn request(
+        &mut self,
+        now: std::time::Duration,
+        active: bool,
+    ) -> Option<std::time::Duration> {
         self.deadline = active.then(|| now + std::time::Duration::from_millis(150));
         self.deadline
     }
@@ -341,7 +364,9 @@ pub(crate) fn arrange_positions(
             automatic.push((index, placement));
         }
     }
-    automatic.sort_by(|(_, a), (_, b)| (a.previous.is_none(), &a.key).cmp(&(b.previous.is_none(), &b.key)));
+    automatic.sort_by(|(_, a), (_, b)| {
+        (a.previous.is_none(), &a.key).cmp(&(b.previous.is_none(), &b.key))
+    });
     for (index, placement) in automatic {
         let fits = |position: [i32; 2]| {
             let (x, y, w, h) = (
@@ -351,7 +376,10 @@ pub(crate) fn arrange_positions(
                 placement.size.1 as i64,
             );
             !occupied.iter().any(|&(ox, oy, ow, oh)| {
-                x < ox as i64 + ow as i64 && x + w > ox as i64 && y < oy as i64 + oh as i64 && y + h > oy as i64
+                x < ox as i64 + ow as i64
+                    && x + w > ox as i64
+                    && y < oy as i64 + oh as i64
+                    && y + h > oy as i64
             })
         };
         let previous = placement.previous.filter(|position| fits(*position));
@@ -463,7 +491,10 @@ mod tests {
     fn profile(name: &str, outputs: &[&str], layout: OutputLayout) -> OutputProfile {
         OutputProfile {
             name: name.into(),
-            outputs: outputs.iter().map(|name| defaults((*name).into())).collect(),
+            outputs: outputs
+                .iter()
+                .map(|name| defaults((*name).into()))
+                .collect(),
             layout,
             confirm_timeout: 15,
             lid_policy: LidPolicy::DockOrSuspend,
@@ -559,7 +590,11 @@ mod tests {
                 &ManualOverride::default(),
             );
             assert_eq!(
-                desired.outputs.iter().filter(|output| output.settings.enabled).count(),
+                desired
+                    .outputs
+                    .iter()
+                    .filter(|output| output.settings.enabled)
+                    .count(),
                 count
             );
             assert_eq!(
@@ -574,7 +609,12 @@ mod tests {
         let missing = [profile("absent", &["DP-9"], OutputLayout::ExternalOnly)];
         let fallback = select_profile(&monitors, false, &missing, &ManualOverride::default());
         assert_eq!(fallback.profile, None);
-        assert!(fallback.outputs.iter().all(|output| output.settings.enabled));
+        assert!(
+            fallback
+                .outputs
+                .iter()
+                .all(|output| output.settings.enabled)
+        );
         let internal = &monitors[..1];
         let mut disabled = profile("disabled", &["eDP-1"], OutputLayout::Extend);
         disabled.outputs[0].enabled = false;
@@ -631,13 +671,23 @@ mod tests {
         let monitors = [monitor("eDP-1", true), monitor("DP-1", false)];
         let mut mirror = profile("mirror", &["eDP-1", "DP-1"], OutputLayout::Mirror);
         mirror.mirror_source = Some("eDP-1".into());
-        let old = select_profile(&monitors, false, &[mirror.clone()], &ManualOverride::default());
+        let old = select_profile(
+            &monitors,
+            false,
+            &[mirror.clone()],
+            &ManualOverride::default(),
+        );
         assert_eq!(old.outputs[1].mirror_source.as_deref(), Some("eDP-1"));
         let removed = select_profile(&monitors[..1], false, &[mirror], &ManualOverride::default());
         assert!(removed.outputs[0].mirror_source.is_none());
         assert!(removed.outputs[0].settings.enabled);
         let extended = select_profile(&monitors, false, &[], &ManualOverride::default());
-        assert!(extended.outputs.iter().all(|output| output.mirror_source.is_none()));
+        assert!(
+            extended
+                .outputs
+                .iter()
+                .all(|output| output.mirror_source.is_none())
+        );
         assert_eq!(changed_outputs(&old, &extended), vec!["DP-1"]);
     }
 
@@ -648,9 +698,14 @@ mod tests {
         mobile.outputs[1].required = false;
         mobile.lid_closed = Some(false);
         assert_eq!(
-            select_profile(&monitors, false, &[mobile.clone()], &ManualOverride::default())
-                .profile
-                .as_deref(),
+            select_profile(
+                &monitors,
+                false,
+                &[mobile.clone()],
+                &ManualOverride::default()
+            )
+            .profile
+            .as_deref(),
             Some("mobile")
         );
         assert_eq!(
@@ -679,7 +734,11 @@ mod tests {
         assert_eq!(restored.outputs.len(), 1);
         assert!(restored.outputs[0].settings.enabled);
         let unknown = [monitor("HDMI-A-2", false)];
-        assert!(restore_configuration(&previous, &unknown).outputs[0].settings.enabled);
+        assert!(
+            restore_configuration(&previous, &unknown).outputs[0]
+                .settings
+                .enabled
+        );
     }
 }
 

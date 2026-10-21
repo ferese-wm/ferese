@@ -22,7 +22,8 @@ fn main() -> iced::Result {
         );
         return Ok(());
     }
-    let preview = args == ["--preview"] || (args.len() == 3 && args[0] == "--preview" && args[1] == "--config");
+    let preview = args == ["--preview"]
+        || (args.len() == 3 && args[0] == "--preview" && args[1] == "--config");
     let config = if preview && args.len() == 3 {
         Some(std::path::PathBuf::from(&args[2]))
     } else {
@@ -113,7 +114,8 @@ impl AuthState {
     }
 
     fn retry_ready(&mut self, now: Instant) -> bool {
-        if matches!(self, Self::Rejected(at) if now.saturating_duration_since(*at) >= Duration::from_secs(2)) {
+        if matches!(self, Self::Rejected(at) if now.saturating_duration_since(*at) >= Duration::from_secs(2))
+        {
             *self = Self::Ready;
             true
         } else {
@@ -202,14 +204,17 @@ impl cosmic::Application for Locker {
             if self.preview {
                 Subscription::none()
             } else {
-                ferese_theme_client::service::subscription().map(|snapshot| Message::ThemeChanged(Box::new(snapshot)))
+                ferese_theme_client::service::subscription()
+                    .map(|snapshot| Message::ThemeChanged(Box::new(snapshot)))
             },
             event::listen_with(|event, _, _| match event {
                 Event::PlatformSpecific(PlatformSpecific::Wayland(
                     wayland::Event::Output(..) | wayland::Event::SessionLock(..),
                 ))
                 | Event::Window(window::Event::Opened { .. })
-                | Event::Keyboard(iced::keyboard::Event::ModifiersChanged(_)) => Some(Message::Event(Box::new(event))),
+                | Event::Keyboard(iced::keyboard::Event::ModifiersChanged(_)) => {
+                    Some(Message::Event(Box::new(event)))
+                }
                 _ => None,
             }),
             if self.appearance.show_clock || self.appearance.show_date {
@@ -236,13 +241,18 @@ impl cosmic::Application for Locker {
                 self.appearance.accent = palette.accent;
                 self.appearance.on_accent = palette.on_accent;
                 self.appearance.radius = palette.radius;
-                self.appearance.font = ferese_theme::font(Some(&snapshot.presented.tokens.typography.font_family));
+                self.appearance.font =
+                    ferese_theme::font(Some(&snapshot.presented.tokens.typography.font_family));
                 let theme = cosmic::command::set_theme(self.appearance.theme());
-                if let Some((revision, path, blur)) = self.appearance.request_wallpaper(&snapshot.theme) {
+                if let Some((revision, path, blur)) =
+                    self.appearance.request_wallpaper(&snapshot.theme)
+                {
                     let wallpaper = cosmic::task::future(async move {
-                        let result = tokio::task::spawn_blocking(move || appearance::load_wallpaper(&path, blur))
-                            .await
-                            .unwrap_or_else(|e| Err(e.to_string()));
+                        let result = tokio::task::spawn_blocking(move || {
+                            appearance::load_wallpaper(&path, blur)
+                        })
+                        .await
+                        .unwrap_or_else(|e| Err(e.to_string()));
                         Message::WallpaperLoaded(revision, result)
                     });
                     return Task::batch([theme, wallpaper]);
@@ -284,7 +294,10 @@ impl cosmic::Application for Locker {
                     return focus();
                 }
 
-                if !self.confirmation.confirmed() || !self.state.may_submit() || self.password.is_empty() {
+                if !self.confirmation.confirmed()
+                    || !self.state.may_submit()
+                    || self.password.is_empty()
+                {
                     return Task::none();
                 }
 
@@ -337,9 +350,10 @@ impl Locker {
             Event::Keyboard(iced::keyboard::Event::ModifiersChanged(modifiers)) => {
                 self.caps_lock = modifiers.contains(iced::keyboard::Modifiers::CAPS_LOCK);
             }
-            Event::PlatformSpecific(PlatformSpecific::Wayland(wayland::Event::Output(event, output)))
-                if !self.preview =>
-            {
+            Event::PlatformSpecific(PlatformSpecific::Wayland(wayland::Event::Output(
+                event,
+                output,
+            ))) if !self.preview => {
                 if matches!(event, wayland::OutputEvent::Removed) {
                     if let Some(id) = self.outputs.remove(&output) {
                         return session_lock::destroy_lock_surface(id);
@@ -352,33 +366,33 @@ impl Locker {
                     }
                 }
             }
-            Event::PlatformSpecific(PlatformSpecific::Wayland(wayland::Event::SessionLock(event))) if !self.preview => {
-                match event {
-                    wayland::SessionLockEvent::Locked if self.confirmation.observe(&event) => {
-                        use std::io::Write;
-                        if std::env::var_os("FERESE_LOCK_READY").is_some() {
-                            let _ = writeln!(std::io::stdout().lock(), "FERESE_LOCKED");
-                        }
+            Event::PlatformSpecific(PlatformSpecific::Wayland(wayland::Event::SessionLock(
+                event,
+            ))) if !self.preview => match event {
+                wayland::SessionLockEvent::Locked if self.confirmation.observe(&event) => {
+                    use std::io::Write;
+                    if std::env::var_os("FERESE_LOCK_READY").is_some() {
+                        let _ = writeln!(std::io::stdout().lock(), "FERESE_LOCKED");
                     }
-                    wayland::SessionLockEvent::Requested if !self.started => {
-                        self.started = true;
-                        return Task::batch(
-                            self.outputs
-                                .iter()
-                                .map(|(output, id)| session_lock::get_lock_surface(*id, output.clone())),
-                        );
-                    }
-                    wayland::SessionLockEvent::Focused(..) => return focus(),
-                    wayland::SessionLockEvent::Unlocked if self.state == AuthState::Unlocking => {
-                        return iced::exit();
-                    }
-                    wayland::SessionLockEvent::Finished | wayland::SessionLockEvent::NotSupported => {
-                        eprintln!("ferese-lock: compositor refused the lock");
-                        return iced::exit();
-                    }
-                    _ => {}
                 }
-            }
+                wayland::SessionLockEvent::Requested if !self.started => {
+                    self.started = true;
+                    return Task::batch(
+                        self.outputs.iter().map(|(output, id)| {
+                            session_lock::get_lock_surface(*id, output.clone())
+                        }),
+                    );
+                }
+                wayland::SessionLockEvent::Focused(..) => return focus(),
+                wayland::SessionLockEvent::Unlocked if self.state == AuthState::Unlocking => {
+                    return iced::exit();
+                }
+                wayland::SessionLockEvent::Finished | wayland::SessionLockEvent::NotSupported => {
+                    eprintln!("ferese-lock: compositor refused the lock");
+                    return iced::exit();
+                }
+                _ => {}
+            },
             Event::Window(window::Event::Opened { .. }) => {
                 return focus();
             }
@@ -403,7 +417,14 @@ impl Locker {
     fn screen_content(&self, size: iced::Size) -> Element<'_, Message> {
         let avatar_size = (size.height * 0.08).clamp(56., 88.);
         let clock_size = (size.height * 0.06)
-            .min(size.width * if self.appearance.twelve_hour { 0.055 } else { 0.085 })
+            .min(
+                size.width
+                    * if self.appearance.twelve_hour {
+                        0.055
+                    } else {
+                        0.085
+                    },
+            )
             .clamp(32., 72.) as u16;
         let margin = if size.width < 640. { 24. } else { 36. };
         let top = (size.height * 0.09).max(24.);
@@ -412,7 +433,9 @@ impl Locker {
             .password()
             .padding([4, 10])
             .size(14)
-            .style(ferese_theme::controls::lock_input(a.radius, a.accent, a.panel))
+            .style(ferese_theme::controls::lock_input(
+                a.radius, a.accent, a.panel,
+            ))
             .font(a.font)
             .id(widget::Id::new("password"));
 
@@ -468,8 +491,15 @@ impl Locker {
             self.label(&self.user, 16).class(iced::Color::WHITE),
             widget::Space::new().height(6),
             input,
-            self.label(if self.caps_lock { "Caps Lock is on" } else { self.status }, 12)
-                .class(iced::Color::WHITE.scale_alpha(0.68)),
+            self.label(
+                if self.caps_lock {
+                    "Caps Lock is on"
+                } else {
+                    self.status
+                },
+                12
+            )
+            .class(iced::Color::WHITE.scale_alpha(0.68)),
         ]
         .spacing(12)
         .align_x(iced::Alignment::Center)
@@ -492,10 +522,17 @@ impl Locker {
         }
 
         if a.show_date {
-            clock = clock.push(self.label(&self.date, 18).class(iced::Color::WHITE.scale_alpha(0.72)));
+            clock = clock.push(
+                self.label(&self.date, 18)
+                    .class(iced::Color::WHITE.scale_alpha(0.72)),
+            );
         }
 
-        let clock_height = if a.show_clock { clock_size as f32 * 1.3 } else { 0. } + if a.show_date { 24. } else { 0. };
+        let clock_height = if a.show_clock {
+            clock_size as f32 * 1.3
+        } else {
+            0.
+        } + if a.show_date { 24. } else { 0. };
         let gap = (size.height * 0.44 - top - clock_height).max(24.);
         let foreground = container(
             column![
@@ -529,12 +566,14 @@ impl Locker {
         })
         .width(Length::Fill)
         .height(Length::Fill)
-        .class(theme::Container::custom(move |_| widget::container::Style {
-            text_color: Some(iced::Color::WHITE.scale_alpha(0.65)),
-            background: Some(iced::Background::Color(iced::Color::from_rgba(
-                0.025, 0.035, 0.06, a.dim,
-            ))),
-            ..Default::default()
+        .class(theme::Container::custom(move |_| {
+            widget::container::Style {
+                text_color: Some(iced::Color::WHITE.scale_alpha(0.65)),
+                background: Some(iced::Background::Color(iced::Color::from_rgba(
+                    0.025, 0.035, 0.06, a.dim,
+                ))),
+                ..Default::default()
+            }
         }));
         let background: Element<'_, Message> = image(a.wallpaper.clone())
             .width(Length::Fill)
@@ -588,6 +627,8 @@ mod tests {
     }
     #[test]
     fn password_messages_are_redacted() {
-        assert!(!format!("{:?}", Message::Input(Zeroizing::new("secret".into()))).contains("secret"));
+        assert!(
+            !format!("{:?}", Message::Input(Zeroizing::new("secret".into()))).contains("secret")
+        );
     }
 }

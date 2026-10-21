@@ -62,7 +62,9 @@ impl Widget<Action, Theme, cosmic::Renderer> for WheelArea<'_> {
             && cursor.is_over(*viewport)
             && let Event::Mouse(mouse::Event::WheelScrolled { delta }) = event
         {
-            shell.publish(cosmic::Action::App(Message::HubWorkspaceScroll(self.id, *delta)));
+            shell.publish(cosmic::Action::App(Message::HubWorkspaceScroll(
+                self.id, *delta,
+            )));
             shell.capture_event();
         }
     }
@@ -76,9 +78,15 @@ impl Widget<Action, Theme, cosmic::Renderer> for WheelArea<'_> {
         cursor: mouse::Cursor,
         viewport: &Rectangle,
     ) {
-        self.content
-            .as_widget()
-            .draw(&tree.children[0], renderer, theme, style, layout, cursor, viewport);
+        self.content.as_widget().draw(
+            &tree.children[0],
+            renderer,
+            theme,
+            style,
+            layout,
+            cursor,
+            viewport,
+        );
     }
     fn a11y_nodes(
         &self,
@@ -86,7 +94,9 @@ impl Widget<Action, Theme, cosmic::Renderer> for WheelArea<'_> {
         tree: &widget::Tree,
         cursor: mouse::Cursor,
     ) -> iced_accessibility::A11yTree {
-        self.content.as_widget().a11y_nodes(layout, &tree.children[0], cursor)
+        self.content
+            .as_widget()
+            .a11y_nodes(layout, &tree.children[0], cursor)
     }
     fn mouse_interaction(
         &self,
@@ -96,9 +106,13 @@ impl Widget<Action, Theme, cosmic::Renderer> for WheelArea<'_> {
         viewport: &Rectangle,
         renderer: &cosmic::Renderer,
     ) -> mouse::Interaction {
-        self.content
-            .as_widget()
-            .mouse_interaction(&tree.children[0], layout, cursor, viewport, renderer)
+        self.content.as_widget().mouse_interaction(
+            &tree.children[0],
+            layout,
+            cursor,
+            viewport,
+            renderer,
+        )
     }
     fn operate(
         &mut self,
@@ -119,8 +133,12 @@ impl Widget<Action, Theme, cosmic::Renderer> for WheelArea<'_> {
         viewport: &Rectangle,
         translation: Vector,
     ) -> Option<cosmic::iced::advanced::overlay::Element<'a, Action, Theme, cosmic::Renderer>> {
-        self.content
-            .as_widget_mut()
-            .overlay(&mut tree.children[0], layout, renderer, viewport, translation)
+        self.content.as_widget_mut().overlay(
+            &mut tree.children[0],
+            layout,
+            renderer,
+            viewport,
+            translation,
+        )
     }
 }

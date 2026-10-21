@@ -102,7 +102,9 @@ impl Capture {
         // uninterruptible roundtrip on a stalled compositor.
         this.sync(stop)?;
         this.sync(stop)?;
-        if (this.state.manager.is_none() && this.state.window_manager.is_none()) || this.state.shm.is_none() {
+        if (this.state.manager.is_none() && this.state.window_manager.is_none())
+            || this.state.shm.is_none()
+        {
             return Err("Ferese screen capture is unavailable in this session".into());
         }
         Ok(this)
@@ -110,7 +112,9 @@ impl Capture {
 
     fn sync(&mut self, stop: &AtomicBool) -> Result<(), String> {
         let done = Arc::new(AtomicBool::new(false));
-        self.connection.display().sync(&self.queue.handle(), done.clone());
+        self.connection
+            .display()
+            .sync(&self.queue.handle(), done.clone());
         let deadline = Instant::now() + Duration::from_secs(5);
         while !done.load(Ordering::Relaxed) {
             self.dispatch(stop, deadline)?;
@@ -138,7 +142,11 @@ impl Capture {
         Ok(())
     }
 
-    pub fn validate_sources(&mut self, selected: &[(String, u32)], stop: &AtomicBool) -> Result<(), String> {
+    pub fn validate_sources(
+        &mut self,
+        selected: &[(String, u32)],
+        stop: &AtomicBool,
+    ) -> Result<(), String> {
         self.sync(stop)?;
         for (name, generation) in selected {
             if self.generation(name) != Some(*generation) {
@@ -162,19 +170,34 @@ impl Capture {
             .collect()
     }
 
-    pub fn frame(&mut self, name: &str, cursor: bool, stop: &AtomicBool, mut pixels: Vec<u8>) -> Result<Frame, String> {
+    pub fn frame(
+        &mut self,
+        name: &str,
+        cursor: bool,
+        stop: &AtomicBool,
+        mut pixels: Vec<u8>,
+    ) -> Result<Frame, String> {
         self.state.result = None;
         self.state.flipped = false;
         self.state.logical_size = None;
         self.state.busy = false;
-        let (frame, transform) = if let Some(id) = name.strip_prefix("window:").and_then(|id| id.parse::<u64>().ok()) {
+        let (frame, transform) = if let Some(id) = name
+            .strip_prefix("window:")
+            .and_then(|id| id.parse::<u64>().ok())
+        {
             let manager = self
                 .state
                 .window_manager
                 .as_ref()
                 .ok_or("Window capture is unavailable")?;
             (
-                manager.capture_window((id >> 32) as u32, id as u32, cursor as u32, &self.queue.handle(), ()),
+                manager.capture_window(
+                    (id >> 32) as u32,
+                    id as u32,
+                    cursor as u32,
+                    &self.queue.handle(),
+                    (),
+                ),
                 wl_output::Transform::Normal,
             )
         } else {
@@ -184,11 +207,18 @@ impl Capture {
                 .iter()
                 .find(|o| o.source.name == name)
                 .ok_or("Shared monitor disconnected")?;
-            if self.selected_output.is_some_and(|selected| selected != output.global) {
+            if self
+                .selected_output
+                .is_some_and(|selected| selected != output.global)
+            {
                 return Err("Shared monitor was replaced".into());
             }
             self.selected_output = Some(output.global);
-            let manager = self.state.manager.as_ref().ok_or("Monitor capture is unavailable")?;
+            let manager = self
+                .state
+                .manager
+                .as_ref()
+                .ok_or("Monitor capture is unavailable")?;
             (
                 manager.capture_output(cursor as i32, &output.proxy, &self.queue.handle(), ()),
                 output.transform,
@@ -206,7 +236,11 @@ impl Capture {
         frame.destroy();
         self.state.result.take().unwrap()?;
 
-        let buffer = self.state.buffer.as_ref().ok_or("Capture supplied no buffer")?;
+        let buffer = self
+            .state
+            .buffer
+            .as_ref()
+            .ok_or("Capture supplied no buffer")?;
         let (width, height) = copy_oriented_pixels(
             &buffer.map,
             buffer.width,
@@ -251,7 +285,9 @@ impl Capture {
 
             if ready > 0 {
                 read.read().map_err(|e| e.to_string())?;
-            } else if ready < 0 && std::io::Error::last_os_error().kind() != std::io::ErrorKind::Interrupted {
+            } else if ready < 0
+                && std::io::Error::last_os_error().kind() != std::io::ErrorKind::Interrupted
+            {
                 return Err(std::io::Error::last_os_error().to_string());
             }
         }
@@ -293,9 +329,13 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
                         scale: 1,
                     },
                 }),
-                "ferese_window_capture_manager_v1" => state.window_manager = Some(registry.bind(name, 1, qh, ())),
+                "ferese_window_capture_manager_v1" => {
+                    state.window_manager = Some(registry.bind(name, 1, qh, ()))
+                }
                 "wl_shm" => state.shm = Some(registry.bind(name, 1, qh, ())),
-                "zwlr_screencopy_manager_v1" => state.manager = Some(registry.bind(name, version.min(3), qh, ())),
+                "zwlr_screencopy_manager_v1" => {
+                    state.manager = Some(registry.bind(name, version.min(3), qh, ()))
+                }
                 _ => (),
             },
             wl_registry::Event::GlobalRemove { name } => state.outputs.retain(|o| o.global != name),
@@ -320,7 +360,9 @@ impl Dispatch<wl_output::WlOutput, u32> for State {
         match event {
             wl_output::Event::Name { name } => output.source.name = name,
             wl_output::Event::Description { description } => output.source.label = description,
-            wl_output::Event::Geometry { x, y, transform, .. } => {
+            wl_output::Event::Geometry {
+                x, y, transform, ..
+            } => {
                 if let WEnum::Value(transform) = transform {
                     output.transform = transform;
                 }
@@ -372,7 +414,9 @@ impl Dispatch<frame::ZwlrScreencopyFrameV1, ()> for State {
                         return Ok(());
                     }
                     // SAFETY: fixed NUL-terminated name and a newly owned memfd.
-                    let fd = unsafe { libc::memfd_create(c"ferese-screencast".as_ptr(), libc::MFD_CLOEXEC) };
+                    let fd = unsafe {
+                        libc::memfd_create(c"ferese-screencast".as_ptr(), libc::MFD_CLOEXEC)
+                    };
 
                     if fd < 0 {
                         return Err(std::io::Error::last_os_error().to_string());
@@ -382,13 +426,20 @@ impl Dispatch<frame::ZwlrScreencopyFrameV1, ()> for State {
                     file.set_len(bytes as u64).map_err(|e| e.to_string())?;
                     // SAFETY: the file has the checked mapping length and lives with the mapping.
                     let map = unsafe { MmapMut::map_mut(&file) }.map_err(|e| e.to_string())?;
-                    let pool = state.shm.as_ref().ok_or("Missing shared memory global")?.create_pool(
-                        file.as_fd(),
-                        bytes as i32,
+                    let pool = state
+                        .shm
+                        .as_ref()
+                        .ok_or("Missing shared memory global")?
+                        .create_pool(file.as_fd(), bytes as i32, qh, ());
+                    let proxy = pool.create_buffer(
+                        0,
+                        width as i32,
+                        height as i32,
+                        stride as i32,
+                        format,
                         qh,
                         (),
                     );
-                    let proxy = pool.create_buffer(0, width as i32, height as i32, stride as i32, format, qh, ());
 
                     pool.destroy();
                     frame.copy(&proxy);
@@ -491,7 +542,9 @@ fn copy_oriented_pixels(
 
 fn buffer_size(width: u32, height: u32, stride: u32) -> Result<usize, String> {
     let row = width.checked_mul(4).ok_or("Capture dimensions overflow")?;
-    let bytes = stride.checked_mul(height).ok_or("Capture dimensions overflow")?;
+    let bytes = stride
+        .checked_mul(height)
+        .ok_or("Capture dimensions overflow")?;
 
     if width == 0 || height == 0 || stride < row || bytes > 128 * 1024 * 1024 {
         return Err("Unsupported capture dimensions".into());
@@ -527,7 +580,9 @@ impl Dispatch<window_manager::FereseWindowCaptureManagerV1, ()> for State {
         _: &QueueHandle<Self>,
     ) {
         match event {
-            window_manager::Event::Geometry { width, height, .. } => state.logical_size = Some((width, height)),
+            window_manager::Event::Geometry { width, height, .. } => {
+                state.logical_size = Some((width, height))
+            }
             window_manager::Event::Busy { .. } => state.busy = true,
             _ => (),
         }
@@ -545,13 +600,17 @@ mod tests {
 
         for discovery in [true, false] {
             let (client, mut server) = UnixStream::pair().unwrap();
-            server.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+            server
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
             let stop = Arc::new(AtomicBool::new(false));
             let flag = stop.clone();
             let worker = std::thread::spawn(move || {
                 let connection = Connection::from_socket(client).unwrap();
                 if discovery {
-                    Capture::connect_with_connection(connection, &flag).err().unwrap()
+                    Capture::connect_with_connection(connection, &flag)
+                        .err()
+                        .unwrap()
                 } else {
                     let queue = connection.new_event_queue();
                     let mut capture = Capture {
@@ -591,7 +650,11 @@ mod tests {
         for (transform, size, expected) in cases {
             for y_invert in [false, true] {
                 let mut source = Vec::new();
-                let rows = if y_invert { [b"def", b"abc"] } else { [b"abc", b"def"] };
+                let rows = if y_invert {
+                    [b"def", b"abc"]
+                } else {
+                    [b"abc", b"def"]
+                };
                 for row in rows {
                     for &value in row {
                         source.extend_from_slice(&pixel(value));

@@ -19,7 +19,11 @@ pub(super) fn overview_chrome_element(
     let mode = output.current_mode()?;
     let parameters = BorderParameters {
         geometry,
-        clip_rect: framebuffer_clip_rect(corners.rect, mode.size, output.current_transform().invert()),
+        clip_rect: framebuffer_clip_rect(
+            corners.rect,
+            mode.size,
+            output.current_transform().invert(),
+        ),
         radius: corners.radius,
         width: (width * scale) as f32,
         color,
@@ -30,13 +34,19 @@ pub(super) fn overview_chrome_element(
         focus_gradient_line: [0.0; 4],
         focus_mix: 0.0,
     };
-    let program = if matches!(key.1, OverviewChromePart::Outline | OverviewChromePart::TabListOutline) {
+    let program = if matches!(
+        key.1,
+        OverviewChromePart::Outline | OverviewChromePart::TabListOutline
+    ) {
         rounded_clip_program(&mut state.render, renderer)?.border
     } else {
         material_program(&mut state.render, renderer)?.0
     };
     let uniforms = |p: &BorderParameters| {
-        if matches!(key.1, OverviewChromePart::Outline | OverviewChromePart::TabListOutline) {
+        if matches!(
+            key.1,
+            OverviewChromePart::Outline | OverviewChromePart::TabListOutline
+        ) {
             border_uniforms(p)
         } else {
             tint_uniforms(p)
@@ -47,7 +57,9 @@ pub(super) fn overview_chrome_element(
         .render
         .outputs
         .entry(output_id)
-        .or_insert_with(|| OverviewScrim { chrome: HashMap::new() })
+        .or_insert_with(|| OverviewScrim {
+            chrome: HashMap::new(),
+        })
         .chrome;
     let cached = chrome
         .entry(key)
@@ -129,7 +141,9 @@ pub(super) fn overview_strip_elements(
             | OverviewChromePart::TabListOutline
             | OverviewChromePart::TabList
             | OverviewChromePart::TabRow
-            | OverviewChromePart::TabFlash => state.windows.window(ferese_layout::WindowId(*id)).is_some(),
+            | OverviewChromePart::TabFlash => {
+                state.windows.window(ferese_layout::WindowId(*id)).is_some()
+            }
             OverviewChromePart::Card | OverviewChromePart::Outline => card_ids.contains(id),
             OverviewChromePart::Strip => true,
         });
@@ -149,7 +163,11 @@ pub(super) fn overview_strip_elements(
         {
             continue;
         }
-        let Some(rect) = frame.windows.get(&id).map(|sample| sample.presentation.bounds.current) else {
+        let Some(rect) = frame
+            .windows
+            .get(&id)
+            .map(|sample| sample.presentation.bounds.current)
+        else {
             continue;
         };
         let Some((buffer, size)) = state.overview_window_label(id, scale, rect.width) else {
@@ -163,7 +181,9 @@ pub(super) fn overview_strip_elements(
             26.0,
         );
         let location = Point::<i32, Physical>::from((
-            ((caption.x - f64::from(output_geometry.loc.x) + caption.width * 0.5) * scale).round() as i32 - size.w / 2,
+            ((caption.x - f64::from(output_geometry.loc.x) + caption.width * 0.5) * scale).round()
+                as i32
+                - size.w / 2,
             ((caption.y - f64::from(output_geometry.loc.y) + 4.0) * scale).round() as i32,
         ));
         if let Ok(element) = MemoryRenderBufferRenderElement::from_buffer(
@@ -171,7 +191,9 @@ pub(super) fn overview_strip_elements(
             location.to_f64(),
             &buffer,
             Some(alpha),
-            Some(Rectangle::from_size((f64::from(size.w), f64::from(size.h)).into())),
+            Some(Rectangle::from_size(
+                (f64::from(size.w), f64::from(size.h)).into(),
+            )),
             Some(
                 (
                     (f64::from(size.w) / scale).round() as i32,
@@ -183,9 +205,11 @@ pub(super) fn overview_strip_elements(
         ) {
             let element = RescaleRenderElement::from_element(element, location, 1.0);
             let element = RelocateRenderElement::from_element(element, (0, 0), Relocate::Relative);
-            if let Some(element) =
-                CropRenderElement::from_element(element, scale, physical_rect(caption, output_geometry.loc, scale))
-            {
+            if let Some(element) = CropRenderElement::from_element(
+                element,
+                scale,
+                physical_rect(caption, output_geometry.loc, scale),
+            ) {
                 elements.push(element.into());
             }
         }
@@ -235,13 +259,20 @@ pub(super) fn overview_strip_elements(
                 let shape = window_corner_shape(window);
 
                 if let Some(programs) = corner_program(&mut state.render, renderer, shape) {
-                    let clip_changed = state
-                        .output_id(output)
-                        .is_some_and(|output| state.render.thumbnail_corner_changed(*id, output, shape));
-                    let Some(sample) = frame.windows.get(id) else { continue };
+                    let clip_changed = state.output_id(output).is_some_and(|output| {
+                        state.render.thumbnail_corner_changed(*id, output, shape)
+                    });
+                    let Some(sample) = frame.windows.get(id) else {
+                        continue;
+                    };
                     let presentation = sample.presentation.thumbnail(*rect);
-                    let corners = RoundedRect::new(presentation.bounds.current, output_geometry.loc, scale, 4.0)
-                        .with_shape(shape);
+                    let corners = RoundedRect::new(
+                        presentation.bounds.current,
+                        output_geometry.loc,
+                        scale,
+                        4.0,
+                    )
+                    .with_shape(shape);
                     if let Some(snapshot) = state.render.snapshot(id)
                         && snapshot.context == renderer.context_id().erased()
                         && (snapshot.scale - scale).abs() < 0.001
@@ -277,16 +308,20 @@ pub(super) fn overview_strip_elements(
         }
         if let Some((buffer, size)) = state.overview_workspace_label(card.index, scale) {
             let location = Point::<i32, Physical>::from((
-                ((card.rect.x - f64::from(output_geometry.loc.x) + card.rect.width * 0.5) * scale).round() as i32
+                ((card.rect.x - f64::from(output_geometry.loc.x) + card.rect.width * 0.5) * scale)
+                    .round() as i32
                     - size.w / 2,
-                ((card.rect.y - f64::from(output_geometry.loc.y) + card.rect.height - 20.0) * scale).round() as i32,
+                ((card.rect.y - f64::from(output_geometry.loc.y) + card.rect.height - 20.0) * scale)
+                    .round() as i32,
             ));
             if let Ok(element) = MemoryRenderBufferRenderElement::from_buffer(
                 renderer,
                 location.to_f64(),
                 &buffer,
                 Some(alpha),
-                Some(Rectangle::from_size((f64::from(size.w), f64::from(size.h)).into())),
+                Some(Rectangle::from_size(
+                    (f64::from(size.w), f64::from(size.h)).into(),
+                )),
                 Some(
                     (
                         (f64::from(size.w) / scale).round() as i32,
@@ -297,7 +332,8 @@ pub(super) fn overview_strip_elements(
                 RenderElementKind::Unspecified,
             ) {
                 let element = RescaleRenderElement::from_element(element, location, 1.0);
-                let element = RelocateRenderElement::from_element(element, (0, 0), Relocate::Relative);
+                let element =
+                    RelocateRenderElement::from_element(element, (0, 0), Relocate::Relative);
                 if let Some(element) = CropRenderElement::from_element(
                     element,
                     scale,

@@ -8,8 +8,14 @@ pub(super) struct SessionDevice<S: Session> {
 
 impl<S: Session> SessionDevice<S> {
     pub fn open(mut session: S, path: &Path) -> Result<Self, S::Error> {
-        let fd = session.open(path, OFlags::RDWR | OFlags::CLOEXEC | OFlags::NOCTTY | OFlags::NONBLOCK)?;
-        Ok(Self { session, fd: Some(fd) })
+        let fd = session.open(
+            path,
+            OFlags::RDWR | OFlags::CLOEXEC | OFlags::NOCTTY | OFlags::NONBLOCK,
+        )?;
+        Ok(Self {
+            session,
+            fd: Some(fd),
+        })
     }
 
     pub fn device_fd(&self) -> io::Result<DeviceFd> {
@@ -20,7 +26,10 @@ impl<S: Session> SessionDevice<S> {
 impl<S: Session> Drop for SessionDevice<S> {
     fn drop(&mut self) {
         if let Err(error) = self.session.close(self.fd.take().unwrap()) {
-            tracing::warn!(?error, "could not release DRM device through the session manager");
+            tracing::warn!(
+                ?error,
+                "could not release DRM device through the session manager"
+            );
         }
     }
 }

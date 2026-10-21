@@ -5,8 +5,9 @@ pub(super) fn run(target: Target, terminal: &[String]) -> Result<(), String> {
     use sources::Action;
     let mut command = match target {
         Target::App { id, desktop } => {
-            let entry = freedesktop_desktop_entry::DesktopEntry::from_path(&desktop, None::<&[&str]>)
-                .map_err(|e| e.to_string())?;
+            let entry =
+                freedesktop_desktop_entry::DesktopEntry::from_path(&desktop, None::<&[&str]>)
+                    .map_err(|e| e.to_string())?;
             let result = if entry.terminal() {
                 let arguments = entry.parse_exec().map_err(|e| e.to_string())?;
                 let mut command = terminal_command(terminal)?;
@@ -16,7 +17,10 @@ pub(super) fn run(target: Target, terminal: &[String]) -> Result<(), String> {
                 }
                 spawn(&mut command)
             } else {
-                open("gio", &[std::ffi::OsStr::new("launch"), desktop.as_os_str()])
+                open(
+                    "gio",
+                    &[std::ffi::OsStr::new("launch"), desktop.as_os_str()],
+                )
             };
             if result.is_ok()
                 && let Err(error) = apps::record(&id)
@@ -25,7 +29,9 @@ pub(super) fn run(target: Target, terminal: &[String]) -> Result<(), String> {
             }
             return result;
         }
-        Target::File(path) => return open("gio", &[std::ffi::OsStr::new("open"), path.as_os_str()]),
+        Target::File(path) => {
+            return open("gio", &[std::ffi::OsStr::new("open"), path.as_os_str()]);
+        }
         Target::Action(action @ (Action::Light | Action::Dark | Action::Auto)) => {
             return compositor_ipc::request("theme-set-mode",serde_json::json!({"mode": match action { Action::Light => "light", Action::Dark => "dark", _ => "auto" }})).map(|_|());
         }

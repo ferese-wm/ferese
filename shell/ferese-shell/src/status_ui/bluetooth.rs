@@ -14,7 +14,12 @@ fn device_list_height(count: usize) -> Option<f32> {
     (count > 4).then_some(DEVICE_LIST_HEIGHT)
 }
 
-pub(super) fn view<'a>(shell: &'a FereseShell, mut rows: MenuRows<'a>, style: MenuStyle, in_hub: bool) -> MenuRows<'a> {
+pub(super) fn view<'a>(
+    shell: &'a FereseShell,
+    mut rows: MenuRows<'a>,
+    style: MenuStyle,
+    in_hub: bool,
+) -> MenuRows<'a> {
     let MenuStyle { muted, .. } = style;
     if let Some(b) = &shell.status.bluetooth {
         rows = rows.push(status_summary(
@@ -43,7 +48,11 @@ pub(super) fn view<'a>(shell: &'a FereseShell, mut rows: MenuRows<'a>, style: Me
                 devices = devices.push(
                     column![
                         shell.render.text(device).size(14),
-                        shell.render.text("Connected").size(12).class(theme::Text::Color(muted)),
+                        shell
+                            .render
+                            .text("Connected")
+                            .size(12)
+                            .class(theme::Text::Color(muted)),
                     ]
                     .spacing(3),
                 );

@@ -54,7 +54,10 @@ pub(super) struct Diagnostics {
 
 impl Diagnostics {
     pub fn from_environment(output: String) -> Self {
-        Self::new(output, std::env::var_os("FERESE_TRACE_PERFORMANCE").is_some())
+        Self::new(
+            output,
+            std::env::var_os("FERESE_TRACE_PERFORMANCE").is_some(),
+        )
     }
 
     fn new(output: String, enabled: bool) -> Self {
@@ -191,9 +194,18 @@ mod tests {
 
     #[test]
     fn primary_classification_does_not_infer_scanout_from_zero_damage() {
-        assert_eq!(PrimaryOutcome::classify(true, false), PrimaryOutcome::DirectScanout);
-        assert_eq!(PrimaryOutcome::classify(false, true), PrimaryOutcome::Composed);
-        assert_eq!(PrimaryOutcome::classify(false, false), PrimaryOutcome::ReusedSwapchain);
+        assert_eq!(
+            PrimaryOutcome::classify(true, false),
+            PrimaryOutcome::DirectScanout
+        );
+        assert_eq!(
+            PrimaryOutcome::classify(false, true),
+            PrimaryOutcome::Composed
+        );
+        assert_eq!(
+            PrimaryOutcome::classify(false, false),
+            PrimaryOutcome::ReusedSwapchain
+        );
     }
 
     #[test]
@@ -224,7 +236,10 @@ mod tests {
         let mut d = Diagnostics::new("test".into(), true);
         let queued = Err::<(), _>("queue failed");
         d.queue_result(&queued, PrimaryOutcome::DirectScanout, true, true);
-        assert!(super::super::capture::after_queue(queued, || panic!("failed queues must not capture")).is_err());
+        assert!(
+            super::super::capture::after_queue(queued, || panic!("failed queues must not capture"))
+                .is_err()
+        );
         assert_eq!(d.counters.submissions, 0);
         assert_eq!(d.counters.scanout_submissions, 0);
         assert_eq!(d.counters.cursor_plane_submissions, 0);

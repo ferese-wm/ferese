@@ -49,7 +49,9 @@ struct Consent {
 
 pub(crate) fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut input = String::new();
-    std::io::stdin().take(256 * 1024 + 1).read_to_string(&mut input)?;
+    std::io::stdin()
+        .take(256 * 1024 + 1)
+        .read_to_string(&mut input)?;
 
     if input.len() > 256 * 1024 {
         return Err("Consent request is too large".into());
@@ -110,11 +112,15 @@ impl cosmic::Application for Consent {
 
     fn subscription(&self) -> cosmic::iced::Subscription<Message> {
         cosmic::iced::Subscription::batch([
-            ferese_theme_client::service::subscription().map(|snapshot| Message::ThemeChanged(Box::new(snapshot))),
+            ferese_theme_client::service::subscription()
+                .map(|snapshot| Message::ThemeChanged(Box::new(snapshot))),
             cosmic::iced::event::listen_with(|event, _, id| match event {
-                cosmic::iced::Event::Window(cosmic::iced::window::Event::Opened { .. }) => Some(Message::Opened(id)),
+                cosmic::iced::Event::Window(cosmic::iced::window::Event::Opened { .. }) => {
+                    Some(Message::Opened(id))
+                }
                 cosmic::iced::Event::Keyboard(cosmic::iced::keyboard::Event::KeyPressed {
-                    key: cosmic::iced::keyboard::Key::Named(cosmic::iced::keyboard::key::Named::Escape),
+                    key:
+                        cosmic::iced::keyboard::Key::Named(cosmic::iced::keyboard::key::Named::Escape),
                     ..
                 }) => Some(Message::Cancel),
                 _ => None,
@@ -126,7 +132,8 @@ impl cosmic::Application for Consent {
         match message {
             Message::ThemeChanged(snapshot) => {
                 self.palette = Palette::from_resolved(&snapshot.presented).flat();
-                self.font = ferese_theme::font(Some(&snapshot.presented.tokens.typography.font_family));
+                self.font =
+                    ferese_theme::font(Some(&snapshot.presented.tokens.typography.font_family));
                 self.background = cosmic::iced::Color {
                     a: ferese_theme::material_opacity(&snapshot.presented),
                     ..self.palette.sidebar

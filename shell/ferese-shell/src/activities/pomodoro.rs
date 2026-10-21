@@ -8,14 +8,20 @@ use ferese_ipc::activities::{PomodoroAction as Action, now_ms};
 use ferese_theme::{icons, menus};
 
 impl FereseShell {
-    pub(super) fn pomodoro_controls(&self, bar: window::Id, opacity: f32) -> Element<'_, cosmic::Action<Message>> {
+    pub(super) fn pomodoro_controls(
+        &self,
+        bar: window::Id,
+        opacity: f32,
+    ) -> Element<'_, cosmic::Action<Message>> {
         let palette = self.config.theme;
         let primary = color_with_opacity(palette.text_primary, opacity);
         let muted = color_with_opacity(palette.text_muted, opacity);
         let accent = color_with_opacity(palette.accent, opacity);
         let current = self.activities.snapshot.pomodoro.as_ref();
         let session = current.map(|current| current.id.clone());
-        let settings = current.map_or(&self.config.activities.pomodoro, |current| &current.timer.settings);
+        let settings = current.map_or(&self.config.activities.pomodoro, |current| {
+            &current.timer.settings
+        });
         let (phase, seconds, description, label, action, symbol) = match current {
             None => (
                 "Focus timer",
@@ -47,11 +53,17 @@ impl FereseShell {
                     let interval = if timer.phase == Phase::Work {
                         format!(
                             "Interval {} of {}",
-                            timer.completed_work.saturating_add(1).min(settings.intervals),
+                            timer
+                                .completed_work
+                                .saturating_add(1)
+                                .min(settings.intervals),
                             settings.intervals
                         )
                     } else {
-                        format!("{} of {} complete", timer.completed_work, settings.intervals)
+                        format!(
+                            "{} of {} complete",
+                            timer.completed_work, settings.intervals
+                        )
                     };
                     format!(
                         "{}{interval}",
@@ -109,8 +121,14 @@ impl FereseShell {
         let heading = row![
             badge,
             column![
-                self.render.text("Pomodoro").size(13).class(theme::Text::Color(primary)),
-                self.render.text(phase).size(11).class(theme::Text::Color(muted)),
+                self.render
+                    .text("Pomodoro")
+                    .size(13)
+                    .class(theme::Text::Color(primary)),
+                self.render
+                    .text(phase)
+                    .size(11)
+                    .class(theme::Text::Color(muted)),
             ]
             .spacing(3)
             .width(Length::Fill),
@@ -125,9 +143,12 @@ impl FereseShell {
         .spacing(8)
         .align_y(Alignment::Center);
         let primary_button = button::custom(
-            row![icons::tinted(symbol, 16, accent), self.render.text(label).size(13)]
-                .spacing(6)
-                .align_y(Alignment::Center),
+            row![
+                icons::tinted(symbol, 16, accent),
+                self.render.text(label).size(13)
+            ]
+            .spacing(6)
+            .align_y(Alignment::Center),
         )
         .id(session.as_ref().map_or_else(
             || cosmic::widget::Id::new(format!("pomodoro-start-{bar:?}")),
@@ -137,9 +158,15 @@ impl FereseShell {
         .padding([7, 10])
         .width(Length::Fill)
         .on_press(message(action));
-        let mut controls = row![motion::button(self.render, primary_button, accent, true, opacity)]
-            .spacing(4)
-            .align_y(Alignment::Center);
+        let mut controls = row![motion::button(
+            self.render,
+            primary_button,
+            accent,
+            true,
+            opacity
+        )]
+        .spacing(4)
+        .align_y(Alignment::Center);
         let secondary = |label: &'static str, symbol, action| {
             let control = button::custom(icons::tinted(symbol, 16, primary))
                 .name(label)
@@ -147,7 +174,10 @@ impl FereseShell {
                 .on_press(message(action));
             tooltip(
                 motion::button(self.render, control, primary, false, opacity),
-                self.render.text(label).size(12).class(theme::Text::Color(primary)),
+                self.render
+                    .text(label)
+                    .size(12)
+                    .class(theme::Text::Color(primary)),
                 cosmic::widget::tooltip::Position::Top,
             )
         };
@@ -171,7 +201,10 @@ impl FereseShell {
         menus::section(
             column![
                 heading,
-                self.render.text(description).size(11).class(theme::Text::Color(muted)),
+                self.render
+                    .text(description)
+                    .size(11)
+                    .class(theme::Text::Color(muted)),
                 controls,
             ]
             .spacing(10)

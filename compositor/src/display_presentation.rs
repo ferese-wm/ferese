@@ -46,7 +46,9 @@ impl DisplayPresentation {
 
     #[cfg(test)]
     pub fn visible(&self, surface: &Id) -> bool {
-        self.outputs.values().any(|record| record.displayed.contains(surface))
+        self.outputs
+            .values()
+            .any(|record| record.displayed.contains(surface))
     }
 
     pub fn outputs_for<'a>(&'a self, surface: &'a Id) -> impl Iterator<Item = &'a Output> {
@@ -143,7 +145,8 @@ mod tests {
         states.states.get_mut(&id).unwrap().visible_area = 0;
         assert!(visible(&states).is_empty());
         states.states.get_mut(&id).unwrap().visible_area = 20;
-        states.states.get_mut(&id).unwrap().presentation_state = RenderElementPresentationState::Skipped;
+        states.states.get_mut(&id).unwrap().presentation_state =
+            RenderElementPresentationState::Skipped;
         assert!(visible(&states).is_empty());
     }
 }

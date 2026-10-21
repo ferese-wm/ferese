@@ -71,7 +71,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 }
 
-fn request(stream: &mut (impl io::Read + io::Write), command: &str, args: Value) -> Result<Value, Box<dyn Error>> {
+fn request(
+    stream: &mut (impl io::Read + io::Write),
+    command: &str,
+    args: Value,
+) -> Result<Value, Box<dyn Error>> {
     write_frame(
         stream,
         &Request {
@@ -92,10 +96,16 @@ fn request(stream: &mut (impl io::Read + io::Write), command: &str, args: Value)
     Ok(response.result.unwrap_or(Value::Null))
 }
 
-fn theme_command(action: &ThemeAction, socket: &Path, json_output: bool) -> Result<(), Box<dyn Error>> {
+fn theme_command(
+    action: &ThemeAction,
+    socket: &Path,
+    json_output: bool,
+) -> Result<(), Box<dyn Error>> {
     let mut connection = ferese_ipc::Connection::connect_to(socket)?;
     let result = match action {
-        ThemeAction::Get => serde_json::to_value(connection.get(ferese_config::families::builtins)?)?,
+        ThemeAction::Get => {
+            serde_json::to_value(connection.get(ferese_config::families::builtins)?)?
+        }
         ThemeAction::Subscribe => {
             let mut snapshot = connection.get(ferese_config::families::builtins)?;
             let mut stdout = io::stdout().lock();
@@ -103,7 +113,8 @@ fn theme_command(action: &ThemeAction, socket: &Path, json_output: bool) -> Resu
                 if !output::write_json_line(&mut stdout, &snapshot)? {
                     return Ok(());
                 }
-                snapshot = connection.watch(snapshot.revision, ferese_config::families::builtins)?;
+                snapshot =
+                    connection.watch(snapshot.revision, ferese_config::families::builtins)?;
             }
         }
         ThemeAction::Mode { mode } => connection.call(
@@ -139,7 +150,8 @@ fn event_stream(socket: &Path) -> Result<(), Box<dyn Error>> {
 
 #[cfg(test)]
 fn parse_args(args: impl IntoIterator<Item = String>) -> Result<(String, Value), String> {
-    let cli = Cli::try_parse_from(std::iter::once("feresectl".to_owned()).chain(args)).map_err(|e| e.to_string())?;
+    let cli = Cli::try_parse_from(std::iter::once("feresectl".to_owned()).chain(args))
+        .map_err(|e| e.to_string())?;
     cli.command
         .ipc()
         .map(|(command, args)| (command.into(), args))
@@ -224,7 +236,8 @@ mod tests {
 
     #[test]
     fn a_failed_x11_retry_surfaces_the_compositor_error_code() {
-        let response = Response::error(1, "x11_unavailable", "X11 is disabled in the configuration");
+        let response =
+            Response::error(1, "x11_unavailable", "X11 is disabled in the configuration");
         let mut bytes = Vec::new();
         write_frame(&mut bytes, &response).expect("encode");
         let decoded: Response = read_frame(&mut bytes.as_slice()).expect("decode");
@@ -258,7 +271,9 @@ mod tests {
     fn display_mode_commands_validate_layouts() {
         for layout in ["internal-only", "external-only", "extend", "mirror"] {
             assert_eq!(
-                parse_args(["output-layout".into(), layout.into()]).unwrap().1,
+                parse_args(["output-layout".into(), layout.into()])
+                    .unwrap()
+                    .1,
                 json!({"layout":layout})
             );
         }
@@ -287,11 +302,15 @@ mod tests {
     #[test]
     fn parses_direction_and_workspace_commands() {
         assert_eq!(
-            parse_args(["focus".to_owned(), "left".to_owned()]).unwrap().1,
+            parse_args(["focus".to_owned(), "left".to_owned()])
+                .unwrap()
+                .1,
             json!({ "direction": "left" })
         );
         assert_eq!(
-            parse_args(["workspace".to_owned(), "7".to_owned()]).unwrap().1,
+            parse_args(["workspace".to_owned(), "7".to_owned()])
+                .unwrap()
+                .1,
             json!({ "index": 7 })
         );
         assert_eq!(
@@ -304,7 +323,10 @@ mod tests {
         );
         assert!(parse_args(["workspace-back-and-forth".into(), "2".into()]).is_err());
         for command in ["focus-last-window", "focus-mru-next", "focus-mru-previous"] {
-            assert_eq!(parse_args([command.into()]).unwrap(), (command.into(), json!({})));
+            assert_eq!(
+                parse_args([command.into()]).unwrap(),
+                (command.into(), json!({}))
+            );
             assert!(parse_args([command.into(), "2".into()]).is_err());
         }
     }
@@ -343,24 +365,40 @@ mod tests {
 
     #[test]
     fn output_commands_have_consistent_arguments() {
-        for command in ["outputs", "output-profiles", "output-confirm", "output-revert"] {
-            assert_eq!(parse_args([command.into()]).unwrap(), (command.into(), json!({})));
+        for command in [
+            "outputs",
+            "output-profiles",
+            "output-confirm",
+            "output-revert",
+        ] {
+            assert_eq!(
+                parse_args([command.into()]).unwrap(),
+                (command.into(), json!({}))
+            );
             assert!(parse_args([command.into(), "extra".into()]).is_err());
         }
         assert_eq!(
-            parse_args(["output-profile".into(), "auto".into()]).unwrap().1,
+            parse_args(["output-profile".into(), "auto".into()])
+                .unwrap()
+                .1,
             json!({"name": "auto"})
         );
         assert_eq!(
-            parse_args(["output-profile".into(), "desk".into()]).unwrap().1,
+            parse_args(["output-profile".into(), "desk".into()])
+                .unwrap()
+                .1,
             json!({"name": "desk"})
         );
         assert_eq!(
-            parse_args(["output-internal".into(), "off".into()]).unwrap().1,
+            parse_args(["output-internal".into(), "off".into()])
+                .unwrap()
+                .1,
             json!({"enabled": false})
         );
         assert_eq!(
-            parse_args(["output-internal".into(), "on".into()]).unwrap().1,
+            parse_args(["output-internal".into(), "on".into()])
+                .unwrap()
+                .1,
             json!({"enabled": true})
         );
         assert!(parse_args(["output-internal".into(), "maybe".into()]).is_err());
@@ -377,15 +415,26 @@ mod tests {
         }
         assert!(parse_args(["join-tab".into()]).is_err());
         assert!(parse_args(["join-tab".into(), "diagonal".into()]).is_err());
-        for action in ["toggle-column-tabbed", "leave-tab", "next-tab", "previous-tab"] {
-            assert_eq!(parse_args([action.into()]).unwrap(), (action.into(), json!({})));
+        for action in [
+            "toggle-column-tabbed",
+            "leave-tab",
+            "next-tab",
+            "previous-tab",
+        ] {
+            assert_eq!(
+                parse_args([action.into()]).unwrap(),
+                (action.into(), json!({}))
+            );
             assert!(parse_args([action.into(), "extra".into()]).is_err());
         }
     }
 
     #[test]
     fn rejects_unknown_or_missing_arguments() {
-        assert_eq!(parse_args(["exit".to_owned()]).unwrap(), ("exit".to_owned(), json!({})));
+        assert_eq!(
+            parse_args(["exit".to_owned()]).unwrap(),
+            ("exit".to_owned(), json!({}))
+        );
         assert!(parse_args(["exit".to_owned(), "extra".to_owned()]).is_err());
         assert!(parse_args(["focus".to_owned()]).is_err());
         assert!(parse_args(["reload-config".to_owned()]).is_ok());

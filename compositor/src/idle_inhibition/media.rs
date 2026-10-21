@@ -57,7 +57,8 @@ impl Engine {
         self.locked = locked;
         if locked {
             for (_, (id, response)) in self.waiters.drain() {
-                let _ = response.try_send(Response::error(id, "session_locked", "Session is locked"));
+                let _ =
+                    response.try_send(Response::error(id, "session_locked", "Session is locked"));
             }
         }
     }
@@ -84,7 +85,13 @@ impl Engine {
         }
     }
 
-    pub(crate) fn watch(&mut self, owner: u64, id: u64, since: u64, response: mpsc::SyncSender<Response>) {
+    pub(crate) fn watch(
+        &mut self,
+        owner: u64,
+        id: u64,
+        since: u64,
+        response: mpsc::SyncSender<Response>,
+    ) {
         if self.locked {
             let _ = response.try_send(Response::error(id, "session_locked", "Session is locked"));
         } else if since != self.snapshot.revision {
@@ -98,8 +105,15 @@ impl Engine {
         self.waiters.remove(&owner);
     }
 
-    pub(crate) fn action(&self, args: Value, reply: Option<(u64, mpsc::SyncSender<Response>)>) -> Result<(), String> {
-        let commands = self.commands.as_ref().ok_or("Media service is unavailable")?;
+    pub(crate) fn action(
+        &self,
+        args: Value,
+        reply: Option<(u64, mpsc::SyncSender<Response>)>,
+    ) -> Result<(), String> {
+        let commands = self
+            .commands
+            .as_ref()
+            .ok_or("Media service is unavailable")?;
         commands
             .try_send(Command {
                 args,
@@ -113,16 +127,18 @@ impl Engine {
 pub(crate) fn init(event_loop: &mut EventLoop<Ferese>) -> Result<(), Box<dyn std::error::Error>> {
     let (sender, receiver) = sync_channel::<Update>(1);
     let (commands, receive_commands) = async_channel::bounded(16);
-    event_loop.handle().insert_source(receiver, move |event, _, state| {
-        if let Event::Msg(update) = event {
-            let changed = inhibition_changed(&state.media_players, &update.players);
-            state.media_players = update.players;
-            state.media_engine.update(update.snapshot);
-            if changed {
-                state.refresh_idle_inhibition();
+    event_loop
+        .handle()
+        .insert_source(receiver, move |event, _, state| {
+            if let Event::Msg(update) = event {
+                let changed = inhibition_changed(&state.media_players, &update.players);
+                state.media_players = update.players;
+                state.media_engine.update(update.snapshot);
+                if changed {
+                    state.refresh_idle_inhibition();
+                }
             }
-        }
-    })?;
+        })?;
     event_loop
         .handle()
         .insert_idle(move |state| state.media_engine.commands = Some(commands));

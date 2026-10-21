@@ -37,7 +37,10 @@ impl Ferese {
                     data.title.as_deref(),
                     data.parent.is_some(),
                 );
-                (rule.block_out_from_screencasts == Some(true), data.parent.clone())
+                (
+                    rule.block_out_from_screencasts == Some(true),
+                    data.parent.clone(),
+                )
             });
             if blocked {
                 return true;
@@ -84,7 +87,11 @@ impl Ferese {
                         && self.capture_protected(window)
                 });
         }
-        let Some(mut focus) = self.seat.get_pointer().and_then(|pointer| pointer.current_focus()) else {
+        let Some(mut focus) = self
+            .seat
+            .get_pointer()
+            .and_then(|pointer| pointer.current_focus())
+        else {
             return false;
         };
         while let Some(parent) = get_parent(&focus) {

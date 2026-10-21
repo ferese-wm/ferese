@@ -80,8 +80,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
 
-    let launch =
-        LaunchConfig::from_environment().map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
+    let launch = LaunchConfig::from_environment()
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
     let config_path = config::config_path();
     let startup = config::startup(config_path.as_deref())?;
     if let Some(error) = &startup.error {
@@ -120,7 +120,9 @@ fn main() -> Result<(), Box<dyn Error>> {
             value
         });
     if let Some(error) = startup.error {
-        state.theme_engine.startup_failed(config_path.as_deref(), error);
+        state
+            .theme_engine
+            .startup_failed(config_path.as_deref(), error);
     }
     theme::init(&mut event_loop, &mut state, startup.theme)?;
     let _resume_monitor = resume::init(&mut event_loop)?;
@@ -201,7 +203,10 @@ fn after_dispatch(state: &mut Ferese) {
     });
 }
 
-fn after_dispatch_with_redraw(state: &mut Ferese, mut redraw: impl FnMut(&mut Ferese, RedrawRequest<'_>)) {
+fn after_dispatch_with_redraw(
+    state: &mut Ferese,
+    mut redraw: impl FnMut(&mut Ferese, RedrawRequest<'_>),
+) {
     crate::backends::direct::gamma::sync_night_light(state);
     state.process_pending_dmabuf_imports();
     state.update_named_cursor(std::time::Instant::now());
@@ -213,7 +218,9 @@ fn after_dispatch_with_redraw(state: &mut Ferese, mut redraw: impl FnMut(&mut Fe
     // when no output has a pending frame.
     let wallpaper_changed = state.wallpaper.poll();
     // All input/Wayland callbacks have returned, releasing seat locks.
-    if state.focus_cycle.is_some() && (state.session_lock.active() || state.input_capture.captures(1)) {
+    if state.focus_cycle.is_some()
+        && (state.session_lock.active() || state.input_capture.captures(1))
+    {
         state.cancel_focus_cycle();
     }
 

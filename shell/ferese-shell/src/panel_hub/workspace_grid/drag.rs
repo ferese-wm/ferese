@@ -11,8 +11,16 @@ pub(super) struct Target {
     pub windows: Vec<(u64, Rectangle)>,
 }
 
-pub(super) fn area(content: Element<'_, Action>, id: window::Id, targets: Vec<Target>) -> Element<'_, Action> {
-    Element::new(DragArea { content, id, targets })
+pub(super) fn area(
+    content: Element<'_, Action>,
+    id: window::Id,
+    targets: Vec<Target>,
+) -> Element<'_, Action> {
+    Element::new(DragArea {
+        content,
+        id,
+        targets,
+    })
 }
 
 struct DragArea<'a> {
@@ -73,7 +81,11 @@ impl Widget<Action, Theme, cosmic::Renderer> for DragArea<'_> {
         match event {
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                 if let (Some(target), Some(point)) = (target, point)
-                    && let Some((window, _)) = target.windows.iter().rev().find(|(_, rect)| rect.contains(point))
+                    && let Some((window, _)) = target
+                        .windows
+                        .iter()
+                        .rev()
+                        .find(|(_, rect)| rect.contains(point))
                 {
                     state.pressed = Some((*window, target.workspace, point));
                     state.moved = false;
@@ -97,7 +109,8 @@ impl Widget<Action, Theme, cosmic::Renderer> for DragArea<'_> {
                                 target.workspace,
                             )));
                         } else if !state.moved && target.workspace == source {
-                            shell.publish(Action::App(Message::HubWorkspaceSelect(self.id, source)));
+                            shell
+                                .publish(Action::App(Message::HubWorkspaceSelect(self.id, source)));
                         }
                     }
                     state.moved = false;
@@ -133,9 +146,15 @@ impl Widget<Action, Theme, cosmic::Renderer> for DragArea<'_> {
         cursor: mouse::Cursor,
         viewport: &Rectangle,
     ) {
-        self.content
-            .as_widget()
-            .draw(&tree.children[0], renderer, theme, style, layout, cursor, viewport);
+        self.content.as_widget().draw(
+            &tree.children[0],
+            renderer,
+            theme,
+            style,
+            layout,
+            cursor,
+            viewport,
+        );
     }
     fn a11y_nodes(
         &self,
@@ -143,7 +162,9 @@ impl Widget<Action, Theme, cosmic::Renderer> for DragArea<'_> {
         tree: &widget::Tree,
         cursor: mouse::Cursor,
     ) -> iced_accessibility::A11yTree {
-        self.content.as_widget().a11y_nodes(layout, &tree.children[0], cursor)
+        self.content
+            .as_widget()
+            .a11y_nodes(layout, &tree.children[0], cursor)
     }
     fn mouse_interaction(
         &self,
@@ -156,9 +177,13 @@ impl Widget<Action, Theme, cosmic::Renderer> for DragArea<'_> {
         if tree.state.downcast_ref::<State>().pressed.is_some() {
             return mouse::Interaction::Grabbing;
         }
-        self.content
-            .as_widget()
-            .mouse_interaction(&tree.children[0], layout, cursor, viewport, renderer)
+        self.content.as_widget().mouse_interaction(
+            &tree.children[0],
+            layout,
+            cursor,
+            viewport,
+            renderer,
+        )
     }
     fn operate(
         &mut self,
@@ -179,9 +204,13 @@ impl Widget<Action, Theme, cosmic::Renderer> for DragArea<'_> {
         viewport: &Rectangle,
         translation: Vector,
     ) -> Option<cosmic::iced::advanced::overlay::Element<'a, Action, Theme, cosmic::Renderer>> {
-        self.content
-            .as_widget_mut()
-            .overlay(&mut tree.children[0], layout, renderer, viewport, translation)
+        self.content.as_widget_mut().overlay(
+            &mut tree.children[0],
+            layout,
+            renderer,
+            viewport,
+            translation,
+        )
     }
 }
 
@@ -231,9 +260,20 @@ mod tests {
                     Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
                     (15., 25.),
                 ),
-                (Event::Mouse(mouse::Event::CursorMoved { position: end.into() }), end),
-                (Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)), end),
-                (Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)), end),
+                (
+                    Event::Mouse(mouse::Event::CursorMoved {
+                        position: end.into(),
+                    }),
+                    end,
+                ),
+                (
+                    Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+                    end,
+                ),
+                (
+                    Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+                    end,
+                ),
             ] {
                 view.as_widget_mut().update(
                     &mut tree,

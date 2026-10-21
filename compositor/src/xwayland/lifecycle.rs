@@ -118,7 +118,12 @@ impl Lifecycle {
         true
     }
 
-    pub fn begin_stop_after_failure(&mut self, generation: u64, now: Instant, retryable: bool) -> Option<AfterStop> {
+    pub fn begin_stop_after_failure(
+        &mut self,
+        generation: u64,
+        now: Instant,
+        retryable: bool,
+    ) -> Option<AfterStop> {
         let current = matches!(
             self.phase,
             Phase::Starting(current)
@@ -144,7 +149,10 @@ impl Lifecycle {
         } else {
             AfterStop::Backoff
         };
-        self.phase = Phase::Stopping { generation, after_stop };
+        self.phase = Phase::Stopping {
+            generation,
+            after_stop,
+        };
 
         Some(after_stop)
     }
@@ -183,7 +191,8 @@ impl Lifecycle {
 
     pub fn park_cleanup_failure(&mut self, generation: u64) -> bool {
         let Phase::Stopping {
-            generation: current, ..
+            generation: current,
+            ..
         } = self.phase
         else {
             return false;
@@ -255,14 +264,21 @@ mod tests {
     use super::*;
 
     fn start(lifecycle: &mut Lifecycle) -> u64 {
-        lifecycle.request_start().expect("Idle must yield a generation ticket")
+        lifecycle
+            .request_start()
+            .expect("Idle must yield a generation ticket")
     }
 
     /// Fail a generation the way the manager does, then complete the stop.
     ///
     /// Cleanup completing is what publishes the next phase, so a test that
     /// needs the next generation must say so explicitly.
-    fn fail_and_stop(lifecycle: &mut Lifecycle, generation: u64, now: Instant, retryable: bool) -> AfterStop {
+    fn fail_and_stop(
+        lifecycle: &mut Lifecycle,
+        generation: u64,
+        now: Instant,
+        retryable: bool,
+    ) -> AfterStop {
         let after_stop = lifecycle
             .begin_stop_after_failure(generation, now, retryable)
             .expect("the current generation must accept a failure");
@@ -328,7 +344,10 @@ mod tests {
 
         assert!(!lifecycle.spawned(stale));
         assert!(!lifecycle.ready(stale));
-        assert_eq!(lifecycle.begin_stop_after_failure(stale, Instant::now(), true), None);
+        assert_eq!(
+            lifecycle.begin_stop_after_failure(stale, Instant::now(), true),
+            None
+        );
         assert_eq!(lifecycle.phase, Phase::Starting(current));
     }
 
@@ -361,7 +380,10 @@ mod tests {
 
         let now = Instant::now();
         let first = start(&mut lifecycle);
-        assert_eq!(fail_and_stop(&mut lifecycle, first, now, true), AfterStop::Backoff);
+        assert_eq!(
+            fail_and_stop(&mut lifecycle, first, now, true),
+            AfterStop::Backoff
+        );
         let Phase::Backoff { until, .. } = lifecycle.phase else {
             panic!("first failure must back off");
         };
@@ -369,7 +391,10 @@ mod tests {
 
         let second = start_after_backoff(&mut lifecycle);
         let now = Instant::now();
-        assert_eq!(fail_and_stop(&mut lifecycle, second, now, true), AfterStop::Backoff);
+        assert_eq!(
+            fail_and_stop(&mut lifecycle, second, now, true),
+            AfterStop::Backoff
+        );
         let Phase::Backoff { until, .. } = lifecycle.phase else {
             panic!("second failure must back off");
         };
@@ -456,7 +481,10 @@ mod tests {
             .begin_stop_after_failure(generation, now, true)
             .expect("the current generation accepts a failure");
 
-        assert!(lifecycle.park_cleanup_failure(generation), "an in-flight stop parks");
+        assert!(
+            lifecycle.park_cleanup_failure(generation),
+            "an in-flight stop parks"
+        );
         assert_eq!(lifecycle.phase, Phase::CleanupFailed { generation });
 
         // The deadline proved nothing, so the service must refuse to act on it.
@@ -569,7 +597,10 @@ mod tests {
         lifecycle
             .begin_stop_after_failure(generation, Instant::now(), false)
             .expect("the current generation accepts a failure");
-        assert_eq!(lifecycle.finish_stop(generation.wrapping_add(1), Instant::now()), None);
+        assert_eq!(
+            lifecycle.finish_stop(generation.wrapping_add(1), Instant::now()),
+            None
+        );
 
         // A stale completion leaves the real transition in flight.
         assert!(lifecycle.phase.is_stopping());

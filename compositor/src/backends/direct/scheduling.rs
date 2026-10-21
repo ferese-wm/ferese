@@ -138,8 +138,15 @@ fn dispatch_frame(state: &mut Ferese, node: DrmNode, crtc: crtc::Handle, identit
     arm_animation_timer(state);
 }
 
-pub(super) fn record_frame_schedule(output: &mut DirectOutput, plan: FramePlan, cost: Duration, submitted: bool) {
-    output.scheduler.rendered(plan, monotonic_now(), cost, submitted);
+pub(super) fn record_frame_schedule(
+    output: &mut DirectOutput,
+    plan: FramePlan,
+    cost: Duration,
+    submitted: bool,
+) {
+    output
+        .scheduler
+        .rendered(plan, monotonic_now(), cost, submitted);
     if std::env::var_os("FERESE_TRACE_PERFORMANCE").is_some() {
         let started = monotonic_now().saturating_sub(cost);
         tracing::debug!(target: "ferese::render", output = %output.output.name(),

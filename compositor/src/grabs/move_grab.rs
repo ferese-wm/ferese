@@ -1,8 +1,9 @@
 use smithay::desktop::Window;
 use smithay::input::pointer::{
-    AxisFrame, ButtonEvent, GestureHoldBeginEvent, GestureHoldEndEvent, GesturePinchBeginEvent, GesturePinchEndEvent,
-    GesturePinchUpdateEvent, GestureSwipeBeginEvent, GestureSwipeEndEvent, GestureSwipeUpdateEvent, GrabStartData,
-    MotionEvent, PointerGrab, PointerInnerHandle, RelativeMotionEvent,
+    AxisFrame, ButtonEvent, GestureHoldBeginEvent, GestureHoldEndEvent, GesturePinchBeginEvent,
+    GesturePinchEndEvent, GesturePinchUpdateEvent, GestureSwipeBeginEvent, GestureSwipeEndEvent,
+    GestureSwipeUpdateEvent, GrabStartData, MotionEvent, PointerGrab, PointerInnerHandle,
+    RelativeMotionEvent,
 };
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::utils::{Logical, Point, Size};
@@ -61,7 +62,12 @@ impl PointerGrab<Ferese> for MoveSurfaceGrab {
         handle.relative_motion(data, focus, event);
     }
 
-    fn button(&mut self, data: &mut Ferese, handle: &mut PointerInnerHandle<'_, Ferese>, event: &ButtonEvent) {
+    fn button(
+        &mut self,
+        data: &mut Ferese,
+        handle: &mut PointerInnerHandle<'_, Ferese>,
+        event: &ButtonEvent,
+    ) {
         handle.button(data, event);
         if handle.current_pressed().is_empty() {
             self.finished = true;
@@ -70,7 +76,12 @@ impl PointerGrab<Ferese> for MoveSurfaceGrab {
         }
     }
 
-    fn axis(&mut self, data: &mut Ferese, handle: &mut PointerInnerHandle<'_, Ferese>, frame: AxisFrame) {
+    fn axis(
+        &mut self,
+        data: &mut Ferese,
+        handle: &mut PointerInnerHandle<'_, Ferese>,
+        frame: AxisFrame,
+    ) {
         handle.axis(data, frame);
     }
 

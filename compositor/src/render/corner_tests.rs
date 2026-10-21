@@ -219,7 +219,9 @@ fn window_corner_shader_timing_sample() {
         Uniform::new("clip_rect", [0.0f32, 0.0, 1024.0, 768.0]),
         Uniform::new("radius", 16.0f32),
     ];
-    let mut texture: GlesTexture = renderer.create_buffer(Fourcc::Abgr8888, (1024, 768).into()).unwrap();
+    let mut texture: GlesTexture = renderer
+        .create_buffer(Fourcc::Abgr8888, (1024, 768).into())
+        .unwrap();
 
     for shape in [CornerShape::Circular, CornerShape::Continuous] {
         let programs = corner_program(&mut resources, &mut renderer, shape).unwrap();
@@ -228,7 +230,9 @@ fn window_corner_shader_timing_sample() {
         for iteration in 0..110 {
             let started = std::time::Instant::now();
             let mut target = renderer.bind(&mut texture).unwrap();
-            let mut frame = renderer.render(&mut target, size, Transform::Normal).unwrap();
+            let mut frame = renderer
+                .render(&mut target, size, Transform::Normal)
+                .unwrap();
             frame.clear(Color32F::TRANSPARENT, &[rect]).unwrap();
             frame
                 .render_pixel_shader_to(
@@ -256,7 +260,11 @@ fn window_corner_shader_timing_sample() {
     }
 }
 
-fn rasterize(renderer: &mut GlesRenderer, program: &GlesPixelProgram, uniforms: &[Uniform<'_>]) -> Vec<u8> {
+fn rasterize(
+    renderer: &mut GlesRenderer,
+    program: &GlesPixelProgram,
+    uniforms: &[Uniform<'_>],
+) -> Vec<u8> {
     let size = (64, 64).into();
     let mut texture: GlesTexture = renderer.create_buffer(Fourcc::Abgr8888, size).unwrap();
     let rect = Rectangle::<i32, Physical>::from_size((64, 64).into());
@@ -294,7 +302,8 @@ fn panel_shader_matches_core_outlines_and_resets_for_popovers() {
     use smithay::backend::renderer::gles::UniformValue;
     let mut renderer = renderer();
     let mut resources = RenderResources::default();
-    let program = material_program_for_corners(&mut resources, &mut renderer, CornerShape::Circular).unwrap();
+    let program =
+        material_program_for_corners(&mut resources, &mut renderer, CornerShape::Circular).unwrap();
     let bounds = ferese_layout::Rect::new(0., 0., 64., 64.);
     let groups = [
         GroupBounds {
@@ -346,7 +355,19 @@ fn panel_shader_matches_core_outlines_and_resets_for_popovers() {
         let matrices = scene
             .packets()
             .into_iter()
-            .map(|p| [p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7], p[8] * 4. + p[9]])
+            .map(|p| {
+                [
+                    p[0],
+                    p[1],
+                    p[2],
+                    p[3],
+                    p[4],
+                    p[5],
+                    p[6],
+                    p[7],
+                    p[8] * 4. + p[9],
+                ]
+            })
             .collect::<Vec<_>>();
         let mut uniforms = vec![
             Uniform::new("visible_rect", [0.0f32, 0., 64., 64.]),
@@ -441,7 +462,10 @@ fn apple_window_fill_and_inset_border_match_path_reference_at_fractional_scales(
                 let inner = coverage(distance + f64::from(width));
                 let index = (y * 64 + x) * 4;
 
-                for (actual, expected) in [(fill[index + 3], outer), (edge[index + 3], (outer - inner).max(0.0))] {
+                for (actual, expected) in [
+                    (fill[index + 3], outer),
+                    (edge[index + 3], (outer - inner).max(0.0)),
+                ] {
                     let expected = (expected * 255.0).round() as u8;
                     assert!(
                         actual.abs_diff(expected) <= 2,
@@ -510,9 +534,12 @@ fn apple_shoulder_extent_never_claims_transparent_pixels_as_opaque() {
 fn docked_panel_fill_covers_the_entire_attached_edge() {
     let mut renderer = renderer();
     let mut resources = RenderResources::default();
-    let material = material_program_for_corners(&mut resources, &mut renderer, CornerShape::Circular).unwrap();
+    let material =
+        material_program_for_corners(&mut resources, &mut renderer, CornerShape::Circular).unwrap();
     for edge in [ferese_panel::Edge::Top, ferese_panel::Edge::Bottom] {
-        let radii = ferese_panel::CornerRadii([14., 8., 12., 20.]).at_edge(edge, true).0;
+        let radii = ferese_panel::CornerRadii([14., 8., 12., 20.])
+            .at_edge(edge, true)
+            .0;
         let pixels = rasterize(
             &mut renderer,
             &material.0,
@@ -537,7 +564,11 @@ fn docked_panel_fill_covers_the_entire_attached_edge() {
                 "wallpaper exposed at {edge:?} pixel {x}"
             );
         }
-        assert_eq!(pixels[free_row * 64 * 4 + 3], 0, "opposite corners remain rounded");
+        assert_eq!(
+            pixels[free_row * 64 * 4 + 3],
+            0,
+            "opposite corners remain rounded"
+        );
     }
 }
 
@@ -546,7 +577,8 @@ fn docked_panel_fill_covers_the_entire_attached_edge() {
 fn asymmetric_panel_fill_and_shadow_match_each_corner() {
     let mut renderer = renderer();
     let mut resources = RenderResources::default();
-    let material = material_program_for_corners(&mut resources, &mut renderer, CornerShape::Circular).unwrap();
+    let material =
+        material_program_for_corners(&mut resources, &mut renderer, CornerShape::Circular).unwrap();
     let rect = [2.0f32, 2.0, 60.0, 60.0];
     let radii = [0.0f32, 4.0, 12.0, 20.0];
     for paint_mode in [0.0f32, 2.0] {
@@ -596,7 +628,9 @@ fn apple_shadow_and_window_tint_match_the_same_outline() {
     let mut renderer = renderer();
     let mut resources = RenderResources::default();
     let programs = corner_program(&mut resources, &mut renderer, CornerShape::Continuous).unwrap();
-    let material = material_program_for_corners(&mut resources, &mut renderer, CornerShape::Continuous).unwrap();
+    let material =
+        material_program_for_corners(&mut resources, &mut renderer, CornerShape::Continuous)
+            .unwrap();
     let rect = [1.25f32, 2.5, 61.5, 59.0];
     let radius = 12.375f32;
     let shadow = rasterize(
@@ -634,7 +668,10 @@ fn apple_shadow_and_window_tint_match_the_same_outline() {
             let shadow_alpha = (-0.5 * (distance.max(0.0) / 4.0).powi(2)).exp();
             let index = (y * 64 + x) * 4;
 
-            for (actual, expected) in [(tint[index + 3], coverage(distance)), (shadow[index + 3], shadow_alpha)] {
+            for (actual, expected) in [
+                (tint[index + 3], coverage(distance)),
+                (shadow[index + 3], shadow_alpha),
+            ] {
                 assert!(
                     actual.abs_diff((expected * 255.0).round() as u8) <= 2,
                     "outline mismatch at ({x}, {y})"
@@ -680,8 +717,16 @@ fn window_role_change_invalidates_decorations_and_preserves_the_resize_snapshot(
         .unwrap()
         .borders
         .contexts
-        .insert(context.clone(), CachedBorder { element, parameters });
-    let texture = renderer.create_buffer(Fourcc::Abgr8888, (64, 64).into()).unwrap();
+        .insert(
+            context.clone(),
+            CachedBorder {
+                element,
+                parameters,
+            },
+        );
+    let texture = renderer
+        .create_buffer(Fourcc::Abgr8888, (64, 64).into())
+        .unwrap();
     resources.set_snapshot(
         id,
         ResizeSnapshot {
@@ -711,7 +756,10 @@ fn window_role_change_invalidates_decorations_and_preserves_the_resize_snapshot(
 fn endpoint_derivatives(points: Cubic, end: bool) -> (Point2, Point2) {
     if end {
         (
-            [3.0 * (points[3][0] - points[2][0]), 3.0 * (points[3][1] - points[2][1])],
+            [
+                3.0 * (points[3][0] - points[2][0]),
+                3.0 * (points[3][1] - points[2][1]),
+            ],
             [
                 6.0 * (points[3][0] - 2.0 * points[2][0] + points[1][0]),
                 6.0 * (points[3][1] - 2.0 * points[2][1] + points[1][1]),
@@ -719,7 +767,10 @@ fn endpoint_derivatives(points: Cubic, end: bool) -> (Point2, Point2) {
         )
     } else {
         (
-            [3.0 * (points[1][0] - points[0][0]), 3.0 * (points[1][1] - points[0][1])],
+            [
+                3.0 * (points[1][0] - points[0][0]),
+                3.0 * (points[1][1] - points[0][1]),
+            ],
             [
                 6.0 * (points[2][0] - 2.0 * points[1][0] + points[0][0]),
                 6.0 * (points[2][1] - 2.0 * points[1][1] + points[0][1]),
@@ -729,7 +780,8 @@ fn endpoint_derivatives(points: Cubic, end: bool) -> (Point2, Point2) {
 }
 
 fn curvature(tangent: Point2, acceleration: Point2) -> f64 {
-    (tangent[0] * acceleration[1] - tangent[1] * acceleration[0]).abs() / tangent[0].hypot(tangent[1]).powi(3)
+    (tangent[0] * acceleration[1] - tangent[1] * acceleration[0]).abs()
+        / tangent[0].hypot(tangent[1]).powi(3)
 }
 
 #[test]
@@ -745,10 +797,12 @@ fn measured_uikit_profile_has_flat_shoulders_but_small_internal_join_discontinui
         assert_eq!(pair[0][3], pair[1][0], "join must be position-continuous");
         let (before, before_acceleration) = endpoint_derivatives(pair[0], true);
         let (after, after_acceleration) = endpoint_derivatives(pair[1], false);
-        let cosine =
-            (before[0] * after[0] + before[1] * after[1]) / before[0].hypot(before[1]) / after[0].hypot(after[1]);
+        let cosine = (before[0] * after[0] + before[1] * after[1])
+            / before[0].hypot(before[1])
+            / after[0].hypot(after[1]);
         let angle = cosine.clamp(-1.0, 1.0).acos().to_degrees();
-        let curvature_jump = (curvature(before, before_acceleration) - curvature(after, after_acceleration)).abs();
+        let curvature_jump =
+            (curvature(before, before_acceleration) - curvature(after, after_acceleration)).abs();
         // This is a measured Apple-style approximation, not a globally G1/G2
         // curve. Preserve and document its limitation instead of falsely
         // passing a continuity test, or silently changing the source profile.
@@ -767,7 +821,9 @@ fn corner_heavy_shader_timing_sample() {
     let current = include_str!("shaders/window_corners.glsl");
     let size = (1024, 768).into();
     let rect = Rectangle::<i32, Physical>::from_size(size);
-    let mut texture: GlesTexture = renderer.create_buffer(Fourcc::Abgr8888, (1024, 768).into()).unwrap();
+    let mut texture: GlesTexture = renderer
+        .create_buffer(Fourcc::Abgr8888, (1024, 768).into())
+        .unwrap();
     let body = "\nvoid main() { float d = rounded_rect_distance(mod(gl_FragCoord.xy, vec2(64.0)), vec4(0.0, 0.0, 64.0, 64.0), radius); gl_FragColor = vec4(edge_coverage(d)); }";
     for (name, source) in reference
         .as_deref()
@@ -784,7 +840,9 @@ fn corner_heavy_shader_timing_sample() {
             for i in 0..110 {
                 let start = std::time::Instant::now();
                 let mut target = renderer.bind(&mut texture).unwrap();
-                let mut frame = renderer.render(&mut target, size, Transform::Normal).unwrap();
+                let mut frame = renderer
+                    .render(&mut target, size, Transform::Normal)
+                    .unwrap();
                 frame.clear(Color32F::TRANSPARENT, &[rect]).unwrap();
                 frame
                     .render_pixel_shader_to(
@@ -817,7 +875,9 @@ fn window_tint_does_not_inherit_panel_geometry() {
     use smithay::backend::renderer::gles::UniformValue;
     use smithay::output::{Mode, PhysicalProperties, Subpixel};
     fn paint(renderer: &mut GlesRenderer, element: &impl RenderElement<GlesRenderer>) -> Vec<u8> {
-        let mut texture: GlesTexture = renderer.create_buffer(Fourcc::Abgr8888, (96, 96).into()).unwrap();
+        let mut texture: GlesTexture = renderer
+            .create_buffer(Fourcc::Abgr8888, (96, 96).into())
+            .unwrap();
         let mut target = renderer.bind(&mut texture).unwrap();
         let rect = Rectangle::from_size((96, 96).into());
         let mut frame = renderer
@@ -837,7 +897,11 @@ fn window_tint_does_not_inherit_panel_geometry() {
             .unwrap();
         let _ = frame.finish().unwrap();
         let mapping = renderer
-            .copy_framebuffer(&target, Rectangle::from_size((96, 96).into()), Fourcc::Abgr8888)
+            .copy_framebuffer(
+                &target,
+                Rectangle::from_size((96, 96).into()),
+                Fourcc::Abgr8888,
+            )
             .unwrap();
         renderer.map_texture(&mapping).unwrap().to_vec()
     }
@@ -863,7 +927,8 @@ fn window_tint_does_not_inherit_panel_geometry() {
         Some((0, 0).into()),
     );
     let geometry = Rectangle::new((6, 6).into(), (80, 80).into());
-    let corners = RoundedRect::from_logical(geometry, 1.0, 12.0).with_shape(CornerShape::Continuous);
+    let corners =
+        RoundedRect::from_logical(geometry, 1.0, 12.0).with_shape(CornerShape::Continuous);
     for resize_fill in [false, true] {
         let tint = window_tint_element(
             &mut resources,
@@ -949,14 +1014,23 @@ fn floating_blur_sampling_halo_does_not_paint_neighboring_islands() {
             ];
             let rect = Rectangle::<i32, Physical>::new(
                 (capture[0] as i32, capture[1] as i32).into(),
-                ((capture[2] - capture[0]) as i32, (capture[3] - capture[1]) as i32).into(),
+                (
+                    (capture[2] - capture[0]) as i32,
+                    (capture[3] - capture[1]) as i32,
+                )
+                    .into(),
             );
             let mut pixels = vec![128_u8; (rect.size.w * rect.size.h * 4) as usize];
             for p in pixels.chunks_exact_mut(4) {
                 p[3] = 255;
             }
             let source = renderer
-                .import_memory(&pixels, Fourcc::Abgr8888, (rect.size.w, rect.size.h).into(), false)
+                .import_memory(
+                    &pixels,
+                    Fourcc::Abgr8888,
+                    (rect.size.w, rect.size.h).into(),
+                    false,
+                )
                 .unwrap();
             let uniforms = vec![
                 Uniform::new("visible_rect", visible),
@@ -981,10 +1055,15 @@ fn floating_blur_sampling_halo_does_not_paint_neighboring_islands() {
                 .create_buffer(Fourcc::Abgr8888, (size.w, size.h).into())
                 .unwrap();
             let mut target = renderer.bind(&mut texture).unwrap();
-            let mut frame = renderer.render(&mut target, size, Transform::Normal).unwrap();
+            let mut frame = renderer
+                .render(&mut target, size, Transform::Normal)
+                .unwrap();
             frame.clear([0.; 4].into(), &[full]).unwrap();
             // OpenGL coordinates have the opposite Y direction from the frame.
-            let dst = Rectangle::new((rect.loc.x, size.h - rect.loc.y - rect.size.h).into(), rect.size);
+            let dst = Rectangle::new(
+                (rect.loc.x, size.h - rect.loc.y - rect.size.h).into(),
+                rect.size,
+            );
             frame
                 .render_texture_from_to(
                     &source,
@@ -1000,7 +1079,11 @@ fn floating_blur_sampling_halo_does_not_paint_neighboring_islands() {
                 .unwrap();
             let _ = frame.finish().unwrap();
             let mapping = renderer
-                .copy_framebuffer(&target, Rectangle::from_size((size.w, size.h).into()), Fourcc::Abgr8888)
+                .copy_framebuffer(
+                    &target,
+                    Rectangle::from_size((size.w, size.h).into()),
+                    Fourcc::Abgr8888,
+                )
                 .unwrap();
             let rendered = renderer.map_texture(&mapping).unwrap().to_vec();
             let mut painted = 0;

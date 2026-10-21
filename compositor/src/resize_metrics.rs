@@ -7,7 +7,9 @@ use std::time::Duration;
 use ferese_core::WorkspaceId;
 use ferese_layout::WindowId;
 
-const BUCKETS_MS: [u64; 16] = [16, 32, 64, 75, 80, 85, 100, 150, 250, 290, 299, 300, 301, 310, 350, 500];
+const BUCKETS_MS: [u64; 16] = [
+    16, 32, 64, 75, 80, 85, 100, 150, 250, 290, 299, 300, 301, 310, 350, 500,
+];
 
 #[derive(Debug, Default)]
 struct Histogram {
@@ -64,7 +66,13 @@ pub(crate) struct ResizeMetrics {
 }
 
 impl ResizeMetrics {
-    pub(crate) fn begin(&mut self, id: WindowId, workspace: Option<WorkspaceId>, app_id: &str, now: Duration) {
+    pub(crate) fn begin(
+        &mut self,
+        id: WindowId,
+        workspace: Option<WorkspaceId>,
+        app_id: &str,
+        now: Duration,
+    ) {
         // Keep an overlapping workspace barrier continuous through retargets.
         let previous_workspace = self.end_client(id, now, End::Replaced);
         if previous_workspace != workspace {
@@ -123,7 +131,13 @@ impl ResizeMetrics {
         }
     }
 
-    pub(crate) fn observe(&mut self, id: WindowId, now: Duration, viewport_active: bool, other_active: bool) {
+    pub(crate) fn observe(
+        &mut self,
+        id: WindowId,
+        now: Duration,
+        viewport_active: bool,
+        other_active: bool,
+    ) {
         let Some(client) = self.clients.get_mut(&id) else {
             return;
         };
@@ -151,7 +165,11 @@ impl ResizeMetrics {
     pub(crate) fn pause_clock(&mut self, now: Duration) {
         // Activity overlap excludes globally paused presentation time. Barrier
         // and target-to-handoff durations remain actual wall-clock durations.
-        for client in self.clients.values_mut().filter(|client| client.started.is_some()) {
+        for client in self
+            .clients
+            .values_mut()
+            .filter(|client| client.started.is_some())
+        {
             client.last_observation = now;
         }
     }
@@ -181,7 +199,9 @@ impl ResizeMetrics {
     pub(crate) fn dump(&self) {
         // Enabling the feature explicitly opts into the exit report. This does
         // not depend on a tracing filter and adds no per-frame log messages.
-        eprintln!("resize-metrics: histogram upper bounds ms {BUCKETS_MS:?}, final bucket overflow");
+        eprintln!(
+            "resize-metrics: histogram upper bounds ms {BUCKETS_MS:?}, final bucket overflow"
+        );
         eprintln!(
             "resize-metrics: workspace barrier durations {:?}",
             self.workspace_duration

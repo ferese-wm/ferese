@@ -89,14 +89,24 @@ fn edge(barrier: &Barrier, zones: &[Zone]) -> Option<Edge> {
             }
             match found {
                 Edge::Top | Edge::Bottom => {
-                    let outside = y1 + if matches!(found, Edge::Top) { -0.5 } else { 0.5 };
+                    let outside = y1
+                        + if matches!(found, Edge::Top) {
+                            -0.5
+                        } else {
+                            0.5
+                        };
                     outside >= f64::from(other.y)
                         && outside < other.bottom()
                         && x1 < other.right()
                         && x2 + 1.0 > f64::from(other.x)
                 }
                 Edge::Left | Edge::Right => {
-                    let outside = x1 + if matches!(found, Edge::Left) { -0.5 } else { 0.5 };
+                    let outside = x1
+                        + if matches!(found, Edge::Left) {
+                            -0.5
+                        } else {
+                            0.5
+                        };
                     outside >= f64::from(other.x)
                         && outside < other.right()
                         && y1 < other.bottom()
@@ -174,7 +184,10 @@ impl InputCapture {
         if self.sessions.len() >= MAX_SESSIONS || capabilities == 0 || capabilities & !3 != 0 {
             return Err("Unsupported capabilities or input capture session limit reached".into());
         }
-        self.next_session = self.next_session.checked_add(1).ok_or("Input capture IDs exhausted")?;
+        self.next_session = self
+            .next_session
+            .checked_add(1)
+            .ok_or("Input capture IDs exhausted")?;
         let id = self.next_session;
         self.sessions.insert(
             id,
@@ -193,15 +206,24 @@ impl InputCapture {
 
     pub(crate) fn zones(&self, id: u64) -> Result<Value, String> {
         self.session(id)?;
-        Ok(json!({"zone_set":self.zone_set, "zones":self.zones.iter().map(|zone|
-            (zone.width, zone.height, zone.x, zone.y)).collect::<Vec<_>>()}))
+        Ok(
+            json!({"zone_set":self.zone_set, "zones":self.zones.iter().map(|zone|
+            (zone.width, zone.height, zone.x, zone.y)).collect::<Vec<_>>()}),
+        )
     }
 
     fn session(&self, id: u64) -> Result<&Session, String> {
-        self.sessions.get(&id).ok_or("Unknown input capture session".into())
+        self.sessions
+            .get(&id)
+            .ok_or("Unknown input capture session".into())
     }
 
-    pub(crate) fn set_barriers(&mut self, id: u64, zone_set: u32, barriers: Vec<Barrier>) -> Result<Vec<u32>, String> {
+    pub(crate) fn set_barriers(
+        &mut self,
+        id: u64,
+        zone_set: u32,
+        barriers: Vec<Barrier>,
+    ) -> Result<Vec<u32>, String> {
         self.session(id)?;
         if barriers.len() > MAX_BARRIERS {
             return Err("Too many pointer barriers".into());
@@ -229,7 +251,10 @@ impl InputCapture {
     }
 
     pub(crate) fn enable(&mut self, id: u64) -> Result<(), String> {
-        let session = self.sessions.get_mut(&id).ok_or("Unknown input capture session")?;
+        let session = self
+            .sessions
+            .get_mut(&id)
+            .ok_or("Unknown input capture session")?;
         if session.closed {
             return Err("Input capture session is closed".into());
         }
@@ -255,7 +280,11 @@ impl InputCapture {
         if self.active() {
             return true;
         }
-        if !allowed || ![from.0, from.1, to.0, to.1].iter().all(|value| value.is_finite()) {
+        if !allowed
+            || ![from.0, from.1, to.0, to.1]
+                .iter()
+                .all(|value| value.is_finite())
+        {
             return false;
         }
         let hit = self
@@ -340,7 +369,10 @@ impl InputCapture {
             self.restore_focus = true;
             let session = self.sessions.get_mut(&id).unwrap();
             let activation = session.activation.take();
-            self.enqueue(id, json!({"type":"deactivated", "activation_id":activation}));
+            self.enqueue(
+                id,
+                json!({"type":"deactivated", "activation_id":activation}),
+            );
             self.flush();
         }
         Ok(())
@@ -365,10 +397,18 @@ impl InputCapture {
     }
 
     pub(crate) fn valid_position(&self, point: (f64, f64)) -> bool {
-        point.0.is_finite() && point.1.is_finite() && self.zones.iter().any(|zone| zone.contains(point))
+        point.0.is_finite()
+            && point.1.is_finite()
+            && self.zones.iter().any(|zone| zone.contains(point))
     }
 
-    pub(crate) fn watch(&mut self, owner: u64, request: u64, id: u64, response: SyncSender<Response>) {
+    pub(crate) fn watch(
+        &mut self,
+        owner: u64,
+        request: u64,
+        id: u64,
+        response: SyncSender<Response>,
+    ) {
         if !self.sessions.contains_key(&id)
             || self.waiters.len() >= MAX_SESSIONS
             || self.waiters.values().any(|(_, token, _)| *token == id)
@@ -479,10 +519,19 @@ impl crate::Ferese {
             && !self.overview.is_presenting()
             && !pointer.is_grabbed()
             && !self.swipe.active()
-            && self.seat.get_keyboard().is_none_or(|keyboard| !keyboard.is_grabbed())
-            && self.seat.get_touch().is_none_or(|touch| !touch.is_grabbed())
+            && self
+                .seat
+                .get_keyboard()
+                .is_none_or(|keyboard| !keyboard.is_grabbed())
+            && self
+                .seat
+                .get_touch()
+                .is_none_or(|touch| !touch.is_grabbed())
             && !self.seat.keyboard_shortcuts_inhibited();
-        if !self.input_capture.motion((from.x, from.y), (to.x, to.y), allowed) {
+        if !self
+            .input_capture
+            .motion((from.x, from.y), (to.x, to.y), allowed)
+        {
             return false;
         }
         let delta = if absolute {
@@ -553,7 +602,10 @@ mod tests {
             [3840, 0, 3840, 1079],
             [0, 0, 0, 1079],
         ] {
-            assert!(edge(&Barrier { id: 1, position }, &zones).is_some(), "{position:?}");
+            assert!(
+                edge(&Barrier { id: 1, position }, &zones).is_some(),
+                "{position:?}"
+            );
         }
         for position in [
             [1920, 0, 1920, 1079],
@@ -562,7 +614,10 @@ mod tests {
             [50, 50, 50, 200],
             [0, 5, 0, 4],
         ] {
-            assert!(edge(&Barrier { id: 1, position }, &zones).is_none(), "{position:?}");
+            assert!(
+                edge(&Barrier { id: 1, position }, &zones).is_none(),
+                "{position:?}"
+            );
         }
         let barrier = Barrier {
             id: 1,
@@ -651,7 +706,11 @@ mod tests {
         capture.enable(id).unwrap();
         assert!(capture.motion((3839.0, 50.0), (3900.0, 50.0), true));
         let activation = capture.sessions[&id].activation.unwrap();
-        assert!(capture.release(id, Some(activation.wrapping_add(1))).is_err());
+        assert!(
+            capture
+                .release(id, Some(activation.wrapping_add(1)))
+                .is_err()
+        );
         capture.release(id, Some(activation)).unwrap();
         assert!(capture.sessions[&id].enabled);
         capture.update_zones(vec![zones()[0]]);

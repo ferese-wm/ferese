@@ -18,11 +18,17 @@ impl Ferese {
     }
 
     pub(crate) fn ensure_output_identity(&mut self, identity: &str) -> OutputId {
-        *self.output_identity_ids.entry(identity.to_owned()).or_insert_with(|| {
-            let id = OutputId(self.next_output_id);
-            self.next_output_id = self.next_output_id.checked_add(1).expect("output ID space exhausted");
-            id
-        })
+        *self
+            .output_identity_ids
+            .entry(identity.to_owned())
+            .or_insert_with(|| {
+                let id = OutputId(self.next_output_id);
+                self.next_output_id = self
+                    .next_output_id
+                    .checked_add(1)
+                    .expect("output ID space exhausted");
+                id
+            })
     }
 
     pub fn register_output(&mut self, output: &Output, identity: String) {
@@ -86,7 +92,9 @@ impl Ferese {
                 .into_iter()
                 .filter(|entry| entry.output != *output)
                 .collect();
-            let changes = self.publish_desktop(runtime).expect("valid surviving output inventory");
+            let changes = self
+                .publish_desktop(runtime)
+                .expect("valid surviving output inventory");
             self.finish_desktop_transition(changes);
         }
     }
@@ -102,12 +110,15 @@ impl Ferese {
             .outputs()
             .find(|candidate| *candidate != output)
             .map(|output| output.name());
-        self.activities.store.remove_output(&output.name(), fallback.as_deref());
+        self.activities
+            .store
+            .remove_output(&output.name(), fallback.as_deref());
         self.activities
             .pomodoro_remove_output(&output.name(), fallback.as_deref());
         self.activities.changed();
         self.display_presentation.remove_output(output);
-        self.output_redraw_pending.retain(|pending| pending != output);
+        self.output_redraw_pending
+            .retain(|pending| pending != output);
         if let Some(id) = self.output_ids.get(output) {
             self.render.remove_output(*id);
             self.capture_render.remove_output(*id);
@@ -123,7 +134,11 @@ impl Ferese {
         self.session_lock.output_removed(output);
     }
 
-    pub(super) fn activate_output_workspace(&mut self, output: OutputId, workspace: ferese_core::WorkspaceId) {
+    pub(super) fn activate_output_workspace(
+        &mut self,
+        output: OutputId,
+        workspace: ferese_core::WorkspaceId,
+    ) {
         if let Err(error) = self.output_workspaces.focus_output(output) {
             tracing::error!(%error, "failed to focus output");
             return;
@@ -163,7 +178,9 @@ impl Ferese {
         let Some(workspace) = self.output_workspaces.active_workspace(output_id) else {
             return;
         };
-        if self.output_workspaces.focused_output() == Some(output_id) && self.workspaces.active_id() == workspace {
+        if self.output_workspaces.focused_output() == Some(output_id)
+            && self.workspaces.active_id() == workspace
+        {
             return;
         }
 
@@ -176,7 +193,9 @@ impl Ferese {
 mod tests {
     use super::*;
 
-    use smithay::backend::input::{ButtonState, Event, InputBackend, InputEvent, PointerButtonEvent, UnusedEvent};
+    use smithay::backend::input::{
+        ButtonState, Event, InputBackend, InputEvent, PointerButtonEvent, UnusedEvent,
+    };
     use smithay::backend::winit::WinitVirtualDevice;
     use smithay::input::pointer::MotionEvent;
     use smithay::utils::SERIAL_COUNTER;
@@ -316,7 +335,10 @@ mod tests {
             card.rect.x + card.rect.width / 2.0,
             card.rect.y + card.rect.height / 2.0,
         ));
-        assert_eq!(state.overview_strip_at(position), Some(expected_output.clone()));
+        assert_eq!(
+            state.overview_strip_at(position),
+            Some(expected_output.clone())
+        );
         click(&mut state, position);
         assert_eq!(state.workspaces.active_id(), card.workspace);
         state.windows.records.insert(
@@ -332,7 +354,10 @@ mod tests {
             .find(|card| card.workspace == expected_workspace)
             .unwrap();
         let preview = occupied.windows[0].1;
-        let image_point = Point::from((preview.x + preview.width / 2.0, preview.y + preview.height / 2.0));
+        let image_point = Point::from((
+            preview.x + preview.width / 2.0,
+            preview.y + preview.height / 2.0,
+        ));
         let label_point = Point::from((
             occupied.rect.x + occupied.rect.width / 2.0,
             occupied.rect.y + occupied.rect.height - 8.0,

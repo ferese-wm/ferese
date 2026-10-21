@@ -67,11 +67,14 @@ impl App {
             ),
             Input::Tab(Tab::Wifi) => (Some(crate::schema::Page::Connections.icon()), false),
             Input::Tab(Tab::Bluetooth) => (Some("M12 3l6 5-12 8 6 5V3 M6 8l12 8-6 5"), false),
-            Input::Run(Command::WifiScan | Command::BluetoothScan(_)) => {
-                (Some("M10 3a7 7 0 1 0 0 14a7 7 0 0 0 0-14 M15 15l6 6"), false)
-            }
+            Input::Run(Command::WifiScan | Command::BluetoothScan(_)) => (
+                Some("M10 3a7 7 0 1 0 0 14a7 7 0 0 0 0-14 M15 15l6 6"),
+                false,
+            ),
             Input::Run(Command::BluetoothStop) => (Some("M6 6h12v12H6z"), false),
-            Input::Run(Command::WifiConnect(..) | Command::BluetoothConnect(_) | Command::BluetoothPair(_))
+            Input::Run(
+                Command::WifiConnect(..) | Command::BluetoothConnect(_) | Command::BluetoothPair(_),
+            )
             | Input::Select(_)
             | Input::SubmitWifi => (Some("M4 12h15 M14 7l5 5-5 5"), false),
             Input::Run(Command::WifiDisconnect(_) | Command::BluetoothDisconnect(_)) => {
@@ -83,7 +86,10 @@ impl App {
         };
         let mut content = row([]).spacing(5).align_y(Alignment::Center);
         if let Some(icon) = icon {
-            content = content.push(visuals::action_icon(icon, if selected { p.accent } else { p.text }));
+            content = content.push(visuals::action_icon(
+                icon,
+                if selected { p.accent } else { p.text },
+            ));
         }
         if !icon_only {
             content = content.push(self.label(label.to_owned(), 12.));
@@ -112,7 +118,10 @@ impl App {
             .into()
     }
 
-    pub(super) fn connection_card<'a>(&self, body: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
+    pub(super) fn connection_card<'a>(
+        &self,
+        body: impl Into<Element<'a, Message>>,
+    ) -> Element<'a, Message> {
         let p = visuals::Palette::from_resolved(&self.resolved.presented);
         container(body)
             .padding([7, 10])
@@ -128,8 +137,18 @@ impl App {
         body = body.push(
             row([])
                 .spacing(6)
-                .push(self.connection_button("Wi-Fi", Input::Tab(Tab::Wifi), true, s.tab == Tab::Wifi))
-                .push(self.connection_button("Bluetooth", Input::Tab(Tab::Bluetooth), true, s.tab == Tab::Bluetooth))
+                .push(self.connection_button(
+                    "Wi-Fi",
+                    Input::Tab(Tab::Wifi),
+                    true,
+                    s.tab == Tab::Wifi,
+                ))
+                .push(self.connection_button(
+                    "Bluetooth",
+                    Input::Tab(Tab::Bluetooth),
+                    true,
+                    s.tab == Tab::Bluetooth,
+                ))
                 .push(widget::Space::new().width(Length::Fill))
                 .push(self.connection_button("Refresh", Input::Refresh, !s.loading, false)),
         );
@@ -147,7 +166,12 @@ impl App {
                 .spacing(6)
                 .push(self.label(busy, 12.));
             if busy == "Pairing…" {
-                status = status.push(self.connection_button("Cancel", Input::Run(Command::CancelPairing), true, false));
+                status = status.push(self.connection_button(
+                    "Cancel",
+                    Input::Run(Command::CancelPairing),
+                    true,
+                    false,
+                ));
             }
             body = body.push(status);
         }

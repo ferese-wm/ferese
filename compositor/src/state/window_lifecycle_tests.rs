@@ -4,7 +4,11 @@ use smithay::input::pointer::{Focus, GrabStartData, MotionEvent};
 use smithay::reexports::wayland_server::Resource;
 use smithay::utils::SERIAL_COUNTER;
 
-fn fixture() -> (smithay::reexports::calloop::EventLoop<'static, Ferese>, Ferese, Output) {
+fn fixture() -> (
+    smithay::reexports::calloop::EventLoop<'static, Ferese>,
+    Ferese,
+    Output,
+) {
     let mut events = smithay::reexports::calloop::EventLoop::try_new().unwrap();
     let mut state = crate::startup_tests::state(&mut events);
     state.animations_enabled = false;
@@ -53,7 +57,9 @@ fn tree_resize_does_not_hold_motion_in_an_unchanged_neighboring_branch() {
         .iter()
         .map(|(window, _)| state.windows.ids()[window])
         .collect::<Vec<_>>();
-    let [a, b, c, d] = ids.as_slice() else { unreachable!() };
+    let [a, b, c, d] = ids.as_slice() else {
+        unreachable!()
+    };
     let (a, b, c, d) = (*a, *b, *c, *d);
     let mut tree = ferese_layout::LayoutTree::default();
     tree.insert(a, None, Axis::Horizontal, 0.5).unwrap();
@@ -94,7 +100,10 @@ fn tree_resize_does_not_hold_motion_in_an_unchanged_neighboring_branch() {
     state.advance_animations_at(Duration::from_millis(16), Duration::from_millis(48));
     let after = [a, b, c, d].map(|id| state.windows.geometry(&id).unwrap().visual.current);
     assert_eq!(before[..2], after[..2], "linked left reflow must wait");
-    assert_ne!(before[2], after[2], "right branch must continue its existing motion");
+    assert_ne!(
+        before[2], after[2],
+        "right branch must continue its existing motion"
+    );
     assert_ne!(before[3], after[3]);
     let frame = state.sample_frame(&output, Duration::from_millis(16));
     assert_eq!(frame.windows[&a].geometry.visual.current, after[0]);
@@ -105,7 +114,11 @@ fn tree_resize_does_not_hold_motion_in_an_unchanged_neighboring_branch() {
         let location = state.space.element_location(window).unwrap();
         assert_eq!(location.x, geometry.visual.current.x.round() as i32);
         assert_eq!(location.y, geometry.visual.current.y.round() as i32);
-        let point = (geometry.visual.current.x + 5.0, geometry.visual.current.y + 5.0).into();
+        let point = (
+            geometry.visual.current.x + 5.0,
+            geometry.visual.current.y + 5.0,
+        )
+            .into();
         let (surface, origin) = state.window_surface_under(point).unwrap();
         assert_eq!(surface, *window.toplevel().unwrap().wl_surface());
         assert!((origin.y - geometry.visual.current.y).abs() < 0.001);
@@ -120,8 +133,16 @@ fn tree_resize_does_not_hold_motion_in_an_unchanged_neighboring_branch() {
     request(&mut clients[0].1, 2, 6, &[], None);
     dispatch(&mut events, &mut state);
     assert!(state.windows.transaction(&a).is_none());
-    assert!(state.presentation_dependencies.reflow_blocked(a, &state.windows));
-    assert!(state.presentation_dependencies.reflow_blocked(b, &state.windows));
+    assert!(
+        state
+            .presentation_dependencies
+            .reflow_blocked(a, &state.windows)
+    );
+    assert!(
+        state
+            .presentation_dependencies
+            .reflow_blocked(b, &state.windows)
+    );
     state.advance_animations_at(Duration::from_millis(284), Duration::from_millis(332));
     assert!(state.windows.transaction(&b).is_none());
     assert_eq!(state.windows.geometry(&a).unwrap().visual.current, after[0]);
@@ -134,10 +155,17 @@ fn tree_resize_does_not_hold_motion_in_an_unchanged_neighboring_branch() {
     request(&mut clients[0].1, 2, 1, &[0, 0, 0], None);
     request(&mut clients[0].1, 2, 6, &[], None);
     dispatch(&mut events, &mut state);
-    assert!(!state.presentation_dependencies.reflow_blocked(c, &state.windows));
+    assert!(
+        !state
+            .presentation_dependencies
+            .reflow_blocked(c, &state.windows)
+    );
     state
         .workspaces
-        .set_active_layout_mode(ferese_core::LayoutMode::Scrolling, Rect::new(0.0, 0.0, 800.0, 600.0))
+        .set_active_layout_mode(
+            ferese_core::LayoutMode::Scrolling,
+            Rect::new(0.0, 0.0, 800.0, 600.0),
+        )
         .unwrap();
     state.relayout();
     for id in [c, d] {
@@ -145,7 +173,11 @@ fn tree_resize_does_not_hold_motion_in_an_unchanged_neighboring_branch() {
     }
     state.release_presentation_dependencies();
     for id in [c, d] {
-        assert!(!state.presentation_dependencies.reflow_blocked(id, &state.windows));
+        assert!(
+            !state
+                .presentation_dependencies
+                .reflow_blocked(id, &state.windows)
+        );
     }
 }
 
@@ -187,7 +219,10 @@ fn width_cycle_keeps_stacked_rows_together_through_holds_forecasts_and_reversal(
         state.release_presentation_dependencies();
         state.advance_animations_at(Duration::ZERO, Duration::ZERO);
         let before = state.windows.geometry(&a).unwrap().visual.current.width;
-        assert_eq!(state.windows.geometry(&b).unwrap().visual.current.width, before);
+        assert_eq!(
+            state.windows.geometry(&b).unwrap().visual.current.width,
+            before
+        );
         state.animations_enabled = animations;
         state.spring_config = SpringConfig {
             stiffness: 900.0,
@@ -222,7 +257,11 @@ fn width_cycle_keeps_stacked_rows_together_through_holds_forecasts_and_reversal(
             let second = *state.windows.geometry(&b).unwrap();
             assert_eq!(first.visual.current.width, second.visual.current.width);
             assert_eq!(first.visual.velocity.width, second.visual.velocity.width);
-            for horizon in [Duration::ZERO, Duration::from_millis(4), Duration::from_millis(16)] {
+            for horizon in [
+                Duration::ZERO,
+                Duration::from_millis(4),
+                Duration::from_millis(16),
+            ] {
                 let scene = state.sample_frame(&output, horizon);
                 assert_eq!(
                     scene.windows[&a].geometry.visual.current.width,
@@ -236,11 +275,15 @@ fn width_cycle_keeps_stacked_rows_together_through_holds_forecasts_and_reversal(
         state.windows.clear_transaction(&a);
         state.release_presentation_dependencies();
         assert_eq!(
-            state.presentation_dependencies.reflow_blocked(a, &state.windows),
+            state
+                .presentation_dependencies
+                .reflow_blocked(a, &state.windows),
             animations
         );
         assert_eq!(
-            state.presentation_dependencies.reflow_blocked(b, &state.windows),
+            state
+                .presentation_dependencies
+                .reflow_blocked(b, &state.windows),
             animations
         );
         for millis in [16, 100, 299, 300, 316, 332] {
@@ -262,11 +305,20 @@ fn width_cycle_keeps_stacked_rows_together_through_holds_forecasts_and_reversal(
         }
         state.release_presentation_dependencies();
         for frame in 1..=150 {
-            state.advance_animations_at(Duration::from_millis(16), Duration::from_millis(332 + frame * 16));
+            state.advance_animations_at(
+                Duration::from_millis(16),
+                Duration::from_millis(332 + frame * 16),
+            );
             assert_equal(&state);
         }
-        assert_eq!(state.windows.geometry(&a).unwrap().visual.current.width, before);
-        assert_eq!(state.windows.geometry(&b).unwrap().visual.current.width, before);
+        assert_eq!(
+            state.windows.geometry(&a).unwrap().visual.current.width,
+            before
+        );
+        assert_eq!(
+            state.windows.geometry(&b).unwrap().visual.current.width,
+            before
+        );
     }
 }
 
@@ -292,9 +344,18 @@ fn floating_placement_reserves_the_full_opening_window_footprint() {
     let obstacles = state.floating_obstacles(None, bounds);
     assert_eq!(
         obstacles,
-        vec![(id.0, crate::floating::intersection(logical, bounds).unwrap())]
+        vec![(
+            id.0,
+            crate::floating::intersection(logical, bounds).unwrap()
+        )]
     );
-    let placed = crate::floating::min_overlap((80., 80.), bounds, &[obstacles[0].1], (logical.x, logical.y)).unwrap();
+    let placed = crate::floating::min_overlap(
+        (80., 80.),
+        bounds,
+        &[obstacles[0].1],
+        (logical.x, logical.y),
+    )
+    .unwrap();
     assert!(crate::floating::intersection(placed, logical).is_none());
 }
 
@@ -424,7 +485,12 @@ fn keyboard_floating_actions_preserve_maximized_and_fullscreen_restore_geometry(
             state.set_window_maximized(id, true);
         }
         let geometry = state.windows.geometry(&id).unwrap().logical;
-        for direction in [Direction::Left, Direction::Right, Direction::Up, Direction::Down] {
+        for direction in [
+            Direction::Left,
+            Direction::Right,
+            Direction::Up,
+            Direction::Down,
+        ] {
             state.move_direction(direction);
             state.resize_direction(direction);
             assert_eq!(state.workspaces.placement(id), normal);
@@ -462,17 +528,29 @@ fn keyboard_floating_resize_reuses_the_client_barrier_and_move_keeps_it_pending(
     let before = state.windows.geometry(&id).unwrap().visual.current;
     let client = state.windows.geometry(&id).unwrap().client.committed_size;
     state.resize_direction(Direction::Right);
-    let transaction = *state.windows.transaction(&id).expect("existing resize barrier");
+    let transaction = *state
+        .windows
+        .transaction(&id)
+        .expect("existing resize barrier");
     assert_eq!(transaction.source_geometry(), Some(window.geometry()));
-    assert_eq!(state.windows.geometry(&id).unwrap().client.committed_size, client);
+    assert_eq!(
+        state.windows.geometry(&id).unwrap().client.committed_size,
+        client
+    );
     assert_eq!(state.windows.geometry(&id).unwrap().visual.current, before);
     assert_eq!(
         state.windows.geometry(&id).unwrap().logical,
         Rect::new(120., 100., 96., 48.)
     );
     state.move_direction(Direction::Right);
-    assert_eq!(state.windows.transaction(&id).unwrap().serial(), transaction.serial());
-    assert_eq!(state.windows.geometry(&id).unwrap().client.committed_size, client);
+    assert_eq!(
+        state.windows.transaction(&id).unwrap().serial(),
+        transaction.serial()
+    );
+    assert_eq!(
+        state.windows.geometry(&id).unwrap().client.committed_size,
+        client
+    );
     assert_eq!(state.windows.geometry(&id).unwrap().visual.current, before);
     assert_eq!(
         state.windows.geometry(&id).unwrap().logical,
@@ -593,12 +671,24 @@ fn dmabuf_validation_uses_the_originating_global_without_a_desktop_frame() {
     // being visited first. The mock capability accepts only B's buffers.
     for (params, buffer) in [(5, None), (6, Some(7))] {
         request(&mut wire, 4, 1, &[params], None);
-        request(&mut wire, params, 1, &[0, 0, 16, 0, 0], Some(file.as_raw_fd()));
+        request(
+            &mut wire,
+            params,
+            1,
+            &[0, 0, 16, 0, 0],
+            Some(file.as_raw_fd()),
+        );
         let mut args = vec![4, 4, Fourcc::Argb8888 as u32, 0];
         if let Some(buffer) = buffer {
             args.insert(0, buffer);
         }
-        request(&mut wire, params, if buffer.is_some() { 3 } else { 2 }, &args, None);
+        request(
+            &mut wire,
+            params,
+            if buffer.is_some() { 3 } else { 2 },
+            &args,
+            None,
+        );
         dispatch(&mut events, &mut state);
         assert!(state.space.outputs().next().is_none());
         state.process_pending_dmabuf_imports();
@@ -619,10 +709,19 @@ fn dmabuf_validation_uses_the_originating_global_without_a_desktop_frame() {
         state.display_handle.flush_clients().unwrap();
         let response = read(&mut wire);
         if buffer.is_none() {
-            assert_eq!(u32::from_ne_bytes(response[..4].try_into().unwrap()), params);
-            assert_eq!(u32::from_ne_bytes(response[4..8].try_into().unwrap()) & 0xffff, 0);
+            assert_eq!(
+                u32::from_ne_bytes(response[..4].try_into().unwrap()),
+                params
+            );
+            assert_eq!(
+                u32::from_ne_bytes(response[4..8].try_into().unwrap()) & 0xffff,
+                0
+            );
         } else {
-            assert!(response.is_empty(), "create_immed success must not emit a failed event");
+            assert!(
+                response.is_empty(),
+                "create_immed success must not emit a failed event"
+            );
         }
         assert!(client.get_credentials(&state.display_handle).is_ok());
     }
@@ -630,12 +729,26 @@ fn dmabuf_validation_uses_the_originating_global_without_a_desktop_frame() {
     // Deferred requests receive one terminal failure on timeout or removal.
     for params in [8, 9] {
         request(&mut wire, 4, 1, &[params], None);
-        request(&mut wire, params, 1, &[0, 0, 16, 0, 0], Some(file.as_raw_fd()));
-        request(&mut wire, params, 2, &[4, 4, Fourcc::Argb8888 as u32, 0], None);
+        request(
+            &mut wire,
+            params,
+            1,
+            &[0, 0, 16, 0, 0],
+            Some(file.as_raw_fd()),
+        );
+        request(
+            &mut wire,
+            params,
+            2,
+            &[4, 4, Fourcc::Argb8888 as u32, 0],
+            None,
+        );
         dispatch(&mut events, &mut state);
         state.process_pending_dmabuf_imports();
         if params == 8 {
-            state.dmabuf_imports.expire(Instant::now() + Duration::from_secs(5));
+            state
+                .dmabuf_imports
+                .expire(Instant::now() + Duration::from_secs(5));
         } else {
             state.dmabuf_imports.remove(b);
         }
@@ -643,8 +756,14 @@ fn dmabuf_validation_uses_the_originating_global_without_a_desktop_frame() {
         state.display_handle.flush_clients().unwrap();
         let response = read(&mut wire);
         assert_eq!(response.len(), 8);
-        assert_eq!(u32::from_ne_bytes(response[..4].try_into().unwrap()), params);
-        assert_eq!(u32::from_ne_bytes(response[4..8].try_into().unwrap()) & 0xffff, 1);
+        assert_eq!(
+            u32::from_ne_bytes(response[..4].try_into().unwrap()),
+            params
+        );
+        assert_eq!(
+            u32::from_ne_bytes(response[4..8].try_into().unwrap()) & 0xffff,
+            1
+        );
         state
             .dmabuf_imports
             .process_with(b, None, |_| panic!("failed request survived"));
@@ -659,9 +778,9 @@ fn dmabuf_validation_uses_the_originating_global_without_a_desktop_frame() {
     drop(wire);
     dispatch(&mut events, &mut state);
     state.process_pending_dmabuf_imports();
-    state
-        .dmabuf_imports
-        .process_with(b, None, |_| panic!("disconnected client's request survived"));
+    state.dmabuf_imports.process_with(b, None, |_| {
+        panic!("disconnected client's request survived")
+    });
 }
 
 #[test]
@@ -697,7 +816,10 @@ fn hidden_null_commit_removes_membership_and_remaps_without_workspace_switch() {
     dispatch(&mut events, &mut state);
     let remapped = state.windows.ids()[&window];
     assert_ne!(id, remapped);
-    assert_eq!(state.workspaces.workspace_for_window(remapped), Some(active));
+    assert_eq!(
+        state.workspaces.workspace_for_window(remapped),
+        Some(active)
+    );
     assert_eq!(state.workspaces.active_id(), active);
 }
 
@@ -731,7 +853,10 @@ fn hidden_commits_update_client_geometry_and_release_resize_transactions() {
     assert!(state.windows.transaction(&id).is_none());
     assert_eq!(
         state.windows.geometry(&id).unwrap().client.committed_size,
-        Some(ClientSize { width: 32, height: 48 })
+        Some(ClientSize {
+            width: 32,
+            height: 48
+        })
     );
     assert!(state.space.element_location(&window).is_none());
 }
@@ -760,13 +885,23 @@ fn floating_maximize_and_restore_work_in_both_layouts() {
     };
 
     let mut next_object = 7;
-    for mode in [ferese_core::LayoutMode::Scrolling, ferese_core::LayoutMode::Tree] {
+    for mode in [
+        ferese_core::LayoutMode::Scrolling,
+        ferese_core::LayoutMode::Tree,
+    ] {
         let bounds = state.output_bounds().unwrap();
-        state.workspaces.set_active_layout_mode(mode, bounds).unwrap();
+        state
+            .workspaces
+            .set_active_layout_mode(mode, bounds)
+            .unwrap();
         state.relayout();
         state.set_window_maximized(id, true);
         let maximized = maximized_rect(bounds, state.gap_config.outer);
-        assert_eq!(state.windows.geometry(&id).unwrap().logical, maximized, "{mode:?}");
+        assert_eq!(
+            state.windows.geometry(&id).unwrap().logical,
+            maximized,
+            "{mode:?}"
+        );
         assert_eq!(
             state.workspaces.placement(id),
             Some(WindowPlacement::Floating { rect: normal })
@@ -785,10 +920,17 @@ fn floating_maximize_and_restore_work_in_both_layouts() {
                 smithay::wayland::GlobalData,
             )
             .unwrap();
-        let (width, height) = (maximized.width.round() as u32, maximized.height.round() as u32);
+        let (width, height) = (
+            maximized.width.round() as u32,
+            maximized.height.round() as u32,
+        );
         let mut file = tempfile::tempfile().unwrap();
-        file.write_all(&0xff112233u32.to_ne_bytes().repeat((width * height) as usize))
-            .unwrap();
+        file.write_all(
+            &0xff112233u32
+                .to_ne_bytes()
+                .repeat((width * height) as usize),
+        )
+        .unwrap();
         request(
             &mut wire,
             shm.id().protocol_id(),
@@ -813,7 +955,11 @@ fn floating_maximize_and_restore_work_in_both_layouts() {
         }));
 
         state.set_window_maximized(id, false);
-        assert_eq!(state.windows.geometry(&id).unwrap().logical, normal, "{mode:?}");
+        assert_eq!(
+            state.windows.geometry(&id).unwrap().logical,
+            normal,
+            "{mode:?}"
+        );
         state.display_handle.flush_clients().unwrap();
         ack_configure(&mut wire, 3);
         request(&mut wire, 3, 3, &[0, 0, 64, 48], None);
@@ -904,7 +1050,10 @@ fn malformed_resize_limits_disconnect_only_the_client_and_motion_survives() {
 
             offset += (header >> 16) as usize;
         }
-        assert!(rejected, "invalid limits {minimum:?}/{maximum:?} were not rejected");
+        assert!(
+            rejected,
+            "invalid limits {minimum:?}/{maximum:?} were not rejected"
+        );
     }
 
     let (healthy, _wire) = window(&mut state, &mut events, 0xff112233);
@@ -926,37 +1075,47 @@ fn window_rule_minimum_size_replaces_the_client_advertised_minimum() {
     request(&mut wire, 2, 6, &[], None);
     dispatch(&mut events, &mut state);
     assert_eq!(
-        state.effective_size_constraints(&window, (800, 600), (0, 0)).0,
+        state
+            .effective_size_constraints(&window, (800, 600), (0, 0))
+            .0,
         (800, 600)
     );
     assert_eq!(state.window_constraints()[&id].min_width, 800.0);
     assert_eq!(state.window_constraints()[&id].min_height, 600.0);
 
-    state.window_rules =
-        crate::config::Config::parse_source("window-rule transient=#false min-width=500 min-height=400\n")
-            .unwrap()
-            .window_rules()
-            .unwrap();
+    state.window_rules = crate::config::Config::parse_source(
+        "window-rule transient=#false min-width=500 min-height=400\n",
+    )
+    .unwrap()
+    .window_rules()
+    .unwrap();
     assert_eq!(
-        state.effective_size_constraints(&window, (800, 600), (0, 0)).0,
+        state
+            .effective_size_constraints(&window, (800, 600), (0, 0))
+            .0,
         (500, 400)
     );
     let constraints = state.window_constraints();
     assert_eq!(constraints[&id].min_width, 500.0);
     assert_eq!(constraints[&id].min_height, 400.0);
 
-    state.window_rules = crate::config::Config::parse_source("window-rule transient=#false min-height=400\n")
-        .unwrap()
-        .window_rules()
-        .unwrap();
+    state.window_rules =
+        crate::config::Config::parse_source("window-rule transient=#false min-height=400\n")
+            .unwrap()
+            .window_rules()
+            .unwrap();
     assert_eq!(
-        state.effective_size_constraints(&window, (800, 600), (0, 0)).0,
+        state
+            .effective_size_constraints(&window, (800, 600), (0, 0))
+            .0,
         (800, 400)
     );
 
     state.window_rules.clear();
     assert_eq!(
-        state.effective_size_constraints(&window, (800, 600), (0, 0)).0,
+        state
+            .effective_size_constraints(&window, (800, 600), (0, 0))
+            .0,
         (800, 600)
     );
 }
@@ -1116,7 +1275,10 @@ fn tree_tabs_join_switch_leave_and_hide_inactive_maximized_windows() {
     let header = bar.rect;
     let content = state.windows.geometry(&b).unwrap().visual.target;
     assert_eq!(content.y, header.y + header.height);
-    let hit = Point::from((header.x + header.width * 0.25, header.y + header.height * 0.5));
+    let hit = Point::from((
+        header.x + header.width * 0.25,
+        header.y + header.height * 0.5,
+    ));
     assert_eq!(state.tab_at(hit), Some(a));
     assert!(state.surface_under(hit).is_none());
     state.cycle_tab(false);
@@ -1170,7 +1332,10 @@ fn scrolling_tabs_switch_with_directional_focus_and_drop_hidden_resize_holds() {
     let position = state.workspaces.active().layout.viewport_x();
     state.windows.set_transaction(
         c,
-        crate::resize_transaction::ResizeTransaction::new(SERIAL_COUNTER.next_serial(), state.presentation_now()),
+        crate::resize_transaction::ResizeTransaction::new(
+            SERIAL_COUNTER.next_serial(),
+            state.presentation_now(),
+        ),
     );
     state.focus_direction(Direction::Up);
     assert_eq!(state.focused_window, Some(b));
@@ -1210,14 +1375,21 @@ fn tab_indicator_hover_switch_and_flash_preserve_window_geometry() {
     let g = state
         .tab_indicator_geometry(&bar, state.presented_window_rect(b).unwrap())
         .unwrap();
-    let point = (g.hit.x + g.hit.width * 0.5, g.rail.y + g.segment_height * 0.5).into();
+    let point = (
+        g.hit.x + g.hit.width * 0.5,
+        g.rail.y + g.segment_height * 0.5,
+    )
+        .into();
     assert_eq!(state.tab_at(point), Some(a));
     assert!(
         state.surface_under(point).is_none(),
         "the rail must not deliver input to the client"
     );
     state.update_tab_indicator_hover(point);
-    assert_eq!(state.tab_indicator.hover.as_ref().unwrap().opacity.current, 1.);
+    assert_eq!(
+        state.tab_indicator.hover.as_ref().unwrap().opacity.current,
+        1.
+    );
     assert_eq!(state.windows.geometry(&b).unwrap().logical, before);
     let g = state
         .tab_indicator_geometry(&bar, state.presented_window_rect(b).unwrap())
@@ -1232,13 +1404,22 @@ fn tab_indicator_hover_switch_and_flash_preserve_window_geometry() {
     assert_eq!(state.tab_at(point), Some(a));
     state.activate_managed_window(a);
     assert_eq!(state.windows.geometry(&a).unwrap().logical, before);
-    assert!(state.tab_indicator.flash.is_none(), "pointer activation does not flash");
+    assert!(
+        state.tab_indicator.flash.is_none(),
+        "pointer activation does not flash"
+    );
     state.update_tab_indicator_hover((799., 599.).into());
-    assert_eq!(state.tab_indicator.hover.as_ref().unwrap().opacity.current, 0.);
+    assert_eq!(
+        state.tab_indicator.hover.as_ref().unwrap().opacity.current,
+        0.
+    );
     state.tab_indicator_settings.flash_duration = Duration::from_millis(1);
     state.cycle_tab(false);
     assert_eq!(state.focused_window, Some(b));
-    assert_eq!(state.tab_indicator.flash.as_ref().unwrap().opacity.current, 1.);
+    assert_eq!(
+        state.tab_indicator.flash.as_ref().unwrap().opacity.current,
+        1.
+    );
     assert_eq!(state.windows.geometry(&b).unwrap().logical, before);
     let deadline = Instant::now() + Duration::from_secs(1);
     while state
@@ -1248,9 +1429,14 @@ fn tab_indicator_hover_switch_and_flash_preserve_window_geometry() {
         .is_some_and(|f| f.opacity.target != 0.)
         && Instant::now() < deadline
     {
-        events.dispatch(Duration::from_millis(5), &mut state).unwrap();
+        events
+            .dispatch(Duration::from_millis(5), &mut state)
+            .unwrap();
     }
-    assert_eq!(state.tab_indicator.flash.as_ref().unwrap().opacity.current, 0.);
+    assert_eq!(
+        state.tab_indicator.flash.as_ref().unwrap().opacity.current,
+        0.
+    );
     state.toggle_column_tabbed();
     assert!(state.tab_indicator.hover.is_none());
     assert!(state.tab_indicator.flash.is_none());
@@ -1369,7 +1555,10 @@ fn transient_fullscreen_exception_follows_parent_changes() {
     let child_id = state.windows.ids()[&child];
     state.set_window_fullscreen(parent_id, true);
     change_transient_parent(&mut state, &child, Some(&parent));
-    assert_eq!(state.floating_above_fullscreen.get(&child_id), Some(&parent_id));
+    assert_eq!(
+        state.floating_above_fullscreen.get(&child_id),
+        Some(&parent_id)
+    );
     change_transient_parent(&mut state, &child, None);
     assert!(
         !state.floating_above_fullscreen.contains_key(&child_id),
@@ -1390,7 +1579,10 @@ fn transient_fullscreen_exception_follows_parent_changes() {
     );
     state.set_window_fullscreen(other_id, true);
     change_transient_parent(&mut state, &child, Some(&other));
-    assert_eq!(state.floating_above_fullscreen.get(&child_id), Some(&other_id));
+    assert_eq!(
+        state.floating_above_fullscreen.get(&child_id),
+        Some(&other_id)
+    );
     state.remove_tiled_window(&other);
     assert!(
         state

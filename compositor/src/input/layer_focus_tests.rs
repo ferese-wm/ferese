@@ -1,6 +1,8 @@
 use super::*;
 use crate::state::ClientState;
-use crate::state::{dispatch_test_client as dispatch, test_client_request as request, test_window as window};
+use crate::state::{
+    dispatch_test_client as dispatch, test_client_request as request, test_window as window,
+};
 use smithay::desktop::{LayerSurface, layer_map_for_output};
 use smithay::output::{Mode, Output, PhysicalProperties, Subpixel};
 use smithay::reexports::calloop::EventLoop;
@@ -11,7 +13,11 @@ use std::os::fd::AsRawFd;
 use std::os::unix::net::UnixStream;
 use std::sync::Arc;
 
-fn layer(state: &mut Ferese, events: &mut EventLoop<'static, Ferese>, output: &Output) -> (LayerSurface, UnixStream) {
+fn layer(
+    state: &mut Ferese,
+    events: &mut EventLoop<'static, Ferese>,
+    output: &Output,
+) -> (LayerSurface, UnixStream) {
     layer_with_policy(state, events, output, 0, 2)
 }
 
@@ -81,7 +87,9 @@ fn layer_with_policy(
         let object = u32::from_ne_bytes(bytes[offset..offset + 4].try_into().unwrap());
         let header = u32::from_ne_bytes(bytes[offset + 4..offset + 8].try_into().unwrap());
         if object == 3 && header & 0xffff == 0 {
-            serial = Some(u32::from_ne_bytes(bytes[offset + 8..offset + 12].try_into().unwrap()));
+            serial = Some(u32::from_ne_bytes(
+                bytes[offset + 8..offset + 12].try_into().unwrap(),
+            ));
         }
         offset += (header >> 16) as usize;
     }
@@ -93,7 +101,8 @@ fn layer_with_policy(
         "acknowledging configure without mapping must not acquire focus"
     );
     let mut file = tempfile::tempfile().unwrap();
-    file.write_all(&0xff112233u32.to_ne_bytes().repeat(64 * 48)).unwrap();
+    file.write_all(&0xff112233u32.to_ne_bytes().repeat(64 * 48))
+        .unwrap();
     request(
         &mut wire,
         shm.id().protocol_id(),
@@ -198,7 +207,11 @@ fn on_demand_layer_focus_follows_opening_and_outside_clicks() {
         },
     );
     state.focus_window_at(outside, SERIAL_COUNTER.next_serial(), true);
-    assert_eq!(keyboard.current_focus(), None, "empty-desktop clicks dismiss the panel");
+    assert_eq!(
+        keyboard.current_focus(),
+        None,
+        "empty-desktop clicks dismiss the panel"
+    );
     request(&mut wire, 2, 6, &[], None);
     dispatch(&mut events, &mut state);
     assert_eq!(
@@ -225,7 +238,9 @@ fn on_demand_layer_focus_follows_opening_and_outside_clicks() {
     let (second, _second_wire) = window(&mut state, &mut events, 0xff334455);
     let first_id = state.windows.ids()[&first];
     assert!(state.activate_managed_window(first_id));
-    let second_bounds = state.presented_window_rect(state.windows.ids()[&second]).unwrap();
+    let second_bounds = state
+        .presented_window_rect(state.windows.ids()[&second])
+        .unwrap();
     let on_window = Point::from((second_bounds.x + 20., second_bounds.y + 20.));
     state.input_settings.focus_follows_mouse = true;
     keyboard.set_focus(
@@ -297,7 +312,12 @@ fn fixture_with_animations(animations: bool) -> (Ferese, EventLoop<'static, Fere
     (state, events, output)
 }
 
-fn commit_policy(state: &mut Ferese, events: &mut EventLoop<'static, Ferese>, wire: &mut UnixStream, keyboard: u32) {
+fn commit_policy(
+    state: &mut Ferese,
+    events: &mut EventLoop<'static, Ferese>,
+    wire: &mut UnixStream,
+    keyboard: u32,
+) {
     request(wire, 3, 4, &[keyboard], None);
     request(wire, 2, 6, &[], None);
     dispatch(events, state);
@@ -345,17 +365,24 @@ fn null_buffer_commit_revokes_layer_focus_without_destroying_role() {
         request(&mut wire, 2, 1, &[0, 0, 0], None); // wl_surface.attach(NULL).
         request(&mut wire, 2, 6, &[], None);
         dispatch(&mut events, &mut state);
-        assert!(panel.layer_surface().alive(), "the layer role survives unmapping");
+        assert!(
+            panel.layer_surface().alive(),
+            "the layer role survives unmapping"
+        );
         assert!(
             state
                 .space
-                .layer_for_surface(panel.wl_surface(), smithay::desktop::WindowSurfaceType::TOPLEVEL)
+                .layer_for_surface(
+                    panel.wl_surface(),
+                    smithay::desktop::WindowSurfaceType::TOPLEVEL
+                )
                 .is_some()
         );
         assert!(
-            smithay::backend::renderer::utils::with_renderer_surface_state(panel.wl_surface(), |s| s
-                .buffer()
-                .is_none())
+            smithay::backend::renderer::utils::with_renderer_surface_state(
+                panel.wl_surface(),
+                |s| s.buffer().is_none()
+            )
             .unwrap()
         );
         assert_eq!(
@@ -392,7 +419,11 @@ fn null_buffer_commit_revokes_layer_focus_without_destroying_role() {
         );
         request(&mut wire, 3, 7, &[], None); // Destroy the role.
         dispatch(&mut events, &mut state);
-        assert_eq!(keyboard.current_focus(), fallback, "destruction restores window focus");
+        assert_eq!(
+            keyboard.current_focus(),
+            fallback,
+            "destruction restores window focus"
+        );
     }
 }
 
@@ -410,7 +441,9 @@ fn ack_latest_configure(wire: &mut UnixStream) {
         let object = u32::from_ne_bytes(bytes[offset..offset + 4].try_into().unwrap());
         let header = u32::from_ne_bytes(bytes[offset + 4..offset + 8].try_into().unwrap());
         if object == 3 && header & 0xffff == 0 {
-            serial = Some(u32::from_ne_bytes(bytes[offset + 8..offset + 12].try_into().unwrap()));
+            serial = Some(u32::from_ne_bytes(
+                bytes[offset + 8..offset + 12].try_into().unwrap(),
+            ));
         }
         offset += (header >> 16) as usize;
     }
@@ -495,7 +528,11 @@ fn layer_mapping_commits_do_not_override_session_lock() {
     request(&mut wire, 2, 6, &[], None);
     dispatch(&mut events, &mut state);
     remap_layer(&mut state, &mut events, &mut wire, 1, 3);
-    assert_eq!(keyboard.current_focus(), None, "layer remapping cannot bypass the lock");
+    assert_eq!(
+        keyboard.current_focus(),
+        None,
+        "layer remapping cannot bypass the lock"
+    );
     request(&mut wire, 3, 7, &[], None);
     dispatch(&mut events, &mut state);
     assert_eq!(
@@ -631,7 +668,11 @@ fn valid_layer_popup_grab_survives_commits_but_not_parent_unmapping() {
         )
         .unwrap();
     let shell = client
-        .create_resource::<XdgWmBase, XdgWmBaseUserData, Ferese>(&state.display_handle, 6, Default::default())
+        .create_resource::<XdgWmBase, XdgWmBaseUserData, Ferese>(
+            &state.display_handle,
+            6,
+            Default::default(),
+        )
         .unwrap();
     request(&mut wire, shell.id().protocol_id(), 1, &[6], None); // Positioner.
     request(&mut wire, 6, 1, &[32, 24], None);
@@ -657,7 +698,12 @@ fn valid_layer_popup_grab_survives_commits_but_not_parent_unmapping() {
     let seat = state.seat.clone();
     let grab = state
         .popups
-        .grab_popup(top.wl_surface().clone(), PopupKind::Xdg(popup.clone()), &seat, serial)
+        .grab_popup(
+            top.wl_surface().clone(),
+            PopupKind::Xdg(popup.clone()),
+            &seat,
+            serial,
+        )
         .unwrap();
     let keyboard = state.seat.get_keyboard().unwrap();
     keyboard.set_grab(&mut state, PopupKeyboardGrab::new(&grab), serial);
@@ -680,7 +726,10 @@ fn valid_layer_popup_grab_survives_commits_but_not_parent_unmapping() {
     request(&mut wire, 2, 1, &[0, 0, 0], None);
     request(&mut wire, 2, 6, &[], None);
     dispatch(&mut events, &mut state);
-    assert!(!keyboard.is_grabbed(), "unmapping revokes the parent popup grab");
+    assert!(
+        !keyboard.is_grabbed(),
+        "unmapping revokes the parent popup grab"
+    );
     assert_ne!(keyboard.current_focus(), popup_focus);
     assert_ne!(keyboard.current_focus(), Some(top.wl_surface().clone()));
 }
@@ -699,8 +748,16 @@ fn fullscreen_layer_eligibility_is_per_output_and_respects_overview() {
     state.set_window_fullscreen(id, true);
     let (top, _top_wire) = layer_with_policy(&mut state, &mut events, &output, 1, 2);
     assert!(!state.layer_keyboard_eligible(&top));
-    assert!(!state.layer_visible_for_frame(&output, smithay::wayland::shell::wlr_layer::Layer::Top, false));
-    assert!(state.layer_visible_for_frame(&output, smithay::wayland::shell::wlr_layer::Layer::Top, true));
+    assert!(!state.layer_visible_for_frame(
+        &output,
+        smithay::wayland::shell::wlr_layer::Layer::Top,
+        false
+    ));
+    assert!(state.layer_visible_for_frame(
+        &output,
+        smithay::wayland::shell::wlr_layer::Layer::Top,
+        true
+    ));
     state.set_overview_active(true);
     assert!(state.layer_keyboard_eligible(&top));
     assert_eq!(
@@ -837,7 +894,11 @@ fn touch_opened_on_demand_layer_does_not_need_pointer_focus() {
         },
     );
     state.focus_window_at(outside, SERIAL_COUNTER.next_serial(), true);
-    assert_eq!(keyboard.current_focus(), None, "empty-desktop clicks dismiss the panel");
+    assert_eq!(
+        keyboard.current_focus(),
+        None,
+        "empty-desktop clicks dismiss the panel"
+    );
     request(&mut wire, 2, 6, &[], None);
     dispatch(&mut events, &mut state);
     assert_eq!(

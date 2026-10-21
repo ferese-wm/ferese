@@ -35,11 +35,16 @@ pub(super) fn hub<'a>(
     let navigation = |label: &'static str, message: Message| {
         crate::motion::button(
             render,
-            cosmic::widget::button::custom(render.text(label).size(11).class(cosmic::theme::Text::Color(primary)))
-                .name(label)
-                .padding([2, 4])
-                .height(22)
-                .on_press(cosmic::Action::App(message)),
+            cosmic::widget::button::custom(
+                render
+                    .text(label)
+                    .size(11)
+                    .class(cosmic::theme::Text::Color(primary)),
+            )
+            .name(label)
+            .padding([2, 4])
+            .height(22)
+            .on_press(cosmic::Action::App(message)),
             primary,
             false,
             opacity,

@@ -77,7 +77,12 @@ impl Style {
     pub const fn detached(self) -> bool {
         matches!(
             self,
-            Self::Floating | Self::Capsules | Self::Fused | Self::Morph | Self::Adaptive | Self::WindowHug
+            Self::Floating
+                | Self::Capsules
+                | Self::Fused
+                | Self::Morph
+                | Self::Adaptive
+                | Self::WindowHug
         )
     }
 }
@@ -129,7 +134,10 @@ pub fn effective_radii(
     index: usize,
     count: usize,
 ) -> Result<CornerRadii, &'static str> {
-    if !size.into_iter().all(|value| value.is_finite() && value >= 0.) {
+    if !size
+        .into_iter()
+        .all(|value| value.is_finite() && value >= 0.)
+    {
         return Err("panel dimensions must be finite and nonnegative");
     }
     if index >= count {
@@ -137,9 +145,12 @@ pub fn effective_radii(
     }
     let [width, height] = size;
     let base = AnchoredRadii(match style {
-        Style::Floating | Style::Capsules | Style::Fused | Style::Morph | Style::Adaptive | Style::WindowHug => {
-            [height / 2.; 4]
-        }
+        Style::Floating
+        | Style::Capsules
+        | Style::Fused
+        | Style::Morph
+        | Style::Adaptive
+        | Style::WindowHug => [height / 2.; 4],
         Style::Notch => match zone {
             ZonePosition::Start => [0., 0., 14., 0.],
             ZonePosition::Center => [0., 0., 20., 20.],
@@ -189,7 +200,12 @@ impl PixelGrid {
         if ![left, top, right, bottom].into_iter().all(f64::is_finite) {
             return Err("surface bounds exceed the physical pixel grid");
         }
-        Ok(Rect::new(left, top, (right - left).max(0.), (bottom - top).max(0.)))
+        Ok(Rect::new(
+            left,
+            top,
+            (right - left).max(0.),
+            (bottom - top).max(0.),
+        ))
     }
 }
 
@@ -266,7 +282,17 @@ mod tests {
         assert_eq!(radius(1, 2).0, [0., 18., 18., 0.]);
         assert_eq!(radius(0, 1).0, [18.; 4]);
         assert_eq!(radius(0, 2).0, [18., 0., 0., 18.]);
-        assert!(effective_radii(Style::Capsules, ZonePosition::Start, Edge::Top, [100., 36.], 0, 0).is_err());
+        assert!(
+            effective_radii(
+                Style::Capsules,
+                ZonePosition::Start,
+                Edge::Top,
+                [100., 36.],
+                0,
+                0
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -288,14 +314,25 @@ mod tests {
 
     #[test]
     fn asymmetric_corners_preserve_notch_shape_and_scale_proportionally() {
-        let notch = effective_radii(Style::Notch, ZonePosition::Center, Edge::Top, [100., 28.], 0, 1).unwrap();
+        let notch = effective_radii(
+            Style::Notch,
+            ZonePosition::Center,
+            Edge::Top,
+            [100., 28.],
+            0,
+            1,
+        )
+        .unwrap();
         assert_eq!(notch.0, [0., 0., 20., 20.]);
         assert_eq!(notch.normalized(30., 28.).0, [0., 0., 15., 15.]);
         assert_eq!(
             CornerRadii([10., 20., 40., 30.]).normalized(35., 25.).0,
             [25. / 6., 25. / 3., 50. / 3., 12.5]
         );
-        assert_eq!(CornerRadii::uniform(f32::MAX).normalized(40., 28.).0, [14.; 4]);
+        assert_eq!(
+            CornerRadii::uniform(f32::MAX).normalized(40., 28.).0,
+            [14.; 4]
+        );
         assert_eq!(notch.normalized(0., 28.).0, [0.; 4]);
     }
 
@@ -317,9 +354,25 @@ mod tests {
     #[test]
     fn floating_gaps_and_round_corners_do_not_capture_input() {
         let grid = PixelGrid::new(1.25).unwrap();
-        let left = RoundedSurface::new(Rect::new(8., 8., 100., 36.), CornerRadii::uniform(18.), grid).unwrap();
-        let right = RoundedSurface::new(Rect::new(116., 8., 100., 36.), CornerRadii::uniform(18.), grid).unwrap();
-        for point in [[0., 0.], [8., 8.], [112., 26.], [216., 26.], [f64::NAN, 26.]] {
+        let left = RoundedSurface::new(
+            Rect::new(8., 8., 100., 36.),
+            CornerRadii::uniform(18.),
+            grid,
+        )
+        .unwrap();
+        let right = RoundedSurface::new(
+            Rect::new(116., 8., 100., 36.),
+            CornerRadii::uniform(18.),
+            grid,
+        )
+        .unwrap();
+        for point in [
+            [0., 0.],
+            [8., 8.],
+            [112., 26.],
+            [216., 26.],
+            [f64::NAN, 26.],
+        ] {
             assert!(!left.contains(point) && !right.contains(point), "{point:?}");
         }
         assert!(left.contains([30., 26.]));
@@ -330,7 +383,12 @@ mod tests {
     fn asymmetric_hit_testing_matches_a_vertically_mirrored_surface() {
         let grid = PixelGrid::new(1.).unwrap();
         let bounds = Rect::new(0., 0., 100., 28.);
-        let top = RoundedSurface::new(bounds, AnchoredRadii([0., 0., 20., 20.]).screen_space(Edge::Top), grid).unwrap();
+        let top = RoundedSurface::new(
+            bounds,
+            AnchoredRadii([0., 0., 20., 20.]).screen_space(Edge::Top),
+            grid,
+        )
+        .unwrap();
         let bottom = RoundedSurface::new(
             bounds,
             AnchoredRadii([0., 0., 20., 20.]).screen_space(Edge::Bottom),
@@ -352,8 +410,18 @@ mod tests {
     #[test]
     fn a_connected_seam_has_exactly_one_input_owner() {
         let grid = PixelGrid::new(1.5).unwrap();
-        let left = RoundedSurface::new(Rect::new(0., 0., 30., 36.), CornerRadii([18., 0., 0., 18.]), grid).unwrap();
-        let right = RoundedSurface::new(Rect::new(30., 0., 40., 36.), CornerRadii([0., 18., 18., 0.]), grid).unwrap();
+        let left = RoundedSurface::new(
+            Rect::new(0., 0., 30., 36.),
+            CornerRadii([18., 0., 0., 18.]),
+            grid,
+        )
+        .unwrap();
+        let right = RoundedSurface::new(
+            Rect::new(30., 0., 40., 36.),
+            CornerRadii([0., 18., 18., 0.]),
+            grid,
+        )
+        .unwrap();
         for y in [0., 18., 35.9] {
             assert!(!left.contains([30., y]));
             assert!(right.contains([30., y]));
@@ -373,7 +441,20 @@ mod tests {
         ] {
             assert!(grid.rect(bounds).is_err());
         }
-        assert!(RoundedSurface::new(Rect::new(0., 0., 10., 28.), CornerRadii::uniform(-1.), grid).is_err());
-        assert!(effective_radii(Style::Floating, ZonePosition::Start, Edge::Top, [100., f32::NAN], 0, 1).is_err());
+        assert!(
+            RoundedSurface::new(Rect::new(0., 0., 10., 28.), CornerRadii::uniform(-1.), grid)
+                .is_err()
+        );
+        assert!(
+            effective_radii(
+                Style::Floating,
+                ZonePosition::Start,
+                Edge::Top,
+                [100., f32::NAN],
+                0,
+                1
+            )
+            .is_err()
+        );
     }
 }

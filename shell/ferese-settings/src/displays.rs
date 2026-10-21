@@ -19,7 +19,12 @@ impl Mode {
     }
 
     pub fn config(self) -> String {
-        format!("{}x{}@{:.3}", self.width, self.height, f64::from(self.refresh) / 1000.)
+        format!(
+            "{}x{}@{:.3}",
+            self.width,
+            self.height,
+            f64::from(self.refresh) / 1000.
+        )
     }
 
     pub fn label(self) -> String {
@@ -131,7 +136,9 @@ pub(super) fn targets(snapshot: &crate::store::Snapshot, displays: &[Display]) -
                 .find(|d| d.connector == matcher || d.identity == matcher);
             targets.push(Target {
                 key: format!("{name}\0{matcher}"),
-                title: live.map(|d| d.connector.clone()).unwrap_or_else(|| matcher.clone()),
+                title: live
+                    .map(|d| d.connector.clone())
+                    .unwrap_or_else(|| matcher.clone()),
                 matcher,
                 profile: Some(name.clone()),
                 prefix: Some(prefix),
@@ -226,7 +233,10 @@ pub(super) fn change_resolution(
     resolution: Resolution,
     automatic: bool,
 ) -> Option<(Mode, bool)> {
-    let modes = choices(display, &format!("{}x{}", resolution.width, resolution.height));
+    let modes = choices(
+        display,
+        &format!("{}x{}", resolution.width, resolution.height),
+    );
     let auto = automatic && modes.iter().any(|m| (59_000..=61_000).contains(&m.refresh));
     let previous = configured
         .split('@')
@@ -327,7 +337,10 @@ mod tests {
             snapshot.edit(&edit).unwrap();
         }
         assert!(!snapshot.boolean(&format!("{prefix}.auto_refresh"), true));
-        assert_eq!(snapshot.string(&format!("{prefix}.mode"), ""), "2880x1800@60.000");
+        assert_eq!(
+            snapshot.string(&format!("{prefix}.mode"), ""),
+            "2880x1800@60.000"
+        );
         assert_eq!(snapshot.number(&format!("{prefix}.scale"), 1.), 1.75);
         for edit in edits(
             prefix,
@@ -341,14 +354,19 @@ mod tests {
             snapshot.edit(&edit).unwrap();
         }
         assert!(snapshot.boolean(&format!("{prefix}.auto_refresh"), false));
-        assert_eq!(snapshot.string(&format!("{prefix}.mode"), ""), "2880x1800@120.000");
+        assert_eq!(
+            snapshot.string(&format!("{prefix}.mode"), ""),
+            "2880x1800@120.000"
+        );
     }
 
     #[test]
     fn selected_display_prefers_active_profile_and_survives_profile_reordering() {
-        let snapshot =
-            Snapshot::parse("output-profile dock { output HDMI-A-1; }; output-profile laptop { output eDP-1; }".into())
-                .unwrap();
+        let snapshot = Snapshot::parse(
+            "output-profile dock { output HDMI-A-1; }; output-profile laptop { output eDP-1; }"
+                .into(),
+        )
+        .unwrap();
         let live = vec![Display {
             connector: "eDP-1".into(),
             identity: "panel".into(),
@@ -359,13 +377,18 @@ mod tests {
             modes: vec![],
         }];
         let values = targets(&snapshot, &live);
-        assert_eq!(selected(&values, None).unwrap().profile.as_deref(), Some("laptop"));
+        assert_eq!(
+            selected(&values, None).unwrap().profile.as_deref(),
+            Some("laptop")
+        );
         let dock = selected(&values, Some("dock\0HDMI-A-1")).unwrap();
         assert!(!dock.connected);
         let key = dock.key.clone();
-        let reordered =
-            Snapshot::parse("output-profile laptop { output eDP-1; }; output-profile dock { output HDMI-A-1; }".into())
-                .unwrap();
+        let reordered = Snapshot::parse(
+            "output-profile laptop { output eDP-1; }; output-profile dock { output HDMI-A-1; }"
+                .into(),
+        )
+        .unwrap();
         let values = targets(&reordered, &live);
         assert_eq!(
             selected(&values, Some(&key)).unwrap().prefix.as_deref(),
@@ -392,7 +415,11 @@ mod tests {
 
     #[test]
     fn resolution_changes_preserve_refresh_and_only_keep_valid_auto_policy() {
-        let mode = |width, height, refresh| Mode { width, height, refresh };
+        let mode = |width, height, refresh| Mode {
+            width,
+            height,
+            refresh,
+        };
         let display = Display {
             connector: "eDP-1".into(),
             identity: "panel".into(),
@@ -427,6 +454,17 @@ mod tests {
             change_resolution(&display, "2880x1800@120", other, true),
             Some((mode(2560, 1440, 90000), false))
         );
-        assert!(change_resolution(&display, "", Resolution { width: 1, height: 1 }, true).is_none());
+        assert!(
+            change_resolution(
+                &display,
+                "",
+                Resolution {
+                    width: 1,
+                    height: 1
+                },
+                true
+            )
+            .is_none()
+        );
     }
 }

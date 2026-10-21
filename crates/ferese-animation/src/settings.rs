@@ -117,7 +117,16 @@ mod tests {
 
     #[test]
     fn speed_validation_rejects_extremes_and_accepts_safe_boundaries() {
-        for speed in [f64::NAN, f64::INFINITY, 0.0, -1.0, 1e-100, 1e100, 0.009, 101.0] {
+        for speed in [
+            f64::NAN,
+            f64::INFINITY,
+            0.0,
+            -1.0,
+            1e-100,
+            1e100,
+            0.009,
+            101.0,
+        ] {
             let settings = MotionSettings {
                 speed,
                 ..Default::default()
@@ -164,7 +173,10 @@ mod tests {
             .unwrap();
             assert!((spring.stiffness - 157.913670417).abs() < 1e-8);
             assert!((spring.damping / (2.0 * spring.stiffness.sqrt()) - ratio).abs() < 1e-10);
-            assert!((std::f64::consts::TAU * (spring.mass / spring.stiffness).sqrt() - 0.5).abs() < 1e-10);
+            assert!(
+                (std::f64::consts::TAU * (spring.mass / spring.stiffness).sqrt() - 0.5).abs()
+                    < 1e-10
+            );
         }
     }
 

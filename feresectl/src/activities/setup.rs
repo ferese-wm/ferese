@@ -8,7 +8,10 @@ fn prepare(source: &str) -> Result<String, Box<dyn Error>> {
         return Ok(source.into());
     }
     if doc.get("panels").is_none() {
-        doc.set("panels", serde_json::to_value(vec![panel::Panel::default()])?)?;
+        doc.set(
+            "panels",
+            serde_json::to_value(vec![panel::Panel::default()])?,
+        )?;
     }
     let panels: Vec<panel::Panel> = serde_json::from_value(doc.get("panels").unwrap().clone())?;
     panel::validate(&panels)?;
@@ -25,7 +28,11 @@ fn prepare(source: &str) -> Result<String, Box<dyn Error>> {
             continue;
         }
         let mut id = "activities".to_string();
-        while groups.iter().flat_map(|group| &group.items).any(|item| item.id.0 == id) {
+        while groups
+            .iter()
+            .flat_map(|group| &group.items)
+            .any(|item| item.id.0 == id)
+        {
             id.push('-');
         }
         let item = serde_json::to_value(panel::Item::new(&id, panel::ItemKind::Activities))?;
@@ -43,7 +50,10 @@ fn prepare(source: &str) -> Result<String, Box<dyn Error>> {
         } else {
             doc.add(
                 &format!("panels.{index}.end.groups"),
-                vec![("id".into(), json!("activities")), ("items".into(), json!([item]))],
+                vec![
+                    ("id".into(), json!("activities")),
+                    ("items".into(), json!([item])),
+                ],
             )?;
         }
     }
@@ -64,7 +74,10 @@ pub fn configure(path: &Path) -> Result<(), Box<dyn Error>> {
         ferese_ipc::activities::now_ms()
     ));
     file.replace(&desired, Some(&backup), |_| Ok(()))?;
-    println!("Configured Live Activities; previous config: {}", backup.display());
+    println!(
+        "Configured Live Activities; previous config: {}",
+        backup.display()
+    );
     Ok(())
 }
 
@@ -73,20 +86,29 @@ mod tests {
     use super::*;
     #[test]
     fn setup_preserves_layout_comments_rules_and_explicit_disable() {
-        let source =
-            "// keep my layout\npanel main { style morph; end { group tools { item activities kind=clock; }; }; }\n";
+        let source = "// keep my layout\npanel main { style morph; end { group tools { item activities kind=clock; }; }; }\n";
         let next = prepare(source).unwrap();
         assert!(next.contains("// keep my layout"));
         let doc = Document::parse(&next).unwrap();
         assert_eq!(doc.get("panels.0.style"), Some(&json!("morph")));
-        assert_eq!(doc.get("panels.0.end.groups.0.items.0.kind"), Some(&json!("clock")));
-        assert_eq!(doc.get("panels.0.end.groups.0.items.1.id"), Some(&json!("activities-")));
+        assert_eq!(
+            doc.get("panels.0.end.groups.0.items.0.kind"),
+            Some(&json!("clock"))
+        );
+        assert_eq!(
+            doc.get("panels.0.end.groups.0.items.1.id"),
+            Some(&json!("activities-"))
+        );
         assert_eq!(prepare(&next).unwrap(), next);
         let disabled = "activities { sources { shell-hook #false; }; }\n";
         assert_eq!(prepare(disabled).unwrap(), disabled);
-        let hidden = "panel main { end { group tools { item tasks kind=activities visible=#false; }; }; }\n";
+        let hidden =
+            "panel main { end { group tools { item tasks kind=activities visible=#false; }; }; }\n";
         let hidden = Document::parse(&prepare(hidden).unwrap()).unwrap();
-        assert_eq!(hidden.get("panels.0.end.groups.0.items.0.visible"), Some(&json!(false)));
+        assert_eq!(
+            hidden.get("panels.0.end.groups.0.items.0.visible"),
+            Some(&json!(false))
+        );
         assert_eq!(
             hidden
                 .get("panels.0.end.groups.0.items")
@@ -97,9 +119,13 @@ mod tests {
             1
         );
         assert!(prepare("").is_ok());
-        let partial = Document::parse(&prepare("activities { max-visible 1; }\n").unwrap()).unwrap();
+        let partial =
+            Document::parse(&prepare("activities { max-visible 1; }\n").unwrap()).unwrap();
         assert_eq!(partial.get("activities.max_visible"), Some(&json!(1)));
-        assert_eq!(partial.get("activities.sources.shell_hook"), Some(&json!(true)));
+        assert_eq!(
+            partial.get("activities.sources.shell_hook"),
+            Some(&json!(true))
+        );
         assert!(prepare("activities { unknown 1; }").is_err());
     }
 
@@ -113,12 +139,22 @@ mod tests {
         let backups: Vec<_> = std::fs::read_dir(directory.path())
             .unwrap()
             .flatten()
-            .filter(|file| file.file_name().to_string_lossy().contains(".before-activities-"))
+            .filter(|file| {
+                file.file_name()
+                    .to_string_lossy()
+                    .contains(".before-activities-")
+            })
             .collect();
         assert_eq!(backups.len(), 1);
-        assert_eq!(std::fs::read_to_string(backups[0].path()).unwrap(), "// original\n");
+        assert_eq!(
+            std::fs::read_to_string(backups[0].path()).unwrap(),
+            "// original\n"
+        );
         std::fs::write(&path, "activities { bad #true; }\n").unwrap();
         assert!(configure(&path).is_err());
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), "activities { bad #true; }\n");
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "activities { bad #true; }\n"
+        );
     }
 }

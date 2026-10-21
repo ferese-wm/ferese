@@ -22,7 +22,10 @@ pub struct Snapshot {
 
 impl Snapshot {
     /// Decode older messages with the caller's catalog. Explicit empty catalogs stay empty.
-    pub fn decode(mut value: Value, fallback_families: impl FnOnce() -> Vec<Family>) -> Result<Self, String> {
+    pub fn decode(
+        mut value: Value,
+        fallback_families: impl FnOnce() -> Vec<Family>,
+    ) -> Result<Self, String> {
         if let Some(object) = value.as_object_mut()
             && !object.contains_key("families")
         {
@@ -40,7 +43,10 @@ impl Snapshot {
 }
 
 impl Connection {
-    pub fn get(&mut self, fallback_families: impl FnOnce() -> Vec<Family>) -> Result<Snapshot, String> {
+    pub fn get(
+        &mut self,
+        fallback_families: impl FnOnce() -> Vec<Family>,
+    ) -> Result<Snapshot, String> {
         Snapshot::decode(self.call("theme-get", json!({}))?, fallback_families)
     }
 
@@ -49,6 +55,9 @@ impl Connection {
         revision: u64,
         fallback_families: impl FnOnce() -> Vec<Family>,
     ) -> Result<Snapshot, String> {
-        Snapshot::decode(self.wait("theme-watch", json!({"since": revision}))?, fallback_families)
+        Snapshot::decode(
+            self.wait("theme-watch", json!({"since": revision}))?,
+            fallback_families,
+        )
     }
 }

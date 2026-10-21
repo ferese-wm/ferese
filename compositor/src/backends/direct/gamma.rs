@@ -24,8 +24,14 @@ struct Transition {
 // A single owner determines both the desired ramp and who loses control on failure.
 enum Source {
     Original,
-    Client { control: ZwlrGammaControlV1, ramp: Ramp },
-    NightLight { temperature: u16, ramp: Ramp },
+    Client {
+        control: ZwlrGammaControlV1,
+        ramp: Ramp,
+    },
+    NightLight {
+        temperature: u16,
+        ramp: Ramp,
+    },
 }
 
 #[derive(Default)]
@@ -136,7 +142,8 @@ impl Gamma {
 
     fn configure(&mut self, settings: Settings, duration: Duration, now: Instant) {
         if settings.enabled {
-            if matches!(self.source, Source::NightLight { temperature, .. } if temperature == settings.temperature) {
+            if matches!(self.source, Source::NightLight { temperature, .. } if temperature == settings.temperature)
+            {
                 return;
             }
             self.replace_source(Source::NightLight {
@@ -152,11 +159,14 @@ impl Gamma {
             Source::Original => &self.original,
             Source::NightLight { ramp, .. } | Source::Client { ramp, .. } => ramp,
         };
-        self.transition = (!duration.is_zero() && !self.suspended && self.current != *target).then(|| Transition {
-            from: self.current.clone(),
-            started: now,
-            duration,
-        });
+        self.transition =
+            (!duration.is_zero() && !self.suspended && self.current != *target).then(|| {
+                Transition {
+                    from: self.current.clone(),
+                    started: now,
+                    duration,
+                }
+            });
     }
 
     fn owns(&self, owner: &ZwlrGammaControlV1) -> bool {
@@ -181,8 +191,10 @@ impl Gamma {
         };
         let animated;
         let ramp = if let Some(transition) = &self.transition {
-            let progress =
-                now.saturating_duration_since(transition.started).as_secs_f64() / transition.duration.as_secs_f64();
+            let progress = now
+                .saturating_duration_since(transition.started)
+                .as_secs_f64()
+                / transition.duration.as_secs_f64();
             if progress >= 1. {
                 self.transition = None;
                 ramp
@@ -222,15 +234,26 @@ impl Drop for Gamma {
     }
 }
 
-pub(crate) fn acquire(state: &mut Ferese, target: &Output, owner: &ZwlrGammaControlV1) -> Option<usize> {
+pub(crate) fn acquire(
+    state: &mut Ferese,
+    target: &Output,
+    owner: &ZwlrGammaControlV1,
+) -> Option<usize> {
     // Reconcile a just-reloaded configuration before assigning ownership.
     sync_night_light(state);
     if state.night_light.enabled {
         return None;
     }
     let duration = state.animation_duration(TRANSITION_DURATION);
-    let backend = state.direct_backend.as_mut().filter(|backend| backend.active)?;
-    for device in backend.devices.values_mut().filter(|device| device.drm.is_active()) {
+    let backend = state
+        .direct_backend
+        .as_mut()
+        .filter(|backend| backend.active)?;
+    for device in backend
+        .devices
+        .values_mut()
+        .filter(|device| device.drm.is_active())
+    {
         for (crtc, output) in &mut device.outputs {
             if &output.output != target || output.global.is_none() {
                 continue;
@@ -255,28 +278,41 @@ pub(crate) fn sync_night_light(state: &mut Ferese) {
     if !state.gamma_dirty {
         return;
     }
-    if !state.direct_backend.as_ref().is_some_and(|backend| backend.active) {
+    if !state
+        .direct_backend
+        .as_ref()
+        .is_some_and(|backend| backend.active)
+    {
         return;
     }
     state.gamma_dirty = false;
     if advance_night_light(state, true) && !state.gamma_timer_pending {
-        let result = state
-            .loop_handle
-            .insert_source(Timer::from_duration(TRANSITION_INTERVAL), |_, _, state| {
+        let result = state.loop_handle.insert_source(
+            Timer::from_duration(TRANSITION_INTERVAL),
+            |_, _, state| {
                 if advance_night_light(state, false) {
                     TimeoutAction::ToDuration(TRANSITION_INTERVAL)
                 } else {
                     state.gamma_timer_pending = false;
                     TimeoutAction::Drop
                 }
-            });
+            },
+        );
         match result {
             Ok(_) => state.gamma_timer_pending = true,
             Err(error) => {
                 tracing::warn!(%error, "could not schedule night-light transition");
                 if let Some(backend) = &mut state.direct_backend {
-                    for device in backend.devices.values_mut().filter(|device| device.drm.is_active()) {
-                        for output in device.outputs.values_mut().filter(|output| !output.power.needs_wake()) {
+                    for device in backend
+                        .devices
+                        .values_mut()
+                        .filter(|device| device.drm.is_active())
+                    {
+                        for output in device
+                            .outputs
+                            .values_mut()
+                            .filter(|output| !output.power.needs_wake())
+                        {
                             if let Some(gamma) = output.gamma.controller_mut() {
                                 gamma.transition = None;
                                 gamma.resume(Instant::now());
@@ -292,11 +328,19 @@ pub(crate) fn sync_night_light(state: &mut Ferese) {
 fn advance_night_light(state: &mut Ferese, force: bool) -> bool {
     let duration = state.animation_duration(TRANSITION_DURATION);
     let now = Instant::now();
-    let Some(backend) = state.direct_backend.as_mut().filter(|backend| backend.active) else {
+    let Some(backend) = state
+        .direct_backend
+        .as_mut()
+        .filter(|backend| backend.active)
+    else {
         return false;
     };
     let mut pending = false;
-    for device in backend.devices.values_mut().filter(|device| device.drm.is_active()) {
+    for device in backend
+        .devices
+        .values_mut()
+        .filter(|device| device.drm.is_active())
+    {
         for (crtc, output) in &mut device.outputs {
             let ready = !output.power.needs_wake();
             let gamma = if ready {
@@ -346,7 +390,11 @@ pub(crate) fn night_light_status(state: &Ferese) -> Status {
     status
 }
 
-fn owned<'a>(state: &'a mut Ferese, target: &Output, owner: &ZwlrGammaControlV1) -> Option<(&'a mut Gamma, bool)> {
+fn owned<'a>(
+    state: &'a mut Ferese,
+    target: &Output,
+    owner: &ZwlrGammaControlV1,
+) -> Option<(&'a mut Gamma, bool)> {
     let duration = state.animation_duration(TRANSITION_DURATION);
     let backend = state.direct_backend.as_mut()?;
     for device in backend.devices.values_mut() {
@@ -362,7 +410,11 @@ fn owned<'a>(state: &'a mut Ferese, target: &Output, owner: &ZwlrGammaControlV1)
     None
 }
 
-pub(crate) fn size(state: &mut Ferese, target: &Output, owner: &ZwlrGammaControlV1) -> Option<usize> {
+pub(crate) fn size(
+    state: &mut Ferese,
+    target: &Output,
+    owner: &ZwlrGammaControlV1,
+) -> Option<usize> {
     owned(state, target, owner).map(|(gamma, _)| gamma.original.size())
 }
 

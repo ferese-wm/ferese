@@ -69,7 +69,9 @@ impl Engine {
             return Err("Pomodoro session changed; refresh its controls".into());
         }
         let now = ferese_ipc::activities::now_ms();
-        if !matches!(request.action, PomodoroAction::Stop | PomodoroAction::Reset) && self.advance_pomodoro(now) {
+        if !matches!(request.action, PomodoroAction::Stop | PomodoroAction::Reset)
+            && self.advance_pomodoro(now)
+        {
             self.changed();
         }
         match request.action {
@@ -85,8 +87,8 @@ impl Engine {
                 }
                 let session = Session::start(self.pomodoro_settings.clone(), now)?;
                 // Verify the long-lived host, never the short-lived CLI, as owner.
-                let (owner, _pidfd, _) =
-                    crate::ipc::activity_owner::inspect(std::process::id()).map_err(|error| error.to_string())?;
+                let (owner, _pidfd, _) = crate::ipc::activity_owner::inspect(std::process::id())
+                    .map_err(|error| error.to_string())?;
                 let id = Id {
                     owner,
                     local: "pomodoro".into(),
@@ -104,7 +106,10 @@ impl Engine {
                 self.pomodoro = None;
             }
             action => {
-                let timer = self.pomodoro.as_mut().ok_or("No Pomodoro session; start one first")?;
+                let timer = self
+                    .pomodoro
+                    .as_mut()
+                    .ok_or("No Pomodoro session; start one first")?;
                 match action {
                     PomodoroAction::Pause => timer.session.pause(now)?,
                     PomodoroAction::Resume => timer.session.resume(now)?,
@@ -182,14 +187,24 @@ impl Alerts {
                     let connection = zbus::blocking::connection::Builder::session()?
                         .method_timeout(Duration::from_secs(2))
                         .build()?;
-                    let mut hints = std::collections::HashMap::<&str, zbus::zvariant::Value<'_>>::new();
+                    let mut hints =
+                        std::collections::HashMap::<&str, zbus::zvariant::Value<'_>>::new();
                     hints.insert("suppress-sound", zbus::zvariant::Value::Bool(true));
                     let reply = connection.call_method(
                         Some("org.freedesktop.Notifications"),
                         "/org/freedesktop/Notifications",
                         Some("org.freedesktop.Notifications"),
                         "Notify",
-                        &("Ferese", 0_u32, "", title, body, Vec::<String>::new(), hints, -1_i32),
+                        &(
+                            "Ferese",
+                            0_u32,
+                            "",
+                            title,
+                            body,
+                            Vec::<String>::new(),
+                            hints,
+                            -1_i32,
+                        ),
                     )?;
                     let _: u32 = reply.body().deserialize()?;
                     Ok(())
@@ -218,8 +233,7 @@ mod tests {
     }
     #[test]
     fn completion_uses_the_standard_notification_service_without_sound() {
-        const TEST: &str =
-            "activities::pomodoro::tests::completion_uses_the_standard_notification_service_without_sound";
+        const TEST: &str = "activities::pomodoro::tests::completion_uses_the_standard_notification_service_without_sound";
         if !crate::startup_tests::private_runtime(TEST) {
             return;
         }
@@ -296,7 +310,10 @@ mod tests {
         assert_eq!(first.id.owner.pid, std::process::id());
         assert!(control(&mut engine, PomodoroAction::Start).is_err());
         engine.remove_connection(10);
-        engine.owner_exit(Owner { pid: 999_999, birth: 0 });
+        engine.owner_exit(Owner {
+            pid: 999_999,
+            birth: 0,
+        });
         assert_eq!(engine.snapshot().pomodoro.as_ref().unwrap().id, first.id);
         assert_eq!(engine.snapshot().activities.len(), 1);
         control(&mut engine, PomodoroAction::Reset).unwrap();
@@ -355,7 +372,10 @@ mod tests {
         engine.pomodoro_remove_output("test", None);
         assert!(engine.pomodoro_attach_output("new"));
         engine.changed();
-        assert_eq!(engine.snapshot().activities[0].data.output.as_deref(), Some("new"));
+        assert_eq!(
+            engine.snapshot().activities[0].data.output.as_deref(),
+            Some("new")
+        );
     }
     #[test]
     fn disabled_alerts_and_schema_errors_have_no_side_effects() {

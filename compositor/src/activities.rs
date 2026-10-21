@@ -48,10 +48,13 @@ impl Default for Engine {
             pomodoro: None,
             pomodoro_settings: Default::default(),
             alerts: None,
-            store: Store::new(ferese_ipc::activities::now_ms() ^ u64::from(std::process::id()) << 32),
+            store: Store::new(
+                ferese_ipc::activities::now_ms() ^ u64::from(std::process::id()) << 32,
+            ),
             rules: Arc::new(RwLock::new(Arc::new(Rules {
                 enabled: false,
-                matcher: ferese_config::activities::Matcher::new(&settings).expect("built-in rules"),
+                matcher: ferese_config::activities::Matcher::new(&settings)
+                    .expect("built-in rules"),
             }))),
             monitor: None,
             process_enabled: false,
@@ -141,7 +144,9 @@ impl Engine {
         {
             match crate::activities_process::Watcher::start(self.rules.clone(), sender.clone()) {
                 Ok(watcher) => self.process_watcher = Some(watcher),
-                Err(error) => tracing::warn!(%error, "could not start optional activity process source"),
+                Err(error) => {
+                    tracing::warn!(%error, "could not start optional activity process source")
+                }
             }
         }
     }
@@ -160,17 +165,22 @@ impl Engine {
                 .cloned()
                 .chain(self.pomodoro.iter().map(|timer| timer.activity()))
                 .collect(),
-            pomodoro: self.pomodoro.as_ref().map(|timer| ferese_ipc::activities::Pomodoro {
-                id: timer.id.clone(),
-                timer: timer.session.clone(),
-            }),
+            pomodoro: self
+                .pomodoro
+                .as_ref()
+                .map(|timer| ferese_ipc::activities::Pomodoro {
+                    id: timer.id.clone(),
+                    timer: timer.session.clone(),
+                }),
             windows: self
                 .windows
                 .iter()
-                .map(|(activity, window)| ferese_ipc::activities::ActivityWindow {
-                    activity: activity.clone(),
-                    window: *window,
-                })
+                .map(
+                    |(activity, window)| ferese_ipc::activities::ActivityWindow {
+                        activity: activity.clone(),
+                        window: *window,
+                    },
+                )
                 .collect(),
         });
         self.cached_snapshot = Some(snapshot.clone());
@@ -206,7 +216,13 @@ impl Engine {
     pub fn get(&mut self, request: u64, sender: SyncSender<Response>) {
         self.deliver(vec![(request, sender)]);
     }
-    pub fn watch(&mut self, connection: u64, request: u64, since: u64, sender: SyncSender<Response>) {
+    pub fn watch(
+        &mut self,
+        connection: u64,
+        request: u64,
+        since: u64,
+        sender: SyncSender<Response>,
+    ) {
         if self.locked || since != self.revision {
             self.get(request, sender);
         } else if self.watchers.len() < 32 {
@@ -258,7 +274,11 @@ impl Engine {
                 self.store
                     .next_deadline(now)
                     .into_iter()
-                    .chain(self.pomodoro.as_ref().and_then(|timer| timer.session.deadline))
+                    .chain(
+                        self.pomodoro
+                            .as_ref()
+                            .and_then(|timer| timer.session.deadline),
+                    )
                     .min(),
             ) {
                 tracing::error!(%error, "Activity deadline could not be armed");
@@ -307,16 +327,17 @@ impl Engine {
         window: Option<u64>,
     ) -> Result<serde_json::Value, &'static str> {
         let started = match &publish {
-            Publish::Start { local, .. } | Publish::Run { local, .. } | Publish::Hook { local, .. } => {
-                Some(local.clone())
-            }
+            Publish::Start { local, .. }
+            | Publish::Run { local, .. }
+            | Publish::Hook { local, .. } => Some(local.clone()),
             _ => None,
         };
         let now = ferese_ipc::activities::now_ms();
         if matches!(publish, Publish::Hook { .. }) && matched.is_none() {
             return Ok(json!({"matched":false}));
         }
-        self.rates.retain(|_, (at, _)| now.saturating_sub(*at) < 60_000);
+        self.rates
+            .retain(|_, (at, _)| now.saturating_sub(*at) < 60_000);
         if self.rates.len() >= 128 && !self.rates.contains_key(&owner) {
             return Err("owner publication quota exceeded");
         }
@@ -392,7 +413,9 @@ impl Engine {
                         value: Value::Indeterminate,
                         template: Template::Progress,
                     };
-                    let id = self.store.start(owner, local, data, now, 0, None, true, true, None)?;
+                    let id = self
+                        .store
+                        .start(owner, local, data, now, 0, None, true, true, None)?;
                     json!({"handle":id,"progress":"indeterminate"})
                 }
             }
@@ -486,7 +509,10 @@ impl Engine {
 }
 
 impl crate::Ferese {
-    pub(crate) fn activity_window(&self, owner: &crate::ipc::activity_owner::VerifiedOwner) -> Option<u64> {
+    pub(crate) fn activity_window(
+        &self,
+        owner: &crate::ipc::activity_owner::VerifiedOwner,
+    ) -> Option<u64> {
         use smithay::reexports::wayland_server::Resource;
         let mut ancestors = owner.ancestor_pids().peekable();
         ancestors.peek()?;
@@ -495,7 +521,8 @@ impl crate::Ferese {
             .records()
             .filter_map(|(id, record)| {
                 let client = record.surface.as_ref()?.client()?;
-                let pid = u32::try_from(client.get_credentials(&self.display_handle).ok()?.pid).ok()?;
+                let pid =
+                    u32::try_from(client.get_credentials(&self.display_handle).ok()?.pid).ok()?;
                 Some((pid, id.0))
             })
             .collect();
@@ -546,15 +573,27 @@ mod tests {
         for since in [revision, engine.revision] {
             let (send, receive) = std::sync::mpsc::sync_channel(1);
             engine.watch(2, 43, since, send);
-            assert_eq!(receive.recv().unwrap().error.unwrap().code, "session_locked");
+            assert_eq!(
+                receive.recv().unwrap().error.unwrap().code,
+                "session_locked"
+            );
         }
         let (send, receive) = std::sync::mpsc::sync_channel(1);
         engine.get(44, send);
-        assert_eq!(receive.recv().unwrap().error.unwrap().code, "session_locked");
+        assert_eq!(
+            receive.recv().unwrap().error.unwrap().code,
+            "session_locked"
+        );
         engine.set_locked(false);
         let (send, receive) = std::sync::mpsc::sync_channel(1);
         engine.watch(3, 45, revision, send);
-        assert!(receive.recv_timeout(Duration::from_secs(2)).unwrap().result.is_some());
+        assert!(
+            receive
+                .recv_timeout(Duration::from_secs(2))
+                .unwrap()
+                .result
+                .is_some()
+        );
     }
 
     #[test]
@@ -605,7 +644,10 @@ mod tests {
     fn snapshots_are_lazy_shared_and_immutable_across_publications() {
         let mut engine = Engine::default();
         engine.changed();
-        assert!(engine.cached_snapshot.is_none(), "no subscriber needs a snapshot");
+        assert!(
+            engine.cached_snapshot.is_none(),
+            "no subscriber needs a snapshot"
+        );
         let before = engine.snapshot();
         assert!(Arc::ptr_eq(&before, &engine.snapshot()));
         let (first, first_reply) = std::sync::mpsc::sync_channel(1);
@@ -637,13 +679,19 @@ mod tests {
         }
         let (sender, receiver) = std::sync::mpsc::sync_channel(1);
         engine.watch(3, 33, before.revision, sender);
-        assert_eq!(receiver.recv_timeout(Duration::from_secs(2)).unwrap().id, 33);
+        assert_eq!(
+            receiver.recv_timeout(Duration::from_secs(2)).unwrap().id,
+            33
+        );
         assert!(Arc::ptr_eq(&after, &engine.snapshot()));
     }
 
     #[test]
     fn process_that_exits_before_detection_dispatch_is_not_published() {
-        let mut child = std::process::Command::new("sleep").arg("30").spawn().unwrap();
+        let mut child = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .unwrap();
         let (owner, fd, _) = crate::ipc::activity_owner::inspect(child.id()).unwrap();
         let matched = ferese_config::activities::Matcher::new(&Default::default())
             .unwrap()
@@ -681,7 +729,10 @@ mod tests {
     #[test]
     fn terminal_matching_uses_nearest_unique_ancestor_and_never_guesses() {
         let ancestry = [400, 300, 200, 100];
-        assert_eq!(origin_window(ancestry.into_iter(), &[(200, 7), (100, 8)]), Some(7));
+        assert_eq!(
+            origin_window(ancestry.into_iter(), &[(200, 7), (100, 8)]),
+            Some(7)
+        );
         assert_eq!(
             origin_window(ancestry.into_iter(), &[(200, 7), (200, 9), (100, 8)]),
             None
@@ -739,7 +790,9 @@ mod tests {
             .unwrap();
         engine.owner_exit(owner());
         assert_eq!(engine.snapshot().windows[0].activity, id);
-        engine.store.advance(ferese_ipc::activities::now_ms() + 2_000);
+        engine
+            .store
+            .advance(ferese_ipc::activities::now_ms() + 2_000);
         engine.changed();
         assert!(engine.snapshot().windows.is_empty());
     }
@@ -776,7 +829,14 @@ mod tests {
             );
         }
         assert_eq!(
-            engine.store.entries().next().unwrap().data.output.as_deref(),
+            engine
+                .store
+                .entries()
+                .next()
+                .unwrap()
+                .data
+                .output
+                .as_deref(),
             Some("first")
         );
         engine

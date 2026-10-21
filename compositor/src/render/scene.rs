@@ -10,7 +10,10 @@ pub(crate) fn animated_window_elements(
     output_elements(state, renderer, output, true)
 }
 
-pub(crate) fn frame_effect_metrics(_elements: &[AnimatedWindowRenderElement], _scale: f64) -> FrameEffectMetrics {
+pub(crate) fn frame_effect_metrics(
+    _elements: &[AnimatedWindowRenderElement],
+    _scale: f64,
+) -> FrameEffectMetrics {
     FrameEffectMetrics
 }
 
@@ -69,9 +72,16 @@ fn scene_elements(
         } else {
             Vec::new()
         };
-        let background = state.session_lock.backgrounds.entry(output.clone()).or_insert_with(|| {
-            smithay::backend::renderer::element::solid::SolidColorBuffer::new(geometry.size, [0.0, 0.0, 0.0, 1.0])
-        });
+        let background = state
+            .session_lock
+            .backgrounds
+            .entry(output.clone())
+            .or_insert_with(|| {
+                smithay::backend::renderer::element::solid::SolidColorBuffer::new(
+                    geometry.size,
+                    [0.0, 0.0, 0.0, 1.0],
+                )
+            });
         background.resize(geometry.size);
         let opacity = state.session_lock.idle_opacity;
         if opacity > 0.0 {
@@ -87,8 +97,14 @@ fn scene_elements(
                 });
             overlay.resize(geometry.size);
             elements.push(
-                SolidColorRenderElement::from_buffer(overlay, (0, 0), scale, opacity, RenderElementKind::Unspecified)
-                    .into(),
+                SolidColorRenderElement::from_buffer(
+                    overlay,
+                    (0, 0),
+                    scale,
+                    opacity,
+                    RenderElementKind::Unspecified,
+                )
+                .into(),
             );
         }
         if let Some(surface) = state
@@ -98,7 +114,10 @@ fn scene_elements(
             .filter(|surface| surface.alive())
         {
             elements.extend(
-                render_elements_from_surface_tree::<GlesRenderer, WaylandSurfaceRenderElement<GlesRenderer>>(
+                render_elements_from_surface_tree::<
+                    GlesRenderer,
+                    WaylandSurfaceRenderElement<GlesRenderer>,
+                >(
                     renderer,
                     surface.wl_surface(),
                     (0, 0),
@@ -111,7 +130,14 @@ fn scene_elements(
             );
         }
         elements.push(
-            SolidColorRenderElement::from_buffer(background, (0, 0), scale, 1.0, RenderElementKind::Unspecified).into(),
+            SolidColorRenderElement::from_buffer(
+                background,
+                (0, 0),
+                scale,
+                1.0,
+                RenderElementKind::Unspecified,
+            )
+            .into(),
         );
         return elements;
     }
@@ -126,11 +152,12 @@ fn scene_elements(
     } else {
         Vec::new()
     };
-    let upper_layers: &[Layer] = if !state.layer_visible_for_frame(output, Layer::Top, frame.overview.is_presenting()) {
-        &[Layer::Overlay]
-    } else {
-        &[Layer::Overlay, Layer::Top]
-    };
+    let upper_layers: &[Layer] =
+        if !state.layer_visible_for_frame(output, Layer::Top, frame.overview.is_presenting()) {
+            &[Layer::Overlay]
+        } else {
+            &[Layer::Overlay, Layer::Top]
+        };
     elements.extend(layer_elements(state, renderer, output, upper_layers));
     if frame.overview.is_presenting() {
         elements.extend(overview_strip_elements(
@@ -196,7 +223,9 @@ fn scene_elements(
         if let Some(group) = closing.remove(&Some(id)) {
             elements.extend(group);
         }
-        elements.extend(super::tabs::tab_elements(state, renderer, output, frame, id, capture));
+        elements.extend(super::tabs::tab_elements(
+            state, renderer, output, frame, id, capture,
+        ));
         let constrain = rounded_visual_rect(visual, output_geometry.loc);
         let material_surface = window
             .toplevel()
@@ -211,7 +240,8 @@ fn scene_elements(
             state.theme_settings.window_radius
         } * decoration_progress;
         let shape = window_corner_shape(&window);
-        let corners = RoundedRect::new(visual, output_geometry.loc, scale, window_radius).with_shape(shape);
+        let corners =
+            RoundedRect::new(visual, output_geometry.loc, scale, window_radius).with_shape(shape);
         let corner_shape_changed = state.render.prepare_window_corners(id, shape);
         let rounded_clip_program = corner_program(&mut state.render, renderer, shape);
         // Only overview/close intentionally scale the complete application.
@@ -241,7 +271,8 @@ fn scene_elements(
             let shadow_color = state.theme_settings.shadow_color.0;
             let focus = sample.presentation.focus();
             let border_width = state.theme_settings.border_width
-                + (state.theme_settings.focus_ring_width - state.theme_settings.border_width) * focus;
+                + (state.theme_settings.focus_ring_width - state.theme_settings.border_width)
+                    * focus;
             let border_color = state.theme_settings.border_color.0;
             let gradient = state.theme_settings.border_gradient;
 
@@ -273,7 +304,10 @@ fn scene_elements(
                 scale,
                 shadow_offset_y * offset_factor,
                 shadow_blur * blur_factor,
-                shadow_opacity * opacity_factor * f64::from(presentation_alpha) * decoration_progress,
+                shadow_opacity
+                    * opacity_factor
+                    * f64::from(presentation_alpha)
+                    * decoration_progress,
                 shadow_color,
                 output,
                 &programs,
@@ -313,9 +347,16 @@ fn scene_elements(
             {
                 let mut color = state.theme_settings.surface_base_color.0;
                 color[3] = presentation_alpha;
-                if let Some(fill) =
-                    window_tint_element(&mut state.render, renderer, id, constrain, corners, color, true, output)
-                {
+                if let Some(fill) = window_tint_element(
+                    &mut state.render,
+                    renderer,
+                    id,
+                    constrain,
+                    corners,
+                    color,
+                    true,
+                    output,
+                ) {
                     // Front-to-back: fill uncovered strips behind the native
                     // content instead of stretching it or exposing wallpaper.
                     elements.push(fill.into());
@@ -342,8 +383,13 @@ fn scene_elements(
                 elements.push(background);
             }
             if material_surface.is_none()
-                && let Some(blur) =
-                    super::window_blur::window_blur_element(state, renderer, output, sample.presentation, corners)
+                && let Some(blur) = super::window_blur::window_blur_element(
+                    state,
+                    renderer,
+                    output,
+                    sample.presentation,
+                    corners,
+                )
             {
                 elements.push(blur);
             }
@@ -420,20 +466,22 @@ pub(super) fn layer_elements(
         requested_layers
             .iter()
             .flat_map(|requested| {
-                map.layers_on(*requested)
-                    .rev()
-                    .filter_map(|layer| map.layer_geometry(layer).map(|geometry| (geometry, layer.clone())))
+                map.layers_on(*requested).rev().filter_map(|layer| {
+                    map.layer_geometry(layer)
+                        .map(|geometry| (geometry, layer.clone()))
+                })
             })
             .collect::<Vec<_>>()
     };
 
     state.render.surfaces.retain(|surface, _| {
         surface.is_alive()
-            || state
-                .render
-                .closing
-                .iter()
-                .any(|window| window.material.as_ref().is_some_and(|(key, ..)| key == surface))
+            || state.render.closing.iter().any(|window| {
+                window
+                    .material
+                    .as_ref()
+                    .is_some_and(|(key, ..)| key == surface)
+            })
     });
 
     let mut elements = Vec::new();
@@ -486,7 +534,8 @@ pub(super) fn cursor_elements(
     let Some(pointer) = state.seat.get_pointer() else {
         return Vec::new();
     };
-    let output_crop = Rectangle::<i32, Logical>::from_size(output_geometry.size).to_physical_precise_round(scale);
+    let output_crop =
+        Rectangle::<i32, Logical>::from_size(output_geometry.size).to_physical_precise_round(scale);
     let origin = Point::<i32, Physical>::default();
     let pointer_location = pointer.current_location() - output_geometry.loc.to_f64();
     match &state.cursor_status {
@@ -498,9 +547,13 @@ pub(super) fn cursor_elements(
                     .map(|attributes| attributes.lock().unwrap().hotspot)
                     .unwrap_or_default()
             });
-            let physical_location = (pointer_location - hotspot.to_f64()).to_physical_precise_round(scale);
+            let physical_location =
+                (pointer_location - hotspot.to_f64()).to_physical_precise_round(scale);
 
-            render_elements_from_surface_tree::<GlesRenderer, WaylandSurfaceRenderElement<GlesRenderer>>(
+            render_elements_from_surface_tree::<
+                GlesRenderer,
+                WaylandSurfaceRenderElement<GlesRenderer>,
+            >(
                 renderer,
                 surface,
                 physical_location,
@@ -511,7 +564,8 @@ pub(super) fn cursor_elements(
             .into_iter()
             .filter_map(|element| {
                 let element = RescaleRenderElement::from_element(element, origin, 1.0);
-                let element = RelocateRenderElement::from_element(element, origin, Relocate::Relative);
+                let element =
+                    RelocateRenderElement::from_element(element, origin, Relocate::Relative);
 
                 CropRenderElement::from_element(element, scale, output_crop).map(Into::into)
             })
@@ -573,8 +627,9 @@ mod layer_crop_tests {
                 [1.0; 4],
                 RenderElementKind::Unspecified,
             );
-            let crop = CropRenderElement::from_element(panel, 1.0, layer_output_crop(mode, transform))
-                .expect("bottom panel must remain visible");
+            let crop =
+                CropRenderElement::from_element(panel, 1.0, layer_output_crop(mode, transform))
+                    .expect("bottom panel must remain visible");
             assert_eq!(crop.geometry(1.0.into()), geometry, "{transform:?}");
         }
     }

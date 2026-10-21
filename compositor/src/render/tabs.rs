@@ -48,7 +48,12 @@ pub(super) fn tab_elements(
     };
     let scale = output.current_scale().fractional_scale();
     let width = content.width / bar.group.windows.len() as f64;
-    let shell = ferese_layout::Rect::new(content.x, content.y - bar.rect.height, content.width, bar.rect.height);
+    let shell = ferese_layout::Rect::new(
+        content.x,
+        content.y - bar.rect.height,
+        content.width,
+        bar.rect.height,
+    );
     let radius = state
         .theme_settings
         .material_radius
@@ -89,14 +94,18 @@ pub(super) fn tab_elements(
                     + ((rect.width - f64::from(size.w) / scale) * 0.5).max(8.0))
                     * scale)
                     .round() as i32,
-                ((rect.y - f64::from(output_geometry.loc.y) + rect.height * 0.5) * scale).round() as i32 - size.h / 2,
+                ((rect.y - f64::from(output_geometry.loc.y) + rect.height * 0.5) * scale).round()
+                    as i32
+                    - size.h / 2,
             ));
             if let Ok(element) = MemoryRenderBufferRenderElement::from_buffer(
                 renderer,
                 location.to_f64(),
                 &buffer,
                 Some(alpha),
-                Some(Rectangle::from_size((f64::from(size.w), f64::from(size.h)).into())),
+                Some(Rectangle::from_size(
+                    (f64::from(size.w), f64::from(size.h)).into(),
+                )),
                 Some(
                     (
                         (f64::from(size.w) / scale).round() as i32,
@@ -107,11 +116,19 @@ pub(super) fn tab_elements(
                 RenderElementKind::Unspecified,
             ) {
                 let element = RescaleRenderElement::from_element(element, location, 1.0);
-                let element = RelocateRenderElement::from_element(element, (0, 0), Relocate::Relative);
-                let clip = ferese_layout::Rect::new(rect.x + 8.0, rect.y, (rect.width - 16.0).max(0.0), rect.height);
-                if let Some(element) =
-                    CropRenderElement::from_element(element, scale, physical_rect(clip, output_geometry.loc, scale))
-                {
+                let element =
+                    RelocateRenderElement::from_element(element, (0, 0), Relocate::Relative);
+                let clip = ferese_layout::Rect::new(
+                    rect.x + 8.0,
+                    rect.y,
+                    (rect.width - 16.0).max(0.0),
+                    rect.height,
+                );
+                if let Some(element) = CropRenderElement::from_element(
+                    element,
+                    scale,
+                    physical_rect(clip, output_geometry.loc, scale),
+                ) {
                     elements.push(element.into());
                 }
             }
@@ -126,7 +143,10 @@ pub(super) fn tab_elements(
             // The shell palette supplies the surface and accent. Keep selection
             // inside the shell so its corners follow the same continuous profile.
             let mut fill = state.theme_settings.surface_raised_color.0;
-            for (channel, accent) in fill[..3].iter_mut().zip(state.theme_settings.accent_color.0) {
+            for (channel, accent) in fill[..3]
+                .iter_mut()
+                .zip(state.theme_settings.accent_color.0)
+            {
                 *channel += (accent - *channel) * 0.16;
             }
             fill[3] = alpha * opacity;

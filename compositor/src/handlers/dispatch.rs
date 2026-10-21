@@ -1,6 +1,7 @@
 use crate::Ferese;
 use smithay::reexports::wayland_server::{
-    Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource, backend::ClientId, protocol as wl,
+    Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource, backend::ClientId,
+    protocol as wl,
 };
 use smithay::reexports::{
     wayland_protocols as protocols, wayland_protocols_misc as misc, wayland_protocols_wlr as wlr,

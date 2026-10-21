@@ -8,7 +8,9 @@ use smithay::reexports::wayland_protocols_wlr::screencopy::v1::server::zwlr_scre
 use smithay::reexports::wayland_protocols_wlr::screencopy::v1::server::zwlr_screencopy_frame_v1::ZwlrScreencopyFrameV1;
 use smithay::reexports::wayland_server::protocol::wl_buffer::WlBuffer;
 use smithay::reexports::wayland_server::protocol::wl_shm;
-use smithay::reexports::wayland_server::{Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource};
+use smithay::reexports::wayland_server::{
+    Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource,
+};
 use smithay::utils::Rectangle;
 use smithay::wayland::shm::with_buffer_contents_mut;
 
@@ -34,7 +36,10 @@ struct Permit {
 impl Permit {
     fn reserve(budget: &Arc<Mutex<Budget>>, bytes: usize) -> Option<Self> {
         let mut available = budget.lock().unwrap();
-        if bytes == 0 || bytes > MAX_BYTES.saturating_sub(available.bytes) || available.frames >= MAX_FRAMES {
+        if bytes == 0
+            || bytes > MAX_BYTES.saturating_sub(available.bytes)
+            || available.frames >= MAX_FRAMES
+        {
             return None;
         }
         available.bytes += bytes;
@@ -77,7 +82,11 @@ struct Conversion {
 
 pub(crate) fn is_portal(stream: &std::os::unix::net::UnixStream) -> bool {
     use std::os::fd::AsRawFd;
-    let mut credentials = libc::ucred { pid: 0, uid: 0, gid: 0 };
+    let mut credentials = libc::ucred {
+        pid: 0,
+        uid: 0,
+        gid: 0,
+    };
     let mut length = std::mem::size_of_val(&credentials) as libc::socklen_t;
     // SAFETY: the connected socket is live and both out pointers cover their
     // initialized stack allocations. SO_PEERCRED identifies the connecting process.
@@ -95,7 +104,10 @@ pub(crate) fn is_portal(stream: &std::os::unix::net::UnixStream) -> bool {
     }
     let expected = std::env::current_exe()
         .ok()
-        .and_then(|exe| exe.parent().map(|dir| dir.join("xdg-desktop-portal-ferese")))
+        .and_then(|exe| {
+            exe.parent()
+                .map(|dir| dir.join("xdg-desktop-portal-ferese"))
+        })
         .and_then(|exe| std::fs::metadata(exe).ok());
     let actual = std::fs::metadata(format!("/proc/{}/exe", credentials.pid)).ok();
     matches!((expected, actual), (Some(expected), Some(actual)) if expected.dev() == actual.dev() && expected.ino() == actual.ino())
@@ -178,11 +190,13 @@ fn finish_conversion(state: &Ferese, result: Conversion) {
 
 impl GlobalDispatch<FereseWindowCaptureManagerV1, Global> for Ferese {
     fn can_view(client: Client, _: &Global) -> bool {
-        client.get_data::<crate::state::ClientState>().is_some_and(|state| {
-            state
-                .capabilities
-                .contains(crate::private_client::ClientCapabilities::WINDOW_CAPTURE)
-        })
+        client
+            .get_data::<crate::state::ClientState>()
+            .is_some_and(|state| {
+                state
+                    .capabilities
+                    .contains(crate::private_client::ClientCapabilities::WINDOW_CAPTURE)
+            })
     }
 
     fn bind(
@@ -248,7 +262,12 @@ impl Dispatch<FereseWindowCaptureManagerV1, Global> for Ferese {
                 })
                 .is_err()
             {
-                *resource.data::<Arc<FrameData>>().unwrap().used.lock().unwrap() = true;
+                *resource
+                    .data::<Arc<FrameData>>()
+                    .unwrap()
+                    .used
+                    .lock()
+                    .unwrap() = true;
                 manager.busy(&resource);
                 resource.failed();
             }
@@ -287,7 +306,8 @@ impl Ferese {
             .clone();
         let geometry = window.geometry();
         let scale = output.current_scale().fractional_scale();
-        let size: smithay::utils::Size<i32, smithay::utils::Physical> = geometry.size.to_physical_precise_round(scale);
+        let size: smithay::utils::Size<i32, smithay::utils::Physical> =
+            geometry.size.to_physical_precise_round(scale);
         let bytes = usize::try_from(size.w)
             .ok()?
             .checked_mul(usize::try_from(size.h).ok()?)?
@@ -299,26 +319,29 @@ impl Ferese {
             *busy = true;
             return None;
         };
-        let cursor = if overlay_cursor && !self.overview.is_presenting() && !self.capture_cursor_protected() {
-            self.seat.get_pointer().and_then(|pointer| {
-                let location = pointer.current_location();
-                if self.window_under_visual(location).as_ref() != Some(&window) {
-                    return None;
-                }
-                let (x, y) = self.inverse_presented_window_point(id, location.x, location.y)?;
-                let surface_point = smithay::utils::Point::from((x, y)) + geometry.loc.to_f64();
-                let (surface, _) = window.surface_under(surface_point, smithay::desktop::WindowSurfaceType::ALL)?;
-                if pointer.current_focus().as_ref() != Some(&surface) {
-                    return None;
-                }
-                Some(Rectangle::new(
-                    (location - smithay::utils::Point::from((x, y))).to_i32_round(),
-                    geometry.size,
-                ))
-            })
-        } else {
-            None
-        };
+        let cursor =
+            if overlay_cursor && !self.overview.is_presenting() && !self.capture_cursor_protected()
+            {
+                self.seat.get_pointer().and_then(|pointer| {
+                    let location = pointer.current_location();
+                    if self.window_under_visual(location).as_ref() != Some(&window) {
+                        return None;
+                    }
+                    let (x, y) = self.inverse_presented_window_point(id, location.x, location.y)?;
+                    let surface_point = smithay::utils::Point::from((x, y)) + geometry.loc.to_f64();
+                    let (surface, _) = window
+                        .surface_under(surface_point, smithay::desktop::WindowSurfaceType::ALL)?;
+                    if pointer.current_focus().as_ref() != Some(&surface) {
+                        return None;
+                    }
+                    Some(Rectangle::new(
+                        (location - smithay::utils::Point::from((x, y))).to_i32_round(),
+                        geometry.size,
+                    ))
+                })
+            } else {
+                None
+            };
         let result = if let Some(backend) = self.nested_backend.clone() {
             let mut backend = backend.try_borrow_mut().ok()?;
             crate::render::capture_window_frame(
@@ -357,10 +380,18 @@ impl Ferese {
     }
 }
 
-pub(super) fn copy_snapshot(state: &Ferese, resource: &ZwlrScreencopyFrameV1, data: &FrameData, buffer: &WlBuffer) {
+pub(super) fn copy_snapshot(
+    state: &Ferese,
+    resource: &ZwlrScreencopyFrameV1,
+    data: &FrameData,
+    buffer: &WlBuffer,
+) {
     let mut used = data.used.lock().unwrap();
     if *used {
-        resource.post_error(frame::Error::AlreadyUsed, "window capture frame has already been used");
+        resource.post_error(
+            frame::Error::AlreadyUsed,
+            "window capture frame has already been used",
+        );
         return;
     }
     *used = true;
@@ -393,7 +424,11 @@ pub(super) fn copy_snapshot(state: &Ferese, resource: &ZwlrScreencopyFrameV1, da
         // SAFETY: Smithay owns the writable mapping, validated format/stride and
         // checked offset cover the complete snapshot; the source is separately owned.
         unsafe {
-            std::ptr::copy_nonoverlapping(snapshot.pixels.pixels.as_ptr(), destination.add(offset), bytes);
+            std::ptr::copy_nonoverlapping(
+                snapshot.pixels.pixels.as_ptr(),
+                destination.add(offset),
+                bytes,
+            );
         }
         true
     })
@@ -459,7 +494,11 @@ pub(crate) mod tests {
             .unwrap();
         let data = frame_data();
         let frame = client
-            .create_resource::<ZwlrScreencopyFrameV1, Arc<FrameData>, Ferese>(&state.display_handle, 3, data.clone())
+            .create_resource::<ZwlrScreencopyFrameV1, Arc<FrameData>, Ferese>(
+                &state.display_handle,
+                3,
+                data.clone(),
+            )
             .unwrap();
         finish_conversion(
             state,
@@ -475,20 +514,27 @@ pub(crate) mod tests {
         let data = frame_data();
         *data.snapshot.lock().unwrap() = Some(snapshot());
         let frame = client
-            .create_resource::<ZwlrScreencopyFrameV1, Arc<FrameData>, Ferese>(&state.display_handle, 3, data.clone())
+            .create_resource::<ZwlrScreencopyFrameV1, Arc<FrameData>, Ferese>(
+                &state.display_handle,
+                3,
+                data.clone(),
+            )
             .unwrap();
         let buffer = client
             .object_from_protocol_id::<WlBuffer>(&state.display_handle, 6)
             .unwrap();
         let before = with_buffer_contents_mut(&buffer, |ptr, _, layout| {
             // SAFETY: the fixture allocates and validates this 64x48 SHM buffer.
-            unsafe { std::slice::from_raw_parts(ptr.add(layout.offset as usize), 64 * 48 * 4).to_vec() }
+            unsafe {
+                std::slice::from_raw_parts(ptr.add(layout.offset as usize), 64 * 48 * 4).to_vec()
+            }
         })
         .unwrap();
         copy_snapshot(state, &frame, &data, &buffer);
         with_buffer_contents_mut(&buffer, |ptr, _, layout| {
             // SAFETY: same fixture-owned buffer as above.
-            let after = unsafe { std::slice::from_raw_parts(ptr.add(layout.offset as usize), 64 * 48 * 4) };
+            let after =
+                unsafe { std::slice::from_raw_parts(ptr.add(layout.offset as usize), 64 * 48 * 4) };
             if allowed {
                 assert!(after.iter().all(|byte| *byte == 0));
             } else {
@@ -496,7 +542,11 @@ pub(crate) mod tests {
             }
             // Restore the client's colored buffer for subsequent renderer checks.
             unsafe {
-                std::ptr::copy_nonoverlapping(before.as_ptr(), ptr.add(layout.offset as usize), before.len());
+                std::ptr::copy_nonoverlapping(
+                    before.as_ptr(),
+                    ptr.add(layout.offset as usize),
+                    before.len(),
+                );
             }
         })
         .unwrap();

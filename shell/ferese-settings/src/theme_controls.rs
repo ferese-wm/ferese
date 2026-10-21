@@ -1,6 +1,6 @@
 use super::{
-    Alignment, App, Edit, Element, Kind, Length, Message, Page, PathBuf, button, column, container, gallery, row,
-    schema, set, text_input, visuals, widget,
+    Alignment, App, Edit, Element, Kind, Length, Message, Page, PathBuf, button, column, container,
+    gallery, row, schema, set, text_input, visuals, widget,
 };
 
 #[derive(Clone, Default)]
@@ -10,7 +10,10 @@ pub(super) struct FamilySections {
 }
 
 impl FamilySections {
-    pub(super) fn new(families: &[ferese_config::families::Family], snapshot: &crate::store::Snapshot) -> Self {
+    pub(super) fn new(
+        families: &[ferese_config::families::Family],
+        snapshot: &crate::store::Snapshot,
+    ) -> Self {
         let (custom, built_in) = (0..families.len()).partition(|&index| {
             snapshot
                 .item(&format!("theme.custom_themes.{}", families[index].id))
@@ -73,7 +76,10 @@ impl App {
                 button::custom(self.label(label, 12.))
                     .name(format!("Theme file: {label}"))
                     .padding([4, 8])
-                    .class(visuals::button_style(palette, index == self.theme_file_target))
+                    .class(visuals::button_style(
+                        palette,
+                        index == self.theme_file_target,
+                    ))
                     .on_press(Message::ThemeFileTarget(index)),
             );
         }
@@ -86,7 +92,11 @@ impl App {
                     .class(visuals::surface(palette.sidebar, 10.)),
             )
             .push(self.settings_button(
-                if file.is_empty() { "Choose…" } else { "Replace…" },
+                if file.is_empty() {
+                    "Choose…"
+                } else {
+                    "Replace…"
+                },
                 "M3 7V5h6l2 2h10v13H3z",
                 Some(Message::PickThemeFile(path)),
                 false,
@@ -171,7 +181,11 @@ impl App {
                     .on_input(move |value| Message::Draft(path.clone(), value))
                     .on_submit(move |_| Message::Commit(submit.clone()))
                     .on_unfocus(Message::Commit(field.clone()))
-                    .width(if field.path.ends_with("timezone") { 150 } else { 75 });
+                    .width(if field.path.ends_with("timezone") {
+                        150
+                    } else {
+                        75
+                    });
                 times = times.push(
                     row([])
                         .spacing(6)
@@ -189,7 +203,10 @@ impl App {
             .into()
     }
 
-    pub(super) fn theme_gallery(&self, appearance: Option<ferese_config::theme::Appearance>) -> Element<'_, Message> {
+    pub(super) fn theme_gallery(
+        &self,
+        appearance: Option<ferese_config::theme::Appearance>,
+    ) -> Element<'_, Message> {
         use ferese_config::theme::Appearance::{Dark, Light};
         let mut heading = row([]).align_y(Alignment::Center).spacing(6).push(
             self.label(
@@ -254,7 +271,10 @@ impl App {
                 let content: Element<'_, Message> = if self.visible_rows.contains(&(list, chunk)) {
                     self.theme_gallery_row(chunk, appearance, custom)
                 } else {
-                    widget::Space::new().height(height).width(Length::Fill).into()
+                    widget::Space::new()
+                        .height(height)
+                        .width(Length::Fill)
+                        .into()
                 };
                 cosmic::iced::widget::sensor(
                     container(content)
@@ -293,7 +313,10 @@ impl App {
     ) -> Option<(&'static str, usize)> {
         let index = self.family_ids.iter().position(|family| family == id)?;
         let (custom, position) = self.family_sections.position(index)?;
-        Some((crate::navigation::gallery_list(appearance, custom), position / 3))
+        Some((
+            crate::navigation::gallery_list(appearance, custom),
+            position / 3,
+        ))
     }
 
     fn theme_gallery_row(

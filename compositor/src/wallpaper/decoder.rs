@@ -30,7 +30,9 @@ impl Decoder {
                 loop {
                     let (queue, ready) = &*worker;
                     let mut queue = ready
-                        .wait_while(queue.lock().unwrap(), |queue| !queue.closed && queue.pending.is_none())
+                        .wait_while(queue.lock().unwrap(), |queue| {
+                            !queue.closed && queue.pending.is_none()
+                        })
                         .unwrap();
                     if queue.closed {
                         break;
@@ -55,7 +57,11 @@ impl Decoder {
     ) -> mpsc::Receiver<Result<Pixels, String>> {
         let (result, receiver) = mpsc::channel();
         let (queue, ready) = &*self.shared;
-        queue.lock().unwrap().pending = Some(Request { path, result, wakeup });
+        queue.lock().unwrap().pending = Some(Request {
+            path,
+            result,
+            wakeup,
+        });
         ready.notify_one();
         receiver
     }
@@ -100,15 +106,26 @@ mod tests {
         let dropped_too = decoder.submit("third".into(), None);
         let latest = decoder.submit("latest".into(), None);
         assert!(events.try_recv().is_err());
-        assert!(matches!(dropped.try_recv(), Err(mpsc::TryRecvError::Disconnected)));
-        assert!(matches!(dropped_too.try_recv(), Err(mpsc::TryRecvError::Disconnected)));
+        assert!(matches!(
+            dropped.try_recv(),
+            Err(mpsc::TryRecvError::Disconnected)
+        ));
+        assert!(matches!(
+            dropped_too.try_recv(),
+            Err(mpsc::TryRecvError::Disconnected)
+        ));
         release.send(()).unwrap();
         assert!(first.recv_timeout(Duration::from_secs(2)).unwrap().is_err());
         assert_eq!(
             events.recv_timeout(Duration::from_secs(2)).unwrap(),
             PathBuf::from("latest")
         );
-        assert!(latest.recv_timeout(Duration::from_secs(2)).unwrap().is_err());
+        assert!(
+            latest
+                .recv_timeout(Duration::from_secs(2))
+                .unwrap()
+                .is_err()
+        );
         assert!(events.try_recv().is_err());
     }
 }

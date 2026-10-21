@@ -1,8 +1,8 @@
 use cosmic::widget::column;
 
 use super::{
-    Alignment, App, Element, Field, Kind, Length, Message, button, container, row, set, slider, text_input, visuals,
-    widget,
+    Alignment, App, Element, Field, Kind, Length, Message, button, container, row, set, slider,
+    text_input, visuals, widget,
 };
 
 impl App {
@@ -39,7 +39,11 @@ impl App {
         .into()
     }
 
-    fn control_button_style(&self, palette: visuals::Palette, selected: bool) -> cosmic::theme::Button {
+    fn control_button_style(
+        &self,
+        palette: visuals::Palette,
+        selected: bool,
+    ) -> cosmic::theme::Button {
         if self.page == crate::schema::Page::Bar {
             visuals::panel_button(palette, selected)
         } else {
@@ -61,7 +65,11 @@ impl App {
                 .align_y(Alignment::Center)
                 .push(visuals::action_icon(
                     icon,
-                    if message.is_some() { palette.text } else { palette.muted },
+                    if message.is_some() {
+                        palette.text
+                    } else {
+                        palette.muted
+                    },
                 ))
                 .push(self.label(label.to_owned(), 12.)),
         )
@@ -82,7 +90,11 @@ impl App {
         widget::tooltip(
             button::custom(visuals::action_icon(
                 icon,
-                if message.is_some() { palette.text } else { palette.muted },
+                if message.is_some() {
+                    palette.text
+                } else {
+                    palette.muted
+                },
             ))
             .name(label.to_owned())
             .padding(4)
@@ -102,13 +114,16 @@ impl App {
                 ferese_config::theme::Appearance::Dark => "dark",
             };
             field.path = format!("theme.{name}.material.opacity");
-            field.description = format!("Opacity for the current {name} appearance. Text and icons stay opaque.");
+            field.description =
+                format!("Opacity for the current {name} appearance. Text and icons stay opaque.");
             if let Kind::Range { default, .. } = &mut field.kind {
                 *default = self.resolved.theme.tokens.material.opacity;
             }
         }
         let palette = visuals::Palette::from_resolved(&self.resolved.presented);
-        let mut labels = column([]).spacing(2).push(self.label(field.label.clone(), 13.));
+        let mut labels = column([])
+            .spacing(2)
+            .push(self.label(field.label.clone(), 13.));
         if !field.description.is_empty() {
             labels = labels.push(
                 self.label(field.description.clone(), 11.)
@@ -121,7 +136,11 @@ impl App {
             Kind::Toggle(default) => {
                 let enabled = self.draft.boolean(&path, default);
                 ferese_theme::controls::switch(enabled, palette)
-                    .name(format!("{}: {}", field.label, if enabled { "on" } else { "off" }))
+                    .name(format!(
+                        "{}: {}",
+                        field.label,
+                        if enabled { "on" } else { "off" }
+                    ))
                     .on_press(Message::Change(set(&path, !enabled)))
                     .into()
             }
@@ -133,7 +152,8 @@ impl App {
                 suffix,
                 integer,
             } => {
-                let margin_limit = (path == "panels.0.geometry.side_margins").then(|| self.panel_side_margin_limit());
+                let margin_limit = (path == "panels.0.geometry.side_margins")
+                    .then(|| self.panel_side_margin_limit());
                 if let Some(limit) = margin_limit {
                     max = f64::from(limit.unwrap_or(0));
                 }
@@ -158,11 +178,13 @@ impl App {
                         .align_y(Alignment::Center)
                         .spacing(8)
                         .push(
-                            slider(min..=max, value, move |value| Message::Range(field.clone(), value))
-                                .step(step)
-                                .class(ferese_theme::menus::slider(palette.accent, 1.))
-                                .on_release(Message::Release(release))
-                                .width(145),
+                            slider(min..=max, value, move |value| {
+                                Message::Range(field.clone(), value)
+                            })
+                            .step(step)
+                            .class(ferese_theme::menus::slider(palette.accent, 1.))
+                            .on_release(Message::Release(release))
+                            .width(145),
                         )
                         .push(self.label(display, 12.).width(65))
                         .into()
@@ -208,7 +230,10 @@ impl App {
                     row([])
                         .spacing(8)
                         .align_y(Alignment::Center)
-                        .push(container(widget::Space::new().width(24).height(24)).class(visuals::surface(swatch, 6.)))
+                        .push(
+                            container(widget::Space::new().width(24).height(24))
+                                .class(visuals::surface(swatch, 6.)),
+                        )
                         .push(input)
                         .into()
                 } else {

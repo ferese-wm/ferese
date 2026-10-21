@@ -60,7 +60,12 @@ impl RenderResources {
         changed
     }
 
-    pub(super) fn thumbnail_corner_changed(&mut self, id: WindowId, output: OutputId, shape: CornerShape) -> bool {
+    pub(super) fn thumbnail_corner_changed(
+        &mut self,
+        id: WindowId,
+        output: OutputId,
+        shape: CornerShape,
+    ) -> bool {
         self.windows
             .entry(id)
             .or_default()
@@ -117,7 +122,9 @@ impl RenderResources {
     }
 
     pub fn snapshots(&self) -> impl Iterator<Item = &ResizeSnapshot> {
-        self.windows.values().filter_map(|window| window.snapshot.as_ref())
+        self.windows
+            .values()
+            .filter_map(|window| window.snapshot.as_ref())
     }
 
     pub fn set_snapshot(&mut self, id: WindowId, snapshot: ResizeSnapshot) {
@@ -130,7 +137,10 @@ impl RenderResources {
         }
     }
 
-    pub fn retain_snapshots(&mut self, mut keep: impl FnMut(&WindowId, &mut ResizeSnapshot) -> bool) {
+    pub fn retain_snapshots(
+        &mut self,
+        mut keep: impl FnMut(&WindowId, &mut ResizeSnapshot) -> bool,
+    ) {
         for (id, window) in &mut self.windows {
             if let Some(snapshot) = &mut window.snapshot
                 && !keep(id, snapshot)
@@ -159,7 +169,8 @@ impl RenderResources {
             .filter(|window| &window.snapshot.context == context)
             .map(|window| window.presentation.id)
             .collect();
-        self.closing.retain(|window| &window.snapshot.context != context);
+        self.closing
+            .retain(|window| &window.snapshot.context != context);
         for id in removed {
             self.remove_window(id);
         }
@@ -201,8 +212,12 @@ mod tests {
     #[test]
     fn window_removal_releases_all_its_caches_without_removing_other_windows() {
         let mut resources = RenderResources::default();
-        resources.windows.insert(WindowId(1), WindowBuffers::default());
-        resources.windows.insert(WindowId(2), WindowBuffers::default());
+        resources
+            .windows
+            .insert(WindowId(1), WindowBuffers::default());
+        resources
+            .windows
+            .insert(WindowId(2), WindowBuffers::default());
 
         resources.remove_window(WindowId(1));
         resources.clear_snapshot(&WindowId(1));
@@ -217,7 +232,10 @@ mod tests {
     fn context_removal_evicts_programs_and_snapshots_without_touching_another_gpu() {
         use smithay::backend::egl::{EGLContext, EGLDevice, EGLDisplay};
 
-        let device = EGLDevice::enumerate().unwrap().last().expect("an EGL device");
+        let device = EGLDevice::enumerate()
+            .unwrap()
+            .last()
+            .expect("an EGL device");
         let display = unsafe { EGLDisplay::new(device).unwrap() };
         let mut first = unsafe { GlesRenderer::new(EGLContext::new(&display).unwrap()).unwrap() };
         let mut second = unsafe { GlesRenderer::new(EGLContext::new(&display).unwrap()).unwrap() };
@@ -229,7 +247,12 @@ mod tests {
             rounded_clip_program(&mut resources, renderer).unwrap();
             material_program(&mut resources, renderer).unwrap();
             blur_program(&mut resources, renderer).unwrap();
-            let texture = Offscreen::<GlesTexture>::create_buffer(renderer, Fourcc::Abgr8888, (16, 16).into()).unwrap();
+            let texture = Offscreen::<GlesTexture>::create_buffer(
+                renderer,
+                Fourcc::Abgr8888,
+                (16, 16).into(),
+            )
+            .unwrap();
             resources.set_snapshot(
                 id,
                 ResizeSnapshot {

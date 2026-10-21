@@ -1,7 +1,10 @@
 use serde::{Deserialize, Serialize};
 
 pub fn now_us() -> u64 {
-    let mut time = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    let mut time = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
     // CLOCK_MONOTONIC shares one epoch between the compositor and shell.
     if unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut time) } != 0 {
         return 0;
@@ -100,7 +103,10 @@ impl Player {
         }
 
         let position = position.max(0.0) as u64;
-        Some(self.length_us.map_or(position, |length| position.min(length)))
+        Some(
+            self.length_us
+                .map_or(position, |length| position.min(length)),
+        )
     }
 }
 

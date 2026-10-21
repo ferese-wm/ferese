@@ -35,7 +35,11 @@ impl App {
             }
             body = body.push(choices);
         }
-        let Some(adapter) = bluetooth.adapters.iter().find(|a| Some(&a.path) == s.adapter.as_ref()) else {
+        let Some(adapter) = bluetooth
+            .adapters
+            .iter()
+            .find(|a| Some(&a.path) == s.adapter.as_ref())
+        else {
             return body
                 .push(self.connection_note("No Bluetooth adapter is available."))
                 .into();
@@ -71,7 +75,10 @@ impl App {
         if !adapter.powered {
             return body.into();
         }
-        let scanning = s.client.as_ref().is_some_and(|c| c.discovering(&adapter.path));
+        let scanning = s
+            .client
+            .as_ref()
+            .is_some_and(|c| c.discovering(&adapter.path));
         body = body.push(
             row([])
                 .align_y(Alignment::Center)
@@ -87,7 +94,11 @@ impl App {
                     .width(Length::Fill),
                 )
                 .push(self.connection_button(
-                    if scanning { "Stop scan" } else { "Find devices" },
+                    if scanning {
+                        "Stop scan"
+                    } else {
+                        "Find devices"
+                    },
                     Input::Run(if scanning {
                         Command::BluetoothStop
                     } else {
@@ -102,9 +113,20 @@ impl App {
         } else {
             "Choose Find devices to discover nearby devices in pairing mode."
         }));
-        let devices: Vec<_> = bluetooth.devices.iter().filter(|d| d.adapter == adapter.path).collect();
+        let devices: Vec<_> = bluetooth
+            .devices
+            .iter()
+            .filter(|d| d.adapter == adapter.path)
+            .collect();
         for paired in [true, false] {
-            body = body.push(self.label(if paired { "Paired devices" } else { "Nearby devices" }, 14.));
+            body = body.push(self.label(
+                if paired {
+                    "Paired devices"
+                } else {
+                    "Nearby devices"
+                },
+                14.,
+            ));
             if !devices.iter().any(|d| d.paired == paired) {
                 body = body.push(self.connection_note(if paired {
                     "No paired devices yet."
@@ -124,7 +146,10 @@ impl App {
                     "{state} · {}{}{}",
                     device.address,
                     if device.trusted { " · Trusted" } else { "" },
-                    device.battery.map(|b| format!(" · {b}% battery")).unwrap_or_default()
+                    device
+                        .battery
+                        .map(|b| format!(" · {b}% battery"))
+                        .unwrap_or_default()
                 );
                 let mut controls = row([]).spacing(6);
                 let action = if device.connected {
@@ -149,13 +174,19 @@ impl App {
                 if device.paired {
                     controls = controls.push(self.connection_button(
                         if device.trusted { "Untrust" } else { "Trust" },
-                        Input::Run(Command::BluetoothTrust(device.path.clone(), !device.trusted)),
+                        Input::Run(Command::BluetoothTrust(
+                            device.path.clone(),
+                            !device.trusted,
+                        )),
                         ready,
                         false,
                     ));
                     controls = controls.push(self.connection_button(
                         "Forget",
-                        Input::Forget(Command::BluetoothForget(device.adapter.clone(), device.path.clone())),
+                        Input::Forget(Command::BluetoothForget(
+                            device.adapter.clone(),
+                            device.path.clone(),
+                        )),
                         ready,
                         false,
                     ));

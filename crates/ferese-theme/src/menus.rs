@@ -19,9 +19,12 @@ pub fn row<'a, M: 'a>(
     trailing: Element<'a, M>,
     font: cosmic::font::Font,
 ) -> Element<'a, M> {
-    iced_row![crate::text(label, font).width(Length::Fill).size(14), trailing]
-        .align_y(Alignment::Center)
-        .into()
+    iced_row![
+        crate::text(label, font).width(Length::Fill).size(14),
+        trailing
+    ]
+    .align_y(Alignment::Center)
+    .into()
 }
 
 pub fn heading<'a, M: 'a>(
@@ -34,7 +37,12 @@ pub fn heading<'a, M: 'a>(
         .align_y(Alignment::Center)
 }
 
-pub fn badge<'a, M: 'a>(content: Element<'a, M>, accent: Color, opacity: f32, radius: f32) -> Element<'a, M> {
+pub fn badge<'a, M: 'a>(
+    content: Element<'a, M>,
+    accent: Color,
+    opacity: f32,
+    radius: f32,
+) -> Element<'a, M> {
     container(content)
         .width(36)
         .height(36)
@@ -47,7 +55,12 @@ pub fn badge<'a, M: 'a>(content: Element<'a, M>, accent: Color, opacity: f32, ra
         .into()
 }
 
-pub fn section<'a, M: 'a>(content: Element<'a, M>, foreground: Color, opacity: f32, radius: f32) -> Element<'a, M> {
+pub fn section<'a, M: 'a>(
+    content: Element<'a, M>,
+    foreground: Color,
+    opacity: f32,
+    radius: f32,
+) -> Element<'a, M> {
     container(content)
         .padding(10)
         .width(Length::Fill)
@@ -73,7 +86,10 @@ pub fn section_label<'a>(
 
 pub fn separator<'a, M: 'a>(foreground: Color, opacity: f32) -> Element<'a, M> {
     container(cosmic::widget::Space::new().width(Length::Fill).height(1))
-        .class(crate::controls::surface(foreground.scale_alpha(0.12 * opacity), 0.))
+        .class(crate::controls::surface(
+            foreground.scale_alpha(0.12 * opacity),
+            0.,
+        ))
         .into()
 }
 
@@ -85,7 +101,10 @@ pub fn switch<'a, M: 'a>(enabled: bool, palette: crate::Palette, opacity: f32) -
         .width(16)
         .height(16)
         .class(crate::controls::surface(
-            Color { a: opacity, ..thumb },
+            Color {
+                a: opacity,
+                ..thumb
+            },
             crate::inner_radius(track_radius, padding),
         ));
     container(knob)
@@ -97,7 +116,10 @@ pub fn switch<'a, M: 'a>(enabled: bool, palette: crate::Palette, opacity: f32) -
         } else {
             cosmic::iced::alignment::Horizontal::Left
         })
-        .class(crate::controls::surface(track.scale_alpha(opacity), track_radius))
+        .class(crate::controls::surface(
+            track.scale_alpha(opacity),
+            track_radius,
+        ))
         .into()
 }
 

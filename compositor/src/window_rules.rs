@@ -90,7 +90,12 @@ pub fn validate(configured: &[WindowRuleConfig]) -> Result<Vec<WindowRule>, Stri
         .collect()
 }
 
-pub fn resolve(rules: &[WindowRule], app_id: Option<&str>, title: Option<&str>, transient: bool) -> WindowRuleResult {
+pub fn resolve(
+    rules: &[WindowRule],
+    app_id: Option<&str>,
+    title: Option<&str>,
+    transient: bool,
+) -> WindowRuleResult {
     let app_id = app_id.map(normalize_app_id);
     let mut result = WindowRuleResult::default();
     if is_native_dialog(app_id.as_deref()) {
@@ -106,7 +111,10 @@ pub fn resolve(rules: &[WindowRule], app_id: Option<&str>, title: Option<&str>, 
             .app_id
             .as_deref()
             .is_none_or(|expected| app_id.as_deref() == Some(expected));
-        let title_matches = rule.title.as_deref().is_none_or(|expected| title == Some(expected));
+        let title_matches = rule
+            .title
+            .as_deref()
+            .is_none_or(|expected| title == Some(expected));
         let transient_matches = rule.transient.is_none_or(|expected| expected == transient);
         if !app_id_matches || !title_matches || !transient_matches {
             continue;
@@ -119,7 +127,9 @@ pub fn resolve(rules: &[WindowRule], app_id: Option<&str>, title: Option<&str>, 
         result.min_width = rule.min_width.or(result.min_width);
         result.min_height = rule.min_height.or(result.min_height);
         result.fullscreen = rule.fullscreen.or(result.fullscreen);
-        result.block_out_from_screencasts = rule.block_out_from_screencasts.or(result.block_out_from_screencasts);
+        result.block_out_from_screencasts = rule
+            .block_out_from_screencasts
+            .or(result.block_out_from_screencasts);
         result.idle_inhibit = rule.idle_inhibit.or(result.idle_inhibit);
     }
 
@@ -128,10 +138,14 @@ pub fn resolve(rules: &[WindowRule], app_id: Option<&str>, title: Option<&str>, 
 
 fn validate_rule(index: usize, rule: &WindowRuleConfig) -> Result<WindowRule, String> {
     if rule.app_id.is_none() && rule.title.is_none() && rule.transient.is_none() {
-        return Err(format!("window_rules[{index}] must match app_id, title, or transient"));
+        return Err(format!(
+            "window_rules[{index}] must match app_id, title, or transient"
+        ));
     }
     if rule.workspace == Some(0) {
-        return Err(format!("window_rules[{index}].workspace must be greater than zero"));
+        return Err(format!(
+            "window_rules[{index}].workspace must be greater than zero"
+        ));
     }
 
     let app_id = rule
@@ -178,7 +192,11 @@ fn nonempty_matcher(value: &str) -> Result<&str, &'static str> {
     }
 }
 
-fn positive_dimension(value: Option<f64>, index: usize, field: &'static str) -> Result<Option<f64>, String> {
+fn positive_dimension(
+    value: Option<f64>,
+    index: usize,
+    field: &'static str,
+) -> Result<Option<f64>, String> {
     if value.is_none_or(|value| value.is_finite() && value > 0.0) {
         Ok(value)
     } else {
@@ -231,7 +249,10 @@ mod tests {
 
     #[test]
     fn capture_privacy_defaults_overrides_and_placement_are_independent() {
-        for app_id in ["dev.ferese.Authentication", "dev.ferese.Authentication.desktop"] {
+        for app_id in [
+            "dev.ferese.Authentication",
+            "dev.ferese.Authentication.desktop",
+        ] {
             assert_eq!(
                 resolve(&[], Some(app_id), None, false).block_out_from_screencasts,
                 Some(true)
@@ -297,9 +318,15 @@ mod tests {
                 ..config(app_id)
             }])
             .unwrap();
-            assert_eq!(resolve(&rules, Some(app_id), None, false).floating, Some(false));
+            assert_eq!(
+                resolve(&rules, Some(app_id), None, false).floating,
+                Some(false)
+            );
         }
-        assert_eq!(resolve(&[], Some("org.example.Editor"), None, false).floating, None);
+        assert_eq!(
+            resolve(&[], Some("org.example.Editor"), None, false).floating,
+            None
+        );
     }
 
     #[test]
@@ -417,7 +444,9 @@ mod tests {
         assert_eq!(removed.floating, Some(false));
         assert_eq!(removed.fullscreen, Some(false));
         assert_eq!(
-            super::live_result(old, Default::default(), true).unwrap().floating,
+            super::live_result(old, Default::default(), true)
+                .unwrap()
+                .floating,
             Some(true)
         );
         let new = super::WindowRuleResult {

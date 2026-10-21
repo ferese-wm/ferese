@@ -113,7 +113,12 @@ impl AnimatedValue {
         self.advance_with_policy(delta, config, config.crossing)
     }
 
-    pub fn advance_with_policy(&mut self, delta: Duration, config: SpringConfig, policy: CrossingPolicy) -> bool {
+    pub fn advance_with_policy(
+        &mut self,
+        delta: Duration,
+        config: SpringConfig,
+        policy: CrossingPolicy,
+    ) -> bool {
         let config = config.normalized();
         let settled = |value: &Self| {
             (value.current - value.target).abs() <= config.position_tolerance
@@ -167,7 +172,12 @@ impl AnimatedRect {
         self.advance_with_policy(delta, config, config.crossing)
     }
 
-    pub fn advance_with_policy(&mut self, delta: Duration, config: SpringConfig, policy: CrossingPolicy) -> bool {
+    pub fn advance_with_policy(
+        &mut self,
+        delta: Duration,
+        config: SpringConfig,
+        policy: CrossingPolicy,
+    ) -> bool {
         let config = config.normalized();
         if delta.is_zero() {
             return !self.is_settled(config);
@@ -278,7 +288,8 @@ impl ClientGeometry {
 
     /// The hard bound for the current uninterrupted client-buffer wait.
     pub fn commit_deadline(&self) -> Option<Duration> {
-        self.waiting_since.map(|started| started + CLIENT_COMMIT_TIMEOUT)
+        self.waiting_since
+            .map(|started| started + CLIENT_COMMIT_TIMEOUT)
     }
 
     pub fn timed_out(&self, now: Duration) -> bool {
@@ -354,7 +365,12 @@ impl WindowGeometry {
         self.client.request_size(size, now).then_some(size)
     }
 
-    pub fn set_presentation_target(&mut self, rect: Rect, fullscreen: bool, now: Duration) -> Option<ClientSize> {
+    pub fn set_presentation_target(
+        &mut self,
+        rect: Rect,
+        fullscreen: bool,
+        now: Duration,
+    ) -> Option<ClientSize> {
         self.set_presentation_mode(
             rect,
             if fullscreen {
@@ -366,7 +382,12 @@ impl WindowGeometry {
         )
     }
 
-    pub fn set_presentation_mode(&mut self, rect: Rect, mode: PresentationMode, now: Duration) -> Option<ClientSize> {
+    pub fn set_presentation_mode(
+        &mut self,
+        rect: Rect,
+        mode: PresentationMode,
+        now: Duration,
+    ) -> Option<ClientSize> {
         let rect = normalized_rect(rect);
         let before = (self.visual.current, self.decorations);
         if self.mode != mode || (self.zoom.is_some() && self.logical != rect) {
@@ -374,7 +395,11 @@ impl WindowGeometry {
                 .zoom
                 .map(|zoom| zoom.decorations)
                 .unwrap_or_else(|| AnimatedValue::new(self.decorations));
-            decorations.set_target(if mode == PresentationMode::Fullscreen { 0.0 } else { 1.0 });
+            decorations.set_target(if mode == PresentationMode::Fullscreen {
+                0.0
+            } else {
+                1.0
+            });
             self.zoom = Some(ZoomTransition { decorations });
         }
         self.mode = mode;
@@ -416,14 +441,24 @@ impl WindowGeometry {
         requested_size
     }
 
-    pub fn advance(&mut self, delta: Duration, config: SpringConfig, animations_enabled: bool) -> bool {
+    pub fn advance(
+        &mut self,
+        delta: Duration,
+        config: SpringConfig,
+        animations_enabled: bool,
+    ) -> bool {
         let previous = (self.visual.current, self.decorations);
         let active = self.advance_presentation(delta, config, animations_enabled);
         self.presentation_changed = previous != (self.visual.current, self.decorations);
         active
     }
 
-    fn advance_presentation(&mut self, delta: Duration, config: SpringConfig, animations_enabled: bool) -> bool {
+    fn advance_presentation(
+        &mut self,
+        delta: Duration,
+        config: SpringConfig,
+        animations_enabled: bool,
+    ) -> bool {
         if !animations_enabled {
             self.visual.snap();
             self.decorations = if self.is_fullscreen() { 0.0 } else { 1.0 };
@@ -483,7 +518,9 @@ fn advance_property(
     config: SpringConfig,
     policy: CrossingPolicy,
 ) {
-    if policy == CrossingPolicy::NoCrossing && spring::crosses(*current, *velocity, target, dt, config) {
+    if policy == CrossingPolicy::NoCrossing
+        && spring::crosses(*current, *velocity, target, dt, config)
+    {
         *current = target;
         *velocity = 0.0;
     } else {
@@ -492,7 +529,13 @@ fn advance_property(
 }
 
 #[cfg(test)]
-fn advance_value(current: &mut f64, target: f64, velocity: &mut f64, dt: f64, config: SpringConfig) {
+fn advance_value(
+    current: &mut f64,
+    target: f64,
+    velocity: &mut f64,
+    dt: f64,
+    config: SpringConfig,
+) {
     (*current, *velocity) = spring::solve(*current, *velocity, target, dt, config);
 }
 
@@ -560,16 +603,31 @@ mod tests {
             ));
         }
         assert_eq!(client.commit_deadline(), Some(Duration::from_millis(500)));
-        assert!(!client.commit(ClientSize { width: 49, height: 100 }));
+        assert!(!client.commit(ClientSize {
+            width: 49,
+            height: 100
+        }));
         assert!(client.expire_wait(Duration::from_millis(499)).is_none());
         assert_eq!(
             client.expire_wait(Duration::from_millis(500)),
-            Some(ClientSize { width: 50, height: 100 })
+            Some(ClientSize {
+                width: 50,
+                height: 100
+            })
         );
         assert_eq!(client.commit_deadline(), None);
-        assert!(client.request_size(ClientSize { width: 51, height: 100 }, Duration::from_millis(600)));
+        assert!(client.request_size(
+            ClientSize {
+                width: 51,
+                height: 100
+            },
+            Duration::from_millis(600)
+        ));
         assert_eq!(client.commit_deadline(), Some(Duration::from_millis(1100)));
-        assert!(client.commit(ClientSize { width: 51, height: 100 }));
+        assert!(client.commit(ClientSize {
+            width: 51,
+            height: 100
+        }));
         assert_eq!(client.commit_deadline(), None);
     }
 
@@ -634,10 +692,17 @@ mod tests {
             assert_eq!(geometry.visual.current, rect);
             assert_eq!(
                 geometry.decorations,
-                if mode == PresentationMode::Fullscreen { 0.0 } else { 1.0 }
+                if mode == PresentationMode::Fullscreen {
+                    0.0
+                } else {
+                    1.0
+                }
             );
             assert!(!geometry.is_zooming());
-            assert_eq!(geometry.is_fullscreen(), mode == PresentationMode::Fullscreen);
+            assert_eq!(
+                geometry.is_fullscreen(),
+                mode == PresentationMode::Fullscreen
+            );
         }
     }
 
@@ -664,7 +729,9 @@ mod tests {
     fn zoom_finishes_without_a_visible_final_edge_jump() {
         let tiled = Rect::new(12.0, 12.0, 942.0, 1056.0);
         let fullscreen = Rect::new(0.0, 0.0, 1920.0, 1080.0);
-        for (start, target, fullscreen_target) in [(tiled, fullscreen, true), (fullscreen, tiled, false)] {
+        for (start, target, fullscreen_target) in
+            [(tiled, fullscreen, true), (fullscreen, tiled, false)]
+        {
             let mut geometry = WindowGeometry::new(start, None);
             if !fullscreen_target {
                 geometry.set_presentation_target(start, true, Duration::ZERO);
@@ -674,7 +741,11 @@ mod tests {
             let mut finished = false;
             for _ in 0..1000 {
                 let before = geometry.visual.current;
-                if !geometry.advance(Duration::from_secs_f64(1.0 / 144.0), SpringConfig::default(), true) {
+                if !geometry.advance(
+                    Duration::from_secs_f64(1.0 / 144.0),
+                    SpringConfig::default(),
+                    true,
+                ) {
                     let right_before = before.x + before.width;
                     let right_after = target.x + target.width;
                     assert!(
@@ -701,7 +772,9 @@ mod tests {
             let progress = 1.0 - geometry.decorations;
             let visual = geometry.visual.current;
             assert!((visual.x - (start.x + (end.x - start.x) * progress)).abs() < 1e-9);
-            assert!((visual.width - (start.width + (end.width - start.width) * progress)).abs() < 1e-9);
+            assert!(
+                (visual.width - (start.width + (end.width - start.width) * progress)).abs() < 1e-9
+            );
         }
     }
 
@@ -712,7 +785,11 @@ mod tests {
         let mut geometry = WindowGeometry::new(tiled, None);
         for enabled in [true, false, true, false] {
             let before = (geometry.visual.current, geometry.decorations);
-            geometry.set_presentation_target(if enabled { fullscreen } else { tiled }, enabled, Duration::ZERO);
+            geometry.set_presentation_target(
+                if enabled { fullscreen } else { tiled },
+                enabled,
+                Duration::ZERO,
+            );
             assert_eq!((geometry.visual.current, geometry.decorations), before);
             geometry.advance(Duration::from_millis(48), SpringConfig::default(), true);
         }
@@ -756,15 +833,24 @@ mod tests {
             Some(ClientSize::from_rect(middle))
         );
         geometry.advance(Duration::from_millis(64), SpringConfig::default(), true);
-        assert_eq!(geometry.presentation_size_request(Duration::from_millis(64)), None);
         assert_eq!(
-            geometry.set_presentation_mode(end, PresentationMode::Normal, Duration::from_millis(64)),
+            geometry.presentation_size_request(Duration::from_millis(64)),
+            None
+        );
+        assert_eq!(
+            geometry.set_presentation_mode(
+                end,
+                PresentationMode::Normal,
+                Duration::from_millis(64)
+            ),
             Some(ClientSize::from_rect(end))
         );
         let mut requests = Vec::new();
         for frame in 1..240 {
             geometry.advance(Duration::from_millis(8), SpringConfig::default(), true);
-            if let Some(size) = geometry.presentation_size_request(Duration::from_millis(64 + frame * 8)) {
+            if let Some(size) =
+                geometry.presentation_size_request(Duration::from_millis(64 + frame * 8))
+            {
                 assert_eq!(geometry.visual.current.width, end.width);
                 requests.push(size);
             }
@@ -809,8 +895,13 @@ mod tests {
                             true,
                         );
                         let current = geometry.visual.current;
-                        let edges = |rect: Rect| [rect.x, rect.y, rect.x + rect.width, rect.y + rect.height];
-                        for ((before, after), end) in edges(previous).into_iter().zip(edges(current)).zip(edges(target))
+                        let edges = |rect: Rect| {
+                            [rect.x, rect.y, rect.x + rect.width, rect.y + rect.height]
+                        };
+                        for ((before, after), end) in edges(previous)
+                            .into_iter()
+                            .zip(edges(current))
+                            .zip(edges(target))
                         {
                             assert!((after - end).abs() <= (before - end).abs() + 1e-9);
                         }
@@ -967,7 +1058,11 @@ mod tests {
         let mut geometry = WindowGeometry::new(rect, None);
 
         assert!(geometry.set_logical_target(rect, Duration::ZERO).is_some());
-        assert!(geometry.set_logical_target(rect, Duration::from_millis(16)).is_none());
+        assert!(
+            geometry
+                .set_logical_target(rect, Duration::from_millis(16))
+                .is_none()
+        );
     }
 
     #[test]
@@ -1026,7 +1121,10 @@ mod tests {
             assert!(sixty.current.width <= target.width);
         }
         for _ in 0..288 {
-            one_forty_four.advance(Duration::from_secs_f64(1.0 / 144.0), SpringConfig::default());
+            one_forty_four.advance(
+                Duration::from_secs_f64(1.0 / 144.0),
+                SpringConfig::default(),
+            );
         }
 
         assert!(sixty.is_settled(SpringConfig::default()));

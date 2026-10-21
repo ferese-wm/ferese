@@ -15,12 +15,17 @@ impl App {
             row([])
                 .spacing(8)
                 .align_y(Alignment::Center)
-                .push(visuals::action_icon("M3 4h18v13H3z M12 17v4 M8 21h8", palette.accent))
+                .push(visuals::action_icon(
+                    "M3 4h18v13H3z M12 17v4 M8 21h8",
+                    palette.accent,
+                ))
                 .push(
                     ferese_theme::controls::select(
-                        cosmic::iced::widget::pick_list(targets.clone(), selected.clone(), |target| {
-                            Message::SelectDisplay(target.key)
-                        })
+                        cosmic::iced::widget::pick_list(
+                            targets.clone(),
+                            selected.clone(),
+                            |target| Message::SelectDisplay(target.key),
+                        )
                         .placeholder("Select display")
                         .font(self.font)
                         .text_size(12)
@@ -86,7 +91,9 @@ impl App {
                     }
                     let modes = displays::choices(display, &configured);
                     let mut refresh: Vec<_> = modes.iter().copied().map(Refresh::Manual).collect();
-                    if modes.iter().any(|mode| (59_000..=61_000).contains(&mode.refresh))
+                    if modes
+                        .iter()
+                        .any(|mode| (59_000..=61_000).contains(&mode.refresh))
                         && let Some(high) = modes.last()
                     {
                         refresh.push(Refresh::Automatic(*high));
@@ -101,7 +108,9 @@ impl App {
                         let selected = refresh.iter().copied().find(|value| match value {
                             Refresh::Automatic(_) => automatic,
                             Refresh::Manual(mode) => {
-                                !automatic && configured_rate.is_some_and(|r| (r - f64::from(mode.refresh)).abs() < 1.)
+                                !automatic
+                                    && configured_rate
+                                        .is_some_and(|r| (r - f64::from(mode.refresh)).abs() < 1.)
                             }
                         });
                         let path = prefix.clone();
@@ -109,10 +118,18 @@ impl App {
                             self.display_control(
                                 "Refresh rate",
                                 ferese_theme::controls::select(
-                                    cosmic::iced::widget::pick_list(refresh, selected, move |value| match value {
-                                        Refresh::Manual(mode) => Message::RefreshRate(path.clone(), mode, false),
-                                        Refresh::Automatic(mode) => Message::RefreshRate(path.clone(), mode, true),
-                                    })
+                                    cosmic::iced::widget::pick_list(
+                                        refresh,
+                                        selected,
+                                        move |value| match value {
+                                            Refresh::Manual(mode) => {
+                                                Message::RefreshRate(path.clone(), mode, false)
+                                            }
+                                            Refresh::Automatic(mode) => {
+                                                Message::RefreshRate(path.clone(), mode, true)
+                                            }
+                                        },
+                                    )
                                     .font(self.font)
                                     .text_size(12)
                                     .padding([4, 8])
@@ -157,7 +174,11 @@ impl App {
             .into()
     }
 
-    fn display_control<'a>(&self, label: &str, control: Element<'a, Message>) -> Element<'a, Message> {
+    fn display_control<'a>(
+        &self,
+        label: &str,
+        control: Element<'a, Message>,
+    ) -> Element<'a, Message> {
         row([])
             .spacing(10)
             .align_y(Alignment::Center)
@@ -168,6 +189,11 @@ impl App {
     }
 
     fn display_mode_field(&self, prefix: &str) -> Element<'static, Message> {
-        self.field(schema::text(format!("{prefix}.mode"), "Resolution / refresh", "", ""))
+        self.field(schema::text(
+            format!("{prefix}.mode"),
+            "Resolution / refresh",
+            "",
+            "",
+        ))
     }
 }

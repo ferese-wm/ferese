@@ -10,7 +10,11 @@ use super::{Menu, OpenMenu, PopoverAnchor};
 use crate::status::Action;
 use crate::{FereseShell, Message};
 
-fn menu_positioner(rectangle: Rectangle<i32>, height_limit: f32, edge: ferese_panel::Edge) -> SctkPositioner {
+fn menu_positioner(
+    rectangle: Rectangle<i32>,
+    height_limit: f32,
+    edge: ferese_panel::Edge,
+) -> SctkPositioner {
     // xdg-positioner: bottom/bottom-left for top bars, top/top-left for bottom bars.
     let (anchor, gravity, gap) = match edge {
         ferese_panel::Edge::Top => (2u32, 6u32, 8),
@@ -21,7 +25,9 @@ fn menu_positioner(rectangle: Rectangle<i32>, height_limit: f32, edge: ferese_pa
         anchor: anchor.try_into().unwrap(),
         gravity: gravity.try_into().unwrap(),
         offset: (rectangle.width / 2, gap),
-        size_limits: Limits::NONE.max_width(368.0).max_height(720.0_f32.max(height_limit)),
+        size_limits: Limits::NONE
+            .max_width(368.0)
+            .max_height(720.0_f32.max(height_limit)),
         constraint_adjustment: 3,
         ..Default::default()
     }
@@ -41,7 +47,10 @@ impl FereseShell {
     pub fn open_menu(&mut self, kind: Menu, anchor: PopoverAnchor) -> Task<Message> {
         if (self.snapshot.binding_mode.is_some() && anchor.item.is_some())
             || !anchor.belongs_to(&self.config.panels[0])
-            || !self.outputs.iter().any(|output| output.bar == anchor.parent)
+            || !self
+                .outputs
+                .iter()
+                .any(|output| output.bar == anchor.parent)
             || self.bar_hidden(anchor.parent)
             || !kind.available(&self.status)
         {
@@ -60,7 +69,9 @@ impl FereseShell {
             return close.chain(open);
         }
         if self.menu.as_ref().is_some_and(|menu| {
-            menu.kind == kind && menu.anchor.same_item(&anchor) && menu.anchor.rectangle == anchor.rectangle
+            menu.kind == kind
+                && menu.anchor.same_item(&anchor)
+                && menu.anchor.rectangle == anchor.rectangle
         }) {
             if let Some(menu) = &mut self.menu
                 && menu.motion.closing()
@@ -94,7 +105,11 @@ impl FereseShell {
         if !kind.available(&self.status) {
             return Task::none();
         }
-        if self.menu.as_ref().is_some_and(|menu| menu.kind == Menu::Notifications) {
+        if self
+            .menu
+            .as_ref()
+            .is_some_and(|menu| menu.kind == Menu::Notifications)
+        {
             self.notifications.history_open = false;
             self.notifications.hovered = None;
         }
@@ -120,7 +135,9 @@ impl FereseShell {
             menu.switch_panel(kind, self.config.animations, Instant::now());
             return Task::batch([
                 notifications,
-                cosmic::iced::platform_specific::shell::commands::popup::reposition(menu.id, positioner),
+                cosmic::iced::platform_specific::shell::commands::popup::reposition(
+                    menu.id, positioner,
+                ),
             ]);
         }
         let id = window::Id::unique();
@@ -166,7 +183,9 @@ impl FereseShell {
         }
         Task::batch([
             tooltip,
-            cosmic::task::message(cosmic::Action::Surface(cosmic::surface::action::destroy_popup(menu.id))),
+            cosmic::task::message(cosmic::Action::Surface(
+                cosmic::surface::action::destroy_popup(menu.id),
+            )),
             self.sync_notification_surface(),
         ])
     }
@@ -302,7 +321,9 @@ mod tests {
             width: 32,
             height: 30,
         };
-        for (edge, anchor, gravity, gap) in [(Edge::Top, 2u32, 6u32, 8), (Edge::Bottom, 1u32, 5u32, -8)] {
+        for (edge, anchor, gravity, gap) in
+            [(Edge::Top, 2u32, 6u32, 8), (Edge::Bottom, 1u32, 5u32, -8)]
+        {
             let positioner = menu_positioner(rectangle, 620., edge);
             assert_eq!(positioner.anchor_rect, rectangle);
             assert_eq!(positioner.anchor, anchor.try_into().unwrap());
@@ -408,7 +429,10 @@ mod tests {
             },
             now,
         );
-        assert_eq!(menu.motion.progress_at(now + Duration::from_millis(60)), normal);
+        assert_eq!(
+            menu.motion.progress_at(now + Duration::from_millis(60)),
+            normal
+        );
     }
     #[test]
     fn popup_anchors_reject_removed_hidden_items_and_other_panel_definitions() {
@@ -426,7 +450,10 @@ mod tests {
         };
         assert!(anchor.belongs_to(&panel));
         let items = &mut panel.end.groups[0].items;
-        let network = items.iter().position(|item| item.id.0 == "network").unwrap();
+        let network = items
+            .iter()
+            .position(|item| item.id.0 == "network")
+            .unwrap();
         items[network].visible = false;
         assert!(!anchor.belongs_to(&panel));
         panel.end.groups[0].items.remove(network);

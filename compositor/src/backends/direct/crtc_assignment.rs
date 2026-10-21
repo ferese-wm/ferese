@@ -130,17 +130,31 @@ mod tests {
     #[test]
     fn every_connector_order_finds_a_complete_matching() {
         let graph = [&[1, 2][..], &[1, 3][..], &[1, 3][..]];
-        for order in [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]] {
+        for order in [
+            [0, 1, 2],
+            [0, 2, 1],
+            [1, 0, 2],
+            [1, 2, 0],
+            [2, 0, 1],
+            [2, 1, 0],
+        ] {
             let requests = order.map(|index| candidates(None, None, graph[index]));
             let result = assign(&requests);
             assert_eq!(result.iter().flatten().count(), 3, "order {order:?}");
-            assert_eq!(assign(&requests), result, "deterministic for the same inventory");
+            assert_eq!(
+                assign(&requests),
+                result,
+                "deterministic for the same inventory"
+            );
         }
     }
 
     #[test]
     fn equal_preferences_use_connector_order() {
-        let result = assign(&[candidates(Some(1), None, &[1, 2]), candidates(Some(1), None, &[1, 2])]);
+        let result = assign(&[
+            candidates(Some(1), None, &[1, 2]),
+            candidates(Some(1), None, &[1, 2]),
+        ]);
         assert_eq!(result, vec![Some(crtc(1)), Some(crtc(2))]);
     }
 
@@ -159,18 +173,29 @@ mod tests {
 
     #[test]
     fn maximum_cardinality_and_preference_objective_match_exhaustive_oracle() {
-        fn score(requests: &[Candidates], assignment: &[Option<crtc::Handle>]) -> (usize, usize, usize) {
+        fn score(
+            requests: &[Candidates],
+            assignment: &[Option<crtc::Handle>],
+        ) -> (usize, usize, usize) {
             let retained = [true, false].map(|applied| {
                 requests
                     .iter()
                     .zip(assignment)
                     .filter(|(request, actual)| {
-                        let preferred = if applied { request.applied } else { request.kernel };
+                        let preferred = if applied {
+                            request.applied
+                        } else {
+                            request.kernel
+                        };
                         preferred.is_some() && preferred == **actual
                     })
                     .count()
             });
-            (assignment.iter().flatten().count(), retained[0], retained[1])
+            (
+                assignment.iter().flatten().count(),
+                retained[0],
+                retained[1],
+            )
         }
 
         fn enumerate(
@@ -204,7 +229,8 @@ mod tests {
                             .filter(|crtc| graph & (1 << (index * 3 + crtc - 1)) != 0)
                             .collect::<Vec<_>>();
                         let applied = ((seed + index) % 4 != 0).then_some((seed + index) % 4);
-                        let kernel = ((seed * 3 + index) % 4 != 0).then_some((seed * 3 + index) % 4);
+                        let kernel =
+                            ((seed * 3 + index) % 4 != 0).then_some((seed * 3 + index) % 4);
                         candidates(applied, kernel, &compatible)
                     })
                     .collect::<Vec<_>>();
@@ -213,13 +239,14 @@ mod tests {
                 let actual = assign(&requests);
                 let used = actual.iter().flatten().collect::<HashSet<_>>();
                 assert_eq!(used.len(), actual.iter().flatten().count());
-                assert!(
-                    requests
-                        .iter()
-                        .zip(&actual)
-                        .all(|(request, crtc)| crtc.is_none_or(|crtc| request.compatible.contains(&crtc)))
+                assert!(requests.iter().zip(&actual).all(|(request, crtc)| {
+                    crtc.is_none_or(|crtc| request.compatible.contains(&crtc))
+                }));
+                assert_eq!(
+                    score(&requests, &actual),
+                    best,
+                    "graph {graph}, preferences {seed}"
                 );
-                assert_eq!(score(&requests, &actual), best, "graph {graph}, preferences {seed}");
             }
         }
     }
@@ -250,10 +277,16 @@ mod tests {
         // The internal panel appears first in the DRM connector inventory.
         let internal = candidates(None, None, &[151, 270]);
         let external = candidates(Some(151), Some(151), &[151, 270]);
-        assert_eq!(assign(&[internal, external]), vec![Some(crtc(270)), Some(crtc(151))]);
+        assert_eq!(
+            assign(&[internal, external]),
+            vec![Some(crtc(270)), Some(crtc(151))]
+        );
         let internal = candidates(None, None, &[151, 270]);
         let external = candidates(Some(151), Some(151), &[151, 270]);
-        assert_eq!(assign(&[external, internal]), vec![Some(crtc(151)), Some(crtc(270))]);
+        assert_eq!(
+            assign(&[external, internal]),
+            vec![Some(crtc(151)), Some(crtc(270))]
+        );
     }
 
     #[test]
@@ -304,7 +337,10 @@ mod tests {
     #[test]
     fn restricted_connector_gets_its_only_free_crtc() {
         assert_eq!(
-            assign(&[candidates(None, None, &[151, 270]), candidates(None, None, &[151])]),
+            assign(&[
+                candidates(None, None, &[151, 270]),
+                candidates(None, None, &[151])
+            ]),
             vec![Some(crtc(270)), Some(crtc(151))]
         );
     }
@@ -312,7 +348,10 @@ mod tests {
     #[test]
     fn exhausted_crtcs_do_not_displace_surviving_output_or_assign_twice() {
         assert_eq!(
-            assign(&[candidates(None, None, &[151]), candidates(Some(151), Some(151), &[151])]),
+            assign(&[
+                candidates(None, None, &[151]),
+                candidates(Some(151), Some(151), &[151])
+            ]),
             vec![None, Some(crtc(151))]
         );
         assert!(assign(&[]).is_empty());

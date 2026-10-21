@@ -41,14 +41,17 @@ pub(crate) fn init_font_loader(
 ) -> Result<(), Box<dyn std::error::Error>> {
     use smithay::reexports::calloop::channel;
     let (results, source) = channel::sync_channel::<(String, Option<FontArc>)>(1);
-    event_loop.handle().insert_source(source, |event, _, state| {
-        if let channel::Event::Msg((family, font)) = event
-            && state.overview.complete_font_load(&family, font)
-            && (state.overview.is_presenting() || state.tab_bars.values().any(|bars| !bars.is_empty()))
-        {
-            crate::backends::direct::render_all(state);
-        }
-    })?;
+    event_loop
+        .handle()
+        .insert_source(source, |event, _, state| {
+            if let channel::Event::Msg((family, font)) = event
+                && state.overview.complete_font_load(&family, font)
+                && (state.overview.is_presenting()
+                    || state.tab_bars.values().any(|bars| !bars.is_empty()))
+            {
+                crate::backends::direct::render_all(state);
+            }
+        })?;
     let latest = Arc::new(Mutex::new(state.overview.font_family.clone()));
     let worker_latest = latest.clone();
     let (wake, requests) = mpsc::sync_channel(1);
@@ -98,7 +101,10 @@ fn label_font(database: &fontdb::Database, family: &str) -> Option<FontArc> {
         })
 }
 
-type LabelBuffer = (MemoryRenderBuffer, smithay::utils::Size<i32, smithay::utils::Buffer>);
+type LabelBuffer = (
+    MemoryRenderBuffer,
+    smithay::utils::Size<i32, smithay::utils::Buffer>,
+);
 type LabelStyle = (u64, u64, [u32; 4]);
 type OverviewStateLabel = HashMap<String, HashMap<LabelStyle, LabelBuffer>>;
 
@@ -170,11 +176,19 @@ pub(crate) fn workspace_strip(bounds: Rect) -> Rect {
 fn window_area(bounds: Rect) -> Rect {
     let strip = workspace_strip(bounds);
     let top = strip.y + strip.height + 16.0;
-    Rect::new(bounds.x, top, bounds.width, (bounds.y + bounds.height - top).max(1.0))
+    Rect::new(
+        bounds.x,
+        top,
+        bounds.width,
+        (bounds.y + bounds.height - top).max(1.0),
+    )
 }
 
 fn contains(rect: Rect, point: Point<f64, Logical>) -> bool {
-    point.x >= rect.x && point.x < rect.x + rect.width && point.y >= rect.y && point.y < rect.y + rect.height
+    point.x >= rect.x
+        && point.x < rect.x + rect.width
+        && point.y >= rect.y
+        && point.y < rect.y + rect.height
 }
 
 fn strip_capacity(strip: Rect) -> usize {
@@ -192,11 +206,10 @@ impl OverviewState {
     pub(crate) fn needs_tick(&self) -> bool {
         self.motion.opacity.current != self.motion.opacity.target
             || self.motion.opacity.velocity != 0.0
-            || self
-                .motion
-                .presentations
-                .values()
-                .any(|rect| rect.current != rect.target || rect.velocity != ferese_animation::RectVelocity::default())
+            || self.motion.presentations.values().any(|rect| {
+                rect.current != rect.target
+                    || rect.velocity != ferese_animation::RectVelocity::default()
+            })
     }
 
     pub(crate) fn is_animating(&self, spring: SpringConfig) -> bool {
@@ -246,12 +259,25 @@ impl OverviewState {
         text: &str,
         scale: f64,
         color: [f32; 4],
-    ) -> Option<(MemoryRenderBuffer, smithay::utils::Size<i32, smithay::utils::Buffer>)> {
+    ) -> Option<(
+        MemoryRenderBuffer,
+        smithay::utils::Size<i32, smithay::utils::Buffer>,
+    )> {
         self.label_with_size(text, scale, color, 13.0)
     }
 
-    fn label_with_size(&mut self, text: &str, scale: f64, color: [f32; 4], font_size: f64) -> Option<LabelBuffer> {
-        let key = (scale.to_bits(), font_size.to_bits(), color.map(f32::to_bits));
+    fn label_with_size(
+        &mut self,
+        text: &str,
+        scale: f64,
+        color: [f32; 4],
+        font_size: f64,
+    ) -> Option<LabelBuffer> {
+        let key = (
+            scale.to_bits(),
+            font_size.to_bits(),
+            color.map(f32::to_bits),
+        );
         if let Some(buffer) = self.labels.get(text).and_then(|styles| styles.get(&key)) {
             return Some(buffer.clone());
         }
@@ -269,7 +295,10 @@ impl OverviewState {
         let mut pen = 2.0;
         for ch in text.chars() {
             let id = font.glyph_id(ch);
-            let glyph = id.with_scale_and_position(scaled.scale(), ab_glyph::point(pen, scaled.ascent() + 1.0));
+            let glyph = id.with_scale_and_position(
+                scaled.scale(),
+                ab_glyph::point(pen, scaled.ascent() + 1.0),
+            );
             pen += scaled.h_advance(id);
             if let Some(outline) = font.outline_glyph(glyph) {
                 let bounds = outline.px_bounds();
@@ -289,8 +318,14 @@ impl OverviewState {
                 });
             }
         }
-        let buffer =
-            MemoryRenderBuffer::from_slice(&pixels, Fourcc::Abgr8888, (width, height), 1, Transform::Normal, None);
+        let buffer = MemoryRenderBuffer::from_slice(
+            &pixels,
+            Fourcc::Abgr8888,
+            (width, height),
+            1,
+            Transform::Normal,
+            None,
+        );
         if self.label_count >= 128 {
             self.labels.clear();
             self.label_count = 0;
@@ -318,12 +353,19 @@ impl OverviewState {
     }
 
     fn select_workspace_windows(&mut self, windows: &[WindowId], preferred: Option<WindowId>) {
-        let visible = |id: &WindowId| windows.contains(id) && self.motion.presentations.contains_key(id);
+        let visible =
+            |id: &WindowId| windows.contains(id) && self.motion.presentations.contains_key(id);
         self.selected = self
             .selected
             .filter(visible)
             .or_else(|| preferred.filter(visible))
-            .or_else(|| windows.iter().copied().filter(visible).min_by_key(|id| id.0));
+            .or_else(|| {
+                windows
+                    .iter()
+                    .copied()
+                    .filter(visible)
+                    .min_by_key(|id| id.0)
+            });
     }
 
     pub(crate) fn selection_state(&self) -> (Option<WindowId>, Option<WorkspaceId>) {
@@ -363,9 +405,13 @@ impl OverviewState {
             .filter(|(id, _)| Some(**id) != self.selected)
             .filter_map(|(id, presentation)| {
                 let center = rect_center(presentation.current);
-                directional_distance(direction, current_center, center).map(|distance| (*id, distance))
+                directional_distance(direction, current_center, center)
+                    .map(|distance| (*id, distance))
             })
-            .min_by(|(left_id, left), (right_id, right)| left.total_cmp(right).then_with(|| left_id.0.cmp(&right_id.0)))
+            .min_by(|(left_id, left), (right_id, right)| {
+                left.total_cmp(right)
+                    .then_with(|| left_id.0.cmp(&right_id.0))
+            })
             .map(|(id, _)| id);
         let Some(next) = next else {
             return false;
@@ -385,26 +431,33 @@ impl OverviewState {
         &self.motion
     }
 
-    fn seed_presentations(&mut self, windows: impl IntoIterator<Item = crate::presentation::WindowPresentation>) {
+    fn seed_presentations(
+        &mut self,
+        windows: impl IntoIterator<Item = crate::presentation::WindowPresentation>,
+    ) {
         for window in windows {
-            self.motion.presentations.entry(window.id).or_insert_with(|| {
-                // Opening scales the final presentation after overview. Remove
-                // it here so the same opening motion is not applied twice.
-                let scale = 0.97 + 0.03 * window.opacity.current;
-                let mut bounds = window.bounds;
-                bounds.velocity = crate::presentation::scaled_visual_velocity(
-                    bounds.current,
-                    bounds.velocity,
-                    1.0 / scale,
-                    -0.03 * window.opacity.velocity / (scale * scale),
-                );
-                bounds.current = crate::presentation::scaled_visual_rect(bounds.current, 1.0 / scale);
-                bounds.velocity.x /= OVERVIEW_MOTION_SPEED;
-                bounds.velocity.y /= OVERVIEW_MOTION_SPEED;
-                bounds.velocity.width /= OVERVIEW_MOTION_SPEED;
-                bounds.velocity.height /= OVERVIEW_MOTION_SPEED;
-                bounds
-            });
+            self.motion
+                .presentations
+                .entry(window.id)
+                .or_insert_with(|| {
+                    // Opening scales the final presentation after overview. Remove
+                    // it here so the same opening motion is not applied twice.
+                    let scale = 0.97 + 0.03 * window.opacity.current;
+                    let mut bounds = window.bounds;
+                    bounds.velocity = crate::presentation::scaled_visual_velocity(
+                        bounds.current,
+                        bounds.velocity,
+                        1.0 / scale,
+                        -0.03 * window.opacity.velocity / (scale * scale),
+                    );
+                    bounds.current =
+                        crate::presentation::scaled_visual_rect(bounds.current, 1.0 / scale);
+                    bounds.velocity.x /= OVERVIEW_MOTION_SPEED;
+                    bounds.velocity.y /= OVERVIEW_MOTION_SPEED;
+                    bounds.velocity.width /= OVERVIEW_MOTION_SPEED;
+                    bounds.velocity.height /= OVERVIEW_MOTION_SPEED;
+                    bounds
+                });
         }
     }
 
@@ -428,7 +481,9 @@ impl OverviewState {
     }
 
     fn retarget(&mut self, targets: HashMap<WindowId, (Rect, Rect)>, animations_enabled: bool) {
-        self.motion.presentations.retain(|id, _| targets.contains_key(id));
+        self.motion
+            .presentations
+            .retain(|id, _| targets.contains_key(id));
 
         for (id, (normal, target)) in targets {
             let presentation = self
@@ -446,7 +501,12 @@ impl OverviewState {
             .selected
             .is_none_or(|id| !self.motion.presentations.contains_key(&id))
         {
-            self.selected = self.motion.presentations.keys().copied().min_by_key(|id| id.0);
+            self.selected = self
+                .motion
+                .presentations
+                .keys()
+                .copied()
+                .min_by_key(|id| id.0);
         }
     }
 
@@ -474,7 +534,12 @@ impl OverviewState {
         }
     }
 
-    pub(crate) fn advance(&mut self, delta: Duration, spring: SpringConfig, animations_enabled: bool) -> bool {
+    pub(crate) fn advance(
+        &mut self,
+        delta: Duration,
+        spring: SpringConfig,
+        animations_enabled: bool,
+    ) -> bool {
         self.motion.advance(delta, spring, animations_enabled)
     }
 }
@@ -496,7 +561,10 @@ impl Ferese {
         }
     }
 
-    pub(crate) fn redraw_overview_selection(&mut self, previous: (Option<WindowId>, Option<WorkspaceId>)) {
+    pub(crate) fn redraw_overview_selection(
+        &mut self,
+        previous: (Option<WindowId>, Option<WorkspaceId>),
+    ) {
         let outputs = self
             .space
             .outputs()
@@ -509,7 +577,8 @@ impl Ferese {
                         .into_iter()
                         .flatten()
                         .any(|workspace| {
-                            self.output_workspaces.output_for_workspace(workspace) == self.output_id(output)
+                            self.output_workspaces.output_for_workspace(workspace)
+                                == self.output_id(output)
                         })
             })
             .cloned()
@@ -523,7 +592,12 @@ impl Ferese {
             .retain(|id, _| self.windows.window(*id).is_some());
     }
 
-    pub(crate) fn overview_window_label(&mut self, id: WindowId, scale: f64, width: f64) -> Option<LabelBuffer> {
+    pub(crate) fn overview_window_label(
+        &mut self,
+        id: WindowId,
+        scale: f64,
+        width: f64,
+    ) -> Option<LabelBuffer> {
         self.window_title_label(id, scale, width, 13.0)
     }
 
@@ -537,7 +611,11 @@ impl Ferese {
         let record = self.windows.record(id)?;
         let limit = ((width - 16.0) / 8.0).clamp(1.0, 48.0) as usize;
         let color = self.theme_settings.text_primary_color.0;
-        let style = (scale.to_bits(), font_size.to_bits(), color.map(f32::to_bits));
+        let style = (
+            scale.to_bits(),
+            font_size.to_bits(),
+            color.map(f32::to_bits),
+        );
 
         if let Some(label) = self.overview.window_labels.get(&id)
             && label.revision == record.metadata_revision
@@ -563,7 +641,9 @@ impl Ferese {
         }
 
         let revision = record.metadata_revision;
-        let buffer = self.overview.label_with_size(&text, scale, color, font_size)?;
+        let buffer = self
+            .overview
+            .label_with_size(&text, scale, color, font_size)?;
         self.overview.window_labels.insert(
             id,
             WindowLabel {
@@ -604,9 +684,15 @@ impl Ferese {
         &mut self,
         index: u32,
         scale: f64,
-    ) -> Option<(MemoryRenderBuffer, smithay::utils::Size<i32, smithay::utils::Buffer>)> {
-        self.overview
-            .label(&index.to_string(), scale, self.theme_settings.text_primary_color.0)
+    ) -> Option<(
+        MemoryRenderBuffer,
+        smithay::utils::Size<i32, smithay::utils::Buffer>,
+    )> {
+        self.overview.label(
+            &index.to_string(),
+            scale,
+            self.theme_settings.text_primary_color.0,
+        )
     }
 
     pub(crate) fn set_overview_active(&mut self, active: bool) {
@@ -676,14 +762,17 @@ impl Ferese {
         if !self.overview.is_active() {
             if self.overview.is_presenting() {
                 let normal = self.normal_window_rects();
-                self.overview.motion.presentations.retain(|id, presentation| {
-                    if let Some(target) = normal.get(id) {
-                        presentation.set_target(*target);
-                        true
-                    } else {
-                        false
-                    }
-                });
+                self.overview
+                    .motion
+                    .presentations
+                    .retain(|id, presentation| {
+                        if let Some(target) = normal.get(id) {
+                            presentation.set_target(*target);
+                            true
+                        } else {
+                            false
+                        }
+                    });
             }
             return;
         }
@@ -691,7 +780,13 @@ impl Ferese {
         let targets = self.overview_targets();
         self.overview.retarget(targets, self.animations_enabled());
         if let Some(cycle) = self.focus_cycle.as_mut() {
-            let available = self.overview.motion.presentations.keys().copied().collect::<Vec<_>>();
+            let available = self
+                .overview
+                .motion
+                .presentations
+                .keys()
+                .copied()
+                .collect::<Vec<_>>();
             if let Some(id) = cycle.reconcile(&available) {
                 self.overview.select_window(id);
             }
@@ -711,7 +806,8 @@ impl Ferese {
                         .collect::<Vec<_>>()
                 })
                 .unwrap_or_default();
-            self.overview.select_workspace_windows(&windows, self.focused_window);
+            self.overview
+                .select_workspace_windows(&windows, self.focused_window);
         }
     }
 
@@ -719,7 +815,12 @@ impl Ferese {
         Some(self.current_window_presentation(id)?.bounds.current)
     }
 
-    pub(crate) fn inverse_presented_window_point(&self, id: WindowId, x: f64, y: f64) -> Option<(f64, f64)> {
+    pub(crate) fn inverse_presented_window_point(
+        &self,
+        id: WindowId,
+        x: f64,
+        y: f64,
+    ) -> Option<(f64, f64)> {
         let geometry = self.windows.geometry(&id)?;
         if !self.overview.is_presenting() && self.windows.record(id)?.opening.is_none() {
             let presented = self.presented_window_rect(id)?;
@@ -732,7 +833,11 @@ impl Ferese {
         };
         let presented = self.presented_window_rect(id)?;
 
-        if source.width <= 0 || source.height <= 0 || presented.width <= 0.0 || presented.height <= 0.0 {
+        if source.width <= 0
+            || source.height <= 0
+            || presented.width <= 0.0
+            || presented.height <= 0.0
+        {
             return None;
         }
 
@@ -780,9 +885,10 @@ impl Ferese {
             .copied()
             .unwrap_or_else(|| selected_index.saturating_sub(capacity - 1))
             .min(max_offset);
-        let card_width = ((strip.width - 24.0 - WORKSPACE_CARD_GAP * capacity.saturating_sub(1) as f64)
-            / capacity as f64)
-            .clamp(1.0, 160.0);
+        let card_width =
+            ((strip.width - 24.0 - WORKSPACE_CARD_GAP * capacity.saturating_sub(1) as f64)
+                / capacity as f64)
+                .clamp(1.0, 160.0);
         let visible_count = workspaces.len().saturating_sub(offset).min(capacity);
         let start_x = centered_row_start(strip, visible_count, card_width);
         workspaces
@@ -791,7 +897,10 @@ impl Ferese {
             .take(capacity)
             .enumerate()
             .map(|(index, view)| {
-                let workspace = self.workspaces.workspace(view.id).expect("workspace view exists");
+                let workspace = self
+                    .workspaces
+                    .workspace(view.id)
+                    .expect("workspace view exists");
 
                 let rect = Rect::new(
                     start_x + index as f64 * (card_width + WORKSPACE_CARD_GAP),
@@ -861,8 +970,11 @@ impl Ferese {
             self.advance_animations(std::time::Instant::now());
             let previous = self.output_workspaces.active_workspace(output_id);
             if let Ok(
-                ferese_core::WorkspaceSwitch::Activated(owner) | ferese_core::WorkspaceSwitch::FocusedExisting(owner),
-            ) = self.output_workspaces.switch_workspace(output_id, card.workspace)
+                ferese_core::WorkspaceSwitch::Activated(owner)
+                | ferese_core::WorkspaceSwitch::FocusedExisting(owner),
+            ) = self
+                .output_workspaces
+                .switch_workspace(output_id, card.workspace)
             {
                 self.update_workspace_slide(output_id, owner, previous, card.workspace, None);
                 // Existing monitor ownership wins; never steal another output's workspace.
@@ -889,7 +1001,9 @@ impl Ferese {
         };
         let capacity = strip_capacity(workspace_strip(bounds));
         let cards = self.overview_workspace_cards(&output);
-        let ordered = self.output_workspaces.ordered_workspaces(&self.workspaces, output_id);
+        let ordered = self
+            .output_workspaces
+            .ordered_workspaces(&self.workspaces, output_id);
         let current = cards
             .first()
             .and_then(|card| ordered.iter().position(|id| *id == card.workspace))
@@ -933,12 +1047,17 @@ impl Ferese {
                     })
                     .collect::<Vec<_>>();
                 for (id, target) in overview_layout(window_area(bounds), &windows) {
-                    targets.insert(id, (self.windows.geometry(&id).unwrap().visual.current, target));
+                    targets.insert(
+                        id,
+                        (self.windows.geometry(&id).unwrap().visual.current, target),
+                    );
                 }
                 continue;
             }
             let mut visible = vec![workspace];
-            let sliding = self.workspace_slide_workspaces(output_id).collect::<Vec<_>>();
+            let sliding = self
+                .workspace_slide_workspaces(output_id)
+                .collect::<Vec<_>>();
             visible.extend(sliding.iter().copied().filter(|id| *id != workspace));
             for workspace in visible {
                 let Some(workspace) = self.workspaces.workspace(workspace) else {
@@ -983,7 +1102,12 @@ fn overview_layout(bounds: Rect, windows: &[(WindowId, Rect)]) -> HashMap<Window
 
 // Preserve input order for rendering: the damage tracker includes each
 // instance's z index, even when neighboring previews do not overlap.
-fn preview_layout(bounds: Rect, windows: &[(WindowId, Rect)], margin: f64, gap: f64) -> Vec<(WindowId, Rect)> {
+fn preview_layout(
+    bounds: Rect,
+    windows: &[(WindowId, Rect)],
+    margin: f64,
+    gap: f64,
+) -> Vec<(WindowId, Rect)> {
     if windows.is_empty() {
         return Vec::new();
     }
@@ -996,8 +1120,10 @@ fn preview_layout(bounds: Rect, windows: &[(WindowId, Rect)], margin: f64, gap: 
     let cell_size = |columns: usize| {
         let rows = windows.len().div_ceil(columns);
         (
-            ((content_width - gap * columns.saturating_sub(1) as f64) / columns as f64).clamp(1.0, 480.0),
-            ((content_height - gap * rows.saturating_sub(1) as f64) / rows as f64).clamp(1.0, 420.0),
+            ((content_width - gap * columns.saturating_sub(1) as f64) / columns as f64)
+                .clamp(1.0, 480.0),
+            ((content_height - gap * rows.saturating_sub(1) as f64) / rows as f64)
+                .clamp(1.0, 420.0),
         )
     };
     let score = |columns: usize| {
@@ -1039,8 +1165,10 @@ fn preview_layout(bounds: Rect, windows: &[(WindowId, Rect)], margin: f64, gap: 
             let width = (source.width * scale).max(1.0);
             let height = (source.height * scale).max(1.0);
             let row_count = (windows.len() - row * columns).min(columns);
-            let row_width = cell_width * row_count as f64 + gap * row_count.saturating_sub(1) as f64;
-            let cell_x = bounds.x + (bounds.width - row_width) * 0.5 + column as f64 * (cell_width + gap);
+            let row_width =
+                cell_width * row_count as f64 + gap * row_count.saturating_sub(1) as f64;
+            let cell_x =
+                bounds.x + (bounds.width - row_width) * 0.5 + column as f64 * (cell_width + gap);
             let cell_y = origin_y + row as f64 * (cell_height + gap);
             let target = Rect::new(
                 cell_x + (cell_width - width) / 2.0,
@@ -1058,7 +1186,11 @@ fn rect_center(rect: Rect) -> (f64, f64) {
     (rect.x + rect.width / 2.0, rect.y + rect.height / 2.0)
 }
 
-fn directional_distance(direction: Direction, current: (f64, f64), candidate: (f64, f64)) -> Option<f64> {
+fn directional_distance(
+    direction: Direction,
+    current: (f64, f64),
+    candidate: (f64, f64),
+) -> Option<f64> {
     let delta_x = candidate.0 - current.0;
     let delta_y = candidate.1 - current.1;
     let (primary, secondary) = match direction {
@@ -1086,7 +1218,10 @@ impl OverviewMotion {
     pub(crate) fn is_animating(&self, spring: SpringConfig) -> bool {
         (self.opacity.current - self.opacity.target).abs() > 0.001
             || self.opacity.velocity.abs() > 0.005
-            || self.presentations.values().any(|rect| !rect.is_settled(spring))
+            || self
+                .presentations
+                .values()
+                .any(|rect| !rect.is_settled(spring))
     }
 
     pub(crate) fn is_presenting(&self) -> bool {
@@ -1113,7 +1248,12 @@ impl OverviewMotion {
         self.presentations.get(&id).map_or(normal, |p| p.current)
     }
 
-    pub(crate) fn advance(&mut self, delta: Duration, spring: SpringConfig, animations_enabled: bool) -> bool {
+    pub(crate) fn advance(
+        &mut self,
+        delta: Duration,
+        spring: SpringConfig,
+        animations_enabled: bool,
+    ) -> bool {
         let delta = delta.mul_f64(OVERVIEW_MOTION_SPEED);
 
         let mut active_animation = false;
@@ -1194,7 +1334,9 @@ mod tests {
             Some(id),
             true,
         );
-        let sampled = overview.motion.presented_bounds(id, AnimatedRect::new(normal));
+        let sampled = overview
+            .motion
+            .presented_bounds(id, AnimatedRect::new(normal));
         assert!((sampled.current.x - normal.x).abs() < 1e-10);
         assert!((sampled.current.width - normal.width).abs() < 1e-10);
         assert!((sampled.velocity.x - velocity.x).abs() < 1e-10);
@@ -1265,7 +1407,10 @@ mod tests {
             requests.request(family);
         }
         receiver.try_recv().unwrap();
-        assert!(matches!(receiver.try_recv(), Err(mpsc::TryRecvError::Empty)));
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
+        ));
         assert_eq!(*requests.latest.lock().unwrap(), "third");
         drop(requests);
         assert!(matches!(receiver.recv(), Err(mpsc::RecvError)));
@@ -1285,7 +1430,9 @@ mod tests {
             let strip = Rect::new(origin + 24.0, 64.0, 1552.0, 132.0);
             for count in [1, 3, 8] {
                 let start = centered_row_start(strip, count, 160.0);
-                let end = start + count as f64 * 160.0 + count.saturating_sub(1) as f64 * WORKSPACE_CARD_GAP;
+                let end = start
+                    + count as f64 * 160.0
+                    + count.saturating_sub(1) as f64 * WORKSPACE_CARD_GAP;
                 assert!((start - strip.x - (strip.x + strip.width - end)).abs() < 0.001);
             }
         }
@@ -1302,7 +1449,11 @@ mod tests {
             assert!(strip.height < bounds.height / 2.0);
             assert!(area.y > strip.y + strip.height);
             let windows = [(WindowId(1), Rect::new(0.0, 0.0, 800.0, 900.0))];
-            assert!(overview_layout(area, &windows).values().all(|rect| rect.y >= area.y));
+            assert!(
+                overview_layout(area, &windows)
+                    .values()
+                    .all(|rect| rect.y >= area.y)
+            );
         }
     }
 
@@ -1386,7 +1537,11 @@ mod tests {
 
         let mut reference = AnimatedRect::new(normal);
         reference.set_target(thumbnail);
-        reference.advance_with_policy(Duration::from_millis(60), spring, CrossingPolicy::NoCrossing);
+        reference.advance_with_policy(
+            Duration::from_millis(60),
+            spring,
+            CrossingPolicy::NoCrossing,
+        );
         assert_eq!(predicted.presented_rect(id, normal), reference.current);
 
         overview.advance(Duration::from_millis(100), spring, true);
@@ -1467,7 +1622,10 @@ mod tests {
     #[test]
     fn overview_grid_preserves_preview_aspect_ratio() {
         let source = Rect::new(0.0, 0.0, 1200.0, 800.0);
-        let layout = overview_layout(Rect::new(0.0, 0.0, 1920.0, 1080.0), &[(WindowId(1), source)]);
+        let layout = overview_layout(
+            Rect::new(0.0, 0.0, 1920.0, 1080.0),
+            &[(WindowId(1), source)],
+        );
         let preview = layout[&WindowId(1)];
 
         assert!((preview.width / preview.height - source.width / source.height).abs() < 0.001);
@@ -1579,7 +1737,10 @@ mod tests {
         let mut overview = OverviewState::default();
 
         overview.enter(
-            HashMap::from([(left, (left_rect, left_rect)), (right, (right_rect, right_rect))]),
+            HashMap::from([
+                (left, (left_rect, left_rect)),
+                (right, (right_rect, right_rect)),
+            ]),
             Some(left),
             false,
         );

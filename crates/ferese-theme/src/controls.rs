@@ -91,7 +91,11 @@ pub(crate) fn switch_colors(palette: Palette, enabled: bool, hovered: bool) -> (
     let track = if enabled {
         palette.accent
     } else {
-        mix(palette.card, palette.text, if hovered { 0.18 } else { 0.12 })
+        mix(
+            palette.card,
+            palette.text,
+            if hovered { 0.18 } else { 0.12 },
+        )
     };
     let thumb = crate::foreground(track, palette.text);
     (track, thumb)
@@ -148,7 +152,13 @@ pub fn select<'a, M: 'a>(
     }))
 }
 
-fn styled_button(p: Palette, selected: bool, navigation: bool, opacity: f32, focus_visible: bool) -> theme::Button {
+fn styled_button(
+    p: Palette,
+    selected: bool,
+    navigation: bool,
+    opacity: f32,
+    focus_visible: bool,
+) -> theme::Button {
     let style = move |hover: bool, focused: bool| {
         let background = if selected {
             mix(p.sidebar, p.accent, if hover { 0.24 } else { 0.17 })
@@ -177,7 +187,12 @@ fn styled_button(p: Palette, selected: bool, navigation: bool, opacity: f32, foc
         };
 
         let fill = if selected {
-            p.selected_background(if hover { 0.24 } else { 0.17 }, background.a, on, background)
+            p.selected_background(
+                if hover { 0.24 } else { 0.17 },
+                background.a,
+                on,
+                background,
+            )
         } else {
             Background::Color(background)
         };
@@ -220,7 +235,10 @@ pub fn authentication_button(palette: Palette) -> theme::Button {
             let candidate = mix(palette.accent, palette.text, interaction);
             crate::accent_pair(crate::composite(candidate, palette.card), palette.text)
         } else {
-            (crate::composite(palette.card, palette.background), palette.muted)
+            (
+                crate::composite(palette.card, palette.background),
+                palette.muted,
+            )
         };
         button::Style {
             shape: Some(BorderShape::Continuous),
@@ -275,7 +293,11 @@ pub fn authentication_input(palette: Palette) -> theme::TextInput {
     }
 }
 
-pub fn lock_input(radius: f32, accent: cosmic::iced::Color, surface: cosmic::iced::Color) -> theme::TextInput {
+pub fn lock_input(
+    radius: f32,
+    accent: cosmic::iced::Color,
+    surface: cosmic::iced::Color,
+) -> theme::TextInput {
     let appearance = move |focused: bool| widget::text_input::Appearance {
         shape: Some(BorderShape::Continuous),
         outline: None,
@@ -329,7 +351,9 @@ pub fn shell_button(
             a: if pressed {
                 0.20 * opacity
             } else {
-                ((if selected { 0.14 } else { 0.0 }) + progress * if selected { 0.02 } else { 0.08 }) * opacity
+                ((if selected { 0.14 } else { 0.0 })
+                    + progress * if selected { 0.02 } else { 0.08 })
+                    * opacity
             },
             ..foreground
         })),
@@ -349,7 +373,12 @@ pub fn surface_appearance(background: Color, radius: f32) -> container::Style {
     }
 }
 
-pub fn notification_button(foreground: Color, hover: Color, radius: f32, filled: bool) -> theme::Button {
+pub fn notification_button(
+    foreground: Color,
+    hover: Color,
+    radius: f32,
+    filled: bool,
+) -> theme::Button {
     let style = move |active: bool| button::Style {
         shape: Some(BorderShape::Continuous),
         outline: None,

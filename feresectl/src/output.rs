@@ -63,7 +63,10 @@ fn terminal_text(text: &str) -> String {
 }
 
 /// Return false when a downstream consumer closes stdout.
-pub fn write_json_line(writer: &mut impl Write, value: &impl serde::Serialize) -> Result<bool, Box<dyn Error>> {
+pub fn write_json_line(
+    writer: &mut impl Write,
+    value: &impl serde::Serialize,
+) -> Result<bool, Box<dyn Error>> {
     let line = serde_json::to_vec(value)?;
     match writer
         .write_all(&line)

@@ -2,12 +2,32 @@ use crate::theme::Appearance;
 pub use ferese_theme_model::families::{Family, Palette};
 
 pub const BUILTINS: [(&str, &str, &str, &str); 6] = [
-    ("ferese-blue", "Ferese Blue", "ferese-blue-light", "ferese-blue"),
-    ("catppuccin", "Catppuccin", "catppuccin-latte", "catppuccin-mocha"),
+    (
+        "ferese-blue",
+        "Ferese Blue",
+        "ferese-blue-light",
+        "ferese-blue",
+    ),
+    (
+        "catppuccin",
+        "Catppuccin",
+        "catppuccin-latte",
+        "catppuccin-mocha",
+    ),
     ("gruvbox", "Gruvbox", "gruvbox-light", "gruvbox"),
     ("rose-pine", "Rosé Pine", "rose-pine-dawn", "rose-pine-moon"),
-    ("tokyo-night", "Tokyo Night", "tokyo-night-day", "tokyo-night"),
-    ("everforest", "Everforest", "everforest-light", "everforest-dark"),
+    (
+        "tokyo-night",
+        "Tokyo Night",
+        "tokyo-night-day",
+        "tokyo-night",
+    ),
+    (
+        "everforest",
+        "Everforest",
+        "everforest-light",
+        "everforest-dark",
+    ),
 ];
 
 pub fn family_id(preset: &str) -> &str {
@@ -19,7 +39,11 @@ pub fn family_id(preset: &str) -> &str {
 
 pub fn variant(id: &str, appearance: Appearance) -> Option<&'static str> {
     if let Some(row) = BUILTINS.iter().find(|row| row.0 == id) {
-        return Some(if appearance == Appearance::Light { row.2 } else { row.3 });
+        return Some(if appearance == Appearance::Light {
+            row.2
+        } else {
+            row.3
+        });
     }
     match (id, appearance) {
         ("dracula", Appearance::Dark) => Some("dracula"),
@@ -36,8 +60,12 @@ pub fn builtins() -> Vec<Family> {
         .map(|(id, name, light, dark)| Family {
             id: (*id).into(),
             name: (*name).into(),
-            light: Some(Palette::from(&crate::theme::preset(light, Appearance::Light).unwrap())),
-            dark: Some(Palette::from(&crate::theme::preset(dark, Appearance::Dark).unwrap())),
+            light: Some(Palette::from(
+                &crate::theme::preset(light, Appearance::Light).unwrap(),
+            )),
+            dark: Some(Palette::from(
+                &crate::theme::preset(dark, Appearance::Dark).unwrap(),
+            )),
         })
         .collect()
 }

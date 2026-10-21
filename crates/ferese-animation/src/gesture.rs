@@ -59,7 +59,11 @@ impl VelocityTracker {
             if divisor.abs() < 1e-12 {
                 let (first, position) = self.samples[0];
                 let dt = last.saturating_sub(first).as_secs_f64();
-                return if dt > 0.0 { (origin - position) / dt } else { 0.0 };
+                return if dt > 0.0 {
+                    (origin - position) / dt
+                } else {
+                    0.0
+                };
             }
             for entry in &mut matrix[col][col..=degree + 1] {
                 *entry /= divisor;
@@ -70,7 +74,10 @@ impl VelocityTracker {
                     continue;
                 }
                 let factor = values[col];
-                for (entry, pivot) in values[col..=degree + 1].iter_mut().zip(&pivot_row[col..=degree + 1]) {
+                for (entry, pivot) in values[col..=degree + 1]
+                    .iter_mut()
+                    .zip(&pivot_row[col..=degree + 1])
+                {
                     *entry -= factor * pivot;
                 }
             }
@@ -89,7 +96,12 @@ pub fn project(position: f64, velocity: f64, rate: f64) -> f64 {
 /// Nonlinear resistance, bounded by `extent`; the derivative transfers the
 /// velocity of the displayed (resisted) position into the release spring.
 pub fn rubber_band(distance: f64, extent: f64, resistance: f64) -> (f64, f64) {
-    if !distance.is_finite() || !extent.is_finite() || extent <= 0.0 || !resistance.is_finite() || resistance <= 0.0 {
+    if !distance.is_finite()
+        || !extent.is_finite()
+        || extent <= 0.0
+        || !resistance.is_finite()
+        || resistance <= 0.0
+    {
         return (0.0, 0.0);
     }
     let denominator = 1.0 + resistance * distance.abs() / extent;
@@ -108,7 +120,9 @@ mod tests {
             let (position, derivative) = rubber_band(x, 64.0, 0.55);
             assert!((0.0..64.0).contains(&position));
             assert_eq!(rubber_band(-x, 64.0, 0.55).0, -position);
-            let measured = (rubber_band(x + 0.0001, 64.0, 0.55).0 - rubber_band(x - 0.0001, 64.0, 0.55).0) / 0.0002;
+            let measured = (rubber_band(x + 0.0001, 64.0, 0.55).0
+                - rubber_band(x - 0.0001, 64.0, 0.55).0)
+                / 0.0002;
             assert!((measured - derivative).abs() < 1e-6);
         }
     }

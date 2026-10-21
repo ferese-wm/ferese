@@ -98,7 +98,8 @@ pub(crate) mod test_hooks {
         ALLOCATOR_ROOT.with(|slot| *slot.borrow_mut() = Some((sockets, locks)));
     }
 
-    pub(crate) fn allocator_root_for_reservation() -> Option<(std::path::PathBuf, std::path::PathBuf)> {
+    pub(crate) fn allocator_root_for_reservation()
+    -> Option<(std::path::PathBuf, std::path::PathBuf)> {
         ALLOCATOR_ROOT.with(|slot| slot.borrow().clone())
     }
 
@@ -111,7 +112,8 @@ pub(crate) mod test_hooks {
             std::thread::current().id()
         ));
         let _ = std::fs::create_dir_all(&root);
-        let _ = std::fs::set_permissions(&root, std::os::unix::fs::PermissionsExt::from_mode(0o700));
+        let _ =
+            std::fs::set_permissions(&root, std::os::unix::fs::PermissionsExt::from_mode(0o700));
         root
     }
 
@@ -299,15 +301,23 @@ impl XwaylandManager {
         self.last_error = None;
     }
 
-    fn install_exit_watch(&mut self, loop_handle: &Loop, generation: u64, pid: u32) -> Result<(), String> {
+    fn install_exit_watch(
+        &mut self,
+        loop_handle: &Loop,
+        generation: u64,
+        pid: u32,
+    ) -> Result<(), String> {
         if let Ok(fd) = crate::process::pidfd(pid) {
-            match loop_handle.insert_source(Generic::new(fd, Interest::READ, Mode::Level), move |_, _, state| {
-                let handle = state.loop_handle.clone();
-                if let Some(manager) = state.xwayland.as_mut() {
-                    manager.handle_exit(&handle, generation, pid);
-                }
-                Ok(PostAction::Remove)
-            }) {
+            match loop_handle.insert_source(
+                Generic::new(fd, Interest::READ, Mode::Level),
+                move |_, _, state| {
+                    let handle = state.loop_handle.clone();
+                    if let Some(manager) = state.xwayland.as_mut() {
+                        manager.handle_exit(&handle, generation, pid);
+                    }
+                    Ok(PostAction::Remove)
+                },
+            ) {
                 Ok(token) => {
                     self.sources.exit_watch = Some(token);
                     return Ok(());
@@ -315,13 +325,21 @@ impl XwaylandManager {
                 Err(error) => warn!(%error, pid, "cannot register the X11 service exit source"),
             }
         } else {
-            warn!(pid, "pidfd unavailable; using a bounded poll to watch the X11 service");
+            warn!(
+                pid,
+                "pidfd unavailable; using a bounded poll to watch the X11 service"
+            );
         }
 
         self.install_exit_poll(loop_handle, generation, pid)
     }
 
-    fn install_exit_poll(&mut self, loop_handle: &Loop, generation: u64, pid: u32) -> Result<(), String> {
+    fn install_exit_poll(
+        &mut self,
+        loop_handle: &Loop,
+        generation: u64,
+        pid: u32,
+    ) -> Result<(), String> {
         let timer = Timer::from_duration(CHILD_POLL_INTERVAL);
         let token = loop_handle
             .insert_source(timer, move |_, _, state| {
@@ -333,7 +351,9 @@ impl XwaylandManager {
                     .and_then(|manager| manager.process.as_mut())
                     .map(|process| process.observe());
                 match observed {
-                    Some(Observation::Running) => return TimeoutAction::ToDuration(CHILD_POLL_INTERVAL),
+                    Some(Observation::Running) => {
+                        return TimeoutAction::ToDuration(CHILD_POLL_INTERVAL);
+                    }
                     Some(Observation::Exited) | Some(Observation::Failed(_)) | None => {}
                 }
                 if let Some(manager) = state.xwayland.as_mut() {
@@ -349,7 +369,10 @@ impl XwaylandManager {
 
     fn owns(&self, generation: u64, pid: u32) -> bool {
         self.lifecycle.phase.generation() == Some(generation)
-            && self.process.as_ref().is_some_and(|process| process.pid() == pid)
+            && self
+                .process
+                .as_ref()
+                .is_some_and(|process| process.pid() == pid)
     }
 
     fn handle_exit(&mut self, loop_handle: &Loop, generation: u64, pid: u32) {
@@ -366,10 +389,11 @@ impl XwaylandManager {
         self.last_error = Some(error.to_owned());
         // The verdict describes the generation that just ended.
         self.readiness_verdict = Readiness::NotAttempted;
-        let Some(after_stop) =
-            self.lifecycle
-                .begin_stop_after_failure(generation, std::time::Instant::now(), retryable)
-        else {
+        let Some(after_stop) = self.lifecycle.begin_stop_after_failure(
+            generation,
+            std::time::Instant::now(),
+            retryable,
+        ) else {
             return;
         };
 
@@ -392,7 +416,10 @@ impl XwaylandManager {
 
         self.sources.readiness_socket = None;
         self.disable_listeners(loop_handle);
-        debug_assert!(self.sources.is_empty(), "a stop must release every source it owns");
+        debug_assert!(
+            self.sources.is_empty(),
+            "a stop must release every source it owns"
+        );
 
         let Some(process) = self.process.as_mut() else {
             // Nothing survived, so cleanup is already complete.
@@ -410,7 +437,8 @@ impl XwaylandManager {
             // The group, not just the leader, has to be gone.
             Some(Observation::Exited) | None => {
                 self.wait_for_empty_group(loop_handle, generation, after_stop);
-                if self.process.is_none() || !matches!(self.lifecycle.phase, Phase::Stopping { .. }) {
+                if self.process.is_none() || !matches!(self.lifecycle.phase, Phase::Stopping { .. })
+                {
                     // Cleanup finished, or was parked as unconfirmed, inside
                     // the helper: either way no poll belongs to this stop.
                     return;
@@ -434,7 +462,10 @@ impl XwaylandManager {
                 return TimeoutAction::Drop;
             };
 
-            if !manager.owns(generation, manager.process.as_ref().map_or(0, OwnedProcessGroup::pid)) {
+            if !manager.owns(
+                generation,
+                manager.process.as_ref().map_or(0, OwnedProcessGroup::pid),
+            ) {
                 return TimeoutAction::Drop;
             }
 
@@ -493,7 +524,11 @@ impl XwaylandManager {
             }
         }
 
-        if self.process.as_ref().is_some_and(OwnedProcessGroup::group_is_empty) {
+        if self
+            .process
+            .as_ref()
+            .is_some_and(OwnedProcessGroup::group_is_empty)
+        {
             self.complete_stop(loop_handle, generation, after_stop);
             return;
         }
@@ -503,7 +538,10 @@ impl XwaylandManager {
         let now = std::time::Instant::now();
         match self.stop_kill_grace {
             None => {
-                warn!(generation, "the X11 service left survivors after SIGKILL; waiting");
+                warn!(
+                    generation,
+                    "the X11 service left survivors after SIGKILL; waiting"
+                );
                 self.stop_kill_grace = Some(now + STOP_TIMEOUT);
             }
             Some(grace) if now >= grace => {
@@ -605,7 +643,10 @@ impl XwaylandManager {
 
         self.process = None;
         if !self.lifecycle.confirm_cleanup(generation) {
-            return Err("the X11 service left the unconfirmed cleanup state while it was checked".to_owned());
+            return Err(
+                "the X11 service left the unconfirmed cleanup state while it was checked"
+                    .to_owned(),
+            );
         }
         info!(
             generation,
@@ -643,7 +684,10 @@ impl XwaylandManager {
         // Safe now: the leader has been reaped, so Drop has nothing to signal.
         self.process = None;
 
-        let Some(published) = self.lifecycle.finish_stop(generation, std::time::Instant::now()) else {
+        let Some(published) = self
+            .lifecycle
+            .finish_stop(generation, std::time::Instant::now())
+        else {
             return;
         };
         debug_assert!(
@@ -659,7 +703,10 @@ impl XwaylandManager {
                     let handle = state.loop_handle.clone();
                     if let Some(manager) = state.xwayland.as_mut() {
                         // Idle again: a still-queued connection can wake us.
-                        if manager.lifecycle.finish_backoff(generation, std::time::Instant::now()) {
+                        if manager
+                            .lifecycle
+                            .finish_backoff(generation, std::time::Instant::now())
+                        {
                             manager.enable_listeners(&handle);
                         }
                     }
@@ -672,7 +719,9 @@ impl XwaylandManager {
             AfterStop::Failed => {
                 // The circuit is open. An open listening socket with no consumer
                 // would strand clients, so fail fast instead.
-                warn!("X11 endpoint disabled after repeated failures; waiting for an explicit retry");
+                warn!(
+                    "X11 endpoint disabled after repeated failures; waiting for an explicit retry"
+                );
                 self.remove_listener_sources(loop_handle);
                 self.reservation.close_listeners();
             }
@@ -695,7 +744,9 @@ impl XwaylandManager {
             return Err("X11 is not in a failed state, so there is nothing to retry".to_owned());
         }
         if self.process.is_some() {
-            return Err("X11 is still stopping its previous service; retry once it has finished".to_owned());
+            return Err(
+                "X11 is still stopping its previous service; retry once it has finished".to_owned(),
+            );
         }
 
         // Rebind the **same** display so launchers that already learned the
@@ -756,7 +807,10 @@ fn validate_runtime_directory(path: &std::path::Path) -> Result<(), String> {
     let metadata = std::fs::symlink_metadata(path)
         .map_err(|error| format!("XDG_RUNTIME_DIR is unusable ({}): {error}", path.display()))?;
     let uid = unsafe { libc::geteuid() };
-    if !metadata.is_dir() || metadata.file_type().is_symlink() || metadata.uid() != uid || metadata.mode() & 0o077 != 0
+    if !metadata.is_dir()
+        || metadata.file_type().is_symlink()
+        || metadata.uid() != uid
+        || metadata.mode() & 0o077 != 0
     {
         return Err(format!(
             "XDG_RUNTIME_DIR is not a private user-owned directory: {}",
@@ -810,8 +864,9 @@ fn start_service(state: &mut Ferese) -> Result<(), String> {
 }
 
 fn request_first_generation(state: &mut Ferese) -> Result<u64, String> {
-    request_start(state)
-        .ok_or_else(|| "X11 could not be started yet; a previous attempt is still in progress".to_owned())
+    request_start(state).ok_or_else(|| {
+        "X11 could not be started yet; a previous attempt is still in progress".to_owned()
+    })
 }
 
 /// Create the private directory that holds one service instance's readiness
@@ -821,7 +876,9 @@ fn request_first_generation(state: &mut Ferese) -> Result<u64, String> {
 /// against the same code that ships: the directory is `0700` whatever the
 /// session umask is, because another user must not be able to place a socket
 /// where Ferese looks for notifications.
-fn notification_directory(runtime_directory: &std::path::Path) -> Result<tempfile::TempDir, String> {
+fn notification_directory(
+    runtime_directory: &std::path::Path,
+) -> Result<tempfile::TempDir, String> {
     tempfile::Builder::new()
         .prefix("ferese-x11-")
         .rand_bytes(16)
@@ -833,7 +890,8 @@ fn notification_directory(runtime_directory: &std::path::Path) -> Result<tempfil
 fn prepare(config: &XwaylandConfig) -> Result<XwaylandManager, String> {
     let runtime_directory = runtime_directory()?;
     let notify_directory = notification_directory(&runtime_directory)?;
-    let reservation = Reservation::allocate().map_err(|error| format!("cannot reserve an X11 display: {error}"))?;
+    let reservation = Reservation::allocate()
+        .map_err(|error| format!("cannot reserve an X11 display: {error}"))?;
     let display = reservation.display_number();
     let authority = AuthorityFile::create(&runtime_directory, display)
         .map_err(|error| format!("cannot create an Xauthority file: {error}"))?;
@@ -876,31 +934,34 @@ fn register_listeners(loop_handle: &Loop, manager: &mut XwaylandManager) -> Resu
             error.to_string()
         })?;
         let token = loop_handle
-            .insert_source(Generic::new(listener, Interest::READ, Mode::Level), |_, _, state| {
-                let handle = state.loop_handle.clone();
+            .insert_source(
+                Generic::new(listener, Interest::READ, Mode::Level),
+                |_, _, state| {
+                    let handle = state.loop_handle.clone();
 
-                let ticket = state.xwayland.as_mut().and_then(|manager| {
-                    let ticket = manager.lifecycle.request_start();
-                    if ticket.is_some() {
-                        manager.disable_listeners(&handle);
-                    }
-                    ticket
-                });
-
-                if let Some(generation) = ticket {
-                    handle.insert_idle(move |state| {
-                        let current = state
-                            .xwayland
-                            .as_ref()
-                            .is_some_and(|manager| manager.owns_generation(generation));
-                        if current {
-                            start_generation(state, generation);
+                    let ticket = state.xwayland.as_mut().and_then(|manager| {
+                        let ticket = manager.lifecycle.request_start();
+                        if ticket.is_some() {
+                            manager.disable_listeners(&handle);
                         }
+                        ticket
                     });
-                }
 
-                Ok(PostAction::Disable)
-            })
+                    if let Some(generation) = ticket {
+                        handle.insert_idle(move |state| {
+                            let current = state
+                                .xwayland
+                                .as_ref()
+                                .is_some_and(|manager| manager.owns_generation(generation));
+                            if current {
+                                start_generation(state, generation);
+                            }
+                        });
+                    }
+
+                    Ok(PostAction::Disable)
+                },
+            )
             .map_err(|error| {
                 for token in inserted.drain(..) {
                     loop_handle.remove(token);
@@ -918,7 +979,9 @@ fn register_listeners(loop_handle: &Loop, manager: &mut XwaylandManager) -> Resu
 
 pub fn retry(state: &mut Ferese) -> Result<(), String> {
     if !state.xwayland_config.enabled {
-        return Err("X11 is disabled in the configuration; enable it and start a new session".to_owned());
+        return Err(
+            "X11 is disabled in the configuration; enable it and start a new session".to_owned(),
+        );
     }
 
     if let Some(manager) = state.xwayland.as_mut() {
@@ -946,7 +1009,11 @@ pub fn status_snapshot(state: &Ferese) -> ferese_ipc::xwayland::Status {
                 XwaylandStartup::Eager => "eager",
             }
             .to_owned(),
-            state: if disabled { State::Disabled } else { State::Failed },
+            state: if disabled {
+                State::Disabled
+            } else {
+                State::Failed
+            },
             display: None,
             satellite_pid: None,
             generation: None,
@@ -959,11 +1026,9 @@ pub fn status_snapshot(state: &Ferese) -> ferese_ipc::xwayland::Status {
                 None
             } else {
                 // Never report an empty failure: say what the user can do.
-                Some(
-                    state.x11_diagnostic.clone().unwrap_or_else(|| {
-                        "the X11 service is not running; retry it or start a new session".to_owned()
-                    }),
-                )
+                Some(state.x11_diagnostic.clone().unwrap_or_else(|| {
+                    "the X11 service is not running; retry it or start a new session".to_owned()
+                }))
             },
         };
     };
@@ -1002,7 +1067,9 @@ fn start_generation(state: &mut Ferese, generation: u64) {
     let Some(manager) = state.xwayland.as_mut() else {
         return;
     };
-    if !manager.owns_generation(generation) || manager.lifecycle.phase != Phase::Starting(generation) {
+    if !manager.owns_generation(generation)
+        || manager.lifecycle.phase != Phase::Starting(generation)
+    {
         return;
     }
 
@@ -1118,44 +1185,49 @@ fn install_readiness_source(
         .map_err(|error| format!("cannot duplicate the readiness endpoint: {error}"))?;
 
     let token = loop_handle
-        .insert_source(Generic::new(clone, Interest::READ, Mode::Level), move |_, _, state| {
-            let handle = state.loop_handle.clone();
-            let Some(manager) = state.xwayland.as_mut() else {
-                return Ok(PostAction::Remove);
-            };
-            if !manager.owns_generation(generation) || manager.lifecycle.phase != Phase::Spawned(generation) {
-                return Ok(PostAction::Remove);
-            }
-
-            for _ in 0..READINESS_DRAIN_BUDGET {
-                let Some(socket) = manager.sources.readiness_socket.as_ref() else {
+        .insert_source(
+            Generic::new(clone, Interest::READ, Mode::Level),
+            move |_, _, state| {
+                let handle = state.loop_handle.clone();
+                let Some(manager) = state.xwayland.as_mut() else {
                     return Ok(PostAction::Remove);
                 };
-                match socket.recv_ready(pid) {
-                    Ok(true) => {
-                        info!(generation, "X11 service reported readiness");
-                        if manager.lifecycle.ready(generation) {
-                            manager.finish_ready(&handle);
+                if !manager.owns_generation(generation)
+                    || manager.lifecycle.phase != Phase::Spawned(generation)
+                {
+                    return Ok(PostAction::Remove);
+                }
 
-                            manager.enable_listeners(&handle);
-                        }
+                for _ in 0..READINESS_DRAIN_BUDGET {
+                    let Some(socket) = manager.sources.readiness_socket.as_ref() else {
                         return Ok(PostAction::Remove);
-                    }
-                    // Ignore stale, foreign, or malformed notifications.
-                    Ok(false) => continue,
-                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                        // Stay level-triggered for any remaining work.
-                        return Ok(PostAction::Continue);
-                    }
-                    Err(error) => {
-                        warn!(%error, "cannot read the X11 readiness notification");
-                        return Ok(PostAction::Continue);
+                    };
+                    match socket.recv_ready(pid) {
+                        Ok(true) => {
+                            info!(generation, "X11 service reported readiness");
+                            if manager.lifecycle.ready(generation) {
+                                manager.finish_ready(&handle);
+
+                                manager.enable_listeners(&handle);
+                            }
+                            return Ok(PostAction::Remove);
+                        }
+                        // Ignore stale, foreign, or malformed notifications.
+                        Ok(false) => continue,
+                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                            // Stay level-triggered for any remaining work.
+                            return Ok(PostAction::Continue);
+                        }
+                        Err(error) => {
+                            warn!(%error, "cannot read the X11 readiness notification");
+                            return Ok(PostAction::Continue);
+                        }
                     }
                 }
-            }
 
-            Ok(PostAction::Continue)
-        })
+                Ok(PostAction::Continue)
+            },
+        )
         .map_err(|error| format!("cannot register the readiness source: {error}"))?;
     manager.sources.readiness = Some(token);
 
@@ -1227,7 +1299,8 @@ mod tests {
             return;
         }
 
-        let mut manager = prepare(&XwaylandConfig::default()).expect("reserve a managed X11 service");
+        let mut manager =
+            prepare(&XwaylandConfig::default()).expect("reserve a managed X11 service");
         assert_eq!(
             manager.status().readiness,
             Readiness::NotAttempted,
@@ -1257,7 +1330,11 @@ mod tests {
         let next = notification_directory(root.path()).expect("the second instance directory");
         let next_socket = ReadinessSocket::create(next.path(), 1).expect("the second endpoint");
 
-        assert_ne!(stale.path(), next.path(), "each instance owns its own directory");
+        assert_ne!(
+            stale.path(),
+            next.path(),
+            "each instance owns its own directory"
+        );
         assert_ne!(
             stale_socket.path(),
             next_socket.path(),

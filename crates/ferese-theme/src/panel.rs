@@ -89,7 +89,11 @@ impl<M> Widget<M, Theme, cosmic::Renderer> for Adaptive<'_, M> {
     }
     fn children(&self) -> Vec<widget::Tree> {
         std::iter::once(widget::Tree::new(&self.content))
-            .chain(self.samples.iter().map(|sample| widget::Tree::new(&sample.view)))
+            .chain(
+                self.samples
+                    .iter()
+                    .map(|sample| widget::Tree::new(&sample.view)),
+            )
             .collect()
     }
     fn diff(&mut self, tree: &mut widget::Tree) {
@@ -117,15 +121,22 @@ impl<M> Widget<M, Theme, cosmic::Renderer> for Adaptive<'_, M> {
         let mut measurements: Vec<Measurement> = Vec::new();
         // Measure preferred content before imposing the panel's width. Otherwise
         // a clipped wide control can look as small as its compact alternative.
-        let measurement_limits = layout::Limits::new(Size::ZERO, Size::new(f32::INFINITY, limits.max().height));
+        let measurement_limits =
+            layout::Limits::new(Size::ZERO, Size::new(f32::INFINITY, limits.max().height));
         for (index, sample) in self.samples.iter_mut().enumerate() {
-            let node = sample
-                .view
-                .as_widget_mut()
-                .layout(&mut tree.children[index + 1], renderer, &measurement_limits);
+            let node = sample.view.as_widget_mut().layout(
+                &mut tree.children[index + 1],
+                renderer,
+                &measurement_limits,
+            );
             let width = node.size().width;
-            if let Some(measurement) = measurements.iter_mut().find(|measurement| measurement.id == sample.id) {
-                measurement.alternatives.push((sample.representation, width));
+            if let Some(measurement) = measurements
+                .iter_mut()
+                .find(|measurement| measurement.id == sample.id)
+            {
+                measurement
+                    .alternatives
+                    .push((sample.representation, width));
             } else {
                 measurements.push(Measurement {
                     id: sample.id.clone(),
@@ -162,7 +173,9 @@ impl<M> Widget<M, Theme, cosmic::Renderer> for Adaptive<'_, M> {
         tree: &widget::Tree,
         cursor: mouse::Cursor,
     ) -> iced_accessibility::A11yTree {
-        self.content.as_widget().a11y_nodes(layout, &tree.children[0], cursor)
+        self.content
+            .as_widget()
+            .a11y_nodes(layout, &tree.children[0], cursor)
     }
     fn update(
         &mut self,
@@ -186,8 +199,10 @@ impl<M> Widget<M, Theme, cosmic::Renderer> for Adaptive<'_, M> {
             viewport,
         );
         let state = tree.state.downcast_mut::<State>();
-        if matches!(event, Event::Window(cosmic::iced::window::Event::RedrawRequested(_)))
-            && state.published.as_ref() != Some(&self.resolution)
+        if matches!(
+            event,
+            Event::Window(cosmic::iced::window::Event::RedrawRequested(_))
+        ) && state.published.as_ref() != Some(&self.resolution)
         {
             state.published = Some(self.resolution.clone());
             shell.publish((self.changed)(self.resolution.clone()));
@@ -203,9 +218,15 @@ impl<M> Widget<M, Theme, cosmic::Renderer> for Adaptive<'_, M> {
         cursor: mouse::Cursor,
         viewport: &Rectangle,
     ) {
-        self.content
-            .as_widget()
-            .draw(&tree.children[0], renderer, theme, style, layout, cursor, viewport);
+        self.content.as_widget().draw(
+            &tree.children[0],
+            renderer,
+            theme,
+            style,
+            layout,
+            cursor,
+            viewport,
+        );
     }
     fn mouse_interaction(
         &self,
@@ -215,9 +236,13 @@ impl<M> Widget<M, Theme, cosmic::Renderer> for Adaptive<'_, M> {
         viewport: &Rectangle,
         renderer: &cosmic::Renderer,
     ) -> mouse::Interaction {
-        self.content
-            .as_widget()
-            .mouse_interaction(&tree.children[0], layout, cursor, viewport, renderer)
+        self.content.as_widget().mouse_interaction(
+            &tree.children[0],
+            layout,
+            cursor,
+            viewport,
+            renderer,
+        )
     }
     fn operate(
         &mut self,
@@ -238,9 +263,13 @@ impl<M> Widget<M, Theme, cosmic::Renderer> for Adaptive<'_, M> {
         viewport: &Rectangle,
         translation: Vector,
     ) -> Option<cosmic::iced::advanced::overlay::Element<'a, M, Theme, cosmic::Renderer>> {
-        self.content
-            .as_widget_mut()
-            .overlay(&mut tree.children[0], layout, renderer, viewport, translation)
+        self.content.as_widget_mut().overlay(
+            &mut tree.children[0],
+            layout,
+            renderer,
+            viewport,
+            translation,
+        )
     }
 }
 
@@ -294,9 +323,10 @@ mod tests {
         for opacity in [0., 0.5, 1.] {
             for border in [false, true] {
                 renderer.reset(bounds);
-                let group = cosmic::widget::container(widgets::Space::new().width(40).height(40)).class(
-                    cosmic::theme::Container::custom(move |_| group_border(Color::WHITE, 8., border)),
-                );
+                let group = cosmic::widget::container(widgets::Space::new().width(40).height(40))
+                    .class(cosmic::theme::Container::custom(move |_| {
+                        group_border(Color::WHITE, 8., border)
+                    }));
                 let mut view: Element<'_, ()> = cosmic::widget::container(group)
                     .class(cosmic::theme::Container::custom(move |_| {
                         crate::controls::surface_appearance(
@@ -309,9 +339,11 @@ mod tests {
                     }))
                     .into();
                 let mut tree = widget::Tree::new(&view);
-                let node =
-                    view.as_widget_mut()
-                        .layout(&mut tree, &renderer, &layout::Limits::new(Size::ZERO, bounds.size()));
+                let node = view.as_widget_mut().layout(
+                    &mut tree,
+                    &renderer,
+                    &layout::Limits::new(Size::ZERO, bounds.size()),
+                );
                 view.as_widget().draw(
                     &tree,
                     &mut renderer,
@@ -325,7 +357,8 @@ mod tests {
                     mouse::Cursor::Unavailable,
                     &bounds,
                 );
-                let pixels = Headless::screenshot(&mut renderer, Size::new(40, 40), 1., Color::TRANSPARENT);
+                let pixels =
+                    Headless::screenshot(&mut renderer, Size::new(40, 40), 1., Color::TRANSPARENT);
                 let alpha = pixels[(20 * 40 + 20) * 4 + 3];
                 assert!(
                     i16::from(alpha).abs_diff((opacity * 255.).round() as i16) <= 1,
@@ -370,10 +403,12 @@ mod tests {
                 id: id.clone(),
                 representation,
                 minimum: None,
-                view: button::custom(text(label).wrapping(cosmic::iced::widget::text::Wrapping::None))
-                    .height(28)
-                    .on_press(Probe::MeasurementClick)
-                    .into(),
+                view: button::custom(
+                    text(label).wrapping(cosmic::iced::widget::text::Wrapping::None),
+                )
+                .height(28)
+                .on_press(Probe::MeasurementClick)
+                .into(),
             })
             .chain(std::iter::once(Sample {
                 id: ItemId("_overflow".into()),
@@ -413,14 +448,23 @@ mod tests {
             let limits = layout::Limits::new(Size::ZERO, viewport.size());
             let node = view.as_widget_mut().layout(tree, &renderer, &limits);
             let built = builds.get();
-            assert_eq!(built, 2, "initial measurement must replace the unallocated content");
+            assert_eq!(
+                built, 2,
+                "initial measurement must replace the unallocated content"
+            );
             view.as_widget_mut().layout(tree, &renderer, &limits);
-            assert_eq!(builds.get(), built, "unchanged allocation must reuse its controls");
+            assert_eq!(
+                builds.get(),
+                built,
+                "unchanged allocation must reuse its controls"
+            );
             let mut messages = Vec::new();
             for _ in 0..4 {
                 view.as_widget_mut().update(
                     tree,
-                    &Event::Window(cosmic::iced::window::Event::RedrawRequested(std::time::Instant::now())),
+                    &Event::Window(cosmic::iced::window::Event::RedrawRequested(
+                        std::time::Instant::now(),
+                    )),
                     Layout::new(&node),
                     mouse::Cursor::Unavailable,
                     &renderer,

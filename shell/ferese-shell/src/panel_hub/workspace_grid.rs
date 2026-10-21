@@ -55,11 +55,19 @@ struct FocusedWorkspace {
 }
 
 impl cosmic::iced::advanced::widget::Operation<Option<u64>> for FocusedWorkspace {
-    fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn cosmic::iced::advanced::widget::Operation<Option<u64>>)) {
+    fn traverse(
+        &mut self,
+        operate: &mut dyn FnMut(&mut dyn cosmic::iced::advanced::widget::Operation<Option<u64>>),
+    ) {
         operate(self);
     }
 
-    fn focusable(&mut self, id: Option<&Id>, _: cosmic::iced::Rectangle, state: &mut dyn operation::Focusable) {
+    fn focusable(
+        &mut self,
+        id: Option<&Id>,
+        _: cosmic::iced::Rectangle,
+        state: &mut dyn operation::Focusable,
+    ) {
         if state.is_focused() {
             self.focused = self
                 .tiles
@@ -77,12 +85,21 @@ impl cosmic::iced::advanced::widget::Operation<Option<u64>> for FocusedWorkspace
 
 // Fit the actual rectangles together, preserving aspect and relative positions.
 fn mini_rects(windows: &[&WindowSnapshot]) -> Vec<(u64, cosmic::iced::Rectangle)> {
-    let rectangles: Vec<_> = windows.iter().filter_map(|w| w.geometry.map(|r| (w.id, r))).collect();
+    let rectangles: Vec<_> = windows
+        .iter()
+        .filter_map(|w| w.geometry.map(|r| (w.id, r)))
+        .collect();
     if rectangles.is_empty() {
         return Vec::new();
     }
-    let x = rectangles.iter().map(|(_, r)| r[0]).fold(f64::INFINITY, f64::min);
-    let y = rectangles.iter().map(|(_, r)| r[1]).fold(f64::INFINITY, f64::min);
+    let x = rectangles
+        .iter()
+        .map(|(_, r)| r[0])
+        .fold(f64::INFINITY, f64::min);
+    let y = rectangles
+        .iter()
+        .map(|(_, r)| r[1])
+        .fold(f64::INFINITY, f64::min);
     let right = rectangles
         .iter()
         .map(|(_, r)| r[0] + r[2])
@@ -111,7 +128,12 @@ fn mini_rects(windows: &[&WindowSnapshot]) -> Vec<(u64, cosmic::iced::Rectangle)
 }
 
 impl FereseShell {
-    pub(crate) fn hub_workspace_move(&mut self, id: window::Id, window: u64, destination: u64) -> Task<Message> {
+    pub(crate) fn hub_workspace_move(
+        &mut self,
+        id: window::Id,
+        window: u64,
+        destination: u64,
+    ) -> Task<Message> {
         let output = self.output_for_bar(id).map(|o| o.id);
         let source = self
             .snapshot
@@ -119,7 +141,11 @@ impl FereseShell {
             .iter()
             .find(|w| w.id == window)
             .map(|w| w.workspace);
-        let valid = |workspace| self.snapshot.workspaces_for_output(output).any(|w| w.id == workspace);
+        let valid = |workspace| {
+            self.snapshot
+                .workspaces_for_output(output)
+                .any(|w| w.id == workspace)
+        };
         if source.is_some_and(valid)
             && valid(destination)
             && let Some(control) = &self.control
@@ -129,7 +155,11 @@ impl FereseShell {
         Task::none()
     }
 
-    pub(crate) fn hub_workspace_hover(&mut self, id: window::Id, workspace: Option<u64>) -> Task<Message> {
+    pub(crate) fn hub_workspace_hover(
+        &mut self,
+        id: window::Id,
+        workspace: Option<u64>,
+    ) -> Task<Message> {
         if let Some(runtime) = self
             .outputs
             .iter()
@@ -169,17 +199,26 @@ impl FereseShell {
         self.query_hub_workspace_focus(id, Some(key))
     }
 
-    pub(crate) fn query_hub_workspace_focus(&self, id: window::Id, key: Option<Named>) -> Task<Message> {
+    pub(crate) fn query_hub_workspace_focus(
+        &self,
+        id: window::Id,
+        key: Option<Named>,
+    ) -> Task<Message> {
         let output = self.output_for_bar(id);
         let tiles = tiles(
-            self.snapshot.workspaces_for_output(output.map(|o| o.id)).collect(),
+            self.snapshot
+                .workspaces_for_output(output.map(|o| o.id))
+                .collect(),
             output.map_or(0, |o| o.active_workspace),
         )
         .into_iter()
         .map(|workspace| (tile_id(id, workspace.id), workspace.id))
         .collect();
-        cosmic::iced::advanced::widget::operate(FocusedWorkspace { tiles, focused: None })
-            .map(move |focused| cosmic::Action::App(Message::HubWorkspaceFocus(id, focused, key)))
+        cosmic::iced::advanced::widget::operate(FocusedWorkspace {
+            tiles,
+            focused: None,
+        })
+        .map(move |focused| cosmic::Action::App(Message::HubWorkspaceFocus(id, focused, key)))
     }
 
     pub(crate) fn hub_workspace_focus(
@@ -199,7 +238,9 @@ impl FereseShell {
             return Task::none();
         };
         let workspaces = tiles(
-            self.snapshot.workspaces_for_output(Some(output.id)).collect(),
+            self.snapshot
+                .workspaces_for_output(Some(output.id))
+                .collect(),
             output.active_workspace,
         );
         let Some(runtime) = self
@@ -216,7 +257,10 @@ impl FereseShell {
             return Task::none();
         };
         let selected = focused.unwrap_or(output.active_workspace);
-        let current = workspaces.iter().position(|w| w.id == selected).unwrap_or(0);
+        let current = workspaces
+            .iter()
+            .position(|w| w.id == selected)
+            .unwrap_or(0);
         let cols = columns((runtime.hub.target_size()[0] - 28.) as f32);
         let next = match key {
             Named::ArrowLeft => current.saturating_sub(1),
@@ -232,7 +276,10 @@ impl FereseShell {
         runtime.workspace_hover = None;
         let rows = workspaces.len().div_ceil(cols);
         Task::batch([
-            cosmic::iced::advanced::widget::operate(operation::focusable::focus(tile_id(id, workspace.id))),
+            cosmic::iced::advanced::widget::operate(operation::focusable::focus(tile_id(
+                id,
+                workspace.id,
+            ))),
             cosmic::iced::widget::scrollable::snap_to(
                 Id::new(format!("morph-workspace-grid-{id:?}")),
                 cosmic::iced::widget::scrollable::RelativeOffset {
@@ -247,11 +294,17 @@ impl FereseShell {
         ])
     }
 
-    pub(crate) fn hub_workspace_grid(&self, id: window::Id, opacity: f32) -> Element<'_, cosmic::Action<Message>> {
+    pub(crate) fn hub_workspace_grid(
+        &self,
+        id: window::Id,
+        opacity: f32,
+    ) -> Element<'_, cosmic::Action<Message>> {
         let output = self.output_for_bar(id);
         let active = output.map_or(0, |o| o.active_workspace);
         let workspaces = tiles(
-            self.snapshot.workspaces_for_output(output.map(|o| o.id)).collect(),
+            self.snapshot
+                .workspaces_for_output(output.map(|o| o.id))
+                .collect(),
             active,
         );
         let runtime = self
@@ -274,7 +327,11 @@ impl FereseShell {
             .find(|w| w.id == hovered)
             .or_else(|| workspaces.iter().find(|w| w.id == active));
         let mut label = current.map_or_else(|| "No workspaces".to_owned(), |w| caption(w));
-        if let Some(workspace) = current.filter(|_| runtime.as_ref().is_some_and(|r| r.workspace_hover.is_some())) {
+        if let Some(workspace) = current.filter(|_| {
+            runtime
+                .as_ref()
+                .is_some_and(|r| r.workspace_hover.is_some())
+        }) {
             let titles = self
                 .snapshot
                 .windows
@@ -324,16 +381,26 @@ impl FereseShell {
                 let label = format!(
                     "{}{}{}",
                     caption(workspace),
-                    if workspace_id == active { ", active" } else { "" },
-                    windows.iter().map(|w| format!(", {}", w.title)).collect::<String>()
+                    if workspace_id == active {
+                        ", active"
+                    } else {
+                        ""
+                    },
+                    windows
+                        .iter()
+                        .map(|w| format!(", {}", w.title))
+                        .collect::<String>()
                 );
-                let transition = self.workspace_ui.transition(workspace_id, workspace_id == active);
+                let transition = self
+                    .workspace_ui
+                    .transition(workspace_id, workspace_id == active);
                 line = line.push(motion::geometry_driven(
                     transition.revision(),
                     move |now| {
                         let progress = transition.progress(now).clamp(0., 1.);
                         let alpha = opacity * if empty { 0.6 } else { 1. };
-                        let foreground = ferese_theme::mix(palette.muted, palette.accent, progress).scale_alpha(alpha);
+                        let foreground = ferese_theme::mix(palette.muted, palette.accent, progress)
+                            .scale_alpha(alpha);
                         let fill = cosmic::iced::Color {
                             a: (0.055 + 0.105 * progress) * alpha,
                             ..ferese_theme::mix(palette.text, palette.accent, progress)
@@ -358,23 +425,30 @@ impl FereseShell {
                             let pulse = if self.render.motion.motion_enabled() {
                                 0.65 + 0.35
                                     * (now
-                                        .saturating_duration_since(transition.revision().unwrap_or(now))
+                                        .saturating_duration_since(
+                                            transition.revision().unwrap_or(now),
+                                        )
                                         .as_secs_f32()
                                         * 4.)
                                         .cos()
                             } else {
                                 1.
                             };
-                            heading = heading.push(container(cosmic::widget::Space::new()).width(4).height(4).class(
-                                theme::Container::custom(move |_| container::Style {
-                                    background: Some(palette.error.scale_alpha(alpha * pulse).into()),
-                                    border: cosmic::iced::Border {
-                                        radius: 2.0.into(),
+                            heading = heading.push(
+                                container(cosmic::widget::Space::new())
+                                    .width(4)
+                                    .height(4)
+                                    .class(theme::Container::custom(move |_| container::Style {
+                                        background: Some(
+                                            palette.error.scale_alpha(alpha * pulse).into(),
+                                        ),
+                                        border: cosmic::iced::Border {
+                                            radius: 2.0.into(),
+                                            ..Default::default()
+                                        },
                                         ..Default::default()
-                                    },
-                                    ..Default::default()
-                                }),
-                            ));
+                                    })),
+                            );
                         }
                         let content = column![
                             container(heading).height(14),
@@ -395,19 +469,29 @@ impl FereseShell {
                                         ..appearance
                                     }),
                                     hovered: Box::new(move |_, _| button::Style {
-                                        background: Some(palette.accent.scale_alpha(0.12 * alpha).into()),
+                                        background: Some(
+                                            palette.accent.scale_alpha(0.12 * alpha).into(),
+                                        ),
                                         ..appearance
                                     }),
                                     pressed: Box::new(move |_, _| appearance),
                                     disabled: Box::new(move |_| appearance),
                                 })
-                                .on_press(cosmic::Action::App(Message::HubWorkspaceSelect(id, workspace_id))),
+                                .on_press(cosmic::Action::App(Message::HubWorkspaceSelect(
+                                    id,
+                                    workspace_id,
+                                ))),
                         )
-                        .on_enter(cosmic::Action::App(Message::HubWorkspaceHover(id, Some(workspace_id))))
+                        .on_enter(cosmic::Action::App(Message::HubWorkspaceHover(
+                            id,
+                            Some(workspace_id),
+                        )))
                         .on_exit(cosmic::Action::App(Message::HubWorkspaceHover(id, None)))
                         .into()
                     },
-                    move |now| transition.active(now) || (urgent && self.render.motion.motion_enabled()),
+                    move |now| {
+                        transition.active(now) || (urgent && self.render.motion.motion_enabled())
+                    },
                     |_| {},
                     |_| None,
                     None,
@@ -455,7 +539,9 @@ mod tests {
 
     #[test]
     fn grid_keeps_occupied_active_and_one_empty_destination_without_a_ten_tile_cap() {
-        let mut all: Vec<_> = (1..=14).map(|id| workspace(id, u32::from(id < 12))).collect();
+        let mut all: Vec<_> = (1..=14)
+            .map(|id| workspace(id, u32::from(id < 12)))
+            .collect();
         all.reverse();
         let shown = tiles(all.iter().collect(), 13);
         assert_eq!(
@@ -527,8 +613,12 @@ mod tests {
                     Box::new(operation::focusable::focus_next())
                 };
                 loop {
-                    view.as_widget_mut()
-                        .operate(&mut tree, Layout::new(&node), &renderer, &mut tab);
+                    view.as_widget_mut().operate(
+                        &mut tree,
+                        Layout::new(&node),
+                        &renderer,
+                        &mut tab,
+                    );
                     match tab.finish() {
                         operation::Outcome::Chain(next) => tab = next,
                         _ => break,

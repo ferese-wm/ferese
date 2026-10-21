@@ -25,7 +25,9 @@ impl VerifiedOwner {
         let mut next = self.owner.pid;
         let mut child = None;
         for _ in 0..16 {
-            let Ok((birth, parent)) = identity(next) else { break };
+            let Ok((birth, parent)) = identity(next) else {
+                break;
+            };
             if next == self.owner.pid && birth != self.owner.birth {
                 break;
             }
@@ -59,7 +61,10 @@ impl VerifiedOwner {
 pub(crate) struct Monitor(Arc<(Mutex<BTreeMap<Owner, OwnedFd>>, Condvar)>);
 impl Monitor {
     pub fn new(sender: channel::SyncSender<IpcEvent>) -> Self {
-        let shared = Arc::new((Mutex::new(BTreeMap::<Owner, OwnedFd>::new()), Condvar::new()));
+        let shared = Arc::new((
+            Mutex::new(BTreeMap::<Owner, OwnedFd>::new()),
+            Condvar::new(),
+        ));
         let worker = shared.clone();
         std::thread::Builder::new()
             .name("ferese-activity-owners".into())
@@ -104,7 +109,11 @@ impl Monitor {
             .expect("activity owners")
             .retain(|owner, _| owners.contains(owner));
     }
-    pub fn verify(&self, stream: &UnixStream, parent: bool) -> io::Result<(VerifiedOwner, Vec<String>)> {
+    pub fn verify(
+        &self,
+        stream: &UnixStream,
+        parent: bool,
+    ) -> io::Result<(VerifiedOwner, Vec<String>)> {
         let peer = credentials(stream)?;
         let peer_pid = u32::try_from(peer.pid).map_err(|_| io::Error::other("invalid peer PID"))?;
         let peer_identity = identity(peer_pid)?;
@@ -115,7 +124,10 @@ impl Monitor {
         let pid = if parent { peer_identity.1 } else { peer_pid };
         let (birth, _) = identity(pid)?;
         let fd = pidfd(pid)?;
-        if identity(pid)?.0 != birth || exited(&fd) || (parent && identity(peer_pid)? != peer_identity) {
+        if identity(pid)?.0 != birth
+            || exited(&fd)
+            || (parent && identity(peer_pid)? != peer_identity)
+        {
             return Err(io::Error::other("owner identity changed"));
         }
         let metadata = std::fs::metadata(format!("/proc/{pid}"))?;
@@ -224,7 +236,11 @@ fn parse_stat(stat: &str) -> io::Result<(u64, u32)> {
     Ok((birth, parent))
 }
 fn credentials(stream: &UnixStream) -> io::Result<libc::ucred> {
-    let mut credentials = libc::ucred { pid: 0, uid: 0, gid: 0 };
+    let mut credentials = libc::ucred {
+        pid: 0,
+        uid: 0,
+        gid: 0,
+    };
     let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
     // SAFETY: both output buffers have the sizes expected by SO_PEERCRED.
     if unsafe {
@@ -274,7 +290,10 @@ mod tests {
     use super::*;
     #[test]
     fn captured_ancestry_stops_at_an_exited_process() {
-        let mut child = std::process::Command::new("sleep").arg("30").spawn().unwrap();
+        let mut child = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .unwrap();
         let (owner, fd, _) = inspect(child.id()).unwrap();
         let mut verified = VerifiedOwner {
             owner,
@@ -283,7 +302,11 @@ mod tests {
         };
         verified.capture_ancestors();
         assert_eq!(verified.ancestor_pids().next(), Some(child.id()));
-        assert!(verified.ancestor_pids().any(|pid| pid == std::process::id()));
+        assert!(
+            verified
+                .ancestor_pids()
+                .any(|pid| pid == std::process::id())
+        );
         child.kill().unwrap();
         child.wait().unwrap();
         assert!(verified.ancestor_pids().next().is_none());
@@ -334,7 +357,10 @@ mod tests {
     fn owner_that_exits_in_the_dispatch_queue_is_rejected() {
         let (sender, _receiver) = channel::sync_channel(16);
         let monitor = Monitor::new(sender);
-        let mut child = std::process::Command::new("sleep").arg("30").spawn().unwrap();
+        let mut child = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .unwrap();
         let (owner, fd, _) = inspect(child.id()).unwrap();
         child.kill().unwrap();
         child.wait().unwrap();
@@ -370,7 +396,10 @@ mod tests {
         assert_eq!(peer.owner.pid, std::process::id());
         let (parent, _) = monitor.verify(&left, true).unwrap();
         assert_eq!(parent.owner.pid, unsafe { libc::getppid() } as u32);
-        let mut child = std::process::Command::new("sleep").arg("0.05").spawn().unwrap();
+        let mut child = std::process::Command::new("sleep")
+            .arg("0.05")
+            .spawn()
+            .unwrap();
         let fd = pidfd(child.id()).unwrap();
         assert!(!exited(&fd));
         child.wait().unwrap();

@@ -89,7 +89,10 @@ mod tests {
         ] {
             let encoded = serde_json::to_value(readiness).unwrap();
             assert_eq!(encoded, json!(name));
-            assert_eq!(serde_json::from_value::<Readiness>(encoded).unwrap(), readiness);
+            assert_eq!(
+                serde_json::from_value::<Readiness>(encoded).unwrap(),
+                readiness
+            );
         }
     }
 

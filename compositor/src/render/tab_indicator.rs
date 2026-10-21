@@ -13,14 +13,23 @@ fn text_element(
     centered: bool,
 ) -> Option<AnimatedWindowRenderElement> {
     let settings = state.tab_indicator_settings;
-    let color = settings.text_color.unwrap_or(state.theme_settings.text_primary_color.0);
+    let color = settings
+        .text_color
+        .unwrap_or(state.theme_settings.text_primary_color.0);
     let available = (rect.width - 16.0).max(0.0);
-    let mut title: String = text.chars().filter(|c| !c.is_control()).take(1024).collect();
-    if state.indicator_text_width(&title, settings.font_size) > available || text.chars().count() > 1024 {
+    let mut title: String = text
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(1024)
+        .collect();
+    if state.indicator_text_width(&title, settings.font_size) > available
+        || text.chars().count() > 1024
+    {
         let mut boundaries: Vec<_> = title.char_indices().map(|(index, _)| index).collect();
         boundaries.push(title.len());
         let fits = boundaries.partition_point(|&end| {
-            state.indicator_text_width(&format!("{}…", &title[..end]), settings.font_size) <= available
+            state.indicator_text_width(&format!("{}…", &title[..end]), settings.font_size)
+                <= available
         });
         if fits == 0 {
             title.clear();
@@ -37,14 +46,17 @@ fn text_element(
     };
     let location = Point::<i32, Physical>::from((
         ((rect.x - f64::from(output_origin.x) + x) * scale).round() as i32,
-        ((rect.y - f64::from(output_origin.y) + rect.height * 0.5) * scale).round() as i32 - size.h / 2,
+        ((rect.y - f64::from(output_origin.y) + rect.height * 0.5) * scale).round() as i32
+            - size.h / 2,
     ));
     let element = MemoryRenderBufferRenderElement::from_buffer(
         renderer,
         location.to_f64(),
         &buffer,
         Some(alpha),
-        Some(Rectangle::from_size((f64::from(size.w), f64::from(size.h)).into())),
+        Some(Rectangle::from_size(
+            (f64::from(size.w), f64::from(size.h)).into(),
+        )),
         Some(
             (
                 (f64::from(size.w) / scale).round() as i32,
@@ -57,12 +69,23 @@ fn text_element(
     .ok()?;
     let element = RescaleRenderElement::from_element(element, location, 1.0);
     let element = RelocateRenderElement::from_element(element, (0, 0), Relocate::Relative);
-    let clip = Rect::new(rect.x + 8.0, rect.y, (rect.width - 16.0).max(0.0), rect.height);
-    CropRenderElement::from_element(element, scale, physical_rect(clip, output_origin, scale)).map(Into::into)
+    let clip = Rect::new(
+        rect.x + 8.0,
+        rect.y,
+        (rect.width - 16.0).max(0.0),
+        rect.height,
+    );
+    CropRenderElement::from_element(element, scale, physical_rect(clip, output_origin, scale))
+        .map(Into::into)
 }
 
 fn title(state: &Ferese, id: WindowId, capture: bool) -> String {
-    if capture && state.windows.window(id).is_none_or(|w| state.capture_protected(w)) {
+    if capture
+        && state
+            .windows
+            .window(id)
+            .is_none_or(|w| state.capture_protected(w))
+    {
         return "Protected window".into();
     }
     state
@@ -99,8 +122,12 @@ pub(super) fn elements(
     let scale = output.current_scale().fractional_scale();
     let settings = state.tab_indicator_settings;
     let anchor = bar.group.windows[0];
-    let accent = settings.active_color.unwrap_or(state.theme_settings.accent_color.0);
-    let inactive = settings.inactive_color.unwrap_or(state.theme_settings.border_color.0);
+    let accent = settings
+        .active_color
+        .unwrap_or(state.theme_settings.accent_color.0);
+    let inactive = settings
+        .inactive_color
+        .unwrap_or(state.theme_settings.border_color.0);
     let mut background = settings
         .background_color
         .unwrap_or(state.theme_settings.surface_raised_color.0);
@@ -109,7 +136,8 @@ pub(super) fn elements(
         state.theme_settings.material_style,
         state.theme_settings.shell_opacity as f32,
     );
-    background[3] = if state.theme_settings.reduce_transparency || material.style == crate::config::MaterialStyle::Solid
+    background[3] = if state.theme_settings.reduce_transparency
+        || material.style == crate::config::MaterialStyle::Solid
     {
         1.0
     } else {
@@ -135,7 +163,15 @@ pub(super) fn elements(
             .tab_indicator
             .first_row
             .min(bar.group.windows.len().saturating_sub(g.rows));
-        for (row, id) in bar.group.windows.iter().copied().skip(first).take(g.rows).enumerate() {
+        for (row, id) in bar
+            .group
+            .windows
+            .iter()
+            .copied()
+            .skip(first)
+            .take(g.rows)
+            .enumerate()
+        {
             let rect = g.row(row);
             let label = title(state, id, capture);
             if let Some(element) = text_element(
@@ -153,7 +189,9 @@ pub(super) fn elements(
             if id == bar.group.active {
                 // Match the control center's selected shell buttons: a quiet
                 // foreground tint, with accent reserved for the active rail.
-                let mut fill = settings.text_color.unwrap_or(state.theme_settings.text_primary_color.0);
+                let mut fill = settings
+                    .text_color
+                    .unwrap_or(state.theme_settings.text_primary_color.0);
                 fill[3] = 0.14 * alpha * hover;
                 if let Some(element) = overview_chrome_element(
                     state,
@@ -172,7 +210,9 @@ pub(super) fn elements(
             }
         }
         if settings.outline_width > 0.0 {
-            let color = settings.outline_color.unwrap_or(state.theme_settings.border_color.0);
+            let color = settings
+                .outline_color
+                .unwrap_or(state.theme_settings.border_color.0);
             if let Some(element) = overview_chrome_element(
                 state,
                 renderer,
@@ -224,7 +264,8 @@ pub(super) fn elements(
             output_geometry.size.h as f64,
         );
         let rect = Rect::new(
-            (content.x + (content.width - width) * 0.5).clamp(bounds.x, bounds.x + bounds.width - width),
+            (content.x + (content.width - width) * 0.5)
+                .clamp(bounds.x, bounds.x + bounds.width - width),
             (content.y + settings.padding).clamp(bounds.y, bounds.y + bounds.height - g.row_height),
             width,
             g.row_height,
@@ -263,7 +304,11 @@ pub(super) fn elements(
             g.rail.width,
             g.segment_height,
         );
-        let color = if id == bar.group.active { accent } else { inactive };
+        let color = if id == bar.group.active {
+            accent
+        } else {
+            inactive
+        };
         if let Some(element) = overview_chrome_element(
             state,
             renderer,

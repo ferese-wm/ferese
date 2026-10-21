@@ -86,7 +86,9 @@ struct Picker {
 
 pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut input = String::new();
-    std::io::stdin().take(256 * 1024 + 1).read_to_string(&mut input)?;
+    std::io::stdin()
+        .take(256 * 1024 + 1)
+        .read_to_string(&mut input)?;
     if input.len() > 256 * 1024 {
         return Err("Picker request is too large".into());
     }
@@ -118,7 +120,12 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
 
 impl cosmic::Application for Picker {
     type Executor = cosmic::executor::Default;
-    type Flags = (Prompt, cosmic::iced::Color, ferese_theme::Palette, cosmic::font::Font);
+    type Flags = (
+        Prompt,
+        cosmic::iced::Color,
+        ferese_theme::Palette,
+        cosmic::font::Font,
+    );
     type Message = Message;
     const APP_ID: &'static str = "dev.ferese.ScreenShare";
 
@@ -130,7 +137,10 @@ impl cosmic::Application for Picker {
         &mut self.core
     }
 
-    fn init(mut core: Core, (prompt, background, palette, font): Self::Flags) -> (Self, Task<Message>) {
+    fn init(
+        mut core: Core,
+        (prompt, background, palette, font): Self::Flags,
+    ) -> (Self, Task<Message>) {
         core.window.show_headerbar = false;
         core.window.border_padding = Some(0);
         core.window.content_container = false;
@@ -171,7 +181,8 @@ impl cosmic::Application for Picker {
 
     fn subscription(&self) -> cosmic::iced::Subscription<Message> {
         cosmic::iced::Subscription::batch([
-            ferese_theme_client::service::subscription().map(|snapshot| Message::ThemeChanged(Box::new(snapshot))),
+            ferese_theme_client::service::subscription()
+                .map(|snapshot| Message::ThemeChanged(Box::new(snapshot))),
             cosmic::iced::event::listen_with(|event, _, id| match event {
                 cosmic::iced::Event::Window(cosmic::iced::window::Event::Opened { .. }) => {
                     Some(Message::WindowOpened(id))
@@ -185,7 +196,8 @@ impl cosmic::Application for Picker {
         match message {
             Message::ThemeChanged(snapshot) => {
                 self.palette = ferese_theme::Palette::from_resolved(&snapshot.presented).flat();
-                self.font = ferese_theme::font(Some(&snapshot.presented.tokens.typography.font_family));
+                self.font =
+                    ferese_theme::font(Some(&snapshot.presented.tokens.typography.font_family));
                 self.background = cosmic::iced::Color {
                     a: ferese_theme::material_opacity(&snapshot.presented),
                     ..self.palette.sidebar
@@ -232,7 +244,11 @@ impl cosmic::Application for Picker {
             Message::Audio(audio) if self.prompt.recording => self.audio = audio,
             Message::Region if self.prompt.recording => self.region = !self.region,
             Message::Share if !self.selected.is_empty() => {
-                let names: Vec<_> = self.selected.iter().map(|i| &self.prompt.sources[*i].name).collect();
+                let names: Vec<_> = self
+                    .selected
+                    .iter()
+                    .map(|i| &self.prompt.sources[*i].name)
+                    .collect();
                 if self.prompt.window_capture {
                     println!("{}", serde_json::to_string(&names).unwrap());
                 } else {
@@ -306,20 +322,26 @@ impl cosmic::Application for Picker {
         for (index, source) in self.prompt.sources.iter().enumerate() {
             let is_window = self.prompt.window_capture || source.window_id().is_some();
             if !self.prompt.window_capture && previous_kind != Some(is_window) {
-                sources = sources.push(self.text(if is_window { "Windows" } else { "Displays" }).size(12));
+                sources = sources.push(
+                    self.text(if is_window { "Windows" } else { "Displays" })
+                        .size(12),
+                );
                 previous_kind = Some(is_window);
             }
             let selected = self.selected.contains(&index);
             let mut entry = row![
                 glyph(ferese_theme::icons::DISPLAY, 24),
                 column![
-                    self.text(if self.prompt.window_capture || source.window_id().is_some() {
-                        &source.label
-                    } else {
-                        &source.name
-                    })
+                    self.text(
+                        if self.prompt.window_capture || source.window_id().is_some() {
+                            &source.label
+                        } else {
+                            &source.name
+                        }
+                    )
                     .size(14),
-                    self.text(format!("{} × {}", source.width, source.height)).size(12)
+                    self.text(format!("{} × {}", source.width, source.height))
+                        .size(12)
                 ]
                 .spacing(3)
                 .width(Length::Fill),
@@ -357,12 +379,16 @@ impl cosmic::Application for Picker {
             content = content.push(
                 row![
                     self.text("Select a region").width(Length::Fill),
-                    ferese_theme::controls::switch(self.region, self.palette).on_press(Message::Region),
+                    ferese_theme::controls::switch(self.region, self.palette)
+                        .on_press(Message::Region),
                 ]
                 .align_y(Alignment::Center),
             );
             let mut audio = column([]).spacing(4);
-            for choices in [[Audio::Off, Audio::System], [Audio::Microphone, Audio::Both]] {
+            for choices in [
+                [Audio::Off, Audio::System],
+                [Audio::Microphone, Audio::Both],
+            ] {
                 let mut choices_row = row([]).spacing(4);
                 for choice in choices {
                     choices_row = choices_row.push(
@@ -404,7 +430,11 @@ impl cosmic::Application for Picker {
 
         let share = ferese_theme::controls::text_button(
             if self.prompt.recording {
-                if self.region { "Select region" } else { "Record" }
+                if self.region {
+                    "Select region"
+                } else {
+                    "Record"
+                }
             } else if self.prompt.window_capture {
                 "Capture"
             } else {
@@ -422,9 +452,13 @@ impl cosmic::Application for Picker {
                 self.background.a,
             ))
             .on_press(Message::Cancel);
-        let footer = row![cosmic::iced::widget::Space::new().width(Length::Fill), cancel, share]
-            .spacing(10)
-            .align_y(Alignment::Center);
+        let footer = row![
+            cosmic::iced::widget::Space::new().width(Length::Fill),
+            cancel,
+            share
+        ]
+        .spacing(10)
+        .align_y(Alignment::Center);
         // Reserve space for the actions even when the compositor shrinks the
         // dialog. The source list and options share the remaining scroll area.
         container(
@@ -447,10 +481,11 @@ impl Picker {
     fn can_remember(&self) -> bool {
         !self.selected.is_empty()
             && self.selected.len() <= 16
-            && self
-                .selected
-                .iter()
-                .all(|index| self.prompt.rememberable.contains(&self.prompt.sources[*index].name))
+            && self.selected.iter().all(|index| {
+                self.prompt
+                    .rememberable
+                    .contains(&self.prompt.sources[*index].name)
+            })
     }
 
     fn text<'a>(

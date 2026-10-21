@@ -2,7 +2,10 @@ use cosmic::iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, re
 use cosmic::iced::{Event, Length, Rectangle, Size, Vector};
 use cosmic::{Element, Theme};
 
-pub(super) fn hover<'a, M: 'a>(content: Element<'a, M>, hover: Option<HoverTarget<'a, M>>) -> Element<'a, M> {
+pub(super) fn hover<'a, M: 'a>(
+    content: Element<'a, M>,
+    hover: Option<HoverTarget<'a, M>>,
+) -> Element<'a, M> {
     Element::new(Hover { content, hover })
 }
 
@@ -63,7 +66,9 @@ impl<M> Widget<M, Theme, cosmic::Renderer> for Hover<'_, M> {
         tree: &widget::Tree,
         cursor: mouse::Cursor,
     ) -> iced_accessibility::A11yTree {
-        self.content.as_widget().a11y_nodes(layout, &tree.children[0], cursor)
+        self.content
+            .as_widget()
+            .a11y_nodes(layout, &tree.children[0], cursor)
     }
 
     fn update(
@@ -88,9 +93,12 @@ impl<M> Widget<M, Theme, cosmic::Renderer> for Hover<'_, M> {
                 target: &hover.id,
                 bounds: None,
             };
-            self.content
-                .as_widget_mut()
-                .operate(&mut tree.children[0], layout, renderer, &mut target);
+            self.content.as_widget_mut().operate(
+                &mut tree.children[0],
+                layout,
+                renderer,
+                &mut target,
+            );
             if matches!(event, Event::Mouse(mouse::Event::CursorLeft))
                 || !cursor.is_over(*viewport)
                 || !target.bounds.is_some_and(|bounds| cursor.is_over(bounds))
@@ -125,9 +133,15 @@ impl<M> Widget<M, Theme, cosmic::Renderer> for Hover<'_, M> {
         cursor: mouse::Cursor,
         viewport: &Rectangle,
     ) {
-        self.content
-            .as_widget()
-            .draw(&tree.children[0], renderer, theme, style, layout, cursor, viewport);
+        self.content.as_widget().draw(
+            &tree.children[0],
+            renderer,
+            theme,
+            style,
+            layout,
+            cursor,
+            viewport,
+        );
     }
 
     fn mouse_interaction(
@@ -138,9 +152,13 @@ impl<M> Widget<M, Theme, cosmic::Renderer> for Hover<'_, M> {
         viewport: &Rectangle,
         renderer: &cosmic::Renderer,
     ) -> mouse::Interaction {
-        self.content
-            .as_widget()
-            .mouse_interaction(&tree.children[0], layout, cursor, viewport, renderer)
+        self.content.as_widget().mouse_interaction(
+            &tree.children[0],
+            layout,
+            cursor,
+            viewport,
+            renderer,
+        )
     }
 
     fn operate(
@@ -163,8 +181,12 @@ impl<M> Widget<M, Theme, cosmic::Renderer> for Hover<'_, M> {
         viewport: &Rectangle,
         translation: Vector,
     ) -> Option<cosmic::iced::advanced::overlay::Element<'a, M, Theme, cosmic::Renderer>> {
-        self.content
-            .as_widget_mut()
-            .overlay(&mut tree.children[0], layout, renderer, viewport, translation)
+        self.content.as_widget_mut().overlay(
+            &mut tree.children[0],
+            layout,
+            renderer,
+            viewport,
+            translation,
+        )
     }
 }

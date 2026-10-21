@@ -50,7 +50,9 @@ impl SessionEnvironment {
             .env_remove("XAUTHORITY");
 
         if let Some(x11) = &self.x11 {
-            command.env("DISPLAY", &x11.display).env("XAUTHORITY", &x11.authority);
+            command
+                .env("DISPLAY", &x11.display)
+                .env("XAUTHORITY", &x11.authority);
         }
         if self.policy == SessionPolicy::Embedded {
             command.env("FERESE_SESSION_IMPORT_ENV", "0");
@@ -125,7 +127,10 @@ mod tests {
         environment(None).apply_public(&mut command);
 
         assert_eq!(value_of(&command, "WAYLAND_SOCKET"), Some(None));
-        assert_eq!(value_of(&command, "FERESE_SHELL_CONTROL_SOCKET"), Some(None));
+        assert_eq!(
+            value_of(&command, "FERESE_SHELL_CONTROL_SOCKET"),
+            Some(None)
+        );
     }
 
     #[test]
@@ -171,7 +176,9 @@ mod tests {
         environment(None).apply_public(&mut command);
         assert_eq!(
             value_of(&command, "FERESE_SOCKET"),
-            Some(Some("/run/user/1000/ferese/instances/preview/control.sock".into()))
+            Some(Some(
+                "/run/user/1000/ferese/instances/preview/control.sock".into()
+            ))
         );
     }
 
@@ -183,8 +190,14 @@ mod tests {
         let mut embedded = environment(None);
         embedded.policy = SessionPolicy::Embedded;
         embedded.apply_public(&mut command);
-        assert_eq!(value_of(&command, "FERESE_SESSION_IMPORT_ENV"), Some(Some("0".into())));
-        assert_eq!(value_of(&command, "FERESE_SESSION_MODE"), Some(Some("embedded".into())));
+        assert_eq!(
+            value_of(&command, "FERESE_SESSION_IMPORT_ENV"),
+            Some(Some("0".into()))
+        );
+        assert_eq!(
+            value_of(&command, "FERESE_SESSION_MODE"),
+            Some(Some("embedded".into()))
+        );
     }
 
     #[test]
@@ -198,7 +211,10 @@ mod tests {
                 value_of(&command, "FERESE_SESSION_IMPORT_ENV"),
                 Some(Some(choice.into()))
             );
-            assert_eq!(value_of(&command, "FERESE_SESSION_MODE"), Some(Some("desktop".into())));
+            assert_eq!(
+                value_of(&command, "FERESE_SESSION_MODE"),
+                Some(Some("desktop".into()))
+            );
         }
     }
 }

@@ -56,7 +56,8 @@ impl Model {
 
     pub fn tick_subscription(&self, visible: bool, on_battery: bool) -> Subscription<()> {
         if visible && needs_progress(&self.snapshot) {
-            cosmic::iced::time::every(Duration::from_secs(if on_battery { 3 } else { 1 })).map(|_| ())
+            cosmic::iced::time::every(Duration::from_secs(if on_battery { 3 } else { 1 }))
+                .map(|_| ())
         } else {
             Subscription::none()
         }
@@ -75,9 +76,18 @@ impl Model {
     }
 
     pub fn refresh_art(&mut self, visible: bool) {
-        let player = if visible { self.snapshot.selected.as_ref() } else { None };
+        let player = if visible {
+            self.snapshot.selected.as_ref()
+        } else {
+            None
+        };
         self.art.request(player);
-        if visible && self.artwork.as_ref().is_some_and(|art| !self.art.accepts(art)) {
+        if visible
+            && self
+                .artwork
+                .as_ref()
+                .is_some_and(|art| !self.art.accepts(art))
+        {
             self.artwork = None;
         }
     }
@@ -91,7 +101,9 @@ impl Model {
                 && pending["owner"] == args["owner"]
             {
                 pending["delta"] = json!(
-                    (pending["delta"].as_f64().unwrap_or(0.0) + args["delta"].as_f64().unwrap_or(0.0)).clamp(-1.0, 1.0)
+                    (pending["delta"].as_f64().unwrap_or(0.0)
+                        + args["delta"].as_f64().unwrap_or(0.0))
+                    .clamp(-1.0, 1.0)
                 );
             } else if self.pending.len() < 8 {
                 self.pending.push_back(args);
@@ -106,7 +118,8 @@ impl Model {
         self.error = None;
         cosmic::task::future(async move {
             let result = tokio::task::spawn_blocking(move || {
-                let mut connection = ferese_ipc::Connection::connect().map_err(|e| e.to_string())?;
+                let mut connection =
+                    ferese_ipc::Connection::connect().map_err(|e| e.to_string())?;
                 connection.call("media-action", args).map(|_| ())
             })
             .await
@@ -127,7 +140,9 @@ impl Model {
 
 fn needs_progress(snapshot: &Snapshot) -> bool {
     snapshot.selected.as_ref().is_some_and(|player| {
-        player.status == Playback::Playing && player.position_us.is_some() && player.length_us.is_some()
+        player.status == Playback::Playing
+            && player.position_us.is_some()
+            && player.length_us.is_some()
     })
 }
 
@@ -141,14 +156,14 @@ impl FereseShell {
         let hub_visible = self.outputs.iter().any(|entry| {
             !entry.hidden
                 && entry.runtime.hub.as_ref().is_some_and(|hub| {
-                    hub.borrow().hub.mode() == ferese_panel::morph::Mode::Expanded(ferese_panel::morph::Content::Media)
+                    hub.borrow().hub.mode()
+                        == ferese_panel::morph::Mode::Expanded(ferese_panel::morph::Content::Media)
                 })
         });
         let visible = (hub_visible
-            || self
-                .menu
-                .as_ref()
-                .is_some_and(|menu| menu.kind == crate::status_ui::Menu::Media && !menu.motion.closing()))
+            || self.menu.as_ref().is_some_and(|menu| {
+                menu.kind == crate::status_ui::Menu::Media && !menu.motion.closing()
+            }))
             && self.outputs.iter().any(|output| !output.hidden);
         let on_battery = self
             .status

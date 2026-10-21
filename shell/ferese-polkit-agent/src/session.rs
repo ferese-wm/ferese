@@ -37,21 +37,29 @@ impl Api {
             static LIBRARIES: OnceLock<Result<(Library, Library), String>> = OnceLock::new();
             let (agent, polkit) = LIBRARIES
                 .get_or_init(|| {
-                    let agent = Library::new("libpolkit-agent-1.so.0").map_err(|e| e.to_string())?;
-                    let polkit = Library::new("libpolkit-gobject-1.so.0").map_err(|e| e.to_string())?;
+                    let agent =
+                        Library::new("libpolkit-agent-1.so.0").map_err(|e| e.to_string())?;
+                    let polkit =
+                        Library::new("libpolkit-gobject-1.so.0").map_err(|e| e.to_string())?;
                     Ok((agent, polkit))
                 })
                 .as_ref()
                 .map_err(Clone::clone)?;
-            let user_new = *polkit.get(b"polkit_unix_user_new\0").map_err(|e| e.to_string())?;
-            let session_new = *agent.get(b"polkit_agent_session_new\0").map_err(|e| e.to_string())?;
+            let user_new = *polkit
+                .get(b"polkit_unix_user_new\0")
+                .map_err(|e| e.to_string())?;
+            let session_new = *agent
+                .get(b"polkit_agent_session_new\0")
+                .map_err(|e| e.to_string())?;
             let initiate = *agent
                 .get(b"polkit_agent_session_initiate\0")
                 .map_err(|e| e.to_string())?;
             let response = *agent
                 .get(b"polkit_agent_session_response\0")
                 .map_err(|e| e.to_string())?;
-            let cancel = *agent.get(b"polkit_agent_session_cancel\0").map_err(|e| e.to_string())?;
+            let cancel = *agent
+                .get(b"polkit_agent_session_cancel\0")
+                .map_err(|e| e.to_string())?;
 
             Ok(Self {
                 user_new,
@@ -69,7 +77,9 @@ pub fn check() -> Result<(), String> {
 }
 
 pub(crate) fn username(uid: u32) -> String {
-    let output = Command::new("getent").args(["passwd", &uid.to_string()]).output();
+    let output = Command::new("getent")
+        .args(["passwd", &uid.to_string()])
+        .output();
     output
         .ok()
         .filter(|output| output.status.success())
@@ -132,21 +142,32 @@ fn prompt_process(request: AuthenticationRequest) -> Result<PromptProcess, Strin
     Ok(process)
 }
 
-unsafe extern "C" fn request_signal(_session: Object, prompt: *const c_char, echo: c_int, data: *mut c_void) {
+unsafe extern "C" fn request_signal(
+    _session: Object,
+    prompt: *const c_char,
+    echo: c_int,
+    data: *mut c_void,
+) {
     let tx = unsafe { &*(data as *const Sender<SessionEvent>) };
-    let prompt = unsafe { CStr::from_ptr(prompt) }.to_string_lossy().into_owned();
+    let prompt = unsafe { CStr::from_ptr(prompt) }
+        .to_string_lossy()
+        .into_owned();
     let _ = tx.send(SessionEvent::Request(prompt, echo != 0));
 }
 
 unsafe extern "C" fn info(_session: Object, text: *const c_char, data: *mut c_void) {
     let tx = unsafe { &*(data as *const Sender<SessionEvent>) };
-    let text = unsafe { CStr::from_ptr(text) }.to_string_lossy().into_owned();
+    let text = unsafe { CStr::from_ptr(text) }
+        .to_string_lossy()
+        .into_owned();
     let _ = tx.send(SessionEvent::Info(text));
 }
 
 unsafe extern "C" fn error(_session: Object, text: *const c_char, data: *mut c_void) {
     let tx = unsafe { &*(data as *const Sender<SessionEvent>) };
-    let text = unsafe { CStr::from_ptr(text) }.to_string_lossy().into_owned();
+    let text = unsafe { CStr::from_ptr(text) }
+        .to_string_lossy()
+        .into_owned();
     let _ = tx.send(SessionEvent::Error(text));
 }
 
@@ -155,7 +176,12 @@ unsafe extern "C" fn completed(_session: Object, success: c_int, data: *mut c_vo
     let _ = tx.send(SessionEvent::Completed(success != 0));
 }
 
-unsafe fn connect(session: Object, name: &'static CStr, callback: gobject_ffi::GCallback, data: *mut c_void) {
+unsafe fn connect(
+    session: Object,
+    name: &'static CStr,
+    callback: gobject_ffi::GCallback,
+    data: *mut c_void,
+) {
     unsafe {
         gobject_ffi::g_signal_connect_data(
             session.cast(),
@@ -195,7 +221,10 @@ impl Drop for SessionGuard {
 }
 
 fn permitted_selection(request: &AuthenticationRequest, uid: u32) -> bool {
-    request.identities.iter().any(|identity| identity.uid == uid)
+    request
+        .identities
+        .iter()
+        .any(|identity| identity.uid == uid)
 }
 
 fn response_buffer(value: &str) -> Option<Zeroizing<Vec<u8>>> {
@@ -273,7 +302,7 @@ fn run_session(
                 unsafe extern "C" fn(Object, *const c_char, *mut c_void),
                 unsafe extern "C" fn(),
             >(
-                info as unsafe extern "C" fn(Object, *const c_char, *mut c_void)
+                info as unsafe extern "C" fn(Object, *const c_char, *mut c_void),
             )),
             signal_data,
         );
@@ -284,7 +313,7 @@ fn run_session(
                 unsafe extern "C" fn(Object, *const c_char, *mut c_void),
                 unsafe extern "C" fn(),
             >(
-                error as unsafe extern "C" fn(Object, *const c_char, *mut c_void)
+                error as unsafe extern "C" fn(Object, *const c_char, *mut c_void),
             )),
             signal_data,
         );
@@ -295,7 +324,7 @@ fn run_session(
                 unsafe extern "C" fn(Object, c_int, *mut c_void),
                 unsafe extern "C" fn(),
             >(
-                completed as unsafe extern "C" fn(Object, c_int, *mut c_void)
+                completed as unsafe extern "C" fn(Object, c_int, *mut c_void),
             )),
             signal_data,
         );
@@ -322,8 +351,13 @@ fn run_session(
                         },
                     )?;
                 }
-                SessionEvent::Info(text) => send(&mut process.writer, &PromptEvent::Info { generation, text })?,
-                SessionEvent::Error(text) => send(&mut process.writer, &PromptEvent::Error { generation, text })?,
+                SessionEvent::Info(text) => {
+                    send(&mut process.writer, &PromptEvent::Info { generation, text })?
+                }
+                SessionEvent::Error(text) => send(
+                    &mut process.writer,
+                    &PromptEvent::Error { generation, text },
+                )?,
                 SessionEvent::Completed(success) => outcome = Some(success),
             }
         }
@@ -368,7 +402,11 @@ fn run_session(
         if !stopped
             && (selected_uid.is_some()
                 || cancelled.load(Ordering::Acquire)
-                || process.child.try_wait().map_err(|e| e.to_string())?.is_some())
+                || process
+                    .child
+                    .try_wait()
+                    .map_err(|e| e.to_string())?
+                    .is_some())
         {
             unsafe { (api.cancel)(session) };
             stopped = true;
@@ -402,7 +440,14 @@ pub fn authenticate(
     context
         .with_thread_default(|| {
             let mut process = prompt_process(request.clone())?;
-            authenticate_sessions(&api, &mut request, &cookie, &context, &mut process, &cancelled)
+            authenticate_sessions(
+                &api,
+                &mut request,
+                &cookie,
+                &context,
+                &mut process,
+                &cancelled,
+            )
         })
         .map_err(|error| error.to_string())?
 }
@@ -421,7 +466,9 @@ fn authenticate_sessions(
     loop {
         match run_session(api, request, cookie, context, process, cancelled) {
             Ok(SessionOutcome::Completed(true)) => break Ok(true),
-            Ok(SessionOutcome::IdentityChanged { uid, generation }) if !cancelled.load(Ordering::Acquire) => {
+            Ok(SessionOutcome::IdentityChanged { uid, generation })
+                if !cancelled.load(Ordering::Acquire) =>
+            {
                 request.selected_uid = uid;
                 request.generation = generation;
             }
@@ -429,7 +476,9 @@ fn authenticate_sessions(
                 failures += 1;
                 // Switching accounts never resets this request's attempt budget.
                 if failures >= MAX_AUTH_ATTEMPTS {
-                    break Err(format!("Authentication failed after {MAX_AUTH_ATTEMPTS} attempts"));
+                    break Err(format!(
+                        "Authentication failed after {MAX_AUTH_ATTEMPTS} attempts"
+                    ));
                 }
                 request.generation.attempt += 1;
             }
@@ -448,7 +497,12 @@ mod tests {
 
     unsafe extern "C" fn fake_initiate(session: Object) {
         unsafe {
-            gobject_ffi::g_signal_emit_by_name(session.cast(), c"request".as_ptr(), c"Password:".as_ptr(), 0 as c_int);
+            gobject_ffi::g_signal_emit_by_name(
+                session.cast(),
+                c"request".as_ptr(),
+                c"Password:".as_ptr(),
+                0 as c_int,
+            );
         }
     }
 
@@ -502,7 +556,8 @@ mod tests {
                     let mut uid = 1000;
                     for line in BufReader::new(output).lines() {
                         let Ok(line) = line else { break };
-                        if let Ok(PromptEvent::Request { generation, .. }) = serde_json::from_str::<PromptEvent>(&line)
+                        if let Ok(PromptEvent::Request { generation, .. }) =
+                            serde_json::from_str::<PromptEvent>(&line)
                         {
                             let count = counter.fetch_add(1, Ordering::SeqCst) + 1;
                             let event = if count == 3 {
@@ -527,7 +582,11 @@ mod tests {
                         }
                     }
                 });
-                let mut process = PromptProcess { child, writer, input };
+                let mut process = PromptProcess {
+                    child,
+                    writer,
+                    input,
+                };
                 let mut request = request_fixture();
                 let result = authenticate_sessions(
                     &api,
@@ -563,13 +622,21 @@ mod tests {
         let context = glib::MainContext::new();
         context
             .with_thread_default(|| {
-                let mut child = Command::new("sleep").arg("5").stdin(Stdio::piped()).spawn().unwrap();
+                let mut child = Command::new("sleep")
+                    .arg("5")
+                    .stdin(Stdio::piped())
+                    .spawn()
+                    .unwrap();
                 let writer = BufWriter::new(child.stdin.take().unwrap());
                 let cookie = CString::new("test-cookie").unwrap();
                 let cancelled = AtomicBool::new(false);
                 let mut request = request_fixture();
                 let (tx, input) = mpsc::channel();
-                let mut process = PromptProcess { child, writer, input };
+                let mut process = PromptProcess {
+                    child,
+                    writer,
+                    input,
+                };
                 tx.send(PromptEvent::SelectIdentity {
                     uid: 1001,
                     generation: Generation {
@@ -585,7 +652,8 @@ mod tests {
                 })
                 .unwrap();
                 assert_eq!(
-                    run_session(&api, &request, &cookie, &context, &mut process, &cancelled).unwrap(),
+                    run_session(&api, &request, &cookie, &context, &mut process, &cancelled)
+                        .unwrap(),
                     SessionOutcome::IdentityChanged {
                         uid: 1001,
                         generation: Generation {
@@ -631,13 +699,15 @@ mod tests {
                 })
                 .unwrap();
                 assert_eq!(
-                    run_session(&api, &request, &cookie, &context, &mut process, &cancelled).unwrap(),
+                    run_session(&api, &request, &cookie, &context, &mut process, &cancelled)
+                        .unwrap(),
                     SessionOutcome::Completed(true)
                 );
                 assert_eq!(RESPONSES.load(Ordering::SeqCst), 1);
                 tx.send(PromptEvent::Cancel).unwrap();
                 assert_eq!(
-                    run_session(&api, &request, &cookie, &context, &mut process, &cancelled).unwrap(),
+                    run_session(&api, &request, &cookie, &context, &mut process, &cancelled)
+                        .unwrap(),
                     SessionOutcome::Cancelled
                 );
             })
@@ -652,13 +722,24 @@ mod tests {
         let context = glib::MainContext::new();
         context
             .with_thread_default(|| {
-                let mut child = Command::new("sleep").arg("5").stdin(Stdio::piped()).spawn().unwrap();
+                let mut child = Command::new("sleep")
+                    .arg("5")
+                    .stdin(Stdio::piped())
+                    .spawn()
+                    .unwrap();
                 let writer = BufWriter::new(child.stdin.take().unwrap());
                 let (tx, input) = mpsc::channel();
-                let mut process = PromptProcess { child, writer, input };
+                let mut process = PromptProcess {
+                    child,
+                    writer,
+                    input,
+                };
                 for (selection, uid) in [(2, 1001), (3, 1000), (1, 1001), (2, 1001)] {
                     tx.send(PromptEvent::SelectIdentity {
-                        generation: Generation { selection, attempt: 0 },
+                        generation: Generation {
+                            selection,
+                            attempt: 0,
+                        },
                         uid,
                     })
                     .unwrap();

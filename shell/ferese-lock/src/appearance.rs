@@ -32,7 +32,8 @@ impl Appearance {
             .and_then(|path| std::fs::read_to_string(path).ok())
             .and_then(|source| Document::parse(&source).ok());
         let mut theme = ferese_theme_client::service::current().presented;
-        if let Some(path) = path.filter(|path| ferese_config::config_path().as_deref() != Some(*path))
+        if let Some(path) =
+            path.filter(|path| ferese_config::config_path().as_deref() != Some(*path))
             && let Some(document) = &doc
             && let Ok(mut connection) = ferese_ipc::Connection::connect()
         {
@@ -49,7 +50,11 @@ impl Appearance {
         Self::from_document(user, doc, &theme)
     }
 
-    fn from_document(user: &str, doc: Option<Document>, theme: &ferese_config::theme::ResolvedTheme) -> Self {
+    fn from_document(
+        user: &str,
+        doc: Option<Document>,
+        theme: &ferese_config::theme::ResolvedTheme,
+    ) -> Self {
         let doc = doc.map(|doc| doc.with_theme(theme));
         let string = |key: &str, fallback: &str| {
             doc.as_ref()
@@ -80,7 +85,9 @@ impl Appearance {
         let loaded = load_wallpaper(&wallpaper_path, if reduce_transparency { 0. } else { blur });
         let wallpaper_loaded = loaded.is_ok();
         let wallpaper = loaded.unwrap_or_else(|_| {
-            image::Handle::from_bytes(include_bytes!("../../../assets/wallpapers/ferese.png").as_slice())
+            image::Handle::from_bytes(
+                include_bytes!("../../../assets/wallpapers/ferese.png").as_slice(),
+            )
         });
         let boolean = |key, fallback| {
             doc.as_ref()
@@ -134,7 +141,10 @@ impl Appearance {
         if self.wallpaper_pending.as_ref() == Some(&desired) {
             return None;
         }
-        if self.wallpaper_loaded && path == self.wallpaper_path && reduce == self.reduce_transparency {
+        if self.wallpaper_loaded
+            && path == self.wallpaper_path
+            && reduce == self.reduce_transparency
+        {
             if self.wallpaper_pending.take().is_some() {
                 self.wallpaper_revision = self.wallpaper_revision.wrapping_add(1);
             }
@@ -149,7 +159,11 @@ impl Appearance {
         ))
     }
 
-    pub fn finish_wallpaper(&mut self, revision: u64, result: Result<image::Handle, String>) -> Result<(), String> {
+    pub fn finish_wallpaper(
+        &mut self,
+        revision: u64,
+        result: Result<image::Handle, String>,
+    ) -> Result<(), String> {
         if revision != self.wallpaper_revision {
             return Ok(());
         }
@@ -165,7 +179,11 @@ impl Appearance {
     }
 
     pub fn clock_format(&self) -> &'static str {
-        if self.twelve_hour { "%I:%M %p" } else { "%H:%M" }
+        if self.twelve_hour {
+            "%I:%M %p"
+        } else {
+            "%H:%M"
+        }
     }
 
     pub fn theme(&self) -> cosmic::Theme {
@@ -188,7 +206,8 @@ impl Appearance {
 }
 
 fn account_picture(user: &str) -> Option<image::Handle> {
-    let mut candidates = vec![std::path::PathBuf::from("/var/lib/AccountsService/icons").join(user)];
+    let mut candidates =
+        vec![std::path::PathBuf::from("/var/lib/AccountsService/icons").join(user)];
     if let Some(home) = std::env::var_os("HOME") {
         candidates.push(std::path::PathBuf::from(home).join(".face"));
     }
@@ -206,11 +225,13 @@ fn account_picture(user: &str) -> Option<image::Handle> {
             side,
         )
         .to_image();
-        let mut pixels = ::image::imageops::resize(&square, 256, 256, ::image::imageops::FilterType::Lanczos3);
+        let mut pixels =
+            ::image::imageops::resize(&square, 256, 256, ::image::imageops::FilterType::Lanczos3);
         // Clip the decoded thumbnail, so the avatar stays circular even on
         // renderers that do not support rounded image clipping.
         for (x, y, pixel) in pixels.enumerate_pixels_mut() {
-            let distance = ((x as f32 + 0.5 - 128.).powi(2) + (y as f32 + 0.5 - 128.).powi(2)).sqrt();
+            let distance =
+                ((x as f32 + 0.5 - 128.).powi(2) + (y as f32 + 0.5 - 128.).powi(2)).sqrt();
             let coverage = (128. - distance).clamp(0., 1.);
             pixel[3] = (pixel[3] as f32 * coverage).round() as u8;
         }
@@ -235,7 +256,11 @@ fn decode_avatar(path: &std::path::Path) -> Result<::image::RgbaImage, String> {
         .custom_flags(libc::O_NONBLOCK)
         .open(path)
         .map_err(|error| error.to_string())?;
-    if !file.metadata().map_err(|error| error.to_string())?.is_file() {
+    if !file
+        .metadata()
+        .map_err(|error| error.to_string())?
+        .is_file()
+    {
         return Err("Avatar is not a regular file".into());
     }
 
@@ -323,7 +348,10 @@ mod tests {
         }
         match load_wallpaper(file.path(), 2.).unwrap() {
             image::Handle::Rgba {
-                width, height, pixels, ..
+                width,
+                height,
+                pixels,
+                ..
             } => {
                 assert_eq!((width, height), (640, 360));
                 assert_eq!(pixels.len(), 640 * 360 * 4);
@@ -378,7 +406,10 @@ mod tests {
         assert!(appearance.request_wallpaper(&theme).is_none());
         theme.tokens.background.lock_path = Some(initial.clone());
         let (_, path, _) = appearance.request_wallpaper(&theme).unwrap();
-        assert_eq!(path, initial, "an explicit lock image overrides the desktop wallpaper");
+        assert_eq!(
+            path, initial,
+            "an explicit lock image overrides the desktop wallpaper"
+        );
     }
 
     #[test]
@@ -395,7 +426,11 @@ mod tests {
         assert!(decode_avatar(file.path()).is_err());
 
         file.as_file().set_len(8 * 1024 * 1024 + 1).unwrap();
-        assert!(decode_avatar(file.path()).unwrap_err().contains("file limit"));
+        assert!(
+            decode_avatar(file.path())
+                .unwrap_err()
+                .contains("file limit")
+        );
     }
 
     #[test]
@@ -429,9 +464,12 @@ mod tests {
         )
         .unwrap();
         let document = Document::parse(&std::fs::read_to_string(&config).unwrap()).unwrap();
-        let theme = ferese_config::theme::resolve(&document, directory.path(), jiff::Timestamp::now(), |_| {
-            Err("unexpected file".into())
-        })
+        let theme = ferese_config::theme::resolve(
+            &document,
+            directory.path(),
+            jiff::Timestamp::now(),
+            |_| Err("unexpected file".into()),
+        )
         .unwrap()
         .theme;
         let appearance = Appearance::from_document("no-such-test-user", Some(document), &theme);

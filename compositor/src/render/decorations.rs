@@ -13,10 +13,14 @@ pub(super) fn corner_program(
     shape: CornerShape,
 ) -> Option<RoundedClipPrograms> {
     let context = renderer.context_id().erased();
-    if let Some(program) = resources.contexts.get(&context).and_then(|programs| match shape {
-        CornerShape::Circular => programs.rounded.as_ref(),
-        CornerShape::Continuous => programs.continuous.as_ref(),
-    }) {
+    if let Some(program) = resources
+        .contexts
+        .get(&context)
+        .and_then(|programs| match shape {
+            CornerShape::Circular => programs.rounded.as_ref(),
+            CornerShape::Continuous => programs.continuous.as_ref(),
+        })
+    {
         return Some(program.clone());
     }
 
@@ -43,11 +47,18 @@ pub(super) fn corner_program(
         UniformName::new("opacity", UniformType::_1f),
         UniformName::new("shadow_color", UniformType::_4f),
     ];
-    let texture =
-        renderer.compile_custom_texture_shader(corner_shader_for(ROUNDED_TEXTURE_SHADER, shape), &texture_uniforms);
-    let border =
-        renderer.compile_custom_pixel_shader(corner_shader_for(ROUNDED_BORDER_SHADER, shape), &border_uniforms);
-    let shadow = renderer.compile_custom_pixel_shader(corner_shader_for(WINDOW_SHADOW_SHADER, shape), &shadow_uniforms);
+    let texture = renderer.compile_custom_texture_shader(
+        corner_shader_for(ROUNDED_TEXTURE_SHADER, shape),
+        &texture_uniforms,
+    );
+    let border = renderer.compile_custom_pixel_shader(
+        corner_shader_for(ROUNDED_BORDER_SHADER, shape),
+        &border_uniforms,
+    );
+    let shadow = renderer.compile_custom_pixel_shader(
+        corner_shader_for(WINDOW_SHADOW_SHADER, shape),
+        &shadow_uniforms,
+    );
     let solid = renderer.compile_custom_pixel_shader(
         corner_shader_for(ROUNDED_SOLID_SHADER, shape),
         &[
@@ -57,7 +68,9 @@ pub(super) fn corner_program(
         ],
     );
     let compiled = texture.and_then(|texture| {
-        border.and_then(|border| shadow.and_then(|shadow| solid.map(|solid| (texture, border, shadow, solid))))
+        border.and_then(|border| {
+            shadow.and_then(|shadow| solid.map(|solid| (texture, border, shadow, solid)))
+        })
     });
     match compiled {
         Ok((texture, border, shadow, solid)) => {
@@ -130,13 +143,22 @@ pub(super) fn window_border_element(
         Some(g) => (
             g.from.0,
             g.to.0,
-            border_gradient_line(corners.rect, mode.size, output.current_transform().invert(), g.angle),
+            border_gradient_line(
+                corners.rect,
+                mode.size,
+                output.current_transform().invert(),
+                g.angle,
+            ),
         ),
         None => (theme.accent_color.0, theme.accent_color.0, [0.0; 4]),
     };
     let parameters = BorderParameters {
         geometry,
-        clip_rect: framebuffer_clip_rect(corners.rect, mode.size, output.current_transform().invert()),
+        clip_rect: framebuffer_clip_rect(
+            corners.rect,
+            mode.size,
+            output.current_transform().invert(),
+        ),
         radius: corners.radius,
         width,
         color: color_with_alpha(from, opacity),
@@ -235,7 +257,11 @@ pub(super) fn window_tint_element(
     let program = material_program_for_corners(resources, renderer, corners.shape)?;
     let parameters = BorderParameters {
         geometry,
-        clip_rect: framebuffer_clip_rect(corners.rect, mode.size, output.current_transform().invert()),
+        clip_rect: framebuffer_clip_rect(
+            corners.rect,
+            mode.size,
+            output.current_transform().invert(),
+        ),
         radius: corners.radius,
         width: 0.0,
         color,
@@ -253,17 +279,20 @@ pub(super) fn window_tint_element(
     } else {
         &mut resources.windows.entry(id).or_default().dim
     };
-    let cached = buffers.contexts.entry(context).or_insert_with(|| CachedBorder {
-        element: SharedPixelShaderElement::new(
-            program.0,
-            geometry,
-            None,
-            1.0,
-            uniforms(&parameters),
-            RenderElementKind::Unspecified,
-        ),
-        parameters: parameters.clone(),
-    });
+    let cached = buffers
+        .contexts
+        .entry(context)
+        .or_insert_with(|| CachedBorder {
+            element: SharedPixelShaderElement::new(
+                program.0,
+                geometry,
+                None,
+                1.0,
+                uniforms(&parameters),
+                RenderElementKind::Unspecified,
+            ),
+            parameters: parameters.clone(),
+        });
     if cached.parameters != parameters {
         if cached.parameters.geometry != geometry {
             cached.element.resize(geometry, None);
@@ -311,7 +340,11 @@ pub(super) fn window_shadow_element(
     let parameters = ShadowParameters {
         blur: (blur * scale) as f32,
         bounds,
-        shadow_rect: framebuffer_clip_rect(shadow_geometry, mode.size, output.current_transform().invert()),
+        shadow_rect: framebuffer_clip_rect(
+            shadow_geometry,
+            mode.size,
+            output.current_transform().invert(),
+        ),
         radius: corners.radius,
         opacity: opacity as f32,
         color,
@@ -349,8 +382,16 @@ pub(super) fn window_shadow_element(
     Some(PhysicalShaderElement {
         inner: cached.element.clone(),
         geometry: Rectangle::new(
-            (shadow_geometry.loc.x - extent, shadow_geometry.loc.y - extent).into(),
-            (shadow_geometry.size.w + 2 * extent, shadow_geometry.size.h + 2 * extent).into(),
+            (
+                shadow_geometry.loc.x - extent,
+                shadow_geometry.loc.y - extent,
+            )
+                .into(),
+            (
+                shadow_geometry.size.w + 2 * extent,
+                shadow_geometry.size.h + 2 * extent,
+            )
+                .into(),
         ),
     })
 }
@@ -365,7 +406,11 @@ pub(super) fn shadow_uniforms(parameters: &ShadowParameters) -> Vec<Uniform<'sta
     ]
 }
 
-pub(super) fn shadow_bounds(geometry: Rectangle<i32, Logical>, offset_y: f64, blur: f64) -> Rectangle<i32, Logical> {
+pub(super) fn shadow_bounds(
+    geometry: Rectangle<i32, Logical>,
+    offset_y: f64,
+    blur: f64,
+) -> Rectangle<i32, Logical> {
     let extent = (blur * 2.0).ceil() as i32;
     let offset_y = offset_y.round() as i32;
 
@@ -399,21 +444,30 @@ pub(super) fn rounded_window_elements(
     let geometry = window.geometry();
     let mut reference = geometry.to_physical_precise_round(scale);
     let behavior = if let Some(size) = native_size {
-        reference.size = Size::<i32, Logical>::from((size.width, size.height)).to_physical_precise_round(scale);
+        reference.size =
+            Size::<i32, Logical>::from((size.width, size.height)).to_physical_precise_round(scale);
         ConstrainScaleBehavior::Stretch
     } else {
         behavior
     };
     let location = physical_constrain.loc - geometry.loc.to_physical_precise_round(scale);
-    let clip = framebuffer_clip_rect(physical_constrain, mode.size, output.current_transform().invert());
+    let clip = framebuffer_clip_rect(
+        physical_constrain,
+        mode.size,
+        output.current_transform().invert(),
+    );
     let radius = corners.radius;
     let surface = toplevel.wl_surface();
 
     let mut content = PopupManager::popups_for_surface(surface)
         .flat_map(|(popup, popup_offset)| {
-            let offset = (geometry.loc + popup_offset - popup.geometry().loc).to_physical_precise_round(scale);
+            let offset = (geometry.loc + popup_offset - popup.geometry().loc)
+                .to_physical_precise_round(scale);
 
-            render_elements_from_surface_tree::<GlesRenderer, WaylandSurfaceRenderElement<GlesRenderer>>(
+            render_elements_from_surface_tree::<
+                GlesRenderer,
+                WaylandSurfaceRenderElement<GlesRenderer>,
+            >(
                 renderer,
                 popup.wl_surface(),
                 location + offset,

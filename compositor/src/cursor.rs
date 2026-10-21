@@ -42,7 +42,11 @@ impl CursorFrame {
         )
     }
 
-    pub(crate) fn physical_location(&self, pointer: Point<f64, Logical>, scale: f64) -> Point<f64, Physical> {
+    pub(crate) fn physical_location(
+        &self,
+        pointer: Point<f64, Logical>,
+        scale: f64,
+    ) -> Point<f64, Physical> {
         self.logical_rect(pointer).loc.to_physical(scale)
     }
 }
@@ -64,7 +68,10 @@ impl NamedCursor {
         let mut offset = elapsed.as_nanos() % period.as_nanos();
         for (index, frame) in self.frames.iter().enumerate() {
             if offset < frame.delay.as_nanos() {
-                return (index, Some(frame.delay - Duration::from_nanos(offset as u64)));
+                return (
+                    index,
+                    Some(frame.delay - Duration::from_nanos(offset as u64)),
+                );
             }
             offset -= frame.delay.as_nanos();
         }
@@ -97,7 +104,9 @@ impl Loader {
             let mut theme = None;
             move |(icon, scale)| {
                 let theme = theme.get_or_insert_with(|| {
-                    CursorTheme::load(&std::env::var("XCURSOR_THEME").unwrap_or_else(|_| "default".into()))
+                    CursorTheme::load(
+                        &std::env::var("XCURSOR_THEME").unwrap_or_else(|_| "default".into()),
+                    )
                 });
                 load_named_cursor(theme, icon, scale)
             }
@@ -135,7 +144,14 @@ impl Loader {
                     drop(requests);
                     let cursor = load(request);
                     let (icon, scale) = request;
-                    if sender.send(Loaded { icon, scale, cursor }).is_err() {
+                    if sender
+                        .send(Loaded {
+                            icon,
+                            scale,
+                            cursor,
+                        })
+                        .is_err()
+                    {
                         break;
                     }
                     signal.wakeup();
@@ -218,7 +234,12 @@ impl crate::Ferese {
         }
         .unwrap_or(1)
         .clamp(1, 8);
-        while let Ok(Loaded { icon, scale, cursor }) = self.cursor_loader.results.try_recv() {
+        while let Ok(Loaded {
+            icon,
+            scale,
+            cursor,
+        }) = self.cursor_loader.results.try_recv()
+        {
             let mut cursor = cursor.unwrap_or_else(fallback_cursor);
             cursor.requested_scale = scale;
             let active = match self.cursor_status {
@@ -230,12 +251,9 @@ impl crate::Ferese {
                     && active.is_some_and(|active| !self.named_cursors.contains_key(&active)));
             let mut bytes: usize = self.named_cursors.values().map(|cursor| cursor.bytes).sum();
             while bytes + cursor.bytes > MAX_CACHE_BYTES {
-                let Some(evict) = self
-                    .named_cursors
-                    .keys()
-                    .copied()
-                    .find(|key| *key != CursorIcon::Default && *key != icon && Some(*key) != active)
-                else {
+                let Some(evict) = self.named_cursors.keys().copied().find(|key| {
+                    *key != CursorIcon::Default && *key != icon && Some(*key) != active
+                }) else {
                     break;
                 };
                 bytes -= self.named_cursors.remove(&evict).unwrap().bytes;
@@ -243,7 +261,8 @@ impl crate::Ferese {
             self.named_cursors.insert(icon, cursor);
             if affects_current {
                 self.cursor_animation.reset = true;
-                self.cursor_redraw_pending |= crate::backends::direct::cursor_animation_visible(self);
+                self.cursor_redraw_pending |=
+                    crate::backends::direct::cursor_animation_visible(self);
             }
         }
 
@@ -257,7 +276,8 @@ impl crate::Ferese {
                 .get(&icon)
                 .is_none_or(|cursor| cursor.requested_scale != self.cursor_animation.buffer_scale)
         {
-            self.cursor_loader.request(icon, self.cursor_animation.buffer_scale);
+            self.cursor_loader
+                .request(icon, self.cursor_animation.buffer_scale);
         }
         let animated = icon
             .and_then(|icon| {
@@ -285,7 +305,8 @@ impl crate::Ferese {
             .get(&icon)
             .or_else(|| self.named_cursors.get(&CursorIcon::Default))
             .unwrap();
-        let (frame, remaining) = cursor.sample(now.saturating_duration_since(self.cursor_animation.epoch));
+        let (frame, remaining) =
+            cursor.sample(now.saturating_duration_since(self.cursor_animation.epoch));
         if self.cursor_animation.frame != frame {
             self.cursor_animation.frame = frame;
             self.cursor_redraw_pending = true;
@@ -293,13 +314,14 @@ impl crate::Ferese {
         if let Some(remaining) = remaining
             && self.cursor_animation.timer.is_none()
         {
-            match self
-                .loop_handle
-                .insert_source(Timer::from_deadline(now + remaining), |_, _, state| {
+            match self.loop_handle.insert_source(
+                Timer::from_deadline(now + remaining),
+                |_, _, state| {
                     state.cursor_animation.timer = None;
                     state.cursor_redraw_pending = true;
                     TimeoutAction::Drop
-                }) {
+                },
+            ) {
                 Ok(token) => self.cursor_animation.timer = Some(token),
                 Err(error) => tracing::warn!(%error, "could not schedule animated cursor"),
             }
@@ -321,7 +343,9 @@ fn load_named_cursor(theme: &CursorTheme, icon: CursorIcon, scale: i32) -> Optio
             return None;
         }
         let mut bytes = Vec::new();
-        file.take((MAX_FILE_BYTES + 1) as u64).read_to_end(&mut bytes).ok()?;
+        file.take((MAX_FILE_BYTES + 1) as u64)
+            .read_to_end(&mut bytes)
+            .ok()?;
         parse_cursor(&bytes, requested, scale)
     })
 }
@@ -348,7 +372,10 @@ fn parse_cursor(bytes: &[u8], requested: u32, scale: i32) -> Option<NamedCursor>
     }
     let header = word(bytes, 4)? as usize;
     let count = word(bytes, 12)? as usize;
-    if header < 16 || count > MAX_FRAMES || header.checked_add(count.checked_mul(12)?)? > bytes.len() {
+    if header < 16
+        || count > MAX_FRAMES
+        || header.checked_add(count.checked_mul(12)?)? > bytes.len()
+    {
         return None;
     }
     let mut images = Vec::new();
@@ -371,7 +398,14 @@ fn parse_cursor(bytes: &[u8], requested: u32, scale: i32) -> Option<NamedCursor>
         let height = word(bytes, pos + 20)?;
         let xhot = word(bytes, pos + 24)?;
         let yhot = word(bytes, pos + 28)?;
-        if nominal == 0 || width == 0 || height == 0 || width > 1024 || height > 1024 || xhot > width || yhot > height {
+        if nominal == 0
+            || width == 0
+            || height == 0
+            || width > 1024
+            || height > 1024
+            || xhot > width
+            || yhot > height
+        {
             return None;
         }
         let pixels = (width as usize).checked_mul(height as usize)?;
@@ -382,7 +416,15 @@ fn parse_cursor(bytes: &[u8], requested: u32, scale: i32) -> Option<NamedCursor>
         let start = pos.checked_add(36)?;
         let end = start.checked_add(pixels.checked_mul(4)?)?;
         let rgba = bytes.get(start..end)?;
-        images.push((nominal, width, height, xhot, yhot, word(bytes, pos + 32)?, rgba));
+        images.push((
+            nominal,
+            width,
+            height,
+            xhot,
+            yhot,
+            word(bytes, pos + 32)?,
+            rgba,
+        ));
     }
     let base = images
         .iter()
@@ -396,7 +438,9 @@ fn parse_cursor(bytes: &[u8], requested: u32, scale: i32) -> Option<NamedCursor>
         .min_by_key(|size| (size.abs_diff(desired), *size))?;
     let mut frames = Vec::new();
     let mut asset_bytes = 0usize;
-    for (_, width, height, xhot, yhot, delay, rgba) in images.into_iter().filter(|image| image.0 == nominal) {
+    for (_, width, height, xhot, yhot, delay, rgba) in
+        images.into_iter().filter(|image| image.0 == nominal)
+    {
         let ratio = f64::from(desired) / f64::from(nominal);
         let w = (f64::from(width) * ratio).round().max(1.0) as u32;
         let h = (f64::from(height) * ratio).round().max(1.0) as u32;
@@ -404,20 +448,29 @@ fn parse_cursor(bytes: &[u8], requested: u32, scale: i32) -> Option<NamedCursor>
             return None;
         }
         let size: Size<i32, Buffer> = (w as i32, h as i32).into();
-        asset_bytes = asset_bytes.checked_add((w as usize).checked_mul(h as usize)?.checked_mul(4)?)?;
+        asset_bytes =
+            asset_bytes.checked_add((w as usize).checked_mul(h as usize)?.checked_mul(4)?)?;
         if asset_bytes > MAX_PIXELS * 4 {
             return None;
         }
         let resized;
         let pixels = if w != width || h != height {
             let original = image::RgbaImage::from_raw(width, height, rgba.to_vec())?;
-            resized = image::imageops::resize(&original, w, h, image::imageops::FilterType::Triangle);
+            resized =
+                image::imageops::resize(&original, w, h, image::imageops::FilterType::Triangle);
             resized.as_raw().as_slice()
         } else {
             rgba
         };
         frames.push(CursorFrame {
-            buffer: MemoryRenderBuffer::from_slice(pixels, Fourcc::Abgr8888, size, scale, Transform::Normal, None),
+            buffer: MemoryRenderBuffer::from_slice(
+                pixels,
+                Fourcc::Abgr8888,
+                size,
+                scale,
+                Transform::Normal,
+                None,
+            ),
             hotspot: (
                 (f64::from(xhot) * ratio).round() as i32,
                 (f64::from(yhot) * ratio).round() as i32,

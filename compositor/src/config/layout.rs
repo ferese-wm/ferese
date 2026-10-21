@@ -58,7 +58,11 @@ impl Config {
     }
 
     pub fn scrolling_focus_strategy(&self) -> ViewportFocusStrategy {
-        match self.scrolling.focus_strategy.unwrap_or(FocusStrategyValue::Minimal) {
+        match self
+            .scrolling
+            .focus_strategy
+            .unwrap_or(FocusStrategyValue::Minimal)
+        {
             FocusStrategyValue::Minimal => ViewportFocusStrategy::Minimal,
             FocusStrategyValue::CenterOnFocus => ViewportFocusStrategy::Center,
             FocusStrategyValue::Paged => ViewportFocusStrategy::Paged,
@@ -66,7 +70,10 @@ impl Config {
     }
 }
 
-pub(super) fn nonnegative_layout_value(value: f64, field: &'static str) -> Result<f64, ConfigError> {
+pub(super) fn nonnegative_layout_value(
+    value: f64,
+    field: &'static str,
+) -> Result<f64, ConfigError> {
     if value.is_finite() && value >= 0.0 {
         Ok(value)
     } else {
@@ -74,10 +81,17 @@ pub(super) fn nonnegative_layout_value(value: f64, field: &'static str) -> Resul
     }
 }
 
-pub(super) fn parse_column_width(value: &ColumnWidthValue, field: &'static str) -> Result<ColumnWidth, ConfigError> {
+pub(super) fn parse_column_width(
+    value: &ColumnWidthValue,
+    field: &'static str,
+) -> Result<ColumnWidth, ConfigError> {
     match value {
-        ColumnWidthValue::Proportion(value) if value.is_finite() && *value > 0.0 => Ok(ColumnWidth::Proportion(*value)),
-        ColumnWidthValue::Named(value) if value.eq_ignore_ascii_case("full") => Ok(ColumnWidth::Full),
+        ColumnWidthValue::Proportion(value) if value.is_finite() && *value > 0.0 => {
+            Ok(ColumnWidth::Proportion(*value))
+        }
+        ColumnWidthValue::Named(value) if value.eq_ignore_ascii_case("full") => {
+            Ok(ColumnWidth::Full)
+        }
         value => Err(ConfigError::ColumnWidth {
             field,
             value: match value {

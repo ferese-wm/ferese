@@ -123,7 +123,12 @@ mod tests {
     impl Wireless {
         #[zbus(property)]
         fn active_access_point(&self) -> OwnedObjectPath {
-            OwnedObjectPath::try_from(if self.0.lock().unwrap().active { "/ap" } else { "/" }).unwrap()
+            OwnedObjectPath::try_from(if self.0.lock().unwrap().active {
+                "/ap"
+            } else {
+                "/"
+            })
+            .unwrap()
         }
     }
     struct Ap(Arc<Mutex<State>>);

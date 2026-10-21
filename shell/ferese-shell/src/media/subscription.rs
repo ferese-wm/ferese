@@ -8,5 +8,7 @@ pub(super) fn subscription() -> Subscription<Arc<Snapshot>> {
 }
 
 fn stream() -> impl cosmic::iced::futures::Stream<Item = Arc<Snapshot>> {
-    crate::ipc_subscription::stream("media-get", "media-watch", |snapshot: &Snapshot| snapshot.revision)
+    crate::ipc_subscription::stream("media-get", "media-watch", |snapshot: &Snapshot| {
+        snapshot.revision
+    })
 }

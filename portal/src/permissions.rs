@@ -58,12 +58,19 @@ fn usb_label(info: &Options, id: &str) -> String {
         .and_then(|value| HashMap::<String, OwnedValue>::try_from(value).ok())
         .unwrap_or_default();
     let property = |keys: &[&str]| {
-        keys.iter()
-            .find_map(|key| properties.get(*key).and_then(|value| <&str>::try_from(value).ok()))
+        keys.iter().find_map(|key| {
+            properties
+                .get(*key)
+                .and_then(|value| <&str>::try_from(value).ok())
+        })
     };
     let vendor = property(&["ID_VENDOR_FROM_DATABASE", "ID_VENDOR", "ID_VENDOR_ID"]);
     let model = property(&["ID_MODEL_FROM_DATABASE", "ID_MODEL", "ID_MODEL_ID"]);
-    let label = [vendor, model].into_iter().flatten().collect::<Vec<_>>().join(" ");
+    let label = [vendor, model]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(" ");
     let label = if label.is_empty() { id } else { &label };
     label
         .chars()
@@ -97,11 +104,27 @@ async fn usb_consent(
         description.push_str(&format!(
             "\n{} — {}",
             label,
-            if writable { "read and write" } else { "read only" }
+            if writable {
+                "read and write"
+            } else {
+                "read only"
+            }
         ));
-        selected.push((id, HashMap::from([("writable".to_owned(), OwnedValue::from(writable))])));
+        selected.push((
+            id,
+            HashMap::from([("writable".to_owned(), OwnedValue::from(writable))]),
+        ));
     }
-    if !consent(app, parent, "USB device access", &description, "Allow access", None).await? {
+    if !consent(
+        app,
+        parent,
+        "USB device access",
+        &description,
+        "Allow access",
+        None,
+    )
+    .await?
+    {
         return Ok(None);
     }
     Ok(Some(HashMap::from([(
@@ -131,7 +154,9 @@ impl Background {
         loop {
             let result = async {
                 let path = ferese_ipc::socket::resolve(None).map_err(|error| error.to_string())?;
-                let stream = UnixStream::connect(path).await.map_err(|error| error.to_string())?;
+                let stream = UnixStream::connect(path)
+                    .await
+                    .map_err(|error| error.to_string())?;
                 let mut events = BackgroundEvents::subscribe(stream).await?;
                 loop {
                     let next = match events.next().await {
@@ -187,7 +212,10 @@ impl BackgroundEvents {
         let mut bytes = Vec::new();
         ferese_ipc::write_frame(&mut bytes, &request).map_err(|error| error.to_string())?;
         tokio::time::timeout(Duration::from_secs(2), async {
-            stream.write_all(&bytes).await.map_err(|error| error.to_string())?;
+            stream
+                .write_all(&bytes)
+                .await
+                .map_err(|error| error.to_string())?;
             let response: ferese_ipc::Response = read_event_frame(&mut stream).await?;
             if response.version != ferese_ipc::VERSION || response.id != request.id {
                 return Err("Unexpected event subscription response".into());
@@ -195,7 +223,10 @@ impl BackgroundEvents {
             if let Some(error) = response.error {
                 return Err(error.message);
             }
-            if response.result.as_ref().and_then(|value| value["version"].as_u64())
+            if response
+                .result
+                .as_ref()
+                .and_then(|value| value["version"].as_u64())
                 != Some(u64::from(ferese_ipc::events::VERSION))
             {
                 return Err("Unsupported event stream version".into());
@@ -226,8 +257,9 @@ impl BackgroundEvents {
             }
             Change::FocusChanged { focus } => {
                 for window in self.windows.as_array_mut().into_iter().flatten() {
-                    window["focused"] =
-                        serde_json::json!(focus["window"].is_number() && window["id"] == focus["window"]);
+                    window["focused"] = serde_json::json!(
+                        focus["window"].is_number() && window["id"] == focus["window"]
+                    );
                 }
                 self.changed = true;
             }
@@ -241,13 +273,18 @@ impl BackgroundEvents {
     }
 }
 
-async fn read_event_frame<T: serde::de::DeserializeOwned>(stream: &mut UnixStream) -> Result<T, String> {
+async fn read_event_frame<T: serde::de::DeserializeOwned>(
+    stream: &mut UnixStream,
+) -> Result<T, String> {
     let size = stream.read_u32().await.map_err(|error| error.to_string())? as usize;
     if size > ferese_ipc::MAX_PAYLOAD_SIZE {
         return Err("Oversized IPC event frame".into());
     }
     let mut bytes = vec![0; size];
-    stream.read_exact(&mut bytes).await.map_err(|error| error.to_string())?;
+    stream
+        .read_exact(&mut bytes)
+        .await
+        .map_err(|error| error.to_string())?;
     serde_json::from_slice(&bytes).map_err(|error| error.to_string())
 }
 
@@ -299,7 +336,8 @@ impl Background {
         let directory = dirs::config_dir()
             .ok_or_else(|| zbus::fdo::Error::Failed("Missing config directory".into()))?
             .join("autostart");
-        set_autostart(&directory, &app_id, enable, &commandline, flags).map_err(zbus::fdo::Error::InvalidArgs)
+        set_autostart(&directory, &app_id, enable, &commandline, flags)
+            .map_err(zbus::fdo::Error::InvalidArgs)
     }
 
     #[zbus(signal)]
@@ -340,7 +378,13 @@ fn app_states(windows: &serde_json::Value) -> HashMap<String, u32> {
     apps
 }
 
-fn set_autostart(directory: &Path, app: &str, enable: bool, argv: &[String], flags: u32) -> Result<bool, String> {
+fn set_autostart(
+    directory: &Path,
+    app: &str,
+    enable: bool,
+    argv: &[String],
+    flags: u32,
+) -> Result<bool, String> {
     if app.is_empty()
         || app.len() > 255
         || !app
@@ -367,7 +411,9 @@ fn set_autostart(directory: &Path, app: &str, enable: bool, argv: &[String], fla
         }
         return Ok(true);
     }
-    if argv.len() > 128 || (argv.first().is_none_or(|argument| argument.is_empty()) && flags & 1 == 0) {
+    if argv.len() > 128
+        || (argv.first().is_none_or(|argument| argument.is_empty()) && flags & 1 == 0)
+    {
         return Err("Invalid autostart command".into());
     }
     let exec = argv
@@ -450,7 +496,11 @@ mod tests {
                 request.args,
                 serde_json::json!({"version": ferese_ipc::events::VERSION})
             );
-            send_frame(&mut peer, &ferese_ipc::Response::success(request.id, request.args)).await;
+            send_frame(
+                &mut peer,
+                &ferese_ipc::Response::success(request.id, request.args),
+            )
+            .await;
             peer
         });
         let mut events = BackgroundEvents::subscribe(client).await.unwrap();
@@ -547,7 +597,9 @@ mod tests {
             windows: serde_json::json!([]),
             changed: false,
         };
-        peer.write_u32((ferese_ipc::MAX_PAYLOAD_SIZE + 1) as u32).await.unwrap();
+        peer.write_u32((ferese_ipc::MAX_PAYLOAD_SIZE + 1) as u32)
+            .await
+            .unwrap();
         assert!(events.next().await.unwrap_err().contains("Oversized"));
         drop(peer);
         assert!(events.next().await.is_err());
@@ -575,9 +627,15 @@ mod tests {
                 "ID_VENDOR_FROM_DATABASE".to_owned(),
                 Value::from("Example Vendor").try_to_owned().unwrap(),
             ),
-            ("ID_MODEL".to_owned(), Value::from("Gamepad").try_to_owned().unwrap()),
+            (
+                "ID_MODEL".to_owned(),
+                Value::from("Gamepad").try_to_owned().unwrap(),
+            ),
         ]);
-        let info = HashMap::from([("properties".into(), Value::from(properties).try_to_owned().unwrap())]);
+        let info = HashMap::from([(
+            "properties".into(),
+            Value::from(properties).try_to_owned().unwrap(),
+        )]);
         assert_eq!(usb_label(&info, "opaque-id"), "Example Vendor Gamepad");
         assert_eq!(usb_label(&Options::new(), "fallback-id"), "fallback-id");
     }

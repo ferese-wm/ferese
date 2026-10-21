@@ -17,10 +17,10 @@ fn read_battery_percent(root: &Path) -> Option<u8> {
             .ok()
             .map(|text| text.trim().to_owned())
     };
-    if entries
-        .iter()
-        .any(|path| read(path, "online").as_deref() == Some("1") && read(path, "type").as_deref() != Some("Battery"))
-    {
+    if entries.iter().any(|path| {
+        read(path, "online").as_deref() == Some("1")
+            && read(path, "type").as_deref() != Some("Battery")
+    }) {
         return None;
     }
     entries.iter().find_map(|path| {
@@ -57,7 +57,9 @@ pub(super) fn low_refresh_mode(size: (u16, u16), modes: &[(u16, u16, i32)]) -> O
     modes
         .iter()
         .enumerate()
-        .filter(|(_, (width, height, refresh))| (*width, *height) == size && (59_000..=61_000).contains(refresh))
+        .filter(|(_, (width, height, refresh))| {
+            (*width, *height) == size && (59_000..=61_000).contains(refresh)
+        })
         .min_by_key(|(_, (_, _, refresh))| refresh.abs_diff(60_000))
         .map(|(index, _)| index)
 }
@@ -96,7 +98,10 @@ mod tests {
         assert_eq!(low_refresh_mode((2880, 1800), &modes), Some(3));
         assert_eq!(low_refresh_mode((2880, 1800), &modes[..3]), Some(2));
         assert_eq!(low_refresh_mode((2880, 1800), &modes[..2]), None);
-        assert_eq!(low_refresh_mode((2880, 1800), &[(2880, 1800, -60_000)]), None);
+        assert_eq!(
+            low_refresh_mode((2880, 1800), &[(2880, 1800, -60_000)]),
+            None
+        );
     }
 
     #[test]

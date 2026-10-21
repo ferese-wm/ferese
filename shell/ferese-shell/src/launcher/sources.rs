@@ -155,7 +155,12 @@ struct WindowEntry {
     seen: bool,
 }
 impl Windows {
-    pub(super) fn sync(&mut self, snapshot: &ShellSnapshot, apps: Option<&super::apps::Apps>, query: &str) -> bool {
+    pub(super) fn sync(
+        &mut self,
+        snapshot: &ShellSnapshot,
+        apps: Option<&super::apps::Apps>,
+        query: &str,
+    ) -> bool {
         let query_changed = self.query != query || self.apps_ready != apps.is_some();
         if self.query != query {
             self.query.clear();
@@ -171,13 +176,17 @@ impl Windows {
                 .or_default()
                 .clone_from(&workspace.name);
         }
-        self.workspaces.retain(|id, _| self.workspace_ids.contains(id));
+        self.workspaces
+            .retain(|id, _| self.workspace_ids.contains(id));
         for entry in self.entries.values_mut() {
             entry.seen = false;
         }
         let mut changed = query_changed;
         for window in &snapshot.windows {
-            let name = self.workspaces.get(&window.workspace).map_or("?", String::as_str);
+            let name = self
+                .workspaces
+                .get(&window.workspace)
+                .map_or("?", String::as_str);
             if let Some(entry) = self.entries.get_mut(&window.id) {
                 entry.seen = true;
                 if !query_changed
@@ -231,7 +240,9 @@ impl Windows {
         changed
     }
     pub(super) fn rows(&self) -> impl Iterator<Item = &Row> {
-        self.entries.values().filter_map(|entry| entry.result.as_ref())
+        self.entries
+            .values()
+            .filter_map(|entry| entry.result.as_ref())
     }
 }
 impl Source for Windows {

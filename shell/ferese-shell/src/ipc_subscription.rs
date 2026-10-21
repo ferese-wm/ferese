@@ -6,7 +6,11 @@ use serde::de::DeserializeOwned;
 use serde_json::json;
 
 /// Follow a versioned snapshot, clearing stale content when its connection ends.
-pub(crate) fn stream<S>(get: &'static str, watch: &'static str, revision: fn(&S) -> u64) -> impl Stream<Item = Arc<S>>
+pub(crate) fn stream<S>(
+    get: &'static str,
+    watch: &'static str,
+    revision: fn(&S) -> u64,
+) -> impl Stream<Item = Arc<S>>
 where
     S: DeserializeOwned + Default + Send + Sync + 'static,
 {
@@ -99,10 +103,14 @@ mod tests {
             );
             return;
         }
-        check_stream::<ferese_ipc::media::Snapshot>("media-get", "media-watch", |snapshot| snapshot.revision);
-        check_stream::<ferese_ipc::activities::Snapshot>("activity-get", "activity-watch", |snapshot| {
+        check_stream::<ferese_ipc::media::Snapshot>("media-get", "media-watch", |snapshot| {
             snapshot.revision
         });
+        check_stream::<ferese_ipc::activities::Snapshot>(
+            "activity-get",
+            "activity-watch",
+            |snapshot| snapshot.revision,
+        );
     }
 
     fn check_stream<S>(get: &'static str, watch: &'static str, revision: fn(&S) -> u64)
@@ -122,32 +130,53 @@ mod tests {
                     match listener.accept() {
                         Ok((connection, _)) => break connection,
                         Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                            assert!(std::time::Instant::now() < deadline, "subscription did not reconnect");
+                            assert!(
+                                std::time::Instant::now() < deadline,
+                                "subscription did not reconnect"
+                            );
                             std::thread::sleep(Duration::from_millis(5));
                         }
                         Err(error) => panic!("accept: {error}"),
                     }
                 };
-                connection.set_read_timeout(Some(Duration::from_secs(8))).unwrap();
-                connection.set_write_timeout(Some(Duration::from_secs(8))).unwrap();
+                connection
+                    .set_read_timeout(Some(Duration::from_secs(8)))
+                    .unwrap();
+                connection
+                    .set_write_timeout(Some(Duration::from_secs(8)))
+                    .unwrap();
                 let request: Request = read_frame(&mut connection).unwrap();
                 assert_eq!(request.command, get);
                 let mut snapshot = serde_json::to_value(S::default()).unwrap();
                 snapshot["revision"] = json!(initial);
-                write_frame(&mut connection, &Response::success(request.id, snapshot.clone())).unwrap();
+                write_frame(
+                    &mut connection,
+                    &Response::success(request.id, snapshot.clone()),
+                )
+                .unwrap();
                 let request: Request = read_frame(&mut connection).unwrap();
                 assert_eq!(request.command, watch);
                 assert_eq!(request.args["since"], initial);
                 if initial == 1 {
                     // Wait for delivery so watch-channel coalescing cannot skip this snapshot.
-                    assert_eq!(consumed_receive.recv_timeout(Duration::from_secs(8)).unwrap(), 1);
+                    assert_eq!(
+                        consumed_receive
+                            .recv_timeout(Duration::from_secs(8))
+                            .unwrap(),
+                        1
+                    );
                     snapshot["revision"] = json!(2);
                     write_frame(&mut connection, &Response::success(request.id, snapshot)).unwrap();
                     let next: Request = read_frame(&mut connection).unwrap();
                     assert_eq!(next.command, watch);
                     assert_eq!(next.args["since"], 2);
                     assert_ne!(request.id, next.id);
-                    assert_eq!(consumed_receive.recv_timeout(Duration::from_secs(8)).unwrap(), 2);
+                    assert_eq!(
+                        consumed_receive
+                            .recv_timeout(Duration::from_secs(8))
+                            .unwrap(),
+                        2
+                    );
                     // Dropping this connection must clear the old snapshot before retrying.
                 } else {
                     watch_send.send(()).unwrap();
@@ -166,18 +195,21 @@ mod tests {
             .block_on(async {
                 let mut subscription = Box::pin(stream::<S>(get, watch, revision));
                 for expected in [1, 2, 0, 3] {
-                    let snapshot = tokio::time::timeout(Duration::from_secs(8), subscription.next())
-                        .await
-                        .unwrap()
-                        .unwrap();
+                    let snapshot =
+                        tokio::time::timeout(Duration::from_secs(8), subscription.next())
+                            .await
+                            .unwrap()
+                            .unwrap();
                     assert_eq!(revision(&snapshot), expected);
                     if expected == 1 || expected == 2 {
                         consumed.send(expected).unwrap();
                     }
                 }
-                tokio::task::spawn_blocking(move || watch_receive.recv_timeout(Duration::from_secs(2)).unwrap())
-                    .await
-                    .unwrap();
+                tokio::task::spawn_blocking(move || {
+                    watch_receive.recv_timeout(Duration::from_secs(2)).unwrap()
+                })
+                .await
+                .unwrap();
                 drop(subscription);
             });
         server.join().unwrap();

@@ -26,7 +26,11 @@ pub(crate) struct ClosedWindow {
 
 impl ClosedWindow {
     pub fn bytes(&self) -> usize {
-        self.snapshot.bytes() + self.handoff.as_ref().map_or(0, |(snapshot, _)| snapshot.bytes())
+        self.snapshot.bytes()
+            + self
+                .handoff
+                .as_ref()
+                .map_or(0, |(snapshot, _)| snapshot.bytes())
     }
 
     pub fn advance(&mut self, delta: Duration, spring: SpringConfig) -> bool {
@@ -82,7 +86,9 @@ pub(super) fn grouped_elements(
         .render
         .closing
         .iter()
-        .filter(|window| window.output == output_id && window.snapshot.context == renderer.context_id().erased())
+        .filter(|window| {
+            window.output == output_id && window.snapshot.context == renderer.context_id().erased()
+        })
         .cloned()
         .collect();
     if windows.is_empty() {
@@ -97,7 +103,8 @@ pub(super) fn grouped_elements(
             window.advance(delta, state.spring_config);
         }
         let visual = window.presentation.bounds.current;
-        let corners = RoundedRect::new(visual, output_geometry.loc, scale, window.radius).with_shape(window.shape);
+        let corners = RoundedRect::new(visual, output_geometry.loc, scale, window.radius)
+            .with_shape(window.shape);
         let constrain = rounded_visual_rect(visual, output_geometry.loc);
         let Some(programs) = corner_program(&mut state.render, renderer, window.shape) else {
             continue;
@@ -124,7 +131,8 @@ pub(super) fn grouped_elements(
             constrain,
             corners,
             scale,
-            theme.border_width + (theme.focus_ring_width - theme.border_width) * window.presentation.focus(),
+            theme.border_width
+                + (theme.focus_ring_width - theme.border_width) * window.presentation.focus(),
             theme.border_color.0,
             theme.border_gradient,
             window.presentation.focus() as f32,
@@ -196,8 +204,13 @@ pub(super) fn grouped_elements(
             elements.push(material);
         }
         if window.material.is_none()
-            && let Some(blur) =
-                super::window_blur::window_blur_element(state, renderer, output, window.presentation, corners)
+            && let Some(blur) = super::window_blur::window_blur_element(
+                state,
+                renderer,
+                output,
+                window.presentation,
+                corners,
+            )
         {
             elements.push(blur);
         }

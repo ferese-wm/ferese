@@ -61,7 +61,11 @@ fn grid_with_density<'a, M: Clone + 'a>(
     navigation: [Element<'a, M>; 3],
     compact: bool,
 ) -> Element<'a, M> {
-    let cell_width = if compact { Length::Fill } else { Length::Fixed(30.) };
+    let cell_width = if compact {
+        Length::Fill
+    } else {
+        Length::Fixed(30.)
+    };
     let cell_height = if compact { 20. } else { 25. };
     let spacing = if compact { 2. } else { 3. };
     let months = [
@@ -96,12 +100,17 @@ fn grid_with_density<'a, M: Clone + 'a>(
     .spacing(2);
     let mut grid = column::with_capacity(8)
         .spacing(spacing)
-        .width(if compact { Length::Fill } else { Length::Shrink })
+        .width(if compact {
+            Length::Fill
+        } else {
+            Length::Shrink
+        })
         .push(header);
-    let mut weekdays =
-        row::with_capacity(7)
-            .spacing(spacing)
-            .width(if compact { Length::Fill } else { Length::Shrink });
+    let mut weekdays = row::with_capacity(7).spacing(spacing).width(if compact {
+        Length::Fill
+    } else {
+        Length::Shrink
+    });
     for label in ["M", "T", "W", "T", "F", "S", "S"] {
         weekdays = weekdays.push(
             container(
@@ -115,27 +124,33 @@ fn grid_with_density<'a, M: Clone + 'a>(
     }
     grid = grid.push(weekdays);
     for week in 0..(start + days).div_ceil(7) {
-        let mut dates =
-            row::with_capacity(7)
-                .spacing(spacing)
-                .width(if compact { Length::Fill } else { Length::Shrink });
+        let mut dates = row::with_capacity(7).spacing(spacing).width(if compact {
+            Length::Fill
+        } else {
+            Length::Shrink
+        });
         for weekday in 0..7 {
             let cell = week * 7 + weekday;
-            let day = cell.checked_sub(start).map(|day| day + 1).filter(|day| *day <= days);
-            let is_today = year == today.year() && month == today.month() && day == Some(today.day() as usize);
+            let day = cell
+                .checked_sub(start)
+                .map(|day| day + 1)
+                .filter(|day| *day <= days);
+            let is_today =
+                year == today.year() && month == today.month() && day == Some(today.day() as usize);
             let label = day.map_or(String::new(), |day| day.to_string());
             dates = dates.push(
-                container(crate::text(label, font).size(12).class(theme::Text::Color(if is_today {
-                    primary
-                } else {
-                    muted
-                })))
+                container(
+                    crate::text(label, font)
+                        .size(12)
+                        .class(theme::Text::Color(if is_today { primary } else { muted })),
+                )
                 .width(cell_width)
                 .height(cell_height)
                 .center_x(cell_width)
                 .center_y(cell_height)
                 .class(theme::Container::custom(move |_| container::Style {
-                    background: is_today.then_some(Background::Color(palette.accent.scale_alpha(0.2 * opacity))),
+                    background: is_today
+                        .then_some(Background::Color(palette.accent.scale_alpha(0.2 * opacity))),
                     border: Border {
                         shape: BorderShape::Continuous,
                         radius: palette.radius.min(12.).into(),
@@ -155,9 +170,18 @@ mod tests {
     #[test]
     fn clock_uses_lowercase_date_and_twelve_hour_time() {
         for (stamp, expected) in [
-            ("2026-09-28T21:32:00+01:00[Africa/Lagos]", "28 sept, 9:32 pm"),
-            ("2026-09-28T00:05:00+01:00[Africa/Lagos]", "28 sept, 12:05 am"),
-            ("2026-09-28T12:00:00+01:00[Africa/Lagos]", "28 sept, 12:00 pm"),
+            (
+                "2026-09-28T21:32:00+01:00[Africa/Lagos]",
+                "28 sept, 9:32 pm",
+            ),
+            (
+                "2026-09-28T00:05:00+01:00[Africa/Lagos]",
+                "28 sept, 12:05 am",
+            ),
+            (
+                "2026-09-28T12:00:00+01:00[Africa/Lagos]",
+                "28 sept, 12:00 pm",
+            ),
         ] {
             assert_eq!(super::format_bar_time(&stamp.parse().unwrap()), expected);
         }
@@ -169,7 +193,10 @@ mod tests {
         let (first, start, days) = super::month(february, 0);
         assert_eq!((first.year(), first.month(), start, days), (2024, 2, 3, 29));
         let (first, start, days) = super::month(february, -2);
-        assert_eq!((first.year(), first.month(), start, days), (2023, 12, 4, 31));
+        assert_eq!(
+            (first.year(), first.month(), start, days),
+            (2023, 12, 4, 31)
+        );
         let june = jiff::civil::Date::new(2025, 6, 1).unwrap();
         let (_, start, days) = super::month(june, 0);
         assert_eq!((start, days), (6, 30));

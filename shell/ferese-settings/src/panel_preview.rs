@@ -20,7 +20,10 @@ fn available(item: &Item) -> bool {
     item.available(SAMPLE_AVAILABILITY)
 }
 
-fn panel_background(theme: &ferese_config::theme::ResolvedTheme, panel: &Panel) -> cosmic::iced::Color {
+fn panel_background(
+    theme: &ferese_config::theme::ResolvedTheme,
+    panel: &Panel,
+) -> cosmic::iced::Color {
     let fill = if panel.style == ferese_panel::PanelStyle::Morph {
         &theme.tokens.colors.surface_raised
     } else {
@@ -81,7 +84,9 @@ impl App {
                 }
             }
             if !self.panel_preview_resolution.overflow.is_empty() {
-                rows = rows.push(container(crate::scrollable(items).height(Length::Shrink)).max_height(160.));
+                rows = rows.push(
+                    container(crate::scrollable(items).height(Length::Shrink)).max_height(160.),
+                );
             }
         }
         let palette = visuals::Palette::from_resolved(&self.resolved.presented);
@@ -97,7 +102,8 @@ impl App {
         let panels = match self.draft.item("panels") {
             Some(panels) => panels.clone(),
             None => {
-                let crate::store::Edit::Set(_, panels) = panel_controls::initialize(&self.draft)? else {
+                let crate::store::Edit::Set(_, panels) = panel_controls::initialize(&self.draft)?
+                else {
                     unreachable!()
                 };
                 panels
@@ -124,7 +130,9 @@ impl App {
                     .into(),
                 ferese_theme::panel_surface::Options {
                     parameters: panel.shape_parameters(),
-                    bounds: Some(cosmic::iced::advanced::widget::Id::new("morph-preview-body")),
+                    bounds: Some(cosmic::iced::advanced::widget::Id::new(
+                        "morph-preview-body",
+                    )),
                     groups: Vec::new(),
                     scale: self.render_scale,
                     high_contrast: palette.high_contrast,
@@ -186,7 +194,10 @@ impl App {
         .flat_map(|(position, zone)| {
             zone.groups.iter().map(move |group| {
                 (
-                    cosmic::iced::advanced::widget::Id::new(format!("preview-group:{}", group.id.0)),
+                    cosmic::iced::advanced::widget::Id::new(format!(
+                        "preview-group:{}",
+                        group.id.0
+                    )),
                     position,
                 )
             })
@@ -233,7 +244,11 @@ impl App {
                     let has_end = panel.end.groups.iter().flat_map(|group| &group.items)
                         .any(|item| matches!(resolution.items.get(&item.id), Some(Placement::Visible { width, .. }) if *width > 0.));
                     end = row([])
-                        .spacing(if has_end { panel.zone_spacing(&panel.end) } else { 0. })
+                        .spacing(if has_end {
+                            panel.zone_spacing(&panel.end)
+                        } else {
+                            0.
+                        })
                         .align_y(Alignment::Center)
                         .push(trigger)
                         .push(end)
@@ -247,7 +262,9 @@ impl App {
                         .push(start)
                         .push(cosmic::widget::Space::new().width(Length::Fill))
                         .push(end),
-                    container(center).center_x(Length::Fill).center_y(Length::Fill),
+                    container(center)
+                        .center_x(Length::Fill)
+                        .center_y(Length::Fill),
                 ]
                 .into()
             },
@@ -287,21 +304,34 @@ impl App {
         )
     }
 
-    fn preview_zone(&self, panel: &Panel, zone: &Zone, resolution: &Resolution) -> Element<'static, Message> {
-        let mut groups = row([]).spacing(panel.zone_spacing(zone)).align_y(Alignment::Center);
+    fn preview_zone(
+        &self,
+        panel: &Panel,
+        zone: &Zone,
+        resolution: &Resolution,
+    ) -> Element<'static, Message> {
+        let mut groups = row([])
+            .spacing(panel.zone_spacing(zone))
+            .align_y(Alignment::Center);
         for group in &zone.groups {
             let mut controls = row([]).align_y(Alignment::Center);
             let mut count = 0;
             for item in &group.items {
-                let Some(Placement::Visible { representation, width }) = resolution.items.get(&item.id) else {
+                let Some(Placement::Visible {
+                    representation,
+                    width,
+                }) = resolution.items.get(&item.id)
+                else {
                     continue;
                 };
                 if *width <= 0. {
                     continue;
                 }
                 if count > 0 {
-                    controls =
-                        controls.push(cosmic::widget::Space::new().width(item.gap_before.unwrap_or(group.spacing)));
+                    controls = controls.push(
+                        cosmic::widget::Space::new()
+                            .width(item.gap_before.unwrap_or(group.spacing)),
+                    );
                 }
                 controls = controls.push(self.preview_control(item, *representation, Some(*width)));
                 count += 1;
@@ -345,16 +375,21 @@ impl App {
         width: Option<f32>,
     ) -> Element<'static, Message> {
         use ferese_theme::icons;
-        let control_height = (self.draft.number("panels.0.geometry.height", 36.) as f32 - 4.).max(20.);
+        let control_height =
+            (self.draft.number("panels.0.geometry.height", 36.) as f32 - 4.).max(20.);
         let palette = visuals::Palette::from_resolved(&self.resolved.presented);
         if let ItemKind::Workspaces { style } = item.kind {
             let sample = ferese_theme::workspaces::sample(style, palette, self.font, 20.);
-            let control = button::custom(container(sample).id(format!("preview-icon:{}", item.id.0)))
-                .name("Edit Workspaces")
-                .padding([0, 2])
-                .height(control_height)
-                .on_press(Message::PanelSelect(item.id.clone()))
-                .class(preview_button(palette, self.panel_selection.as_ref() == Some(&item.id)));
+            let control =
+                button::custom(container(sample).id(format!("preview-icon:{}", item.id.0)))
+                    .name("Edit Workspaces")
+                    .padding([0, 2])
+                    .height(control_height)
+                    .on_press(Message::PanelSelect(item.id.clone()))
+                    .class(preview_button(
+                        palette,
+                        self.panel_selection.as_ref() == Some(&item.id),
+                    ));
             return container(control)
                 .id(format!("preview-item:{}", item.id.0))
                 .width(width.map_or(Length::Shrink, Length::Fixed))
@@ -400,7 +435,10 @@ impl App {
             .height(Length::Fill)
             .spacing(5)
             .align_y(Alignment::Center)
-            .push(container(icons::tinted(source, 16, palette.text)).id(format!("preview-icon:{}", item.id.0)));
+            .push(
+                container(icons::tinted(source, 16, palette.text))
+                    .id(format!("preview-icon:{}", item.id.0)),
+            );
 
         if !label.is_empty() {
             content = content.push(
@@ -484,7 +522,9 @@ fn preview_button(palette: visuals::Palette, selected: bool) -> cosmic::theme::B
 mod tests {
     use super::*;
     use cosmic::Application;
-    use cosmic::iced::advanced::{Layout, Shell, clipboard, layout, mouse, renderer::Headless, widget};
+    use cosmic::iced::advanced::{
+        Layout, Shell, clipboard, layout, mouse, renderer::Headless, widget,
+    };
     use cosmic::iced::{Event, Font, Pixels, Point, Rectangle, Size};
 
     #[test]
@@ -564,14 +604,18 @@ mod tests {
             let tree = tree.get_or_insert_with(|| widget::Tree::new(&view));
             tree.diff(view.as_widget_mut());
             let viewport = Rectangle::with_size(Size::new(width, 80.));
-            let node = view
-                .as_widget_mut()
-                .layout(tree, &renderer, &layout::Limits::new(Size::ZERO, viewport.size()));
+            let node = view.as_widget_mut().layout(
+                tree,
+                &renderer,
+                &layout::Limits::new(Size::ZERO, viewport.size()),
+            );
             let mut messages = Vec::new();
             for _ in 0..3 {
                 view.as_widget_mut().update(
                     tree,
-                    &Event::Window(cosmic::iced::window::Event::RedrawRequested(std::time::Instant::now())),
+                    &Event::Window(cosmic::iced::window::Event::RedrawRequested(
+                        std::time::Instant::now(),
+                    )),
                     Layout::new(&node),
                     mouse::Cursor::Unavailable,
                     &renderer,
@@ -629,7 +673,13 @@ mod tests {
                 );
             }
             if width == 2400. {
-                let target = bounds.items.iter().find(|(id, _)| id == &clock).unwrap().1.center();
+                let target = bounds
+                    .items
+                    .iter()
+                    .find(|(id, _)| id == &clock)
+                    .unwrap()
+                    .1
+                    .center();
                 for event in [
                     mouse::Event::ButtonPressed(mouse::Button::Left),
                     mouse::Event::ButtonReleased(mouse::Button::Left),
@@ -648,7 +698,9 @@ mod tests {
                 assert_eq!(
                     messages
                         .iter()
-                        .filter(|message| matches!(message, Message::PanelSelect(id) if id == &clock))
+                        .filter(
+                            |message| matches!(message, Message::PanelSelect(id) if id == &clock)
+                        )
                         .count(),
                     1
                 );
@@ -680,7 +732,10 @@ mod tests {
             ),
         )
         .0;
-        for background in [ferese_panel::PanelStyle::Flat, ferese_panel::PanelStyle::Floating] {
+        for background in [
+            ferese_panel::PanelStyle::Flat,
+            ferese_panel::PanelStyle::Floating,
+        ] {
             let mut panel = Panel::from_preset(ferese_panel::PanelStyle::Floating);
             panel.apply_preset(background);
             // Match a three-group layout with media in navigation and a larger status group.
@@ -711,7 +766,12 @@ mod tests {
                         .into_iter()
                         .flat_map(|zone| &zone.groups)
                         .flat_map(|group| &group.items)
-                        .map(|item| (widget::Id::new(format!("preview-item:{}", item.id.0)), item.id.clone()))
+                        .map(|item| {
+                            (
+                                widget::Id::new(format!("preview-item:{}", item.id.0)),
+                                item.id.clone(),
+                            )
+                        })
                         .chain(std::iter::once((
                             widget::Id::new("preview-item:_overflow"),
                             ItemId("_overflow".into()),
@@ -727,7 +787,10 @@ mod tests {
                     .find(|(id, _)| id == &title.id)
                     .expect("sample title remains visible")
                     .1;
-                assert!((center.center_x() - width / 2.).abs() < 0.1, "{center:?} at {width}");
+                assert!(
+                    (center.center_x() - width / 2.).abs() < 0.1,
+                    "{center:?} at {width}"
+                );
                 // Match the shell: titles yield space down to their shared minimum.
                 assert!(center.width >= title.kind.minimum_width().unwrap().min(natural) - 0.1);
                 assert!(center.width <= natural + 0.1);
@@ -746,7 +809,11 @@ mod tests {
                     } else {
                         side.x - center.x - center.width
                     };
-                    assert!(gap >= 7.9, "{background:?} at {width}: {} crowds title ({gap}px)", id.0);
+                    assert!(
+                        gap >= 7.9,
+                        "{background:?} at {width}: {} crowds title ({gap}px)",
+                        id.0
+                    );
                 }
             }
         }
@@ -774,7 +841,10 @@ mod tests {
             ),
         )
         .0;
-        for background in [ferese_panel::PanelStyle::Flat, ferese_panel::PanelStyle::Floating] {
+        for background in [
+            ferese_panel::PanelStyle::Flat,
+            ferese_panel::PanelStyle::Floating,
+        ] {
             let panel = Panel::from_preset(background);
             let ids: Vec<_> = [&panel.start, &panel.center, &panel.end]
                 .into_iter()
@@ -796,25 +866,48 @@ mod tests {
                     let mut controls = Bounds {
                         targets: ids
                             .iter()
-                            .map(|id| (widget::Id::new(format!("preview-item:{}", id.0)), id.clone()))
+                            .map(|id| {
+                                (
+                                    widget::Id::new(format!("preview-item:{}", id.0)),
+                                    id.clone(),
+                                )
+                            })
                             .collect(),
                         ..Default::default()
                     };
                     let mut icons = Bounds {
                         targets: ids
                             .iter()
-                            .map(|id| (widget::Id::new(format!("preview-icon:{}", id.0)), id.clone()))
+                            .map(|id| {
+                                (
+                                    widget::Id::new(format!("preview-icon:{}", id.0)),
+                                    id.clone(),
+                                )
+                            })
                             .collect(),
                         ..Default::default()
                     };
-                    view.as_widget_mut()
-                        .operate(&mut tree, Layout::new(&node), &renderer, &mut controls);
-                    view.as_widget_mut()
-                        .operate(&mut tree, Layout::new(&node), &renderer, &mut icons);
+                    view.as_widget_mut().operate(
+                        &mut tree,
+                        Layout::new(&node),
+                        &renderer,
+                        &mut controls,
+                    );
+                    view.as_widget_mut().operate(
+                        &mut tree,
+                        Layout::new(&node),
+                        &renderer,
+                        &mut icons,
+                    );
                     assert!(!controls.items.is_empty());
                     assert_eq!(controls.items.len(), icons.items.len());
                     for (id, icon) in &icons.items {
-                        let control = controls.items.iter().find(|(item, _)| item == id).unwrap().1;
+                        let control = controls
+                            .items
+                            .iter()
+                            .find(|(item, _)| item == id)
+                            .unwrap()
+                            .1;
                         assert!(
                             (icon.center_y() - control.center_y()).abs() < 0.01,
                             "{background:?} at {width}: {} icon {icon:?} is off-center in {control:?}",
@@ -863,14 +956,17 @@ mod tests {
         let mut baseline_bounds = None;
         for state in ["idle", "hovered", "pressed", "selected"] {
             app.panel_selection = (state == "selected").then(|| item.id.clone());
-            let mut view: Element<'_, Message> = container(app.preview_control(&item, Representation::Icon, None))
-                .center_x(Length::Fill)
-                .center_y(Length::Fill)
-                .into();
+            let mut view: Element<'_, Message> =
+                container(app.preview_control(&item, Representation::Icon, None))
+                    .center_x(Length::Fill)
+                    .center_y(Length::Fill)
+                    .into();
             let mut tree = widget::Tree::new(&view);
-            let node =
-                view.as_widget_mut()
-                    .layout(&mut tree, &renderer, &layout::Limits::new(Size::ZERO, viewport.size()));
+            let node = view.as_widget_mut().layout(
+                &mut tree,
+                &renderer,
+                &layout::Limits::new(Size::ZERO, viewport.size()),
+            );
             let mut bounds = Bounds {
                 targets: vec![(widget::Id::new("preview-item:battery"), item.id.clone())],
                 ..Default::default()
@@ -917,11 +1013,18 @@ mod tests {
             let pixels = Headless::screenshot(&mut renderer, Size::new(96, 48), 1., backdrop);
             if let Some(baseline) = &baseline {
                 let mut changed = 0;
-                for (index, (before, after)) in baseline.chunks_exact(4).zip(pixels.chunks_exact(4)).enumerate() {
+                for (index, (before, after)) in baseline
+                    .chunks_exact(4)
+                    .zip(pixels.chunks_exact(4))
+                    .enumerate()
+                {
                     if before != after {
                         changed += 1;
                         assert!(
-                            target.contains(Point::new((index % 96) as f32 + 0.5, (index / 96) as f32 + 0.5)),
+                            target.contains(Point::new(
+                                (index % 96) as f32 + 0.5,
+                                (index / 96) as f32 + 0.5
+                            )),
                             "{state} paints outside the hit area"
                         );
                     }

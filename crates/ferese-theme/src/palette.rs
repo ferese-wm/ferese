@@ -27,12 +27,16 @@ impl Palette {
             sidebar: color(&theme.tokens.colors.surface_base),
             card: color(&theme.tokens.colors.surface_raised),
             accent: color(&theme.tokens.colors.accent),
-            accent_gradient: theme.tokens.focus_ring.effective_gradient().map(|gradient| {
-                // Iced's zero angle points up; theme angles start left-to-right.
-                Linear::new((gradient.angle.rem_euclid(360.) as f32 + 90.).to_radians())
-                    .add_stop(0., color(&gradient.from))
-                    .add_stop(1., color(&gradient.to))
-            }),
+            accent_gradient: theme
+                .tokens
+                .focus_ring
+                .effective_gradient()
+                .map(|gradient| {
+                    // Iced's zero angle points up; theme angles start left-to-right.
+                    Linear::new((gradient.angle.rem_euclid(360.) as f32 + 90.).to_radians())
+                        .add_stop(0., color(&gradient.from))
+                        .add_stop(1., color(&gradient.to))
+                }),
             on_accent: color(&theme.tokens.colors.on_accent),
             text: color(&theme.tokens.colors.text_primary),
             muted: color(&theme.tokens.colors.text_muted),
@@ -63,13 +67,19 @@ impl Palette {
         };
 
         for stop in gradient.stops.iter_mut().flatten() {
-            stop.color = mix(self.sidebar, crate::composite(stop.color, self.sidebar), strength);
+            stop.color = mix(
+                self.sidebar,
+                crate::composite(stop.color, self.sidebar),
+                strength,
+            );
         }
 
         // Bound every interpolated color, rather than sampling a few points.
         // Adjust both stops together so one foreground stays readable.
         let minimum = if self.high_contrast { 7. } else { 4.5 };
-        let shade = if crate::contrast(Color::BLACK, foreground) > crate::contrast(Color::WHITE, foreground) {
+        let shade = if crate::contrast(Color::BLACK, foreground)
+            > crate::contrast(Color::WHITE, foreground)
+        {
             Color::BLACK
         } else {
             Color::WHITE
@@ -153,7 +163,11 @@ pub fn parse_color(value: &str) -> Option<Color> {
 }
 
 pub fn mix(a: Color, b: Color, t: f32) -> Color {
-    Color::from_rgb(a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t, a.b + (b.b - a.b) * t)
+    Color::from_rgb(
+        a.r + (b.r - a.r) * t,
+        a.g + (b.g - a.g) * t,
+        a.b + (b.b - a.b) * t,
+    )
 }
 
 pub fn surface_shade(base: Color) -> Color {
@@ -223,14 +237,23 @@ mod tests {
             let native = palette.native_theme();
             for opacity in [1., 0.5] {
                 let class = crate::controls::material_button_style(palette, true, opacity);
-                for style in [native.active(false, true, &class), native.hovered(false, true, &class)] {
-                    let Some(Background::Gradient(cosmic::iced::Gradient::Linear(gradient))) = style.background else {
+                for style in [
+                    native.active(false, true, &class),
+                    native.hovered(false, true, &class),
+                ] {
+                    let Some(Background::Gradient(cosmic::iced::Gradient::Linear(gradient))) =
+                        style.background
+                    else {
                         panic!("{} selected control lost its gradient", preset.id);
                     };
                     let from = gradient.stops[0].unwrap().color;
                     let to = gradient.stops[1].unwrap().color;
                     assert_eq!(from.a, to.a);
-                    assert!(if opacity == 1. { from.a == 1. } else { from.a < 1. });
+                    assert!(if opacity == 1. {
+                        from.a == 1.
+                    } else {
+                        from.a < 1.
+                    });
                     for step in 0..=32 {
                         let fill = crate::composite(
                             Color {
@@ -239,7 +262,11 @@ mod tests {
                             },
                             palette.sidebar,
                         );
-                        assert!(crate::contrast(fill, style.text_color.unwrap()) >= 4.5, "{}", preset.id);
+                        assert!(
+                            crate::contrast(fill, style.text_color.unwrap()) >= 4.5,
+                            "{}",
+                            preset.id
+                        );
                     }
                 }
             }
@@ -257,7 +284,9 @@ mod tests {
         let mut resolved = ferese_config::theme::default_theme();
         resolved.tokens.focus_ring.gradient.as_mut().unwrap().angle = 0.;
         let palette = Palette::from_resolved(&resolved);
-        assert!((palette.accent_gradient.unwrap().angle.0 - std::f32::consts::FRAC_PI_2).abs() < 0.001);
+        assert!(
+            (palette.accent_gradient.unwrap().angle.0 - std::f32::consts::FRAC_PI_2).abs() < 0.001
+        );
         resolved.tokens.focus_ring.style = ferese_theme_model::PaintStyle::Solid;
         assert!(Palette::from_resolved(&resolved).accent_gradient.is_none());
         resolved.tokens.focus_ring.style = ferese_theme_model::PaintStyle::Auto;

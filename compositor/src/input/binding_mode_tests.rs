@@ -60,7 +60,11 @@ pub(crate) fn key(state: &mut Ferese, code: u32, pressed: bool) {
     state.process_input_event::<TestInput>(InputEvent::Keyboard {
         event: TestKey(
             Keycode::new(code),
-            if pressed { KeyState::Pressed } else { KeyState::Released },
+            if pressed {
+                KeyState::Pressed
+            } else {
+                KeyState::Released
+            },
         ),
     });
 }
@@ -78,7 +82,10 @@ fn state(events: &mut EventLoop<'static, Ferese>) -> Ferese {
     config.wallpaper.path = None;
     let mut state = Ferese::new(events, Display::new().unwrap(), config).unwrap();
     state.config_source = Some(SOURCE.into());
-    let mut sections = ferese_config::Document::parse(SOURCE).unwrap().value().clone();
+    let mut sections = ferese_config::Document::parse(SOURCE)
+        .unwrap()
+        .value()
+        .clone();
     sections.as_object_mut().unwrap().remove("theme");
     state.config_sections = Some(sections);
     state
@@ -149,7 +156,11 @@ fn reload_transitions_cancel_modes_without_losing_key_ownership() {
     let mut state = state(&mut events);
     state.set_binding_mode("resize");
     key(&mut state, 43, true);
-    assert!(state.reload_config_source("binding-mode default {}".into()).is_err());
+    assert!(
+        state
+            .reload_config_source("binding-mode default {}".into())
+            .is_err()
+    );
     assert_eq!(state.binding_modes.active(), Some("resize"));
     assert!(state.intercepted_keys.contains(&Keycode::new(43)));
     state
@@ -163,7 +174,11 @@ fn reload_transitions_cancel_modes_without_losing_key_ownership() {
     state
         .reload_config_source(format!("{SOURCE}\ninput {{ repeat-rate 30; }}"))
         .unwrap();
-    assert_eq!(state.binding_modes.active(), None, "input reload exits mode");
+    assert_eq!(
+        state.binding_modes.active(),
+        None,
+        "input reload exits mode"
+    );
     state.set_binding_mode("resize");
     state
         .reload_config_source("binding-mode launch { binding t spawn terminal; }".into())
@@ -176,8 +191,9 @@ fn reload_transitions_cancel_modes_without_losing_key_ownership() {
 
 #[test]
 fn escape_exits_with_every_modifier_combination() {
-    if !crate::startup_tests::private_runtime("input::binding_mode_tests::escape_exits_with_every_modifier_combination")
-    {
+    if !crate::startup_tests::private_runtime(
+        "input::binding_mode_tests::escape_exits_with_every_modifier_combination",
+    ) {
         return;
     }
     let mut events = EventLoop::try_new().unwrap();
@@ -220,7 +236,9 @@ fn input_capture_exits_modes_and_prevents_reentry() {
         y: 0,
     }]);
     let id = state.input_capture.register(1, 3).unwrap();
-    let zone_set = state.input_capture.zones(id).unwrap()["zone_set"].as_u64().unwrap() as u32;
+    let zone_set = state.input_capture.zones(id).unwrap()["zone_set"]
+        .as_u64()
+        .unwrap() as u32;
     state
         .input_capture
         .set_barriers(

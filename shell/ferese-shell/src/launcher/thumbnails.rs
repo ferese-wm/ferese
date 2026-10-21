@@ -35,7 +35,8 @@ impl Thumbnails {
                     _ => None,
                 })
         });
-        self.images.retain(|id, _| self.visible.contains(&Some(*id)));
+        self.images
+            .retain(|id, _| self.visible.contains(&Some(*id)));
         for id in self.visible.into_iter().flatten() {
             if self.pending.len() < 3 && self.pending.insert(id) {
                 control.thumbnail(self.token, id);
@@ -45,11 +46,19 @@ impl Thumbnails {
     }
 }
 impl FereseShell {
-    pub(crate) fn launcher_thumbnail(&mut self, token: u32, window: u64, image: Option<image::Handle>) {
+    pub(crate) fn launcher_thumbnail(
+        &mut self,
+        token: u32,
+        window: u64,
+        image: Option<image::Handle>,
+    ) {
         let Some(launcher) = &mut self.launcher else {
             return;
         };
-        if launcher.closing || launcher.thumbnails.token != token || !launcher.thumbnails.pending.remove(&window) {
+        if launcher.closing
+            || launcher.thumbnails.token != token
+            || !launcher.thumbnails.pending.remove(&window)
+        {
             return;
         }
         if let Some(image) = image {
@@ -72,12 +81,28 @@ mod tests {
         launcher.thumbnails.pending.insert(1);
         let image = image::Handle::from_rgba(1, 1, vec![255, 0, 0, 255]);
         shell.launcher_thumbnail(token.wrapping_add(1), 1, Some(image.clone()));
-        assert!(shell.launcher.as_ref().unwrap().thumbnails.images.is_empty());
+        assert!(
+            shell
+                .launcher
+                .as_ref()
+                .unwrap()
+                .thumbnails
+                .images
+                .is_empty()
+        );
         shell.launcher_thumbnail(token, 1, Some(image.clone()));
         assert_eq!(shell.launcher.as_ref().unwrap().thumbnails.images.len(), 1);
         let _ = shell.destroy_launcher();
         let _ = shell.toggle_launcher("test".into());
         shell.launcher_thumbnail(token, 1, Some(image));
-        assert!(shell.launcher.as_ref().unwrap().thumbnails.images.is_empty());
+        assert!(
+            shell
+                .launcher
+                .as_ref()
+                .unwrap()
+                .thumbnails
+                .images
+                .is_empty()
+        );
     }
 }

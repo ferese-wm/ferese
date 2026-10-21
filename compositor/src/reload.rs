@@ -14,14 +14,19 @@ impl Prepared {
         Self::with_watch(source, directory, &mut Vec::new())
     }
 
-    fn with_watch(source: String, directory: &std::path::Path, watched: &mut Vec<PathBuf>) -> Result<Self, String> {
+    fn with_watch(
+        source: String,
+        directory: &std::path::Path,
+        watched: &mut Vec<PathBuf>,
+    ) -> Result<Self, String> {
         if source.len() > 60 * 1024 {
             return Err("configuration exceeds the 60 KiB live-reload limit".into());
         }
 
         let document = ferese_config::Document::parse(&source).map_err(|e| e.to_string())?;
         if let Some(value) = document.get("theme")
-            && let Ok(policy) = serde_json::from_value::<ferese_config::theme::Policy>(value.clone())
+            && let Ok(policy) =
+                serde_json::from_value::<ferese_config::theme::Policy>(value.clone())
         {
             watched.extend(
                 [&policy.file, &policy.light.file, &policy.dark.file]
@@ -76,24 +81,27 @@ impl Worker {
         event_loop: &mut calloop::EventLoop<'static, crate::Ferese>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let (requests, receiver) = std::sync::mpsc::sync_channel::<Request>(8);
-        let (results, events) = calloop::channel::channel::<(Result<Prepared, String>, Vec<PathBuf>, Option<Reply>)>();
-        event_loop.handle().insert_source(events, |event, _, state| {
-            if let calloop::channel::Event::Msg((result, watched, reply)) = event {
-                state.theme_engine.watch_files(&watched);
-                let result = result.and_then(|prepared| state.apply_prepared_config(prepared));
-                if let Err(error) = &result {
-                    state.theme_engine.reject(error.clone());
-                }
+        let (results, events) =
+            calloop::channel::channel::<(Result<Prepared, String>, Vec<PathBuf>, Option<Reply>)>();
+        event_loop
+            .handle()
+            .insert_source(events, |event, _, state| {
+                if let calloop::channel::Event::Msg((result, watched, reply)) = event {
+                    state.theme_engine.watch_files(&watched);
+                    let result = result.and_then(|prepared| state.apply_prepared_config(prepared));
+                    if let Err(error) = &result {
+                        state.theme_engine.reject(error.clone());
+                    }
 
-                if let Some((id, reply)) = reply {
-                    let response = match result {
-                        Ok(()) => ferese_ipc::Response::success(id, serde_json::json!({})),
-                        Err(error) => ferese_ipc::Response::error(id, "invalid_config", error),
-                    };
-                    let _ = reply.try_send(response);
+                    if let Some((id, reply)) = reply {
+                        let response = match result {
+                            Ok(()) => ferese_ipc::Response::success(id, serde_json::json!({})),
+                            Err(error) => ferese_ipc::Response::error(id, "invalid_config", error),
+                        };
+                        let _ = reply.try_send(response);
+                    }
                 }
-            }
-        })?;
+            })?;
         std::thread::Builder::new()
             .name("ferese-config".into())
             .spawn(move || {
@@ -110,7 +118,11 @@ impl Worker {
                     let result = path
                         .as_ref()
                         .map_or_else(
-                            || request.fallback.ok_or_else(|| "No configuration available".into()),
+                            || {
+                                request
+                                    .fallback
+                                    .ok_or_else(|| "No configuration available".into())
+                            },
                             |path| {
                                 if path.exists() || !request.force {
                                     crate::config::read_source(path)
@@ -124,7 +136,8 @@ impl Worker {
                             // Auto mode still resolves time and system appearance.
                             if let Some(previous) = &cached
                                 && previous.source == source
-                                && previous.candidate.policy.mode != ferese_config::theme::Mode::Auto
+                                && previous.candidate.policy.mode
+                                    != ferese_config::theme::Mode::Auto
                                 && file_stamps(&previous.candidate.files) == stamps
                             {
                                 return Ok(previous.clone());
@@ -149,16 +162,23 @@ impl Worker {
 }
 
 impl crate::Ferese {
-    pub(crate) fn queue_config_reload(&self, force: bool, reply: Option<Reply>) -> Result<(), String> {
+    pub(crate) fn queue_config_reload(
+        &self,
+        force: bool,
+        reply: Option<Reply>,
+    ) -> Result<(), String> {
         let request = Request {
             force,
             fallback: self.config_source.clone(),
             reply,
         };
-        let worker = self.config_worker.as_ref().ok_or("configuration worker unavailable")?;
+        let worker = self
+            .config_worker
+            .as_ref()
+            .ok_or("configuration worker unavailable")?;
         if let Err(error) = worker.requests.try_send(request) {
-            let (std::sync::mpsc::TrySendError::Full(request) | std::sync::mpsc::TrySendError::Disconnected(request)) =
-                error;
+            let (std::sync::mpsc::TrySendError::Full(request)
+            | std::sync::mpsc::TrySendError::Disconnected(request)) = error;
             if let Some((id, reply)) = request.reply {
                 let _ = reply.try_send(ferese_ipc::Response::error(
                     id,
@@ -276,8 +296,9 @@ mod tests {
 
     #[test]
     fn wallpaper_only_reload_applies_path_and_mode_changes() {
-        if !crate::startup_tests::private_runtime("reload::tests::wallpaper_only_reload_applies_path_and_mode_changes")
-        {
+        if !crate::startup_tests::private_runtime(
+            "reload::tests::wallpaper_only_reload_applies_path_and_mode_changes",
+        ) {
             return;
         }
         let mut events = calloop::EventLoop::try_new().unwrap();
@@ -286,8 +307,12 @@ mod tests {
         let image_path = directory.path().join("wallpaper.png");
         image::RgbaImage::new(2, 2).save(&image_path).unwrap();
         for mode in ["fit", "fill"] {
-            let source = format!("wallpaper {{ path \"{}\"; mode \"{mode}\"; }}", image_path.display());
-            let (_, runtime, candidate) = crate::config::prepare(&source, directory.path()).unwrap();
+            let source = format!(
+                "wallpaper {{ path \"{}\"; mode \"{mode}\"; }}",
+                image_path.display()
+            );
+            let (_, runtime, candidate) =
+                crate::config::prepare(&source, directory.path()).unwrap();
             // Model a settled theme; changing only the wallpaper must still apply.
             state.theme_engine.live.theme = candidate.theme.clone();
             state.theme_engine.live.presented = candidate.theme;
@@ -310,8 +335,9 @@ mod tests {
 
     #[test]
     fn rejected_keymap_reload_preserves_other_configuration() {
-        if !crate::startup_tests::private_runtime("reload::tests::rejected_keymap_reload_preserves_other_configuration")
-        {
+        if !crate::startup_tests::private_runtime(
+            "reload::tests::rejected_keymap_reload_preserves_other_configuration",
+        ) {
             return;
         }
         let mut events = calloop::EventLoop::try_new().unwrap();
@@ -326,7 +352,9 @@ mod tests {
         // Exercise application failure after preparation, for example when an
         // XKB file disappears before the compositor installs the new keymap.
         runtime.input_settings.xkb_layout = "ferese_missing_keymap_for_reload_test".into();
-        let error = state.apply_runtime_config(runtime, &serde_json::json!({})).unwrap_err();
+        let error = state
+            .apply_runtime_config(runtime, &serde_json::json!({}))
+            .unwrap_err();
         assert!(error.contains("keymap reload failed"), "{error}");
         assert_eq!(state.xwayland_config.enabled, before_xwayland);
         assert_eq!(state.activities.snapshot().revision, before_activities);
@@ -336,9 +364,14 @@ mod tests {
         let mut runtime = crate::config::Config::default().runtime_config().unwrap();
         runtime.xwayland.enabled = !before_xwayland;
         runtime.layout_mode = ferese_core::LayoutMode::Tree;
-        state.apply_runtime_config(runtime, &serde_json::json!({})).unwrap();
+        state
+            .apply_runtime_config(runtime, &serde_json::json!({}))
+            .unwrap();
         assert_eq!(state.xwayland_config.enabled, !before_xwayland);
-        assert_eq!(state.workspaces.active().layout.mode(), ferese_core::LayoutMode::Tree);
+        assert_eq!(
+            state.workspaces.active().layout.mode(),
+            ferese_core::LayoutMode::Tree
+        );
         assert!(state.activities.snapshot().revision > before_activities);
     }
 
@@ -379,9 +412,14 @@ mod tests {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         let valid = "animations { speed 0.5; }";
         std::fs::write(&path, valid).unwrap();
-        for (index, source) in [Some(valid), Some(valid), Some("animations { speed -1.0; }"), None]
-            .into_iter()
-            .enumerate()
+        for (index, source) in [
+            Some(valid),
+            Some(valid),
+            Some("animations { speed -1.0; }"),
+            None,
+        ]
+        .into_iter()
+        .enumerate()
         {
             if let Some(source) = source {
                 std::fs::write(&path, source).unwrap();
@@ -392,7 +430,9 @@ mod tests {
             let before = state.ipc_events.config_revision;
             let theme_before = state.theme_engine.live.theme.clone();
             let (reply, received) = std::sync::mpsc::sync_channel(1);
-            state.queue_config_reload(index == 1, Some((42, reply))).unwrap();
+            state
+                .queue_config_reload(index == 1, Some((42, reply)))
+                .unwrap();
             if index == 1 {
                 // Present a frame while the duplicate reload is queued. Theme
                 // revisions include these frames; config revisions do not.
@@ -401,7 +441,9 @@ mod tests {
             }
             let deadline = Instant::now() + Duration::from_secs(5);
             let response = loop {
-                event_loop.dispatch(Duration::from_millis(10), &mut state).unwrap();
+                event_loop
+                    .dispatch(Duration::from_millis(10), &mut state)
+                    .unwrap();
                 if let Ok(response) = received.try_recv() {
                     break response;
                 }
@@ -415,7 +457,10 @@ mod tests {
             );
             assert_eq!(state.config_source.as_deref(), Some(valid));
             let applied = source == Some(valid) && !already_applied;
-            assert_eq!(state.ipc_events.config_revision, before + u64::from(applied));
+            assert_eq!(
+                state.ipc_events.config_revision,
+                before + u64::from(applied)
+            );
             if already_applied {
                 assert_eq!(state.theme_engine.live.theme, theme_before);
             }
@@ -460,8 +505,9 @@ mod tests {
         state.theme_engine.live.presented = candidate.theme;
 
         for inactive_opacity in [1.0, 0.75, 0.9] {
-            let source =
-                format!("appearance {{ focus-effect {{ inactive-opacity {inactive_opacity}; inactive-dim 0.25; }}; }}");
+            let source = format!(
+                "appearance {{ focus-effect {{ inactive-opacity {inactive_opacity}; inactive-dim 0.25; }}; }}"
+            );
             state.reload_config_source(source).unwrap();
             assert_eq!(state.focus_effect.inactive_opacity, inactive_opacity);
             let (alpha, dim) = state.focus_effect.resolve(0.0, true, 0.0);
@@ -486,7 +532,10 @@ mod tests {
         );
         assert_eq!(state.focus_effect, previous);
         state
-            .reload_config_source("appearance { focus-effect { inactive-dim 0; }; }; theme { mode \"light\"; }".into())
+            .reload_config_source(
+                "appearance { focus-effect { inactive-dim 0; }; }; theme { mode \"light\"; }"
+                    .into(),
+            )
             .unwrap();
         state.poll_theme();
         assert_eq!(state.focus_effect.inactive_dim, 0.0);
@@ -514,12 +563,17 @@ mod tests {
                 .env_remove("FERESE_SOCKET")
                 .output()
                 .unwrap();
-            assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+            assert!(
+                result.status.success(),
+                "{}",
+                String::from_utf8_lossy(&result.stderr)
+            );
             return;
         }
 
         let directory = Directory::new();
-        let (_, runtime, _) = crate::config::prepare("xwayland { enabled #false; }", &directory.0).unwrap();
+        let (_, runtime, _) =
+            crate::config::prepare("xwayland { enabled #false; }", &directory.0).unwrap();
         let mut event_loop = smithay::reexports::calloop::EventLoop::try_new().unwrap();
         let display = smithay::reexports::wayland_server::Display::new().unwrap();
         let mut state = crate::Ferese::new(&mut event_loop, display, runtime).unwrap();
@@ -563,7 +617,11 @@ mod tests {
                 .env_remove("FERESE_SOCKET")
                 .output()
                 .unwrap();
-            assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+            assert!(
+                result.status.success(),
+                "{}",
+                String::from_utf8_lossy(&result.stderr)
+            );
             return;
         }
         let directory = Directory::new();

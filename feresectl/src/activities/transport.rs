@@ -62,7 +62,12 @@ impl Stream {
         self.deadline
             .checked_duration_since(Instant::now())
             .filter(|remaining| !remaining.is_zero())
-            .ok_or_else(|| io::Error::new(io::ErrorKind::TimedOut, "activity publication deadline expired"))
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "activity publication deadline expired",
+                )
+            })
     }
 }
 impl Read for Stream {
@@ -107,7 +112,10 @@ mod tests {
         });
         {
             let mut stream = connect(&path, Duration::from_millis(100)).unwrap();
-            assert!(super::super::super::request(&mut stream, "activity-get", serde_json::json!({})).is_err());
+            assert!(
+                super::super::super::request(&mut stream, "activity-get", serde_json::json!({}))
+                    .is_err()
+            );
         }
         closed
             .recv_timeout(Duration::from_millis(400))

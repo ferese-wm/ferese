@@ -2,7 +2,10 @@ use cosmic::iced::advanced::widget::Id;
 use cosmic::iced::advanced::widget::operation::{Operation, Scrollable};
 use cosmic::iced::{Rectangle, Vector};
 
-pub(super) fn gallery_list(appearance: Option<ferese_config::theme::Appearance>, custom: bool) -> &'static str {
+pub(super) fn gallery_list(
+    appearance: Option<ferese_config::theme::Appearance>,
+    custom: bool,
+) -> &'static str {
     match (appearance, custom) {
         (Some(ferese_config::theme::Appearance::Light), false) => "theme-light",
         (Some(ferese_config::theme::Appearance::Dark), false) => "theme-dark",
@@ -28,7 +31,10 @@ impl RevealRow {
     }
 
     pub(super) fn for_target(target: Id) -> Self {
-        Self { target, bounds: None }
+        Self {
+            target,
+            bounds: None,
+        }
     }
 }
 

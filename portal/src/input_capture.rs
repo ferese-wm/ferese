@@ -87,7 +87,10 @@ impl InputCapture {
             let connection = connection.clone();
             let path = path.to_owned();
             tokio::spawn(async move {
-                let _ = connection.object_server().remove::<SessionObject, _>(path).await;
+                let _ = connection
+                    .object_server()
+                    .remove::<SessionObject, _>(path)
+                    .await;
             });
         }
     }
@@ -98,7 +101,9 @@ impl InputCapture {
             .lock()
             .await
             .iter()
-            .filter_map(|(path, session)| (Some(session.owner.as_str()) != owner).then_some(path.clone()))
+            .filter_map(|(path, session)| {
+                (Some(session.owner.as_str()) != owner).then_some(path.clone())
+            })
             .collect::<Vec<_>>();
         for path in stale {
             self.end(connection, &path).await;
@@ -163,7 +168,10 @@ impl InputCapture {
             if session.cancel.stopped.load(Ordering::SeqCst) {
                 break;
             }
-            let transport = state.worker.as_ref().map(|worker| worker.send(events.clone()));
+            let transport = state
+                .worker
+                .as_ref()
+                .map(|worker| worker.send(events.clone()));
             if transport.is_some_and(|result| result.is_err()) {
                 break;
             }
@@ -186,9 +194,11 @@ impl InputCapture {
                         if let Some(position) = event["cursor_position"]
                             .as_array()
                             .filter(|position| position.len() == 2)
-                            && let Ok(position) =
-                                Value::from((position[0].as_f64().unwrap_or(0.0), position[1].as_f64().unwrap_or(0.0)))
-                                    .try_to_owned()
+                            && let Ok(position) = Value::from((
+                                position[0].as_f64().unwrap_or(0.0),
+                                position[1].as_f64().unwrap_or(0.0),
+                            ))
+                            .try_to_owned()
                         {
                             options.insert("cursor_position".into(), position);
                         }
@@ -205,8 +215,12 @@ impl InputCapture {
                         )
                         .await
                     }
-                    Some("disabled") => Self::disabled(&emitter, path.clone(), Options::new()).await,
-                    Some("zones") => Self::zones_changed(&emitter, path.clone(), Options::new()).await,
+                    Some("disabled") => {
+                        Self::disabled(&emitter, path.clone(), Options::new()).await
+                    }
+                    Some("zones") => {
+                        Self::zones_changed(&emitter, path.clone(), Options::new()).await
+                    }
                     Some("closed") => {
                         closed = true;
                         Ok(())
@@ -238,7 +252,8 @@ fn capabilities(options: &Options) -> zbus::fdo::Result<u32> {
     let requested = options
         .get("capabilities")
         .ok_or_else(|| invalid("Missing requested capabilities"))?;
-    let requested = u32::try_from(requested).map_err(|_| invalid("Invalid requested capabilities"))?;
+    let requested =
+        u32::try_from(requested).map_err(|_| invalid("Invalid requested capabilities"))?;
     if requested == 0 || requested & 3 == 0 {
         return Err(invalid("No supported capabilities requested"));
     }
@@ -266,7 +281,9 @@ impl InputCapture {
         #[zbus(header)] header: Header<'_>,
     ) -> zbus::fdo::Result<Options> {
         let owner = authorize(connection, &header).await?;
-        if !session_handle.as_str().starts_with(&format!("{PATH}/session/"))
+        if !session_handle
+            .as_str()
+            .starts_with(&format!("{PATH}/session/"))
             || session_handle.as_str().len() > 512
             || app_id.len() > 512
         {
@@ -362,7 +379,9 @@ impl InputCapture {
         #[zbus(connection)] connection: &Connection,
         #[zbus(header)] header: Header<'_>,
     ) -> zbus::fdo::Result<(u32, Options)> {
-        let session = self.session(connection, &header, &session_handle, &app_id).await?;
+        let session = self
+            .session(connection, &header, &session_handle, &app_id)
+            .await?;
         let caps = capabilities(&options)?;
         crate::restore::persist_mode(&options)?;
         let cancel = self.requests.begin(connection, &header, &handle).await?;
@@ -401,11 +420,18 @@ impl InputCapture {
                 let reply = bridge
                     .call("input-capture-register", json!({"capabilities":caps}))
                     .await?;
-                let id = reply["session"].as_u64().ok_or("Missing capture session ID")?;
-                let keymap = reply["keymap"].as_str().ok_or("Missing keyboard map")?.to_owned();
+                let id = reply["session"]
+                    .as_u64()
+                    .ok_or("Missing capture session ID")?;
+                let keymap = reply["keymap"]
+                    .as_str()
+                    .ok_or("Missing keyboard map")?
+                    .to_owned();
                 let watch = Bridge::connect()?;
                 let mut state = session.state.lock().await;
-                if cancel.stopped.load(Ordering::SeqCst) || session.cancel.stopped.load(Ordering::SeqCst) {
+                if cancel.stopped.load(Ordering::SeqCst)
+                    || session.cancel.stopped.load(Ordering::SeqCst)
+                {
                     bridge.close();
                     return Err("Input capture approval was cancelled".to_owned());
                 }
@@ -461,7 +487,9 @@ impl InputCapture {
         #[zbus(connection)] connection: &Connection,
         #[zbus(header)] header: Header<'_>,
     ) -> zbus::fdo::Result<(u32, Options)> {
-        let session = self.session(connection, &header, &session_handle, &app_id).await?;
+        let session = self
+            .session(connection, &header, &session_handle, &app_id)
+            .await?;
         let (bridge, id) = Self::native(&session).await?;
         let cancel = self.requests.begin(connection, &header, &handle).await?;
         let result = tokio::select! {
@@ -471,20 +499,25 @@ impl InputCapture {
             result = bridge.call("input-capture-zones", json!({"session":id})) => Some(result),
         };
         self.requests.end(connection, &handle).await;
-        if cancel.stopped.load(Ordering::SeqCst) || session.cancel.stopped.load(Ordering::SeqCst) || result.is_none() {
+        if cancel.stopped.load(Ordering::SeqCst)
+            || session.cancel.stopped.load(Ordering::SeqCst)
+            || result.is_none()
+        {
             return Ok((1, Options::new()));
         }
         let result = self
             .finish_native_call(connection, &session_handle, &bridge, result.unwrap())
             .await?;
-        let zones: Vec<(u32, u32, i32, i32)> =
-            serde_json::from_value(result["zones"].clone()).map_err(|_| invalid("Invalid native capture zones"))?;
+        let zones: Vec<(u32, u32, i32, i32)> = serde_json::from_value(result["zones"].clone())
+            .map_err(|_| invalid("Invalid native capture zones"))?;
         Ok((
             0,
             Options::from([
                 (
                     "zones".into(),
-                    Value::from(zones).try_to_owned().map_err(|e| failed(e.to_string()))?,
+                    Value::from(zones)
+                        .try_to_owned()
+                        .map_err(|e| failed(e.to_string()))?,
                 ),
                 (
                     "zone_set".into(),
@@ -506,7 +539,9 @@ impl InputCapture {
         #[zbus(connection)] connection: &Connection,
         #[zbus(header)] header: Header<'_>,
     ) -> zbus::fdo::Result<(u32, Options)> {
-        let session = self.session(connection, &header, &session_handle, &app_id).await?;
+        let session = self
+            .session(connection, &header, &session_handle, &app_id)
+            .await?;
         let (bridge, id) = Self::native(&session).await?;
         if barriers.len() > 64 {
             return Err(invalid("Too many pointer barriers"));
@@ -514,15 +549,20 @@ impl InputCapture {
         let barriers = barriers
             .into_iter()
             .map(|barrier| {
-                let id = u32::try_from(barrier.get("barrier_id").ok_or_else(|| invalid("Missing barrier ID"))?)
-                    .map_err(|_| invalid("Invalid barrier ID"))?;
+                let id = u32::try_from(
+                    barrier
+                        .get("barrier_id")
+                        .ok_or_else(|| invalid("Missing barrier ID"))?,
+                )
+                .map_err(|_| invalid("Invalid barrier ID"))?;
                 let position = barrier
                     .get("position")
                     .ok_or_else(|| invalid("Missing barrier position"))?
                     .try_clone()
                     .map_err(|_| invalid("Invalid position"))?;
-                let position: (i32, i32, i32, i32) =
-                    position.try_into().map_err(|_| invalid("Invalid barrier position"))?;
+                let position: (i32, i32, i32, i32) = position
+                    .try_into()
+                    .map_err(|_| invalid("Invalid barrier position"))?;
                 Ok(json!({"id":id,"position":[position.0,position.1,position.2,position.3]}))
             })
             .collect::<zbus::fdo::Result<Vec<_>>>()?;
@@ -534,7 +574,10 @@ impl InputCapture {
             result = bridge.call("input-capture-barriers", json!({"session":id,"zone_set":zone_set,"barriers":barriers})) => Some(result),
         };
         self.requests.end(connection, &handle).await;
-        if cancel.stopped.load(Ordering::SeqCst) || session.cancel.stopped.load(Ordering::SeqCst) || result.is_none() {
+        if cancel.stopped.load(Ordering::SeqCst)
+            || session.cancel.stopped.load(Ordering::SeqCst)
+            || result.is_none()
+        {
             self.end(connection, session_handle.as_str()).await;
             return Ok((1, Options::new()));
         }
@@ -563,7 +606,9 @@ impl InputCapture {
         #[zbus(connection)] connection: &Connection,
         #[zbus(header)] header: Header<'_>,
     ) -> zbus::fdo::Result<OwnedFd> {
-        let session = self.session(connection, &header, &session_handle, &app_id).await?;
+        let session = self
+            .session(connection, &header, &session_handle, &app_id)
+            .await?;
         Self::native(&session).await?;
         let mut state = session.state.lock().await;
         if state.worker.is_some() {
@@ -572,10 +617,11 @@ impl InputCapture {
         let capabilities = state.capabilities;
         let keymap = state.keymap.clone();
         let cancel = session.cancel.clone();
-        let (worker, fd) = tokio::task::spawn_blocking(move || Worker::start(capabilities, &keymap, cancel))
-            .await
-            .map_err(|e| failed(e.to_string()))?
-            .map_err(failed)?;
+        let (worker, fd) =
+            tokio::task::spawn_blocking(move || Worker::start(capabilities, &keymap, cancel))
+                .await
+                .map_err(|e| failed(e.to_string()))?
+                .map_err(failed)?;
         state.worker = Some(worker);
         Ok(fd.into())
     }
@@ -588,7 +634,9 @@ impl InputCapture {
         #[zbus(connection)] connection: &Connection,
         #[zbus(header)] header: Header<'_>,
     ) -> zbus::fdo::Result<(u32, Options)> {
-        let session = self.session(connection, &header, &session_handle, &app_id).await?;
+        let session = self
+            .session(connection, &header, &session_handle, &app_id)
+            .await?;
         let (bridge, id) = Self::native(&session).await?;
         let ready = session
             .state
@@ -600,12 +648,16 @@ impl InputCapture {
             .ok_or_else(|| invalid("Connect to EIS before enabling input capture"))?;
         let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
         while !ready.load(Ordering::SeqCst) {
-            if session.cancel.stopped.load(Ordering::SeqCst) || tokio::time::Instant::now() >= deadline {
+            if session.cancel.stopped.load(Ordering::SeqCst)
+                || tokio::time::Instant::now() >= deadline
+            {
                 return Err(invalid("EIS receiver has not bound an input device"));
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
-        let result = bridge.call("input-capture-enable", json!({"session":id})).await;
+        let result = bridge
+            .call("input-capture-enable", json!({"session":id}))
+            .await;
         self.finish_native_call(connection, &session_handle, &bridge, result)
             .await?;
         Ok((0, Options::new()))
@@ -619,9 +671,13 @@ impl InputCapture {
         #[zbus(connection)] connection: &Connection,
         #[zbus(header)] header: Header<'_>,
     ) -> zbus::fdo::Result<(u32, Options)> {
-        let session = self.session(connection, &header, &session_handle, &app_id).await?;
+        let session = self
+            .session(connection, &header, &session_handle, &app_id)
+            .await?;
         let (bridge, id) = Self::native(&session).await?;
-        let result = bridge.call("input-capture-disable", json!({"session":id})).await;
+        let result = bridge
+            .call("input-capture-disable", json!({"session":id}))
+            .await;
         self.finish_native_call(connection, &session_handle, &bridge, result)
             .await?;
         Ok((0, Options::new()))
@@ -635,7 +691,9 @@ impl InputCapture {
         #[zbus(connection)] connection: &Connection,
         #[zbus(header)] header: Header<'_>,
     ) -> zbus::fdo::Result<(u32, Options)> {
-        let session = self.session(connection, &header, &session_handle, &app_id).await?;
+        let session = self
+            .session(connection, &header, &session_handle, &app_id)
+            .await?;
         let (bridge, id) = Self::native(&session).await?;
         let activation = options
             .get("activation_id")
@@ -769,12 +827,19 @@ mod tests {
                     ..State::default()
                 }),
             });
-            capture.sessions.lock().await.insert(path.to_string(), session.clone());
+            capture
+                .sessions
+                .lock()
+                .await
+                .insert(path.to_string(), session.clone());
             let response = std::thread::spawn(move || {
                 let request: ferese_ipc::Request = ferese_ipc::read_frame(&mut peer).unwrap();
                 if !transport_failure {
-                    ferese_ipc::write_frame(&mut peer, &ferese_ipc::Response::error(request.id, "denied", "Denied"))
-                        .unwrap();
+                    ferese_ipc::write_frame(
+                        &mut peer,
+                        &ferese_ipc::Response::error(request.id, "denied", "Denied"),
+                    )
+                    .unwrap();
                 }
             });
             let result = control.call("input-capture-disable", json!({})).await;
@@ -785,7 +850,10 @@ mod tests {
                     .is_err()
             );
             response.join().unwrap();
-            assert_eq!(session.cancel.stopped.load(Ordering::SeqCst), transport_failure);
+            assert_eq!(
+                session.cancel.stopped.load(Ordering::SeqCst),
+                transport_failure
+            );
             assert_eq!(watch.is_closed(), transport_failure);
             assert_eq!(
                 capture.sessions.lock().await.contains_key(path.as_str()),
@@ -801,7 +869,9 @@ mod tests {
     fn requested_capabilities_are_required_and_supported_subset_is_returned() {
         assert!(capabilities(&Options::new()).is_err());
         for requested in [0u32, 4, 8] {
-            assert!(capabilities(&Options::from([("capabilities".into(), requested.into())])).is_err());
+            assert!(
+                capabilities(&Options::from([("capabilities".into(), requested.into())])).is_err()
+            );
         }
         for (requested, supported) in [(1u32, 1), (2, 2), (3, 3), (7, 3), (9, 1)] {
             assert_eq!(

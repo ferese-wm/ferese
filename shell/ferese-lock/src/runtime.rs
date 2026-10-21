@@ -18,8 +18,10 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for Registry {
     }
 }
 pub fn check_protocol() -> Result<(), String> {
-    let connection = Connection::connect_to_env().map_err(|e| format!("Wayland connection: {e}"))?;
-    let (globals, _) = registry_queue_init::<Registry>(&connection).map_err(|e| format!("Wayland registry: {e}"))?;
+    let connection =
+        Connection::connect_to_env().map_err(|e| format!("Wayland connection: {e}"))?;
+    let (globals, _) = registry_queue_init::<Registry>(&connection)
+        .map_err(|e| format!("Wayland registry: {e}"))?;
     if globals
         .contents()
         .clone_list()
@@ -70,7 +72,11 @@ pub struct Confirmation {
 }
 impl Confirmation {
     pub fn observe(&mut self, event: &cosmic::iced::event::wayland::SessionLockEvent) -> bool {
-        if !matches!(event, cosmic::iced::event::wayland::SessionLockEvent::Locked) || self.confirmed {
+        if !matches!(
+            event,
+            cosmic::iced::event::wayland::SessionLockEvent::Locked
+        ) || self.confirmed
+        {
             return false;
         }
         self.confirmed = true;
@@ -88,7 +94,12 @@ mod tests {
     fn invalid_confirmation_returns_without_waiting_for_or_killing_the_locker() {
         for message in ["unexpected", "FERESE_LOCKED"] {
             let mut child = Command::new("sh")
-                .args(["-c", "printf '%s\\n' \"$1\"; exec sleep 3", "lock-fixture", message])
+                .args([
+                    "-c",
+                    "printf '%s\\n' \"$1\"; exec sleep 3",
+                    "lock-fixture",
+                    message,
+                ])
                 .stdout(Stdio::piped())
                 .spawn()
                 .unwrap();
@@ -105,7 +116,9 @@ mod tests {
 
     #[test]
     fn only_compositor_confirmation_marks_the_lock_ready_once() {
-        use cosmic::iced::event::wayland::SessionLockEvent::{Finished, Locked, NotSupported, Requested};
+        use cosmic::iced::event::wayland::SessionLockEvent::{
+            Finished, Locked, NotSupported, Requested,
+        };
         let mut c = Confirmation::default();
         for event in [Requested, Requested, Finished, NotSupported] {
             assert!(!c.observe(&event));
@@ -131,7 +144,9 @@ pub fn minute_ticks() -> impl cosmic::iced::futures::Stream<Item = ()> {
     })
 }
 
-pub fn retry_deadline(at: &std::time::Instant) -> impl cosmic::iced::futures::Stream<Item = ()> + use<> {
+pub fn retry_deadline(
+    at: &std::time::Instant,
+) -> impl cosmic::iced::futures::Stream<Item = ()> + use<> {
     let at = *at;
     cosmic::iced::futures::stream::once(async move {
         tokio::time::sleep(Duration::from_secs(2).saturating_sub(at.elapsed())).await;
@@ -149,6 +164,9 @@ mod clock_tests {
             until_next_minute(Duration::from_millis(119_999)),
             Duration::from_millis(1)
         );
-        assert_eq!(until_next_minute(Duration::from_secs(125)), Duration::from_secs(55));
+        assert_eq!(
+            until_next_minute(Duration::from_secs(125)),
+            Duration::from_secs(55)
+        );
     }
 }

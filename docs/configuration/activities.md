@@ -37,6 +37,7 @@ Omitted fields use these built-in defaults. Integer ranges include both endpoint
 | `owner-ceiling` | Integer 0–255 | `160` | Highest base priority used to rank ordinary activities |
 | `start-delay-ms` | Integer 0–60000 | `300` | Minimum delay before a task appears; a rule can require a longer delay |
 | `result-flash-ms` | Integer 0–10000 | `1500` | How long an eligible completion result remains visible |
+| `pomodoro` | Nested block | [Defaults below](#pomodoro) | Focus intervals, breaks and completion notifications |
 
 ## Sources
 

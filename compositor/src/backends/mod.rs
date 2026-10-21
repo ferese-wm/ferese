@@ -26,12 +26,16 @@ pub struct LaunchConfig {
 
 impl LaunchConfig {
     pub fn from_environment() -> Result<Self, String> {
-        let graphical_session = std::env::var_os("WAYLAND_DISPLAY").is_some() || std::env::var_os("DISPLAY").is_some();
+        let graphical_session =
+            std::env::var_os("WAYLAND_DISPLAY").is_some() || std::env::var_os("DISPLAY").is_some();
 
         Self::parse(std::env::args_os().skip(1), graphical_session)
     }
 
-    fn parse(args: impl IntoIterator<Item = OsString>, graphical_session: bool) -> Result<Self, String> {
+    fn parse(
+        args: impl IntoIterator<Item = OsString>,
+        graphical_session: bool,
+    ) -> Result<Self, String> {
         let mut args = args.into_iter().peekable();
         let mut requested_backend = None;
         let mut client = Vec::new();
@@ -113,7 +117,10 @@ fn parse_backend(value: &OsString) -> Result<Option<BackendKind>, String> {
         Some("auto") => Ok(None),
         Some("nested") => Ok(Some(BackendKind::Nested)),
         Some("drm") => Ok(Some(BackendKind::Drm)),
-        _ => Err(format!("unknown backend {:?}; expected auto, nested, or drm", value)),
+        _ => Err(format!(
+            "unknown backend {:?}; expected auto, nested, or drm",
+            value
+        )),
     }
 }
 
@@ -148,7 +155,11 @@ mod tests {
         .unwrap();
         assert!(config.supervise_client);
         assert_eq!(config.client, [OsString::from("ferese-session-shell")]);
-        assert!(config.client_capabilities.contains(ClientCapabilities::SHELL_CONTROL));
+        assert!(
+            config
+                .client_capabilities
+                .contains(ClientCapabilities::SHELL_CONTROL)
+        );
     }
 
     #[test]
@@ -194,25 +205,42 @@ mod tests {
         .unwrap();
 
         assert_eq!(config.client, [OsString::from("ferese-effects-probe")]);
-        assert!(config.client_capabilities.contains(ClientCapabilities::EFFECTS));
+        assert!(
+            config
+                .client_capabilities
+                .contains(ClientCapabilities::EFFECTS)
+        );
     }
 
     #[test]
     fn explicitly_grants_shell_control_to_the_launched_private_client() {
         let config = LaunchConfig::parse(
-            [OsString::from("--grant-shell-control"), OsString::from("ferese-shell")],
+            [
+                OsString::from("--grant-shell-control"),
+                OsString::from("ferese-shell"),
+            ],
             true,
         )
         .unwrap();
 
         assert_eq!(config.client, [OsString::from("ferese-shell")]);
-        assert!(config.client_capabilities.contains(ClientCapabilities::SHELL_CONTROL));
-        assert!(!config.client_capabilities.contains(ClientCapabilities::EFFECTS));
+        assert!(
+            config
+                .client_capabilities
+                .contains(ClientCapabilities::SHELL_CONTROL)
+        );
+        assert!(
+            !config
+                .client_capabilities
+                .contains(ClientCapabilities::EFFECTS)
+        );
     }
 
     #[test]
     fn rejects_an_unknown_backend() {
-        let error = LaunchConfig::parse([OsString::from("--backend"), OsString::from("other")], true).unwrap_err();
+        let error =
+            LaunchConfig::parse([OsString::from("--backend"), OsString::from("other")], true)
+                .unwrap_err();
 
         assert!(error.contains("unknown backend"));
     }

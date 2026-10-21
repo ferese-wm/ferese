@@ -3,7 +3,9 @@ use ferese_layout::WindowId;
 use ferese_protocols::shell::v1::server::ferese_shell_manager_v1::FereseShellManagerV1;
 use ferese_protocols::shell::v1::server::ferese_shell_v1::FereseShellV1;
 use ferese_protocols::shell::v1::server::{ferese_shell_manager_v1, ferese_shell_v1};
-use smithay::reexports::wayland_server::{Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource};
+use smithay::reexports::wayland_server::{
+    Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource,
+};
 
 use crate::Ferese;
 use crate::private_client::ClientCapabilities;
@@ -48,9 +50,11 @@ impl GlobalDispatch<FereseShellManagerV1, ()> for Ferese {
     }
 
     fn can_view(client: Client, _global_data: &()) -> bool {
-        client
-            .get_data::<ClientState>()
-            .is_some_and(|state| state.capabilities.contains(ClientCapabilities::SHELL_CONTROL))
+        client.get_data::<ClientState>().is_some_and(|state| {
+            state
+                .capabilities
+                .contains(ClientCapabilities::SHELL_CONTROL)
+        })
     }
 }
 
@@ -103,20 +107,28 @@ impl Dispatch<FereseShellV1, ()> for Ferese {
                 window_hi,
                 window_lo,
             } => {
-                if let Some((width, height, file)) = state.shell_thumbnail(join_id(window_hi, window_lo)) {
+                if let Some((width, height, file)) =
+                    state.shell_thumbnail(join_id(window_hi, window_lo))
+                {
                     use std::os::fd::AsFd;
                     shell.thumbnail(token, window_hi, window_lo, width, height, file.as_fd());
                 } else {
                     shell.thumbnail_unavailable(token, window_hi, window_lo);
                 }
             }
-            ferese_shell_v1::Request::ActivateWindow { window_hi, window_lo } => state.handle_shell_window_request(
+            ferese_shell_v1::Request::ActivateWindow {
+                window_hi,
+                window_lo,
+            } => state.handle_shell_window_request(
                 shell,
                 ferese_shell_v1::FailedRequest::ActivateWindow,
                 join_id(window_hi, window_lo),
                 ShellWindowAction::Activate,
             ),
-            ferese_shell_v1::Request::CloseWindow { window_hi, window_lo } => state.handle_shell_window_request(
+            ferese_shell_v1::Request::CloseWindow {
+                window_hi,
+                window_lo,
+            } => state.handle_shell_window_request(
                 shell,
                 ferese_shell_v1::FailedRequest::CloseWindow,
                 join_id(window_hi, window_lo),
@@ -129,7 +141,11 @@ impl Dispatch<FereseShellV1, ()> for Ferese {
                 let workspace = WorkspaceId(join_u64(workspace_hi, workspace_lo));
 
                 if !state.activate_managed_workspace(workspace) {
-                    send_request_failed(shell, ferese_shell_v1::FailedRequest::ActivateWorkspace, workspace.0);
+                    send_request_failed(
+                        shell,
+                        ferese_shell_v1::FailedRequest::ActivateWorkspace,
+                        workspace.0,
+                    );
                 }
             }
             ferese_shell_v1::Request::MoveWindowToWorkspace {
@@ -141,7 +157,11 @@ impl Dispatch<FereseShellV1, ()> for Ferese {
                 let window = join_id(window_hi, window_lo);
                 let workspace = WorkspaceId(join_u64(workspace_hi, workspace_lo));
                 if !state.move_managed_window_to_workspace(window, workspace) {
-                    send_request_failed(shell, ferese_shell_v1::FailedRequest::MoveWindowToWorkspace, window.0);
+                    send_request_failed(
+                        shell,
+                        ferese_shell_v1::FailedRequest::MoveWindowToWorkspace,
+                        window.0,
+                    );
                 }
             }
             ferese_shell_v1::Request::ConfirmLogout { serial } => {
@@ -157,21 +177,36 @@ impl Dispatch<FereseShellV1, ()> for Ferese {
                 force,
             } => {
                 if force <= 1 {
-                    state.confirm_portal_logout(shell, serial, query_token, inhibitor_revision, force == 1);
+                    state.confirm_portal_logout(
+                        shell,
+                        serial,
+                        query_token,
+                        inhibitor_revision,
+                        force == 1,
+                    );
                 }
             }
             ferese_shell_v1::Request::CancelLogout { serial } => {
-                if state.logout_owner.as_ref() == Some(&shell.id()) && state.pending_logout == Some(serial) {
+                if state.logout_owner.as_ref() == Some(&shell.id())
+                    && state.pending_logout == Some(serial)
+                {
                     state.cancel_logout_confirmation();
                 }
             }
             ferese_shell_v1::Request::EnterOverview => state.set_overview_active(true),
             ferese_shell_v1::Request::ExitOverview => state.set_overview_active(false),
-            ferese_shell_v1::Request::SelectOverviewWindow { window_hi, window_lo } => {
+            ferese_shell_v1::Request::SelectOverviewWindow {
+                window_hi,
+                window_lo,
+            } => {
                 let id = join_id(window_hi, window_lo);
 
                 if !state.select_overview_window(id) {
-                    send_request_failed(shell, ferese_shell_v1::FailedRequest::SelectOverviewWindow, id.0);
+                    send_request_failed(
+                        shell,
+                        ferese_shell_v1::FailedRequest::SelectOverviewWindow,
+                        id.0,
+                    );
                 }
             }
             ferese_shell_v1::Request::Destroy => {
@@ -195,7 +230,12 @@ impl Dispatch<FereseShellV1, ()> for Ferese {
     }
 }
 
-fn logout_confirmation_matches(pending: Option<u32>, query: Option<u32>, serial: u32, token: u32) -> bool {
+fn logout_confirmation_matches(
+    pending: Option<u32>,
+    query: Option<u32>,
+    serial: u32,
+    token: u32,
+) -> bool {
     pending == Some(serial) && query == Some(token)
 }
 
@@ -209,7 +249,14 @@ fn consume_logout_confirmation(pending: &mut Option<u32>, serial: u32) -> bool {
 }
 
 impl Ferese {
-    fn confirm_portal_logout(&mut self, shell: &FereseShellV1, serial: u32, token: u32, revision: u32, force: bool) {
+    fn confirm_portal_logout(
+        &mut self,
+        shell: &FereseShellV1,
+        serial: u32,
+        token: u32,
+        revision: u32,
+        force: bool,
+    ) {
         if self.logout_owner.as_ref() != Some(&shell.id())
             || !logout_confirmation_matches(self.pending_logout, self.logout_query, serial, token)
         {
@@ -254,7 +301,10 @@ impl Ferese {
             tracing::warn!("display mode chooser requires the updated Ferese shell");
             return false;
         };
-        shell.toggle_display_mode(self.focused_output().map_or_else(String::new, |output| output.name()));
+        shell.toggle_display_mode(
+            self.focused_output()
+                .map_or_else(String::new, |output| output.name()),
+        );
         true
     }
 
@@ -270,7 +320,10 @@ impl Ferese {
         else {
             return false;
         };
-        shell.toggle_launcher(self.focused_output().map_or_else(String::new, |output| output.name()));
+        shell.toggle_launcher(
+            self.focused_output()
+                .map_or_else(String::new, |output| output.name()),
+        );
         true
     }
 
@@ -287,7 +340,9 @@ impl Ferese {
             tracing::warn!("shortcut hint requires the updated Ferese shell");
             return false;
         };
-        let output = self.focused_output().map_or_else(String::new, |output| output.name());
+        let output = self
+            .focused_output()
+            .map_or_else(String::new, |output| output.name());
         shell.toggle_keybinding_guide(output);
         true
     }
@@ -312,7 +367,9 @@ impl Ferese {
         self.logout_query = Some(self.portal_session.begin_query());
         self.pending_logout = Some(serial);
         self.logout_owner = Some(shell.id());
-        let output_name = self.focused_output().map_or_else(String::new, |output| output.name());
+        let output_name = self
+            .focused_output()
+            .map_or_else(String::new, |output| output.name());
         shell.logout_requested(serial, output_name);
     }
 
@@ -321,7 +378,11 @@ impl Ferese {
             self.portal_session.cancel_query(token);
         }
         if let Some(serial) = self.pending_logout.take() {
-            for shell in self.shell_resources.iter().filter_map(|shell| shell.upgrade().ok()) {
+            for shell in self
+                .shell_resources
+                .iter()
+                .filter_map(|shell| shell.upgrade().ok())
+            {
                 if self.logout_owner.as_ref() == Some(&shell.id()) && shell.version() >= 3 {
                     shell.logout_cancelled(serial);
                 }
@@ -343,7 +404,8 @@ impl Ferese {
             return;
         }
 
-        self.shell_resources.retain(|resource| resource.upgrade().is_ok());
+        self.shell_resources
+            .retain(|resource| resource.upgrade().is_ok());
         if self.shell_resources.is_empty() {
             self.last_shell_snapshot = None;
             return;
@@ -377,14 +439,16 @@ impl Ferese {
         for previous in &snapshot.outputs {
             if outputs.next() != Some(previous.id)
                 || self.output_names.get(&previous.id) != Some(&previous.name)
-                || self.output_workspaces.active_workspace(previous.id) != Some(previous.active_workspace)
+                || self.output_workspaces.active_workspace(previous.id)
+                    != Some(previous.active_workspace)
                 || self
                     .output_ids
                     .iter()
                     .find(|(_, id)| **id == previous.id)
                     .and_then(|(output, _)| self.output_bounds_for(output))
                     != previous.bounds
-                || (self.output_workspaces.focused_output() == Some(previous.id)) != previous.focused
+                || (self.output_workspaces.focused_output() == Some(previous.id))
+                    != previous.focused
             {
                 return false;
             }
@@ -394,7 +458,9 @@ impl Ferese {
             return false;
         }
 
-        let mut workspaces = self.output_workspaces.workspace_views_iter(&self.workspaces);
+        let mut workspaces = self
+            .output_workspaces
+            .workspace_views_iter(&self.workspaces);
 
         for previous in &snapshot.workspaces {
             let Some(view) = workspaces.next() else {
@@ -416,7 +482,10 @@ impl Ferese {
             return false;
         }
 
-        let mut windows = self.windows.ordered_ids().filter_map(|id| self.shell_window_data(id));
+        let mut windows = self
+            .windows
+            .ordered_ids()
+            .filter_map(|id| self.shell_window_data(id));
 
         for previous in &snapshot.windows {
             let Some((id, workspace, app_id, title, state)) = windows.next() else {
@@ -456,7 +525,8 @@ impl Ferese {
         // New subscribers always receive a complete snapshot. Do not update the
         // broadcast cache here: existing subscribers may still need this state.
         self.shell_snapshot_serial = self.shell_snapshot_serial.wrapping_add(1);
-        self.shell_snapshot().send(shell, self.shell_snapshot_serial);
+        self.shell_snapshot()
+            .send(shell, self.shell_snapshot_serial);
     }
 
     fn output_snapshots(&self) -> Vec<OutputSnapshot> {
@@ -494,7 +564,10 @@ impl Ferese {
             .collect()
     }
 
-    fn shell_window_data(&self, id: WindowId) -> Option<(WindowId, u64, &str, &str, ferese_shell_v1::WindowState)> {
+    fn shell_window_data(
+        &self,
+        id: WindowId,
+    ) -> Option<(WindowId, u64, &str, &str, ferese_shell_v1::WindowState)> {
         let workspace = self.workspaces.workspace_for_window(id)?;
         let record = self.windows.record(id)?;
         self.windows.window(id)?.toplevel()?;
@@ -535,15 +608,20 @@ impl Ferese {
         self.windows
             .ordered_ids()
             .filter_map(|id| self.shell_window_data(id))
-            .map(|(id, workspace, app_id, title, state)| ManagedWindowSnapshot {
-                id,
-                workspace,
-                app_id: app_id.to_owned(),
-                title: title.to_owned(),
-                state,
-                source_geometry: self.shell_window_geometry(id),
-                geometry: previews.get(&id).copied().or_else(|| self.shell_window_geometry(id)),
-            })
+            .map(
+                |(id, workspace, app_id, title, state)| ManagedWindowSnapshot {
+                    id,
+                    workspace,
+                    app_id: app_id.to_owned(),
+                    title: title.to_owned(),
+                    state,
+                    source_geometry: self.shell_window_geometry(id),
+                    geometry: previews
+                        .get(&id)
+                        .copied()
+                        .or_else(|| self.shell_window_geometry(id)),
+                },
+            )
             .collect()
     }
 
@@ -612,7 +690,10 @@ impl ShellSnapshot {
         }
         for workspace in &self.workspaces {
             let (workspace_hi, workspace_lo) = split_id(workspace.id.0);
-            let (output_hi, output_lo) = workspace.output.map(|output| split_id(output.0)).unwrap_or_default();
+            let (output_hi, output_lo) = workspace
+                .output
+                .map(|output| split_id(output.0))
+                .unwrap_or_default();
 
             shell.workspace(
                 workspace_hi,
@@ -642,7 +723,14 @@ impl ShellSnapshot {
             if shell.version() >= 8
                 && let Some(rect) = snapshot.geometry
             {
-                shell.window_geometry(window_hi, window_lo, rect.x, rect.y, rect.width, rect.height);
+                shell.window_geometry(
+                    window_hi,
+                    window_lo,
+                    rect.x,
+                    rect.y,
+                    rect.width,
+                    rect.height,
+                );
             }
         }
         shell.snapshot_end(serial);
@@ -833,20 +921,42 @@ mod tests {
         assert!(state.shell_snapshot_matches(&occupied));
         let output_id = state.output_ids[&output];
         let next = state.workspaces.create_workspace();
-        state.output_workspaces.assign_workspace(output_id, next).unwrap();
+        state
+            .output_workspaces
+            .assign_workspace(output_id, next)
+            .unwrap();
         assert!(!state.shell_snapshot_matches(&occupied));
         let assigned = state.shell_snapshot();
-        state.output_workspaces.switch_workspace(output_id, next).unwrap();
+        state
+            .output_workspaces
+            .switch_workspace(output_id, next)
+            .unwrap();
         assert!(!state.shell_snapshot_matches(&assigned));
         let selected = state.shell_snapshot();
         assert!(state.shell_snapshot_matches(&selected));
-        assert_eq!(state.output_workspaces.active_workspace(output_id), Some(next));
-        assert_eq!(state.workspaces.workspace(next).unwrap().layout.window_ids().count(), 0);
+        assert_eq!(
+            state.output_workspaces.active_workspace(output_id),
+            Some(next)
+        );
+        assert_eq!(
+            state
+                .workspaces
+                .workspace(next)
+                .unwrap()
+                .layout
+                .window_ids()
+                .count(),
+            0
+        );
         let hidden_before = state.workspace_preview_rects()[&WindowId(99)];
         let before = state.preview_cache_stats();
         state.output_names.insert(output_id, "Renamed".into());
         state.shell_snapshot();
-        assert_eq!(state.preview_cache_stats(), before, "names do not affect previews");
+        assert_eq!(
+            state.preview_cache_stats(),
+            before,
+            "names do not affect previews"
+        );
         state.output_names.insert(output_id, "snapshot-test".into());
         // The second workspace is empty; modifying its layout should not solve the hidden one.
         state
@@ -868,13 +978,18 @@ mod tests {
         state.workspace_preview_rects();
         let selected = state.shell_snapshot();
         state
-            .reload_config_source("layout { inner-gap 30; outer-gap 40; smart-gaps #false; }".into())
+            .reload_config_source(
+                "layout { inner-gap 30; outer-gap 40; smart-gaps #false; }".into(),
+            )
             .unwrap();
         assert!(
             !state.shell_snapshot_matches(&selected),
             "hidden previews must invalidate even with no visible window geometry to change"
         );
-        assert_ne!(state.workspace_preview_rects()[&WindowId(99)], hidden_before);
+        assert_ne!(
+            state.workspace_preview_rects()[&WindowId(99)],
+            hidden_before
+        );
         let refreshed = state.shell_snapshot();
         assert!(state.shell_snapshot_matches(&refreshed));
         state
@@ -899,7 +1014,12 @@ mod tests {
     #[test]
     fn logout_serial_cannot_authorize_a_different_session_query() {
         assert!(super::logout_confirmation_matches(Some(42), Some(9), 42, 9));
-        assert!(!super::logout_confirmation_matches(Some(42), Some(9), 42, 10));
+        assert!(!super::logout_confirmation_matches(
+            Some(42),
+            Some(9),
+            42,
+            10
+        ));
         assert!(!super::logout_confirmation_matches(None, Some(9), 42, 9));
     }
 
@@ -976,7 +1096,11 @@ mod tests {
     fn config_chunks_are_bounded_and_preserve_unicode() {
         let source = "abc🌲é".repeat(9000);
         let chunks = config_chunks(&source);
-        assert!(chunks.iter().all(|chunk| !chunk.is_empty() && chunk.len() <= 1024));
+        assert!(
+            chunks
+                .iter()
+                .all(|chunk| !chunk.is_empty() && chunk.len() <= 1024)
+        );
         assert_eq!(chunks.concat(), source);
         assert!(config_chunks("").is_empty());
     }

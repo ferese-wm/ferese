@@ -35,7 +35,10 @@ fn transition_progress(elapsed: Duration, duration: Duration) -> f64 {
     }
 }
 
-pub(crate) fn resolve_candidate(document: &Document, directory: &Path) -> Result<Candidate, String> {
+pub(crate) fn resolve_candidate(
+    document: &Document,
+    directory: &Path,
+) -> Result<Candidate, String> {
     resolve_with_context(
         document,
         directory,
@@ -53,7 +56,9 @@ pub(crate) fn preview(args: &Value) -> Result<Value, String> {
     let directory = args["directory"]
         .as_str()
         .map(PathBuf::from)
-        .or_else(|| crate::config::config_path().and_then(|path| path.parent().map(ToOwned::to_owned)))
+        .or_else(|| {
+            crate::config::config_path().and_then(|path| path.parent().map(ToOwned::to_owned))
+        })
         .unwrap_or_else(|| PathBuf::from("."));
     let document = Document::parse(source).map_err(|e| e.to_string())?;
     let candidate = resolve_candidate(&document, &directory)?;
@@ -169,7 +174,13 @@ impl Engine {
         self.active_files == files
     }
 
-    pub(crate) fn watch(&mut self, owner: u64, id: u64, since: u64, response: mpsc::SyncSender<Response>) {
+    pub(crate) fn watch(
+        &mut self,
+        owner: u64,
+        id: u64,
+        since: u64,
+        response: mpsc::SyncSender<Response>,
+    ) {
         if since != self.revision {
             let _ = response.try_send(Response::success(id, self.value()));
         } else {
@@ -233,7 +244,10 @@ impl Engine {
         }
         for path in self.active_files.iter().chain(files) {
             let path = if let (Some(parent), Some(name)) = (path.parent(), path.file_name()) {
-                parent.canonicalize().unwrap_or_else(|_| parent.to_owned()).join(name)
+                parent
+                    .canonicalize()
+                    .unwrap_or_else(|_| parent.to_owned())
+                    .join(name)
             } else {
                 path.clone()
             };
@@ -304,29 +318,35 @@ pub(crate) fn init(
     state: &mut Ferese,
     candidate: Candidate,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let clock = unsafe { libc::timerfd_create(libc::CLOCK_REALTIME, libc::TFD_CLOEXEC | libc::TFD_NONBLOCK) };
+    let clock = unsafe {
+        libc::timerfd_create(libc::CLOCK_REALTIME, libc::TFD_CLOEXEC | libc::TFD_NONBLOCK)
+    };
     if clock < 0 {
         return Err(io::Error::last_os_error().into());
     }
     let clock = unsafe { OwnedFd::from_raw_fd(clock) };
     let source = clock.try_clone()?;
     state.theme_engine.clock = Some(clock);
-    event_loop
-        .handle()
-        .insert_source(Generic::new(source, Interest::READ, PollMode::Level), |_, _, state| {
+    event_loop.handle().insert_source(
+        Generic::new(source, Interest::READ, PollMode::Level),
+        |_, _, state| {
             if let Some(clock) = &state.theme_engine.clock {
                 let mut expirations = 0u64;
                 unsafe { libc::read(clock.as_raw_fd(), (&mut expirations as *mut u64).cast(), 8) };
             }
             state.refresh_theme();
             Ok(PostAction::Continue)
-        })?;
+        },
+    )?;
     let (sender, events) = mpsc::sync_channel(1);
     let paths = state.theme_engine.paths.clone();
     if let Some(config) = crate::config::config_path() {
         paths.lock().unwrap().insert(config);
     }
-    paths.lock().unwrap().insert(PathBuf::from("/etc/localtime"));
+    paths
+        .lock()
+        .unwrap()
+        .insert(PathBuf::from("/etc/localtime"));
     let wakeup = state.loop_signal.clone();
     let system_sender = sender.clone();
     let system_wakeup = wakeup.clone();
@@ -355,13 +375,17 @@ pub(crate) fn init(
                     .output()
                 {
                     if let Some(state) = SYSTEM_APPEARANCE.get() {
-                        *state.lock().unwrap() = system_appearance_value(&String::from_utf8_lossy(&output.stdout));
+                        *state.lock().unwrap() =
+                            system_appearance_value(&String::from_utf8_lossy(&output.stdout));
                     }
                     let _ = system_sender.try_send(());
                     system_wakeup.wakeup();
                 }
                 if let Some(output) = monitor.stdout.take() {
-                    for line in std::io::BufReader::new(output).lines().map_while(Result::ok) {
+                    for line in std::io::BufReader::new(output)
+                        .lines()
+                        .map_while(Result::ok)
+                    {
                         let value = system_appearance_value(&line);
                         if let Some(state) = SYSTEM_APPEARANCE.get() {
                             *state.lock().unwrap() = value;
@@ -454,7 +478,8 @@ impl Ferese {
             self.poll_theme();
             return;
         }
-        let wallpaper = (self.wallpaper.configuration() != &wallpaper).then(|| self.wallpaper.replacement(wallpaper));
+        let wallpaper = (self.wallpaper.configuration() != &wallpaper)
+            .then(|| self.wallpaper.replacement(wallpaper));
         self.theme_engine.pending = Some(Pending {
             candidate,
             wallpaper,
@@ -469,7 +494,9 @@ impl Ferese {
             && let Some(wallpaper) = &mut pending.wallpaper
         {
             wallpaper.poll();
-            if wallpaper.element(renderer, output).is_some() || wallpaper.configuration().path.is_none() {
+            if wallpaper.element(renderer, output).is_some()
+                || wallpaper.configuration().path.is_none()
+            {
                 pending.ready.insert(output.clone());
             }
         }
@@ -481,7 +508,10 @@ impl Ferese {
         output: &Output,
     ) -> Option<crate::presentation::NativeTextureElement> {
         let transition = self.theme_engine.transition.as_mut()?;
-        transition.previous_wallpaper.as_mut()?.element(renderer, output)
+        transition
+            .previous_wallpaper
+            .as_mut()?
+            .element(renderer, output)
     }
 
     pub(crate) fn theme_progress(&self) -> f32 {
@@ -490,7 +520,10 @@ impl Ferese {
             .as_ref()
             .filter(|transition| transition.previous_wallpaper.is_some())
             .map_or(1., |transition| {
-                transition_progress(transition.started.elapsed(), self.theme_transition_duration()) as f32
+                transition_progress(
+                    transition.started.elapsed(),
+                    self.theme_transition_duration(),
+                ) as f32
             })
     }
 
@@ -512,9 +545,15 @@ impl Ferese {
             if let Some(wallpaper) = &mut pending.wallpaper {
                 wallpaper.poll();
             }
-            let ready =
-                pending.wallpaper.is_none() || self.space.outputs().all(|output| pending.ready.contains(output));
-            let failed = pending.wallpaper.as_ref().is_some_and(WallpaperState::failed);
+            let ready = pending.wallpaper.is_none()
+                || self
+                    .space
+                    .outputs()
+                    .all(|output| pending.ready.contains(output));
+            let failed = pending
+                .wallpaper
+                .as_ref()
+                .is_some_and(WallpaperState::failed);
             start = ready || failed || now >= pending.deadline;
             if start && !ready {
                 pending.wallpaper = None;
@@ -553,7 +592,8 @@ impl Ferese {
         let duration = self.theme_transition_duration();
         if frame_due && let Some(transition) = &self.theme_engine.transition {
             self.theme_engine.last_frame = Some(now);
-            let progress = transition_progress(now.saturating_duration_since(transition.started), duration);
+            let progress =
+                transition_progress(now.saturating_duration_since(transition.started), duration);
             let target = &self.theme_engine.live.theme;
             let complete = progress >= 1.;
             let presented = if complete {
@@ -561,7 +601,8 @@ impl Ferese {
             } else {
                 transition.from.transition(target, progress)
             };
-            self.theme_settings = Config::resolved_theme_settings(&presented).expect("validated resolved theme");
+            self.theme_settings =
+                Config::resolved_theme_settings(&presented).expect("validated resolved theme");
             self.theme_engine.live.presented = presented;
             self.theme_engine.publish();
 
@@ -574,20 +615,21 @@ impl Ferese {
             crate::backends::direct::render_all(self);
         }
         if !self.theme_engine.timer_pending {
-            let deadline = if self.theme_engine.transition.is_some() || self.theme_engine.pending.is_some() {
-                Some(now + Duration::from_millis(16))
-            } else {
-                self.theme_engine.dirty
-            };
+            let deadline =
+                if self.theme_engine.transition.is_some() || self.theme_engine.pending.is_some() {
+                    Some(now + Duration::from_millis(16))
+                } else {
+                    self.theme_engine.dirty
+                };
             if let Some(deadline) = deadline {
                 self.theme_engine.timer_pending = true;
-                if let Err(error) = self
-                    .loop_handle
-                    .insert_source(Timer::from_deadline(deadline), |_, _, state| {
-                        state.theme_engine.timer_pending = false;
-                        state.poll_theme();
-                        TimeoutAction::Drop
-                    })
+                if let Err(error) =
+                    self.loop_handle
+                        .insert_source(Timer::from_deadline(deadline), |_, _, state| {
+                            state.theme_engine.timer_pending = false;
+                            state.poll_theme();
+                            TimeoutAction::Drop
+                        })
                 {
                     self.theme_engine.timer_pending = false;
                     tracing::warn!(%error, "cannot schedule theme update");
@@ -600,7 +642,9 @@ impl Ferese {
         let path = crate::config::config_path().ok_or("No configuration directory")?;
         let original = crate::config::read_source(&path)?;
         let mut document = Document::parse(&original).map_err(|e| e.to_string())?;
-        document.set("theme.mode", json!(mode)).map_err(|e| e.to_string())?;
+        document
+            .set("theme.mode", json!(mode))
+            .map_err(|e| e.to_string())?;
         let source = document.to_string();
         crate::config::prepare(&source, path.parent().unwrap_or(Path::new(".")))?;
         let temporary = path.with_extension(format!("kdl.{}.tmp", std::process::id()));
@@ -615,10 +659,13 @@ impl Ferese {
                 file.set_permissions(metadata.permissions())
                     .map_err(|e| e.to_string())?;
             }
-            file.write_all(source.as_bytes()).map_err(|e| e.to_string())?;
+            file.write_all(source.as_bytes())
+                .map_err(|e| e.to_string())?;
             file.sync_all().map_err(|e| e.to_string())?;
             if crate::config::read_source(&path)? != original {
-                return Err("Configuration changed while updating the mode; please try again".into());
+                return Err(
+                    "Configuration changed while updating the mode; please try again".into(),
+                );
             }
             std::fs::rename(&temporary, &path).map_err(|e| e.to_string())?;
             Ok(())
@@ -647,7 +694,8 @@ mod tests {
             events: Some(events),
             ..Engine::default()
         };
-        engine.watcher = Some(file_watcher(engine.paths.clone(), sender, event_loop.get_signal()).unwrap());
+        engine.watcher =
+            Some(file_watcher(engine.paths.clone(), sender, event_loop.get_signal()).unwrap());
         engine.watch_files(std::slice::from_ref(&path));
         for source in ["// first save", "// second save"] {
             let temporary = path.with_extension("new");
@@ -655,7 +703,10 @@ mod tests {
             std::fs::rename(&temporary, &path).unwrap();
             let deadline = Instant::now() + Duration::from_secs(3);
             while !engine.files_changed(Instant::now()) {
-                assert!(Instant::now() < deadline, "atomic save notification never settled");
+                assert!(
+                    Instant::now() < deadline,
+                    "atomic save notification never settled"
+                );
                 std::thread::sleep(Duration::from_millis(10));
             }
             assert_eq!(crate::config::read_source(&path).unwrap(), source);
@@ -688,10 +739,18 @@ mod tests {
     #[test]
     fn startup_warning_survives_repeated_rejection_without_duplicate_publication() {
         let mut engine = Engine::default();
-        engine.startup_failed(Some(Path::new("/config.kdl")), "unknown field group_surface".into());
+        engine.startup_failed(
+            Some(Path::new("/config.kdl")),
+            "unknown field group_surface".into(),
+        );
         engine.publish();
         let initial = engine.value();
-        assert!(initial["error"].as_str().unwrap().contains("default settings"));
+        assert!(
+            initial["error"]
+                .as_str()
+                .unwrap()
+                .contains("default settings")
+        );
         assert!(initial["error"].as_str().unwrap().contains("/config.kdl"));
         for _ in 0..3 {
             engine.reject("unknown field group_surface".into());
@@ -701,7 +760,10 @@ mod tests {
         assert_eq!(engine.live.error.as_deref(), Some("different invalid edit"));
         assert_eq!(engine.revision, 2);
         engine.reject("unknown field group_surface".into());
-        assert_eq!(engine.live.error.as_deref(), Some("unknown field group_surface"));
+        assert_eq!(
+            engine.live.error.as_deref(),
+            Some("unknown field group_surface")
+        );
         assert_eq!(engine.revision, 3);
     }
 
@@ -741,9 +803,18 @@ mod tests {
     #[test]
     fn theme_and_wallpaper_share_scaled_progress_and_instant_completion() {
         let elapsed = Duration::from_millis(50);
-        assert_eq!(transition_progress(elapsed, Duration::from_millis(200)), 0.25);
-        assert_eq!(transition_progress(elapsed, Duration::from_millis(100)), 0.5);
-        assert_eq!(transition_progress(elapsed, Duration::from_millis(400)), 0.125);
+        assert_eq!(
+            transition_progress(elapsed, Duration::from_millis(200)),
+            0.25
+        );
+        assert_eq!(
+            transition_progress(elapsed, Duration::from_millis(100)),
+            0.5
+        );
+        assert_eq!(
+            transition_progress(elapsed, Duration::from_millis(400)),
+            0.125
+        );
         assert_eq!(transition_progress(Duration::ZERO, Duration::ZERO), 1.0);
         assert_eq!(
             transition_progress(Duration::from_secs(1), Duration::from_millis(200)),

@@ -66,7 +66,10 @@ pub fn default_wallpaper_for(appearance: theme::Appearance) -> &'static str {
                     .join(name)
             });
 
-        path.canonicalize().unwrap_or(path).to_string_lossy().into_owned()
+        path.canonicalize()
+            .unwrap_or(path)
+            .to_string_lossy()
+            .into_owned()
     })
 }
 
@@ -93,7 +96,12 @@ fn is_records(key: &str, parent: &str) -> bool {
         (parent, key),
         (
             "",
-            "bindings" | "binding_modes" | "window_rules" | "output_profiles" | "autostart" | "panels"
+            "bindings"
+                | "binding_modes"
+                | "window_rules"
+                | "output_profiles"
+                | "autostart"
+                | "panels"
         ) | ("output_profiles", "outputs")
             | ("binding_modes", "bindings")
             | ("start" | "center" | "end", "groups")
@@ -105,7 +113,13 @@ fn is_array(key: &str, parent: &str) -> bool {
     parent == "commands"
         || matches!(
             key,
-            "command" | "position" | "padding" | "width_presets" | "xkb_options" | "settings_command" | "outputs"
+            "command"
+                | "position"
+                | "padding"
+                | "width_presets"
+                | "xkb_options"
+                | "settings_command"
+                | "outputs"
         )
 }
 
@@ -114,7 +128,9 @@ fn scalar(value: &KdlValue) -> Result<Value, Error> {
         KdlValue::String(s) => Value::String(s.clone()),
         KdlValue::Bool(v) => Value::Bool(*v),
         KdlValue::Null => {
-            return Err(Error("Omit optional settings instead of using #null".into()));
+            return Err(Error(
+                "Omit optional settings instead of using #null".into(),
+            ));
         }
         KdlValue::Integer(n) => {
             if let Ok(n) = i64::try_from(*n) {
@@ -154,7 +170,9 @@ fn object(doc: &KdlDocument, parent: &str) -> Result<Map<String, Value>, Error> 
             node_value(node, &key, parent)?
         };
         if is_records(&key, parent) {
-            let records = result.entry(key).or_insert_with(|| Value::Array(Vec::new()));
+            let records = result
+                .entry(key)
+                .or_insert_with(|| Value::Array(Vec::new()));
             records.as_array_mut().unwrap().push(value);
         } else {
             insert(&mut result, key, value)?;
@@ -166,7 +184,9 @@ fn object(doc: &KdlDocument, parent: &str) -> Result<Map<String, Value>, Error> 
 
 fn node_value(node: &KdlNode, key: &str, parent: &str) -> Result<Value, Error> {
     if node.ty().is_some() || node.entries().iter().any(|e| e.ty().is_some()) {
-        return Err(Error("Type annotations are not supported in configuration".into()));
+        return Err(Error(
+            "Type annotations are not supported in configuration".into(),
+        ));
     }
 
     let args = node
@@ -182,7 +202,11 @@ fn node_value(node: &KdlNode, key: &str, parent: &str) -> Result<Value, Error> {
         .collect::<Vec<_>>();
 
     if is_records(key, parent) {
-        let mut map = node.children().map(|d| object(d, key)).transpose()?.unwrap_or_default();
+        let mut map = node
+            .children()
+            .map(|d| object(d, key))
+            .transpose()?
+            .unwrap_or_default();
         for (name, entry) in props {
             insert(&mut map, name, scalar(entry.value())?)?;
         }
@@ -219,7 +243,11 @@ fn node_value(node: &KdlNode, key: &str, parent: &str) -> Result<Value, Error> {
             )));
         }
 
-        let mut map = node.children().map(|d| object(d, key)).transpose()?.unwrap_or_default();
+        let mut map = node
+            .children()
+            .map(|d| object(d, key))
+            .transpose()?
+            .unwrap_or_default();
         for (name, entry) in props {
             insert(&mut map, name, scalar(entry.value())?)?;
         }
@@ -245,7 +273,9 @@ pub struct Document {
 
 impl Document {
     pub fn parse(source: &str) -> Result<Self, Error> {
-        let doc = source.parse::<KdlDocument>().map_err(|e| Error(format!("{e:?}")))?;
+        let doc = source
+            .parse::<KdlDocument>()
+            .map_err(|e| Error(format!("{e:?}")))?;
         let value = Value::Object(object(&doc, "")?);
 
         Ok(Self { doc, value })
@@ -258,7 +288,8 @@ impl Document {
     /// A runtime view; the original KDL remains available for comment-preserving edits.
     pub fn with_theme(&self, theme: &theme::ResolvedTheme) -> Self {
         let mut document = self.clone();
-        document.value["theme"] = serde_json::to_value(&theme.tokens).expect("serializable theme tokens");
+        document.value["theme"] =
+            serde_json::to_value(&theme.tokens).expect("serializable theme tokens");
         document.value["theme"]["appearance"] = serde_json::to_value(theme.appearance).unwrap();
         document
     }
@@ -317,7 +348,10 @@ impl Document {
     pub fn add(&mut self, path: &str, fields: Vec<(String, Value)>) -> Result<(), Error> {
         let mut candidate = self.clone();
         let (last, parents) = path.rsplit_once('.').map_or((path, ""), |(p, l)| (l, p));
-        let parent = parents.rsplit('.').find(|s| s.parse::<usize>().is_err()).unwrap_or("");
+        let parent = parents
+            .rsplit('.')
+            .find(|s| s.parse::<usize>().is_err())
+            .unwrap_or("");
 
         if !is_records(last, parent) {
             return Err(Error("Expected a list of records".into()));
@@ -325,12 +359,18 @@ impl Document {
 
         let doc = section_mut(
             &mut candidate.doc,
-            &parents.split('.').filter(|s| !s.is_empty()).collect::<Vec<_>>(),
+            &parents
+                .split('.')
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>(),
             "",
         )?;
 
-        doc.nodes_mut()
-            .push(value_node(last, &Value::Object(fields.into_iter().collect()), parent)?);
+        doc.nodes_mut().push(value_node(
+            last,
+            &Value::Object(fields.into_iter().collect()),
+            parent,
+        )?);
         format_document(&mut candidate.doc);
         candidate.refresh()?;
         *self = candidate;
@@ -344,11 +384,21 @@ impl Document {
         }
 
         if self.get("theme.light").is_some() || self.get("theme.dark").is_some() {
-            set_in(&mut self.doc, &["theme", "mode"], "", Value::String("dark".into()))?;
+            set_in(
+                &mut self.doc,
+                &["theme", "mode"],
+                "",
+                Value::String("dark".into()),
+            )?;
             return self.refresh();
         }
 
-        let Some(index) = self.doc.nodes().iter().position(|node| node.name().value() == "theme") else {
+        let Some(index) = self
+            .doc
+            .nodes()
+            .iter()
+            .position(|node| node.name().value() == "theme")
+        else {
             return Ok(());
         };
 
@@ -356,7 +406,11 @@ impl Document {
             let mut moved = Vec::new();
 
             for name in ["colors", "surface", "border", "focus-ring"] {
-                if let Some(index) = children.nodes().iter().position(|node| node.name().value() == name) {
+                if let Some(index) = children
+                    .nodes()
+                    .iter()
+                    .position(|node| node.name().value() == name)
+                {
                     moved.push(children.nodes_mut().remove(index));
                 }
             }
@@ -367,7 +421,12 @@ impl Document {
             }
         }
 
-        set_in(&mut self.doc, &["theme", "mode"], "", Value::String("dark".into()))?;
+        set_in(
+            &mut self.doc,
+            &["theme", "mode"],
+            "",
+            Value::String("dark".into()),
+        )?;
         self.refresh()
     }
 
@@ -388,14 +447,18 @@ impl Document {
 
         let doc = section_mut(
             &mut candidate.doc,
-            &parents.split('.').filter(|s| !s.is_empty()).collect::<Vec<_>>(),
+            &parents
+                .split('.')
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>(),
             "",
         )?;
-        if let Some(index) = doc
-            .nodes()
-            .iter()
-            .position(|node| field(node.name().value(), parents.rsplit('.').next().unwrap_or("")) == name)
-        {
+        if let Some(index) = doc.nodes().iter().position(|node| {
+            field(
+                node.name().value(),
+                parents.rsplit('.').next().unwrap_or(""),
+            ) == name
+        }) {
             let node = doc.nodes_mut().remove(index);
             let mut comments = String::new();
 
@@ -423,14 +486,19 @@ impl Document {
         let (last, parents) = path.rsplit_once('.').map_or((path, ""), |(p, l)| (l, p));
         let doc = section_mut(
             &mut candidate.doc,
-            &parents.split('.').filter(|s| !s.is_empty()).collect::<Vec<_>>(),
+            &parents
+                .split('.')
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>(),
             "",
         )?;
         let i = doc
             .nodes()
             .iter()
             .enumerate()
-            .filter(|(_, n)| field(n.name().value(), parents.rsplit('.').next().unwrap_or("")) == last)
+            .filter(|(_, n)| {
+                field(n.name().value(), parents.rsplit('.').next().unwrap_or("")) == last
+            })
             .nth(index)
             .map(|(i, _)| i)
             .ok_or_else(|| Error("This item no longer exists. Reload settings.".into()))?;
@@ -498,7 +566,11 @@ type NodeFormat = (Vec<Option<kdl::KdlEntryFormat>>, Option<String>);
 
 fn collect_node_formats(doc: &KdlDocument, formats: &mut Vec<NodeFormat>) {
     for node in doc.nodes() {
-        let entries = node.entries().iter().map(|entry| entry.format().cloned()).collect();
+        let entries = node
+            .entries()
+            .iter()
+            .map(|entry| entry.format().cloned())
+            .collect();
         let terminator = node
             .format()
             .map(|format| format.terminator.clone())
@@ -543,7 +615,11 @@ fn format_document(doc: &mut KdlDocument) {
 }
 
 fn node_index(doc: &mut KdlDocument, key: &str, parent: &str) -> usize {
-    if let Some(i) = doc.nodes().iter().position(|n| field(n.name().value(), parent) == key) {
+    if let Some(i) = doc
+        .nodes()
+        .iter()
+        .position(|n| field(n.name().value(), parent) == key)
+    {
         return i;
     }
 
@@ -551,7 +627,11 @@ fn node_index(doc: &mut KdlDocument, key: &str, parent: &str) -> usize {
     doc.nodes().len() - 1
 }
 
-fn section_mut<'a>(doc: &'a mut KdlDocument, parts: &[&str], parent: &str) -> Result<&'a mut KdlDocument, Error> {
+fn section_mut<'a>(
+    doc: &'a mut KdlDocument,
+    parts: &[&str],
+    parent: &str,
+) -> Result<&'a mut KdlDocument, Error> {
     if parts.is_empty() {
         return Ok(doc);
     }
@@ -606,10 +686,11 @@ fn unset_property(doc: &mut KdlDocument, parts: &[&str], parent: &str) -> Result
         return Ok(false);
     };
     if parts.len() == used + 1
-        && let Some(index) = node
-            .entries()
-            .iter()
-            .position(|entry| entry.name().is_some_and(|name| field(name.value(), key) == parts[used]))
+        && let Some(index) = node.entries().iter().position(|entry| {
+            entry
+                .name()
+                .is_some_and(|name| field(name.value(), key) == parts[used])
+        })
     {
         let entry = node.entries_mut().remove(index);
         if let Some(format) = entry.format() {
@@ -660,7 +741,8 @@ fn set_in(doc: &mut KdlDocument, parts: &[&str], parent: &str, value: Value) -> 
         {
             collect_comments(node, &mut comments);
         }
-        doc.nodes_mut().retain(|node| field(node.name().value(), parent) != key);
+        doc.nodes_mut()
+            .retain(|node| field(node.name().value(), parent) != key);
         if let Some(first) = nodes.first_mut() {
             first.set_format(kdl::KdlNodeFormat {
                 leading: comments,
@@ -732,7 +814,9 @@ fn set_in(doc: &mut KdlDocument, parts: &[&str], parent: &str, value: Value) -> 
                 }
             }
 
-            if key == "autostart" && rest[0] == "command" && node.children().is_none_or(|d| d.get("command").is_none())
+            if key == "autostart"
+                && rest[0] == "command"
+                && node.children().is_none_or(|d| d.get("command").is_none())
             {
                 node.entries_mut().retain(|e| e.name().is_some());
                 for value in value
@@ -847,9 +931,15 @@ fn value_node(key: &str, value: &Value, parent: &str) -> Result<KdlNode, Error> 
                     {
                         node.entries_mut().push(KdlEntry::new(kdl_value(value)?));
                     }
-                } else if is_records(key, parent) && map.len() <= 4 && !value.is_array() && !value.is_object() {
-                    node.entries_mut()
-                        .push(KdlEntry::new_prop(name.replace('_', "-"), kdl_value(value)?));
+                } else if is_records(key, parent)
+                    && map.len() <= 4
+                    && !value.is_array()
+                    && !value.is_object()
+                {
+                    node.entries_mut().push(KdlEntry::new_prop(
+                        name.replace('_', "-"),
+                        kdl_value(value)?,
+                    ));
                 } else {
                     append(&mut child, name, value, key)?;
                 }
@@ -871,7 +961,10 @@ fn value_node(key: &str, value: &Value, parent: &str) -> Result<KdlNode, Error> 
 
 fn append(doc: &mut KdlDocument, key: &str, value: &Value, parent: &str) -> Result<(), Error> {
     if is_records(key, parent) {
-        for record in value.as_array().ok_or_else(|| Error("Expected records".into()))? {
+        for record in value
+            .as_array()
+            .ok_or_else(|| Error("Expected records".into()))?
+        {
             doc.nodes_mut().push(value_node(key, record, parent)?);
         }
     } else {
@@ -894,13 +987,22 @@ mod tests {
             "binding-mode resize { binding h resize left; binding l resize right; }\nbinding-mode launch { binding t spawn terminal; }\n",
         ).unwrap();
         assert_eq!(document.get("binding_modes.0.name").unwrap(), "resize");
-        assert_eq!(document.get("binding_modes.1.bindings.0.argument").unwrap(), "terminal");
+        assert_eq!(
+            document.get("binding_modes.1.bindings.0.argument").unwrap(),
+            "terminal"
+        );
         document
             .set("binding_modes.0.bindings.0.argument", "up".into())
             .unwrap();
         let reparsed = super::Document::parse(&document.to_string()).unwrap();
-        assert_eq!(reparsed.get("binding_modes.0.bindings.0.argument").unwrap(), "up");
-        assert_eq!(reparsed.get("binding_modes.0.bindings.1.argument").unwrap(), "right");
+        assert_eq!(
+            reparsed.get("binding_modes.0.bindings.0.argument").unwrap(),
+            "up"
+        );
+        assert_eq!(
+            reparsed.get("binding_modes.0.bindings.1.argument").unwrap(),
+            "right"
+        );
     }
     #[test]
     fn adopting_appearance_modes_preserves_legacy_colors_and_comments() {
@@ -908,7 +1010,9 @@ mod tests {
             "// my desktop\ntheme {\n    colors {\n        accent \"#123456\" // my accent\n    }\n}\n",
         )
         .unwrap();
-        document.set("theme.mode", serde_json::json!("light")).unwrap();
+        document
+            .set("theme.mode", serde_json::json!("light"))
+            .unwrap();
         assert_eq!(
             document.get("theme.dark.colors.accent"),
             Some(&serde_json::json!("#123456"))
@@ -931,7 +1035,8 @@ mod tests {
 
     #[test]
     fn inline_comments_and_failed_edits_leave_document_intact() {
-        let mut doc = Document::parse("// header\nanimations {\n    speed 0.75 // keep inline\n}\n").unwrap();
+        let mut doc =
+            Document::parse("// header\nanimations {\n    speed 0.75 // keep inline\n}\n").unwrap();
         doc.set("animations.speed", 0.8.into()).unwrap();
         assert!(doc.to_string().contains("// keep inline"));
         assert_eq!(
@@ -974,11 +1079,15 @@ autostart "program" "two words" enabled=#false
         assert_eq!(doc.get("bindings.0.action").unwrap(), "toggle-overview");
         doc.set("bindings.0.action", "none".into()).unwrap();
         doc.set("input.repeat_rate", 25.into()).unwrap();
-        doc.set("output_profiles.0.outputs.0.scale", 2.0.into()).unwrap();
+        doc.set("output_profiles.0.outputs.0.scale", 2.0.into())
+            .unwrap();
         let reparsed = Document::parse(&doc.to_string()).unwrap();
         assert_eq!(reparsed.get("bindings.0.action").unwrap(), "none");
         assert_eq!(reparsed.get("input.repeat_rate").unwrap(), 25);
-        assert_eq!(reparsed.get("output_profiles.0.outputs.0.scale").unwrap(), 2.0);
+        assert_eq!(
+            reparsed.get("output_profiles.0.outputs.0.scale").unwrap(),
+            2.0
+        );
     }
 
     #[test]
@@ -987,13 +1096,21 @@ autostart "program" "two words" enabled=#false
             "output-profile desk { output match=\"DP-1\" { position 0 0; }; }\ncommands { lock-screen \"locker\"; }\n",
         )
         .unwrap();
-        doc.set("output_profiles.0.outputs.0.position", serde_json::json!([100, 200]))
-            .unwrap();
-        doc.set("commands.lock-screen", serde_json::json!(["ferese-lock", "--lock"]))
-            .unwrap();
+        doc.set(
+            "output_profiles.0.outputs.0.position",
+            serde_json::json!([100, 200]),
+        )
+        .unwrap();
+        doc.set(
+            "commands.lock-screen",
+            serde_json::json!(["ferese-lock", "--lock"]),
+        )
+        .unwrap();
         let reparsed = Document::parse(&doc.to_string()).unwrap();
         assert_eq!(
-            reparsed.get("output_profiles.0.outputs.0.position").unwrap(),
+            reparsed
+                .get("output_profiles.0.outputs.0.position")
+                .unwrap(),
             &serde_json::json!([100, 200])
         );
         assert_eq!(
@@ -1023,7 +1140,9 @@ autostart "program" "two words" enabled=#false
                 serde_json::json!({})
             );
         }
-        assert!(Document::parse("panel main { metadata { desktop-widgets \"custom\"; }; }").is_ok());
+        assert!(
+            Document::parse("panel main { metadata { desktop-widgets \"custom\"; }; }").is_ok()
+        );
     }
 
     #[test]

@@ -42,27 +42,31 @@ fn tree_reflow_groups(
     allow_overshoot: bool,
 ) -> HashMap<WindowId, usize> {
     let margin = inner_gap.max(0.0) / 2.0;
-    let axis_bounds =
-        |position: f64, size: f64, target_position: f64, target_size: f64, speed: f64, size_speed: f64| {
-            let distance = target_position - position;
-            let size_distance = target_size - size;
-            let moving = distance != 0.0 || size_distance != 0.0 || speed != 0.0 || size_speed != 0.0;
-            let reversing =
-                (speed != 0.0 && distance * speed <= 0.0) || (size_speed != 0.0 && size_distance * size_speed <= 0.0);
-            // Endpoint bounds cannot contain overshoot or motion away from the
-            // target. Widen only that axis, preserving separation on a fixed axis.
-            if reversing || (allow_overshoot && moving) {
-                return (f64::NEG_INFINITY, f64::INFINITY);
-            }
-            // Proportional component velocities preserve a shared edge. Otherwise
-            // bound position and size separately to include intermediate excursions.
-            let end = if (speed * size_distance - size_speed * distance).abs() < 1e-6 {
-                (position + size).max(target_position + target_size)
-            } else {
-                position.max(target_position) + size.max(target_size)
-            };
-            (position.min(target_position) - margin, end + margin)
+    let axis_bounds = |position: f64,
+                       size: f64,
+                       target_position: f64,
+                       target_size: f64,
+                       speed: f64,
+                       size_speed: f64| {
+        let distance = target_position - position;
+        let size_distance = target_size - size;
+        let moving = distance != 0.0 || size_distance != 0.0 || speed != 0.0 || size_speed != 0.0;
+        let reversing = (speed != 0.0 && distance * speed <= 0.0)
+            || (size_speed != 0.0 && size_distance * size_speed <= 0.0);
+        // Endpoint bounds cannot contain overshoot or motion away from the
+        // target. Widen only that axis, preserving separation on a fixed axis.
+        if reversing || (allow_overshoot && moving) {
+            return (f64::NEG_INFINITY, f64::INFINITY);
+        }
+        // Proportional component velocities preserve a shared edge. Otherwise
+        // bound position and size separately to include intermediate excursions.
+        let end = if (speed * size_distance - size_speed * distance).abs() < 1e-6 {
+            (position + size).max(target_position + target_size)
+        } else {
+            position.max(target_position) + size.max(target_size)
         };
+        (position.min(target_position) - margin, end + margin)
+    };
     let moving = motions
         .into_iter()
         .filter(|(_, source, target, velocity)| {
@@ -131,7 +135,11 @@ impl PresentationDependencies {
         self.viewport.get(&workspace).cloned()
     }
 
-    pub(super) fn restore_viewport(&mut self, workspace: WorkspaceId, saved: Option<ViewportDependencies>) {
+    pub(super) fn restore_viewport(
+        &mut self,
+        workspace: WorkspaceId,
+        saved: Option<ViewportDependencies>,
+    ) {
         if let Some(saved) = saved {
             self.viewport.insert(workspace, saved);
         } else {
@@ -140,7 +148,12 @@ impl PresentationDependencies {
     }
 
     #[cfg(test)]
-    pub(super) fn wait_for_viewport(&mut self, workspace: WorkspaceId, id: WindowId, serial: Serial) {
+    pub(super) fn wait_for_viewport(
+        &mut self,
+        workspace: WorkspaceId,
+        id: WindowId,
+        serial: Serial,
+    ) {
         self.viewport.insert(
             workspace,
             ViewportDependencies {
@@ -202,7 +215,8 @@ impl PresentationDependencies {
         self.viewport.retain(|_, waits| {
             waits.waits.retain(|wait| Self::pending(*wait, windows));
             for step in &mut waits.steps {
-                step.inputs.retain(|input| Self::pending(input.commit, windows));
+                step.inputs
+                    .retain(|input| Self::pending(input.commit, windows));
             }
             if waits.steps.iter().all(|step| step.inputs.is_empty()) {
                 waits.steps.clear();
@@ -222,9 +236,9 @@ fn viewport_dependencies(
         return ViewportDependencies::default();
     };
     let live = |input: &ViewportCommit| {
-        pending
-            .iter()
-            .any(|(window, transaction)| *window == input.commit.window && transaction.serial() == input.commit.serial)
+        pending.iter().any(|(window, transaction)| {
+            *window == input.commit.window && transaction.serial() == input.commit.serial
+        })
     };
     for step in &mut previous.steps {
         for input in &mut step.inputs {
@@ -238,7 +252,11 @@ fn viewport_dependencies(
     }
     // Fold any prefix with no current configure inputs to the numeric start
     // already stored in the next request. No obsolete serial owns a recipe.
-    if let Some(first) = previous.steps.iter().position(|step| !step.inputs.is_empty()) {
+    if let Some(first) = previous
+        .steps
+        .iter()
+        .position(|step| !step.inputs.is_empty())
+    {
         previous.steps.drain(..first);
     } else {
         previous.steps.clear();
@@ -257,7 +275,11 @@ fn viewport_dependencies(
             })
         })
         .collect::<Vec<_>>();
-    if previous.steps.last().is_none_or(|step| step.target != *target) {
+    if previous
+        .steps
+        .last()
+        .is_none_or(|step| step.target != *target)
+    {
         if !target.uses_previous_target() {
             previous.steps.clear();
             previous.overflow = false;
@@ -283,7 +305,9 @@ fn viewport_dependencies(
     owners.extend(inputs.iter().map(|input| input.commit));
     owners.sort_by_key(|owner| owner.window.0);
     owners.dedup();
-    let evaluate = |only: Option<ClientCommit>, exclude: Option<ClientCommit>, retained: Option<&HashSet<WindowId>>| {
+    let evaluate = |only: Option<ClientCommit>,
+                    exclude: Option<ClientCommit>,
+                    retained: Option<&HashSet<WindowId>>| {
         let mut start = None;
         for step in &previous.steps {
             let widths = step
@@ -316,7 +340,10 @@ fn viewport_dependencies(
     // Retain a collective wait in that case, removing inputs that are not
     // needed to keep the held target different from the requested target.
     if previous.waits.is_empty() && (held - layout.viewport_x()).abs() > 0.001 {
-        let mut collective = owners.iter().map(|owner| owner.window).collect::<HashSet<_>>();
+        let mut collective = owners
+            .iter()
+            .map(|owner| owner.window)
+            .collect::<HashSet<_>>();
         for owner in &owners {
             collective.remove(&owner.window);
             if (evaluate(None, None, Some(&collective)) - layout.viewport_x()).abs() <= 0.001 {
@@ -342,7 +369,9 @@ impl Ferese {
     pub(super) fn release_presentation_dependencies(&mut self) {
         let paused_reflow = self.presentation_dependencies.paused_reflow.clone();
         self.rebuild_presentation_dependencies_with_release(true);
-        self.presentation_dependencies.paused_reflow.extend(paused_reflow);
+        self.presentation_dependencies
+            .paused_reflow
+            .extend(paused_reflow);
     }
 
     pub(super) fn rebuild_presentation_dependencies(&mut self) {
@@ -379,7 +408,8 @@ impl Ferese {
                     tree_reflow_groups(
                         motions,
                         self.gap_config.inner,
-                        self.spring_config.crossing == ferese_animation::CrossingPolicy::AllowOvershoot,
+                        self.spring_config.crossing
+                            == ferese_animation::CrossingPolicy::AllowOvershoot,
                     ),
                 ))
             })
@@ -392,9 +422,10 @@ impl Ferese {
                 continue;
             };
             let own_column = match &workspace.layout {
-                WorkspaceLayout::Scrolling(layout) => {
-                    layout.columns().iter().position(|column| column.windows.contains(&id))
-                }
+                WorkspaceLayout::Scrolling(layout) => layout
+                    .columns()
+                    .iter()
+                    .position(|column| column.windows.contains(&id)),
                 WorkspaceLayout::Tree(_) => None,
             };
             let mut waits = Vec::new();
@@ -419,12 +450,17 @@ impl Ferese {
                                     .iter()
                                     .position(|column| column.windows.contains(slow))
                                     .is_some_and(|source| {
-                                        source == own || (source < own && transaction.width_changes())
+                                        source == own
+                                            || (source < own && transaction.width_changes())
                                     })
                             }),
-                            WorkspaceLayout::Tree(_) => tree_groups.get(&workspace_id).is_some_and(|groups| {
-                                groups.get(&id).is_some_and(|group| groups.get(slow) == Some(group))
-                            }),
+                            WorkspaceLayout::Tree(_) => {
+                                tree_groups.get(&workspace_id).is_some_and(|groups| {
+                                    groups
+                                        .get(&id)
+                                        .is_some_and(|group| groups.get(slow) == Some(group))
+                                })
+                            }
                         });
                 if linked {
                     waits.push(commit);
@@ -450,7 +486,8 @@ impl Ferese {
                     .windows
                     .resizing()
                     .filter(|id| {
-                        self.workspaces.workspace_for_window(**id) == Some(workspace.id) && layout.contains(**id)
+                        self.workspaces.workspace_for_window(**id) == Some(workspace.id)
+                            && layout.contains(**id)
                     })
                     .map(|id| (*id, *self.windows.transaction(id).unwrap()))
                     .collect::<Vec<_>>(),
@@ -554,7 +591,10 @@ mod tests {
         );
         assert_eq!(groups[&WindowId(1)], groups[&WindowId(2)]);
         let groups = tree_reflow_groups(
-            [(WindowId(1), source, target), (WindowId(2), neighbor, moving_neighbor)],
+            [
+                (WindowId(1), source, target),
+                (WindowId(2), neighbor, moving_neighbor),
+            ],
             0.0,
         );
         assert_ne!(
@@ -566,7 +606,8 @@ mod tests {
 
     fn nested_tree() -> ferese_layout::LayoutTree {
         let mut tree = ferese_layout::LayoutTree::default();
-        tree.insert(WindowId(1), None, Axis::Horizontal, 0.5).unwrap();
+        tree.insert(WindowId(1), None, Axis::Horizontal, 0.5)
+            .unwrap();
         tree.insert(WindowId(3), Some(WindowId(1)), Axis::Horizontal, 0.5)
             .unwrap();
         tree.insert(WindowId(2), Some(WindowId(1)), Axis::Vertical, 0.5)
@@ -586,15 +627,18 @@ mod tests {
                 smart: false,
             };
             let mut tree = nested_tree();
-            let solve = |tree: &ferese_layout::LayoutTree, constraints: &HashMap<WindowId, SizeConstraints>| {
+            let solve = |tree: &ferese_layout::LayoutTree,
+                         constraints: &HashMap<WindowId, SizeConstraints>| {
                 tree.geometry_with_constraints(bounds, gaps, constraints, Some(WindowId(1)))
                     .unwrap()
                     .geometry
             };
             let constraints = HashMap::new();
             let source = solve(&tree, &constraints);
-            tree.resize_window(WindowId(1), Direction::Down, 0.1).unwrap();
-            tree.resize_window(WindowId(3), Direction::Down, 0.1).unwrap();
+            tree.resize_window(WindowId(1), Direction::Down, 0.1)
+                .unwrap();
+            tree.resize_window(WindowId(3), Direction::Down, 0.1)
+                .unwrap();
             let target = solve(&tree, &constraints);
             let group = |source: &HashMap<WindowId, Rect>, target: &HashMap<WindowId, Rect>| {
                 tree_reflow_groups(
@@ -611,7 +655,8 @@ mod tests {
 
             // A horizontal request walks through the vertical child to the
             // root split: both branches' actual x/width now participate.
-            tree.resize_window(WindowId(1), Direction::Right, 0.1).unwrap();
+            tree.resize_window(WindowId(1), Direction::Right, 0.1)
+                .unwrap();
             let ancestor = solve(&tree, &constraints);
             let groups = group(&source, &ancestor);
             assert!(groups.values().all(|group| *group == groups[&WindowId(1)]));
@@ -649,7 +694,9 @@ mod tests {
             )]);
             let clipped_source = solve(&tree, &maximum);
             let mut wider = tree.clone();
-            wider.resize_window(WindowId(1), Direction::Right, 0.1).unwrap();
+            wider
+                .resize_window(WindowId(1), Direction::Right, 0.1)
+                .unwrap();
             let clipped_target = solve(&wider, &maximum);
             assert_eq!(clipped_source[&WindowId(1)], clipped_target[&WindowId(1)]);
             assert!(!group(&clipped_source, &clipped_target).contains_key(&WindowId(1)));
@@ -677,7 +724,9 @@ mod tests {
             source[3],
         ];
         let groups = tree_reflow_groups(
-            ids.into_iter().enumerate().map(|(i, id)| (id, source[i], target[i])),
+            ids.into_iter()
+                .enumerate()
+                .map(|(i, id)| (id, source[i], target[i])),
             0.0,
         );
         assert_eq!(
@@ -689,7 +738,8 @@ mod tests {
         let mut tree = nested_tree();
         tree.stack_window(WindowId(2), WindowId(1)).unwrap();
         let before = tree.geometry(Rect::new(0.0, 0.0, 800.0, 600.0)).unwrap();
-        tree.resize_window(WindowId(2), Direction::Right, 0.1).unwrap();
+        tree.resize_window(WindowId(2), Direction::Right, 0.1)
+            .unwrap();
         let after = tree.geometry(Rect::new(0.0, 0.0, 800.0, 600.0)).unwrap();
         let groups = tree_reflow_groups(
             before
@@ -721,14 +771,19 @@ mod tests {
         layout.set_focus_strategy(ViewportFocusStrategy::Center);
         layout.insert(a, None).unwrap();
         layout.insert(b, Some(a)).unwrap();
-        layout.set_column_width(a, ColumnWidth::Fixed(150.0)).unwrap();
-        layout.set_column_width(b, ColumnWidth::Fixed(300.0)).unwrap();
+        layout
+            .set_column_width(a, ColumnWidth::Fixed(150.0))
+            .unwrap();
+        layout
+            .set_column_width(b, ColumnWidth::Fixed(300.0))
+            .unwrap();
         layout
             .resolve_geometry_with_constraints(bounds, gaps, &constraints, Some(b))
             .unwrap();
         let pending = [(
             a,
-            ResizeTransaction::new(10.into(), Duration::ZERO).with_column_width(Some(100.0), Some(150.0)),
+            ResizeTransaction::new(10.into(), Duration::ZERO)
+                .with_column_width(Some(100.0), Some(150.0)),
         )];
         let first = viewport_dependencies(&layout, &pending, Default::default());
         assert_eq!(first.waits.len(), 1);
@@ -753,11 +808,13 @@ mod tests {
         let pending = [
             (
                 a,
-                ResizeTransaction::new(10.into(), Duration::ZERO).with_column_width(Some(100.0), Some(40.0)),
+                ResizeTransaction::new(10.into(), Duration::ZERO)
+                    .with_column_width(Some(100.0), Some(40.0)),
             ),
             (
                 b,
-                ResizeTransaction::new(20.into(), Duration::ZERO).with_column_width(Some(100.0), Some(40.0)),
+                ResizeTransaction::new(20.into(), Duration::ZERO)
+                    .with_column_width(Some(100.0), Some(40.0)),
             ),
         ];
         assert!(!layout.viewport_depends_on_width(a, 100.0, 40.0));
@@ -765,19 +822,31 @@ mod tests {
         let both = viewport_dependencies(&layout, &pending, Default::default());
         assert_eq!(both.waits.len(), 2, "joint held widths select another page");
         let partial = viewport_dependencies(&layout, &pending[1..], both);
-        assert!(partial.waits.is_empty(), "one remaining held width fits this page");
-        assert!(viewport_dependencies(&layout, &[], partial).steps.is_empty());
+        assert!(
+            partial.waits.is_empty(),
+            "one remaining held width fits this page"
+        );
+        assert!(
+            viewport_dependencies(&layout, &[], partial)
+                .steps
+                .is_empty()
+        );
         // Independent absolute requests reset history. Relative request storage
         // is capped even if a client keeps replacing its configure.
         layout.set_focus_strategy(ViewportFocusStrategy::Center);
-        layout.set_column_width(a, ColumnWidth::Fixed(150.0)).unwrap();
-        layout.set_column_width(b, ColumnWidth::Fixed(300.0)).unwrap();
+        layout
+            .set_column_width(a, ColumnWidth::Fixed(150.0))
+            .unwrap();
+        layout
+            .set_column_width(b, ColumnWidth::Fixed(300.0))
+            .unwrap();
         layout
             .resolve_geometry_with_constraints(bounds, gaps, &constraints, Some(b))
             .unwrap();
         let pending = [(
             a,
-            ResizeTransaction::new(30.into(), Duration::ZERO).with_column_width(Some(100.0), Some(150.0)),
+            ResizeTransaction::new(30.into(), Duration::ZERO)
+                .with_column_width(Some(100.0), Some(150.0)),
         )];
         let mut graph = viewport_dependencies(&layout, &pending, Default::default());
         for index in 0..80 {
@@ -790,7 +859,10 @@ mod tests {
             assert!(graph.steps.len() <= MAX_VIEWPORT_STEPS);
         }
         assert!(graph.overflow);
-        assert!(!graph.waits.is_empty(), "bounded fallback must not free linked input");
+        assert!(
+            !graph.waits.is_empty(),
+            "bounded fallback must not free linked input"
+        );
         layout.center_window(a, bounds, gaps, &constraints).unwrap();
         graph = viewport_dependencies(&layout, &pending, graph);
         assert_eq!(graph.steps.len(), 1);
@@ -807,7 +879,10 @@ mod tests {
         windows.register("b", b);
         windows.register("neighbor", neighbor);
         windows.set_transaction(a, ResizeTransaction::new(10.into(), Duration::ZERO));
-        windows.set_transaction(b, ResizeTransaction::new(20.into(), Duration::from_millis(100)));
+        windows.set_transaction(
+            b,
+            ResizeTransaction::new(20.into(), Duration::from_millis(100)),
+        );
         let commit = |window, serial| ClientCommit {
             window,
             serial: Serial::from(serial),
@@ -815,24 +890,34 @@ mod tests {
         let workspace = WorkspaceId(1);
         let mut dependencies = PresentationDependencies::default();
         dependencies.reflow.insert(a, vec![commit(a, 10)]);
-        dependencies.reflow.insert(neighbor, vec![commit(a, 10), commit(b, 20)]);
+        dependencies
+            .reflow
+            .insert(neighbor, vec![commit(a, 10), commit(b, 20)]);
         dependencies.wait_for_viewport(workspace, b, 20.into());
         assert!(dependencies.reflow_blocked(neighbor, &windows));
         assert!(!dependencies.reflow_blocked(b, &windows));
         assert!(dependencies.viewport_blocked(workspace, &windows));
         dependencies.holds(&windows);
         // A replacement cannot be released by the older committed serial.
-        windows.set_transaction(b, ResizeTransaction::new(21.into(), Duration::from_millis(150)));
+        windows.set_transaction(
+            b,
+            ResizeTransaction::new(21.into(), Duration::from_millis(150)),
+        );
         assert!(!windows.transaction(&b).unwrap().accepts(Some(20.into())));
         assert!(!dependencies.viewport_blocked(workspace, &windows));
         dependencies.wait_for_viewport(workspace, b, 21.into());
-        dependencies.reflow.insert(neighbor, vec![commit(a, 10), commit(b, 21)]);
+        dependencies
+            .reflow
+            .insert(neighbor, vec![commit(a, 10), commit(b, 21)]);
         windows.expire_transactions(Duration::from_millis(300));
         assert!(windows.transaction(&a).is_none());
         assert!(windows.transaction(&b).is_some());
         assert!(dependencies.reflow_blocked(neighbor, &windows));
         let held = dependencies.holds(&windows);
-        assert!(held.contains(&a), "release tick must not charge waiting time");
+        assert!(
+            held.contains(&a),
+            "release tick must not charge waiting time"
+        );
         let held = dependencies.holds(&windows);
         assert!(!held.contains(&a));
         // Unmap removes the serial owner; both properties retire on the tick.
@@ -864,11 +949,15 @@ mod tests {
             WindowId(6),
         ];
         for (i, id) in ids.iter().enumerate() {
-            layout.insert(*id, i.checked_sub(1).map(|j| ids[j])).unwrap();
+            layout
+                .insert(*id, i.checked_sub(1).map(|j| ids[j]))
+                .unwrap();
         }
 
         for (id, width) in ids.into_iter().zip([40.0, 40.0, 80.0, 80.0, 40.0, 40.0]) {
-            layout.set_column_width(id, ColumnWidth::Fixed(width)).unwrap();
+            layout
+                .set_column_width(id, ColumnWidth::Fixed(width))
+                .unwrap();
         }
 
         layout.focus(ids[4]).unwrap();
@@ -893,7 +982,13 @@ mod tests {
                 )
             })
             .collect::<Vec<_>>();
-        assert_eq!(layout.viewport_target().unwrap().with_held_widths(&widths, None), 320.0);
+        assert_eq!(
+            layout
+                .viewport_target()
+                .unwrap()
+                .with_held_widths(&widths, None),
+            320.0
+        );
         let graph = viewport_dependencies(&layout, &pending, Default::default());
         assert!(
             !graph.waits.is_empty(),
@@ -925,7 +1020,10 @@ mod tests {
                     (*id, source, target)
                 })
                 .collect::<Vec<_>>();
-            let held = layout.viewport_target().unwrap().with_held_widths(&held_widths, None);
+            let held = layout
+                .viewport_target()
+                .unwrap()
+                .with_held_widths(&held_widths, None);
             let partial = viewport_dependencies(&layout, &remaining, graph.clone());
             if (held - layout.viewport_x()).abs() > 0.001 {
                 assert!(
@@ -958,9 +1056,23 @@ mod tests {
             viewport.retarget(layout.viewport_x(), true);
             viewport.reconcile_hold(true, false);
             viewport.reconcile_hold(blocked, true);
-            viewport.advance(Duration::from_secs(3), SpringConfig::default(), true, blocked);
-            assert_eq!(viewport.motion().current, 0.0, "release consumed waiting time: {mask}");
-            viewport.advance(Duration::from_millis(16), SpringConfig::default(), true, blocked);
+            viewport.advance(
+                Duration::from_secs(3),
+                SpringConfig::default(),
+                true,
+                blocked,
+            );
+            assert_eq!(
+                viewport.motion().current,
+                0.0,
+                "release consumed waiting time: {mask}"
+            );
+            viewport.advance(
+                Duration::from_millis(16),
+                SpringConfig::default(),
+                true,
+                blocked,
+            );
             assert_eq!(
                 viewport.motion().current == 0.0,
                 blocked,

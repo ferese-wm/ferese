@@ -196,11 +196,15 @@ pub mod window_capture {
                     use wayland_client::protocol::__interfaces::*;
                     use wayland_protocols_wlr::screencopy::v1::client::__interfaces::*;
 
-                    wayland_scanner::generate_interfaces!("../../protocols/ferese-window-capture-v1.xml");
+                    wayland_scanner::generate_interfaces!(
+                        "../../protocols/ferese-window-capture-v1.xml"
+                    );
                 }
                 use self::__interfaces::*;
 
-                wayland_scanner::generate_client_code!("../../protocols/ferese-window-capture-v1.xml");
+                wayland_scanner::generate_client_code!(
+                    "../../protocols/ferese-window-capture-v1.xml"
+                );
             }
 
             #[cfg(feature = "server")]
@@ -213,11 +217,15 @@ pub mod window_capture {
                     use wayland_protocols_wlr::screencopy::v1::server::__interfaces::*;
                     use wayland_server::protocol::__interfaces::*;
 
-                    wayland_scanner::generate_interfaces!("../../protocols/ferese-window-capture-v1.xml");
+                    wayland_scanner::generate_interfaces!(
+                        "../../protocols/ferese-window-capture-v1.xml"
+                    );
                 }
                 use self::__interfaces::*;
 
-                wayland_scanner::generate_server_code!("../../protocols/ferese-window-capture-v1.xml");
+                wayland_scanner::generate_server_code!(
+                    "../../protocols/ferese-window-capture-v1.xml"
+                );
             }
         }
     }

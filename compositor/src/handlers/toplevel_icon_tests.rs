@@ -28,19 +28,28 @@ fn icon_cleanup_messages(destroy_icon: bool) -> Vec<(u32, u16, Vec<u32>)> {
         .create_resource::<WlCompositor, GlobalData, Ferese>(&state.display_handle, 6, GlobalData)
         .unwrap();
     let shell = client
-        .create_resource::<XdgWmBase, XdgWmBaseUserData, Ferese>(&state.display_handle, 6, Default::default())
+        .create_resource::<XdgWmBase, XdgWmBaseUserData, Ferese>(
+            &state.display_handle,
+            6,
+            Default::default(),
+        )
         .unwrap();
     let shm = client
         .create_resource::<WlShm, GlobalData, Ferese>(&state.display_handle, 1, GlobalData)
         .unwrap();
     let manager = client
-        .create_resource::<XdgToplevelIconManagerV1, GlobalData, Ferese>(&state.display_handle, 1, GlobalData)
+        .create_resource::<XdgToplevelIconManagerV1, GlobalData, Ferese>(
+            &state.display_handle,
+            1,
+            GlobalData,
+        )
         .unwrap();
     request(&mut wire, compositor.id().protocol_id(), 0, &[2], None);
     request(&mut wire, shell.id().protocol_id(), 2, &[3, 2], None);
     request(&mut wire, 3, 1, &[4], None);
     let mut file = tempfile::tempfile().unwrap();
-    file.write_all(&0xff112233u32.to_ne_bytes().repeat(32 * 32)).unwrap();
+    file.write_all(&0xff112233u32.to_ne_bytes().repeat(32 * 32))
+        .unwrap();
     request(
         &mut wire,
         shm.id().protocol_id(),
@@ -85,9 +94,15 @@ fn destroying_an_assigned_icon_before_its_buffer_keeps_the_client_connected() {
         return;
     }
     let messages = icon_cleanup_messages(true);
-    assert!(!messages.iter().any(|(object, opcode, _)| *object == 1 && *opcode == 0));
     assert!(
-        messages.iter().any(|(object, opcode, _)| *object == 8 && *opcode == 0),
+        !messages
+            .iter()
+            .any(|(object, opcode, _)| *object == 1 && *opcode == 0)
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|(object, opcode, _)| *object == 8 && *opcode == 0),
         "valid icon cleanup disconnected the client before its sync reply: {messages:?}"
     );
 }

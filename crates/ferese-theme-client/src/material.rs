@@ -33,8 +33,9 @@ impl ModalMaterial {
             return Err("Dialog materials require Wayland".into());
         };
         // Iced lends live native handles; this backend borrows its connection.
-        let backend =
-            unsafe { wayland_client::backend::Backend::from_foreign_display(display.display.as_ptr().cast()) };
+        let backend = unsafe {
+            wayland_client::backend::Backend::from_foreign_display(display.display.as_ptr().cast())
+        };
         let connection = Connection::from_backend(backend);
         let id = unsafe {
             wayland_client::backend::ObjectId::from_ptr(
@@ -43,7 +44,8 @@ impl ModalMaterial {
             )
         }
         .map_err(|error| error.to_string())?;
-        let surface = wl_surface::WlSurface::from_id(&connection, id).map_err(|error| error.to_string())?;
+        let surface =
+            wl_surface::WlSurface::from_id(&connection, id).map_err(|error| error.to_string())?;
         let (globals, mut queue) =
             registry_queue_init::<MaterialState>(&connection).map_err(|error| error.to_string())?;
         let qh = queue.handle();
@@ -57,7 +59,9 @@ impl ModalMaterial {
             material,
         };
         let mut state = MaterialState::default();
-        queue.roundtrip(&mut state).map_err(|error| error.to_string())?;
+        queue
+            .roundtrip(&mut state)
+            .map_err(|error| error.to_string())?;
         if !state.ready {
             return Err("Dialog material attachment was not acknowledged".into());
         }
@@ -116,8 +120,8 @@ delegate_noop!(MaterialState: ignore FereseMaterialManagerV1);
 mod tests {
     use super::*;
     use cosmic::iced::window::raw_window_handle::{
-        DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, WaylandDisplayHandle, WaylandWindowHandle,
-        WindowHandle,
+        DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, WaylandDisplayHandle,
+        WaylandWindowHandle, WindowHandle,
     };
     use std::ptr::NonNull;
     use wayland_client::protocol::wl_compositor;
@@ -166,7 +170,8 @@ mod tests {
         queue.roundtrip(&mut MaterialState::default()).unwrap();
         // The compositor rejects duplicate materials. Reattachment proves the final
         // drop destroyed the first material while preserving the borrowed display.
-        let replacement = ModalMaterial::attach(&window).expect("last clone released the surface material");
+        let replacement =
+            ModalMaterial::attach(&window).expect("last clone released the surface material");
         drop(replacement);
         queue.roundtrip(&mut MaterialState::default()).unwrap();
         window.surface.destroy();

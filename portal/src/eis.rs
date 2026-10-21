@@ -21,7 +21,11 @@ pub(crate) struct Worker {
 }
 
 impl Worker {
-    pub(crate) fn start(capabilities: u32, keymap: &str, cancel: Arc<Cancel>) -> Result<(Self, OwnedFd), String> {
+    pub(crate) fn start(
+        capabilities: u32,
+        keymap: &str,
+        cancel: Arc<Cancel>,
+    ) -> Result<(Self, OwnedFd), String> {
         if keymap.is_empty() || keymap.len() > 256 * 1024 {
             return Err("Invalid captured keyboard map".into());
         }
@@ -47,7 +51,8 @@ impl Worker {
                 let _finish = Finish(cancel);
                 let run = || {
                     let context = eis::Context::new(server).map_err(|e| e.to_string())?;
-                    let mut event_loop = EventLoop::<State>::try_new().map_err(|e| e.to_string())?;
+                    let mut event_loop =
+                        EventLoop::<State>::try_new().map_err(|e| e.to_string())?;
                     let signal = event_loop.get_signal();
                     let (sender, receiver) = channel::sync_channel(4);
                     event_loop
@@ -59,19 +64,22 @@ impl Worker {
                         .map_err(|e| e.to_string())?;
                     event_loop
                         .handle()
-                        .insert_source(EisRequestSource::new(context, 1), |event, connection, state| {
-                            let action = match event {
-                                Ok(event) => state.request(connection, event),
-                                Err(_) => {
+                        .insert_source(
+                            EisRequestSource::new(context, 1),
+                            |event, connection, state| {
+                                let action = match event {
+                                    Ok(event) => state.request(connection, event),
+                                    Err(_) => {
+                                        state.signal.stop();
+                                        PostAction::Remove
+                                    }
+                                };
+                                if connection.flush().is_err() {
                                     state.signal.stop();
-                                    PostAction::Remove
                                 }
-                            };
-                            if connection.flush().is_err() {
-                                state.signal.stop();
-                            }
-                            Ok(action)
-                        })
+                                Ok(action)
+                            },
+                        )
                         .map_err(|e| e.to_string())?;
                     let mut state = State {
                         signal: signal.clone(),
@@ -91,7 +99,8 @@ impl Worker {
                         .map_err(|_| "Input transport startup cancelled".to_owned())?;
                     let _ = event_loop.run(None, &mut state, |_| {});
                     if let Some(connection) = state.connection.take() {
-                        connection.disconnected(eis::connection::DisconnectReason::Disconnected, None);
+                        connection
+                            .disconnected(eis::connection::DisconnectReason::Disconnected, None);
                     }
                     state.ready.store(false, Ordering::SeqCst);
                     Ok::<(), String>(())
@@ -104,7 +113,14 @@ impl Worker {
         let (sender, signal) = started
             .recv_timeout(std::time::Duration::from_secs(2))
             .map_err(|_| "Input transport startup timed out".to_owned())??;
-        Ok((Self { sender, signal, ready }, client.into()))
+        Ok((
+            Self {
+                sender,
+                signal,
+                ready,
+            },
+            client.into(),
+        ))
     }
 
     pub(crate) fn send(&self, events: Vec<Value>) -> Result<(), String> {
@@ -156,14 +172,18 @@ impl State {
                     capabilities |= DeviceCapability::Keyboard;
                 }
                 if self.capabilities & 2 != 0 {
-                    capabilities |= DeviceCapability::Pointer | DeviceCapability::Button | DeviceCapability::Scroll;
+                    capabilities |= DeviceCapability::Pointer
+                        | DeviceCapability::Button
+                        | DeviceCapability::Scroll;
                 }
                 let _ = connection.add_seat(Some("Ferese input capture"), capabilities);
                 self.connection = Some(connection.clone());
             }
             EisRequestSourceEvent::Request(EisRequest::Bind(request)) => {
-                let keyboard = request.capabilities.contains(DeviceCapability::Keyboard) && self.capabilities & 1 != 0;
-                let pointer = request.capabilities.contains(DeviceCapability::Pointer) && self.capabilities & 2 != 0;
+                let keyboard = request.capabilities.contains(DeviceCapability::Keyboard)
+                    && self.capabilities & 1 != 0;
+                let pointer = request.capabilities.contains(DeviceCapability::Pointer)
+                    && self.capabilities & 2 != 0;
                 if !keyboard && let Some(device) = self.keyboard.take() {
                     device.remove();
                     self.keyboard_ready = false;
@@ -179,7 +199,11 @@ impl State {
                         DeviceCapability::Keyboard.into(),
                         |device| {
                             if let Some(keyboard) = device.interface::<eis::Keyboard>() {
-                                keyboard.keymap(eis::keyboard::KeymapType::Xkb, self.keymap_size, self.keymap.as_fd());
+                                keyboard.keymap(
+                                    eis::keyboard::KeymapType::Xkb,
+                                    self.keymap_size,
+                                    self.keymap.as_fd(),
+                                );
                             }
                         },
                     );
@@ -189,11 +213,15 @@ impl State {
                 }
                 if pointer && self.pointer.is_none() {
                     let caps = request.capabilities
-                        & (DeviceCapability::Pointer | DeviceCapability::Button | DeviceCapability::Scroll);
-                    let device =
-                        request
-                            .seat
-                            .add_device(Some("Ferese pointer"), eis::device::DeviceType::Virtual, caps, |_| {});
+                        & (DeviceCapability::Pointer
+                            | DeviceCapability::Button
+                            | DeviceCapability::Scroll);
+                    let device = request.seat.add_device(
+                        Some("Ferese pointer"),
+                        eis::device::DeviceType::Virtual,
+                        caps,
+                        |_| {},
+                    );
                     self.pointer_ready = device.device().version() < 3;
                     device.resumed();
                     self.pointer = Some(device);
@@ -227,11 +255,14 @@ impl State {
                     return PostAction::Remove;
                 }
                 self.ready.store(
-                    (self.keyboard.is_none() || self.keyboard_ready) && (self.pointer.is_none() || self.pointer_ready),
+                    (self.keyboard.is_none() || self.keyboard_ready)
+                        && (self.pointer.is_none() || self.pointer_ready),
                     Ordering::SeqCst,
                 );
             }
-            EisRequestSourceEvent::Request(EisRequest::Disconnect | EisRequest::DeviceClosed(_)) => {
+            EisRequestSourceEvent::Request(
+                EisRequest::Disconnect | EisRequest::DeviceClosed(_),
+            ) => {
                 self.signal.stop();
                 return PostAction::Remove;
             }
@@ -266,7 +297,12 @@ impl State {
                     if let Some(device) = &self.keyboard
                         && let Some(keyboard) = device.interface::<eis::Keyboard>()
                     {
-                        for key in event["keys"].as_array().into_iter().flatten().filter_map(Value::as_u64) {
+                        for key in event["keys"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .filter_map(Value::as_u64)
+                        {
                             keyboard.key(key as u32, eis::keyboard::KeyState::Press);
                         }
                         device.frame(now());
@@ -346,7 +382,10 @@ impl State {
 }
 
 fn now() -> u64 {
-    let mut time = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    let mut time = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
     // SAFETY: the initialized output pointer covers a timespec allocation.
     if unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut time) } == 0 {
         time.tv_sec as u64 * 1_000_000 + time.tv_nsec as u64 / 1_000
@@ -370,8 +409,8 @@ mod tests {
         let cancel = Arc::new(Cancel::default());
         let map = "xkb_keymap { xkb_keycodes { include \"evdev+aliases(qwerty)\" }; xkb_types { include \"complete\" }; xkb_compatibility { include \"complete\" }; xkb_symbols { include \"pc+us+inet(evdev)\" }; };";
         let (worker, fd) = Worker::start(3, map, cancel.clone()).unwrap();
-        let fixture =
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../scripts/tests/fixtures/eis-receiver.py");
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../scripts/tests/fixtures/eis-receiver.py");
         let mut client = Command::new("python3")
             .arg(fixture)
             .stdin(Stdio::from(fd))
@@ -386,7 +425,10 @@ mod tests {
         if !worker.ready.load(Ordering::SeqCst) {
             let _ = client.kill();
             let output = client.wait_with_output().unwrap();
-            panic!("Receiver did not bind: {}", String::from_utf8_lossy(&output.stderr));
+            panic!(
+                "Receiver did not bind: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
         }
         worker
             .send(vec![
@@ -401,7 +443,11 @@ mod tests {
             ])
             .unwrap();
         let output = client.wait_with_output().unwrap();
-        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
         assert!(String::from_utf8_lossy(&output.stdout).contains("\"keymap\": true"));
         let deadline = Instant::now() + Duration::from_secs(2);
         while !cancel.stopped.load(Ordering::SeqCst) && Instant::now() < deadline {

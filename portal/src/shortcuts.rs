@@ -89,7 +89,10 @@ impl GlobalShortcuts {
             if let Ok(emitter) = SignalEmitter::new(connection, path) {
                 let _ = SessionObject::closed(&emitter).await;
             }
-            let _ = connection.object_server().remove::<SessionObject, _>(path).await;
+            let _ = connection
+                .object_server()
+                .remove::<SessionObject, _>(path)
+                .await;
         }
     }
 
@@ -132,14 +135,25 @@ impl GlobalShortcuts {
                 .filter(|field| !field.trigger.trim().is_empty())
                 .map(|field| json!({"id":field.id,"trigger":field.trigger.trim()}))
                 .collect::<Vec<_>>();
-            match bridge.call("portal-shortcuts-register", json!(registration)).await {
+            match bridge
+                .call("portal-shortcuts-register", json!(registration))
+                .await
+            {
                 Ok(_) => {
                     let mut state = session.state.lock().await;
 
-                    if session.cancel.stopped.load(std::sync::atomic::Ordering::SeqCst)
+                    if session
+                        .cancel
+                        .stopped
+                        .load(std::sync::atomic::Ordering::SeqCst)
                         || cancel.stopped.load(std::sync::atomic::Ordering::SeqCst)
                     {
-                        if first || session.cancel.stopped.load(std::sync::atomic::Ordering::SeqCst) {
+                        if first
+                            || session
+                                .cancel
+                                .stopped
+                                .load(std::sync::atomic::Ordering::SeqCst)
+                        {
                             bridge.close();
                         } else {
                             let previous = previous
@@ -148,7 +162,11 @@ impl GlobalShortcuts {
                                 .map(|field| json!({"id":field.id,"trigger":field.trigger}))
                                 .collect::<Vec<_>>();
 
-                            if bridge.call("portal-shortcuts-register", json!(previous)).await.is_err() {
+                            if bridge
+                                .call("portal-shortcuts-register", json!(previous))
+                                .await
+                                .is_err()
+                            {
                                 bridge.close();
                             }
                         }
@@ -185,7 +203,13 @@ impl GlobalShortcuts {
         }
     }
 
-    async fn watch(&self, connection: Connection, path: OwnedObjectPath, session: Arc<Session>, bridge: Bridge) {
+    async fn watch(
+        &self,
+        connection: Connection,
+        path: OwnedObjectPath,
+        session: Arc<Session>,
+        bridge: Bridge,
+    ) {
         let emitter = SignalEmitter::new(&connection, PATH).unwrap();
         loop {
             tokio::select! {
@@ -198,7 +222,11 @@ impl GlobalShortcuts {
                 _ => break,
             };
             let mut state = session.state.lock().await;
-            if session.cancel.stopped.load(std::sync::atomic::Ordering::SeqCst) {
+            if session
+                .cancel
+                .stopped
+                .load(std::sync::atomic::Ordering::SeqCst)
+            {
                 break;
             }
             if let Some(active) = value["shortcuts"]
@@ -207,13 +235,16 @@ impl GlobalShortcuts {
             {
                 let mut changed = false;
                 for field in &mut state.fields {
-                    if !field.trigger.is_empty() && !active.iter().any(|item| item["id"] == field.id) {
+                    if !field.trigger.is_empty()
+                        && !active.iter().any(|item| item["id"] == field.id)
+                    {
                         field.trigger.clear();
                         changed = true;
                     }
                 }
                 if changed {
-                    let _ = Self::shortcuts_changed(&emitter, path.clone(), results(&state.fields)).await;
+                    let _ = Self::shortcuts_changed(&emitter, path.clone(), results(&state.fields))
+                        .await;
                 }
             }
             for event in value["events"].as_array().into_iter().flatten() {
@@ -222,9 +253,12 @@ impl GlobalShortcuts {
                 };
                 let timestamp = event["timestamp"].as_u64().unwrap_or(0);
                 if event["active"] == true {
-                    let _ = Self::activated(&emitter, path.clone(), id, timestamp, Options::new()).await;
+                    let _ = Self::activated(&emitter, path.clone(), id, timestamp, Options::new())
+                        .await;
                 } else {
-                    let _ = Self::deactivated(&emitter, path.clone(), id, timestamp, Options::new()).await;
+                    let _ =
+                        Self::deactivated(&emitter, path.clone(), id, timestamp, Options::new())
+                            .await;
                 }
             }
         }
@@ -249,11 +283,15 @@ impl GlobalShortcuts {
         #[zbus(header)] header: Header<'_>,
     ) -> zbus::fdo::Result<(u32, Options)> {
         let owner = authorize(connection, &header).await?;
-        if !session_handle.as_str().starts_with(&format!("{PATH}/session/"))
+        if !session_handle
+            .as_str()
+            .starts_with(&format!("{PATH}/session/"))
             || session_handle.as_str().len() > 512
             || app_id.len() > 512
         {
-            return Err(zbus::fdo::Error::InvalidArgs("Invalid shortcut session".into()));
+            return Err(zbus::fdo::Error::InvalidArgs(
+                "Invalid shortcut session".into(),
+            ));
         }
         let cancel = self.requests.begin(connection, &header, &handle).await?;
         let mut sessions = self.sessions.lock().await;
@@ -467,7 +505,9 @@ impl SessionObject {
         #[zbus(header)] header: Header<'_>,
     ) -> zbus::fdo::Result<()> {
         if header.sender().map(|sender| sender.as_str()) != Some(self.owner.as_str()) {
-            return Err(zbus::fdo::Error::AccessDenied("Not your shortcut session".into()));
+            return Err(zbus::fdo::Error::AccessDenied(
+                "Not your shortcut session".into(),
+            ));
         }
         self.backend.end(connection, &self.path).await;
         Ok(())
@@ -512,7 +552,10 @@ fn fields(shortcuts: Shortcuts) -> Result<Vec<ShortcutField>, String> {
     Ok(fields)
 }
 
-fn validate_selection(requested: &[ShortcutField], selected: &[ShortcutField]) -> Result<(), String> {
+fn validate_selection(
+    requested: &[ShortcutField],
+    selected: &[ShortcutField],
+) -> Result<(), String> {
     if selected.len() != requested.len()
         || selected.iter().zip(requested).any(|(chosen, original)| {
             chosen.id != original.id
@@ -552,7 +595,10 @@ fn reply(response: Result<Option<Shortcuts>, String>) -> (u32, Options) {
     match response {
         Ok(Some(shortcuts)) => (
             0,
-            HashMap::from([("shortcuts".into(), Value::from(shortcuts).try_into().unwrap())]),
+            HashMap::from([(
+                "shortcuts".into(),
+                Value::from(shortcuts).try_into().unwrap(),
+            )]),
         ),
         Ok(None) => (1, Options::new()),
         Err(error) => {

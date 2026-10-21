@@ -103,21 +103,31 @@ impl PortalSession {
 
     pub(crate) fn remove(&mut self, owner: u64) {
         self.waiters.remove(&owner);
-        if self.phase == 2 && self.query.as_ref().is_some_and(|query| query.owner == Some(owner)) {
+        if self.phase == 2
+            && self
+                .query
+                .as_ref()
+                .is_some_and(|query| query.owner == Some(owner))
+        {
             self.set_phase(1);
         }
         if self.inhibitors.remove(&owner).is_some() {
             self.inhibitor_revision = self.inhibitor_revision.wrapping_add(1);
         }
         let monitor_removed = self.monitors.remove(&owner);
-        let acknowledged = self.query.as_mut().is_some_and(|query| query.pending.remove(&owner));
+        let acknowledged = self
+            .query
+            .as_mut()
+            .is_some_and(|query| query.pending.remove(&owner));
         if monitor_removed || acknowledged {
             self.changed();
         }
     }
 
     pub(crate) fn idle_inhibited(&self) -> bool {
-        self.inhibitors.values().any(|inhibitor| inhibitor.flags & 8 != 0)
+        self.inhibitors
+            .values()
+            .any(|inhibitor| inhibitor.flags & 8 != 0)
     }
 
     pub(crate) fn begin_query(&mut self) -> u32 {
@@ -141,7 +151,11 @@ impl PortalSession {
     }
 
     pub(crate) fn cancel_query(&mut self, token: u32) {
-        if self.query.as_ref().is_some_and(|query| query.token == token) {
+        if self
+            .query
+            .as_ref()
+            .is_some_and(|query| query.token == token)
+        {
             self.set_phase(1);
         }
     }
@@ -154,19 +168,37 @@ impl PortalSession {
                 .is_some_and(|query| query.pending.is_empty() || Instant::now() >= query.deadline)
     }
 
-    pub(crate) fn validate_end(&self, token: u32, inhibitor_revision: u32, force: bool) -> Result<(), String> {
+    pub(crate) fn validate_end(
+        &self,
+        token: u32,
+        inhibitor_revision: u32,
+        force: bool,
+    ) -> Result<(), String> {
         if !self.query_ready() || self.query.as_ref().is_none_or(|query| query.token != token) {
-            return Err("Session-ending confirmation expired or applications are still responding".into());
+            return Err(
+                "Session-ending confirmation expired or applications are still responding".into(),
+            );
         }
         if self.inhibitor_revision != inhibitor_revision
-            || (!force && self.inhibitors.values().any(|inhibitor| inhibitor.flags & 1 != 0))
+            || (!force
+                && self
+                    .inhibitors
+                    .values()
+                    .any(|inhibitor| inhibitor.flags & 1 != 0))
         {
-            return Err("Applications changed their inhibitors; review the confirmation again".into());
+            return Err(
+                "Applications changed their inhibitors; review the confirmation again".into(),
+            );
         }
         Ok(())
     }
 
-    pub(crate) fn commit_end(&mut self, token: u32, inhibitor_revision: u32, force: bool) -> Result<(), String> {
+    pub(crate) fn commit_end(
+        &mut self,
+        token: u32,
+        inhibitor_revision: u32,
+        force: bool,
+    ) -> Result<(), String> {
         self.validate_end(token, inhibitor_revision, force)?;
         self.set_phase(3);
         Ok(())
@@ -209,7 +241,13 @@ impl PortalSession {
         }
     }
 
-    pub(crate) fn watch(&mut self, owner: u64, id: u64, since: u64, response: SyncSender<Response>) {
+    pub(crate) fn watch(
+        &mut self,
+        owner: u64,
+        id: u64,
+        since: u64,
+        response: SyncSender<Response>,
+    ) {
         if since != self.revision {
             let _ = response.try_send(Response::success(id, self.snapshot()));
         } else {
@@ -224,7 +262,10 @@ impl PortalSession {
             .map(|inhibitor| json!({"flags": inhibitor.flags, "app": inhibitor.app, "reason": inhibitor.reason}))
             .collect::<Vec<_>>();
         let remaining = self.query.as_ref().map_or(0, |query| {
-            query.deadline.saturating_duration_since(Instant::now()).as_millis() as u64
+            query
+                .deadline
+                .saturating_duration_since(Instant::now())
+                .as_millis() as u64
         });
         json!({"screensaver-active": self.locked, "session-state": self.phase, "revision": self.revision,
             "inhibitors": inhibitors, "inhibitor-revision": self.inhibitor_revision,
@@ -236,16 +277,17 @@ impl PortalSession {
 impl crate::Ferese {
     pub(crate) fn end_portal_session(&mut self) {
         let token = self.portal_session.query.as_ref().map(|query| query.token);
-        let result =
-            self.loop_handle
-                .insert_source(Timer::from_duration(Duration::from_millis(200)), move |_, _, state| {
-                    if state.portal_session.phase == 3
-                        && state.portal_session.query.as_ref().map(|query| query.token) == token
-                    {
-                        state.loop_signal.stop();
-                    }
-                    TimeoutAction::Drop
-                });
+        let result = self.loop_handle.insert_source(
+            Timer::from_duration(Duration::from_millis(200)),
+            move |_, _, state| {
+                if state.portal_session.phase == 3
+                    && state.portal_session.query.as_ref().map(|query| query.token) == token
+                {
+                    state.loop_signal.stop();
+                }
+                TimeoutAction::Drop
+            },
+        );
         if let Err(error) = result {
             tracing::error!(%error, "failed to schedule session ending");
             self.loop_signal.stop();
@@ -304,10 +346,20 @@ mod tests {
         let approved = session.inhibitor_revision;
         session.register(1, inhibition(1)).unwrap();
         assert!(session.commit_end(token, approved, true).is_err());
-        assert!(session.commit_end(token, session.inhibitor_revision, false).is_err());
-        session.commit_end(token, session.inhibitor_revision, true).unwrap();
+        assert!(
+            session
+                .commit_end(token, session.inhibitor_revision, false)
+                .is_err()
+        );
+        session
+            .commit_end(token, session.inhibitor_revision, true)
+            .unwrap();
         assert_eq!(session.snapshot()["session-state"], 3);
-        assert!(session.commit_end(token, session.inhibitor_revision, true).is_err());
+        assert!(
+            session
+                .commit_end(token, session.inhibitor_revision, true)
+                .is_err()
+        );
     }
 
     #[test]
@@ -350,7 +402,10 @@ mod tests {
         let response = receiver.try_recv().unwrap();
         assert_eq!(response.result.unwrap()["screensaver-active"], true);
         session.set_locked(false);
-        assert_eq!(session.snapshot()["transitions"].as_array().unwrap().len(), 2);
+        assert_eq!(
+            session.snapshot()["transitions"].as_array().unwrap().len(),
+            2
+        );
         let (sender, receiver) = std::sync::mpsc::sync_channel(1);
         session.watch(1, 11, session.revision, sender);
         session.remove(1);

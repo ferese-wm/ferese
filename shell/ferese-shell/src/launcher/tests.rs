@@ -42,7 +42,10 @@ fn escape_pops_one_layer_in_every_category() {
 #[test]
 fn typing_never_opens_alternates_and_empty_home_has_pills() {
     let mut shell = shell();
-    let _ = shell.update_launcher(Message::Input(shell.launcher.as_ref().unwrap().id, "fire".into()));
+    let _ = shell.update_launcher(Message::Input(
+        shell.launcher.as_ref().unwrap().id,
+        "fire".into(),
+    ));
     let launcher = shell.launcher.as_mut().unwrap();
     assert!(!launcher.alternatives);
     assert_eq!(launcher.target_height(), 72.);
@@ -57,13 +60,28 @@ fn late_results_cannot_replace_a_new_query_or_invocation() {
     let mut shell = shell();
     let id = shell.launcher.as_ref().unwrap().id;
     let _ = shell.update_launcher(Message::Input(id, "new".into()));
-    let _ = shell.update_launcher(Message::Results(id, 0, vec![row("old")], files::Status::Ready));
+    let _ = shell.update_launcher(Message::Results(
+        id,
+        0,
+        vec![row("old")],
+        files::Status::Ready,
+    ));
     assert!(shell.launcher.as_ref().unwrap().rows.is_empty());
     let _ = shell.destroy_launcher();
-    let _ = shell.update_launcher(Message::Results(id, 1, vec![row("old")], files::Status::Ready));
+    let _ = shell.update_launcher(Message::Results(
+        id,
+        1,
+        vec![row("old")],
+        files::Status::Ready,
+    ));
     assert!(shell.launcher.is_none());
     let _ = shell.toggle_launcher("test".into());
-    let _ = shell.update_launcher(Message::Results(id, 0, vec![row("old")], files::Status::Ready));
+    let _ = shell.update_launcher(Message::Results(
+        id,
+        0,
+        vec![row("old")],
+        files::Status::Ready,
+    ));
     assert!(shell.launcher.as_ref().unwrap().rows.is_empty());
 }
 #[test]
@@ -134,7 +152,12 @@ fn queries_are_coalesced_and_only_the_latest_result_is_applied() {
     let _ = shell.update_launcher(Message::Input(id, "first".into()));
     let _ = shell.update_launcher(Message::Input(id, "second".into()));
     let revision = shell.launcher.as_ref().unwrap().revision;
-    let _ = shell.update_launcher(Message::Results(id, 0, vec![row("stale")], files::Status::Ready));
+    let _ = shell.update_launcher(Message::Results(
+        id,
+        0,
+        vec![row("stale")],
+        files::Status::Ready,
+    ));
     assert!(shell.launcher.as_ref().unwrap().running);
     assert!(shell.launcher.as_ref().unwrap().rows.is_empty());
     let _ = shell.update_launcher(Message::Results(

@@ -1,12 +1,18 @@
 use std::time::Instant;
 
-use cosmic::iced::advanced::{Clipboard, Layout, Renderer as _, Shell, Widget, layout, mouse, renderer, widget};
+use cosmic::iced::advanced::{
+    Clipboard, Layout, Renderer as _, Shell, Widget, layout, mouse, renderer, widget,
+};
 use cosmic::iced::{Color, Event, Length, Rectangle, Size, window};
 use cosmic::{Element, Theme};
 
 use crate::Message;
 
-pub(super) fn view<'a>(started: Instant, animate: bool, color: Color) -> Element<'a, cosmic::Action<Message>> {
+pub(super) fn view<'a>(
+    started: Instant,
+    animate: bool,
+    color: Color,
+) -> Element<'a, cosmic::Action<Message>> {
     Element::new(Equalizer {
         started,
         animate,
@@ -33,7 +39,12 @@ impl Widget<cosmic::Action<Message>, Theme, cosmic::Renderer> for Equalizer {
         Size::new(Length::Fixed(13.), Length::Fixed(14.))
     }
 
-    fn layout(&mut self, _: &mut widget::Tree, _: &cosmic::Renderer, limits: &layout::Limits) -> layout::Node {
+    fn layout(
+        &mut self,
+        _: &mut widget::Tree,
+        _: &cosmic::Renderer,
+        limits: &layout::Limits,
+    ) -> layout::Node {
         layout::Node::new(limits.resolve(13., 14., Size::ZERO))
     }
 
@@ -78,12 +89,20 @@ impl Widget<cosmic::Action<Message>, Theme, cosmic::Renderer> for Equalizer {
         renderer.with_layer(clip, |renderer| {
             for index in 0..3 {
                 let phase = (elapsed - index as f32 * 0.2) * std::f32::consts::TAU / 0.9;
-                let fraction = if self.animate { 0.65 + 0.35 * phase.sin() } else { 0.45 };
+                let fraction = if self.animate {
+                    0.65 + 0.35 * phase.sin()
+                } else {
+                    0.45
+                };
                 let height = bounds.height * fraction;
                 renderer.fill_quad(
                     renderer::Quad {
                         bounds: Rectangle::new(
-                            (bounds.x + index as f32 * 5., bounds.y + bounds.height - height).into(),
+                            (
+                                bounds.x + index as f32 * 5.,
+                                bounds.y + bounds.height - height,
+                            )
+                                .into(),
                             (3., height).into(),
                         ),
                         border: cosmic::iced::Border {

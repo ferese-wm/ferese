@@ -40,7 +40,8 @@ impl Connection {
             command: command.into(),
             args,
         };
-        let response = write_frame(&mut self.stream, &request).and_then(|()| read_frame::<Response>(&mut self.stream));
+        let response = write_frame(&mut self.stream, &request)
+            .and_then(|()| read_frame::<Response>(&mut self.stream));
         let response = match response {
             Ok(response) => response,
             Err(error) => {
@@ -60,7 +61,9 @@ impl Connection {
 
     /// Wait for a server-side change; dropping the cancellation handle interrupts it.
     pub fn wait(&mut self, command: &str, args: Value) -> Result<Value, String> {
-        self.stream.set_read_timeout(None).map_err(|e| e.to_string())?;
+        self.stream
+            .set_read_timeout(None)
+            .map_err(|e| e.to_string())?;
         let result = self.call(command, args);
         self.stream
             .set_read_timeout(Some(Duration::from_secs(2)))
@@ -93,12 +96,19 @@ mod tests {
             send.send(connection.wait("activity-watch", json!({"since": 7})))
                 .unwrap();
         });
-        server.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        server
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
         let request: Request = read_frame(&mut server).unwrap();
         assert_eq!(request.command, "activity-watch");
         assert_eq!(request.args, json!({"since": 7}));
         drop(cancellation);
-        assert!(receive.recv_timeout(Duration::from_secs(2)).unwrap().is_err());
+        assert!(
+            receive
+                .recv_timeout(Duration::from_secs(2))
+                .unwrap()
+                .is_err()
+        );
         assert!(read_frame::<Request>(&mut server).is_err());
         worker.join().unwrap();
     }
@@ -107,8 +117,12 @@ mod tests {
     fn response_identity_is_checked_before_returning_values() {
         for wrong_version in [false, true] {
             let (stream, mut server) = UnixStream::pair().unwrap();
-            server.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
-            stream.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+            server
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
             let worker = std::thread::spawn(move || {
                 let request: Request = read_frame(&mut server).unwrap();
                 let mut response = Response::success(request.id, json!({}));

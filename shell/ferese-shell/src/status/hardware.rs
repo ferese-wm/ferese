@@ -73,12 +73,15 @@ impl Monitor {
                 loop {
                     // SAFETY: both descriptors remain owned by this thread; poll writes within the array.
                     let result = unsafe { libc::poll(descriptors.as_mut_ptr(), 2, -1) };
-                    if result < 0 && std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted {
+                    if result < 0
+                        && std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted
+                    {
                         continue;
                     }
                     if result < 0
                         || descriptors[1].revents != 0
-                        || descriptors[0].revents & (libc::POLLERR | libc::POLLHUP | libc::POLLNVAL) != 0
+                        || descriptors[0].revents & (libc::POLLERR | libc::POLLHUP | libc::POLLNVAL)
+                            != 0
                     {
                         break;
                     }

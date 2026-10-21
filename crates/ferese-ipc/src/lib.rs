@@ -79,7 +79,10 @@ impl fmt::Display for FrameError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Io(error) => error.fmt(formatter),
-            Self::Oversized(size) => write!(formatter, "IPC payload is {size} bytes; maximum is {MAX_PAYLOAD_SIZE}"),
+            Self::Oversized(size) => write!(
+                formatter,
+                "IPC payload is {size} bytes; maximum is {MAX_PAYLOAD_SIZE}"
+            ),
             Self::InvalidJson(error) => write!(formatter, "invalid IPC JSON: {error}"),
         }
     }

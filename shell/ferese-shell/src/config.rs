@@ -92,8 +92,10 @@ impl Default for ShellTheme {
             bar_text_primary: [240, 243, 250, 255],
             bar_text_muted: [170, 180, 199, 255],
             surface_base: [17, 24, 33, 255],
-            surface_raised: parse_color(&ferese_config::theme::default_tokens().colors.surface_raised)
-                .expect("valid theme surface color"),
+            surface_raised: parse_color(
+                &ferese_config::theme::default_tokens().colors.surface_raised,
+            )
+            .expect("valid theme surface color"),
             surface_popover: [17, 24, 33, 255],
             text_primary: [244, 247, 251, 255],
             text_muted: [135, 147, 162, 255],
@@ -130,7 +132,8 @@ impl ShellTheme {
     }
 
     pub(crate) fn palette(self) -> ferese_theme::Palette {
-        let color = |[r, g, b, a]: [u8; 4]| cosmic::iced::Color::from_rgba8(r, g, b, f32::from(a) / 255.);
+        let color =
+            |[r, g, b, a]: [u8; 4]| cosmic::iced::Color::from_rgba8(r, g, b, f32::from(a) / 255.);
         let surface = color(self.surface_base);
         ferese_theme::Palette {
             appearance: self.appearance,
@@ -352,10 +355,15 @@ pub(crate) fn load(snapshot: &ferese_ipc::theme::Snapshot) -> Result<ShellConfig
     load_path(&path, snapshot)
 }
 
-fn load_path(path: &std::path::Path, snapshot: &ferese_ipc::theme::Snapshot) -> Result<ShellConfig, String> {
+fn load_path(
+    path: &std::path::Path,
+    snapshot: &ferese_ipc::theme::Snapshot,
+) -> Result<ShellConfig, String> {
     match fs::symlink_metadata(path) {
         Ok(_) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(ShellConfig::default()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(ShellConfig::default());
+        }
         Err(error) => return Err(format!("cannot read {}: {error}", path.display())),
     }
     let mut source = String::new();
@@ -368,7 +376,8 @@ fn load_path(path: &std::path::Path, snapshot: &ferese_ipc::theme::Snapshot) -> 
     if source.len() > ferese_config::file::LIMIT {
         return Err(format!("{} exceeds 60 KiB", path.display()));
     }
-    parse_source(&source, snapshot).map_err(|error| format!("invalid configuration in {}: {error}", path.display()))
+    parse_source(&source, snapshot)
+        .map_err(|error| format!("invalid configuration in {}: {error}", path.display()))
 }
 
 pub(crate) fn parse_source(
@@ -400,11 +409,18 @@ fn parse_document(
                 ferese_panel::validate(panels).map_err(ferese_config::Error::from)?;
             }
 
-            config.animations.validate().map_err(ferese_config::Error::from)?;
-            config.notifications.validate().map_err(ferese_config::Error::from)?;
+            config
+                .animations
+                .validate()
+                .map_err(ferese_config::Error::from)?;
+            config
+                .notifications
+                .validate()
+                .map_err(ferese_config::Error::from)?;
             let mut theme = shell_theme(&config.theme);
             theme.appearance = appearance;
-            theme.material_radius = nonnegative_or(config.theme.geometry.shell_radius.unwrap_or(14.0), 14.0);
+            theme.material_radius =
+                nonnegative_or(config.theme.geometry.shell_radius.unwrap_or(14.0), 14.0);
             theme.bar_radius = theme.material_radius;
 
             Ok(ShellConfig {
@@ -420,7 +436,9 @@ fn parse_document(
                 wallpaper: config.theme.background,
                 theme,
                 theme_mode: mode,
-                panels: config.panels.unwrap_or_else(|| vec![crate::panel::Panel::default()]),
+                panels: config
+                    .panels
+                    .unwrap_or_else(|| vec![crate::panel::Panel::default()]),
                 status: StatusConfig {
                     low_battery_threshold: config.status.low_battery_threshold.min(100),
                     ..config.status
@@ -433,7 +451,8 @@ fn parse_document(
 
 impl ShellConfig {
     pub(crate) fn apply_theme(&mut self, theme: &ferese_config::theme::ResolvedTheme) {
-        let config: ThemeConfig = serde_json::from_value(serde_json::to_value(&theme.tokens).unwrap()).unwrap();
+        let config: ThemeConfig =
+            serde_json::from_value(serde_json::to_value(&theme.tokens).unwrap()).unwrap();
         self.theme = shell_theme(&config);
         self.theme.appearance = theme.appearance;
         self.theme.high_contrast = theme.accessibility.increase_contrast;
@@ -472,16 +491,21 @@ fn shell_theme(theme: &ThemeConfig) -> ShellTheme {
         reduce_transparency: defaults.reduce_transparency,
         material_radius: defaults.material_radius,
         bar_background: {
-            let mut background = parse_color(&theme.surface.bar.background).unwrap_or(defaults.bar_background);
+            let mut background =
+                parse_color(&theme.surface.bar.background).unwrap_or(defaults.bar_background);
             background[3] = alpha;
             background
         },
-        bar_text_primary: parse_color(&theme.surface.bar.text_primary).unwrap_or(defaults.bar_text_primary),
-        bar_text_muted: parse_color(&theme.surface.bar.text_muted).unwrap_or(defaults.bar_text_muted),
+        bar_text_primary: parse_color(&theme.surface.bar.text_primary)
+            .unwrap_or(defaults.bar_text_primary),
+        bar_text_muted: parse_color(&theme.surface.bar.text_muted)
+            .unwrap_or(defaults.bar_text_muted),
         surface_base: parse_color(&theme.colors.surface_base).unwrap_or(defaults.surface_base),
-        surface_raised: parse_color(&theme.colors.surface_raised).unwrap_or(defaults.surface_raised),
+        surface_raised: parse_color(&theme.colors.surface_raised)
+            .unwrap_or(defaults.surface_raised),
         surface_popover: {
-            let mut color = parse_color(&theme.colors.surface_base).unwrap_or(defaults.surface_base);
+            let mut color =
+                parse_color(&theme.colors.surface_base).unwrap_or(defaults.surface_base);
             color[3] = alpha;
             color
         },
@@ -492,11 +516,15 @@ fn shell_theme(theme: &ThemeConfig) -> ShellTheme {
         on_accent: parse_color(&theme.colors.on_accent).unwrap_or(defaults.on_accent),
         border: parse_color(&theme.colors.border).unwrap_or(defaults.border),
         shadow: parse_color(&theme.colors.shadow).unwrap_or(defaults.shadow),
-        bar_radius: nonnegative_or(theme.geometry.shell_radius.unwrap_or(14.0), defaults.bar_radius),
+        bar_radius: nonnegative_or(
+            theme.geometry.shell_radius.unwrap_or(14.0),
+            defaults.bar_radius,
+        ),
         control_gap: nonnegative_or(theme.geometry.control_gap, defaults.control_gap),
         shadow_offset_y: finite_or(theme.shadow.soft.offset_y, defaults.shadow_offset_y),
         shadow_blur: nonnegative_or(theme.shadow.soft.blur, defaults.shadow_blur),
-        shadow_opacity: finite_or(theme.shadow.soft.opacity, defaults.shadow_opacity).clamp(0.0, 1.0),
+        shadow_opacity: finite_or(theme.shadow.soft.opacity, defaults.shadow_opacity)
+            .clamp(0.0, 1.0),
     }
 }
 
@@ -594,13 +622,21 @@ mod tests {
         assert_eq!(config.panels[0].morph.media_height, 184.);
         assert!(!config.panels[0].morph.peek_on_hover);
         assert!(
-            parse_test_source("panel main { style morph; }\n").unwrap().panels[0]
+            parse_test_source("panel main { style morph; }\n")
+                .unwrap()
+                .panels[0]
                 .morph
                 .peek_on_hover
         );
-        assert!(parse_test_source("panel main { style morph; morph { peek-on-hover 1; }; }\n").is_err());
-        assert!(parse_test_source("panel main { style morph; morph { idle-wdth 180; }; }\n").is_err());
-        assert!(parse_test_source("panel main { style morph; morph { idle-width -1; }; }\n").is_err());
+        assert!(
+            parse_test_source("panel main { style morph; morph { peek-on-hover 1; }; }\n").is_err()
+        );
+        assert!(
+            parse_test_source("panel main { style morph; morph { idle-wdth 180; }; }\n").is_err()
+        );
+        assert!(
+            parse_test_source("panel main { style morph; morph { idle-width -1; }; }\n").is_err()
+        );
     }
 
     #[test]
@@ -659,9 +695,14 @@ mod tests {
                     .theme;
                     let mut config = parse_test_source(&source).unwrap();
                     config.apply_theme(&resolved);
-                    let effective = config.theme.panel_opacity(config.panels[0].background_opacity);
+                    let effective = config
+                        .theme
+                        .panel_opacity(config.panels[0].background_opacity);
                     assert_eq!(effective, if reduce { 1. } else { opacity });
-                    assert_eq!(effective, resolved.panel_opacity(config.panels[0].background_opacity));
+                    assert_eq!(
+                        effective,
+                        resolved.panel_opacity(config.panels[0].background_opacity)
+                    );
                 }
             }
         }
@@ -671,7 +712,8 @@ mod tests {
     fn rejects_removed_physics_keys_before_publication() {
         for property in ["spring", "viewport-spring"] {
             for coefficient in ["mass", "stiffness", "damping", "damping-ratio"] {
-                let source = format!("animations {{ {property} {{ {coefficient} 0; overshoot #true; }}; }}");
+                let source =
+                    format!("animations {{ {property} {{ {coefficient} 0; overshoot #true; }}; }}");
                 let error = parse_test_source(&source).unwrap_err().to_string();
                 assert!(error.contains("unknown field"), "{error}");
             }
@@ -738,7 +780,8 @@ mod tests {
 
     #[test]
     fn group_surfaces_do_not_change_modal_opacity() {
-        let normal = parse_test_source("theme { material { style translucent; opacity 0.7; }; }").unwrap();
+        let normal =
+            parse_test_source("theme { material { style translucent; opacity 0.7; }; }").unwrap();
         let islands = parse_test_source(
             "panel main { style floating; }\ntheme { material { style translucent; opacity 0.7; }; }",
         )
@@ -793,7 +836,10 @@ theme {
             config.theme.typography.font_family.as_deref(),
             Some("JetBrainsMono Nerd Font")
         );
-        assert_eq!(config.theme.background.path, Some(PathBuf::from("/tmp/wallpaper.png")));
+        assert_eq!(
+            config.theme.background.path,
+            Some(PathBuf::from("/tmp/wallpaper.png"))
+        );
         assert_eq!(config.theme.background.mode, WallpaperMode::Fit);
     }
 
@@ -813,8 +859,7 @@ theme {
     fn loader_reports_invalid_configuration_without_replacing_it() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("config.kdl");
-        let source =
-            "notifications { do-not-disturb #true; }\nstatus { bar-layout islands; battery-percentage #false; }";
+        let source = "notifications { do-not-disturb #true; }\nstatus { bar-layout islands; battery-percentage #false; }";
         std::fs::write(&path, source).unwrap();
         let error = super::load_path(&path, &ferese_theme_client::service::fallback()).unwrap_err();
         assert!(error.contains("bar_layout"), "{error}");
@@ -842,7 +887,8 @@ theme {
             )
             .is_ok()
         );
-        let error = super::load_path(directory.path(), &ferese_theme_client::service::fallback()).unwrap_err();
+        let error = super::load_path(directory.path(), &ferese_theme_client::service::fallback())
+            .unwrap_err();
         assert!(error.contains("cannot read"), "{error}");
         let path = directory.path().join("config.kdl");
         std::os::unix::fs::symlink(directory.path().join("missing-target"), &path).unwrap();

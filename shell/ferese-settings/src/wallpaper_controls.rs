@@ -79,7 +79,12 @@ impl Preview {
         true
     }
 
-    fn finish(&mut self, path: String, desired: &str, result: Result<widget::image::Handle, String>) {
+    fn finish(
+        &mut self,
+        path: String,
+        desired: &str,
+        result: Result<widget::image::Handle, String>,
+    ) {
         if self.requested.as_deref() != Some(&path) {
             return;
         }
@@ -171,7 +176,11 @@ fn thumbnail(path: String, builtin: Option<Appearance>) -> Task<Message> {
                 limits.max_image_width = Some(16384);
                 limits.max_image_height = Some(16384);
                 reader.limits(limits);
-                let (width, height) = if builtin.is_some() { (400, 225) } else { (1000, 500) };
+                let (width, height) = if builtin.is_some() {
+                    (400, 225)
+                } else {
+                    (1000, 500)
+                };
                 let pixels = reader
                     .decode()
                     .map_err(|e| e.to_string())?
@@ -240,9 +249,12 @@ impl App {
             return path;
         }
 
-        ferese_config::theme::theme_path(self.path.parent().unwrap_or(std::path::Path::new(".")), path.as_ref())
-            .to_string_lossy()
-            .into_owned()
+        ferese_config::theme::theme_path(
+            self.path.parent().unwrap_or(std::path::Path::new(".")),
+            path.as_ref(),
+        )
+        .to_string_lossy()
+        .into_owned()
     }
 
     pub(super) fn load_thumbnail(&mut self) -> Task<Message> {
@@ -266,7 +278,11 @@ impl App {
         Task::batch(tasks)
     }
 
-    pub(super) fn wallpaper_thumbnail(&mut self, path: String, result: Result<widget::image::Handle, String>) {
+    pub(super) fn wallpaper_thumbnail(
+        &mut self,
+        path: String,
+        result: Result<widget::image::Handle, String>,
+    ) {
         let desired = self.active_wallpaper_path();
         self.wallpaper.active.finish(path, &desired, result);
     }
@@ -293,9 +309,13 @@ impl App {
         schema::fields(Page::Wallpaper)
             .into_iter()
             .map(|mut field| {
-                field.path = field.path.replace("theme.background", self.wallpaper.target.prefix());
+                field.path = field
+                    .path
+                    .replace("theme.background", self.wallpaper.target.prefix());
                 if let Kind::Text { default, .. } = &mut field.kind {
-                    *default = ferese_config::default_wallpaper_for(self.wallpaper.target.appearance(active));
+                    *default = ferese_config::default_wallpaper_for(
+                        self.wallpaper.target.appearance(active),
+                    );
                 }
 
                 field
@@ -319,7 +339,9 @@ impl App {
     pub(super) fn wallpaper_controls(&self) -> Element<'_, Message> {
         let palette = visuals::Palette::from_resolved(&self.resolved.presented);
         let preview = &self.wallpaper.active;
-        let mut body = column([]).spacing(8).push(self.label("Current wallpaper", 13.));
+        let mut body = column([])
+            .spacing(8)
+            .push(self.label("Current wallpaper", 13.));
         let current: Element<'_, Message> = if let Some(handle) = &preview.handle {
             widget::image(handle.clone())
                 .border_radius(palette.radius.min(10.))
@@ -333,13 +355,20 @@ impl App {
                 if preview.requested.is_some() {
                     "Loading preview…"
                 } else {
-                    preview.error.as_deref().unwrap_or("No wallpaper image selected.")
+                    preview
+                        .error
+                        .as_deref()
+                        .unwrap_or("No wallpaper image selected.")
                 },
                 palette,
                 180.,
             )
         };
-        body = body.push(widget::container(current).height(180).center_x(Length::Fill));
+        body = body.push(
+            widget::container(current)
+                .height(180)
+                .center_x(Length::Fill),
+        );
 
         body = body.push(
             row([])
@@ -347,9 +376,13 @@ impl App {
                 .align_y(Alignment::Center)
                 .push(self.label("Apply to", 12.))
                 .push(ferese_theme::controls::select(
-                    cosmic::iced::widget::pick_list(Target::ALL, Some(self.wallpaper.target), Message::WallpaperTarget)
-                        .font(self.font)
-                        .text_size(12),
+                    cosmic::iced::widget::pick_list(
+                        Target::ALL,
+                        Some(self.wallpaper.target),
+                        Message::WallpaperTarget,
+                    )
+                    .font(self.font)
+                    .text_size(12),
                     palette,
                 ))
                 .push(widget::Space::new().width(Length::Fill))
@@ -378,11 +411,18 @@ impl App {
                     .content_fit(cosmic::iced::ContentFit::Cover)
                     .into()
             } else {
-                self.wallpaper_placeholder(preview.error.as_deref().unwrap_or("Loading preview…"), palette, 110.)
+                self.wallpaper_placeholder(
+                    preview.error.as_deref().unwrap_or("Loading preview…"),
+                    palette,
+                    110.,
+                )
             };
-            let label = widget::container(self.label(name, 12.).class(cosmic::theme::Text::Color(palette.text)))
-                .padding([7, 10])
-                .width(Length::Fill);
+            let label = widget::container(
+                self.label(name, 12.)
+                    .class(cosmic::theme::Text::Color(palette.text)),
+            )
+            .padding([7, 10])
+            .width(Length::Fill);
             let tile = column([]).push(image).push(label);
 
             defaults = defaults.push(
@@ -467,7 +507,11 @@ mod tests {
         for width in [420., 760.] {
             let mut app = App::init(
                 cosmic::app::Core::default(),
-                ("/preview/config.kdl".into(), Snapshot::parse(String::new()), None),
+                (
+                    "/preview/config.kdl".into(),
+                    Snapshot::parse(String::new()),
+                    None,
+                ),
             )
             .0;
             let dimensions = |app: &App| {
@@ -495,7 +539,11 @@ mod tests {
                 .finish("/active.png".into(), "/active.png", Ok(handle.clone()));
 
             for index in 0..app.wallpaper.defaults.len() {
-                app.wallpaper.defaults[index].finish("/default.png".into(), "/default.png", Ok(handle.clone()));
+                app.wallpaper.defaults[index].finish(
+                    "/default.png".into(),
+                    "/default.png",
+                    Ok(handle.clone()),
+                );
                 assert_eq!(dimensions(&app), initial);
             }
 
@@ -526,13 +574,21 @@ mod tests {
             .unwrap();
         let mut app = App::init(
             cosmic::app::Core::default(),
-            ("/preview/config.kdl".into(), Snapshot::parse(String::new()), None),
+            (
+                "/preview/config.kdl".into(),
+                Snapshot::parse(String::new()),
+                None,
+            ),
         )
         .0;
         for appearance in [Appearance::Light, Appearance::Dark] {
             let path = ferese_config::default_wallpaper_for(appearance);
             let pixels = image::open(path).unwrap().thumbnail(400, 225).into_rgba8();
-            let handle = widget::image::Handle::from_rgba(pixels.width(), pixels.height(), pixels.into_raw());
+            let handle = widget::image::Handle::from_rgba(
+                pixels.width(),
+                pixels.height(),
+                pixels.into_raw(),
+            );
             assert!(app.wallpaper.defaults[index(appearance)].request(path));
             app.default_wallpaper_thumbnail(appearance, Ok(handle));
         }
@@ -596,7 +652,11 @@ mod tests {
                         1.25,
                         theme.cosmic().bg_color().into(),
                     );
-                    let preview = if page == Page::Wallpaper { "wallpaper" } else { "theme" };
+                    let preview = if page == Page::Wallpaper {
+                        "wallpaper"
+                    } else {
+                        "theme"
+                    };
                     let path = format!("/tmp/ferese-{preview}-{backend}-{name}.png");
                     image::save_buffer(&path, &pixels, 1250, 975, image::ColorType::Rgba8).unwrap();
                     eprintln!("Preview page: {path}");
@@ -617,13 +677,17 @@ mod tests {
         assert_eq!(snapshot.string("theme.background.path", ""), "/shared.png");
         assert!(snapshot.item("theme.light.background.path").is_none());
         assert!(snapshot.item("theme.dark.background.path").is_none());
-        assert_eq!(snapshot.string("theme.background.lock_path", ""), "/lock.png");
+        assert_eq!(
+            snapshot.string("theme.background.lock_path", ""),
+            "/lock.png"
+        );
     }
 
     #[test]
     fn selecting_one_mode_preserves_the_other_and_inherits_shared_settings() {
         let mut snapshot =
-            Snapshot::parse("theme { background { path \"/shared.png\"; mode \"fit\"; }; }".into()).unwrap();
+            Snapshot::parse("theme { background { path \"/shared.png\"; mode \"fit\"; }; }".into())
+                .unwrap();
         for edit in edits(Target::Light, "path", "/light.png") {
             snapshot.edit(&edit).unwrap();
         }
@@ -641,11 +705,18 @@ mod tests {
         }
 
         for target in Target::ALL {
-            assert!(snapshot.item(&format!("{}.path", target.prefix())).is_none());
+            assert!(
+                snapshot
+                    .item(&format!("{}.path", target.prefix()))
+                    .is_none()
+            );
         }
 
         assert_eq!(snapshot.string("theme.background.mode", ""), "fit");
-        assert_eq!(snapshot.string("theme.background.lock_path", ""), "/lock.png");
+        assert_eq!(
+            snapshot.string("theme.background.lock_path", ""),
+            "/lock.png"
+        );
     }
 
     #[test]

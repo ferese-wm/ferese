@@ -19,19 +19,35 @@ pub(super) struct Compact {
 }
 
 impl Compact {
-    pub fn update(&mut self, entries: &[&Activity], selection: &Selection, font: Font, available: f32) {
+    pub fn update(
+        &mut self,
+        entries: &[&Activity],
+        selection: &Selection,
+        font: Font,
+        available: f32,
+    ) {
         if self.font != Some(font) {
             self.font = Some(font);
             self.titles.clear();
             self.badge = None;
         }
         self.titles.retain(|id, _| selection.visible.contains(id));
-        for entry in entries.iter().filter(|entry| selection.visible.contains(&entry.id)) {
+        for entry in entries
+            .iter()
+            .filter(|entry| selection.visible.contains(&entry.id))
+        {
             let title = &entry.data.title;
-            if self.titles.get(&entry.id).is_none_or(|(cached, _)| cached != title) {
+            if self
+                .titles
+                .get(&entry.id)
+                .is_none_or(|(cached, _)| cached != title)
+            {
                 self.titles.insert(
                     entry.id.clone(),
-                    (title.clone(), text_width(title, 12., font).ceil().clamp(48., 100.)),
+                    (
+                        title.clone(),
+                        text_width(title, 12., font).ceil().clamp(48., 100.),
+                    ),
                 );
             }
         }
@@ -65,7 +81,9 @@ impl Compact {
     }
 
     pub fn text_width(&self, id: &Id) -> f32 {
-        self.titles.get(id).map_or(48., |(_, width)| width * self.text_scale)
+        self.titles
+            .get(id)
+            .map_or(48., |(_, width)| width * self.text_scale)
     }
 }
 

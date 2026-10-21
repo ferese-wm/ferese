@@ -29,7 +29,11 @@ fn serve(path: &Path, expected: &'static str, value: serde_json::Value) -> threa
 }
 
 fn success(output: Output) -> String {
-    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     String::from_utf8(output.stdout).unwrap()
 }
 
@@ -88,7 +92,14 @@ fn explicit_socket_targets_the_nested_instance_for_queries_and_theme_commands() 
     host_listener.set_nonblocking(true).unwrap();
     for args in [
         vec!["--socket", nested.to_str().unwrap(), "-j", "windows"],
-        vec!["theme", "mode", "dark", "--socket", nested.to_str().unwrap(), "--json"],
+        vec![
+            "theme",
+            "mode",
+            "dark",
+            "--socket",
+            nested.to_str().unwrap(),
+            "--json",
+        ],
     ] {
         let worker = serve(
             &nested,
@@ -119,7 +130,11 @@ fn socket_environment_and_runtime_fallback_use_the_same_query_path() {
     std::fs::create_dir(directory.path().join("ferese")).unwrap();
     let socket = directory.path().join("ferese/control.sock");
     for environment in ["FERESE_SOCKET", "XDG_RUNTIME_DIR"] {
-        let worker = serve(&socket, "outputs", json!([{"name": "nested", "enabled": true}]));
+        let worker = serve(
+            &socket,
+            "outputs",
+            json!([{"name": "nested", "enabled": true}]),
+        );
         let target = if environment == "FERESE_SOCKET" {
             socket.as_path()
         } else {
@@ -172,9 +187,15 @@ fn event_stream_uses_the_selected_socket_and_prints_complete_json_lines() {
         let request: Request = read_frame(&mut stream).unwrap();
         assert_eq!(request.command, "event-stream");
         assert_eq!(request.args["version"], VERSION);
-        write_frame(&mut stream, &Response::success(request.id, json!({"version": VERSION}))).unwrap();
+        write_frame(
+            &mut stream,
+            &Response::success(request.id, json!({"version": VERSION})),
+        )
+        .unwrap();
         write_frame(&mut stream, &event).unwrap();
-        stopped.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+        stopped
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
     });
     let mut child = ctl(&["event-stream", "--socket", socket.to_str().unwrap()])
         .stdout(Stdio::piped())
@@ -202,7 +223,10 @@ fn activity_start_uses_versioned_framing_and_parent_scope() {
         assert_eq!(request.version, ferese_ipc::VERSION);
         assert_eq!(request.command, "activity-publish");
         let wire: ferese_ipc::activities::Request = serde_json::from_value(request.args).unwrap();
-        assert!(matches!(wire.owner, ferese_ipc::activities::OwnerScope::Parent));
+        assert!(matches!(
+            wire.owner,
+            ferese_ipc::activities::OwnerScope::Parent
+        ));
         match wire.publish {
             ferese_ipc::activities::Publish::Start { local, data, .. } => {
                 assert_eq!(local, "build");
@@ -255,7 +279,10 @@ fn run_preserves_arguments_cwd_environment_output_and_exit_when_publishing_fails
     assert_eq!(output.status.code(), Some(17));
     assert_eq!(
         String::from_utf8(output.stdout).unwrap(),
-        format!("argument with spaces;$literal|preserved|{}", dir.path().display())
+        format!(
+            "argument with spaces;$literal|preserved|{}",
+            dir.path().display()
+        )
     );
     assert_eq!(output.stderr, b"stderr");
 }
@@ -273,7 +300,9 @@ fn run_preserves_child_exit_and_signal_status() {
     .output()
     .unwrap();
     assert_eq!(output.status.code(), Some(19));
-    let output = ctl(&["run", "--", "sh", "-c", "kill -TERM $$"]).output().unwrap();
+    let output = ctl(&["run", "--", "sh", "-c", "kill -TERM $$"])
+        .output()
+        .unwrap();
     assert_eq!(output.status.signal(), Some(libc::SIGTERM));
 }
 
@@ -343,7 +372,11 @@ fn fake_cargo(dir: &Path, script: &str) -> String {
     let path = dir.join("cargo");
     std::fs::write(&path, script).unwrap();
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
-    format!("{}:{}", dir.display(), std::env::var("PATH").unwrap_or_default())
+    format!(
+        "{}:{}",
+        dir.display(),
+        std::env::var("PATH").unwrap_or_default()
+    )
 }
 
 #[test]
@@ -442,7 +475,10 @@ sys.exit(19)
                     };
                     write_frame(
                         &mut stream,
-                        &Response::success(request.id, json!({"handle":handle,"progress":"cargo-json"})),
+                        &Response::success(
+                            request.id,
+                            json!({"handle":handle,"progress":"cargo-json"}),
+                        ),
                     )
                     .unwrap();
                 }
@@ -457,19 +493,32 @@ sys.exit(19)
         }
         panic!("completion was not published");
     });
-    let output = ctl(&["--socket", socket.to_str().unwrap(), "run", "--", "cargo", "build"])
-        .env("PATH", path)
-        .current_dir(dir.path())
-        .output()
-        .unwrap();
+    let output = ctl(&[
+        "--socket",
+        socket.to_str().unwrap(),
+        "run",
+        "--",
+        "cargo",
+        "build",
+    ])
+    .env("PATH", path)
+    .current_dir(dir.path())
+    .output()
+    .unwrap();
     assert_eq!(output.status.code(), Some(19));
     assert_eq!(output.stdout, b"child output\ndiagnostic\n");
-    assert!(server.join().unwrap() > 0, "probe must exercise progress publishing");
+    assert!(
+        server.join().unwrap() > 0,
+        "probe must exercise progress publishing"
+    );
     let elapsed: f64 = std::fs::read_to_string(dir.path().join("elapsed"))
         .unwrap()
         .parse()
         .unwrap();
-    assert!(elapsed < 1.5, "stdout reader stalled the child for {elapsed}s");
+    assert!(
+        elapsed < 1.5,
+        "stdout reader stalled the child for {elapsed}s"
+    );
 }
 
 #[test]
@@ -488,7 +537,9 @@ fn launcher_toggle_uses_the_shell_command() {
 
 #[test]
 fn pomodoro_commands_use_the_versioned_session_api() {
-    for action in ["start", "pause", "resume", "next", "stop", "reset", "status"] {
+    for action in [
+        "start", "pause", "resume", "next", "stop", "reset", "status",
+    ] {
         let directory = tempfile::tempdir().unwrap();
         let socket = directory.path().join("control.sock");
         let listener = UnixListener::bind(&socket).unwrap();
@@ -496,8 +547,15 @@ fn pomodoro_commands_use_the_versioned_session_api() {
             let (mut stream, _) = listener.accept().unwrap();
             let request: Request = read_frame(&mut stream).unwrap();
             assert_eq!(request.command, "pomodoro");
-            assert_eq!(request.args, json!({"version":1,"action":action,"session":null}));
-            write_frame(&mut stream, &Response::success(request.id, json!({"phase":"work"}))).unwrap();
+            assert_eq!(
+                request.args,
+                json!({"version":1,"action":action,"session":null})
+            );
+            write_frame(
+                &mut stream,
+                &Response::success(request.id, json!({"phase":"work"})),
+            )
+            .unwrap();
         });
         success(
             ctl(&["--socket", socket.to_str().unwrap(), "pomodoro", action])

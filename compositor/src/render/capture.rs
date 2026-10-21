@@ -33,10 +33,14 @@ fn render_window_texture(
     if bytes == 0 || bytes > remaining {
         return Ok(None);
     }
-    let content = render_elements_from_surface_tree::<GlesRenderer, WaylandSurfaceRenderElement<GlesRenderer>>(
+    let content = render_elements_from_surface_tree::<
+        GlesRenderer,
+        WaylandSurfaceRenderElement<GlesRenderer>,
+    >(
         renderer,
         toplevel.wl_surface(),
-        Point::<i32, Logical>::from((-geometry.loc.x, -geometry.loc.y)).to_physical_precise_round(scale),
+        Point::<i32, Logical>::from((-geometry.loc.x, -geometry.loc.y))
+            .to_physical_precise_round(scale),
         scale,
         1.0,
         RenderElementKind::Unspecified,
@@ -46,7 +50,11 @@ fn render_window_texture(
     }
     let mut texture = match reusable.filter(|texture| texture.size() == (size.w, size.h).into()) {
         Some(texture) => texture,
-        None => Offscreen::<GlesTexture>::create_buffer(renderer, Fourcc::Abgr8888, (size.w, size.h).into())?,
+        None => Offscreen::<GlesTexture>::create_buffer(
+            renderer,
+            Fourcc::Abgr8888,
+            (size.w, size.h).into(),
+        )?,
     };
     {
         let mut target = renderer.bind(&mut texture)?;
@@ -93,13 +101,22 @@ pub(crate) fn capture_window_frame(
         .get_or_insert_threadsafe(|| Arc::new(CaptureTarget::default()))
         .clone();
     let reusable = cache.0.lock().unwrap().take();
-    let mut snapshot = render_window_texture(renderer, window, geometry, scale, 128 * 1024 * 1024, reusable)
-        .map_err(|error| error.to_string())?
-        .ok_or("Window has no capturable content")?;
+    let mut snapshot = render_window_texture(
+        renderer,
+        window,
+        geometry,
+        scale,
+        128 * 1024 * 1024,
+        reusable,
+    )
+    .map_err(|error| error.to_string())?
+    .ok_or("Window has no capturable content")?;
     let size = snapshot.texture.size();
     if let Some((state, cursor_geometry)) = cursor {
         let elements = cursor_elements(state, renderer, cursor_geometry, scale);
-        let mut target = renderer.bind(&mut snapshot.texture).map_err(|e| e.to_string())?;
+        let mut target = renderer
+            .bind(&mut snapshot.texture)
+            .map_err(|e| e.to_string())?;
         let mut frame = renderer
             .render(&mut target, (size.w, size.h).into(), Transform::Normal)
             .map_err(|e| e.to_string())?;
@@ -113,7 +130,11 @@ pub(crate) fn capture_window_frame(
         let _ = frame.finish().map_err(|e| e.to_string())?;
     }
     let mapping = renderer
-        .copy_texture(&snapshot.texture, Rectangle::from_size(size), Fourcc::Abgr8888)
+        .copy_texture(
+            &snapshot.texture,
+            Rectangle::from_size(size),
+            Fourcc::Abgr8888,
+        )
         .map_err(|error| error.to_string())?;
     if mapping.format() != Some(Fourcc::Abgr8888) {
         return Err("Unsupported window readback format".into());
@@ -125,7 +146,9 @@ pub(crate) fn capture_window_frame(
     // Smithay maps its PBO here and can wait for the GPU. Nonblocking readback
     // needs a retained mapping plus an EGL-context-owned fence, polled before
     // mapping; moving this call to the conversion worker is not context-safe.
-    let source = renderer.map_texture(&mapping).map_err(|error| error.to_string())?;
+    let source = renderer
+        .map_texture(&mapping)
+        .map_err(|error| error.to_string())?;
     if source.len() < bytes {
         return Err("Incomplete window readback".into());
     }
@@ -164,7 +187,9 @@ mod tests {
         convert_window_pixels(&mut pixels);
         assert_eq!(
             pixels,
-            [30, 20, 10, 255, 255, 128, 64, 128, 0, 0, 0, 0, 255, 255, 255, 1]
+            [
+                30, 20, 10, 255, 255, 128, 64, 128, 0, 0, 0, 0, 255, 255, 255, 1
+            ]
         );
     }
 }

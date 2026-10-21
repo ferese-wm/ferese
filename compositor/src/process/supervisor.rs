@@ -51,13 +51,16 @@ impl Supervisor {
             let watched = pidfd(pid).and_then(|fd| {
                 state
                     .loop_handle
-                    .insert_source(Generic::new(fd, Interest::READ, Mode::Level), move |_, _, state| {
-                        if let Some(owner) = weak.upgrade() {
-                            owner.borrow_mut().source = None;
-                            Self::exited(&owner, state);
-                        }
-                        Ok(PostAction::Remove)
-                    })
+                    .insert_source(
+                        Generic::new(fd, Interest::READ, Mode::Level),
+                        move |_, _, state| {
+                            if let Some(owner) = weak.upgrade() {
+                                owner.borrow_mut().source = None;
+                                Self::exited(&owner, state);
+                            }
+                            Ok(PostAction::Remove)
+                        },
+                    )
                     .map_err(io::Error::other)
             });
             if let Ok(token) = watched {
@@ -69,23 +72,26 @@ impl Supervisor {
             let weak = Rc::downgrade(owner);
             let token = state
                 .loop_handle
-                .insert_source(Timer::from_duration(Duration::from_millis(250)), move |_, _, state| {
-                    let Some(owner) = weak.upgrade() else {
-                        return TimeoutAction::Drop;
-                    };
-                    let done = owner
-                        .borrow_mut()
-                        .child
-                        .as_mut()
-                        .is_none_or(|child| child.try_wait().ok().flatten().is_some());
-                    if done {
-                        owner.borrow_mut().source = None;
-                        Self::exited(&owner, state);
-                        TimeoutAction::Drop
-                    } else {
-                        TimeoutAction::ToDuration(Duration::from_millis(250))
-                    }
-                })
+                .insert_source(
+                    Timer::from_duration(Duration::from_millis(250)),
+                    move |_, _, state| {
+                        let Some(owner) = weak.upgrade() else {
+                            return TimeoutAction::Drop;
+                        };
+                        let done = owner
+                            .borrow_mut()
+                            .child
+                            .as_mut()
+                            .is_none_or(|child| child.try_wait().ok().flatten().is_some());
+                        if done {
+                            owner.borrow_mut().source = None;
+                            Self::exited(&owner, state);
+                            TimeoutAction::Drop
+                        } else {
+                            TimeoutAction::ToDuration(Duration::from_millis(250))
+                        }
+                    },
+                )
                 .expect("register desktop child watcher");
             owner.borrow_mut().source = Some(token);
         } else {
@@ -177,7 +183,8 @@ mod tests {
         if !crate::startup_tests::private_runtime(test) {
             return;
         }
-        crate::xwayland::test_hooks::PIDFD_UNAVAILABLE.store(polling, std::sync::atomic::Ordering::SeqCst);
+        crate::xwayland::test_hooks::PIDFD_UNAVAILABLE
+            .store(polling, std::sync::atomic::Ordering::SeqCst);
         let mut events = calloop::EventLoop::try_new().unwrap();
         let mut state = crate::startup_tests::state(&mut events);
         let directory = tempfile::tempdir().unwrap();
@@ -200,30 +207,42 @@ if os.environ['FERESE_CLIENT_RESTART'] == '1':
         );
         let deadline = Instant::now() + Duration::from_secs(5);
         let rows = loop {
-            events.dispatch(Duration::from_millis(20), &mut state).unwrap();
+            events
+                .dispatch(Duration::from_millis(20), &mut state)
+                .unwrap();
             let text = std::fs::read_to_string(&record).unwrap_or_default();
             let rows: Vec<_> = text.lines().map(str::to_owned).collect();
             if rows.len() == 2 {
                 break rows;
             }
-            assert!(Instant::now() < deadline, "supervised child did not restart: {text}");
+            assert!(
+                Instant::now() < deadline,
+                "supervised child did not restart: {text}"
+            );
         };
         assert!(rows[0].ends_with(" 0"));
         assert!(rows[1].ends_with(" 1"));
-        assert_ne!(rows[0].split_whitespace().next(), rows[1].split_whitespace().next());
+        assert_ne!(
+            rows[0].split_whitespace().next(),
+            rows[1].split_whitespace().next()
+        );
         let child_pid = owner.borrow().child.as_ref().unwrap().id();
         unsafe {
             libc::kill(child_pid as i32, libc::SIGKILL);
         }
         while owner.borrow().child.is_some() {
-            events.dispatch(Duration::from_millis(20), &mut state).unwrap();
+            events
+                .dispatch(Duration::from_millis(20), &mut state)
+                .unwrap();
             assert!(Instant::now() < deadline);
         }
         assert!(owner.borrow().source.is_some(), "restart timer armed");
         owner.borrow_mut().stop(&state.loop_handle);
         let stopped = Instant::now();
         while stopped.elapsed() < Duration::from_millis(2200) {
-            events.dispatch(Duration::from_millis(20), &mut state).unwrap();
+            events
+                .dispatch(Duration::from_millis(20), &mut state)
+                .unwrap();
         }
         assert_eq!(std::fs::read_to_string(record).unwrap().lines().count(), 2);
         assert!(owner.borrow().source.is_none());
@@ -265,7 +284,9 @@ time.sleep(60)
                 break pid;
             }
             assert!(Instant::now() < deadline);
-            events.dispatch(Duration::from_millis(20), &mut state).unwrap();
+            events
+                .dispatch(Duration::from_millis(20), &mut state)
+                .unwrap();
         };
         owner.borrow_mut().stop(&state.loop_handle);
         let status_path = format!("/proc/{pid}/status");
@@ -279,7 +300,10 @@ time.sleep(60)
             if !running {
                 break;
             }
-            assert!(Instant::now() < deadline, "helper descendant survived shutdown");
+            assert!(
+                Instant::now() < deadline,
+                "helper descendant survived shutdown"
+            );
             std::thread::sleep(Duration::from_millis(10));
         }
         assert!(owner.borrow().child.is_none());

@@ -16,9 +16,16 @@ impl Ferese {
     }
 
     pub(crate) fn restore_initial_floating_size(&mut self, window: &Window) {
-        let Some(toplevel) = window.toplevel() else { return };
+        let Some(toplevel) = window.toplevel() else {
+            return;
+        };
         let (app_id, title, transient) = with_states(toplevel.wl_surface(), |states| {
-            let attributes = states.data_map.get::<XdgToplevelSurfaceData>().unwrap().lock().unwrap();
+            let attributes = states
+                .data_map
+                .get::<XdgToplevelSurfaceData>()
+                .unwrap()
+                .lock()
+                .unwrap();
             (
                 attributes.app_id.clone(),
                 attributes.title.clone(),
@@ -29,12 +36,19 @@ impl Ferese {
             pending.states.contains(xdg_toplevel::State::Fullscreen)
                 || pending.states.contains(xdg_toplevel::State::Maximized)
         });
-        let rule = resolve_window_rules(&self.window_rules, app_id.as_deref(), title.as_deref(), transient);
+        let rule = resolve_window_rules(
+            &self.window_rules,
+            app_id.as_deref(),
+            title.as_deref(),
+            transient,
+        );
         if crate::window_rules::is_native_dialog(app_id.as_deref())
             || transient
             || special_mode
             || rule.fullscreen == Some(true)
-            || !rule.floating.unwrap_or(rule.width.is_some() || rule.height.is_some())
+            || !rule
+                .floating
+                .unwrap_or(rule.width.is_some() || rule.height.is_some())
         {
             return;
         }
@@ -62,7 +76,8 @@ impl Ferese {
             Some((rule.width, rule.height)),
         );
         let size = ClientSize::from_rect(rect);
-        toplevel.with_pending_state(|pending| pending.size = Some((size.width, size.height).into()));
+        toplevel
+            .with_pending_state(|pending| pending.size = Some((size.width, size.height).into()));
     }
 
     pub(crate) fn add_rule_placed_window(
@@ -114,16 +129,22 @@ impl Ferese {
         let size_rect = client_size(&window)
             .map(|size| natural_floating_rect(bounds, size))
             .unwrap_or_else(|| centered_floating_rect(bounds));
-        let rect = self.place_floating(&window, None, bounds, (size_rect.width, size_rect.height), None);
+        let rect = self.place_floating(
+            &window,
+            None,
+            bounds,
+            (size_rect.width, size_rect.height),
+            None,
+        );
         let anchor = self
             .focused_window
             .and_then(|focused| self.presented_window_rect(focused))
             .unwrap_or(bounds);
         let fullscreen = self.workspaces.active().fullscreen;
         let focus = true;
-        if let Err(error) = self
-            .workspaces
-            .insert_floating_window(id, self.workspaces.active_id(), rect, focus)
+        if let Err(error) =
+            self.workspaces
+                .insert_floating_window(id, self.workspaces.active_id(), rect, focus)
         {
             tracing::error!(%error, ?id, "failed to insert rule-placed floating window");
             return;
@@ -131,11 +152,16 @@ impl Ferese {
 
         self.windows.register_window(window.clone(), id);
         self.refresh_capture_privacy();
-        self.windows.update(id, |w| w.placement_anchor = Some(anchor));
+        self.windows
+            .update(id, |w| w.placement_anchor = Some(anchor));
 
-        if rule.width.is_none() && rule.height.is_none() && client_size(&window).is_none() && remembered_work.is_none()
+        if rule.width.is_none()
+            && rule.height.is_none()
+            && client_size(&window).is_none()
+            && remembered_work.is_none()
         {
-            self.windows.update(id, |w| w.natural_floating_pending = true);
+            self.windows
+                .update(id, |w| w.natural_floating_pending = true);
         }
 
         self.window_stack.insert(id);
@@ -202,12 +228,22 @@ impl Ferese {
         let size_rect = client_size(&window)
             .map(|s| natural_floating_rect(bounds, s))
             .unwrap_or_else(|| centered_transient_rect(visible_parent));
-        let rect = self.place_floating(&window, None, bounds, (size_rect.width, size_rect.height), None);
+        let rect = self.place_floating(
+            &window,
+            None,
+            bounds,
+            (size_rect.width, size_rect.height),
+            None,
+        );
         let id = self.windows.allocate_id();
 
         let focus = workspace == self.workspaces.active_id()
-            && (self.focused_window == Some(parent) || self.workspaces.active().fullscreen == Some(parent));
-        if let Err(error) = self.workspaces.insert_floating_window(id, workspace, rect, focus) {
+            && (self.focused_window == Some(parent)
+                || self.workspaces.active().fullscreen == Some(parent));
+        if let Err(error) = self
+            .workspaces
+            .insert_floating_window(id, workspace, rect, focus)
+        {
             tracing::error!(%error, ?id, ?parent, "failed to insert transient window");
             return;
         }
@@ -216,7 +252,8 @@ impl Ferese {
         self.refresh_capture_privacy();
         self.window_stack.insert(id);
         if client_size(&window).is_none() {
-            self.windows.update(id, |w| w.natural_floating_pending = true);
+            self.windows
+                .update(id, |w| w.natural_floating_pending = true);
         }
 
         if self
@@ -286,8 +323,10 @@ impl Ferese {
             );
             (
                 (
-                    rule.min_width.map_or(minimum.0, |width| width.ceil() as i32),
-                    rule.min_height.map_or(minimum.1, |height| height.ceil() as i32),
+                    rule.min_width
+                        .map_or(minimum.0, |width| width.ceil() as i32),
+                    rule.min_height
+                        .map_or(minimum.1, |height| height.ceil() as i32),
                 ),
                 maximum,
             )
@@ -303,15 +342,26 @@ impl Ferese {
             };
 
             let (app_id, title, transient) = with_states(toplevel.wl_surface(), |states| {
-                let attributes = states.data_map.get::<XdgToplevelSurfaceData>().unwrap().lock().unwrap();
+                let attributes = states
+                    .data_map
+                    .get::<XdgToplevelSurfaceData>()
+                    .unwrap()
+                    .lock()
+                    .unwrap();
                 (
                     attributes.app_id.clone(),
                     attributes.title.clone(),
                     attributes.parent.is_some(),
                 )
             });
-            let old = resolve_window_rules(old_rules, app_id.as_deref(), title.as_deref(), transient);
-            let new = resolve_window_rules(&self.window_rules, app_id.as_deref(), title.as_deref(), transient);
+            let old =
+                resolve_window_rules(old_rules, app_id.as_deref(), title.as_deref(), transient);
+            let new = resolve_window_rules(
+                &self.window_rules,
+                app_id.as_deref(),
+                title.as_deref(),
+                transient,
+            );
             minimums_changed |= old.min_width != new.min_width || old.min_height != new.min_height;
             if let Some(new) = crate::window_rules::live_result(old, new, transient) {
                 self.apply_window_rule_result(&window, new);
@@ -322,7 +372,11 @@ impl Ferese {
         }
     }
 
-    pub(super) fn apply_window_rule_result(&mut self, window: &Window, rule: crate::window_rules::WindowRuleResult) {
+    pub(super) fn apply_window_rule_result(
+        &mut self,
+        window: &Window,
+        rule: crate::window_rules::WindowRuleResult,
+    ) {
         let Some(id) = self.windows.ids().get(window).copied() else {
             return;
         };
@@ -347,8 +401,12 @@ impl Ferese {
                 .workspaces
                 .workspace_for_window(id)
                 .and_then(|workspace| self.output_workspaces.output_for_workspace(workspace))
-            && let Some(workspace) = self.output_workspaces.workspace_at(&self.workspaces, output, index)
-            && let Err(error) = self.workspaces.move_window_to_workspace(id, workspace, axis, 0.5)
+            && let Some(workspace) =
+                self.output_workspaces
+                    .workspace_at(&self.workspaces, output, index)
+            && let Err(error) = self
+                .workspaces
+                .move_window_to_workspace(id, workspace, axis, 0.5)
         {
             tracing::warn!(%error, ?id, ?workspace, "failed to apply window workspace rule");
         }
@@ -359,7 +417,10 @@ impl Ferese {
             .floating
             .or((rule.width.is_some() || rule.height.is_some()).then_some(true));
         if let Some(should_float) = should_float {
-            let is_floating = matches!(self.workspaces.placement(id), Some(WindowPlacement::Floating { .. }));
+            let is_floating = matches!(
+                self.workspaces.placement(id),
+                Some(WindowPlacement::Floating { .. })
+            );
             let mut rect = centered_floating_rect(bounds);
             if should_float && rule.width.is_none() && rule.height.is_none() {
                 if let Some(size) = client_size(window) {
@@ -371,7 +432,8 @@ impl Ferese {
                     .and_then(|entry| entry.restore(&self.floating_outputs()))
                     .is_none()
                 {
-                    self.windows.update(id, |w| w.natural_floating_pending = true);
+                    self.windows
+                        .update(id, |w| w.natural_floating_pending = true);
                 }
             }
             rect.width = rule.width.unwrap_or(rect.width).min(bounds.width);
@@ -387,7 +449,9 @@ impl Ferese {
             }
 
             let result = if should_float != is_floating {
-                self.workspaces.toggle_floating(id, rect, axis, 0.5).map(|_| ())
+                self.workspaces
+                    .toggle_floating(id, rect, axis, 0.5)
+                    .map(|_| ())
             } else if should_float && (rule.width.is_some() || rule.height.is_some()) {
                 self.workspaces.set_floating_rect(id, rect)
             } else {
@@ -426,11 +490,18 @@ impl Ferese {
             self.invalidate_window_stacking();
         }
         let placement = parent.and_then(|parent| {
-            if self.workspaces.workspace_for_window(id) != self.workspaces.workspace_for_window(parent) {
-                tracing::warn!(?id, ?parent, "ignored transient parent on another workspace");
+            if self.workspaces.workspace_for_window(id)
+                != self.workspaces.workspace_for_window(parent)
+            {
+                tracing::warn!(
+                    ?id,
+                    ?parent,
+                    "ignored transient parent on another workspace"
+                );
                 return None;
             }
-            self.floating_bounds_for_window(parent).map(|bounds| (parent, bounds))
+            self.floating_bounds_for_window(parent)
+                .map(|bounds| (parent, bounds))
         });
         let Some((parent, bounds)) = placement else {
             if removed {
@@ -444,7 +515,13 @@ impl Ferese {
         let size_rect = client_size(window)
             .map(|s| natural_floating_rect(bounds, s))
             .unwrap_or_else(|| centered_transient_rect(visible_parent));
-        let rect = self.place_floating(window, Some(id), bounds, (size_rect.width, size_rect.height), None);
+        let rect = self.place_floating(
+            window,
+            Some(id),
+            bounds,
+            (size_rect.width, size_rect.height),
+            None,
+        );
         let result = match self.workspaces.placement(id) {
             Some(WindowPlacement::Tiled) => self
                 .workspaces
@@ -501,8 +578,11 @@ impl Ferese {
         self.refresh_capture_privacy();
         self.focus_history.remove(id);
         #[cfg(feature = "resize-metrics")]
-        self.resize_metrics
-            .end(id, self.presentation_now(), crate::resize_metrics::End::Cancelled);
+        self.resize_metrics.end(
+            id,
+            self.presentation_now(),
+            crate::resize_metrics::End::Cancelled,
+        );
         self.render.remove_window(id);
         self.capture_render.remove_window(id);
         self.window_stack.remove(id);
@@ -532,7 +612,9 @@ impl Ferese {
         };
 
         let serial = window.toplevel().and_then(|toplevel| {
-            toplevel.with_cached_state(|state| state.last_acked.as_ref().map(|configure| configure.serial))
+            toplevel.with_cached_state(|state| {
+                state.last_acked.as_ref().map(|configure| configure.serial)
+            })
         });
         if !transaction.accepts(serial) {
             return;
@@ -547,7 +629,9 @@ impl Ferese {
             return;
         };
 
-        let source_geometry = transaction.source_geometry().unwrap_or_else(|| window.geometry());
+        let source_geometry = transaction
+            .source_geometry()
+            .unwrap_or_else(|| window.geometry());
         let scale = output.current_scale().fractional_scale();
         let source_size = source_geometry.size.to_physical_precise_round(scale);
         if self.render.snapshot(&id).is_some_and(|snapshot| {
@@ -561,8 +645,17 @@ impl Ferese {
             return;
         }
 
-        let used: usize = self.render.snapshots().map(|snapshot| snapshot.bytes()).sum::<usize>()
-            + self.render.closing.iter().map(|window| window.bytes()).sum::<usize>();
+        let used: usize = self
+            .render
+            .snapshots()
+            .map(|snapshot| snapshot.bytes())
+            .sum::<usize>()
+            + self
+                .render
+                .closing
+                .iter()
+                .map(|window| window.bytes())
+                .sum::<usize>();
         let remaining = crate::presentation::SNAPSHOT_BUDGET.saturating_sub(used);
         let result = if let Some(backend) = &self.nested_backend {
             // Commit dispatch does not run inside the Winit event callback;
@@ -584,7 +677,11 @@ impl Ferese {
         };
         match result {
             Ok(Some(snapshot)) => {
-                tracing::debug!(?id, bytes = snapshot.bytes(), "captured native resize handoff");
+                tracing::debug!(
+                    ?id,
+                    bytes = snapshot.bytes(),
+                    "captured native resize handoff"
+                );
                 self.render.set_snapshot(id, snapshot);
             }
             Ok(None) => {}
@@ -601,7 +698,9 @@ impl Ferese {
         // Read the acknowledgement attached to this commit, not a newer ack
         // that arrived without its corresponding buffer.
         let committed_serial = window.toplevel().and_then(|toplevel| {
-            toplevel.with_cached_state(|state| state.last_acked.as_ref().map(|configure| configure.serial))
+            toplevel.with_cached_state(|state| {
+                state.last_acked.as_ref().map(|configure| configure.serial)
+            })
         });
         if self
             .windows
@@ -611,8 +710,11 @@ impl Ferese {
             #[cfg(feature = "resize-metrics")]
             {
                 self.measure_resize_pauses(self.presentation_now());
-                self.resize_metrics
-                    .end(id, self.presentation_now(), crate::resize_metrics::End::Commit);
+                self.resize_metrics.end(
+                    id,
+                    self.presentation_now(),
+                    crate::resize_metrics::End::Commit,
+                );
             }
             self.windows.clear_transaction(&id);
             self.release_presentation_dependencies();
@@ -643,15 +745,24 @@ impl Ferese {
             .is_some_and(|workspace| workspace.fullscreen == Some(id));
         let normal_geometry = !fullscreen
             && !self.windows.record(id).is_some_and(|w| w.maximized)
-            && self.windows.geometry(&id).is_none_or(|geometry| !geometry.is_zooming());
+            && self
+                .windows
+                .geometry(&id)
+                .is_none_or(|geometry| !geometry.is_zooming());
         let initial_floating = self
             .windows
             .update(id, |w| std::mem::take(&mut w.natural_floating_pending))
             .unwrap_or(false)
-            || self.windows.record(id).is_some_and(|w| w.placement_anchor.is_some());
+            || self
+                .windows
+                .record(id)
+                .is_some_and(|w| w.placement_anchor.is_some());
         if initial_floating
             && normal_geometry
-            && matches!(self.workspaces.placement(id), Some(WindowPlacement::Floating { .. }))
+            && matches!(
+                self.workspaces.placement(id),
+                Some(WindowPlacement::Floating { .. })
+            )
             && let Some(bounds) = self.floating_bounds_for_window(id)
         {
             let rect = self.place_floating(
@@ -665,10 +776,14 @@ impl Ferese {
             if self.workspaces.set_floating_rect(id, rect).is_ok() {
                 // This is the first mapped client buffer, not a user resize.
                 // Do not animate from the temporary placement box.
-                self.windows.set_geometry(id, WindowGeometry::new(rect, Some(size)));
+                self.windows
+                    .set_geometry(id, WindowGeometry::new(rect, Some(size)));
                 #[cfg(feature = "resize-metrics")]
-                self.resize_metrics
-                    .end(id, self.presentation_now(), crate::resize_metrics::End::Cancelled);
+                self.resize_metrics.end(
+                    id,
+                    self.presentation_now(),
+                    crate::resize_metrics::End::Cancelled,
+                );
                 self.windows.clear_transaction(&id);
                 self.relayout();
             }
@@ -681,17 +796,23 @@ impl Ferese {
         let settled_configure = window.toplevel().is_some_and(|toplevel| {
             let committed = toplevel.with_cached_state(|state| state.last_acked.clone());
             with_states(toplevel.wl_surface(), |states| {
-                states.data_map.get::<XdgToplevelSurfaceData>().is_some_and(|data| {
-                    let Ok(data) = data.lock() else { return false };
-                    floating_commit_is_current(
-                        data.pending_configures().is_empty(),
-                        committed.as_ref().map(|configure| configure.serial),
-                        data.last_acked.as_ref().map(|configure| configure.serial),
-                        committed
-                            .as_ref()
-                            .is_some_and(|configure| configure.state.states.contains(xdg_toplevel::State::Resizing)),
-                    )
-                })
+                states
+                    .data_map
+                    .get::<XdgToplevelSurfaceData>()
+                    .is_some_and(|data| {
+                        let Ok(data) = data.lock() else { return false };
+                        floating_commit_is_current(
+                            data.pending_configures().is_empty(),
+                            committed.as_ref().map(|configure| configure.serial),
+                            data.last_acked.as_ref().map(|configure| configure.serial),
+                            committed.as_ref().is_some_and(|configure| {
+                                configure
+                                    .state
+                                    .states
+                                    .contains(xdg_toplevel::State::Resizing)
+                            }),
+                        )
+                    })
             })
         });
         if settled_configure
@@ -699,25 +820,45 @@ impl Ferese {
             && let Some(WindowPlacement::Floating { rect }) = self.workspaces.placement(id)
             && ClientSize::from_rect(rect) != size
         {
-            let mut rect = Rect::new(rect.x, rect.y, f64::from(size.width), f64::from(size.height));
-            if let Some((left, top, anchor)) = self.windows.record(id).and_then(|w| w.resize_anchor.as_ref()) {
-                rect = crate::floating::anchored_size(*anchor, (rect.width, rect.height), *left, *top);
+            let mut rect = Rect::new(
+                rect.x,
+                rect.y,
+                f64::from(size.width),
+                f64::from(size.height),
+            );
+            if let Some((left, top, anchor)) = self
+                .windows
+                .record(id)
+                .and_then(|w| w.resize_anchor.as_ref())
+            {
+                rect =
+                    crate::floating::anchored_size(*anchor, (rect.width, rect.height), *left, *top);
             } else if initial_floating && let Some(work) = self.floating_bounds_for_window(id) {
                 rect = crate::floating::clamp_to_work(rect, work);
             }
 
             if self.workspaces.set_floating_rect(id, rect).is_ok() {
-                self.windows.set_geometry(id, WindowGeometry::new(rect, Some(size)));
+                self.windows
+                    .set_geometry(id, WindowGeometry::new(rect, Some(size)));
                 #[cfg(feature = "resize-metrics")]
-                self.resize_metrics
-                    .end(id, self.presentation_now(), crate::resize_metrics::End::Cancelled);
+                self.resize_metrics.end(
+                    id,
+                    self.presentation_now(),
+                    crate::resize_metrics::End::Cancelled,
+                );
                 self.windows.clear_transaction(&id);
                 self.render.clear_snapshot(&id);
                 self.relayout();
             }
         }
 
-        if settled_configure && self.windows.update(id, |w| w.resize_anchor.take()).flatten().is_some() {
+        if settled_configure
+            && self
+                .windows
+                .update(id, |w| w.resize_anchor.take())
+                .flatten()
+                .is_some()
+        {
             self.remember_floating(window);
         }
 
@@ -726,7 +867,12 @@ impl Ferese {
         };
 
         let matches_target = geometry.client.commit(size);
-        tracing::debug!(?id, ?size, matches_target, "recorded client geometry commit");
+        tracing::debug!(
+            ?id,
+            ?size,
+            matches_target,
+            "recorded client geometry commit"
+        );
     }
 
     pub fn close_focused_window(&mut self) {

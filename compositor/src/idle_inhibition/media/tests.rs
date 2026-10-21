@@ -55,7 +55,9 @@ fn pin_ignore_and_departure_do_not_leave_a_ghost_player() {
 fn initial_ties_are_deterministic_and_stopped_players_are_hidden() {
     let mut state = PlayersState::default();
     for name in ["z", "a"] {
-        state.players.insert(name.into(), player(name, Playback::Playing));
+        state
+            .players
+            .insert(name.into(), player(name, Playback::Playing));
     }
     assert_eq!(state.selected().unwrap().name, "a");
     state.update(player("a", Playback::Stopped));
@@ -132,7 +134,10 @@ fn session_lock_cancels_pending_and_rejects_new_media_watches() {
     for since in [0, engine.snapshot.revision] {
         let (send, receive) = mpsc::sync_channel(1);
         engine.watch(2, 43, since, send);
-        assert_eq!(receive.recv().unwrap().error.unwrap().code, "session_locked");
+        assert_eq!(
+            receive.recv().unwrap().error.unwrap().code,
+            "session_locked"
+        );
     }
     engine.set_locked(false);
     let (send, receive) = mpsc::sync_channel(1);

@@ -17,7 +17,10 @@ impl FereseShell {
             .as_ref()
             .filter(|battery| {
                 battery.percent < self.config.status.low_battery_threshold
-                    && matches!(battery.status.as_str(), "Discharging" | "Pending discharge" | "Empty")
+                    && matches!(
+                        battery.status.as_str(),
+                        "Discharging" | "Pending discharge" | "Empty"
+                    )
             })
             .map(|battery| battery.percent)
     }
@@ -53,7 +56,15 @@ impl FereseShell {
                 .and_then(|runtime| runtime.borrow().idle_content_width)
                 .unwrap_or(self.panel_for_bar(id).morph.idle_width);
             let workspaces = self.hub_workspace_width(id);
-            return (Peek::Date, width + if workspaces > 0. { workspaces + 10. } else { 0. });
+            return (
+                Peek::Date,
+                width
+                    + if workspaces > 0. {
+                        workspaces + 10.
+                    } else {
+                        0.
+                    },
+            );
         }
         let player = self.media.snapshot.selected.as_ref().filter(|player| {
             matches!(
@@ -122,7 +133,11 @@ impl FereseShell {
                     .size(13)
                     .class(theme::Text::Color(foreground))
                     .width(width)
-                    .align_x(if expanded { Alignment::End } else { Alignment::Start })
+                    .align_x(if expanded {
+                        Alignment::End
+                    } else {
+                        Alignment::Start
+                    })
             ]
             .spacing(8)
             .align_y(Alignment::Center)
@@ -136,7 +151,11 @@ impl FereseShell {
             .align_y(Alignment::Center)
             .width(width)
             .push(icons::tinted(
-                if saving { icons::RECORD_SAVING } else { icons::RECORD },
+                if saving {
+                    icons::RECORD_SAVING
+                } else {
+                    icons::RECORD
+                },
                 18,
                 warning,
             ));
@@ -153,8 +172,13 @@ impl FereseShell {
             // Reserve the same width for every second, regardless of digit advances.
             let timer_width = elapsed.len().max(5) as f32 * 8.;
             strip = strip.push(
-                container(self.render.text(elapsed).size(13).class(theme::Text::Color(foreground)))
-                    .center_x(timer_width),
+                container(
+                    self.render
+                        .text(elapsed)
+                        .size(13)
+                        .class(theme::Text::Color(foreground)),
+                )
+                .center_x(timer_width),
             );
         } else {
             strip = strip.push(
@@ -181,7 +205,9 @@ impl FereseShell {
                     self.battery_indicator(self.config.theme, opacity, true),
                     28.,
                 ))
-                .name(format!("Low battery, {percent} percent. Open battery controls"))
+                .name(format!(
+                    "Low battery, {percent} percent. Open battery controls"
+                ))
                 .padding(0)
                 .height(28)
                 .class(theme::Button::Custom {
@@ -190,7 +216,10 @@ impl FereseShell {
                     pressed: Box::new(move |_, _| style),
                     disabled: Box::new(move |_| style),
                 })
-                .on_press(cosmic::Action::App(Message::HubOpen(id, status_ui::Menu::Battery))),
+                .on_press(cosmic::Action::App(Message::HubOpen(
+                    id,
+                    status_ui::Menu::Battery,
+                ))),
             );
         }
         strip.into()

@@ -17,7 +17,13 @@ fn random_cookie() -> io::Result<[u8; 16]> {
     let mut cookie = [0_u8; 16];
     let mut filled = 0;
     while filled < cookie.len() {
-        let count = unsafe { libc::getrandom(cookie[filled..].as_mut_ptr().cast(), cookie.len() - filled, 0) };
+        let count = unsafe {
+            libc::getrandom(
+                cookie[filled..].as_mut_ptr().cast(),
+                cookie.len() - filled,
+                0,
+            )
+        };
         if count < 0 {
             let error = io::Error::last_os_error();
             if error.kind() == io::ErrorKind::Interrupted {
@@ -26,7 +32,10 @@ fn random_cookie() -> io::Result<[u8; 16]> {
             return Err(error);
         }
         if count == 0 {
-            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "getrandom returned zero"));
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "getrandom returned zero",
+            ));
         }
         filled += count as usize;
     }
@@ -72,7 +81,8 @@ impl AuthorityFile {
         let mut file = tempfile::Builder::new()
             .prefix("ferese-xauth-")
             .tempfile_in(runtime_directory)?;
-        file.as_file().set_permissions(fs::Permissions::from_mode(0o600))?;
+        file.as_file()
+            .set_permissions(fs::Permissions::from_mode(0o600))?;
 
         let cookie = random_cookie()?;
         let host = hostname()?;
@@ -159,7 +169,10 @@ mod tests {
             let file = AuthorityFile::create(&runtime, 3).unwrap();
             let path = file.path().to_owned();
             let mode = fs::metadata(&path).unwrap().mode() & 0o777;
-            assert_eq!(mode, 0o600, "authority file must not be group/world readable");
+            assert_eq!(
+                mode, 0o600,
+                "authority file must not be group/world readable"
+            );
             path
         };
 
@@ -168,7 +181,8 @@ mod tests {
 
     #[test]
     fn a_group_readable_runtime_directory_is_rejected() {
-        let runtime = std::env::temp_dir().join(format!("ferese-xauth-loose-{}", std::process::id()));
+        let runtime =
+            std::env::temp_dir().join(format!("ferese-xauth-loose-{}", std::process::id()));
         let _ = fs::remove_dir_all(&runtime);
         fs::create_dir_all(&runtime).unwrap();
         fs::set_permissions(&runtime, fs::Permissions::from_mode(0o755)).unwrap();
@@ -204,11 +218,17 @@ mod tests {
             .lines()
             .find(|line| line.contains("MIT-MAGIC-COOKIE-1"))
             .unwrap_or_else(|| panic!("xauth did not list the cookie record: {listing:?}"));
-        assert!(entry.contains(":91"), "entry must reference the display: {entry:?}");
+        assert!(
+            entry.contains(":91"),
+            "entry must reference the display: {entry:?}"
+        );
 
         let cookie_hex = entry.split_whitespace().last().expect("cookie field");
         assert_eq!(cookie_hex.len(), 32, "16-byte cookie as hex: {cookie_hex}");
-        assert!(cookie_hex.chars().any(|c| c != '0'), "cookie must not be zero");
+        assert!(
+            cookie_hex.chars().any(|c| c != '0'),
+            "cookie must not be zero"
+        );
     }
 
     #[test]

@@ -38,7 +38,11 @@ async fn bus_call<T: serde::de::DeserializeOwned + zbus::zvariant::Type>(
         .deserialize()
 }
 
-async fn properties(connection: &Connection, owner: &str, interface: &str) -> zbus::Result<Properties> {
+async fn properties(
+    connection: &Connection,
+    owner: &str,
+    interface: &str,
+) -> zbus::Result<Properties> {
     connection
         .call_method(Some(owner), PATH, Some(PROPERTIES), "GetAll", &(interface,))
         .await?
@@ -47,7 +51,9 @@ async fn properties(connection: &Connection, owner: &str, interface: &str) -> zb
 }
 
 fn string<'a>(properties: &'a Properties, name: &str) -> Option<&'a str> {
-    properties.get(name).and_then(|value| <&str>::try_from(value).ok())
+    properties
+        .get(name)
+        .and_then(|value| <&str>::try_from(value).ok())
 }
 
 pub(super) fn clean(value: &str, length: usize) -> String {
@@ -163,7 +169,11 @@ async fn discover(connection: &Connection, name: String, owner: String) -> Playe
     player
 }
 
-async fn action(connection: &Connection, state: &mut PlayersState, args: &serde_json::Value) -> Result<(), String> {
+async fn action(
+    connection: &Connection,
+    state: &mut PlayersState,
+    args: &serde_json::Value,
+) -> Result<(), String> {
     let kind = args["action"].as_str().ok_or("Missing media action")?;
     if kind == "auto" {
         state.pinned = None;
@@ -176,7 +186,10 @@ async fn action(connection: &Connection, state: &mut PlayersState, args: &serde_
     }
     .cloned()
     .ok_or("No active media player")?;
-    if args["owner"].as_str().is_some_and(|owner| owner != player.owner) {
+    if args["owner"]
+        .as_str()
+        .is_some_and(|owner| owner != player.owner)
+    {
         return Err("Media player was replaced".into());
     }
 
@@ -227,12 +240,15 @@ async fn action(connection: &Connection, state: &mut PlayersState, args: &serde_
             if args["track_id"].as_str() != view.track_id.as_deref() {
                 return Err("Media track changed".into());
             }
-            let position = args["position_us"].as_u64().ok_or("Invalid media position")?;
+            let position = args["position_us"]
+                .as_u64()
+                .ok_or("Invalid media position")?;
             let position = view
                 .length_us
                 .map_or(position, |length| position.min(length))
                 .min(i64::MAX as u64) as i64;
-            let track = OwnedObjectPath::try_from(view.track_id.clone().unwrap()).map_err(|error| error.to_string())?;
+            let track = OwnedObjectPath::try_from(view.track_id.clone().unwrap())
+                .map_err(|error| error.to_string())?;
             connection
                 .call_method(
                     Some(player.owner.as_str()),
@@ -279,7 +295,11 @@ async fn action(connection: &Connection, state: &mut PlayersState, args: &serde_
     Ok(())
 }
 
-fn publish(state: &PlayersState, previous: &mut Option<Update>, sender: &SyncSender<Update>) -> bool {
+fn publish(
+    state: &PlayersState,
+    previous: &mut Option<Update>,
+    sender: &SyncSender<Update>,
+) -> bool {
     let update = state.update_snapshot();
     if previous
         .as_ref()
@@ -336,7 +356,10 @@ async fn monitor(
         .deserialize()?;
     let mut names: Vec<_> = names
         .into_iter()
-        .filter(|name| name.strip_prefix(PREFIX).is_some_and(|suffix| suffix.starts_with('.')))
+        .filter(|name| {
+            name.strip_prefix(PREFIX)
+                .is_some_and(|suffix| suffix.starts_with('.'))
+        })
         .collect();
     names.sort_unstable();
     for name in names.into_iter().take(MAX_PLAYERS) {
@@ -367,7 +390,9 @@ async fn monitor(
         };
         match input {
             Input::Action(None) => return Ok(()),
-            Input::Signal(None) => return Err(zbus::Error::Failure("MPRIS signal stream ended".into())),
+            Input::Signal(None) => {
+                return Err(zbus::Error::Failure("MPRIS signal stream ended".into()));
+            }
             Input::Action(Some(command)) => {
                 let result = if command.sent.elapsed() > Duration::from_secs(2) {
                     Err("Media command expired".into())
@@ -389,8 +414,12 @@ async fn monitor(
                     .member()
                     .is_some_and(|member| member.as_str() == "NameOwnerChanged")
                 {
-                    let (name, _, owner): (String, String, String) = message.body().deserialize()?;
-                    if !name.strip_prefix(PREFIX).is_some_and(|suffix| suffix.starts_with('.')) {
+                    let (name, _, owner): (String, String, String) =
+                        message.body().deserialize()?;
+                    if !name
+                        .strip_prefix(PREFIX)
+                        .is_some_and(|suffix| suffix.starts_with('.'))
+                    {
                         continue;
                     }
                     state.remove(&name);
@@ -402,7 +431,10 @@ async fn monitor(
                         state.update(player);
                     }
                 } else if let Some(owner) = header.sender() {
-                    if header.member().is_some_and(|member| member.as_str() == "Seeked") {
+                    if header
+                        .member()
+                        .is_some_and(|member| member.as_str() == "Seeked")
+                    {
                         let names: Vec<_> = state
                             .players
                             .values()
@@ -417,14 +449,17 @@ async fn monitor(
                         }
                     } else {
                         let Ok((interface, changed, invalidated)) =
-                            message.body().deserialize::<(String, Properties, Vec<String>)>()
+                            message
+                                .body()
+                                .deserialize::<(String, Properties, Vec<String>)>()
                         else {
                             continue;
                         };
                         let identity = interface == PREFIX
-                            && ["Identity", "DesktopEntry", "CanRaise"]
-                                .iter()
-                                .any(|key| changed.contains_key(*key) || invalidated.iter().any(|field| field == key));
+                            && ["Identity", "DesktopEntry", "CanRaise"].iter().any(|key| {
+                                changed.contains_key(*key)
+                                    || invalidated.iter().any(|field| field == key)
+                            });
                         let playback = interface == PLAYER
                             && [
                                 "PlaybackStatus",
@@ -439,7 +474,10 @@ async fn monitor(
                                 "CanControl",
                             ]
                             .iter()
-                            .any(|key| changed.contains_key(*key) || invalidated.iter().any(|field| field == key));
+                            .any(|key| {
+                                changed.contains_key(*key)
+                                    || invalidated.iter().any(|field| field == key)
+                            });
                         if !identity && !playback {
                             continue;
                         }
@@ -483,10 +521,16 @@ pub(super) fn run(sender: SyncSender<Update>, commands: async_channel::Receiver<
         if matches!(result, Ok(())) || commands.is_closed() {
             break;
         }
-        if sender.send(PlayersState::default().update_snapshot()).is_err() {
+        if sender
+            .send(PlayersState::default().update_snapshot())
+            .is_err()
+        {
             break;
         }
-        tracing::debug!(?result, "MPRIS disconnected; clearing playback and retrying");
+        tracing::debug!(
+            ?result,
+            "MPRIS disconnected; clearing playback and retrying"
+        );
         std::thread::sleep(Duration::from_secs(5));
     }
 }

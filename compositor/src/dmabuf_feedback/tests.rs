@@ -108,8 +108,13 @@ fn subscriptions_update_deduplicate_and_retire_device_preferences() {
             if *object != 7 || *opcode != 0 {
                 return None;
             }
-            let bytes = args[2..].iter().flat_map(|word| word.to_ne_bytes()).collect::<Vec<_>>();
-            bytes.starts_with(b"zwp_linux_dmabuf_v1\0").then_some(args[0])
+            let bytes = args[2..]
+                .iter()
+                .flat_map(|word| word.to_ne_bytes())
+                .collect::<Vec<_>>();
+            bytes
+                .starts_with(b"zwp_linux_dmabuf_v1\0")
+                .then_some(args[0])
         })
         .expect("DMA-BUF v4 global");
     let name = b"zwp_linux_dmabuf_v1\0";
@@ -131,7 +136,10 @@ fn subscriptions_update_deduplicate_and_retire_device_preferences() {
     assert_eq!(flags(&initial, 9), [0]);
     assert_eq!(done(&initial, 9), 1);
     assert_eq!(state.dmabuf_feedback.requested().count(), 1);
-    let main = initial.iter().find(|(id, opcode, _)| *id == 9 && *opcode == 2).unwrap();
+    let main = initial
+        .iter()
+        .find(|(id, opcode, _)| *id == 9 && *opcode == 2)
+        .unwrap();
     assert_eq!(main.2[0] as usize, std::mem::size_of::<libc::dev_t>());
     assert_eq!(main.2[1], 10, "main device remains the renderer");
 
@@ -141,11 +149,20 @@ fn subscriptions_update_deduplicate_and_retire_device_preferences() {
     let changed = messages(&mut wire);
     assert_eq!(flags(&changed, 9), [TrancheFlags::Scanout.bits(), 0]);
     assert_eq!(done(&changed, 9), 1);
-    let target = changed.iter().find(|(id, opcode, _)| *id == 9 && *opcode == 4).unwrap();
-    assert_eq!(target.2[1], 20, "scanout tranche targets the primary DRM device");
+    let target = changed
+        .iter()
+        .find(|(id, opcode, _)| *id == 9 && *opcode == 4)
+        .unwrap();
+    assert_eq!(
+        target.2[1], 20,
+        "scanout tranche targets the primary DRM device"
+    );
     state.dmabuf_feedback.refresh(&selected);
     state.display_handle.flush_clients().unwrap();
-    assert!(messages(&mut wire).is_empty(), "Smithay suppresses unchanged feedback");
+    assert!(
+        messages(&mut wire).is_empty(),
+        "Smithay suppresses unchanged feedback"
+    );
 
     request(&mut wire, 8, 3, &[10, 2], None);
     dispatch(&mut events, &mut state);
@@ -167,7 +184,11 @@ fn subscriptions_update_deduplicate_and_retire_device_preferences() {
     request(&mut wire, 8, 2, &[12], None); // get_default_feedback
     dispatch(&mut events, &mut state);
     let renewed = messages(&mut wire);
-    assert_eq!(flags(&renewed, 11), [0], "renewal starts with safe render feedback");
+    assert_eq!(
+        flags(&renewed, 11),
+        [0],
+        "renewal starts with safe render feedback"
+    );
     assert_eq!(flags(&renewed, 12), [0]);
     state.dmabuf_feedback.refresh(&selected);
     state.display_handle.flush_clients().unwrap();
@@ -198,7 +219,12 @@ fn subscriptions_update_deduplicate_and_retire_device_preferences() {
     state.dmabuf_feedback.refresh(&selected); // A stale choice cannot resurrect a retired preference.
     state.display_handle.flush_clients().unwrap();
     assert!(messages(&mut wire).is_empty());
-    assert!(state.dmabuf_feedback.new_surface(&surface, global).is_none());
+    assert!(
+        state
+            .dmabuf_feedback
+            .new_surface(&surface, global)
+            .is_none()
+    );
     drop(wire);
     dispatch(&mut events, &mut state);
     state.dmabuf_feedback.refresh(&HashMap::new());

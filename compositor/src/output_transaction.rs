@@ -152,7 +152,12 @@ mod tests {
         let inventory = |active: &BTreeSet<u8>| {
             active
                 .iter()
-                .map(|id| (OutputId(*id as u64), OutputGeometry::new(*id as i32 * 800, 0, 800, 600)))
+                .map(|id| {
+                    (
+                        OutputId(*id as u64),
+                        OutputGeometry::new(*id as i32 * 800, 0, 800, 600),
+                    )
+                })
                 .collect::<Vec<_>>()
         };
         for rollback_fails in [false, true] {
@@ -184,8 +189,14 @@ mod tests {
                 )
                 .unwrap();
             if rollback_fails {
-                assert_eq!(plan.outputs.connected_outputs().collect::<Vec<_>>(), vec![OutputId(2)]);
-                assert_eq!(plan.outputs.output_for_workspace(WorkspaceId(1)), Some(OutputId(2)));
+                assert_eq!(
+                    plan.outputs.connected_outputs().collect::<Vec<_>>(),
+                    vec![OutputId(2)]
+                );
+                assert_eq!(
+                    plan.outputs.output_for_workspace(WorkspaceId(1)),
+                    Some(OutputId(2))
+                );
             } else {
                 assert_eq!(plan.outputs, published);
                 assert!(plan.affected_outputs.is_empty());

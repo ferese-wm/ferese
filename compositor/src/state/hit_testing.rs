@@ -1,7 +1,10 @@
 use super::*;
 
 impl Ferese {
-    pub fn surface_under(&self, position: Point<f64, Logical>) -> Option<(WlSurface, Point<f64, Logical>)> {
+    pub fn surface_under(
+        &self,
+        position: Point<f64, Logical>,
+    ) -> Option<(WlSurface, Point<f64, Logical>)> {
         if self.session_lock.active() {
             return self.lock_surface_under(position);
         }
@@ -29,7 +32,10 @@ impl Ferese {
             })
     }
 
-    pub fn layer_under(&self, position: Point<f64, Logical>) -> Option<(LayerSurface, WlSurface, Point<f64, Logical>)> {
+    pub fn layer_under(
+        &self,
+        position: Point<f64, Logical>,
+    ) -> Option<(LayerSurface, WlSurface, Point<f64, Logical>)> {
         if self.session_lock.active() {
             return None;
         }
@@ -69,7 +75,8 @@ impl Ferese {
                 return None;
             }
 
-            let (source_x, source_y) = self.inverse_presented_window_point(*id, position.x, position.y)?;
+            let (source_x, source_y) =
+                self.inverse_presented_window_point(*id, position.x, position.y)?;
             let source_point = Point::from((source_x, source_y)) + window.geometry().loc.to_f64();
 
             let surface = window.surface_under(source_point, WindowSurfaceType::ALL);
@@ -110,7 +117,8 @@ impl Ferese {
             for layer in map.layers_on(*requested).rev() {
                 let geometry = map.layer_geometry(layer)?;
                 let layer_position = output_position - geometry.loc.to_f64();
-                let Some((surface, surface_location)) = layer.surface_under(layer_position, WindowSurfaceType::ALL)
+                let Some((surface, surface_location)) =
+                    layer.surface_under(layer_position, WindowSurfaceType::ALL)
                 else {
                     continue;
                 };
@@ -135,9 +143,13 @@ impl Ferese {
             return;
         }
 
-        send_frames_surface_tree(surface, output, self.start_time.elapsed(), None, |surface, _| {
-            eligible.get(&surface.into()).cloned()
-        });
+        send_frames_surface_tree(
+            surface,
+            output,
+            self.start_time.elapsed(),
+            None,
+            |surface, _| eligible.get(&surface.into()).cloned(),
+        );
     }
 
     pub fn window_under_visual(&self, position: Point<f64, Logical>) -> Option<Window> {
@@ -165,9 +177,13 @@ impl Ferese {
             }
 
             if !overview_active {
-                let (source_x, source_y) = self.inverse_presented_window_point(*id, position.x, position.y)?;
-                let source_point = Point::from((source_x, source_y)) + window.geometry().loc.to_f64();
-                if window.surface_under(source_point, WindowSurfaceType::ALL).is_none()
+                let (source_x, source_y) =
+                    self.inverse_presented_window_point(*id, position.x, position.y)?;
+                let source_point =
+                    Point::from((source_x, source_y)) + window.geometry().loc.to_f64();
+                if window
+                    .surface_under(source_point, WindowSurfaceType::ALL)
+                    .is_none()
                     && !self.window_fills_visual_bounds(*id, workspace)
                 {
                     return None;
@@ -184,9 +200,13 @@ impl Ferese {
         }
     }
 
-    pub(super) fn workspace_under_pointer(&self, position: Point<f64, Logical>) -> Option<WorkspaceId> {
+    pub(super) fn workspace_under_pointer(
+        &self,
+        position: Point<f64, Logical>,
+    ) -> Option<WorkspaceId> {
         let output = self.space.output_under(position).next()?;
-        self.output_workspaces.active_workspace(self.output_id(output)?)
+        self.output_workspaces
+            .active_workspace(self.output_id(output)?)
     }
 
     pub(crate) fn window_belongs_to_output(&self, window: WindowId, output: &Output) -> bool {
@@ -194,7 +214,8 @@ impl Ferese {
             return false;
         };
         if self.focus_cycle.is_some() && self.overview.is_active() {
-            return self.overview.has_window_preview(window) && self.focus_preview_output(window) == Some(output_id);
+            return self.overview.has_window_preview(window)
+                && self.focus_preview_output(window) == Some(output_id);
         }
         let workspace = self.workspaces.workspace_for_window(window);
         workspace == self.output_workspaces.active_workspace(output_id)
@@ -227,7 +248,10 @@ impl Ferese {
         ))
     }
 
-    pub(crate) fn visual_rect_for_window(&self, window: &Window) -> Option<Rectangle<i32, Logical>> {
+    pub(crate) fn visual_rect_for_window(
+        &self,
+        window: &Window,
+    ) -> Option<Rectangle<i32, Logical>> {
         let id = self.windows.ids().get(window)?;
         let rect = self.presented_window_rect(*id)?;
         let size = ClientSize::from_rect(rect);

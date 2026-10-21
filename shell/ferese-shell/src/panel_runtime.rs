@@ -1,7 +1,9 @@
 use std::time::{Duration, Instant};
 
 use cosmic::app::Task;
-use cosmic::iced::platform_specific::shell::commands::layer_surface::{set_exclusive_zone, set_input_zone, set_size};
+use cosmic::iced::platform_specific::shell::commands::layer_surface::{
+    set_exclusive_zone, set_input_zone, set_size,
+};
 use cosmic::iced::window;
 use ferese_panel::adaptive::{Adaptive, WindowState};
 use ferese_panel::{Panel, PanelStyle};
@@ -135,10 +137,11 @@ impl FereseShell {
         let mut tasks = Vec::new();
         let mut changed = Vec::new();
         for entry in &mut self.outputs {
-            if entry
-                .runtime
-                .observe(&self.config.panels[0], &self.snapshot, entry.name.as_deref())
-            {
+            if entry.runtime.observe(
+                &self.config.panels[0],
+                &self.snapshot,
+                entry.name.as_deref(),
+            ) {
                 let panel = entry.runtime.panel(&self.config.panels[0]);
                 let geometry = panel.resolved_geometry();
                 let output = self
@@ -150,7 +153,11 @@ impl FereseShell {
                 entry.bar_regions.clear();
                 entry.panel_resolution = None;
                 tasks.push(set_input_zone(entry.bar, Some(Vec::new())));
-                tasks.push(set_size(entry.bar, None, Some(geometry.height.round() as u32)));
+                tasks.push(set_size(
+                    entry.bar,
+                    None,
+                    Some(geometry.height.round() as u32),
+                ));
                 tasks.push(set_exclusive_zone(
                     entry.bar,
                     panel.exclusive_zone(output_bar_hidden(&self.snapshot, output)),
@@ -171,7 +178,11 @@ impl FereseShell {
         for bar in changed {
             tasks.push(self.update_panel_margin(bar, true));
             tasks.push(self.dismiss_workspace_tooltip_for_bar(bar));
-            if self.menu.as_ref().is_some_and(|menu| menu.anchor.parent == bar) {
+            if self
+                .menu
+                .as_ref()
+                .is_some_and(|menu| menu.anchor.parent == bar)
+            {
                 tasks.push(self.destroy_menu());
             }
         }

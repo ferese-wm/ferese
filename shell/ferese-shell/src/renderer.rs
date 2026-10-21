@@ -45,7 +45,11 @@ mod tests {
         command.env("ICED_BACKEND", "tiny-skia,wgpu");
         apply_app_backend(&mut command, None);
         assert_eq!(
-            command.get_envs().find(|(key, _)| *key == "ICED_BACKEND").unwrap().1,
+            command
+                .get_envs()
+                .find(|(key, _)| *key == "ICED_BACKEND")
+                .unwrap()
+                .1,
             None
         );
     }
@@ -56,7 +60,11 @@ mod tests {
             let mut command = Command::new("ferese-settings");
             apply_app_backend(&mut command, Some(OsStr::new(backend)));
             assert_eq!(
-                command.get_envs().find(|(key, _)| *key == "ICED_BACKEND").unwrap().1,
+                command
+                    .get_envs()
+                    .find(|(key, _)| *key == "ICED_BACKEND")
+                    .unwrap()
+                    .1,
                 Some(OsStr::new(backend))
             );
         }

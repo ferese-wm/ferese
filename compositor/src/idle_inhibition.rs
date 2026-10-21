@@ -77,16 +77,21 @@ fn player_window(player: &media::Player, windows: &[AppWindow<'_>]) -> Option<Wi
 impl Ferese {
     pub(crate) fn refresh_idle_inhibition(&mut self) {
         let playing = self.media_players.iter().any(|player| player.playing);
-        let has_rules = self.window_rules.iter().any(|rule| rule.idle_policy().is_some());
+        let has_rules = self
+            .window_rules
+            .iter()
+            .any(|rule| rule.idle_policy().is_some());
         let selected = self
             .window_rules
             .iter()
             .any(|rule| rule.idle_policy().is_some_and(|mode| mode != Mode::None));
         let playback_policy = self.idle_inhibit.fullscreen_playback
-            || self
-                .window_rules
-                .iter()
-                .any(|rule| matches!(rule.idle_policy(), Some(Mode::Playing | Mode::FullscreenPlaying)));
+            || self.window_rules.iter().any(|rule| {
+                matches!(
+                    rule.idle_policy(),
+                    Some(Mode::Playing | Mode::FullscreenPlaying)
+                )
+            });
         let automatic = (playback_policy && playing) || selected;
         let eligible = if self.idle_inhibitors.is_empty() && !automatic {
             Default::default()
@@ -195,9 +200,15 @@ mod tests {
             "idle-inhibit { fullscreen-playback #false; }\nwindow-rule app-id=\"player\" idle-inhibit=\"visible\"\nwindow-rule app-id=\"player\" title=\"Private\" idle-inhibit=\"none\"\n",
         ).unwrap().runtime_config().unwrap();
         assert!(!config.idle_inhibit.fullscreen_playback);
-        let visible = crate::window_rules::resolve(&config.window_rules, Some("player"), None, false);
+        let visible =
+            crate::window_rules::resolve(&config.window_rules, Some("player"), None, false);
         assert_eq!(visible.idle_inhibit, Some(Mode::Visible));
-        let none = crate::window_rules::resolve(&config.window_rules, Some("player"), Some("Private"), false);
+        let none = crate::window_rules::resolve(
+            &config.window_rules,
+            Some("player"),
+            Some("Private"),
+            false,
+        );
         assert_eq!(none.idle_inhibit, Some(Mode::None));
         assert_eq!(crate::window_rules::live_result(visible, none, false), None);
         for mode in ["playing", "fullscreen", "fullscreen-playing", "none"] {
@@ -211,9 +222,15 @@ mod tests {
             );
         }
         assert!(
-            crate::config::Config::parse_source("window-rule app-id=\"player\" idle-inhibit=\"alwayss\"\n").is_err()
+            crate::config::Config::parse_source(
+                "window-rule app-id=\"player\" idle-inhibit=\"alwayss\"\n"
+            )
+            .is_err()
         );
-        assert!(crate::config::Config::parse_source("idle-inhibit { fullscreen-playback \"yes\"; }\n").is_err());
+        assert!(
+            crate::config::Config::parse_source("idle-inhibit { fullscreen-playback \"yes\"; }\n")
+                .is_err()
+        );
     }
 
     #[test]
@@ -236,7 +253,10 @@ mod tests {
             pid: Some(99),
             app_id: "Player.desktop",
         };
-        assert_eq!(player_window(&player, &[window, unrelated]), Some(window.id));
+        assert_eq!(
+            player_window(&player, &[window, unrelated]),
+            Some(window.id)
+        );
         assert_eq!(player_window(&player, &[unrelated]), Some(unrelated.id));
         assert_eq!(player_window(&player, &[]), None);
         assert_eq!(

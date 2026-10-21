@@ -113,8 +113,9 @@ fn encode_png(canvas: &Canvas) -> Result<Vec<u8>, String> {
     if width == 0 || height == 0 {
         return Err("Screenshot is empty".into());
     }
-    let image = image::ImageBuffer::<image::Rgba<u8>, _>::from_raw(width, height, canvas.pixels.as_slice())
-        .ok_or("Screenshot buffer does not match its dimensions")?;
+    let image =
+        image::ImageBuffer::<image::Rgba<u8>, _>::from_raw(width, height, canvas.pixels.as_slice())
+            .ok_or("Screenshot buffer does not match its dimensions")?;
 
     let mut out = Vec::new();
     let encoder = image::codecs::png::PngEncoder::new_with_quality(
@@ -122,8 +123,14 @@ fn encode_png(canvas: &Canvas) -> Result<Vec<u8>, String> {
         image::codecs::png::CompressionType::Fast,
         image::codecs::png::FilterType::Adaptive,
     );
-    image::ImageEncoder::write_image(encoder, image.as_raw(), width, height, image::ExtendedColorType::Rgba8)
-        .map_err(|error| format!("Could not encode screenshot: {error}"))?;
+    image::ImageEncoder::write_image(
+        encoder,
+        image.as_raw(),
+        width,
+        height,
+        image::ExtendedColorType::Rgba8,
+    )
+    .map_err(|error| format!("Could not encode screenshot: {error}"))?;
     tracing::debug!(encoded = out.len(), "encoded screenshot");
     Ok(out)
 }
@@ -178,8 +185,8 @@ fn write_private_file_in(
 }
 
 fn private_directory() -> Result<PathBuf, String> {
-    let runtime =
-        std::env::var_os("XDG_RUNTIME_DIR").ok_or("XDG_RUNTIME_DIR is not set, so screenshots cannot be staged")?;
+    let runtime = std::env::var_os("XDG_RUNTIME_DIR")
+        .ok_or("XDG_RUNTIME_DIR is not set, so screenshots cannot be staged")?;
     let root = PathBuf::from(runtime);
     let directory = root.join("ferese-screenshots");
     match fs::symlink_metadata(&directory) {
@@ -194,7 +201,9 @@ fn private_directory() -> Result<PathBuf, String> {
         }
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             fs::create_dir(&directory)
-                .and_then(|()| fs::set_permissions(&directory, fs::Permissions::from_mode(DIR_MODE)))
+                .and_then(|()| {
+                    fs::set_permissions(&directory, fs::Permissions::from_mode(DIR_MODE))
+                })
                 .map_err(|error| format!("Could not create screenshot directory: {error}"))?;
         }
         Err(error) => return Err(format!("Could not inspect screenshot directory: {error}")),
@@ -248,7 +257,11 @@ mod tests {
             .expect("decodes back")
             .to_rgba8();
         assert_eq!(decoded.dimensions(), (4, 3));
-        assert_eq!(decoded.as_raw(), &canvas.pixels, "encoding changed the pixel data");
+        assert_eq!(
+            decoded.as_raw(),
+            &canvas.pixels,
+            "encoding changed the pixel data"
+        );
         // The opaque alpha we force is preserved through the round trip.
         assert_eq!(decoded.get_pixel(0, 0)[3], 255);
     }
@@ -279,7 +292,10 @@ mod tests {
         let path = write_private_file(&png).expect("staged");
         use std::os::unix::fs::PermissionsExt;
         let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
-        assert_eq!(mode, FILE_MODE, "staged screenshots are not group/world readable");
+        assert_eq!(
+            mode, FILE_MODE,
+            "staged screenshots are not group/world readable"
+        );
         fs::remove_file(&path).unwrap();
     }
 
@@ -293,7 +309,10 @@ mod tests {
         fs::write(&other, b"not a screenshot").unwrap();
 
         sweep_stale_files();
-        assert!(fresh.exists(), "a freshly staged screenshot is still in use");
+        assert!(
+            fresh.exists(),
+            "a freshly staged screenshot is still in use"
+        );
         assert!(other.exists(), "unrelated files are left alone");
 
         fs::remove_file(&fresh).unwrap();

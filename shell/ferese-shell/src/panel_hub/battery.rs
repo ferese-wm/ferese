@@ -26,7 +26,10 @@ impl FereseShell {
             .padding([0, 3])
             .width(WIDTH as f32)
             .height(28)
-            .on_press(cosmic::Action::App(Message::HubOpen(id, status_ui::Menu::Battery))),
+            .on_press(cosmic::Action::App(Message::HubOpen(
+                id,
+                status_ui::Menu::Battery,
+            ))),
             foreground,
             active,
             opacity,

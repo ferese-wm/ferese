@@ -6,7 +6,11 @@ use smithay::backend::allocator::Allocator;
 use smithay::backend::drm::exporter::{ExportBuffer, ExportFramebuffer};
 use smithay::reexports::drm::control::{AtomicCommitFlags, ResourceHandle, atomic::AtomicModeReq};
 
-fn property<D: ControlDevice, H: ResourceHandle>(drm: &D, handle: H, name: &str) -> io::Result<property::Handle> {
+fn property<D: ControlDevice, H: ResourceHandle>(
+    drm: &D,
+    handle: H,
+    name: &str,
+) -> io::Result<property::Handle> {
     for (property, _) in drm.get_properties(handle)?.iter() {
         if drm.get_property(*property)?.name().to_bytes() == name.as_bytes() {
             return Ok(*property);
@@ -35,8 +39,9 @@ fn clear_secondary_planes(
     for plane in planes.cursor.iter().chain(&planes.overlay) {
         let properties = drm.get_properties(plane.handle)?;
         let owned = properties.iter().any(|(handle, value)| {
-            drm.get_property(*handle)
-                .is_ok_and(|info| info.name().to_bytes() == b"CRTC_ID" && *value == u32::from(crtc) as u64)
+            drm.get_property(*handle).is_ok_and(|info| {
+                info.name().to_bytes() == b"CRTC_ID" && *value == u32::from(crtc) as u64
+            })
         });
         if owned {
             add(drm, request, plane.handle, "FB_ID", 0)?;
@@ -59,12 +64,14 @@ impl Drop for Blobs {
     }
 }
 
-pub(super) fn validate_device(device: &DirectDevice, scan: &OutputScan) -> Result<(), Box<dyn Error>> {
+pub(super) fn validate_device(
+    device: &DirectDevice,
+    scan: &OutputScan,
+) -> Result<(), Box<dyn Error>> {
     if scan.selections.iter().all(|selection| {
-        device
-            .outputs
-            .get(&selection.crtc)
-            .is_some_and(|output| output.connector == selection.connector.handle() && output.mode == selection.mode)
+        device.outputs.get(&selection.crtc).is_some_and(|output| {
+            output.connector == selection.connector.handle() && output.mode == selection.mode
+        })
     }) && scan.selections.len() == device.outputs.len()
     {
         return Ok(());
@@ -82,7 +89,10 @@ pub(super) fn validate_device(device: &DirectDevice, scan: &OutputScan) -> Resul
     };
     let mut buffers = Vec::new();
     let mut framebuffers = Vec::new();
-    let mut allocator = GbmAllocator::new(device.gbm.clone(), GbmBufferFlags::RENDERING | GbmBufferFlags::SCANOUT);
+    let mut allocator = GbmAllocator::new(
+        device.gbm.clone(),
+        GbmBufferFlags::RENDERING | GbmBufferFlags::SCANOUT,
+    );
     let exporter = GbmFramebufferExporter::new(device.gbm.clone(), Some(device.render_node).into());
     let mut used_planes = HashSet::new();
     let desired_crtcs = scan
@@ -151,16 +161,33 @@ pub(super) fn validate_device(device: &DirectDevice, scan: &OutputScan) -> Resul
                 Fourcc::Argb8888 | Fourcc::Abgr8888 | Fourcc::Xrgb8888 | Fourcc::Xbgr8888
             )
         }) {
-            if let Ok(buffer) = allocator.create_buffer(width.into(), height.into(), format.code, &[format.modifier])
-                && let Ok(Some(fb)) = exporter.add_framebuffer(drm.device_fd(), ExportBuffer::Allocator(&buffer), false)
+            if let Ok(buffer) = allocator.create_buffer(
+                width.into(),
+                height.into(),
+                format.code,
+                &[format.modifier],
+            ) && let Ok(Some(fb)) =
+                exporter.add_framebuffer(drm.device_fd(), ExportBuffer::Allocator(&buffer), false)
             {
                 allocated = Some((buffer, fb));
                 break;
             }
         }
         let (buffer, fb) = allocated.ok_or("unable to allocate a DRM validation buffer")?;
-        add(drm, &mut request, primary, "FB_ID", u32::from(*fb.as_ref()) as u64)?;
-        add(drm, &mut request, primary, "CRTC_ID", u32::from(selection.crtc) as u64)?;
+        add(
+            drm,
+            &mut request,
+            primary,
+            "FB_ID",
+            u32::from(*fb.as_ref()) as u64,
+        )?;
+        add(
+            drm,
+            &mut request,
+            primary,
+            "CRTC_ID",
+            u32::from(selection.crtc) as u64,
+        )?;
         for (name, value) in [
             ("SRC_X", 0),
             ("SRC_Y", 0),
@@ -176,7 +203,10 @@ pub(super) fn validate_device(device: &DirectDevice, scan: &OutputScan) -> Resul
         buffers.push(buffer);
         framebuffers.push(fb);
     }
-    drm.atomic_commit(AtomicCommitFlags::TEST_ONLY | AtomicCommitFlags::ALLOW_MODESET, request)?;
+    drm.atomic_commit(
+        AtomicCommitFlags::TEST_ONLY | AtomicCommitFlags::ALLOW_MODESET,
+        request,
+    )?;
     Ok(())
 }
 
@@ -348,13 +378,19 @@ impl crate::output_transaction::HardwareTransaction for DeviceTransaction<'_> {
             let previous = self.device.outputs.get_mut(&crtc).unwrap();
             previous.surface = replacement.surface;
             previous.dmabuf_feedback = replacement.dmabuf_feedback;
-            previous.surface.commit_frame().map_err(|error| error.to_string())?;
+            previous
+                .surface
+                .commit_frame()
+                .map_err(|error| error.to_string())?;
         }
         let Some(output) = self.device.outputs.get_mut(&crtc) else {
             return Ok(());
         };
         output.dmabuf_feedback.invalidate();
-        output.surface.reset_state().map_err(|error| error.to_string())?;
+        output
+            .surface
+            .reset_state()
+            .map_err(|error| error.to_string())?;
         let restored = output
             .surface
             .set_connectors(&[output.connector])
@@ -368,9 +404,16 @@ impl crate::output_transaction::HardwareTransaction for DeviceTransaction<'_> {
                 )
                 .map_err(|error| error.to_string())
             })
-            .and_then(|()| output.surface.commit_frame().map_err(|error| error.to_string()));
+            .and_then(|()| {
+                output
+                    .surface
+                    .commit_frame()
+                    .map_err(|error| error.to_string())
+            });
         self.state.session_lock.output_added(&output.output);
-        self.state.display_presentation.remove_output(&output.output);
+        self.state
+            .display_presentation
+            .remove_output(&output.output);
         self.state
             .desktop_transition
             .as_mut()
@@ -378,7 +421,9 @@ impl crate::output_transaction::HardwareTransaction for DeviceTransaction<'_> {
             .redraw
             .insert(output.output.clone());
         output.lock_frame_pending = false;
-        output.surface.set_output_mode_source((&output.output).into());
+        output
+            .surface
+            .set_output_mode_source((&output.output).into());
         cancel_output_timers(&self.state.loop_handle, output);
         output.frame_pending = false;
         restored
@@ -447,8 +492,12 @@ pub(super) fn apply_device(
     }
     for crtc in &changed {
         let selection = &selections[crtc];
-        let mut output = staged.remove(crtc).or_else(|| device.outputs.remove(crtc)).unwrap();
-        if output.connector != selection.connector.handle() || output.identity != selection.identity {
+        let mut output = staged
+            .remove(crtc)
+            .or_else(|| device.outputs.remove(crtc))
+            .unwrap();
+        if output.connector != selection.connector.handle() || output.identity != selection.identity
+        {
             retire(state, &mut output, node, *crtc);
             let (handle, _) = create_output(
                 state,
@@ -482,7 +531,9 @@ pub(super) fn apply_device(
             state.display_presentation.remove_output(&output.output);
         }
         output.lock_frame_pending = false;
-        output.surface.set_output_mode_source((&output.output).into());
+        output
+            .surface
+            .set_output_mode_source((&output.output).into());
         cancel_output_timers(&state.loop_handle, &mut output);
         output.frame_pending = false;
         output.primary_commit = None;
@@ -513,7 +564,11 @@ pub(super) fn update_applied_info(device: &mut DirectDevice) {
     for info in &mut device.connected_outputs {
         info.enabled = false;
         info.current_mode = None;
-        if let Some(output) = device.outputs.values().find(|output| output.identity == info.identity) {
+        if let Some(output) = device
+            .outputs
+            .values()
+            .find(|output| output.identity == info.identity)
+        {
             info.enabled = true;
             info.current_mode = Some(connected_mode_info(output.mode));
             info.scale = output.settings.scale;
@@ -568,7 +623,12 @@ pub(super) fn recover_last_output(state: &mut Ferese) {
         .unwrap()
         .devices
         .values()
-        .any(|device| device.outputs.values().any(|output| output.mirror_source.is_none()))
+        .any(|device| {
+            device
+                .outputs
+                .values()
+                .any(|output| output.mirror_source.is_none())
+        })
     {
         return;
     }
@@ -604,7 +664,11 @@ pub(super) fn recover_last_output(state: &mut Ferese) {
         let nodes = backend
             .devices
             .iter()
-            .filter(|(_, device)| candidate.key.starts_with(&format!("{}/", drm_device_key(&device.drm))))
+            .filter(|(_, device)| {
+                candidate
+                    .key
+                    .starts_with(&format!("{}/", drm_device_key(&device.drm)))
+            })
             .map(|(node, _)| *node)
             .collect::<Vec<_>>();
         if validate_desired_outputs(state).is_ok() {
@@ -617,7 +681,12 @@ pub(super) fn recover_last_output(state: &mut Ferese) {
                 .unwrap()
                 .devices
                 .values()
-                .any(|device| device.outputs.values().any(|output| output.mirror_source.is_none()))
+                .any(|device| {
+                    device
+                        .outputs
+                        .values()
+                        .any(|output| output.mirror_source.is_none())
+                })
             {
                 remember_applied_configuration(state);
                 state.direct_backend.as_mut().unwrap().output_error = original_error;

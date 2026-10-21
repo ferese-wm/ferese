@@ -78,17 +78,18 @@ impl Schedule {
             AutoSource::System => Ok((
                 context.system.unwrap_or(Appearance::Dark),
                 None,
-                context
-                    .system
-                    .is_none()
-                    .then(|| "System appearance is unavailable. Using Dark until it becomes available.".into()),
+                context.system.is_none().then(|| {
+                    "System appearance is unavailable. Using Dark until it becomes available."
+                        .into()
+                }),
             )),
             AutoSource::Schedule => self
                 .boundaries(now, zone)
                 .map(|(appearance, next)| (appearance, Some(next), None)),
-            AutoSource::SunriseSunset => {
-                Err("Sunrise/sunset is not available yet; choose Follow system or Custom schedule.".into())
-            }
+            AutoSource::SunriseSunset => Err(
+                "Sunrise/sunset is not available yet; choose Follow system or Custom schedule."
+                    .into(),
+            ),
         }
     }
 
@@ -105,7 +106,11 @@ impl Schedule {
         }
     }
 
-    pub fn boundaries(&self, now: Timestamp, zone: &TimeZone) -> Result<(Appearance, Timestamp), String> {
+    pub fn boundaries(
+        &self,
+        now: Timestamp,
+        zone: &TimeZone,
+    ) -> Result<(Appearance, Timestamp), String> {
         let parse = |s: &str| -> Result<Time, String> {
             if s.len() != 5 || s.as_bytes()[2] != b':' {
                 return Err("theme schedule times must use HH:MM".into());
@@ -171,7 +176,9 @@ pub struct Policy {
     pub accent: Option<String>,
 }
 
-fn deserialize_light_selection<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Selection, D::Error> {
+fn deserialize_light_selection<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Selection, D::Error> {
     let mut value = Value::deserialize(deserializer)?;
     if let Some(object) = value.as_object_mut() {
         object.entry("preset").or_insert(json!("ferese-blue-light"));
@@ -264,11 +271,12 @@ pub fn resolve_with_context(
     } else {
         TimeZone::UTC
     };
-    let (scheduled, next, auto_note) = if policy.mode == Mode::Auto || policy.schedule.source == AutoSource::Schedule {
-        policy.schedule.resolve(now, &zone, context)?
-    } else {
-        (Appearance::Dark, None, None)
-    };
+    let (scheduled, next, auto_note) =
+        if policy.mode == Mode::Auto || policy.schedule.source == AutoSource::Schedule {
+            policy.schedule.resolve(now, &zone, context)?
+        } else {
+            (Appearance::Dark, None, None)
+        };
     let appearance = match policy.mode {
         Mode::Light => Appearance::Light,
         Mode::Dark => Appearance::Dark,
@@ -300,14 +308,22 @@ pub fn resolve_with_context(
         imported.insert(id.clone(), variants);
     }
     let split = policy.split.unwrap_or_else(|| {
-        crate::families::family_id(&policy.light.preset) != crate::families::family_id(&policy.dark.preset)
+        crate::families::family_id(&policy.light.preset)
+            != crate::families::family_id(&policy.dark.preset)
     });
     let single = policy
         .family
         .as_deref()
         .unwrap_or_else(|| crate::families::family_id(&policy.dark.preset));
-    let mut fallback_note = if policy.mode == Mode::Auto { auto_note } else { None };
-    for (kind, selection) in [(Appearance::Light, &policy.light), (Appearance::Dark, &policy.dark)] {
+    let mut fallback_note = if policy.mode == Mode::Auto {
+        auto_note
+    } else {
+        None
+    };
+    for (kind, selection) in [
+        (Appearance::Light, &policy.light),
+        (Appearance::Dark, &policy.dark),
+    ] {
         let family_id = if split {
             selection
                 .family
@@ -316,15 +332,16 @@ pub fn resolve_with_context(
         } else {
             single
         };
-        let variant = imported
-            .get(family_id)
-            .and_then(|pair: &(Option<Tokens>, Option<Tokens>)| {
-                if kind == Appearance::Light {
-                    pair.0.clone()
-                } else {
-                    pair.1.clone()
-                }
-            });
+        let variant =
+            imported
+                .get(family_id)
+                .and_then(|pair: &(Option<Tokens>, Option<Tokens>)| {
+                    if kind == Appearance::Light {
+                        pair.0.clone()
+                    } else {
+                        pair.1.clone()
+                    }
+                });
         let custom_variant = variant.is_some();
         let mut tokens = if let Some(tokens) = variant {
             tokens
@@ -332,7 +349,10 @@ pub fn resolve_with_context(
             preset(id, kind)?
         } else {
             if !imported.contains_key(family_id)
-                && !matches!(family_id, "dracula" | "monochrome" | "monokai" | "ayu-light")
+                && !matches!(
+                    family_id,
+                    "dracula" | "monochrome" | "monokai" | "ayu-light"
+                )
             {
                 return Err(format!("Unknown theme family: {family_id}"));
             }
@@ -343,7 +363,11 @@ pub fn resolve_with_context(
                     .map_or(family_id, |family| family.name.as_str());
                 fallback_note = Some(format!(
                     "{name} has no {} variant. Using Ferese Blue for this appearance.",
-                    if kind == Appearance::Light { "light" } else { "dark" }
+                    if kind == Appearance::Light {
+                        "light"
+                    } else {
+                        "dark"
+                    }
                 ));
             }
             preset(
@@ -358,8 +382,8 @@ pub fn resolve_with_context(
         if !families.iter().any(|family| family.id == family_id) {
             let light = crate::families::variant(family_id, Appearance::Light)
                 .and_then(|id| preset(id, Appearance::Light).ok());
-            let dark =
-                crate::families::variant(family_id, Appearance::Dark).and_then(|id| preset(id, Appearance::Dark).ok());
+            let dark = crate::families::variant(family_id, Appearance::Dark)
+                .and_then(|id| preset(id, Appearance::Dark).ok());
             families.push(crate::families::Family {
                 id: family_id.into(),
                 name: family_id.into(),
@@ -372,12 +396,16 @@ pub fn resolve_with_context(
         let authored_accent = tokens.colors.accent.clone();
         let preset_end = (!custom_variant)
             .then(|| {
-                let id = crate::families::variant(family_id, kind).unwrap_or(if kind == Appearance::Light {
-                    "ferese-blue-light"
-                } else {
-                    "ferese-blue"
-                });
-                crate::presets::PRESETS.iter().find(|preset| preset.id == id)
+                let id = crate::families::variant(family_id, kind).unwrap_or(
+                    if kind == Appearance::Light {
+                        "ferese-blue-light"
+                    } else {
+                        "ferese-blue"
+                    },
+                );
+                crate::presets::PRESETS
+                    .iter()
+                    .find(|preset| preset.id == id)
             })
             .flatten()
             .map(|preset| preset.gradient_end)
@@ -402,7 +430,11 @@ pub fn resolve_with_context(
             let layer = Document::parse(&source).map_err(|e| format!("{}: {e}", path.display()))?;
             let layer = layer.get("theme").unwrap_or(layer.value());
             for role in ["surface_raised", "application_background"] {
-                if layer.get("colors").and_then(|colors| colors.get(role)).is_some() {
+                if layer
+                    .get("colors")
+                    .and_then(|colors| colors.get(role))
+                    .is_some()
+                {
                     explicit_surfaces.insert(role);
                 }
             }
@@ -419,7 +451,11 @@ pub fn resolve_with_context(
         tokens = serde_json::from_value(value).map_err(|e| e.to_string())?;
         for layer in [&root, &Value::Object(overrides.clone())] {
             for role in ["surface_raised", "application_background"] {
-                if layer.get("colors").and_then(|colors| colors.get(role)).is_some() {
+                if layer
+                    .get("colors")
+                    .and_then(|colors| colors.get(role))
+                    .is_some()
+                {
                     explicit_surfaces.insert(role);
                 }
             }
@@ -430,25 +466,35 @@ pub fn resolve_with_context(
         } else {
             [1.; 4]
         };
-        if tokens.colors.surface_base != authored_base && !explicit_surfaces.contains("surface_raised") {
+        if tokens.colors.surface_base != authored_base
+            && !explicit_surfaces.contains("surface_raised")
+        {
             tokens.colors.surface_raised = hex(blend(base, shade, 0.055));
         }
-        if tokens.colors.surface_base != authored_base && !explicit_surfaces.contains("application_background") {
+        if tokens.colors.surface_base != authored_base
+            && !explicit_surfaces.contains("application_background")
+        {
             tokens.colors.application_background = hex(blend(base, shade, 0.025));
         }
         if let Some(accent) = &policy.accent {
             tokens.colors.accent = accent.clone();
         }
-        for path in [&mut tokens.background.path, &mut tokens.background.lock_path]
-            .into_iter()
-            .flatten()
+        for path in [
+            &mut tokens.background.path,
+            &mut tokens.background.lock_path,
+        ]
+        .into_iter()
+        .flatten()
         {
             *path = theme_path(directory, path);
         }
         validate(&tokens)?;
         let requested_accent = tokens.colors.accent.clone();
         transform(&mut tokens, &policy.accessibility, &mut warnings);
-        resolve_gradients(&mut tokens, preset_end.filter(|_| requested_accent == authored_accent));
+        resolve_gradients(
+            &mut tokens,
+            preset_end.filter(|_| requested_accent == authored_accent),
+        );
         let theme = ResolvedTheme {
             appearance: kind,
             tokens,
@@ -471,7 +517,11 @@ pub fn resolve_with_context(
         theme: selected.expect("selected appearance"),
         warnings,
         files: all_files,
-        next_transition: if policy.mode == Mode::Auto { next } else { None },
+        next_transition: if policy.mode == Mode::Auto {
+            next
+        } else {
+            None
+        },
         families,
         fallback_note,
     })
@@ -513,7 +563,12 @@ pub fn validate_overrides(document: &Document) -> Result<(), String> {
     let mut tokens = token_value(&default_tokens())?;
     merge(&mut tokens, root, "", true)?;
     for selection in [&policy.light, &policy.dark] {
-        merge(&mut tokens, &Value::Object(selection.overrides.clone()), "", false)?;
+        merge(
+            &mut tokens,
+            &Value::Object(selection.overrides.clone()),
+            "",
+            false,
+        )?;
     }
     Ok(())
 }
@@ -562,7 +617,10 @@ fn merge(target: &mut Value, layer: &Value, prefix: &str, inline: bool) -> Resul
 }
 
 pub fn preset(name: &str, appearance: Appearance) -> Result<Tokens, String> {
-    if let Some(preset) = crate::presets::PRESETS.iter().find(|preset| preset.id == name) {
+    if let Some(preset) = crate::presets::PRESETS
+        .iter()
+        .find(|preset| preset.id == name)
+    {
         if preset.appearance != appearance {
             return Err(format!("Preset {name} does not support {appearance:?}"));
         }
@@ -640,7 +698,10 @@ pub fn authored_warnings(tokens: &Tokens) -> Vec<String> {
     let surfaces = [
         ("surface-base", &tokens.colors.surface_base),
         ("surface-raised", &tokens.colors.surface_raised),
-        ("application-background", &tokens.colors.application_background),
+        (
+            "application-background",
+            &tokens.colors.application_background,
+        ),
     ];
     let check = |foreground: &str, background: &str, minimum: f64| {
         let foreground = rgba(foreground).unwrap();
@@ -685,7 +746,9 @@ fn validate(tokens: &Tokens) -> Result<(), String> {
             }
             Value::Number(n) => {
                 let n = n.as_f64().ok_or("invalid theme number")?;
-                if !n.is_finite() || (path != ".shadow.soft.offset_y" && !path.ends_with(".angle") && n < 0.) {
+                if !n.is_finite()
+                    || (path != ".shadow.soft.offset_y" && !path.ends_with(".angle") && n < 0.)
+                {
                     return Err(format!("Invalid theme value {path}"));
                 }
                 if (path.ends_with("opacity") || path.ends_with("tint_strength")) && n > 1. {
@@ -735,7 +798,9 @@ fn transform(t: &mut Tokens, accessibility: &Accessibility, warnings: &mut Vec<S
             .fold(f64::INFINITY, f64::min)
     };
     let choose = |preserve_foreground: bool| {
-        let acceptable = |color| score(color) >= 3. && (!preserve_foreground || contrast(preferred, color) >= 4.5);
+        let acceptable = |color| {
+            score(color) >= 3. && (!preserve_foreground || contrast(preferred, color) >= 4.5)
+        };
         if acceptable(requested) {
             return Some(requested);
         }
@@ -759,7 +824,11 @@ fn transform(t: &mut Tokens, accessibility: &Accessibility, warnings: &mut Vec<S
     });
     t.colors.accent = hex(adjusted);
     t.colors.on_accent = hex(readable(preferred, adjusted, 4.5));
-    let minimum = if accessibility.increase_contrast { 7. } else { 4.5 };
+    let minimum = if accessibility.increase_contrast {
+        7.
+    } else {
+        4.5
+    };
     let body = [surface, backgrounds[2], backgrounds[3]];
     let bar = [backgrounds[1]; 3];
     for (label, color, backgrounds) in [
@@ -784,7 +853,11 @@ fn transform(t: &mut Tokens, accessibility: &Accessibility, warnings: &mut Vec<S
         }
     }
     if accessibility.increase_contrast {
-        t.colors.border = hex(readable_across(rgba(&t.colors.border).unwrap(), &backgrounds, 3.));
+        t.colors.border = hex(readable_across(
+            rgba(&t.colors.border).unwrap(),
+            &backgrounds,
+            3.,
+        ));
         if backgrounds
             .iter()
             .any(|background| contrast(rgba(&t.colors.border).unwrap(), *background) < 3.)
@@ -818,7 +891,12 @@ fn resolve_gradients(tokens: &mut Tokens, preset_end: Option<&str>) {
         rgba(&tokens.surface.bar.background).unwrap(),
     ];
     for (paint, color, endpoint, focus) in [
-        (&mut tokens.focus_ring, &tokens.colors.accent, preset_end, true),
+        (
+            &mut tokens.focus_ring,
+            &tokens.colors.accent,
+            preset_end,
+            true,
+        ),
         (&mut tokens.border, &tokens.colors.border, None, false),
     ] {
         if paint.style == PaintStyle::Solid {
@@ -865,7 +943,8 @@ fn resolve_material_contrast(tokens: &mut Tokens, minimum: f64) {
         .map(|step| initial + (1. - initial) * f64::from(step) / 100.)
         .find(|opacity| {
             let bounds = material_bounds(surface, *opacity);
-            readable(&[bounds[0], bounds[1], raised, app]) && readable(&material_bounds(bar, *opacity))
+            readable(&[bounds[0], bounds[1], raised, app])
+                && readable(&material_bounds(bar, *opacity))
         })
         .unwrap_or(1.0);
     tokens.material.opacity = tokens.material.opacity.max(opacity);
@@ -883,12 +962,20 @@ fn resolve_material_contrast(tokens: &mut Tokens, minimum: f64) {
     }
 }
 
-pub type ImportedFamily = (crate::families::Family, (Option<Tokens>, Option<Tokens>), Vec<String>);
+pub type ImportedFamily = (
+    crate::families::Family,
+    (Option<Tokens>, Option<Tokens>),
+    Vec<String>,
+);
 
 pub fn import_family(id: &str, source: &str) -> Result<ImportedFamily, String> {
     let document = Document::parse(source).map_err(|e| e.to_string())?;
     let root = document.get("theme").unwrap_or(document.value());
-    let name = root.get("name").and_then(Value::as_str).unwrap_or(id).to_owned();
+    let name = root
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or(id)
+        .to_owned();
     let mut variants = [None, None];
     let mut warnings = vec![];
     for (index, (key, appearance)) in [("light", Appearance::Light), ("dark", Appearance::Dark)]
@@ -907,7 +994,11 @@ pub fn import_family(id: &str, source: &str) -> Result<ImportedFamily, String> {
             let mut value = token_value(&base)?;
             merge(&mut value, layer, "", false)?;
             let mut tokens: Tokens = serde_json::from_value(value).map_err(|e| e.to_string())?;
-            if layer.get("colors").and_then(|colors| colors.get("border")).is_none() {
+            if layer
+                .get("colors")
+                .and_then(|colors| colors.get("border"))
+                .is_none()
+            {
                 // A new family without an authored border follows its own foreground,
                 // rather than inheriting the unrelated Ferese Blue border.
                 let mut border = rgba(&tokens.colors.text_primary)?;
@@ -920,9 +1011,16 @@ pub fn import_family(id: &str, source: &str) -> Result<ImportedFamily, String> {
         }
     }
     if variants.iter().all(Option::is_none) {
-        return Err("A theme file must declare a light and/or dark section; partial palettes are allowed.".into());
+        return Err(
+            "A theme file must declare a light and/or dark section; partial palettes are allowed."
+                .into(),
+        );
     }
-    for key in root.as_object().ok_or("Theme file must be a section")?.keys() {
+    for key in root
+        .as_object()
+        .ok_or("Theme file must be a section")?
+        .keys()
+    {
         if !matches!(key.as_str(), "name" | "light" | "dark") {
             return Err(format!("Unknown theme token: {key}"));
         }
@@ -946,9 +1044,12 @@ mod tests {
                 "theme {{ geometry {{ shell-radius {requested}; window-radius 7.25; }} }}"
             ))
             .unwrap();
-            let result = super::resolve(&document, std::path::Path::new("/tmp"), jiff::Timestamp::now(), |_| {
-                Err("unexpected theme file".into())
-            })
+            let result = super::resolve(
+                &document,
+                std::path::Path::new("/tmp"),
+                jiff::Timestamp::now(),
+                |_| Err("unexpected theme file".into()),
+            )
             .unwrap();
             assert_eq!(result.theme.tokens.geometry.shell_radius, expected);
             assert_eq!(result.theme.tokens.geometry.window_radius, 7.25);
@@ -1047,7 +1148,11 @@ mod tests {
                 ];
                 assert_eq!(
                     gradient.to,
-                    hex(readable_across(rgba(preset.gradient_end).unwrap(), &backgrounds, 3.))
+                    hex(readable_across(
+                        rgba(preset.gradient_end).unwrap(),
+                        &backgrounds,
+                        3.
+                    ))
                 );
                 assert!(
                     backgrounds
@@ -1078,8 +1183,10 @@ mod tests {
         assert!(from[0] > from[1] && from[1] > from[2]);
         assert!(to[0] > to[1] && to[1] > to[2]);
 
-        let document =
-            Document::parse("theme { family custom; custom-themes { custom { file \"custom.kdl\"; }; }; }").unwrap();
+        let document = Document::parse(
+            "theme { family custom; custom-themes { custom { file \"custom.kdl\"; }; }; }",
+        )
+        .unwrap();
         let theme = resolve(
             &document,
             Path::new("/config"),
@@ -1118,12 +1225,18 @@ mod tests {
         );
         assert!(theme.tokens.border.gradient.is_none());
 
-        let source = source.replace("family catppuccin", "family catppuccin\nfocus-ring { style solid; }");
+        let source = source.replace(
+            "family catppuccin",
+            "family catppuccin\nfocus-ring { style solid; }",
+        );
         let theme = candidate(&source).unwrap().theme;
         assert!(theme.tokens.focus_ring.gradient.is_none());
         assert_eq!(theme.tokens.focus_ring.style, PaintStyle::Solid);
         assert!(candidate("theme { focus-ring { style rainbow; }; }").is_err());
-        assert!(candidate("theme { focus-ring { gradient { from \"bad\"; to \"#FFFFFF\"; }; }; }").is_err());
+        assert!(
+            candidate("theme { focus-ring { gradient { from \"bad\"; to \"#FFFFFF\"; }; }; }")
+                .is_err()
+        );
     }
 
     #[test]
@@ -1153,7 +1266,13 @@ mod tests {
         assert_eq!(middle.tokens.focus_ring.style, PaintStyle::Auto);
         assert!(middle.tokens.focus_ring.gradient.is_some());
         assert_eq!(from.transition(&to, 1.), to);
-        assert!(to.transition(&from, 0.5).tokens.focus_ring.gradient.is_some());
+        assert!(
+            to.transition(&from, 0.5)
+                .tokens
+                .focus_ring
+                .gradient
+                .is_some()
+        );
     }
 
     #[test]
@@ -1168,20 +1287,39 @@ mod tests {
                 authored_warnings(&tokens)
             );
             let source = match entry.appearance {
-                Appearance::Light => format!("theme {{ mode \"light\"; light {{ preset \"{}\"; }}; }}", entry.id),
-                Appearance::Dark => format!("theme {{ mode \"dark\"; dark {{ preset \"{}\"; }}; }}", entry.id),
+                Appearance::Light => format!(
+                    "theme {{ mode \"light\"; light {{ preset \"{}\"; }}; }}",
+                    entry.id
+                ),
+                Appearance::Dark => format!(
+                    "theme {{ mode \"dark\"; dark {{ preset \"{}\"; }}; }}",
+                    entry.id
+                ),
             };
             let resolved = candidate(&source).unwrap().theme;
             assert_eq!(resolved.tokens.colors.border, tokens.colors.border);
-            assert_eq!(resolved.tokens.colors.surface_raised, tokens.colors.surface_raised);
+            assert_eq!(
+                resolved.tokens.colors.surface_raised,
+                tokens.colors.surface_raised
+            );
             assert_eq!(
                 resolved.tokens.colors.application_background,
                 tokens.colors.application_background
             );
-            assert!(authored_warnings(&resolved.tokens).is_empty(), "{}", entry.id);
+            assert!(
+                authored_warnings(&resolved.tokens).is_empty(),
+                "{}",
+                entry.id
+            );
         }
-        let dark: Vec<_> = PRESETS.iter().filter(|p| p.appearance == Appearance::Dark).collect();
-        let light: Vec<_> = PRESETS.iter().filter(|p| p.appearance == Appearance::Light).collect();
+        let dark: Vec<_> = PRESETS
+            .iter()
+            .filter(|p| p.appearance == Appearance::Dark)
+            .collect();
+        let light: Vec<_> = PRESETS
+            .iter()
+            .filter(|p| p.appearance == Appearance::Light)
+            .collect();
         assert_eq!(dark.len(), 6);
         assert_eq!(light.len(), 6);
         for (dark, light) in dark.iter().zip(light) {
@@ -1209,7 +1347,12 @@ mod tests {
                             entry.id
                         );
                         let result = candidate(&source).unwrap();
-                        assert!(result.warnings.is_empty(), "{}: {:?}", entry.id, result.warnings);
+                        assert!(
+                            result.warnings.is_empty(),
+                            "{}: {:?}",
+                            entry.id,
+                            result.warnings
+                        );
                         let theme = result.theme;
                         assert!(authored_warnings(&theme.tokens).is_empty(), "{}", entry.id);
                         if increase {
@@ -1218,9 +1361,15 @@ mod tests {
                                 &theme.tokens.colors.surface_raised,
                                 &theme.tokens.colors.application_background,
                             ] {
-                                for foreground in [&theme.tokens.colors.text_primary, &theme.tokens.colors.text_muted] {
+                                for foreground in [
+                                    &theme.tokens.colors.text_primary,
+                                    &theme.tokens.colors.text_muted,
+                                ] {
                                     assert!(
-                                        contrast(rgba(foreground).unwrap(), rgba(background).unwrap()) >= 7.,
+                                        contrast(
+                                            rgba(foreground).unwrap(),
+                                            rgba(background).unwrap()
+                                        ) >= 7.,
                                         "{}: {foreground} on {background}",
                                         entry.id
                                     );
@@ -1262,13 +1411,17 @@ mod tests {
         let resolved = candidate(r#"theme { mode "light"; family "catppuccin"; split #true; light { family "gruvbox"; }; dark { family "everforest"; }; }"#).unwrap();
         assert_eq!(
             resolved.theme.tokens.colors.surface_base,
-            preset("gruvbox-light", Appearance::Light).unwrap().colors.surface_base
+            preset("gruvbox-light", Appearance::Light)
+                .unwrap()
+                .colors
+                .surface_base
         );
     }
 
     #[test]
     fn single_variant_families_use_an_explicit_default_fallback() {
-        let resolved = candidate(r#"theme { mode "light"; family "dracula"; split #false; }"#).unwrap();
+        let resolved =
+            candidate(r#"theme { mode "light"; family "dracula"; split #false; }"#).unwrap();
         assert_eq!(
             resolved.theme.tokens.colors.surface_base,
             preset("ferese-blue-light", Appearance::Light)
@@ -1283,7 +1436,8 @@ mod tests {
                 .iter()
                 .any(|family| family.id == "dracula" && family.light.is_none())
         );
-        let resolved = candidate(r#"theme { mode "dark"; family "dracula"; split #false; }"#).unwrap();
+        let resolved =
+            candidate(r#"theme { mode "dark"; family "dracula"; split #false; }"#).unwrap();
         assert!(resolved.fallback_note.is_none());
         assert_eq!(resolved.theme.tokens.colors.surface_base, "#282A36");
     }
@@ -1376,7 +1530,8 @@ mod tests {
 
     #[test]
     fn system_auto_is_context_driven_and_has_no_polling_deadline() {
-        let document = Document::parse(r#"theme { mode "auto"; schedule { source "system"; }; }"#).unwrap();
+        let document =
+            Document::parse(r#"theme { mode "auto"; schedule { source "system"; }; }"#).unwrap();
         for appearance in [Appearance::Light, Appearance::Dark] {
             let resolved = resolve_with_context(
                 &document,
@@ -1392,7 +1547,13 @@ mod tests {
             assert!(resolved.next_transition.is_none());
             assert!(resolved.fallback_note.is_none());
         }
-        let unavailable = resolve(&document, Path::new("/tmp"), Timestamp::now(), |_| unreachable!()).unwrap();
+        let unavailable = resolve(
+            &document,
+            Path::new("/tmp"),
+            Timestamp::now(),
+            |_| unreachable!(),
+        )
+        .unwrap();
         assert!(unavailable.fallback_note.unwrap().contains("unavailable"));
     }
 
@@ -1446,7 +1607,11 @@ mod tests {
             light_at: "01:30".into(),
             ..schedule
         };
-        for now in ["2026-11-01T05:30:00Z", "2026-11-01T06:00:00Z", "2026-11-01T06:30:00Z"] {
+        for now in [
+            "2026-11-01T05:30:00Z",
+            "2026-11-01T06:00:00Z",
+            "2026-11-01T06:30:00Z",
+        ] {
             let (appearance, next) = schedule.boundaries(now.parse().unwrap(), &zone).unwrap();
             assert_eq!(appearance, Appearance::Light);
             assert_eq!(next, "2026-11-02T00:00:00Z".parse::<Timestamp>().unwrap());
@@ -1459,15 +1624,20 @@ mod tests {
             "theme { file \"themes/shared.kdl\"; light { file \"themes/light.kdl\"; }; mode \"light\"; }",
         )
         .unwrap();
-        let result = resolve(&doc, Path::new("/config/ferese"), Timestamp::now(), |path| {
-            match path.to_str().unwrap() {
+        let result = resolve(
+            &doc,
+            Path::new("/config/ferese"),
+            Timestamp::now(),
+            |path| match path.to_str().unwrap() {
                 "/config/ferese/themes/shared.kdl" => {
                     Ok("colors { accent \"#12AABB\"; text-primary \"#182234\"; }".into())
                 }
-                "/config/ferese/themes/light.kdl" => Ok("theme { colors { accent \"#315090\"; }; }".into()),
+                "/config/ferese/themes/light.kdl" => {
+                    Ok("theme { colors { accent \"#315090\"; }; }".into())
+                }
                 _ => panic!("wrong relative path"),
-            }
-        })
+            },
+        )
         .unwrap();
         assert_eq!(result.theme.requested_accent, "#315090");
         assert_eq!(result.theme.tokens.colors.text_primary, "#182234");
@@ -1516,10 +1686,13 @@ mod tests {
             .contains("future_token")
         );
         assert!(
-            import_family("bad", "theme { light { geometry { top-bar-radius 8; }; }; }")
-                .err()
-                .unwrap()
-                .contains("geometry.top_bar_radius")
+            import_family(
+                "bad",
+                "theme { light { geometry { top-bar-radius 8; }; }; }"
+            )
+            .err()
+            .unwrap()
+            .contains("geometry.top_bar_radius")
         );
         assert!(
             import_family("bad", "theme { name Test; future-token 1; light {}; }")
@@ -1549,7 +1722,9 @@ mod tests {
                             ) >= 4.5
                         );
                         if increase {
-                            assert!(contrast(rgba(&tokens.colors.text_primary).unwrap(), surface) >= 7.);
+                            assert!(
+                                contrast(rgba(&tokens.colors.text_primary).unwrap(), surface) >= 7.
+                            );
                         }
                         if reduce {
                             assert_eq!(tokens.material.style, "solid");
@@ -1565,8 +1740,12 @@ mod tests {
     #[test]
     fn transition_text_remains_readable_at_fixed_steps_on_composited_surfaces() {
         use crate::presets::PRESETS;
-        let darks = PRESETS.iter().filter(|entry| entry.appearance == Appearance::Dark);
-        let lights = PRESETS.iter().filter(|entry| entry.appearance == Appearance::Light);
+        let darks = PRESETS
+            .iter()
+            .filter(|entry| entry.appearance == Appearance::Dark);
+        let lights = PRESETS
+            .iter()
+            .filter(|entry| entry.appearance == Appearance::Light);
         for (dark_entry, light_entry) in darks.zip(lights) {
             let dark = candidate(&format!(
                 r#"theme {{ mode "dark"; dark {{ preset "{}"; }}; material {{ style "translucent"; }}; }}"#,
@@ -1585,9 +1764,13 @@ mod tests {
                     for step in 1..20 {
                         let frame = from.transition(to, f64::from(step) / 20.);
                         let mut surface = rgba(&frame.tokens.colors.surface_base).unwrap();
-                        surface[3] = frame.tokens.material.opacity * frame.tokens.material.tint_strength;
+                        surface[3] =
+                            frame.tokens.material.opacity * frame.tokens.material.tint_strength;
                         let surface = composite(surface, backdrop);
-                        for text in [&frame.tokens.colors.text_primary, &frame.tokens.colors.text_muted] {
+                        for text in [
+                            &frame.tokens.colors.text_primary,
+                            &frame.tokens.colors.text_muted,
+                        ] {
                             assert!(
                                 contrast(rgba(text).unwrap(), surface) >= 4.5,
                                 "step {step}: {text}, contrast {}",
@@ -1598,7 +1781,10 @@ mod tests {
                             &frame.tokens.colors.surface_raised,
                             &frame.tokens.colors.application_background,
                         ] {
-                            for text in [&frame.tokens.colors.text_primary, &frame.tokens.colors.text_muted] {
+                            for text in [
+                                &frame.tokens.colors.text_primary,
+                                &frame.tokens.colors.text_muted,
+                            ] {
                                 assert!(
                                     contrast(rgba(text).unwrap(), rgba(background).unwrap()) >= 4.5,
                                     "native app step {step}: {text} on {background}"
@@ -1606,13 +1792,17 @@ mod tests {
                             }
                         }
                         let mut bar = rgba(&frame.tokens.surface.bar.background).unwrap();
-                        bar[3] = frame.tokens.material.opacity * frame.tokens.material.tint_strength;
+                        bar[3] =
+                            frame.tokens.material.opacity * frame.tokens.material.tint_strength;
                         let bar = composite(bar, backdrop);
                         for text in [
                             &frame.tokens.surface.bar.text_primary,
                             &frame.tokens.surface.bar.text_muted,
                         ] {
-                            assert!(contrast(rgba(text).unwrap(), bar) >= 4.5, "bar step {step}: {text}");
+                            assert!(
+                                contrast(rgba(text).unwrap(), bar) >= 4.5,
+                                "bar step {step}: {text}"
+                            );
                         }
                         assert!(
                             contrast(
@@ -1670,8 +1860,16 @@ mod tests {
             assert_eq!(from.transition(&from, p), from);
             let frame = from.transition(&to, p);
             assert_eq!(frame.tokens.material.opacity, from.tokens.material.opacity);
-            let low = from.tokens.material.tint_strength.min(to.tokens.material.tint_strength);
-            let high = from.tokens.material.tint_strength.max(to.tokens.material.tint_strength);
+            let low = from
+                .tokens
+                .material
+                .tint_strength
+                .min(to.tokens.material.tint_strength);
+            let high = from
+                .tokens
+                .material
+                .tint_strength
+                .max(to.tokens.material.tint_strength);
             assert!((low..=high).contains(&frame.tokens.material.tint_strength));
         }
     }
@@ -1692,9 +1890,10 @@ mod tests {
 
     #[test]
     fn reduced_motion_cuts_and_policy_does_not_follow_brightness() {
-        let mut light = candidate("theme { mode \"light\"; colors { surface-base \"#111111\"; }; }")
-            .unwrap()
-            .theme;
+        let mut light =
+            candidate("theme { mode \"light\"; colors { surface-base \"#111111\"; }; }")
+                .unwrap()
+                .theme;
         assert_eq!(light.appearance, Appearance::Light);
         light.reduced_motion = true;
         assert_eq!(default_theme().transition(&light, 0.), light);

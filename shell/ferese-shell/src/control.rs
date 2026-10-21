@@ -21,7 +21,10 @@ pub(crate) struct ShellSnapshot {
 }
 
 impl ShellSnapshot {
-    pub(crate) fn workspaces_for_output(&self, output: Option<u64>) -> impl Iterator<Item = &WorkspaceSnapshot> {
+    pub(crate) fn workspaces_for_output(
+        &self,
+        output: Option<u64>,
+    ) -> impl Iterator<Item = &WorkspaceSnapshot> {
         self.workspaces
             .iter()
             .filter(move |workspace| output.is_some() && workspace.output == output)
@@ -60,7 +63,10 @@ pub(crate) struct WindowSnapshot {
     pub(crate) maximized: bool,
     #[cfg_attr(
         not(test),
-        expect(dead_code, reason = "The current bar does not display window placement.")
+        expect(
+            dead_code,
+            reason = "The current bar does not display window placement."
+        )
     )]
     pub(crate) floating: bool,
 }
@@ -184,16 +190,30 @@ impl ShellControl {
 
         loop {
             match self.updates.try_recv() {
-                Ok(ControlUpdate::Logout(serial, output)) => poll.commands.push(ControlCommand::Logout(serial, output)),
-                Ok(ControlUpdate::ToggleDisplays(output)) => poll.commands.push(ControlCommand::ToggleDisplays(output)),
-                Ok(ControlUpdate::MonitorsChanged) => poll.commands.push(ControlCommand::MonitorsChanged),
-                Ok(ControlUpdate::DismissLauncher) => poll.commands.push(ControlCommand::DismissLauncher),
-                Ok(ControlUpdate::Thumbnail(token, window, image)) => {
-                    poll.commands.push(ControlCommand::Thumbnail(token, window, image))
+                Ok(ControlUpdate::Logout(serial, output)) => {
+                    poll.commands.push(ControlCommand::Logout(serial, output))
                 }
-                Ok(ControlUpdate::ToggleLauncher(output)) => poll.commands.push(ControlCommand::ToggleLauncher(output)),
-                Ok(ControlUpdate::ToggleGuide(output)) => poll.commands.push(ControlCommand::ToggleGuide(output)),
-                Ok(ControlUpdate::LogoutCancelled(serial)) => poll.commands.push(ControlCommand::CancelLogout(serial)),
+                Ok(ControlUpdate::ToggleDisplays(output)) => {
+                    poll.commands.push(ControlCommand::ToggleDisplays(output))
+                }
+                Ok(ControlUpdate::MonitorsChanged) => {
+                    poll.commands.push(ControlCommand::MonitorsChanged)
+                }
+                Ok(ControlUpdate::DismissLauncher) => {
+                    poll.commands.push(ControlCommand::DismissLauncher)
+                }
+                Ok(ControlUpdate::Thumbnail(token, window, image)) => poll
+                    .commands
+                    .push(ControlCommand::Thumbnail(token, window, image)),
+                Ok(ControlUpdate::ToggleLauncher(output)) => {
+                    poll.commands.push(ControlCommand::ToggleLauncher(output))
+                }
+                Ok(ControlUpdate::ToggleGuide(output)) => {
+                    poll.commands.push(ControlCommand::ToggleGuide(output))
+                }
+                Ok(ControlUpdate::LogoutCancelled(serial)) => {
+                    poll.commands.push(ControlCommand::CancelLogout(serial))
+                }
                 Ok(ControlUpdate::Config(source)) => poll.config = Some(source),
                 Ok(ControlUpdate::Snapshot(snapshot)) => poll.snapshot = Some(snapshot),
                 Ok(ControlUpdate::OverviewState(active)) => poll.overview_active = Some(active),
@@ -221,7 +241,8 @@ impl ShellControl {
         }
         let (hi, lo) = split_id(window);
         let (workspace_hi, workspace_lo) = split_id(workspace);
-        self.shell.move_window_to_workspace(hi, lo, workspace_hi, workspace_lo);
+        self.shell
+            .move_window_to_workspace(hi, lo, workspace_hi, workspace_lo);
         let _ = self.connection.flush();
     }
 
@@ -240,7 +261,10 @@ impl ShellControl {
 
     #[cfg_attr(
         not(test),
-        expect(dead_code, reason = "Window-targeting API; the current UI targets workspaces.")
+        expect(
+            dead_code,
+            reason = "Window-targeting API; the current UI targets workspaces."
+        )
     )]
     pub(crate) fn close_window(&self, id: u64) {
         let (hi, lo) = split_id(id);
@@ -250,7 +274,10 @@ impl ShellControl {
 
     #[cfg_attr(
         not(test),
-        expect(dead_code, reason = "Window-targeting API; the current UI targets workspaces.")
+        expect(
+            dead_code,
+            reason = "Window-targeting API; the current UI targets workspaces."
+        )
     )]
     pub(crate) fn select_overview_window(&self, id: u64) {
         let (hi, lo) = split_id(id);
@@ -282,8 +309,8 @@ impl ShellControl {
 }
 
 fn control_connection() -> Result<Connection, Box<dyn Error>> {
-    let raw_fd =
-        std::env::var_os("FERESE_SHELL_CONTROL_SOCKET").ok_or("Ferese did not provide a shell-control connection")?;
+    let raw_fd = std::env::var_os("FERESE_SHELL_CONTROL_SOCKET")
+        .ok_or("Ferese did not provide a shell-control connection")?;
     let fd = raw_fd
         .to_str()
         .ok_or("FERESE_SHELL_CONTROL_SOCKET is not valid UTF-8")?
@@ -346,9 +373,11 @@ impl Dispatch<FereseShellV1, ()> for ControlState {
                 window_hi,
                 window_lo,
             } => {
-                let _ = state
-                    .sender
-                    .send(ControlUpdate::Thumbnail(token, join_id(window_hi, window_lo), None));
+                let _ = state.sender.send(ControlUpdate::Thumbnail(
+                    token,
+                    join_id(window_hi, window_lo),
+                    None,
+                ));
             }
             ferese_shell_v1::Event::Thumbnail {
                 token,
@@ -370,14 +399,20 @@ impl Dispatch<FereseShellV1, ()> for ControlState {
                     }
                     let mut bytes = vec![0; size];
                     file.read_exact(&mut bytes).ok()?;
-                    Some(cosmic::widget::image::Handle::from_rgba(width, height, bytes))
+                    Some(cosmic::widget::image::Handle::from_rgba(
+                        width, height, bytes,
+                    ))
                 })();
-                let _ = state
-                    .sender
-                    .send(ControlUpdate::Thumbnail(token, join_id(window_hi, window_lo), image));
+                let _ = state.sender.send(ControlUpdate::Thumbnail(
+                    token,
+                    join_id(window_hi, window_lo),
+                    image,
+                ));
             }
             ferese_shell_v1::Event::ToggleLauncher { output_name } => {
-                let _ = state.sender.send(ControlUpdate::ToggleLauncher(output_name));
+                let _ = state
+                    .sender
+                    .send(ControlUpdate::ToggleLauncher(output_name));
             }
             ferese_shell_v1::Event::ConfigBegin => state.config = Some(String::new()),
             ferese_shell_v1::Event::ConfigChunk { source } => {
@@ -441,7 +476,8 @@ impl Dispatch<FereseShellV1, ()> for ControlState {
                 state: window_state,
             } => {
                 // WEnum::Unknown holds the entire bitfield, not just new bits.
-                let flags = ferese_shell_v1::WindowState::from_bits_truncate(u32::from(window_state));
+                let flags =
+                    ferese_shell_v1::WindowState::from_bits_truncate(u32::from(window_state));
 
                 state.pending.windows.push(WindowSnapshot {
                     id: join_id(window_hi, window_lo),
@@ -479,14 +515,25 @@ impl Dispatch<FereseShellV1, ()> for ControlState {
             ferese_shell_v1::Event::Capabilities { .. } => {
                 let _ = state.sender.send(ControlUpdate::MonitorsChanged);
             }
-            ferese_shell_v1::Event::SnapshotEnd { serial } if state.serial.take() == Some(serial) => {
-                let _ = state.sender.send(ControlUpdate::Snapshot(state.pending.clone()));
+            ferese_shell_v1::Event::SnapshotEnd { serial }
+                if state.serial.take() == Some(serial) =>
+            {
+                let _ = state
+                    .sender
+                    .send(ControlUpdate::Snapshot(state.pending.clone()));
             }
-            ferese_shell_v1::Event::LogoutRequested { serial, output_name } => {
-                let _ = state.sender.send(ControlUpdate::Logout(serial, output_name));
+            ferese_shell_v1::Event::LogoutRequested {
+                serial,
+                output_name,
+            } => {
+                let _ = state
+                    .sender
+                    .send(ControlUpdate::Logout(serial, output_name));
             }
             ferese_shell_v1::Event::ToggleDisplayMode { output_name } => {
-                let _ = state.sender.send(ControlUpdate::ToggleDisplays(output_name));
+                let _ = state
+                    .sender
+                    .send(ControlUpdate::ToggleDisplays(output_name));
             }
             ferese_shell_v1::Event::MonitorStateChanged => {
                 let _ = state.sender.send(ControlUpdate::MonitorsChanged);
@@ -636,7 +683,9 @@ mod tests {
             &control,
             &mut state,
             &queue,
-            ferese_shell_v1::Event::BindingMode { name: "resize".into() },
+            ferese_shell_v1::Event::BindingMode {
+                name: "resize".into(),
+            },
         );
         assert!(control.poll().snapshot.is_none());
         dispatch_event(
@@ -645,7 +694,10 @@ mod tests {
             &queue,
             ferese_shell_v1::Event::SnapshotEnd { serial: 1 },
         );
-        assert_eq!(control.poll().snapshot.unwrap().binding_mode.as_deref(), Some("resize"));
+        assert_eq!(
+            control.poll().snapshot.unwrap().binding_mode.as_deref(),
+            Some("resize")
+        );
         dispatch_event(
             &control,
             &mut state,
@@ -656,7 +708,9 @@ mod tests {
             &control,
             &mut state,
             &queue,
-            ferese_shell_v1::Event::BindingMode { name: String::new() },
+            ferese_shell_v1::Event::BindingMode {
+                name: String::new(),
+            },
         );
         dispatch_event(
             &control,
@@ -677,7 +731,10 @@ mod tests {
             ferese_shell_v1::Event::SnapshotBegin { serial: 7 },
         );
         let ids = [0x1234_5678_9abc_def0, 0xfedc_ba98_7654_3210];
-        for (id, flags) in [(ids[0], 0), (ids[1], ferese_shell_v1::WindowState::Floating.bits())] {
+        for (id, flags) in [
+            (ids[0], 0),
+            (ids[1], ferese_shell_v1::WindowState::Floating.bits()),
+        ] {
             dispatch_event(&control, &mut state, &queue, window_event(id, flags));
         }
         assert!(control.poll().snapshot.is_none());
@@ -688,7 +745,14 @@ mod tests {
             ferese_shell_v1::Event::SnapshotEnd { serial: 7 },
         );
         let snapshot = control.poll().snapshot.unwrap().clone();
-        assert_eq!(snapshot.windows.iter().map(|window| window.id).collect::<Vec<_>>(), ids);
+        assert_eq!(
+            snapshot
+                .windows
+                .iter()
+                .map(|window| window.id)
+                .collect::<Vec<_>>(),
+            ids
+        );
         let [tiled, floating] = snapshot.windows.as_slice() else {
             panic!("expected two windows")
         };
@@ -818,11 +882,26 @@ mod tests {
         let cases = [
             (known.bits(), [true, true, true, true, false]),
             (known.bits() | future, [true, true, true, true, false]),
-            (Flags::Focused.bits() | future, [true, false, false, false, false]),
-            (Flags::Urgent.bits() | future, [false, true, false, false, false]),
-            (Flags::Fullscreen.bits() | future, [false, false, true, false, false]),
-            (Flags::Floating.bits() | future, [false, false, false, true, false]),
-            (Flags::Maximized.bits() | future, [false, false, false, false, true]),
+            (
+                Flags::Focused.bits() | future,
+                [true, false, false, false, false],
+            ),
+            (
+                Flags::Urgent.bits() | future,
+                [false, true, false, false, false],
+            ),
+            (
+                Flags::Fullscreen.bits() | future,
+                [false, false, true, false, false],
+            ),
+            (
+                Flags::Floating.bits() | future,
+                [false, false, false, true, false],
+            ),
+            (
+                Flags::Maximized.bits() | future,
+                [false, false, false, false, true],
+            ),
             (future, [false; 5]),
             (0, [false; 5]),
         ];
@@ -833,7 +912,12 @@ mod tests {
             ferese_shell_v1::Event::SnapshotBegin { serial: 1 },
         );
         for (index, (bits, _)) in cases.iter().enumerate() {
-            dispatch_event(&control, &mut state, &queue, window_event(index as u64 + 1, *bits));
+            dispatch_event(
+                &control,
+                &mut state,
+                &queue,
+                window_event(index as u64 + 1, *bits),
+            );
         }
         dispatch_event(
             &control,
@@ -925,13 +1009,19 @@ mod workspace_tests {
             focused: output == 1 && index == 1,
         };
         let snapshot = ShellSnapshot {
-            workspaces: vec![workspace(7, 1, 1, 2), workspace(9, 1, 2, 0), workspace(3, 2, 1, 0)],
+            workspaces: vec![
+                workspace(7, 1, 1, 2),
+                workspace(9, 1, 2, 0),
+                workspace(3, 2, 1, 0),
+            ],
             ..Default::default()
         };
 
         let left = snapshot.workspaces_for_output(Some(1)).collect::<Vec<_>>();
         assert_eq!(
-            left.iter().map(|workspace| workspace.id).collect::<Vec<_>>(),
+            left.iter()
+                .map(|workspace| workspace.id)
+                .collect::<Vec<_>>(),
             vec![7, 9]
         );
         assert_eq!(left[0].window_count, 2);
@@ -961,20 +1051,38 @@ mod wake_tests {
             sender,
             wake: wake.clone(),
         };
-        sender.send(ControlUpdate::OverviewState(true)).ok().unwrap();
+        sender
+            .send(ControlUpdate::OverviewState(true))
+            .ok()
+            .unwrap();
         let stream = wake.stream();
         cosmic::iced::futures::pin_mut!(stream);
 
         assert_eq!(stream.next().now_or_never(), Some(Some(())));
-        assert!(matches!(receiver.try_recv(), Ok(ControlUpdate::OverviewState(true))));
+        assert!(matches!(
+            receiver.try_recv(),
+            Ok(ControlUpdate::OverviewState(true))
+        ));
         assert_eq!(stream.next().now_or_never(), None);
 
-        sender.send(ControlUpdate::Logout(7, "display".into())).ok().unwrap();
+        sender
+            .send(ControlUpdate::Logout(7, "display".into()))
+            .ok()
+            .unwrap();
         sender.send(ControlUpdate::LogoutCancelled(7)).ok().unwrap();
         sender.send(ControlUpdate::Disconnected).ok().unwrap();
         assert_eq!(stream.next().now_or_never(), Some(Some(())));
-        assert!(matches!(receiver.try_recv(), Ok(ControlUpdate::Logout(7, _))));
-        assert!(matches!(receiver.try_recv(), Ok(ControlUpdate::LogoutCancelled(7))));
-        assert!(matches!(receiver.try_recv(), Ok(ControlUpdate::Disconnected)));
+        assert!(matches!(
+            receiver.try_recv(),
+            Ok(ControlUpdate::Logout(7, _))
+        ));
+        assert!(matches!(
+            receiver.try_recv(),
+            Ok(ControlUpdate::LogoutCancelled(7))
+        ));
+        assert!(matches!(
+            receiver.try_recv(),
+            Ok(ControlUpdate::Disconnected)
+        ));
     }
 }

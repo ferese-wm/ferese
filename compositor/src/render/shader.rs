@@ -3,7 +3,9 @@
 use std::sync::Arc;
 
 use smithay::backend::renderer::element::{Element, Id, Kind, RenderElement};
-use smithay::backend::renderer::gles::{GlesError, GlesFrame, GlesPixelProgram, GlesRenderer, Uniform};
+use smithay::backend::renderer::gles::{
+    GlesError, GlesFrame, GlesPixelProgram, GlesRenderer, Uniform,
+};
 use smithay::backend::renderer::utils::{CommitCounter, OpaqueRegions};
 use smithay::utils::{Buffer, Logical, Physical, Rectangle, Scale, Transform};
 
@@ -47,7 +49,11 @@ impl SharedPixelShaderElement {
         }
     }
 
-    pub(crate) fn resize(&mut self, area: Rectangle<i32, Logical>, opaque: Option<Vec<Rectangle<i32, Logical>>>) {
+    pub(crate) fn resize(
+        &mut self,
+        area: Rectangle<i32, Logical>,
+        opaque: Option<Vec<Rectangle<i32, Logical>>>,
+    ) {
         let opaque = opaque.unwrap_or_default();
 
         if self.state.area != area || self.state.opaque != opaque {
@@ -75,7 +81,13 @@ impl Element for SharedPixelShaderElement {
     }
 
     fn src(&self) -> Rectangle<f64, Buffer> {
-        Rectangle::from_size(self.state.area.size.to_f64().to_buffer(1.0, Transform::Normal))
+        Rectangle::from_size(
+            self.state
+                .area
+                .size
+                .to_f64()
+                .to_buffer(1.0, Transform::Normal),
+        )
     }
 
     fn geometry(&self, scale: Scale<f64>) -> Rectangle<i32, Physical> {
@@ -159,9 +171,13 @@ mod tests {
     #[test]
     #[ignore = "requires an EGL rendering device"]
     fn shared_shader_matches_smithay_and_keeps_old_frames_immutable() {
-        let device = EGLDevice::enumerate().unwrap().last().expect("an EGL device");
+        let device = EGLDevice::enumerate()
+            .unwrap()
+            .last()
+            .expect("an EGL device");
         let display = unsafe { EGLDisplay::new(device).unwrap() };
-        let mut renderer = unsafe { GlesRenderer::new(EGLContext::new(&display).unwrap()).unwrap() };
+        let mut renderer =
+            unsafe { GlesRenderer::new(EGLContext::new(&display).unwrap()).unwrap() };
         let program = renderer
             .compile_custom_pixel_shader(
                 super::super::corner_shader(super::super::ROUNDED_SOLID_SHADER),
@@ -191,7 +207,14 @@ mod tests {
             uniforms(red),
             Kind::Unspecified,
         );
-        let mut shared = SharedPixelShaderElement::new(program, area, opaque, 0.5, uniforms(red), Kind::Unspecified);
+        let mut shared = SharedPixelShaderElement::new(
+            program,
+            area,
+            opaque,
+            0.5,
+            uniforms(red),
+            Kind::Unspecified,
+        );
         let old = shared.clone();
         let old_commit = old.current_commit();
 
@@ -205,14 +228,20 @@ mod tests {
         );
 
         for scale in [1.0, 1.25, 2.0] {
-            assert_eq!(shared.geometry(scale.into()), baseline.geometry(scale.into()));
+            assert_eq!(
+                shared.geometry(scale.into()),
+                baseline.geometry(scale.into())
+            );
             assert_eq!(
                 &*shared.opaque_regions(scale.into()),
                 &*baseline.opaque_regions(scale.into())
             );
         }
 
-        assert_eq!(pixels(&mut renderer, &shared), pixels(&mut renderer, &baseline));
+        assert_eq!(
+            pixels(&mut renderer, &shared),
+            pixels(&mut renderer, &baseline)
+        );
         shared.resize(area, Some(vec![Rectangle::from_size((20, 20).into())]));
         assert!(Arc::ptr_eq(&shared.state, &old.state));
         shared.update_uniforms(uniforms(green));
@@ -220,12 +249,21 @@ mod tests {
         assert_eq!(shared.id(), old.id());
         assert_eq!(old.current_commit(), old_commit);
         assert_ne!(shared.current_commit(), old_commit);
-        assert_eq!(pixels(&mut renderer, &old), pixels(&mut renderer, &baseline));
-        assert_ne!(pixels(&mut renderer, &shared), pixels(&mut renderer, &baseline));
+        assert_eq!(
+            pixels(&mut renderer, &old),
+            pixels(&mut renderer, &baseline)
+        );
+        assert_ne!(
+            pixels(&mut renderer, &shared),
+            pixels(&mut renderer, &baseline)
+        );
 
         let retained = shared.clone();
         shared.resize(Rectangle::from_size((16, 16).into()), None);
-        assert_eq!(retained.geometry(1.0.into()), area.to_physical_precise_round(1.0));
+        assert_eq!(
+            retained.geometry(1.0.into()),
+            area.to_physical_precise_round(1.0)
+        );
         assert_eq!(shared.geometry(1.0.into()).size, (16, 16).into());
         assert!(shared.opaque_regions(1.0.into()).is_empty());
         assert_eq!(shared.alpha(), baseline.alpha());

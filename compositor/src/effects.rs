@@ -6,7 +6,9 @@ use ferese_protocols::effects::v1::server::ferese_surface_effects_v1::FereseSurf
 use ferese_protocols::effects::v1::server::{ferese_effects_manager_v1, ferese_surface_effects_v1};
 use ferese_protocols::material::v1::server::ferese_material_manager_v1::FereseMaterialManagerV1;
 use ferese_protocols::material::v1::server::ferese_surface_material_v1::FereseSurfaceMaterialV1;
-use ferese_protocols::material::v1::server::{ferese_material_manager_v1, ferese_surface_material_v1};
+use ferese_protocols::material::v1::server::{
+    ferese_material_manager_v1, ferese_surface_material_v1,
+};
 use smithay::reexports::wayland_server::backend::ClientId;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::reexports::wayland_server::{
@@ -37,10 +39,16 @@ pub(crate) struct ResolvedMaterial {
     pub shadow: [f64; 3],
 }
 
-pub(crate) fn resolve_material(role: SemanticRole, style: MaterialStyle, opacity: f32) -> ResolvedMaterial {
+pub(crate) fn resolve_material(
+    role: SemanticRole,
+    style: MaterialStyle,
+    opacity: f32,
+) -> ResolvedMaterial {
     let shadow = match role {
         SemanticRole::Panel => [1.0, 5.0, 0.04],
-        SemanticRole::PanelElevated | SemanticRole::Popover | SemanticRole::Menu => [2.0, 8.0, 0.07],
+        SemanticRole::PanelElevated | SemanticRole::Popover | SemanticRole::Menu => {
+            [2.0, 8.0, 0.07]
+        }
         SemanticRole::Hud => [1.0, 4.0, 0.04],
         SemanticRole::Notification | SemanticRole::Modal => [3.0, 10.0, 0.09],
     };
@@ -48,7 +56,11 @@ pub(crate) fn resolve_material(role: SemanticRole, style: MaterialStyle, opacity
         MaterialStyle::Solid => 1.0,
         MaterialStyle::Translucent => opacity.clamp(0.0, 1.0),
     };
-    ResolvedMaterial { style, opacity, shadow }
+    ResolvedMaterial {
+        style,
+        opacity,
+        shadow,
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -167,7 +179,9 @@ impl Dispatch<FereseMaterialManagerV1, ()> for Ferese {
         match request {
             ferese_material_manager_v1::Request::GetSurfaceMaterial { id, surface } => {
                 let attached = with_states(&surface, |states| {
-                    states.data_map.insert_if_missing_threadsafe(SurfaceEffectsState::new);
+                    states
+                        .data_map
+                        .insert_if_missing_threadsafe(SurfaceEffectsState::new);
                     let effects = states.data_map.get::<SurfaceEffectsState>().unwrap();
                     effects.attached.swap(true, Ordering::AcqRel)
                 });
@@ -288,7 +302,9 @@ pub(crate) fn surface_region_opacities(surface: &WlSurface) -> Vec<u32> {
 }
 
 fn decode_region_opacities(bytes: &[u8]) -> Option<Vec<u32>> {
-    if !bytes.len().is_multiple_of(4) || bytes.len() > ferese_protocols::effects::v1::MAX_REGIONS * 4 {
+    if !bytes.len().is_multiple_of(4)
+        || bytes.len() > ferese_protocols::effects::v1::MAX_REGIONS * 4
+    {
         return None;
     }
     bytes
@@ -303,7 +319,9 @@ fn decode_region_opacities(bytes: &[u8]) -> Option<Vec<u32>> {
 }
 
 fn decode_regions(bytes: &[u8]) -> Option<Vec<[f64; 5]>> {
-    if !bytes.len().is_multiple_of(20) || bytes.len() > ferese_protocols::effects::v1::MAX_REGIONS * 20 {
+    if !bytes.len().is_multiple_of(20)
+        || bytes.len() > ferese_protocols::effects::v1::MAX_REGIONS * 20
+    {
         return None;
     }
     bytes
@@ -311,7 +329,8 @@ fn decode_regions(bytes: &[u8]) -> Option<Vec<[f64; 5]>> {
         .0
         .iter()
         .map(|tuple| {
-            let values: [f64; 5] = std::array::from_fn(|i| f64::from(f32::from_ne_bytes(tuple.as_chunks::<4>().0[i])));
+            let values: [f64; 5] =
+                std::array::from_fn(|i| f64::from(f32::from_ne_bytes(tuple.as_chunks::<4>().0[i])));
             (values[2] > 0.0
                 && values[3] > 0.0
                 && values[4] >= 0.0
@@ -363,7 +382,9 @@ impl Dispatch<FereseEffectsManagerV1, ()> for Ferese {
         match request {
             ferese_effects_manager_v1::Request::GetSurfaceEffects { id, surface } => {
                 let already_attached = with_states(&surface, |states| {
-                    states.data_map.insert_if_missing_threadsafe(SurfaceEffectsState::new);
+                    states
+                        .data_map
+                        .insert_if_missing_threadsafe(SurfaceEffectsState::new);
                     states
                         .data_map
                         .get::<SurfaceEffectsState>()
@@ -416,8 +437,10 @@ impl Dispatch<FereseSurfaceEffectsV1, SurfaceEffectsUserData> for Ferese {
                 fusion,
                 opacity,
             } => {
-                let (Some(regions), Some(panel)) = (decode_regions(&regions), decode_panel_shapes(&shapes, fusion))
-                else {
+                let (Some(regions), Some(panel)) = (
+                    decode_regions(&regions),
+                    decode_panel_shapes(&shapes, fusion),
+                ) else {
                     return;
                 };
                 if panel.shapes.is_empty() != regions.is_empty() {
@@ -600,17 +623,22 @@ pub(crate) fn surface_opacity(surface: &WlSurface) -> f32 {
         states
             .data_map
             .get::<SurfaceEffectsState>()
-            .map_or(1.0, |effects| *effects.opacity.lock().unwrap() as f32 / 1000.0)
+            .map_or(1.0, |effects| {
+                *effects.opacity.lock().unwrap() as f32 / 1000.0
+            })
     })
 }
 
 pub(crate) fn begin_surface_dismiss(surface: &WlSurface) -> bool {
     with_states(surface, |states| {
-        states.data_map.get::<SurfaceEffectsState>().is_some_and(|effects| {
-            effects.presentation_supported.load(Ordering::Acquire)
-                && effects.attached.load(Ordering::Acquire)
-                && !effects.dismissing.swap(true, Ordering::AcqRel)
-        })
+        states
+            .data_map
+            .get::<SurfaceEffectsState>()
+            .is_some_and(|effects| {
+                effects.presentation_supported.load(Ordering::Acquire)
+                    && effects.attached.load(Ordering::Acquire)
+                    && !effects.dismissing.swap(true, Ordering::AcqRel)
+            })
     })
 }
 
@@ -733,7 +761,10 @@ mod tests {
 
     #[test]
     fn region_opacities_validate_independent_fades() {
-        let bytes: Vec<_> = [0u32, 500, 1000].into_iter().flat_map(u32::to_ne_bytes).collect();
+        let bytes: Vec<_> = [0u32, 500, 1000]
+            .into_iter()
+            .flat_map(u32::to_ne_bytes)
+            .collect();
         assert_eq!(decode_region_opacities(&bytes), Some(vec![0, 500, 1000]));
         assert_eq!(decode_region_opacities(&[]), Some(vec![]));
         assert!(decode_region_opacities(&bytes[..11]).is_none());

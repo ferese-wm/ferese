@@ -34,7 +34,11 @@ pub(super) fn snapshot_element(
             .into(),
     )
     .intersection(pixels)?;
-    let clip = framebuffer_clip_rect(pixels, output.current_mode()?.size, output.current_transform().invert());
+    let clip = framebuffer_clip_rect(
+        pixels,
+        output.current_mode()?.size,
+        output.current_transform().invert(),
+    );
     Some(NativeTextureElement {
         id: snapshot.id.clone(),
         commit: snapshot.commit,
@@ -46,7 +50,10 @@ pub(super) fn snapshot_element(
         ))),
         alpha: presentation.alpha() * handoff,
         program: Some(programs.texture.clone()),
-        uniforms: vec![Uniform::new("clip_rect", clip), Uniform::new("radius", corners.radius)],
+        uniforms: vec![
+            Uniform::new("clip_rect", clip),
+            Uniform::new("radius", corners.radius),
+        ],
     })
 }
 
@@ -84,7 +91,8 @@ mod tests {
             Some((0, 0).into()),
         );
         let mut resources = RenderResources::default();
-        let programs = corner_program(&mut resources, &mut renderer, CornerShape::Continuous).unwrap();
+        let programs =
+            corner_program(&mut resources, &mut renderer, CornerShape::Continuous).unwrap();
         for (scale, focus_alpha) in [1.0, 1.25, 1.5, 2.0]
             .into_iter()
             .flat_map(|scale| [1.0, 0.8].map(|alpha| (scale, alpha)))
@@ -100,17 +108,22 @@ mod tests {
                 scale_content: false,
                 native_size: None,
             };
-            let corners =
-                RoundedRect::new(live.bounds.current, (0, 0).into(), scale, 8.0).with_shape(CornerShape::Continuous);
+            let corners = RoundedRect::new(live.bounds.current, (0, 0).into(), scale, 8.0)
+                .with_shape(CornerShape::Continuous);
             let size = corners.rect.size;
             let mut texture: GlesTexture = renderer
                 .create_buffer(Fourcc::Abgr8888, (size.w, size.h).into())
                 .unwrap();
             {
                 let mut target = renderer.bind(&mut texture).unwrap();
-                let mut frame = renderer.render(&mut target, size, Transform::Normal).unwrap();
+                let mut frame = renderer
+                    .render(&mut target, size, Transform::Normal)
+                    .unwrap();
                 frame
-                    .clear(Color32F::new(1.0, 0.0, 0.0, 1.0), &[Rectangle::from_size(size)])
+                    .clear(
+                        Color32F::new(1.0, 0.0, 0.0, 1.0),
+                        &[Rectangle::from_size(size)],
+                    )
                     .unwrap();
                 let _ = frame.finish().unwrap();
             }
@@ -127,10 +140,20 @@ mod tests {
             closing.close();
             let mut pixels = Vec::new();
             for presentation in [live, closing] {
-                let element =
-                    snapshot_element(&snapshot, presentation, corners, scale, &output, &programs, 1.0).unwrap();
+                let element = snapshot_element(
+                    &snapshot,
+                    presentation,
+                    corners,
+                    scale,
+                    &output,
+                    &programs,
+                    1.0,
+                )
+                .unwrap();
                 assert_eq!(element.geometry, corners.rect);
-                let mut texture: GlesTexture = renderer.create_buffer(Fourcc::Abgr8888, (128, 128).into()).unwrap();
+                let mut texture: GlesTexture = renderer
+                    .create_buffer(Fourcc::Abgr8888, (128, 128).into())
+                    .unwrap();
                 {
                     let mut target = renderer.bind(&mut texture).unwrap();
                     let mut frame = renderer
@@ -148,14 +171,23 @@ mod tests {
                     let _ = frame.finish().unwrap();
                 }
                 let mapping = renderer
-                    .copy_texture(&texture, Rectangle::from_size((128, 128).into()), Fourcc::Abgr8888)
+                    .copy_texture(
+                        &texture,
+                        Rectangle::from_size((128, 128).into()),
+                        Fourcc::Abgr8888,
+                    )
                     .unwrap();
                 pixels.push(renderer.map_texture(&mapping).unwrap().to_vec());
             }
-            assert_eq!(pixels[0], pixels[1], "close handoff changed pixels at scale {scale}");
+            assert_eq!(
+                pixels[0], pixels[1],
+                "close handoff changed pixels at scale {scale}"
+            );
             let expected = (focus_alpha * 255.0).round() as u8;
             assert!(
-                pixels[0].chunks_exact(4).any(|pixel| pixel[3].abs_diff(expected) <= 1),
+                pixels[0]
+                    .chunks_exact(4)
+                    .any(|pixel| pixel[3].abs_diff(expected) <= 1),
                 "snapshot alpha must be applied once"
             );
             assert!(
@@ -183,7 +215,10 @@ mod tests {
             assert_eq!(predicted.presentation.focus_alpha, focus_alpha);
             let faded = &predicted.handoff.as_ref().unwrap().0;
             assert_eq!(faded.elapsed, Duration::from_millis(40));
-            assert_eq!(retained.handoff.as_ref().unwrap().0.elapsed, Duration::from_millis(20));
+            assert_eq!(
+                retained.handoff.as_ref().unwrap().0.elapsed,
+                Duration::from_millis(20)
+            );
             let element = snapshot_element(
                 faded,
                 predicted.presentation,
@@ -200,7 +235,10 @@ mod tests {
             assert!(retained.handoff.is_none());
             let thumbnail = live.thumbnail(ferese_layout::Rect::new(4.25, 3.75, 16.5, 12.25));
             let corners = RoundedRect::new(thumbnail.bounds.current, (0, 0).into(), scale, 4.0);
-            let element = snapshot_element(&snapshot, thumbnail, corners, scale, &output, &programs, 1.0).unwrap();
+            let element = snapshot_element(
+                &snapshot, thumbnail, corners, scale, &output, &programs, 1.0,
+            )
+            .unwrap();
             assert_eq!(element.geometry, corners.rect);
             assert!((element.source.size.w - f64::from(size.w)).abs() < 1e-9);
             assert!((element.source.size.h - f64::from(size.h)).abs() < 1e-9);

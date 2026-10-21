@@ -68,7 +68,10 @@ impl<'a> OutputBuffer<'a> {
             )
             .cast::<spa::sys::spa_meta_header>();
             if let Some(header) = header.as_mut() {
-                let mut now = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+                let mut now = libc::timespec {
+                    tv_sec: 0,
+                    tv_nsec: 0,
+                };
                 header.pts = if libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut now) == 0 {
                     now.tv_sec * 1_000_000_000 + now.tv_nsec
                 } else {
@@ -99,10 +102,13 @@ fn int_property(key: u32, value: i32) -> spa::pod::Property {
     }
 }
 fn pod(object: spa::pod::Object) -> Vec<u8> {
-    spa::pod::serialize::PodSerializer::serialize(std::io::Cursor::new(Vec::new()), &spa::pod::Value::Object(object))
-        .unwrap()
-        .0
-        .into_inner()
+    spa::pod::serialize::PodSerializer::serialize(
+        std::io::Cursor::new(Vec::new()),
+        &spa::pod::Value::Object(object),
+    )
+    .unwrap()
+    .0
+    .into_inner()
 }
 
 fn video_format(width: u32, height: u32) -> Vec<u8> {
@@ -137,7 +143,11 @@ fn video_format(width: u32, height: u32) -> Vec<u8> {
     ))
 }
 
-pub fn run(name: String, cursor: bool, generation: Option<u32>) -> Result<(), Box<dyn std::error::Error>> {
+pub fn run(
+    name: String,
+    cursor: bool,
+    generation: Option<u32>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let stop = Arc::new(AtomicBool::new(false));
     let pipe_stop = stop.clone();
     std::thread::spawn(move || {
@@ -201,10 +211,14 @@ pub fn run(name: String, cursor: bool, generation: Option<u32>) -> Result<(), Bo
         .add_local_listener_with_user_data(data)
         .state_changed(move |stream, data, _, state| {
             data.fresh.store(false, Ordering::SeqCst);
-            data.streaming
-                .store(matches!(state, pw::stream::StreamState::Streaming), Ordering::Relaxed);
+            data.streaming.store(
+                matches!(state, pw::stream::StreamState::Streaming),
+                Ordering::Relaxed,
+            );
             match state {
-                pw::stream::StreamState::Paused | pw::stream::StreamState::Streaming if !data.announced => {
+                pw::stream::StreamState::Paused | pw::stream::StreamState::Streaming
+                    if !data.announced =>
+                {
                     let node = stream.node_id();
                     if node != u32::MAX {
                         data.announced = true;
@@ -241,7 +255,8 @@ pub fn run(name: String, cursor: bool, generation: Option<u32>) -> Result<(), Bo
                 || format.size().width == 0
                 || format.size().height == 0
                 || (!resizable && (format.size().width, format.size().height) != (width, height))
-                || u64::from(format.size().width) * u64::from(format.size().height) * 4 > 128 * 1024 * 1024
+                || u64::from(format.size().width) * u64::from(format.size().height) * 4
+                    > 128 * 1024 * 1024
                 || format.format() != spa::param::video::VideoFormat::BGRx
             {
                 data.stop.store(true, Ordering::Relaxed);
@@ -254,7 +269,10 @@ pub fn run(name: String, cursor: bool, generation: Option<u32>) -> Result<(), Bo
                 spa::param::ParamType::Buffers,
                 int_property(spa::sys::SPA_PARAM_BUFFERS_buffers, 4),
                 int_property(spa::sys::SPA_PARAM_BUFFERS_blocks, 1),
-                int_property(spa::sys::SPA_PARAM_BUFFERS_size, (width * height * 4) as i32),
+                int_property(
+                    spa::sys::SPA_PARAM_BUFFERS_size,
+                    (width * height * 4) as i32
+                ),
                 int_property(spa::sys::SPA_PARAM_BUFFERS_stride, (width * 4) as i32),
                 int_property(spa::sys::SPA_PARAM_BUFFERS_align, 16)
             ));
@@ -272,7 +290,10 @@ pub fn run(name: String, cursor: bool, generation: Option<u32>) -> Result<(), Bo
                 )
             ));
             if stream
-                .update_params(&mut [Pod::from_bytes(&buffers).unwrap(), Pod::from_bytes(&header).unwrap()])
+                .update_params(&mut [
+                    Pod::from_bytes(&buffers).unwrap(),
+                    Pod::from_bytes(&header).unwrap(),
+                ])
                 .is_err()
             {
                 data.stop.store(true, Ordering::Relaxed);
@@ -335,7 +356,9 @@ pub fn run(name: String, cursor: bool, generation: Option<u32>) -> Result<(), Bo
         while !capture_stop.load(Ordering::Relaxed) {
             let start = Instant::now();
 
-            if capture_streaming.load(Ordering::Relaxed) || checked.elapsed() >= Duration::from_secs(1) {
+            if capture_streaming.load(Ordering::Relaxed)
+                || checked.elapsed() >= Duration::from_secs(1)
+            {
                 checked = Instant::now();
                 match capture.frame(&name, cursor, &capture_stop, std::mem::take(&mut spare)) {
                     Ok(frame) if resizable || (frame.width == width && frame.height == height) => {
@@ -382,7 +405,9 @@ pub fn run(name: String, cursor: bool, generation: Option<u32>) -> Result<(), Bo
         } else {
             Duration::from_millis(10)
         };
-        mainloop.loop_().iterate(pw::loop_::Timeout::Finite(timeout));
+        mainloop
+            .loop_()
+            .iterate(pw::loop_::Timeout::Finite(timeout));
         if streaming.load(Ordering::Relaxed) && Instant::now() >= next_frame {
             let _ = stream.trigger_process();
             next_frame = Instant::now() + interval;

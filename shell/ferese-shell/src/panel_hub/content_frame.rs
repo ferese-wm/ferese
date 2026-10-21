@@ -1,5 +1,7 @@
 use crate::Message;
-use cosmic::iced::advanced::{Clipboard, Layout, Renderer as _, Shell, Widget, layout, mouse, renderer, widget};
+use cosmic::iced::advanced::{
+    Clipboard, Layout, Renderer as _, Shell, Widget, layout, mouse, renderer, widget,
+};
 use cosmic::iced::{Event, Length, Rectangle, Size, Vector};
 use cosmic::{Element, Theme};
 
@@ -8,7 +10,11 @@ type Action = cosmic::Action<Message>;
 // Content keeps its destination layout while the shell springs around it.
 // Centering against the animated width cancels the shell's movement; anchoring
 // to the screen edge keeps its vertical position stable too.
-pub(super) fn view(content: Element<'_, Action>, size: [f64; 2], edge: ferese_panel::Edge) -> Element<'_, Action> {
+pub(super) fn view(
+    content: Element<'_, Action>,
+    size: [f64; 2],
+    edge: ferese_panel::Edge,
+) -> Element<'_, Action> {
     Element::new(ContentFrame {
         content,
         target: Size::new(size[0] as f32, size[1] as f32),

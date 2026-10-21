@@ -18,7 +18,12 @@ use std::time::Duration;
 
 // Expanded lists retain result rows under DND. Compact selection applies DND
 // separately, so rendered rows and keyboard focus always share this projection.
-fn list_entries<'a>(snapshot: &'a Snapshot, native: &'a [Activity], now: u64, output: &str) -> Vec<&'a Activity> {
+fn list_entries<'a>(
+    snapshot: &'a Snapshot,
+    native: &'a [Activity],
+    now: u64,
+    output: &str,
+) -> Vec<&'a Activity> {
     ranked(
         snapshot.activities.iter().chain(native.iter()),
         now,
@@ -87,7 +92,10 @@ struct FocusedActivity {
     focused: Option<Id>,
 }
 impl cosmic::iced::advanced::widget::Operation<Option<Id>> for FocusedActivity {
-    fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn cosmic::iced::advanced::widget::Operation<Option<Id>>)) {
+    fn traverse(
+        &mut self,
+        operate: &mut dyn FnMut(&mut dyn cosmic::iced::advanced::widget::Operation<Option<Id>>),
+    ) {
         operate(self);
     }
     fn focusable(
@@ -124,13 +132,17 @@ fn icon(name: &str) -> &'static [u8] {
 }
 fn progress_percent(activity: &Activity) -> Option<u8> {
     match activity.data.value {
-        Value::Progress(value) if activity.state == State::Running => Some((value.clamp(0., 1.) * 100.).round() as u8),
+        Value::Progress(value) if activity.state == State::Running => {
+            Some((value.clamp(0., 1.) * 100.).round() as u8)
+        }
         _ => None,
     }
 }
 
 fn detail(activity: &Activity) -> Option<String> {
-    progress_percent(activity).is_none().then(|| label(activity))
+    progress_percent(activity)
+        .is_none()
+        .then(|| label(activity))
 }
 
 fn label(activity: &Activity) -> String {
@@ -147,7 +159,12 @@ fn label(activity: &Activity) -> String {
         Value::Text(text) => text.clone(),
         Value::Progress(progress) => format!("{}%", (progress * 100.).round() as u32),
         Value::Countdown { .. } | Value::PausedCountdown { .. } => {
-            let seconds = activity.data.value.remaining_ms(now_ms()).unwrap_or(0).div_ceil(1_000);
+            let seconds = activity
+                .data
+                .value
+                .remaining_ms(now_ms())
+                .unwrap_or(0)
+                .div_ceil(1_000);
             format!("{}:{:02}", seconds / 60, seconds % 60)
         }
         Value::Indeterminate => {
@@ -293,17 +310,28 @@ impl FereseShell {
                     .map(|output| output.name.as_str())
                     .unwrap_or("")
                     .to_owned();
-                let entries = list_entries(&self.activities.snapshot, &self.activities.native, now, &name);
+                let entries = list_entries(
+                    &self.activities.snapshot,
+                    &self.activities.native,
+                    now,
+                    &name,
+                );
                 let compact: Vec<_> = entries
                     .iter()
                     .copied()
-                    .filter(|entry| entry.eligible(now, dnd) && entry.data.source != ferese_activities::Source::Media)
+                    .filter(|entry| {
+                        entry.eligible(now, dnd)
+                            && entry.data.source != ferese_activities::Source::Media
+                    })
                     .collect();
                 let presentation = self.activities.flat.entry(output.bar).or_default();
                 presentation
                     .selection
                     .select(&compact, self.activities.snapshot.limits, dnd, 0);
-                let rows = entries.iter().map(|entry| entry.id.clone()).collect::<Vec<_>>();
+                let rows = entries
+                    .iter()
+                    .map(|entry| entry.id.clone())
+                    .collect::<Vec<_>>();
                 reconcile_focus(&mut presentation.focus, &presentation.rows, &rows);
                 presentation.rows = rows;
                 continue;
@@ -313,7 +341,12 @@ impl FereseShell {
                 .output_for_bar(output.bar)
                 .map(|output| output.name.as_str())
                 .unwrap_or("");
-            let entries = list_entries(&self.activities.snapshot, &self.activities.native, now, name);
+            let entries = list_entries(
+                &self.activities.snapshot,
+                &self.activities.native,
+                now,
+                name,
+            );
             let workspace_width = self.hub_workspace_width(output.bar) as f32;
             let panel = self.panel_for_bar(output.bar);
             let available = super::panel_hub::content_width(panel, output.size) as f32
@@ -328,16 +361,22 @@ impl FereseShell {
             let compact: Vec<_> = entries
                 .iter()
                 .copied()
-                .filter(|entry| entry.eligible(now, dnd) && entry.data.source != ferese_activities::Source::Media)
+                .filter(|entry| {
+                    entry.eligible(now, dnd)
+                        && entry.data.source != ferese_activities::Source::Media
+                })
                 .collect();
             let compact = if self.compact_activities_configured(output.bar) {
                 compact
             } else {
                 Vec::new()
             };
-            presentation
-                .selection
-                .select(&compact, self.activities.snapshot.limits, dnd, protected);
+            presentation.selection.select(
+                &compact,
+                self.activities.snapshot.limits,
+                dnd,
+                protected,
+            );
             let rows: Vec<_> = entries.iter().map(|entry| entry.id.clone()).collect();
             reconcile_focus(&mut presentation.focus, &presentation.rows, &rows);
             presentation.rows = rows;
@@ -355,11 +394,14 @@ impl FereseShell {
                             .unwrap_or(now)
                             .saturating_sub(entry.result_flash_ms),
                     );
-                    presentation.tints.entry(entry.id.clone()).or_insert_with(|| {
-                        let mut value = AnimatedValue::new(if age < 400 { 1. } else { 0. });
-                        value.set_target(0.);
-                        value
-                    });
+                    presentation
+                        .tints
+                        .entry(entry.id.clone())
+                        .or_insert_with(|| {
+                            let mut value = AnimatedValue::new(if age < 400 { 1. } else { 0. });
+                            value.set_target(0.);
+                            value
+                        });
                 }
             }
             let target = f64::from(presentation.selection.visible.len() == 2);
@@ -367,9 +409,12 @@ impl FereseShell {
                 .divider
                 .get_or_insert_with(|| AnimatedValue::new(0.))
                 .retarget_preserving_motion(target);
-            presentation
-                .compact
-                .update(&entries, &presentation.selection, self.render.font, available);
+            presentation.compact.update(
+                &entries,
+                &presentation.selection,
+                self.render.font,
+                available,
+            );
             let compact_width = presentation.compact.width;
             if !presentation.selection.visible.is_empty() {
                 runtime.idle_content_width = Some(f64::from(compact_width));
@@ -402,29 +447,35 @@ impl FereseShell {
             {
                 return false;
             }
-            self.outputs.iter().filter(|output| !output.hidden).any(|output| {
-                let list = self
-                    .menu
-                    .as_ref()
-                    .is_some_and(|menu| menu.kind == status_ui::Menu::Activities && menu.anchor.parent == output.bar);
-                let routed = self
-                    .output_for_bar(output.bar)
-                    .is_some_and(|output| activity.data.output.as_deref() == Some(&output.name));
-                if let Some(runtime) = &output.runtime.hub {
-                    let runtime = runtime.borrow();
-                    routed
-                        && (runtime.activities.selection.visible.contains(&activity.id)
-                            || runtime.hub.mode()
-                                == ferese_panel::morph::Mode::Expanded(ferese_panel::morph::Content::Activities))
-                } else {
-                    routed
-                        && (list
-                            || self.activities.flat.get(&output.bar).is_some_and(|presentation| {
-                                self.compact_activities_configured(output.bar)
-                                    && presentation.selection.visible.contains(&activity.id)
-                            }))
-                }
-            })
+            self.outputs
+                .iter()
+                .filter(|output| !output.hidden)
+                .any(|output| {
+                    let list = self.menu.as_ref().is_some_and(|menu| {
+                        menu.kind == status_ui::Menu::Activities && menu.anchor.parent == output.bar
+                    });
+                    let routed = self.output_for_bar(output.bar).is_some_and(|output| {
+                        activity.data.output.as_deref() == Some(&output.name)
+                    });
+                    if let Some(runtime) = &output.runtime.hub {
+                        let runtime = runtime.borrow();
+                        routed
+                            && (runtime.activities.selection.visible.contains(&activity.id)
+                                || runtime.hub.mode()
+                                    == ferese_panel::morph::Mode::Expanded(
+                                        ferese_panel::morph::Content::Activities,
+                                    ))
+                    } else {
+                        routed
+                            && (list
+                                || self.activities.flat.get(&output.bar).is_some_and(
+                                    |presentation| {
+                                        self.compact_activities_configured(output.bar)
+                                            && presentation.selection.visible.contains(&activity.id)
+                                    },
+                                ))
+                    }
+                })
         });
         if visible {
             cosmic::iced::time::every(Duration::from_secs(1)).map(|_| ())
@@ -456,20 +507,24 @@ impl FereseShell {
             reduced,
             ring_color,
         );
-        let center: Element<'_, cosmic::Action<Message>> = if let Some(percent) = progress_percent(activity) {
-            self.render
-                .text(percent.to_string())
-                .size(if percent == 100 { 9. } else { 10. })
-                .line_height(cosmic::iced::widget::text::LineHeight::Relative(1.))
-                .class(theme::Text::Color(color))
-                .into()
-        } else {
-            icons::tinted(icon(&activity.data.icon), 14, color).into()
-        };
+        let center: Element<'_, cosmic::Action<Message>> =
+            if let Some(percent) = progress_percent(activity) {
+                self.render
+                    .text(percent.to_string())
+                    .size(if percent == 100 { 9. } else { 10. })
+                    .line_height(cosmic::iced::widget::text::LineHeight::Relative(1.))
+                    .class(theme::Text::Color(color))
+                    .into()
+            } else {
+                icons::tinted(icon(&activity.data.icon), 14, color).into()
+            };
         cosmic::iced::widget::stack![ring, container(center).center_x(26).center_y(26)].into()
     }
     pub fn activity_available(&self, id: window::Id) -> bool {
-        let name = self.output_for_bar(id).map(|output| output.name.as_str()).unwrap_or("");
+        let name = self
+            .output_for_bar(id)
+            .map(|output| output.name.as_str())
+            .unwrap_or("");
         ranked(
             self.activities
                 .snapshot
@@ -537,16 +592,17 @@ impl FereseShell {
             return (container(self.render.text("")).width(0).into(), false);
         };
         let palette = self.config.theme.palette();
-        let result_age = activity
-            .result_deadline
-            .map(|deadline| now_ms().saturating_sub(deadline.saturating_sub(activity.result_flash_ms)));
-        let foreground = if result_age.is_some_and(|age| age < 400) && activity.state == State::Failed {
-            palette.error
-        } else if result_age.is_some_and(|age| age < 400) && activity.state == State::Done {
-            palette.accent
-        } else {
-            palette.text
-        };
+        let result_age = activity.result_deadline.map(|deadline| {
+            now_ms().saturating_sub(deadline.saturating_sub(activity.result_flash_ms))
+        });
+        let foreground =
+            if result_age.is_some_and(|age| age < 400) && activity.state == State::Failed {
+                palette.error
+            } else if result_age.is_some_and(|age| age < 400) && activity.state == State::Done {
+                palette.accent
+            } else {
+                palette.text
+            };
         let mut content = row![self.activity_icon(activity, foreground, width.is_some())]
             .spacing(6)
             .align_y(Alignment::Center);
@@ -573,7 +629,8 @@ impl FereseShell {
                     )),
             );
         }
-        let hidden = presentation.selection.hidden + presentation.selection.visible.len().saturating_sub(1);
+        let hidden =
+            presentation.selection.hidden + presentation.selection.visible.len().saturating_sub(1);
         if hidden > 0 && !self.notifications.dnd && self.activities.snapshot.limits.show_badge {
             content = content.push(self.render.text(format!("+{hidden}")).size(11));
         }
@@ -613,10 +670,16 @@ impl FereseShell {
                 ))
             });
         (
-            cosmic::iced::widget::mouse_area(crate::motion::button(self.render, button, palette.text, selected, 1.))
-                .on_enter(cosmic::Action::App(Message::ActivityHover(id, true)))
-                .on_exit(cosmic::Action::App(Message::ActivityHover(id, false)))
-                .into(),
+            cosmic::iced::widget::mouse_area(crate::motion::button(
+                self.render,
+                button,
+                palette.text,
+                selected,
+                1.,
+            ))
+            .on_enter(cosmic::Action::App(Message::ActivityHover(id, true)))
+            .on_exit(cosmic::Action::App(Message::ActivityHover(id, false)))
+            .into(),
             true,
         )
     }
@@ -711,7 +774,13 @@ impl FereseShell {
         id: window::Id,
     ) -> Option<impl cosmic::iced::advanced::widget::Operation<Option<Id>> + use<>> {
         let bar = self.activity_list_bar(id)?;
-        let hub = self.outputs.iter().find(|entry| entry.bar == bar)?.runtime.hub.as_ref();
+        let hub = self
+            .outputs
+            .iter()
+            .find(|entry| entry.bar == bar)?
+            .runtime
+            .hub
+            .as_ref();
         let rows = if let Some(hub) = hub {
             hub.borrow().activities.rows.clone()
         } else {
@@ -729,13 +798,21 @@ impl FereseShell {
         key: Option<cosmic::iced::keyboard::key::Named>,
     ) -> Option<Task<Message>> {
         Some(
-            cosmic::iced::advanced::widget::operate(self.activity_focus_query(id)?)
-                .map(move |focused| cosmic::Action::App(Message::ActivityNavigation(id, focused, key))),
+            cosmic::iced::advanced::widget::operate(self.activity_focus_query(id)?).map(
+                move |focused| cosmic::Action::App(Message::ActivityNavigation(id, focused, key)),
+            ),
         )
     }
-    pub fn activity_key(&self, id: window::Id, key: cosmic::iced::keyboard::key::Named) -> Option<Task<Message>> {
+    pub fn activity_key(
+        &self,
+        id: window::Id,
+        key: cosmic::iced::keyboard::key::Named,
+    ) -> Option<Task<Message>> {
         use cosmic::iced::keyboard::key::Named;
-        if !matches!(key, Named::ArrowUp | Named::ArrowDown | Named::Home | Named::End) {
+        if !matches!(
+            key,
+            Named::ArrowUp | Named::ArrowDown | Named::Home | Named::End
+        ) {
             return None;
         }
         self.query_activity_focus(id, Some(key))
@@ -747,7 +824,13 @@ impl FereseShell {
         key: Option<cosmic::iced::keyboard::key::Named>,
     ) -> Option<Task<Message>> {
         let bar = self.activity_list_bar(id)?;
-        let hub = self.outputs.iter().find(|entry| entry.bar == bar)?.runtime.hub.as_ref();
+        let hub = self
+            .outputs
+            .iter()
+            .find(|entry| entry.bar == bar)?
+            .runtime
+            .hub
+            .as_ref();
         let mut runtime = hub.map(|hub| hub.borrow_mut());
         let presentation = if let Some(runtime) = &mut runtime {
             &mut runtime.activities
@@ -773,9 +856,14 @@ impl FereseShell {
             _ => presentation.rows.len().saturating_sub(1),
         };
         presentation.focus = presentation.rows.get(next).cloned();
-        Some(presentation.focus.as_ref().map_or_else(Task::none, |focus| {
-            cosmic::widget::button::focus(activity_widget_id(bar, focus))
-        }))
+        Some(
+            presentation
+                .focus
+                .as_ref()
+                .map_or_else(Task::none, |focus| {
+                    cosmic::widget::button::focus(activity_widget_id(bar, focus))
+                }),
+        )
     }
     pub fn activity_result_tint(&self, id: window::Id) -> Option<(cosmic::iced::Color, f32)> {
         let runtime = self
@@ -787,23 +875,28 @@ impl FereseShell {
             .as_ref()?
             .borrow();
         let palette = self.config.theme.palette();
-        runtime.activities.selection.visible.iter().find_map(|identity| {
-            let entry = self
-                .activities
-                .snapshot
-                .activities
-                .iter()
-                .find(|entry| &entry.id == identity)?;
-            let alpha = runtime.activities.tints.get(identity)?.current as f32;
-            (alpha > 0.).then_some((
-                if entry.state == State::Failed {
-                    palette.error
-                } else {
-                    palette.accent
-                },
-                alpha.clamp(0., 1.) * 0.4,
-            ))
-        })
+        runtime
+            .activities
+            .selection
+            .visible
+            .iter()
+            .find_map(|identity| {
+                let entry = self
+                    .activities
+                    .snapshot
+                    .activities
+                    .iter()
+                    .find(|entry| &entry.id == identity)?;
+                let alpha = runtime.activities.tints.get(identity)?.current as f32;
+                (alpha > 0.).then_some((
+                    if entry.state == State::Failed {
+                        palette.error
+                    } else {
+                        palette.accent
+                    },
+                    alpha.clamp(0., 1.) * 0.4,
+                ))
+            })
     }
     pub fn activity_compact(
         &self,
@@ -843,12 +936,14 @@ impl FereseShell {
                     .map_or(1., |value| value.current as f32)
                     .clamp(0., 1.);
                 let divider_color = palette.text.scale_alpha(opacity * alpha * 0.25);
-                strip = strip.push(container(cosmic::iced::widget::Space::new().width(1).height(18)).class(
-                    theme::Container::custom(move |_| container::Style {
-                        background: Some(divider_color.into()),
-                        ..Default::default()
-                    }),
-                ));
+                strip = strip.push(
+                    container(cosmic::iced::widget::Space::new().width(1).height(18)).class(
+                        theme::Container::custom(move |_| container::Style {
+                            background: Some(divider_color.into()),
+                            ..Default::default()
+                        }),
+                    ),
+                );
             }
             let semantic = if activity.state == State::Failed {
                 palette.error
@@ -936,7 +1031,10 @@ impl FereseShell {
                     pressed: Box::new(move |_, _| appearance),
                     disabled: Box::new(move |_| appearance),
                 })
-                .on_press(cosmic::Action::App(Message::HubOpen(id, status_ui::Menu::Activities))),
+                .on_press(cosmic::Action::App(Message::HubOpen(
+                    id,
+                    status_ui::Menu::Activities,
+                ))),
         );
         let budget = presentation.compact.width
             + if self.hub_workspace_width(id) > 0. {
@@ -947,13 +1045,29 @@ impl FereseShell {
         container(controls)
             .padding([0., compact::PADDING])
             .height(Length::Fill)
-            .width(if intrinsic { Length::Fixed(budget) } else { Length::Fill })
+            .width(if intrinsic {
+                Length::Fixed(budget)
+            } else {
+                Length::Fill
+            })
             .into()
     }
-    pub fn activity_list(&self, id: window::Id, opacity: f32) -> Element<'_, cosmic::Action<Message>> {
+    pub fn activity_list(
+        &self,
+        id: window::Id,
+        opacity: f32,
+    ) -> Element<'_, cosmic::Action<Message>> {
         let palette = self.config.theme.palette();
-        let name = self.output_for_bar(id).map(|output| output.name.as_str()).unwrap_or("");
-        let entries = list_entries(&self.activities.snapshot, &self.activities.native, now_ms(), name);
+        let name = self
+            .output_for_bar(id)
+            .map(|output| output.name.as_str())
+            .unwrap_or("");
+        let entries = list_entries(
+            &self.activities.snapshot,
+            &self.activities.native,
+            now_ms(),
+            name,
+        );
         let focus = self
             .outputs
             .iter()
@@ -1031,7 +1145,10 @@ impl FereseShell {
                 Template::Media { artist, playing } => {
                     body = body.push(
                         self.render
-                            .text(format!("{artist} · {}", if *playing { "Playing" } else { "Paused" }))
+                            .text(format!(
+                                "{artist} · {}",
+                                if *playing { "Playing" } else { "Paused" }
+                            ))
                             .size(12),
                     );
                 }
@@ -1042,7 +1159,8 @@ impl FereseShell {
                 }
                 _ => {}
             }
-            if activity.data.source == ferese_activities::Source::Media && activity.id.session == 0 {
+            if activity.data.source == ferese_activities::Source::Media && activity.id.session == 0
+            {
                 body = body.push(
                     button::custom(icons::tinted(icons::MEDIA_PLAY, 16, palette.text))
                         .name("Play or pause")
@@ -1085,7 +1203,10 @@ impl FereseShell {
                             pressed: Box::new(move |focused, _| appearance(0.10, focused)),
                             disabled: Box::new(move |_| appearance(0.025, false)),
                         })
-                        .on_press(cosmic::Action::App(Message::ActivityActivate(id, activity.id.clone())))
+                        .on_press(cosmic::Action::App(Message::ActivityActivate(
+                            id,
+                            activity.id.clone()
+                        )))
                         .width(Length::Fill),
                 ]
                 .width(Length::Fill)

@@ -68,7 +68,8 @@ impl FrameScheduler {
             // A cold GPU is less predictable. Start immediately on idle wakeup.
             self.interval
         } else {
-            (self.render_estimate + self.render_variance * 2 + TIMER_MARGIN + self.extra_margin).min(self.interval)
+            (self.render_estimate + self.render_variance * 2 + TIMER_MARGIN + self.extra_margin)
+                .min(self.interval)
         }
     }
 
@@ -95,7 +96,10 @@ impl FrameScheduler {
         }
 
         let requested_at = self.requested_at?;
-        if self.last_presented.is_some_and(|last| last > now + self.interval) {
+        if self
+            .last_presented
+            .is_some_and(|last| last > now + self.interval)
+        {
             self.last_presented = None;
             self.last_target = None;
         }
@@ -148,8 +152,12 @@ impl FrameScheduler {
             let ratio = (elapsed.as_secs_f64() / 0.5).clamp(0.01, 1.0);
             let deviation = sample.saturating_sub(self.render_estimate);
             let variance_ratio = (elapsed.as_secs_f64() / 6.0).clamp(0.001, 0.1);
-            self.render_variance = self.render_variance.mul_f64(1.0 - variance_ratio).max(deviation);
-            self.render_estimate = self.render_estimate.mul_f64(1.0 - ratio) + sample.mul_f64(ratio);
+            self.render_variance = self
+                .render_variance
+                .mul_f64(1.0 - variance_ratio)
+                .max(deviation);
+            self.render_estimate =
+                self.render_estimate.mul_f64(1.0 - ratio) + sample.mul_f64(ratio);
         }
     }
 
@@ -168,7 +176,8 @@ impl FrameScheduler {
         self.last_target = Some(timestamp);
         let late = timestamp.saturating_sub(plan.present_at);
         if plan.phase_known && late > self.interval / 2 {
-            let missed = (late.as_nanos() + self.interval.as_nanos() / 2) / self.interval.as_nanos();
+            let missed =
+                (late.as_nanos() + self.interval.as_nanos() / 2) / self.interval.as_nanos();
             self.missed_deadlines = self.missed_deadlines.saturating_add(missed as u64);
             // CPU submission timings may omit asynchronous GPU work. Increase
             // the margin promptly after a real miss; relax it slowly afterward.
@@ -226,7 +235,8 @@ impl FrameScheduler {
         // the next refresh look too early and halve a client's frame rate.
         self.last_callback = Some(self.last_presented.map_or(now, |last| {
             let tolerance = Duration::from_micros(500).min(self.interval / 8);
-            let slots = (now.saturating_sub(last) + tolerance).as_nanos() / self.interval.as_nanos();
+            let slots =
+                (now.saturating_sub(last) + tolerance).as_nanos() / self.interval.as_nanos();
             last + self.interval.mul_f64(slots as f64)
         }));
     }
@@ -308,7 +318,10 @@ mod tests {
         scheduler.callback_sent(ms(110));
         scheduler.request(ms(108));
         assert_eq!(scheduler.plan(ms(108)).unwrap().present_at, ms(120));
-        assert_eq!(scheduler.callback_deadline(ms(111), ms(110)).unwrap(), ms(120));
+        assert_eq!(
+            scheduler.callback_deadline(ms(111), ms(110)).unwrap(),
+            ms(120)
+        );
     }
 
     #[test]
@@ -319,7 +332,9 @@ mod tests {
         let unchanged = scheduler.plan(ms(101)).unwrap();
         scheduler.begin();
         scheduler.rendered(unchanged, ms(108), ms(1), false);
-        let callback_at = scheduler.callback_deadline(ms(108), unchanged.present_at).unwrap();
+        let callback_at = scheduler
+            .callback_deadline(ms(108), unchanged.present_at)
+            .unwrap();
         assert_eq!(callback_at, ms(110));
 
         scheduler.request(ms(109));
@@ -330,13 +345,19 @@ mod tests {
         // The old timer is dispatched late, after a new frame was queued.
         // Neither that timer nor the predicted refresh can release callbacks.
         assert_eq!(scheduler.callback_deadline(ms(118), callback_at), None);
-        assert_eq!(scheduler.callback_deadline(ms(120), changed.present_at), None);
+        assert_eq!(
+            scheduler.callback_deadline(ms(120), changed.present_at),
+            None
+        );
         assert_eq!(scheduler.callback_deadline(ms(129), callback_at), None);
 
         scheduler.presented(ms(130));
         assert_eq!(scheduler.callback_deadline(ms(130), ms(130)), Some(ms(130)));
         scheduler.callback_sent(ms(130));
-        assert_eq!(scheduler.callback_deadline(ms(130), callback_at), Some(ms(140)));
+        assert_eq!(
+            scheduler.callback_deadline(ms(130), callback_at),
+            Some(ms(140))
+        );
     }
 
     #[test]

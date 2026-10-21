@@ -2,7 +2,11 @@ use cosmic::widget::{column, slider};
 
 use super::*;
 
-pub(super) fn view<'a>(shell: &'a FereseShell, mut rows: MenuRows<'a>, style: MenuStyle) -> MenuRows<'a> {
+pub(super) fn view<'a>(
+    shell: &'a FereseShell,
+    mut rows: MenuRows<'a>,
+    style: MenuStyle,
+) -> MenuRows<'a> {
     let Some(status) = &shell.status.night_light else {
         return rows.push(shell.render.text("Night light is unavailable").size(13));
     };
@@ -28,9 +32,19 @@ pub(super) fn view<'a>(shell: &'a FereseShell, mut rows: MenuRows<'a>, style: Me
         shell.render.text("Lower temperatures are warmer").size(12),
     ]
     .spacing(8);
-    rows = rows.push(control_card(shell.render, warmth.into(), style.primary, style.opacity));
+    rows = rows.push(control_card(
+        shell.render,
+        warmth.into(),
+        style.primary,
+        style.opacity,
+    ));
     if status.supported_outputs == 0 {
-        rows = rows.push(shell.render.text("No display supports night light").size(13));
+        rows = rows.push(
+            shell
+                .render
+                .text("No display supports night light")
+                .size(13),
+        );
     } else if status.enabled && status.failed_outputs > 0 {
         rows = rows.push(
             shell

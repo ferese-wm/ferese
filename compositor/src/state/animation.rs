@@ -19,7 +19,10 @@ impl Ferese {
         // desktop must not turn suspend/DPMS time into a spring step.
         if self.space.outputs().next().is_none()
             || self.session_lock.sleeping
-            || self.direct_backend.as_ref().is_some_and(|backend| !backend.active)
+            || self
+                .direct_backend
+                .as_ref()
+                .is_some_and(|backend| !backend.active)
         {
             #[cfg(feature = "resize-metrics")]
             self.resize_metrics.pause_clock(self.start_time.elapsed());
@@ -29,7 +32,13 @@ impl Ferese {
         self.advance_animations_by(delta)
     }
 
-    pub fn record_drm_presentation(&mut self, node: DrmNode, crtc: crtc::Handle, time: DrmEventTime, sequence: u32) {
+    pub fn record_drm_presentation(
+        &mut self,
+        node: DrmNode,
+        crtc: crtc::Handle,
+        time: DrmEventTime,
+        sequence: u32,
+    ) {
         if let Some(backend) = self.direct_backend.as_mut() {
             backend.record_presentation(node, crtc, time, sequence);
         }
@@ -37,7 +46,12 @@ impl Ferese {
 
     #[cfg(feature = "resize-metrics")]
     pub(super) fn measure_resize_pauses(&mut self, now: Duration) {
-        if self.session_lock.sleeping || self.direct_backend.as_ref().is_some_and(|backend| !backend.active) {
+        if self.session_lock.sleeping
+            || self
+                .direct_backend
+                .as_ref()
+                .is_some_and(|backend| !backend.active)
+        {
             self.resize_metrics.pause_clock(now);
             return;
         }
@@ -46,7 +60,8 @@ impl Ferese {
             let Some(workspace) = self.workspaces.workspace_for_window(*id) else {
                 continue;
             };
-            let moving = |value: &AnimatedValue| value.current != value.target || value.velocity != 0.0;
+            let moving =
+                |value: &AnimatedValue| value.current != value.target || value.velocity != 0.0;
             let viewport = self
                 .presentation_dependencies
                 .viewport_blocked(workspace, &self.windows)
@@ -57,28 +72,46 @@ impl Ferese {
                 && self
                     .output_workspaces
                     .output_for_workspace(workspace)
-                    .is_some_and(|output| self.output_workspaces.active_workspace(output) == Some(workspace))
-                && self.focus_swipe().is_none_or(|swipe| swipe.workspace != workspace);
-            let others = self.workspaces.workspace(workspace).is_some_and(|workspace| {
-                workspace
-                    .layout
-                    .window_ids()
-                    .chain(workspace.floating.iter().copied())
-                    .any(|other| {
-                        other != *id
-                            && self.presentation_dependencies.reflow_blocked(other, &self.windows)
-                            && self
-                                .windows
-                                .window(other)
-                                .is_some_and(|window| self.space.element_location(window).is_some())
-                            && self.windows.record(other).is_some_and(|record| {
-                                record.geometry.is_some_and(|mut geometry| {
-                                    geometry.advance(Duration::ZERO, self.spring_config, self.animations_enabled)
-                                }) || record.world_x.as_ref().is_some_and(|(_, value)| moving(value))
-                                    || record.coupled_width.as_ref().is_some_and(|(_, value)| moving(value))
-                            })
+                    .is_some_and(|output| {
+                        self.output_workspaces.active_workspace(output) == Some(workspace)
                     })
-            });
+                && self
+                    .focus_swipe()
+                    .is_none_or(|swipe| swipe.workspace != workspace);
+            let others = self
+                .workspaces
+                .workspace(workspace)
+                .is_some_and(|workspace| {
+                    workspace
+                        .layout
+                        .window_ids()
+                        .chain(workspace.floating.iter().copied())
+                        .any(|other| {
+                            other != *id
+                                && self
+                                    .presentation_dependencies
+                                    .reflow_blocked(other, &self.windows)
+                                && self.windows.window(other).is_some_and(|window| {
+                                    self.space.element_location(window).is_some()
+                                })
+                                && self.windows.record(other).is_some_and(|record| {
+                                    record.geometry.is_some_and(|mut geometry| {
+                                        geometry.advance(
+                                            Duration::ZERO,
+                                            self.spring_config,
+                                            self.animations_enabled,
+                                        )
+                                    }) || record
+                                        .world_x
+                                        .as_ref()
+                                        .is_some_and(|(_, value)| moving(value))
+                                        || record
+                                            .coupled_width
+                                            .as_ref()
+                                            .is_some_and(|(_, value)| moving(value))
+                                })
+                        })
+                });
             self.resize_metrics.observe(
                 *id,
                 now,
@@ -110,7 +143,9 @@ impl Ferese {
         if self.viewports.iter().any(|(workspace, viewport)| {
             self.output_workspaces
                 .output_for_workspace(*workspace)
-                .is_some_and(|output| self.output_workspaces.active_workspace(output) == Some(*workspace))
+                .is_some_and(|output| {
+                    self.output_workspaces.active_workspace(output) == Some(*workspace)
+                })
                 && viewport.needs_tick()
         }) {
             return true;
@@ -124,7 +159,8 @@ impl Ferese {
 
         self.windows.records().any(|(&id, record)| {
             let focus = if selected == Some(id) { 1.0 } else { 0.0 };
-            let activation = crate::focus_effect::target(self.focus_effect, self.focused_window, id);
+            let activation =
+                crate::focus_effect::target(self.focus_effect, self.focused_window, id);
 
             record_needs_tick(record, focus, activation, || {
                 self.windows
@@ -155,15 +191,20 @@ impl Ferese {
             .filter(|swipe| !self.focus_swipe_is_current(swipe))
             .map(|swipe| swipe.workspace)
         {
-            let swipe = self.viewports.get_mut(&workspace).unwrap().end_gesture(None).unwrap();
+            let swipe = self
+                .viewports
+                .get_mut(&workspace)
+                .unwrap()
+                .end_gesture(None)
+                .unwrap();
             self.presentation_dependencies
                 .restore_viewport(swipe.workspace, swipe.dependencies);
             self.release_presentation_dependencies();
         }
 
-        let mut active_animation = self
-            .tab_indicator
-            .advance(delta, self.spring_config, self.animations_enabled);
+        let mut active_animation =
+            self.tab_indicator
+                .advance(delta, self.spring_config, self.animations_enabled);
         let mut completed_slides = Vec::new();
         for (output, slide) in &mut self.workspace_slides {
             if slide.held_progress.is_some() {
@@ -212,7 +253,9 @@ impl Ferese {
         for (&id, record) in self.windows.records_mut() {
             let selected = selected_window == Some(id);
             let target = if selected { 1.0 } else { 0.0 };
-            let focus = record.focus.get_or_insert_with(|| AnimatedValue::new(target));
+            let focus = record
+                .focus
+                .get_or_insert_with(|| AnimatedValue::new(target));
             let previous = focus.current;
             let changed = focus.target != target;
             focus.set_target(target);
@@ -225,7 +268,9 @@ impl Ferese {
                 focus.snap();
             }
             appearance_changed |= previous != focus.current;
-            let shadow = record.shadow.get_or_insert_with(|| AnimatedValue::new(target));
+            let shadow = record
+                .shadow
+                .get_or_insert_with(|| AnimatedValue::new(target));
             let previous = shadow.current;
             let changed = shadow.target != target;
             shadow.set_target(target);
@@ -271,8 +316,9 @@ impl Ferese {
         }
         let mut finished = Vec::new();
         self.render.closing.retain_mut(|window| {
-            let active =
-                self.animations_enabled && !self.session_lock.active() && window.advance(delta, self.spring_config);
+            let active = self.animations_enabled
+                && !self.session_lock.active()
+                && window.advance(delta, self.spring_config);
             if !active {
                 finished.push(window.presentation.id);
             }
@@ -299,8 +345,12 @@ impl Ferese {
         #[cfg(feature = "resize-metrics")]
         {
             for (&id, record) in self.windows.records() {
-                if record.resize.is_some_and(|transaction| transaction.expired(now)) {
-                    self.resize_metrics.end(id, now, crate::resize_metrics::End::Deadline);
+                if record
+                    .resize
+                    .is_some_and(|transaction| transaction.expired(now))
+                {
+                    self.resize_metrics
+                        .end(id, now, crate::resize_metrics::End::Deadline);
                 }
             }
         }
@@ -324,7 +374,9 @@ impl Ferese {
                 return false;
             }
 
-            let waiting_for_client = self.presentation_dependencies.reflow_blocked(*id, &self.windows);
+            let waiting_for_client = self
+                .presentation_dependencies
+                .reflow_blocked(*id, &self.windows);
             // A shrinking client's destination buffer arrives before the
             // animated bounds reach it. Keep the old native pixels covering
             // that strip rather than fading them into the neutral resize fill.
@@ -355,7 +407,11 @@ impl Ferese {
             if !active {
                 #[cfg(feature = "resize-metrics")]
                 resize_metrics.handoff_end(*id, now, snapshot.elapsed);
-                tracing::debug!(?id, bytes = snapshot.bytes(), "released resize handoff snapshot");
+                tracing::debug!(
+                    ?id,
+                    bytes = snapshot.bytes(),
+                    "released resize handoff snapshot"
+                );
             }
             active
         });
@@ -366,7 +422,9 @@ impl Ferese {
             if self
                 .output_workspaces
                 .output_for_workspace(*workspace)
-                .is_none_or(|output| self.output_workspaces.active_workspace(output) != Some(*workspace))
+                .is_none_or(|output| {
+                    self.output_workspaces.active_workspace(output) != Some(*workspace)
+                })
             {
                 continue;
             }
@@ -407,7 +465,8 @@ impl Ferese {
                 geometry.visual.velocity.width = 0.0;
             }
             if !held {
-                active_animation |= geometry.advance(delta, self.spring_config, self.animations_enabled);
+                active_animation |=
+                    geometry.advance(delta, self.spring_config, self.animations_enabled);
             }
 
             if zooming != geometry.is_zooming() {
@@ -435,7 +494,12 @@ impl Ferese {
                         presented_world.velocity = 0.0;
                     }
                     let presented_viewport = viewport.presented_motion();
-                    sync_scrolling_coordinates(geometry, &mut presented_world, &presented_viewport, false);
+                    sync_scrolling_coordinates(
+                        geometry,
+                        &mut presented_world,
+                        &presented_viewport,
+                        false,
+                    );
                 }
             }
 
@@ -520,9 +584,9 @@ impl Ferese {
             self.retarget_overview();
         }
         let overview_was_presenting = self.overview.is_presenting();
-        active_animation |= self
-            .overview
-            .advance(delta, self.spring_config, self.animations_enabled);
+        active_animation |=
+            self.overview
+                .advance(delta, self.spring_config, self.animations_enabled);
         if overview_was_presenting != self.overview.is_presenting() {
             self.reconcile_layer_keyboard_focus();
         }
@@ -591,7 +655,10 @@ impl Ferese {
                 let position = slide.position(item, delta);
                 offsets.insert(
                     item.workspace,
-                    (position.x * f64::from(size.w), position.y * f64::from(size.h)),
+                    (
+                        position.x * f64::from(size.w),
+                        position.y * f64::from(size.h),
+                    ),
                 );
             }
         }
@@ -634,8 +701,14 @@ fn record_needs_tick(
 ) -> bool {
     if record.resize.is_some()
         || record.opening.is_some()
-        || record.focus.as_ref().is_none_or(|motion| motion.needs_update(focus))
-        || record.shadow.as_ref().is_none_or(|motion| motion.needs_update(focus))
+        || record
+            .focus
+            .as_ref()
+            .is_none_or(|motion| motion.needs_update(focus))
+        || record
+            .shadow
+            .as_ref()
+            .is_none_or(|motion| motion.needs_update(focus))
     {
         return true;
     }
@@ -645,7 +718,10 @@ fn record_needs_tick(
         .focus_transition
         .as_ref()
         .is_none_or(|motion| motion.needs_update(activation))
-        || record.world_x.as_ref().is_some_and(|(_, world)| moving(world))
+        || record
+            .world_x
+            .as_ref()
+            .is_some_and(|(_, world)| moving(world))
         || record.coupled_width.is_some()
         || record.geometry.is_some_and(|geometry| {
             geometry.is_zooming()
@@ -654,7 +730,8 @@ fn record_needs_tick(
                 || geometry.visual.current != geometry.visual.target
                 || geometry.visual.velocity != ferese_animation::RectVelocity::default()
                 || (!record.natural_floating_pending
-                    && geometry.client.last_configured_size != Some(ClientSize::from_rect(geometry.logical)))
+                    && geometry.client.last_configured_size
+                        != Some(ClientSize::from_rect(geometry.logical)))
         });
 
     // A stale hidden target must not keep waking the whole desktop.
@@ -756,15 +833,33 @@ mod tests {
         viewport.advance(Duration::from_millis(40), config, true, false);
         let mut world = AnimatedValue::new(500.0);
         world.set_target(900.0);
-        world.advance_with_policy(Duration::from_millis(40), config, CrossingPolicy::NoCrossing);
+        world.advance_with_policy(
+            Duration::from_millis(40),
+            config,
+            CrossingPolicy::NoCrossing,
+        );
         let mut width = AnimatedValue::new(400.0);
         width.set_target(700.0);
-        width.advance_with_policy(Duration::from_millis(40), config, CrossingPolicy::NoCrossing);
+        width.advance_with_policy(
+            Duration::from_millis(40),
+            config,
+            CrossingPolicy::NoCrossing,
+        );
         let mut geometry = WindowGeometry::new(
-            Rect::new(world.current - viewport.motion().current, 0.0, width.current, 300.0),
+            Rect::new(
+                world.current - viewport.motion().current,
+                0.0,
+                width.current,
+                300.0,
+            ),
             None,
         );
-        let target = Rect::new(world.target - viewport.motion().target, 0.0, width.target, 300.0);
+        let target = Rect::new(
+            world.target - viewport.motion().target,
+            0.0,
+            width.target,
+            300.0,
+        );
         geometry.set_logical_target(target, Duration::from_millis(40));
         sync_scrolling_coordinates(&mut geometry, &mut world, viewport.motion(), false);
         geometry.visual.velocity.width = width.velocity;
@@ -773,12 +868,20 @@ mod tests {
         world.retarget_preserving_motion(1000.0);
         width.retarget_preserving_motion(600.0);
         geometry.set_logical_target(
-            Rect::new(world.target - viewport.motion().target, 0.0, width.target, 300.0),
+            Rect::new(
+                world.target - viewport.motion().target,
+                0.0,
+                width.target,
+                300.0,
+            ),
             Duration::from_millis(40),
         );
         sync_scrolling_coordinates(&mut geometry, &mut world, viewport.motion(), false);
         assert_eq!(geometry.visual.current, before);
-        assert_eq!(geometry.visual.velocity.x, world.velocity - viewport.motion().velocity);
+        assert_eq!(
+            geometry.visual.velocity.x,
+            world.velocity - viewport.motion().velocity
+        );
         assert_eq!(geometry.logical.x, world.target - viewport.motion().target);
 
         for mode in [
@@ -787,10 +890,17 @@ mod tests {
             PresentationMode::Normal,
         ] {
             let before = geometry.visual.current;
-            geometry.set_presentation_mode(Rect::new(0.0, 0.0, 1920.0, 1080.0), mode, Duration::from_millis(40));
+            geometry.set_presentation_mode(
+                Rect::new(0.0, 0.0, 1920.0, 1080.0),
+                mode,
+                Duration::from_millis(40),
+            );
             sync_scrolling_coordinates(&mut geometry, &mut world, viewport.motion(), true);
             assert_eq!(geometry.visual.current, before);
-            assert_eq!(world.current, geometry.visual.current.x + viewport.motion().current);
+            assert_eq!(
+                world.current,
+                geometry.visual.current.x + viewport.motion().current
+            );
             geometry.advance(Duration::ZERO, config, true);
             assert_eq!(geometry.visual.current, before);
             geometry.advance(Duration::from_millis(16), config, true);
@@ -870,7 +980,10 @@ mod tests {
         state.register_output(&output, "pause-test".into());
         let workspace = state.workspaces.active_id();
         let id = WindowId(1);
-        state.workspaces.insert_window(id, Axis::Horizontal, 0.5).unwrap();
+        state
+            .workspaces
+            .insert_window(id, Axis::Horizontal, 0.5)
+            .unwrap();
         state.windows.records.insert(id, settled());
         let mut viewport = AnimatedValue::new(0.0);
         viewport.set_target(500.0);
@@ -960,7 +1073,11 @@ mod tests {
         // A settled transaction still has to flush its resume guard; otherwise
         // the next unrelated animation would inherit an old paused workspace.
         let target = state.viewports[&workspace].motion().target;
-        state.viewports.get_mut(&workspace).unwrap().retarget(target, false);
+        state
+            .viewports
+            .get_mut(&workspace)
+            .unwrap()
+            .retarget(target, false);
         state.windows.record_mut(id).unwrap().focus = Some(AnimatedValue::new(0.0));
         state.windows.set_transaction(
             id,

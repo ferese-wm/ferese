@@ -111,21 +111,28 @@ pub(super) fn group_record_path(panel: &Panel, id: &GroupId) -> Result<String, S
 }
 
 pub(super) fn destinations(panel: &Panel) -> Vec<Destination> {
-    [("start", &panel.start), ("center", &panel.center), ("end", &panel.end)]
-        .into_iter()
-        .flat_map(|(zone, definition)| {
-            definition.groups.iter().map(move |group| Destination {
-                zone,
-                group: group.id.clone(),
-            })
+    [
+        ("start", &panel.start),
+        ("center", &panel.center),
+        ("end", &panel.end),
+    ]
+    .into_iter()
+    .flat_map(|(zone, definition)| {
+        definition.groups.iter().map(move |group| Destination {
+            zone,
+            group: group.id.clone(),
         })
-        .collect()
+    })
+    .collect()
 }
 
 fn group_path(panel: &Panel, destination: &Destination) -> Result<String, String> {
     // The zone is a display label; a queued selection follows the group's ID
     // even if another edit has since moved it to a different zone.
-    Ok(format!("{}.items", group_record_path(panel, &destination.group)?))
+    Ok(format!(
+        "{}.items",
+        group_record_path(panel, &destination.group)?
+    ))
 }
 
 fn locate(panel: &Panel, id: &ItemId) -> Result<(String, usize), String> {
@@ -136,7 +143,11 @@ fn locate(panel: &Panel, id: &ItemId) -> Result<(String, usize), String> {
             "center" => &panel.center,
             _ => &panel.end,
         };
-        let group = zone.groups.iter().find(|group| group.id == destination.group).unwrap();
+        let group = zone
+            .groups
+            .iter()
+            .find(|group| group.id == destination.group)
+            .unwrap();
         if let Some(index) = group.items.iter().position(|item| &item.id == id) {
             return Ok((path, index));
         }
@@ -168,8 +179,13 @@ pub(super) fn plan(snapshot: &Snapshot, action: Action) -> Result<Vec<Edit>, Str
         edits.extend(plan(&candidate, action)?);
         return Ok(edits);
     }
-    let panels: Vec<Panel> = serde_json::from_value(snapshot.item("panels").ok_or("Customize items first.")?.clone())
-        .map_err(|error| error.to_string())?;
+    let panels: Vec<Panel> = serde_json::from_value(
+        snapshot
+            .item("panels")
+            .ok_or("Customize items first.")?
+            .clone(),
+    )
+    .map_err(|error| error.to_string())?;
     ferese_panel::validate(&panels)?;
     let panel = &panels[0];
     let earlier = matches!(&action, Action::Earlier(_));
@@ -227,7 +243,9 @@ pub(super) fn plan(snapshot: &Snapshot, action: Action) -> Result<Vec<Edit>, Str
             } else {
                 (index + 1 < items.len()).then_some(index + 1)
             };
-            let Some(next) = next else { return Ok(Vec::new()) };
+            let Some(next) = next else {
+                return Ok(Vec::new());
+            };
             items.swap(index, next);
             vec![set(&path, items)]
         }
@@ -318,7 +336,9 @@ pub(super) fn plan(snapshot: &Snapshot, action: Action) -> Result<Vec<Edit>, Str
                 return Err("Unknown panel item setting.".into());
             }
             let (path, index) = locate(panel, &id)?;
-            if field == "style" && !matches!(panel.item(&id).unwrap().kind, ItemKind::Workspaces { .. }) {
+            if field == "style"
+                && !matches!(panel.item(&id).unwrap().kind, ItemKind::Workspaces { .. })
+            {
                 return Err("Workspace style belongs to Workspaces items.".into());
             }
             vec![set(&format!("{path}.{index}.{field}"), value)]
@@ -348,7 +368,9 @@ pub(super) fn plan(snapshot: &Snapshot, action: Action) -> Result<Vec<Edit>, Str
                 .find(|id| panel.item(&ItemId(id.clone())).is_none())
                 .unwrap();
             let mut items = records(snapshot, &path);
-            items.push(serde_json::to_value(Item::new(&id, kind)).map_err(|error| error.to_string())?);
+            items.push(
+                serde_json::to_value(Item::new(&id, kind)).map_err(|error| error.to_string())?,
+            );
             vec![set(&path, items)]
         }
         Action::AddGroup(zone) => {
@@ -389,7 +411,9 @@ pub(super) fn plan(snapshot: &Snapshot, action: Action) -> Result<Vec<Edit>, Str
             } else {
                 (index + 1 < groups.len()).then_some(index + 1)
             };
-            let Some(next) = next else { return Ok(Vec::new()) };
+            let Some(next) = next else {
+                return Ok(Vec::new());
+            };
             groups.swap(index, next);
             vec![set(&path, groups)]
         }
@@ -398,13 +422,17 @@ pub(super) fn plan(snapshot: &Snapshot, action: Action) -> Result<Vec<Edit>, Str
             if !zone.definition(panel).groups[index].items.is_empty() {
                 return Err("Move or remove this group's items before removing the group.".into());
             }
-            vec![Edit::Remove(format!("panels.0.{}.groups", zone.key()), index)]
+            vec![Edit::Remove(
+                format!("panels.0.{}.groups", zone.key()),
+                index,
+            )]
         }
         Action::SetGroup(id, field, value) => {
             let (field, value) = match field.as_str() {
                 "padding_vertical" | "padding_horizontal" => {
                     let (zone, index) = locate_group(panel, &id)?;
-                    let mut padding = serde_json::to_value(zone.definition(panel).groups[index].padding).unwrap();
+                    let mut padding =
+                        serde_json::to_value(zone.definition(panel).groups[index].padding).unwrap();
                     padding[usize::from(field == "padding_horizontal")] = value;
                     ("padding".to_owned(), padding)
                 }
@@ -413,7 +441,10 @@ pub(super) fn plan(snapshot: &Snapshot, action: Action) -> Result<Vec<Edit>, Str
             if !matches!(field.as_str(), "spacing" | "padding" | "island_padding") {
                 return Err("Unknown panel group setting.".into());
             }
-            vec![set(&format!("{}.{field}", group_record_path(panel, &id)?), value)]
+            vec![set(
+                &format!("{}.{field}", group_record_path(panel, &id)?),
+                value,
+            )]
         }
     };
     let mut candidate = snapshot.clone();
@@ -431,12 +462,21 @@ mod tests {
     #[test]
     fn first_geometry_edit_materializes_the_panel_atomically() {
         let mut snapshot = Snapshot::parse("// keep\nanimations { speed 0.8; }".into()).unwrap();
-        let edits = plan(&snapshot, Action::SetGeometry("side_margins".into(), 18.into())).unwrap();
-        assert_eq!(edits.len(), 2, "initialize and edit share one save/undo transaction");
+        let edits = plan(
+            &snapshot,
+            Action::SetGeometry("side_margins".into(), 18.into()),
+        )
+        .unwrap();
+        assert_eq!(
+            edits.len(),
+            2,
+            "initialize and edit share one save/undo transaction"
+        );
         for edit in edits {
             snapshot.edit(&edit).unwrap();
         }
-        let panels: Vec<Panel> = serde_json::from_value(snapshot.item("panels").unwrap().clone()).unwrap();
+        let panels: Vec<Panel> =
+            serde_json::from_value(snapshot.item("panels").unwrap().clone()).unwrap();
         assert_eq!(panels[0].resolved_geometry().height, 36.);
         assert_eq!(panels[0].resolved_geometry().edge_margin, 0);
         assert_eq!(panels[0].geometry.side_margins, Some(18));
@@ -506,15 +546,21 @@ animations { speed 0.8; }
 
     #[test]
     fn morph_attachment_restores_floating_margin_and_preserves_clearance() {
-        let mut snapshot =
-            Snapshot::parse("panel main { style morph; geometry { edge-margin 9; window-clearance 3; }; }".into())
-                .unwrap();
-        let before = serde_json::from_value::<Vec<Panel>>(snapshot.item("panels").unwrap().clone()).unwrap();
+        let mut snapshot = Snapshot::parse(
+            "panel main { style morph; geometry { edge-margin 9; window-clearance 3; }; }".into(),
+        )
+        .unwrap();
+        let before =
+            serde_json::from_value::<Vec<Panel>>(snapshot.item("panels").unwrap().clone()).unwrap();
         apply(&mut snapshot, Action::SetMorphAttached(true));
-        let attached = serde_json::from_value::<Vec<Panel>>(snapshot.item("panels").unwrap().clone()).unwrap();
+        let attached =
+            serde_json::from_value::<Vec<Panel>>(snapshot.item("panels").unwrap().clone()).unwrap();
         assert_eq!(attached[0].resolved_geometry().edge_margin, 0);
         assert_eq!(attached[0].resolved_geometry().window_clearance, 3);
-        assert_eq!(attached[0].exclusive_zone(false), before[0].exclusive_zone(false));
+        assert_eq!(
+            attached[0].exclusive_zone(false),
+            before[0].exclusive_zone(false)
+        );
         assert!(attached[0].shape_parameters().attached);
         apply(&mut snapshot, Action::SetMorphAttached(false));
         assert_eq!(
@@ -525,10 +571,14 @@ animations { speed 0.8; }
 
     #[test]
     fn hover_preference_round_trips_without_changing_shape_or_items() {
-        let mut snapshot = Snapshot::parse("panel main { style morph; morph { idle-width 180; }; }".into()).unwrap();
-        let before = serde_json::from_value::<Vec<Panel>>(snapshot.item("panels").unwrap().clone()).unwrap();
+        let mut snapshot =
+            Snapshot::parse("panel main { style morph; morph { idle-width 180; }; }".into())
+                .unwrap();
+        let before =
+            serde_json::from_value::<Vec<Panel>>(snapshot.item("panels").unwrap().clone()).unwrap();
         apply(&mut snapshot, Action::SetPeekOnHover(false));
-        let after = serde_json::from_value::<Vec<Panel>>(snapshot.item("panels").unwrap().clone()).unwrap();
+        let after =
+            serde_json::from_value::<Vec<Panel>>(snapshot.item("panels").unwrap().clone()).unwrap();
         assert!(!after[0].morph.peek_on_hover);
         let mut expected = before.clone();
         expected[0].morph.peek_on_hover = false;
@@ -569,7 +619,8 @@ animations { speed 0.8; }
             serde_json::from_value(value).unwrap()
         };
         apply(&mut snapshot, Action::SetBorder(false));
-        let panels: Vec<Panel> = serde_json::from_value(snapshot.item("panels").unwrap().clone()).unwrap();
+        let panels: Vec<Panel> =
+            serde_json::from_value(snapshot.item("panels").unwrap().clone()).unwrap();
         assert!(!panels[0].border);
         assert_eq!(panels[0].start, original[0].start);
         assert_eq!(panels[0].center, original[0].center);
@@ -585,7 +636,8 @@ animations { speed 0.8; }
         apply(&mut snapshot, Action::SetCorner(0, 9.));
         apply(&mut snapshot, Action::SetCorner(3, 21.));
         let radii: ferese_panel::CornerRadii =
-            serde_json::from_value(snapshot.item("panels.0.corner_radius").unwrap().clone()).unwrap();
+            serde_json::from_value(snapshot.item("panels.0.corner_radius").unwrap().clone())
+                .unwrap();
         assert_eq!(radii.0, [9., 8., 12., 21.]);
         let previous = snapshot.source.clone();
         for action in [
@@ -600,15 +652,19 @@ animations { speed 0.8; }
 
     #[test]
     fn panel_corner_override_is_independent_and_clearing_or_removing_restores_inheritance() {
-        let mut snapshot = Snapshot::parse("theme { geometry { shell-radius 14; }; }".into()).unwrap();
+        let mut snapshot =
+            Snapshot::parse("theme { geometry { shell-radius 14; }; }".into()).unwrap();
         assert!(plan(&snapshot, Action::ClearRadius).unwrap().is_empty());
         apply(&mut snapshot, Action::SetRadius("4px 8px 12px 16px".into()));
         let resolve = |snapshot: &Snapshot, radius| {
-            let panels: Vec<Panel> = serde_json::from_value(snapshot.item("panels").unwrap().clone()).unwrap();
+            let panels: Vec<Panel> =
+                serde_json::from_value(snapshot.item("panels").unwrap().clone()).unwrap();
             panels[0].resolved_radius(radius).0
         };
         assert_eq!(resolve(&snapshot, 14.), [4., 8., 12., 16.]);
-        snapshot.edit(&set("theme.geometry.shell_radius", 20)).unwrap();
+        snapshot
+            .edit(&set("theme.geometry.shell_radius", 20))
+            .unwrap();
         assert_eq!(resolve(&snapshot, 20.), [4., 8., 12., 16.]);
         let original = snapshot.source.clone();
         assert!(plan(&snapshot, Action::SetRadius("-4px".into())).is_err());
@@ -631,7 +687,8 @@ animations { speed 0.8; }
         apply(&mut snapshot, Action::SetEdge(ferese_panel::Edge::Bottom));
         let before = snapshot.item("panels.0.start").unwrap().clone();
         assert_eq!(snapshot.string("panels.0.edge", ""), "bottom");
-        let panels: Vec<Panel> = serde_json::from_value(snapshot.item("panels").unwrap().clone()).unwrap();
+        let panels: Vec<Panel> =
+            serde_json::from_value(snapshot.item("panels").unwrap().clone()).unwrap();
         let battery = panels[0].item(&ItemId("battery".into())).unwrap();
         assert_eq!(battery.kind, ItemKind::Battery { percentage: true });
         apply(&mut snapshot, Action::SetEdge(ferese_panel::Edge::Top));
@@ -661,7 +718,8 @@ animations { speed 0.8; }
         for edit in edits {
             snapshot.edit(&edit).unwrap();
         }
-        let panels: Vec<Panel> = serde_json::from_value(snapshot.item("panels").unwrap().clone()).unwrap();
+        let panels: Vec<Panel> =
+            serde_json::from_value(snapshot.item("panels").unwrap().clone()).unwrap();
         let battery = panels[0].item(&ItemId("battery".into())).unwrap();
         assert_eq!(battery.kind, ItemKind::Battery { percentage: true });
         assert!(!battery.visible);
@@ -681,12 +739,18 @@ animations { speed 0.8; }
             &mut snapshot,
             Action::Move(ItemId("clock".into()), target("start", "navigation")),
         );
-        assert_eq!(ids(&snapshot, "panels.0.start.groups.0.items"), ["overview", "clock"]);
+        assert_eq!(
+            ids(&snapshot, "panels.0.start.groups.0.items"),
+            ["overview", "clock"]
+        );
         assert_eq!(
             snapshot.string("panels.0.start.groups.0.items.1.metadata.custom_note", ""),
             "keep"
         );
-        assert_eq!(snapshot.string("panels.0.end.groups.0.items.0.overflow", ""), "always");
+        assert_eq!(
+            snapshot.string("panels.0.end.groups.0.items.0.overflow", ""),
+            "always"
+        );
         assert!(snapshot.source.contains("// first clock"));
         assert_eq!(snapshot.number("animations.speed", 1.0), 0.8);
     }
@@ -694,7 +758,10 @@ animations { speed 0.8; }
     #[test]
     fn repeated_kind_additions_get_unique_ids_and_remove_only_the_addressed_instance() {
         let mut snapshot = snapshot();
-        apply(&mut snapshot, Action::Add(ItemKind::Clock, target("end", "status")));
+        apply(
+            &mut snapshot,
+            Action::Add(ItemKind::Clock, target("end", "status")),
+        );
         assert_eq!(
             ids(&snapshot, "panels.0.end.groups.0.items"),
             ["clock", "clock-2", "network", "clock-3"]
@@ -704,7 +771,10 @@ animations { speed 0.8; }
             ids(&snapshot, "panels.0.end.groups.0.items"),
             ["clock", "network", "clock-3"]
         );
-        apply(&mut snapshot, Action::Add(ItemKind::Clock, target("end", "status")));
+        apply(
+            &mut snapshot,
+            Action::Add(ItemKind::Clock, target("end", "status")),
+        );
         assert_eq!(
             ids(&snapshot, "panels.0.end.groups.0.items"),
             ["clock", "network", "clock-3", "clock-2"]
@@ -721,7 +791,10 @@ animations { speed 0.8; }
         );
         assert!(plan(&snapshot, pending).unwrap().is_empty());
         apply(&mut snapshot, Action::Earlier(ItemId("network".into())));
-        assert_eq!(ids(&snapshot, "panels.0.start.groups.0.items"), ["network", "overview"]);
+        assert_eq!(
+            ids(&snapshot, "panels.0.start.groups.0.items"),
+            ["network", "overview"]
+        );
         assert!(
             plan(&snapshot, Action::Earlier(ItemId("network".into())))
                 .unwrap()
@@ -738,9 +811,18 @@ animations { speed 0.8; }
             Action::Move(ItemId("network".into()), target("start", "navigation")),
         );
         apply(&mut snapshot, pending);
-        assert_eq!(snapshot.string("panels.0.start.groups.0.items.1.id", ""), "network");
-        assert_eq!(snapshot.string("panels.0.start.groups.0.items.1.overflow", ""), "never");
-        assert_eq!(snapshot.string("panels.0.end.groups.0.items.1.id", ""), "clock-2");
+        assert_eq!(
+            snapshot.string("panels.0.start.groups.0.items.1.id", ""),
+            "network"
+        );
+        assert_eq!(
+            snapshot.string("panels.0.start.groups.0.items.1.overflow", ""),
+            "never"
+        );
+        assert_eq!(
+            snapshot.string("panels.0.end.groups.0.items.1.id", ""),
+            "clock-2"
+        );
         assert!(
             plan(
                 &snapshot,
@@ -766,7 +848,10 @@ animations { speed 0.8; }
         apply(&mut snapshot, Action::Remove(ItemId("title".into())));
         assert_eq!(snapshot.records("panels.0.center.groups"), 1);
         assert_eq!(snapshot.records("panels.0.center.groups.0.items"), 0);
-        apply(&mut snapshot, Action::Add(ItemKind::Clock, target("center", "title")));
+        apply(
+            &mut snapshot,
+            Action::Add(ItemKind::Clock, target("center", "title")),
+        );
         assert_eq!(snapshot.records("panels.0.center.groups.0.items"), 1);
     }
 
@@ -784,7 +869,10 @@ animations { speed 0.8; }
             snapshot.edit(&edit).unwrap();
         }
         let complete = Snapshot::parse(snapshot.source).unwrap();
-        assert_eq!(ids(&complete, "panels.0.center.groups.0.items"), ["title", "clock"]);
+        assert_eq!(
+            ids(&complete, "panels.0.center.groups.0.items"),
+            ["title", "clock"]
+        );
         let restored = Snapshot::parse(original.source).unwrap();
         assert_eq!(restored.doc.value(), original.doc.value());
     }
@@ -801,7 +889,10 @@ animations { speed 0.8; }
         apply(&mut snapshot, Action::SetOpacity(0.45));
         apply(&mut snapshot, Action::MoveGroup(id.clone(), Zone::Start));
         apply(&mut snapshot, Action::EarlierGroup(id.clone()));
-        assert_eq!(ids(&snapshot, "panels.0.start.groups"), ["status", "navigation"]);
+        assert_eq!(
+            ids(&snapshot, "panels.0.start.groups"),
+            ["status", "navigation"]
+        );
         assert_eq!(
             ids(&snapshot, "panels.0.start.groups.0.items"),
             ["clock", "clock-2", "network"]
@@ -813,11 +904,26 @@ animations { speed 0.8; }
         assert_eq!(snapshot.number("panels.0.start.groups.0.spacing", 0.), 7.5);
         assert!((snapshot.number("panels.0.background_opacity", 1.) - 0.45).abs() < 0.0001);
         assert!(snapshot.source.contains("// first clock"));
-        assert!(plan(&snapshot, Action::EarlierGroup(id.clone())).unwrap().is_empty());
+        assert!(
+            plan(&snapshot, Action::EarlierGroup(id.clone()))
+                .unwrap()
+                .is_empty()
+        );
         apply(&mut snapshot, Action::LaterGroup(id.clone()));
-        assert_eq!(ids(&snapshot, "panels.0.start.groups"), ["navigation", "status"]);
-        assert!(plan(&snapshot, Action::LaterGroup(id.clone())).unwrap().is_empty());
-        assert!(plan(&snapshot, Action::MoveGroup(id, Zone::Start)).unwrap().is_empty());
+        assert_eq!(
+            ids(&snapshot, "panels.0.start.groups"),
+            ["navigation", "status"]
+        );
+        assert!(
+            plan(&snapshot, Action::LaterGroup(id.clone()))
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            plan(&snapshot, Action::MoveGroup(id, Zone::Start))
+                .unwrap()
+                .is_empty()
+        );
         assert_eq!(snapshot.number("animations.speed", 1.), 0.8);
     }
 
@@ -860,10 +966,16 @@ animations { speed 0.8; }
         for _ in 0..3 {
             apply(&mut snapshot, Action::AddGroup(Zone::End));
         }
-        assert_eq!(ids(&snapshot, "panels.0.end.groups"), ["end-1", "end-2", "end-3"]);
+        assert_eq!(
+            ids(&snapshot, "panels.0.end.groups"),
+            ["end-1", "end-2", "end-3"]
+        );
         apply(&mut snapshot, Action::SetBorder(false));
         assert!(!snapshot.boolean("panels.0.border", true));
-        apply(&mut snapshot, Action::Add(ItemKind::Clock, target("end", "end-2")));
+        apply(
+            &mut snapshot,
+            Action::Add(ItemKind::Clock, target("end", "end-2")),
+        );
         let original = snapshot.source.clone();
         assert!(plan(&snapshot, Action::RemoveGroup(GroupId("end-2".into()))).is_err());
         assert_eq!(snapshot.source, original);
@@ -896,7 +1008,13 @@ animations { speed 0.8; }
                 .is_err()
             );
         }
-        assert!(plan(&snapshot, Action::MoveGroup(GroupId("missing".into()), Zone::Start)).is_err());
+        assert!(
+            plan(
+                &snapshot,
+                Action::MoveGroup(GroupId("missing".into()), Zone::Start)
+            )
+            .is_err()
+        );
         assert_eq!(snapshot.source, original);
     }
 
@@ -904,7 +1022,10 @@ animations { speed 0.8; }
     fn drop_reorders_exact_instances_and_preserves_authored_fields() {
         let mut snapshot = snapshot();
         let id = ItemId("clock".into());
-        apply(&mut snapshot, Action::Place(id.clone(), target("end", "status"), None));
+        apply(
+            &mut snapshot,
+            Action::Place(id.clone(), target("end", "status"), None),
+        );
         assert_eq!(
             ids(&snapshot, "panels.0.end.groups.0.items"),
             ["clock-2", "network", "clock"]
@@ -914,9 +1035,12 @@ animations { speed 0.8; }
             "keep"
         );
         assert!(
-            plan(&snapshot, Action::Place(id.clone(), target("end", "status"), None))
-                .unwrap()
-                .is_empty()
+            plan(
+                &snapshot,
+                Action::Place(id.clone(), target("end", "status"), None)
+            )
+            .unwrap()
+            .is_empty()
         );
         assert!(
             plan(
@@ -928,7 +1052,11 @@ animations { speed 0.8; }
         );
         apply(
             &mut snapshot,
-            Action::Place(id.clone(), target("end", "status"), Some(ItemId("clock-2".into()))),
+            Action::Place(
+                id.clone(),
+                target("end", "status"),
+                Some(ItemId("clock-2".into())),
+            ),
         );
         assert_eq!(
             ids(&snapshot, "panels.0.end.groups.0.items"),
@@ -938,8 +1066,14 @@ animations { speed 0.8; }
             &mut snapshot,
             Action::Place(id, target("center", "title"), Some(ItemId("title".into()))),
         );
-        assert_eq!(ids(&snapshot, "panels.0.center.groups.0.items"), ["clock", "title"]);
-        assert_eq!(ids(&snapshot, "panels.0.end.groups.0.items"), ["clock-2", "network"]);
+        assert_eq!(
+            ids(&snapshot, "panels.0.center.groups.0.items"),
+            ["clock", "title"]
+        );
+        assert_eq!(
+            ids(&snapshot, "panels.0.end.groups.0.items"),
+            ["clock-2", "network"]
+        );
         assert!(snapshot.source.contains("// first clock"));
     }
 
@@ -961,7 +1095,11 @@ animations { speed 0.8; }
         assert_eq!(snapshot.source, original);
         apply(&mut snapshot, Action::Remove(ItemId("title".into())));
         apply(&mut snapshot, Action::RemoveGroup(GroupId("title".into())));
-        let edits = plan(&snapshot, Action::PlaceInZone(ItemId("clock".into()), Zone::Center)).unwrap();
+        let edits = plan(
+            &snapshot,
+            Action::PlaceInZone(ItemId("clock".into()), Zone::Center),
+        )
+        .unwrap();
         assert_eq!(edits.len(), 3, "create and move through one save");
         for edit in edits {
             snapshot.edit(&edit).unwrap();
@@ -984,9 +1122,14 @@ animations { speed 0.8; }
         for style in ferese_panel::WorkspaceStyle::ALL {
             apply(
                 &mut snapshot,
-                Action::Set(ItemId("workspaces".into()), "style".into(), style.key().into()),
+                Action::Set(
+                    ItemId("workspaces".into()),
+                    "style".into(),
+                    style.key().into(),
+                ),
             );
-            let panels: Vec<Panel> = serde_json::from_value(snapshot.item("panels").unwrap().clone()).unwrap();
+            let panels: Vec<Panel> =
+                serde_json::from_value(snapshot.item("panels").unwrap().clone()).unwrap();
             let panel = &panels[0];
             assert_eq!(
                 panel.item(&ItemId("workspaces".into())).unwrap().kind,
@@ -1003,7 +1146,8 @@ animations { speed 0.8; }
             &mut snapshot,
             Action::Move(ItemId("workspaces".into()), target("end", "status")),
         );
-        let panels: Vec<Panel> = serde_json::from_value(snapshot.item("panels").unwrap().clone()).unwrap();
+        let panels: Vec<Panel> =
+            serde_json::from_value(snapshot.item("panels").unwrap().clone()).unwrap();
         let panel = &panels[0];
         assert_eq!(
             panel.item(&ItemId("workspaces".into())).unwrap().kind,
@@ -1025,7 +1169,8 @@ animations { speed 0.8; }
             Action::Set(ItemId("title".into()), "visible".into(), true.into()),
         );
         assert!(snapshot.source.contains("// keep") && snapshot.source.contains("custom-note"));
-        let panels: Vec<Panel> = serde_json::from_value(snapshot.item("panels").unwrap().clone()).unwrap();
+        let panels: Vec<Panel> =
+            serde_json::from_value(snapshot.item("panels").unwrap().clone()).unwrap();
         assert!(panels[0].item(&ItemId("title".into())).unwrap().visible);
     }
     #[test]
@@ -1037,7 +1182,10 @@ animations { speed 0.8; }
             Action::ClearGeometry("panels.0.geometry.side_margins".into()),
         );
         assert_eq!(snapshot.item("panels.0.geometry.side_margins"), None);
-        assert_eq!(snapshot.item("panels.0.geometry.height"), Some(&serde_json::json!(32)));
+        assert_eq!(
+            snapshot.item("panels.0.geometry.height"),
+            Some(&serde_json::json!(32))
+        );
         assert!(snapshot.item("panels.0.corner_radius").is_some());
         apply(&mut snapshot, Action::ResetShape);
         assert_eq!(snapshot.item("panels.0.geometry"), None);
@@ -1050,13 +1198,20 @@ animations { speed 0.8; }
     fn panel_presets_preserve_group_layout_items_and_comments() {
         let mut snapshot = Snapshot::parse("// keep\npanel main { style floating; center { group title { padding 2 7; item title kind=focused-window; }; }; end { group media { item media kind=media; }; }; }".into()).unwrap();
         let groups = snapshot.item("panels.0.center.groups").unwrap().clone();
-        apply(&mut snapshot, Action::ApplyPreset(ferese_panel::PanelStyle::Flat));
+        apply(
+            &mut snapshot,
+            Action::ApplyPreset(ferese_panel::PanelStyle::Flat),
+        );
         assert_eq!(snapshot.string("panels.0.style", ""), "flat");
         assert_eq!(snapshot.item("panels.0.center.groups"), Some(&groups));
         assert!(snapshot.source.contains("// keep"));
-        apply(&mut snapshot, Action::ApplyPreset(ferese_panel::PanelStyle::Floating));
+        apply(
+            &mut snapshot,
+            Action::ApplyPreset(ferese_panel::PanelStyle::Floating),
+        );
         assert_eq!(snapshot.item("panels.0.center.groups"), Some(&groups));
-        let panels: Vec<Panel> = serde_json::from_value(snapshot.item("panels").unwrap().clone()).unwrap();
+        let panels: Vec<Panel> =
+            serde_json::from_value(snapshot.item("panels").unwrap().clone()).unwrap();
         assert_eq!(panels[0].preset(), Some(ferese_panel::PanelStyle::Floating));
         for surface in ["none", "inset", "island"] {
             assert!(

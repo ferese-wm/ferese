@@ -98,7 +98,11 @@ fn value(
     message: &Option<String>,
     remaining_ms: Option<u64>,
 ) -> Result<Option<Value>, Box<dyn Error>> {
-    if usize::from(progress.is_some()) + usize::from(message.is_some()) + usize::from(remaining_ms.is_some()) > 1 {
+    if usize::from(progress.is_some())
+        + usize::from(message.is_some())
+        + usize::from(remaining_ms.is_some())
+        > 1
+    {
         return Err("choose one activity value".into());
     }
     Ok(progress
@@ -111,7 +115,11 @@ fn value(
             })
         }))
 }
-fn publish(socket: &Path, owner: OwnerScope, publish: Publish) -> Result<serde_json::Value, Box<dyn Error>> {
+fn publish(
+    socket: &Path,
+    owner: OwnerScope,
+    publish: Publish,
+) -> Result<serde_json::Value, Box<dyn Error>> {
     publish_with_timeout(socket, owner, publish, std::time::Duration::from_secs(2))
 }
 fn publish_with_timeout(
@@ -207,18 +215,28 @@ pub fn command(action: &Action, socket: &Path, json_output: bool) -> Result<(), 
             },
             message: message.clone(),
         },
-        Action::Cancel { local, handle: token } => Publish::Cancel {
+        Action::Cancel {
+            local,
+            handle: token,
+        } => Publish::Cancel {
             local: local.clone(),
             handle: handle(token)?,
         },
-        Action::Hook { local, command, cwd } => Publish::Hook {
+        Action::Hook {
+            local,
+            command,
+            cwd,
+        } => Publish::Hook {
             local: local.clone(),
             command: command.clone(),
             cwd: cwd.clone(),
         },
         Action::List => {
             let mut stream = std::os::unix::net::UnixStream::connect(socket)?;
-            return super::output::print(&super::request(&mut stream, "activity-get", json!({}))?, json_output);
+            return super::output::print(
+                &super::request(&mut stream, "activity-get", json!({}))?,
+                json_output,
+            );
         }
     };
     let result = publish(socket, OwnerScope::Parent, request)?;
@@ -275,9 +293,12 @@ pub fn run(
     }
     let adapter = (configured_adapter || cargo_json)
         && program == "cargo"
-        && args
-            .get(1)
-            .is_some_and(|operation| matches!(operation.as_str(), "build" | "check" | "test" | "run" | "clippy"));
+        && args.get(1).is_some_and(|operation| {
+            matches!(
+                operation.as_str(),
+                "build" | "check" | "test" | "run" | "clippy"
+            )
+        });
     let mut command = Command::new(program);
     command.args(&args[1..]);
     if adapter && !args.iter().any(|arg| arg.starts_with("--message-format")) {
@@ -296,7 +317,11 @@ pub fn run(
     command
         .stdin(Stdio::inherit())
         .stderr(Stdio::inherit())
-        .stdout(if adapter { Stdio::piped() } else { Stdio::inherit() });
+        .stdout(if adapter {
+            Stdio::piped()
+        } else {
+            Stdio::inherit()
+        });
     // Terminal-generated signals reach both processes in the shell's job group.
     // The wrapper waits for the actual child result; the child resets inherited
     // dispositions before exec. SIGTSTP/SIGCONT retain normal job control.
@@ -336,10 +361,15 @@ pub fn run(
     let drain_deadline = output::Deadline::default();
     let reader = child.stdout.take().map(|stdout| {
         let deadline = drain_deadline.clone();
-        let updates = publisher.as_ref().map(|publisher| publisher.updates.clone());
+        let updates = publisher
+            .as_ref()
+            .map(|publisher| publisher.updates.clone());
         let (done, finished) = std::sync::mpsc::sync_channel(1);
         std::thread::spawn(move || {
-            let mut input = io::BufReader::new(output::Output { pipe: stdout, deadline });
+            let mut input = io::BufReader::new(output::Output {
+                pipe: stdout,
+                deadline,
+            });
             let mut stdout = io::stdout().lock();
             let mut units = 0_u64;
             let mut last = std::time::Instant::now();
@@ -362,7 +392,9 @@ pub fn run(
                         }
                     } else if message["reason"] == "compiler-artifact" {
                         units = units.saturating_add(1);
-                    } else if message["reason"] != "build-finished" && message["reason"] != "build-script-executed" {
+                    } else if message["reason"] != "build-finished"
+                        && message["reason"] != "build-script-executed"
+                    {
                         let _ = stdout.write_all(&bytes);
                     }
                     if last.elapsed() >= std::time::Duration::from_millis(200) {
@@ -373,7 +405,11 @@ pub fn run(
                     }
                     continue;
                 }
-                if stdout.write_all(&bytes).and_then(|_| stdout.flush()).is_err() {
+                if stdout
+                    .write_all(&bytes)
+                    .and_then(|_| stdout.flush())
+                    .is_err()
+                {
                     break;
                 }
             }
@@ -384,14 +420,18 @@ pub fn run(
     });
     let status = child.wait()?;
     CHILD.store(0, std::sync::atomic::Ordering::Relaxed);
-    *drain_deadline.lock().unwrap() = Some(std::time::Instant::now() + std::time::Duration::from_millis(250));
+    *drain_deadline.lock().unwrap() =
+        Some(std::time::Instant::now() + std::time::Duration::from_millis(250));
     if let Some(reader) = reader {
         // Descendants may inherit the pipe after the direct child exits. Drain
         // buffered output briefly, but never wait for those descendants' EOF.
         let _ = reader.recv_timeout(std::time::Duration::from_millis(350));
     }
     if let Some(publisher) = publisher {
-        let result = if matches!(status.signal(), Some(libc::SIGINT | libc::SIGTERM | libc::SIGQUIT)) {
+        let result = if matches!(
+            status.signal(),
+            Some(libc::SIGINT | libc::SIGTERM | libc::SIGQUIT)
+        ) {
             State::Cancelled
         } else if status.success() {
             State::Done

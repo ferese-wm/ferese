@@ -1,6 +1,7 @@
 use super::sources::{Matcher, ResultId, Row, Source, Target};
 use fff_search::{
-    FilePicker, FilePickerOptions, FuzzySearchOptions, PaginationArgs, QueryParser, SharedFilePicker, SharedFrecency,
+    FilePicker, FilePickerOptions, FuzzySearchOptions, PaginationArgs, QueryParser,
+    SharedFilePicker, SharedFrecency,
 };
 use std::sync::{Arc, OnceLock};
 
@@ -27,7 +28,8 @@ impl Files {
     fn picker(&self) -> Result<&SharedFilePicker, &str> {
         self.0
             .get_or_init(|| {
-                let home = std::env::var_os("HOME").ok_or_else(|| "No home directory".to_string())?;
+                let home =
+                    std::env::var_os("HOME").ok_or_else(|| "No home directory".to_string())?;
                 let home = std::fs::canonicalize(home).map_err(|e| e.to_string())?;
                 if home.parent().is_none() {
                     return Err("The filesystem root cannot be indexed".into());
@@ -55,7 +57,9 @@ impl Files {
     pub(super) fn status(&self) -> Status {
         match self.0.get() {
             Some(Err(error)) => Status::Unavailable(format!("File search unavailable: {error}")),
-            Some(Ok(picker)) if !picker.wait_for_scan(std::time::Duration::ZERO) => Status::Indexing,
+            Some(Ok(picker)) if !picker.wait_for_scan(std::time::Duration::ZERO) => {
+                Status::Indexing
+            }
             _ => Status::Ready,
         }
     }
@@ -94,7 +98,10 @@ impl Files {
                     None,
                     FuzzySearchOptions {
                         max_threads: 2,
-                        pagination: PaginationArgs { offset: 0, limit: 100 },
+                        pagination: PaginationArgs {
+                            offset: 0,
+                            limit: 100,
+                        },
                         ..Default::default()
                     },
                 )
@@ -111,7 +118,11 @@ impl Files {
             .into_iter()
             .take_while(|_| !cancel.cancelled())
             .map(|path| {
-                let title = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+                let title = path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into_owned();
                 let icon = Some(icons.file(&path));
                 let subtitle = format!("File · {}", path.parent().unwrap_or(&path).display());
                 let path: Arc<std::path::Path> = path.into();

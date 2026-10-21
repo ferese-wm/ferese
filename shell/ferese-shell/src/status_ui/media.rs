@@ -8,7 +8,8 @@ use serde_json::json;
 
 use super::{Menu, MenuRows, MenuStyle};
 use crate::{
-    BarMetrics, FereseShell, Message, ShellTheme, accented_icon, bar_content, color, color_with_opacity, motion,
+    BarMetrics, FereseShell, Message, ShellTheme, accented_icon, bar_content, color,
+    color_with_opacity, motion,
 };
 
 const SEEK_THUMB_DIAMETER: f32 = 10.0;
@@ -80,30 +81,39 @@ pub(super) fn bar<'a>(
     let Some(player) = &shell.media.snapshot.selected else {
         return shell.render.text("").into();
     };
-    let foreground = color(if selected { palette.accent } else { palette.text_primary });
-    let vertical_padding = ((metrics.group_item_height - f32::from(metrics.icon_size)) * 0.5).clamp(0.0, 2.0);
+    let foreground = color(if selected {
+        palette.accent
+    } else {
+        palette.text_primary
+    });
+    let vertical_padding =
+        ((metrics.group_item_height - f32::from(metrics.icon_size)) * 0.5).clamp(0.0, 2.0);
     let height = metrics.group_item_height - 2.0 * vertical_padding;
     let side = height.min(24.0);
-    let cover: Element<'_, cosmic::Action<Message>> =
-        match shell.media.artwork.as_ref().and_then(|art| art.handle.as_ref()) {
-            Some(handle) => image(handle.clone())
-                .width(side)
-                .height(side)
-                .content_fit(cosmic::iced::ContentFit::Cover)
-                .border_radius(shell.render.radius(6.0))
-                .shape(BorderShape::Continuous)
-                .into(),
-            None => container(accented_icon(
-                icons::MEDIA,
-                side as u16,
-                foreground,
-                color(palette.accent),
-            ))
-            .center_x(side)
-            .center_y(side)
+    let cover: Element<'_, cosmic::Action<Message>> = match shell
+        .media
+        .artwork
+        .as_ref()
+        .and_then(|art| art.handle.as_ref())
+    {
+        Some(handle) => image(handle.clone())
             .width(side)
+            .height(side)
+            .content_fit(cosmic::iced::ContentFit::Cover)
+            .border_radius(shell.render.radius(6.0))
+            .shape(BorderShape::Continuous)
             .into(),
-        };
+        None => container(accented_icon(
+            icons::MEDIA,
+            side as u16,
+            foreground,
+            color(palette.accent),
+        ))
+        .center_x(side)
+        .center_y(side)
+        .width(side)
+        .into(),
+    };
     let label = shell
         .render
         .text(player.label())
@@ -120,7 +130,8 @@ pub(super) fn bar<'a>(
     let preferred_label_width: f32 = if compact { 112. } else { 320. };
     // Outer padding, the transport button, details padding, and cover spacing
     // share the allocation with the label.
-    let chrome = 4. + 2. + f32::from(metrics.icon_size) + 12. + 8. + if compact { 0. } else { side + 8. };
+    let chrome =
+        4. + 2. + f32::from(metrics.icon_size) + 12. + 8. + if compact { 0. } else { side + 8. };
     let label_width = width.map_or(preferred_label_width, |width| {
         (width - chrome).max(0.).min(preferred_label_width)
     });
@@ -150,7 +161,11 @@ pub(super) fn bar<'a>(
     let playing = player.status == Playback::Playing;
     let mut toggle = button::custom(bar_content(
         accented_icon(
-            if playing { icons::MEDIA_PAUSE } else { icons::MEDIA_PLAY },
+            if playing {
+                icons::MEDIA_PAUSE
+            } else {
+                icons::MEDIA_PLAY
+            },
             metrics.icon_size,
             foreground,
             color(palette.accent),
@@ -186,7 +201,9 @@ pub(super) fn bar<'a>(
 
     let mut area = mouse_area(controls);
     if player.can_raise {
-        area = area.on_middle_release(cosmic::Action::App(Message::MediaAction(shell.media.action("raise"))));
+        area = area.on_middle_release(cosmic::Action::App(Message::MediaAction(
+            shell.media.action("raise"),
+        )));
     }
     if player.can_control && player.volume.is_some() {
         let action = shell.media.action("volume");
@@ -205,7 +222,11 @@ fn volume_delta(delta: mouse::ScrollDelta) -> f64 {
         mouse::ScrollDelta::Lines { y, .. } => f64::from(y) * 0.05,
         mouse::ScrollDelta::Pixels { y, .. } => f64::from(y) * 0.001,
     };
-    if delta.is_finite() { delta.clamp(-1.0, 1.0) } else { 0.0 }
+    if delta.is_finite() {
+        delta.clamp(-1.0, 1.0)
+    } else {
+        0.0
+    }
 }
 
 fn transport<'a>(
@@ -228,7 +249,8 @@ fn transport_sized<'a>(
     style: MenuStyle,
     size: f32,
 ) -> Element<'a, cosmic::Action<Message>> {
-    let fill = (action == "play-pause").then_some(if enabled { style.primary } else { style.muted });
+    let fill =
+        (action == "play-pause").then_some(if enabled { style.primary } else { style.muted });
     let foreground = match fill {
         Some(fill) => cosmic::iced::Color {
             a: fill.a,
@@ -247,7 +269,10 @@ fn transport_sized<'a>(
             accented_icon(
                 source,
                 (size - 20.) as u16,
-                cosmic::iced::Color { a: 1., ..foreground },
+                cosmic::iced::Color {
+                    a: 1.,
+                    ..foreground
+                },
                 color(style.theme.accent),
             )
             .opacity(foreground.a),
@@ -260,13 +285,19 @@ fn transport_sized<'a>(
     .height(size)
     .name(label);
     if enabled {
-        control = control.on_press(cosmic::Action::App(Message::MediaAction(shell.media.action(action))));
+        control = control.on_press(cosmic::Action::App(Message::MediaAction(
+            shell.media.action(action),
+        )));
     }
 
     motion::circular_button(shell.render, control, foreground, fill, style.opacity, size)
 }
 
-pub(super) fn hub<'a>(shell: &'a FereseShell, rows: MenuRows<'a>, style: MenuStyle) -> MenuRows<'a> {
+pub(super) fn hub<'a>(
+    shell: &'a FereseShell,
+    rows: MenuRows<'a>,
+    style: MenuStyle,
+) -> MenuRows<'a> {
     let Some(player) = &shell.media.snapshot.selected else {
         return rows.push(
             shell
@@ -276,31 +307,35 @@ pub(super) fn hub<'a>(shell: &'a FereseShell, rows: MenuRows<'a>, style: MenuSty
                 .class(theme::Text::Color(style.muted)),
         );
     };
-    let cover: Element<'_, cosmic::Action<Message>> =
-        match shell.media.artwork.as_ref().and_then(|art| art.handle.as_ref()) {
-            Some(handle) => image(handle.clone())
-                .width(64)
-                .height(64)
-                .opacity(style.opacity)
-                .content_fit(cosmic::iced::ContentFit::Cover)
-                .border_radius(10.)
-                .into(),
-            None => container(
-                accented_icon(
-                    icons::MEDIA,
-                    26,
-                    color(style.theme.text_primary),
-                    color(style.theme.accent),
-                )
-                .opacity(style.opacity),
-            )
-            .center_x(64)
-            .center_y(64)
-            .class(theme::Container::custom(move |_| {
-                ferese_theme::controls::surface_appearance(style.primary.scale_alpha(0.06), 10.)
-            }))
+    let cover: Element<'_, cosmic::Action<Message>> = match shell
+        .media
+        .artwork
+        .as_ref()
+        .and_then(|art| art.handle.as_ref())
+    {
+        Some(handle) => image(handle.clone())
+            .width(64)
+            .height(64)
+            .opacity(style.opacity)
+            .content_fit(cosmic::iced::ContentFit::Cover)
+            .border_radius(10.)
             .into(),
-        };
+        None => container(
+            accented_icon(
+                icons::MEDIA,
+                26,
+                color(style.theme.text_primary),
+                color(style.theme.accent),
+            )
+            .opacity(style.opacity),
+        )
+        .center_x(64)
+        .center_y(64)
+        .class(theme::Container::custom(move |_| {
+            ferese_theme::controls::surface_appearance(style.primary.scale_alpha(0.06), 10.)
+        }))
+        .into(),
+    };
     let mut info = column![
         shell
             .render
@@ -327,8 +362,9 @@ pub(super) fn hub<'a>(shell: &'a FereseShell, rows: MenuRows<'a>, style: MenuSty
         player.length_us.filter(|length| *length > 0),
         player.position_at(shell.media.now_us),
     ) {
-        let value =
-            (shell.media.seeking.unwrap_or(position).min(length) as f64 / length as f64 * 10_000.).round() as u32;
+        let value = (shell.media.seeking.unwrap_or(position).min(length) as f64 / length as f64
+            * 10_000.)
+            .round() as u32;
         if player.can_control && player.can_seek && player.track_id.is_some() {
             info = info.push(
                 slider(0..=10_000_u32, value, move |value| {
@@ -358,7 +394,11 @@ pub(super) fn hub<'a>(shell: &'a FereseShell, rows: MenuRows<'a>, style: MenuSty
                 ),
                 transport_sized(
                     shell,
-                    if playing { icons::MEDIA_PAUSE } else { icons::MEDIA_PLAY },
+                    if playing {
+                        icons::MEDIA_PAUSE
+                    } else {
+                        icons::MEDIA_PLAY
+                    },
                     if playing { "Pause" } else { "Play" },
                     "play-pause",
                     player.can_toggle(),
@@ -381,22 +421,35 @@ pub(super) fn hub<'a>(shell: &'a FereseShell, rows: MenuRows<'a>, style: MenuSty
     )
 }
 
-pub(super) fn view<'a>(shell: &'a FereseShell, mut rows: MenuRows<'a>, style: MenuStyle) -> MenuRows<'a> {
+pub(super) fn view<'a>(
+    shell: &'a FereseShell,
+    mut rows: MenuRows<'a>,
+    style: MenuStyle,
+) -> MenuRows<'a> {
     if let Some(player) = &shell.media.snapshot.selected {
-        let cover: Element<'_, cosmic::Action<Message>> =
-            match shell.media.artwork.as_ref().and_then(|art| art.handle.as_ref()) {
-                Some(handle) => image(handle.clone())
-                    .width(64)
-                    .height(64)
-                    .content_fit(cosmic::iced::ContentFit::Contain)
-                    .border_radius(shell.render.radius(12.0))
-                    .shape(BorderShape::Continuous)
-                    .into(),
-                None => container(accented_icon(icons::MEDIA, 30, style.muted, color(style.theme.accent)))
-                    .center_x(64)
-                    .center_y(64)
-                    .into(),
-            };
+        let cover: Element<'_, cosmic::Action<Message>> = match shell
+            .media
+            .artwork
+            .as_ref()
+            .and_then(|art| art.handle.as_ref())
+        {
+            Some(handle) => image(handle.clone())
+                .width(64)
+                .height(64)
+                .content_fit(cosmic::iced::ContentFit::Contain)
+                .border_radius(shell.render.radius(12.0))
+                .shape(BorderShape::Continuous)
+                .into(),
+            None => container(accented_icon(
+                icons::MEDIA,
+                30,
+                style.muted,
+                color(style.theme.accent),
+            ))
+            .center_x(64)
+            .center_y(64)
+            .into(),
+        };
         let text_size = if player.label().len() >= 24 { 13 } else { 15 };
         let mut info = column![
             shell
@@ -470,20 +523,23 @@ pub(super) fn view<'a>(shell: &'a FereseShell, mut rows: MenuRows<'a>, style: Me
             } else {
                 progress = progress.push(seek_pill(
                     container(
-                        cosmic::iced::widget::ProgressBar::new(0.0..=1.0, (position as f64 / length as f64) as f32)
-                            .girth(4)
-                            .length(Length::Fill)
-                            .class(cosmic::theme::iced::ProgressBar::custom(move |_| {
-                                cosmic::iced::widget::progress_bar::Style {
-                                    background: style.muted.scale_alpha(0.35).into(),
-                                    bar: color_with_opacity(style.theme.accent, style.opacity).into(),
-                                    border: cosmic::iced::Border {
-                                        shape: BorderShape::Circular,
-                                        radius: 2.0.into(),
-                                        ..Default::default()
-                                    },
-                                }
-                            })),
+                        cosmic::iced::widget::ProgressBar::new(
+                            0.0..=1.0,
+                            (position as f64 / length as f64) as f32,
+                        )
+                        .girth(4)
+                        .length(Length::Fill)
+                        .class(cosmic::theme::iced::ProgressBar::custom(move |_| {
+                            cosmic::iced::widget::progress_bar::Style {
+                                background: style.muted.scale_alpha(0.35).into(),
+                                bar: color_with_opacity(style.theme.accent, style.opacity).into(),
+                                border: cosmic::iced::Border {
+                                    shape: BorderShape::Circular,
+                                    radius: 2.0.into(),
+                                    ..Default::default()
+                                },
+                            }
+                        })),
                     )
                     .center_y(20),
                     style,
@@ -525,7 +581,11 @@ pub(super) fn view<'a>(shell: &'a FereseShell, mut rows: MenuRows<'a>, style: Me
                     ),
                     transport(
                         shell,
-                        if playing { icons::MEDIA_PAUSE } else { icons::MEDIA_PLAY },
+                        if playing {
+                            icons::MEDIA_PAUSE
+                        } else {
+                            icons::MEDIA_PLAY
+                        },
                         if playing { "Pause" } else { "Play" },
                         "play-pause",
                         player.can_toggle(),
@@ -597,7 +657,11 @@ pub(super) fn view<'a>(shell: &'a FereseShell, mut rows: MenuRows<'a>, style: Me
                         shell.render,
                         label,
                         Message::MediaAction(pin),
-                        if player.ignored { style.muted } else { style.primary },
+                        if player.ignored {
+                            style.muted
+                        } else {
+                            style.primary
+                        },
                         style.opacity
                     ),
                     super::controls::menu_button(
@@ -616,7 +680,13 @@ pub(super) fn view<'a>(shell: &'a FereseShell, mut rows: MenuRows<'a>, style: Me
     }
 
     if let Some(error) = &shell.media.error {
-        rows = rows.push(shell.render.text(error).size(12).class(theme::Text::Color(style.muted)));
+        rows = rows.push(
+            shell
+                .render
+                .text(error)
+                .size(12)
+                .class(theme::Text::Color(style.muted)),
+        );
     }
 
     rows
@@ -645,9 +715,24 @@ mod tests {
 
     #[test]
     fn wheel_changes_are_bounded_and_pixel_scrolling_is_not_a_full_step() {
-        assert_eq!(volume_delta(mouse::ScrollDelta::Lines { x: 0.0, y: 1.0 }), 0.05);
-        assert_eq!(volume_delta(mouse::ScrollDelta::Pixels { x: 0.0, y: 1.0 }), 0.001);
-        assert_eq!(volume_delta(mouse::ScrollDelta::Lines { x: 0.0, y: f32::NAN }), 0.0);
-        assert_eq!(volume_delta(mouse::ScrollDelta::Lines { x: 0.0, y: 1000.0 }), 1.0);
+        assert_eq!(
+            volume_delta(mouse::ScrollDelta::Lines { x: 0.0, y: 1.0 }),
+            0.05
+        );
+        assert_eq!(
+            volume_delta(mouse::ScrollDelta::Pixels { x: 0.0, y: 1.0 }),
+            0.001
+        );
+        assert_eq!(
+            volume_delta(mouse::ScrollDelta::Lines {
+                x: 0.0,
+                y: f32::NAN
+            }),
+            0.0
+        );
+        assert_eq!(
+            volume_delta(mouse::ScrollDelta::Lines { x: 0.0, y: 1000.0 }),
+            1.0
+        );
     }
 }

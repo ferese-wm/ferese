@@ -110,7 +110,9 @@ mod tests {
         let server = std::thread::spawn(move || {
             for revision in [1, 2] {
                 let (mut connection, _) = listener.accept().unwrap();
-                connection.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+                connection
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
                 let get: Request = read_frame(&mut connection).unwrap();
                 assert_eq!(get.command, "theme-get");
                 let mut snapshot = fallback();
@@ -145,9 +147,11 @@ mod tests {
                     .unwrap();
                 assert_eq!(snapshot.revision, revision);
             }
-            tokio::task::spawn_blocking(move || watch_receive.recv_timeout(Duration::from_secs(5)).unwrap())
-                .await
-                .unwrap();
+            tokio::task::spawn_blocking(move || {
+                watch_receive.recv_timeout(Duration::from_secs(5)).unwrap()
+            })
+            .await
+            .unwrap();
             drop(subscription);
         });
         server.join().unwrap();

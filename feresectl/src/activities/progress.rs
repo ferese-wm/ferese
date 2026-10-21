@@ -102,23 +102,34 @@ mod tests {
         let (release, released) = mpsc::channel();
         let server = std::thread::spawn(move || {
             let (mut first, _) = listener.accept().unwrap();
-            first.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
+            first
+                .set_read_timeout(Some(Duration::from_secs(1)))
+                .unwrap();
             let request: Request = read_frame(&mut first).unwrap();
             seen.send(()).unwrap();
             released.recv_timeout(Duration::from_secs(1)).unwrap();
             // The progress timeout can already have elapsed on a loaded host.
-            let _ = write_frame(&mut first, &Response::success(request.id, serde_json::json!({})));
+            let _ = write_frame(
+                &mut first,
+                &Response::success(request.id, serde_json::json!({})),
+            );
             let (mut latest, _) = listener.accept().unwrap();
             let request: Request = read_frame(&mut latest).unwrap();
-            let wire: ferese_ipc::activities::Request = serde_json::from_value(request.args).unwrap();
+            let wire: ferese_ipc::activities::Request =
+                serde_json::from_value(request.args).unwrap();
             assert!(
                 matches!(wire.publish, Publish::Update { value: Some(Value::Text(ref text)), .. } if text == "1000 units compiled")
             );
-            write_frame(&mut latest, &Response::success(request.id, serde_json::json!({}))).unwrap();
+            write_frame(
+                &mut latest,
+                &Response::success(request.id, serde_json::json!({})),
+            )
+            .unwrap();
             seen.send(()).unwrap();
             let (mut end, _) = listener.accept().unwrap();
             let request: Request = read_frame(&mut end).unwrap();
-            let wire: ferese_ipc::activities::Request = serde_json::from_value(request.args).unwrap();
+            let wire: ferese_ipc::activities::Request =
+                serde_json::from_value(request.args).unwrap();
             assert!(matches!(
                 wire.publish,
                 Publish::End {
@@ -126,7 +137,11 @@ mod tests {
                     ..
                 }
             ));
-            write_frame(&mut end, &Response::success(request.id, serde_json::json!({}))).unwrap();
+            write_frame(
+                &mut end,
+                &Response::success(request.id, serde_json::json!({})),
+            )
+            .unwrap();
         });
         let publisher = Publisher::new(
             socket,

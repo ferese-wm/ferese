@@ -5,7 +5,8 @@ use smithay::reexports::wayland_server::protocol::wl_buffer;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::wayland::buffer::BufferHandler;
 use smithay::wayland::compositor::{
-    CompositorClientState, CompositorHandler, CompositorState, get_parent, get_role, is_sync_subsurface,
+    CompositorClientState, CompositorHandler, CompositorState, get_parent, get_role,
+    is_sync_subsurface,
 };
 use smithay::wayland::dmabuf::{DmabufGlobal, DmabufHandler, DmabufState, ImportNotifier};
 use smithay::wayland::shm::{ShmHandler, ShmState};

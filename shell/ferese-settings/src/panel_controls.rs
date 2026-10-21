@@ -69,59 +69,68 @@ impl App {
         let mut rows = widget::column([]).spacing(12);
         match self.panel_page {
             PanelPage::Panels => {
-                rows = rows.push(
-                    widget::container(
-                        widget::row([])
-                            .spacing(12)
-                            .align_y(cosmic::iced::Alignment::Center)
-                            .push(crate::visuals::action_icon(
-                                if edge == Edge::Top {
-                                    "M3 5h18v14H3z M3 9h18"
-                                } else {
-                                    "M3 5h18v14H3z M3 15h18"
-                                },
-                                palette.accent,
-                            ))
-                            .push(
-                                widget::column([])
-                                    .spacing(3)
-                                    .push(self.panel_heading(
-                                        if edge == Edge::Top { "Top panel" } else { "Bottom panel" },
-                                        14.,
-                                    ))
-                                    .push(self.note("Shown on all displays"))
-                                    .width(cosmic::iced::Length::Fill),
-                            )
-                            .push(self.settings_button(
-                                "Edit panel",
-                                "M4 20l4-1 12-12-3-3L5 16z",
-                                Some(Message::PanelPage(PanelPage::Arrange)),
-                                false,
-                            ))
-                            .push(
-                                self.settings_icon_button(
+                rows =
+                    rows.push(
+                        widget::container(
+                            widget::row([])
+                                .spacing(12)
+                                .align_y(cosmic::iced::Alignment::Center)
+                                .push(crate::visuals::action_icon(
+                                    if edge == Edge::Top {
+                                        "M3 5h18v14H3z M3 9h18"
+                                    } else {
+                                        "M3 5h18v14H3z M3 15h18"
+                                    },
+                                    palette.accent,
+                                ))
+                                .push(
+                                    widget::column([])
+                                        .spacing(3)
+                                        .push(self.panel_heading(
+                                            if edge == Edge::Top {
+                                                "Top panel"
+                                            } else {
+                                                "Bottom panel"
+                                            },
+                                            14.,
+                                        ))
+                                        .push(self.note("Shown on all displays"))
+                                        .width(cosmic::iced::Length::Fill),
+                                )
+                                .push(self.settings_button(
+                                    "Edit panel",
+                                    "M4 20l4-1 12-12-3-3L5 16z",
+                                    Some(Message::PanelPage(PanelPage::Arrange)),
+                                    false,
+                                ))
+                                .push(self.settings_icon_button(
                                     "Remove custom panel",
                                     "M4 7h16 M9 7V4h6v3 M6 7l1 13h10l1-13 M10 11v5 M14 11v5",
-                                    self.draft
-                                        .item("panels")
-                                        .is_some()
-                                        .then(|| Message::Change(store::Edit::Unset("panels".into()))),
-                                ),
-                            ),
-                    )
-                    .padding(14)
-                    .width(cosmic::iced::Length::Fill)
-                    .class(crate::visuals::surface(palette.card, 14.)),
-                );
+                                    self.draft.item("panels").is_some().then(|| {
+                                        Message::Change(store::Edit::Unset("panels".into()))
+                                    }),
+                                )),
+                        )
+                        .padding(14)
+                        .width(cosmic::iced::Length::Fill)
+                        .class(crate::visuals::surface(palette.card, 14.)),
+                    );
                 let preset = self.preview_panel().ok().and_then(|panel| panel.preset());
                 let position = widget::row([Edge::Top, Edge::Bottom].into_iter().map(|position| {
-                    let label = if position == Edge::Top { "Top" } else { "Bottom" };
+                    let label = if position == Edge::Top {
+                        "Top"
+                    } else {
+                        "Bottom"
+                    };
                     widget::button::custom(self.label(label, 12.))
                         .name(format!("Panel position: {label}"))
                         .padding([8, 10])
                         .width(cosmic::iced::Length::Fill)
                         .class(crate::visuals::panel_button(palette, edge == position))
-                        .on_press_maybe((edge != position).then_some(Message::PanelEdit(Action::SetEdge(position))))
+                        .on_press_maybe(
+                            (edge != position)
+                                .then_some(Message::PanelEdit(Action::SetEdge(position))),
+                        )
                         .into()
                 }))
                 .spacing(2);
@@ -151,11 +160,14 @@ impl App {
                             "Outline",
                             "Add a fine line around the panel shape.",
                             widget::container(
-                                ferese_theme::controls::switch(self.draft.boolean("panels.0.border", false), palette)
-                                    .name("Outline")
-                                    .on_press(Message::PanelEdit(Action::SetBorder(
-                                        !self.draft.boolean("panels.0.border", false),
-                                    ))),
+                                ferese_theme::controls::switch(
+                                    self.draft.boolean("panels.0.border", false),
+                                    palette,
+                                )
+                                .name("Outline")
+                                .on_press(Message::PanelEdit(Action::SetBorder(
+                                    !self.draft.boolean("panels.0.border", false),
+                                ))),
                             )
                             .align_right(cosmic::iced::Length::Fill)
                             .into(),
@@ -179,7 +191,9 @@ impl App {
                                 widget::container(
                                     ferese_theme::controls::switch(attached, palette)
                                         .name("Attach to screen edge")
-                                        .on_press(Message::PanelEdit(Action::SetMorphAttached(!attached))),
+                                        .on_press(Message::PanelEdit(Action::SetMorphAttached(
+                                            !attached,
+                                        ))),
                                 )
                                 .align_right(cosmic::iced::Length::Fill)
                                 .into(),
@@ -193,7 +207,9 @@ impl App {
                                 widget::container(
                                     ferese_theme::controls::switch(enabled, palette)
                                         .name("Preview on hover")
-                                        .on_press(Message::PanelEdit(Action::SetPeekOnHover(!enabled))),
+                                        .on_press(Message::PanelEdit(Action::SetPeekOnHover(
+                                            !enabled,
+                                        ))),
                                 )
                                 .align_right(cosmic::iced::Length::Fill)
                                 .into(),
@@ -206,10 +222,9 @@ impl App {
                             .padding([8, 10])
                             .width(cosmic::iced::Length::Fill)
                             .class(crate::visuals::panel_button(palette, count == maximum))
-                            .on_press_maybe(
-                                (count != maximum)
-                                    .then(|| Message::Change(store::set("activities.max_visible", count))),
-                            )
+                            .on_press_maybe((count != maximum).then(|| {
+                                Message::Change(store::set("activities.max_visible", count))
+                            }))
                             .into()
                     }))
                     .spacing(2);
@@ -232,7 +247,10 @@ impl App {
                         widget::container(
                             ferese_theme::controls::switch(show_badge, palette)
                                 .name("Show activity count")
-                                .on_press(Message::Change(store::set("activities.show_badge", !show_badge))),
+                                .on_press(Message::Change(store::set(
+                                    "activities.show_badge",
+                                    !show_badge,
+                                ))),
                         )
                         .align_right(cosmic::iced::Length::Fill)
                         .into(),
@@ -246,7 +264,8 @@ impl App {
                         .class(crate::visuals::surface(palette.card, 14.)),
                 );
                 let pins = self.preview_panel().is_ok_and(|panel| {
-                    panel.geometry != ferese_panel::GeometryIntent::default() || panel.corner_radius.is_some()
+                    panel.geometry != ferese_panel::GeometryIntent::default()
+                        || panel.corner_radius.is_some()
                 });
                 let mut settings = widget::column([]).spacing(4).push(
                     widget::container(
@@ -277,12 +296,18 @@ impl App {
                         !matches!(
                             preset.unwrap_or_default(),
                             ferese_panel::PanelStyle::Flat | ferese_panel::PanelStyle::Notch
-                        ) || !matches!(field.path.rsplit('.').next(), Some("edge_margin" | "side_margins"))
+                        ) || !matches!(
+                            field.path.rsplit('.').next(),
+                            Some("edge_margin" | "side_margins")
+                        )
                     })
                 {
                     let mut field = field;
                     if preset == Some(ferese_panel::PanelStyle::Morph) {
-                        if matches!(field.path.rsplit('.').next(), Some("inner_padding" | "side_margins")) {
+                        if matches!(
+                            field.path.rsplit('.').next(),
+                            Some("inner_padding" | "side_margins")
+                        ) {
                             continue;
                         }
                         if field.path.ends_with(".height") {
@@ -296,15 +321,23 @@ impl App {
                                 .unwrap_or_default(),
                         )
                         .unwrap();
-                        *default = geometry[field.path.rsplit('.').next().unwrap()].as_f64().unwrap();
+                        *default = geometry[field.path.rsplit('.').next().unwrap()]
+                            .as_f64()
+                            .unwrap();
                     }
                     let pinned = self.draft.item(&field.path).is_some();
-                    let reset = pinned.then_some(Message::PanelEdit(Action::ClearGeometry(field.path.clone())));
+                    let reset = pinned.then_some(Message::PanelEdit(Action::ClearGeometry(
+                        field.path.clone(),
+                    )));
                     let reset_label = format!("Reset {}", field.label);
                     settings = settings.push(
                         widget::row![
                             self.field(field),
-                            self.settings_icon_button(&reset_label, "M3 12a9 9 0 1 0 3-6 M3 3v6h6", reset)
+                            self.settings_icon_button(
+                                &reset_label,
+                                "M3 12a9 9 0 1 0 3-6 M3 3v6h6",
+                                reset
+                            )
                         ]
                         .spacing(8)
                         .align_y(cosmic::iced::Alignment::Center),
@@ -381,7 +414,10 @@ impl App {
 
     fn panel_opacity_controls(&self) -> Element<'static, Message> {
         use cosmic::iced::{Alignment, Length};
-        if self.draft.boolean("theme.accessibility.reduce_transparency", false) {
+        if self
+            .draft
+            .boolean("theme.accessibility.reduce_transparency", false)
+        {
             return self.panel_appearance_row(
                 "Background opacity",
                 "Reduce transparency is on. Turn it off in Accessibility to change opacity.",
@@ -424,16 +460,21 @@ impl App {
             .spacing(10)
             .align_y(Alignment::Center)
             .push(
-                crate::slider(0. ..=100., value, move |value| Message::Range(field.clone(), value))
-                    .step(1.)
-                    .class(ferese_theme::menus::slider(palette.accent, 1.))
-                    .on_release(Message::Release(release))
-                    .width(Length::Fill),
+                crate::slider(0. ..=100., value, move |value| {
+                    Message::Range(field.clone(), value)
+                })
+                .step(1.)
+                .class(ferese_theme::menus::slider(palette.accent, 1.))
+                .on_release(Message::Release(release))
+                .width(Length::Fill),
             )
             .push(
-                widget::container(self.label(format!("{value:.0}%"), 12.).align_x(Alignment::Center))
-                    .padding([6, 0])
-                    .width(48),
+                widget::container(
+                    self.label(format!("{value:.0}%"), 12.)
+                        .align_x(Alignment::Center),
+                )
+                .padding([6, 0])
+                .width(48),
             )
             .push(self.settings_icon_button(
                 "Use shell opacity",
@@ -458,26 +499,30 @@ impl App {
             .preview_panel()
             .map(|panel| panel.resolved_geometry().height * 0.5)
             .unwrap_or(18.);
-        let custom = self
-            .draft
-            .item("panels.0.corner_radius")
-            .and_then(|value| serde_json::from_value::<ferese_panel::CornerRadii>(value.clone()).ok());
+        let custom = self.draft.item("panels.0.corner_radius").and_then(|value| {
+            serde_json::from_value::<ferese_panel::CornerRadii>(value.clone()).ok()
+        });
         let radii = custom.unwrap_or_else(|| ferese_panel::CornerRadii::uniform(shell_radius));
-        let modes = widget::row([("Automatic", false), ("Custom", true)].map(|(label, selected)| {
-            widget::button::custom(self.label(label, 12.).align_x(Alignment::Center))
-                .name(format!("Corner radius: {label}"))
-                .padding([8, 12])
-                .width(Length::Fill)
-                .class(crate::visuals::panel_button(palette, custom.is_some() == selected))
-                .on_press_maybe((custom.is_some() != selected).then(|| {
-                    Message::PanelEdit(if selected {
-                        Action::SetRadius(format!("{shell_radius}px"))
-                    } else {
-                        Action::ClearRadius
-                    })
-                }))
-                .into()
-        }))
+        let modes = widget::row([("Automatic", false), ("Custom", true)].map(
+            |(label, selected)| {
+                widget::button::custom(self.label(label, 12.).align_x(Alignment::Center))
+                    .name(format!("Corner radius: {label}"))
+                    .padding([8, 12])
+                    .width(Length::Fill)
+                    .class(crate::visuals::panel_button(
+                        palette,
+                        custom.is_some() == selected,
+                    ))
+                    .on_press_maybe((custom.is_some() != selected).then(|| {
+                        Message::PanelEdit(if selected {
+                            Action::SetRadius(format!("{shell_radius}px"))
+                        } else {
+                            Action::ClearRadius
+                        })
+                    }))
+                    .into()
+            },
+        ))
         .spacing(2);
         let modes = widget::container(modes)
             .padding(3)
@@ -491,7 +536,11 @@ impl App {
             (2, "Outer right", "M5 19h10a4 4 0 0 0 4-4V5"),
         ] {
             let value = radii.0[index];
-            let tint = if custom.is_some() { palette.text } else { palette.muted };
+            let tint = if custom.is_some() {
+                palette.text
+            } else {
+                palette.muted
+            };
             corners.push(
                 widget::container(
                     widget::row([])
@@ -499,14 +548,13 @@ impl App {
                         .align_y(Alignment::Center)
                         .push(crate::visuals::action_icon(icon, palette.muted))
                         .push(self.label(label, 12.).width(Length::Fill))
-                        .push(
-                            self.settings_icon_button(
-                                &format!("Decrease {label} radius"),
-                                "M5 12h14",
-                                (custom.is_some() && value > 0.)
-                                    .then_some(Message::PanelEdit(Action::SetCorner(index, (value - 1.).max(0.)))),
-                            ),
-                        )
+                        .push(self.settings_icon_button(
+                            &format!("Decrease {label} radius"),
+                            "M5 12h14",
+                            (custom.is_some() && value > 0.).then_some(Message::PanelEdit(
+                                Action::SetCorner(index, (value - 1.).max(0.)),
+                            )),
+                        ))
                         .push(
                             self.label(format!("{value} px"), 12.)
                                 .width(52)
@@ -519,7 +567,10 @@ impl App {
                                 "M12 5v14 M5 12h14",
                                 custom
                                     .is_some()
-                                    .then_some(Message::PanelEdit(Action::SetCorner(index, value + 1.))),
+                                    .then_some(Message::PanelEdit(Action::SetCorner(
+                                        index,
+                                        value + 1.,
+                                    ))),
                             ),
                         ),
                 )
@@ -637,7 +688,10 @@ impl App {
                             zone: placement.key(),
                             group: group.id.clone(),
                         },
-                        format!("panels.0.{}.groups.{group_index}.items.{item_index}", placement.key()),
+                        format!(
+                            "panels.0.{}.groups.{group_index}.items.{item_index}",
+                            placement.key()
+                        ),
                     ));
                 }
             }
@@ -704,14 +758,20 @@ impl App {
         let palette = crate::visuals::Palette::from_resolved(&self.resolved.presented);
         let mut zones = widget::column([]).spacing(18);
         if panel.group_count() == ferese_panel::MAX_GROUPS {
-            zones = zones.push(self.label(format!("{}-group limit reached", ferese_panel::MAX_GROUPS), 12.));
+            zones = zones.push(self.label(
+                format!("{}-group limit reached", ferese_panel::MAX_GROUPS),
+                12.,
+            ));
         }
         for placement in Zone::ALL {
             let zone = placement.definition(panel);
             let mut groups = widget::column([]).spacing(8).push(
                 widget::row([])
                     .align_y(Alignment::Center)
-                    .push(self.panel_heading(placement.to_string(), 13.).width(Length::Fill))
+                    .push(
+                        self.panel_heading(placement.to_string(), 13.)
+                            .width(Length::Fill),
+                    )
                     .push(
                         self.settings_button(
                             "Add group",
@@ -733,7 +793,10 @@ impl App {
                         widget::row([])
                             .spacing(6)
                             .align_y(Alignment::Center)
-                            .push(crate::visuals::action_icon("M3 7h18v13H3z M3 7V4h7l3 3", palette.muted))
+                            .push(crate::visuals::action_icon(
+                                "M3 7h18v13H3z M3 7V4h7l3 3",
+                                palette.muted,
+                            ))
                             .push(self.label(group_name(&group.id.0), 13.)),
                     )
                     .name(format!("Edit group {}", group.id.0))
@@ -746,9 +809,11 @@ impl App {
                     .on_press(Message::PanelGroupSelect(group.id.clone())),
                 );
                 let add_item = crate::visuals::panel_select(
-                    cosmic::iced::widget::pick_list(CATALOG.to_vec(), None::<CatalogItem>, move |kind| {
-                        Message::PanelEdit(Action::Add(kind.0, destination.clone()))
-                    })
+                    cosmic::iced::widget::pick_list(
+                        CATALOG.to_vec(),
+                        None::<CatalogItem>,
+                        move |kind| Message::PanelEdit(Action::Add(kind.0, destination.clone())),
+                    )
                     .placeholder("Add item")
                     .font(self.font)
                     .text_size(12)
@@ -776,13 +841,15 @@ impl App {
                                     palette.muted.scale_alpha(0.6)
                                 },
                             ))
-                            .push(self.label(item.kind.label(), 13.).width(Length::Fill).class(
-                                cosmic::theme::Text::Color(if item.visible {
-                                    palette.text
-                                } else {
-                                    palette.muted.scale_alpha(0.6)
-                                }),
-                            )),
+                            .push(
+                                self.label(item.kind.label(), 13.)
+                                    .width(Length::Fill)
+                                    .class(cosmic::theme::Text::Color(if item.visible {
+                                        palette.text
+                                    } else {
+                                        palette.muted.scale_alpha(0.6)
+                                    })),
+                            ),
                     )
                     .name(format!("Edit {} · {}", item.kind.label(), item.id.0))
                     .padding([8, 6])
@@ -796,7 +863,10 @@ impl App {
                         widget::container(
                             widget::row([])
                                 .align_y(Alignment::Center)
-                                .push(widget::mouse_area(grip).interaction(cosmic::iced::mouse::Interaction::Grab))
+                                .push(
+                                    widget::mouse_area(grip)
+                                        .interaction(cosmic::iced::mouse::Interaction::Grab),
+                                )
                                 .push(select),
                         )
                         .id(crate::panel_drag::item_id(&item.id))
@@ -806,7 +876,8 @@ impl App {
                 }
                 let mut contents = widget::column([]).spacing(4).push(heading);
                 if items.is_empty() {
-                    contents = contents.push(widget::container(self.note("Drop items here")).padding([8, 6]));
+                    contents = contents
+                        .push(widget::container(self.note("Drop items here")).padding([8, 6]));
                 } else {
                     contents = contents.push(
                         widget::flex_row(items)
@@ -854,7 +925,11 @@ impl App {
                         .class(crate::visuals::surface(palette.card, 10.)),
                 );
             }
-            zones = zones.push(widget::container(groups).padding([0, 4]).width(Length::Fill));
+            zones = zones.push(
+                widget::container(groups)
+                    .padding([0, 4])
+                    .width(Length::Fill),
+            );
         }
         crate::panel_drag::frame(zones.into(), panel, palette.accent)
     }
@@ -899,7 +974,11 @@ mod tests {
         use cosmic::Application;
         let mut app = App::init(
             cosmic::app::Core::default(),
-            ("/unused/range.kdl".into(), store::Snapshot::parse(String::new()), None),
+            (
+                "/unused/range.kdl".into(),
+                store::Snapshot::parse(String::new()),
+                None,
+            ),
         )
         .0;
         assert_eq!(app.panel_side_margin_limit(), None);
@@ -928,19 +1007,27 @@ mod tests {
 
     #[test]
     fn customization_uses_canonical_defaults_and_retains_other_fields() {
-        let mut snapshot = store::Snapshot::parse("// keep\nanimations { speed 0.8; }\n".into()).unwrap();
+        let mut snapshot =
+            store::Snapshot::parse("// keep\nanimations { speed 0.8; }\n".into()).unwrap();
         snapshot.edit(&initialize(&snapshot).unwrap()).unwrap();
         let snapshot = store::Snapshot::parse(snapshot.source).unwrap();
-        let panels: Vec<Panel> = serde_json::from_value(snapshot.item("panels").unwrap().clone()).unwrap();
+        let panels: Vec<Panel> =
+            serde_json::from_value(snapshot.item("panels").unwrap().clone()).unwrap();
         assert_eq!(panels[0].preset(), Some(ferese_panel::PanelStyle::Flat));
-        assert_eq!(panels[0].resolved_geometry(), ferese_panel::PanelGeometry::default());
+        assert_eq!(
+            panels[0].resolved_geometry(),
+            ferese_panel::PanelGeometry::default()
+        );
         assert!(panels[0].center.groups[0].items[0].visible);
         assert_eq!(snapshot.number("animations.speed", 1.), 0.8);
         assert!(snapshot.source.contains("// keep"));
         let id = snapshot.string("panels.0.end.groups.0.items.2.id", "");
         let mut changed = snapshot;
         changed
-            .edit(&store::set("panels.0.end.groups.0.items.2.overflow", "always"))
+            .edit(&store::set(
+                "panels.0.end.groups.0.items.2.overflow",
+                "always",
+            ))
             .unwrap();
         let changed = store::Snapshot::parse(changed.source).unwrap();
         assert_eq!(changed.string("panels.0.end.groups.0.items.2.id", ""), id);
@@ -978,7 +1065,11 @@ mod tests {
             .unwrap();
         let app = App::init(
             crate::Core::default(),
-            ("/unused/editor.kdl".into(), store::Snapshot::parse(String::new()), None),
+            (
+                "/unused/editor.kdl".into(),
+                store::Snapshot::parse(String::new()),
+                None,
+            ),
         )
         .0;
         let panel = Panel::default();
