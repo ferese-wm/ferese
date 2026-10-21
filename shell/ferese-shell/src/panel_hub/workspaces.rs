@@ -1,10 +1,12 @@
 use std::time::{Duration, Instant};
 
 use cosmic::app::Task;
-use cosmic::iced::{Alignment, mouse::ScrollDelta, window};
+use cosmic::iced::mouse::ScrollDelta;
+use cosmic::iced::{Alignment, window};
 use cosmic::widget::{button, container, row};
 use cosmic::{Element, theme};
-use ferese_panel::{ItemKind, morph::Mode};
+use ferese_panel::ItemKind;
+use ferese_panel::morph::Mode;
 
 use super::Event;
 use crate::control::WorkspaceSnapshot;

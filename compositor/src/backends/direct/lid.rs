@@ -1,7 +1,10 @@
 //! Resume reads are asynchronous; newer switch events win over old replies.
 use std::sync::{Arc, Mutex, mpsc};
 
-use super::*;
+use super::{
+    Duration, Error, Ferese, RegistrationToken, TimeoutAction, Timer, cancel_output_timers,
+    reconcile_outputs,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct Probe {

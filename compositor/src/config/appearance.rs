@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Config, ConfigError, Deserialize, default_border_width, default_focus_ring_width,
+    default_shadow_blur, default_shadow_offset_y, default_shadow_opacity, default_window_radius,
+};
 
 impl Config {
     pub(crate) fn focus_effect_settings(&self) -> Result<FocusEffectSettings, ConfigError> {

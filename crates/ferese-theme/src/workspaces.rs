@@ -237,9 +237,9 @@ pub fn sample<'a, M: 'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cosmic::iced::advanced::{
-        Layout, Renderer, layout, renderer, renderer::Headless, widget::Tree,
-    };
+    use cosmic::iced::advanced::renderer::Headless;
+    use cosmic::iced::advanced::widget::Tree;
+    use cosmic::iced::advanced::{Layout, Renderer, layout, renderer};
     use cosmic::iced::{Font, Pixels, Rectangle, Size, mouse};
 
     #[test]

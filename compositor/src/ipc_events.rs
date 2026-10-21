@@ -254,7 +254,8 @@ mod tests {
     fn topology_events_wait_for_publication_and_report_config_commits() {
         use crate::state::DesktopOutput;
         use smithay::output::{Mode, Output, PhysicalProperties, Scale, Subpixel};
-        use smithay::reexports::{calloop::EventLoop, wayland_server::Display};
+        use smithay::reexports::calloop::EventLoop;
+        use smithay::reexports::wayland_server::Display;
         use smithay::utils::Transform;
 
         if !crate::startup_tests::private_runtime(

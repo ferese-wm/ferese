@@ -1,5 +1,6 @@
 use cosmic::iced::border::Shape as BorderShape;
-use cosmic::iced::{Background, Color, gradient::Linear};
+use cosmic::iced::gradient::Linear;
+use cosmic::iced::{Background, Color};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Palette {

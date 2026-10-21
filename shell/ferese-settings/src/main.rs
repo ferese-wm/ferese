@@ -9,7 +9,7 @@ mod panel_inspector;
 mod panel_preview;
 mod theme_controls;
 
-use theme_controls::*;
+use theme_controls::gallery_id;
 
 mod displays;
 mod displays_ui;
@@ -1309,7 +1309,9 @@ mod tests {
         app.page = Page::Bar;
         let edit = panel_controls::initialize(&app.draft).unwrap();
         app.draft.edit(&edit).unwrap();
-        use cosmic::iced::advanced::{layout, renderer::Headless, widget::Tree};
+        use cosmic::iced::advanced::layout;
+        use cosmic::iced::advanced::renderer::Headless;
+        use cosmic::iced::advanced::widget::Tree;
         use cosmic::iced::{Font, Pixels, Size};
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -1537,7 +1539,9 @@ mod tests {
             .enable_all()
             .build()
             .unwrap();
-        use cosmic::iced::advanced::{layout, renderer::Headless, widget::Tree};
+        use cosmic::iced::advanced::layout;
+        use cosmic::iced::advanced::renderer::Headless;
+        use cosmic::iced::advanced::widget::Tree;
         use cosmic::iced::{Font, Pixels, Size};
         let renderer = runtime
             .block_on(<cosmic::Renderer as Headless>::new(
@@ -1722,9 +1726,8 @@ mod tests {
     #[ignore = "release scroll/render sample; requires both renderer backends"]
     fn profile_dense_pages_on_both_renderers() {
         use cosmic::iced::advanced::renderer::{Headless, Renderer as _};
-        use cosmic::iced::advanced::{
-            Layout, Shell, clipboard, layout, mouse, renderer, widget::Tree,
-        };
+        use cosmic::iced::advanced::widget::Tree;
+        use cosmic::iced::advanced::{Layout, Shell, clipboard, layout, mouse, renderer};
         use cosmic::iced::{Color, Event, Font, Pixels, Point, Rectangle, Size};
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()

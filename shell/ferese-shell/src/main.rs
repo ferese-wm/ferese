@@ -3,8 +3,8 @@ mod bar;
 mod battery_indicator;
 mod surfaces;
 
-use bar::*;
-use surfaces::*;
+use bar::{bar_content, output_bar_hidden};
+use surfaces::{EffectsBinding, EffectsContext, native_wayland_surface};
 
 mod clock;
 mod compositor_ipc;
@@ -1335,6 +1335,9 @@ fn color_with_opacity(mut value: [u8; 4], opacity: f32) -> Color {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bar::bar_hidden;
+    use crate::bar::focused_bar_title;
+    use crate::bar::workspace_active_on_bar;
     use crate::control::{OutputSnapshot, WindowSnapshot};
     pub(super) fn shell_with_measured_panel() -> FereseShell {
         let config = ShellConfig::default();

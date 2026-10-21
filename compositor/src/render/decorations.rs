@@ -1,4 +1,14 @@
-use super::*;
+use super::{
+    AnimatedWindowRenderElement, BorderParameters, CachedBorder, CachedShadow, ConstrainAlign,
+    ConstrainScaleBehavior, CornerShape, GlesRenderer, Logical, Output, Physical,
+    PhysicalShaderElement, Point, PopupManager, ROUNDED_BORDER_SHADER, ROUNDED_SOLID_SHADER,
+    ROUNDED_TEXTURE_SHADER, Rectangle, RenderElementKind, RenderResources, Renderer,
+    RoundedClipPrograms, RoundedRect, RoundedSurfaceRenderElement, ShadowParameters,
+    SharedPixelShaderElement, Size, Transform, Uniform, UniformName, UniformType,
+    WINDOW_SHADOW_SHADER, WaylandSurfaceRenderElement, WindowContentRenderElement, clamp_radius,
+    constrain_render_elements, corner_shader_for, material_program_for_corners,
+    render_elements_from_surface_tree,
+};
 
 pub(super) fn rounded_clip_program(
     resources: &mut RenderResources,
@@ -528,9 +538,6 @@ pub(super) fn resize_content_behavior(intentional_scale: bool) -> ConstrainScale
         ConstrainScaleBehavior::CutOff
     }
 }
-
-#[cfg(test)]
-pub(super) use crate::presentation::scaled_visual_rect;
 
 pub(super) fn color_with_alpha(mut color: [f32; 4], alpha: f32) -> [f32; 4] {
     color[3] *= alpha;

@@ -1,6 +1,14 @@
 //! A target displays a composition of the source, with no second workspace or input domain.
 //! Source alone releases client callbacks/presentation feedback. Targets have independent KMS clocks.
-use super::*;
+#[cfg(test)]
+use smithay::backend::allocator::Fourcc;
+#[cfg(test)]
+use smithay::output::Scale;
+
+use super::{
+    CommitCounter, DirectOutput, Ferese, GlesRenderer, GlesTexture, Output, OutputMode,
+    PhysicalProperties, Subpixel, Transform, capture, sampled_output_elements,
+};
 use smithay::backend::renderer::Texture;
 use smithay::utils::{Buffer, Physical, Rectangle};
 

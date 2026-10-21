@@ -1,6 +1,8 @@
-use ferese_config::{Document, file::ConfigFile, panel};
+use ferese_config::file::ConfigFile;
+use ferese_config::{Document, panel};
 use serde_json::json;
-use std::{error::Error, path::Path};
+use std::error::Error;
+use std::path::Path;
 
 fn prepare(source: &str) -> Result<String, Box<dyn Error>> {
     let mut doc = Document::parse(source)?;

@@ -1,5 +1,5 @@
 //! A fixed-width battery silhouette; the percentage is text, not regenerated SVG.
-use super::*;
+use super::{Element, FereseShell, Message, button, color_with_opacity, motion, status_ui, window};
 
 pub(super) const WIDTH: f64 = 38.;
 

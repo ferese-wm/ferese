@@ -1,5 +1,7 @@
 //! Uncertain KMS completion requires device reconciliation, not buffer reuse.
-use super::*;
+use super::{
+    DirectOutput, DrmNode, Duration, Ferese, Instant, TimeoutAction, Timer, crtc, reconcile_outputs,
+};
 
 const COMPLETION_TIMEOUT: Duration = Duration::from_secs(2);
 

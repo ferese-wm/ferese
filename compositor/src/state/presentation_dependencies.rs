@@ -1,4 +1,19 @@
-use super::*;
+use super::{
+    Ferese, HashMap, HashSet, Rect, WindowId, WorkspaceId, WorkspaceLayout, window_registry,
+};
+#[cfg(test)]
+use ferese_animation::SpringConfig;
+#[cfg(test)]
+use ferese_layout::Axis;
+#[cfg(test)]
+use ferese_layout::Direction;
+#[cfg(test)]
+use ferese_layout::GapConfig;
+#[cfg(test)]
+use ferese_layout::SizeConstraints;
+#[cfg(test)]
+use ferese_layout::ViewportFocusStrategy;
+
 use smithay::utils::Serial;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -518,6 +533,8 @@ impl Ferese {
 mod tests {
     use super::*;
     use crate::resize_transaction::ResizeTransaction;
+    use crate::state::ViewportPresentation;
+    use std::time::Duration;
 
     fn tree_reflow_groups(
         motions: impl IntoIterator<Item = (WindowId, Rect, Rect)>,

@@ -6,7 +6,8 @@ use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 
 use cosmic::iced::{Subscription, futures};
-use jiff::{Timestamp, Zoned, tz::TimeZone};
+use jiff::tz::TimeZone;
+use jiff::{Timestamp, Zoned};
 
 const SECOND: i128 = 1_000_000_000;
 const MINUTE: i128 = 60 * SECOND;

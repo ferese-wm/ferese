@@ -276,7 +276,8 @@ impl<M> Widget<M, Theme, cosmic::Renderer> for Adaptive<'_, M> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cosmic::iced::advanced::{clipboard, renderer::Headless};
+    use cosmic::iced::advanced::clipboard;
+    use cosmic::iced::advanced::renderer::Headless;
     use cosmic::iced::{Font, Pixels, Point};
     use cosmic::widget::{button, text};
     use ferese_panel::OverflowPolicy;

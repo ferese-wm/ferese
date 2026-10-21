@@ -1,4 +1,4 @@
-use super::*;
+use super::{Config, ConfigError, Deserialize, HashSet, default_true};
 
 impl Config {
     pub fn output_profiles(&self) -> Result<Vec<OutputProfile>, ConfigError> {

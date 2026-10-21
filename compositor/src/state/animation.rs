@@ -1,4 +1,10 @@
-use super::*;
+#[cfg(any(test, feature = "resize-metrics"))]
+use super::viewport::ViewportPresentation;
+use super::{
+    AnimatedValue, ClientSize, DrmEventTime, DrmNode, Duration, Ferese, HashMap, HashSet, Instant,
+    OutputId, PopupManager, SpringConfig, WindowGeometry, WindowId, WorkspaceId, crtc,
+    scaled_animation_duration,
+};
 
 impl Ferese {
     pub(super) fn presentation_now(&self) -> Duration {
@@ -740,8 +746,22 @@ fn record_needs_tick(
 
 #[cfg(test)]
 mod tests {
+    use crate::state::BoundedFade;
+    #[cfg(test)]
+    use calloop::EventLoop;
+    #[cfg(test)]
+    use ferese_animation::CrossingPolicy;
+    #[cfg(test)]
+    use ferese_animation::PresentationMode;
+    #[cfg(test)]
+    use ferese_layout::Axis;
+    #[cfg(test)]
+    use ferese_layout::Rect;
+
     use super::super::window_registry::WindowRecord;
     use super::*;
+    use smithay::output::Output;
+    use smithay::reexports::wayland_server::Display;
 
     fn settled() -> WindowRecord {
         let rect = Rect::new(0.0, 0.0, 400.0, 300.0);

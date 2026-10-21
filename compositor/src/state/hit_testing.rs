@@ -1,4 +1,8 @@
-use super::*;
+use super::{
+    ClientSize, CursorImageStatus, Ferese, Layer, LayerSurface, Logical, Output, Point, Rectangle,
+    Window, WindowId, WindowSurfaceType, WlSurface, WorkspaceId, layer_map_for_output,
+    send_frames_surface_tree, window_has_buffer,
+};
 
 impl Ferese {
     pub fn surface_under(

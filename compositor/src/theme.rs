@@ -10,10 +10,8 @@ use calloop::timer::{TimeoutAction, Timer};
 use calloop::{Interest, Mode as PollMode, PostAction};
 use ferese_config::Document;
 use ferese_config::theme::{Candidate, Mode, TRANSITION_MS, resolve_with_context};
-use ferese_ipc::{
-    Response,
-    theme::{SCHEMA_VERSION, Snapshot},
-};
+use ferese_ipc::Response;
+use ferese_ipc::theme::{SCHEMA_VERSION, Snapshot};
 use jiff::Timestamp;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use serde_json::{Value, json};

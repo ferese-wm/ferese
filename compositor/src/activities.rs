@@ -4,10 +4,8 @@ pub(crate) mod deadline;
 mod pomodoro;
 mod publication;
 use ferese_activities::{Data, Id, Owner, Source, State, Store, Template, Value};
-use ferese_ipc::{
-    Response,
-    activities::{Publish, Snapshot},
-};
+use ferese_ipc::Response;
+use ferese_ipc::activities::{Publish, Snapshot};
 use serde_json::json;
 use std::collections::BTreeMap;
 use std::sync::mpsc::SyncSender;

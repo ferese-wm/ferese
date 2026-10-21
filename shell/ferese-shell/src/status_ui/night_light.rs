@@ -1,6 +1,6 @@
 use cosmic::widget::{column, slider};
 
-use super::*;
+use super::{Action, FereseShell, MenuRows, MenuStyle, Message, control_card, toggle_row};
 
 pub(super) fn view<'a>(
     shell: &'a FereseShell,

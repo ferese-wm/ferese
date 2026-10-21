@@ -1,5 +1,9 @@
-use smithay::{backend::session::Session, reexports::rustix::fs::OFlags, utils::DeviceFd};
-use std::{io, os::fd::OwnedFd, path::Path};
+use smithay::backend::session::Session;
+use smithay::reexports::rustix::fs::OFlags;
+use smithay::utils::DeviceFd;
+use std::io;
+use std::os::fd::OwnedFd;
+use std::path::Path;
 
 pub(super) struct SessionDevice<S: Session> {
     session: S,
@@ -37,7 +41,10 @@ impl<S: Session> Drop for SessionDevice<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{cell::Cell, fs::File, os::fd::AsRawFd, rc::Rc};
+    use std::cell::Cell;
+    use std::fs::File;
+    use std::os::fd::AsRawFd;
+    use std::rc::Rc;
 
     #[derive(Clone, Default)]
     struct TestSession(Rc<Cell<Option<i32>>>);

@@ -1,12 +1,9 @@
 //! Activity deadlines share CLOCK_BOOTTIME with the published countdowns. A
 //! monotonic calloop timer would otherwise keep waiting for time spent asleep.
-use smithay::reexports::calloop::{
-    Interest, LoopHandle, Mode, PostAction, RegistrationToken, generic::Generic,
-};
-use std::{
-    io,
-    os::fd::{AsRawFd, FromRawFd, OwnedFd},
-};
+use smithay::reexports::calloop::generic::Generic;
+use smithay::reexports::calloop::{Interest, LoopHandle, Mode, PostAction, RegistrationToken};
+use std::io;
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 
 pub(crate) struct Deadline {
     fd: OwnedFd,

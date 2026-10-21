@@ -9,8 +9,15 @@ mod thumbnails;
 mod view;
 mod work;
 
-use super::*;
-use cosmic::iced::keyboard::{Key, key::Named};
+use super::{
+    Anchor, Border, Color, ContentFit, Duration, EffectsBinding, Element, Event, FereseShell,
+    IcedMargin, IcedOutput, Instant, KeyboardInteractivity, Layer, Length, PlatformSpecific,
+    SctkLayerSurfaceSettings, ShellControl, Subscription, Task, bar_icon, button,
+    color_with_opacity, container, destroy_layer_surface, ferese_surface_effects_v1, image, motion,
+    native_wayland_surface, row, system_modal, theme, wayland, window, wl_surface,
+};
+use cosmic::iced::keyboard::Key;
+use cosmic::iced::keyboard::key::Named;
 use ferese_animation::{AnimatedValue, SpringConfig};
 use sources::{Category, Row, Source, Target};
 use std::sync::Arc;

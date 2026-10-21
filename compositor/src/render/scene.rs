@@ -1,6 +1,23 @@
 use smithay::desktop::Window;
 
-use super::*;
+#[cfg(test)]
+use smithay::backend::renderer::element::Id;
+#[cfg(test)]
+use smithay::backend::renderer::utils::CommitCounter;
+
+use super::{
+    AnimatedWindowRenderElement, ConstrainAlign, ConstrainBehavior, ConstrainReference,
+    CropRenderElement, CursorImageStatus, CursorImageSurfaceData, Duration, Ferese,
+    FrameEffectMetrics, GlesRenderer, Layer, LayerSurface, Logical, MaterialSurface,
+    MemoryRenderBufferRenderElement, Output, Physical, Point, PopupManager, Rectangle, Relocate,
+    RelocateRenderElement, RenderElementKind, Renderer, RescaleRenderElement, Resource,
+    RoundedRect, Size, SolidColorRenderElement, Transform, WaylandSurfaceRenderElement,
+    append_material_surface, backdrop, constrain_space_element, corner_program,
+    layer_map_for_output, material_element, overview_strip_elements,
+    render_elements_from_surface_tree, resize_content_behavior, rounded_visual_rect,
+    rounded_window_elements, window_border_element, window_corner_shape, window_shadow_element,
+    window_tint_element, with_states,
+};
 
 pub(crate) fn animated_window_elements(
     state: &mut Ferese,
@@ -602,6 +619,7 @@ pub(super) fn cursor_elements(
 #[cfg(test)]
 mod layer_crop_tests {
     use super::*;
+    use smithay::backend::renderer::element::Element;
 
     #[test]
     fn layer_crop_keeps_bottom_edge_content_in_every_output_transform() {

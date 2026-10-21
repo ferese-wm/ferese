@@ -2,10 +2,8 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use calloop::channel::SyncSender;
-use ferese_ipc::{
-    Response,
-    media::{Playback, now_us},
-};
+use ferese_ipc::Response;
+use ferese_ipc::media::{Playback, now_us};
 use futures_lite::{StreamExt, future, stream};
 use zbus::zvariant::{Array, OwnedObjectPath, OwnedValue, Value};
 use zbus::{Connection, MatchRule, MessageStream};

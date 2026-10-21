@@ -1522,10 +1522,8 @@ fn shell_can_move_a_window_to_the_current_workspace_on_another_output() {
 }
 
 fn change_transient_parent(state: &mut Ferese, child: &Window, parent: Option<&Window>) {
-    use smithay::wayland::{
-        compositor::with_states,
-        shell::xdg::{XdgShellHandler, XdgToplevelSurfaceData},
-    };
+    use smithay::wayland::compositor::with_states;
+    use smithay::wayland::shell::xdg::{XdgShellHandler, XdgToplevelSurfaceData};
     let toplevel = child.toplevel().unwrap();
     with_states(toplevel.wl_surface(), |states| {
         states

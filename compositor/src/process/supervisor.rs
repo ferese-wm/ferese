@@ -1,6 +1,9 @@
 //! Supervise the explicitly opted-in desktop helper. Each generation gets new
 //! private Wayland connections; a dead generation's descriptors are never reused.
-use super::*;
+use super::{
+    Child, ClientCapabilities, Duration, Ferese, Generic, Interest, LoopHandle, Mode, PostAction,
+    Rc, RefCell, TimeoutAction, Timer, io, pidfd, spawn_client_inner, terminate_child, warn,
+};
 use calloop::RegistrationToken;
 use std::ffi::OsString;
 use std::time::Instant;

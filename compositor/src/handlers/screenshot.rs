@@ -1,11 +1,9 @@
 //! Converts output-buffer readback into upright image coordinates.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::SyncSender as ReplySender;
-use std::sync::{
-    Arc,
-    atomic::{AtomicUsize, Ordering},
-};
 use std::time::{Duration, Instant};
 
 use ferese_ipc::Response;
@@ -1954,10 +1952,10 @@ mod tests {
     fn conversion_does_not_flip_vertically() {
         // Top row red, bottom row blue. An extra Y flip would swap them.
         let mut f = frame(Transform::Normal, 1, 2);
-        f.pixels = vec![0x00, 0x00, 0xFF, 0x00, 0xFF, 0x00, 0x00, 0x00];
+        f.pixels = vec![0x00, 0x00, 0xff, 0x00, 0xff, 0x00, 0x00, 0x00];
         let out = scale_and_convert(&f, 1, 2).unwrap();
-        assert_eq!(&out[0..4], &[0xFF, 0x00, 0x00, 255], "top row");
-        assert_eq!(&out[4..8], &[0x00, 0x00, 0xFF, 255], "bottom row");
+        assert_eq!(&out[0..4], &[0xff, 0x00, 0x00, 255], "top row");
+        assert_eq!(&out[4..8], &[0x00, 0x00, 0xff, 255], "bottom row");
     }
 
     #[test]
@@ -1971,7 +1969,7 @@ mod tests {
                 let value = (row * 2 + column) as u8;
                 padded.extend_from_slice(&[value, value, value, 255]);
             }
-            padded.extend_from_slice(&[0xEE; 4]);
+            padded.extend_from_slice(&[0xee; 4]);
         }
         f.pixels = padded;
 

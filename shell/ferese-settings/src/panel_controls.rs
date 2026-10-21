@@ -1,7 +1,8 @@
 use ferese_panel::{Edge, ItemKind, Panel};
 
 use crate::panel_edit::{Action, Destination, Zone};
-use crate::{App, Element, Message, schema::Page, store, widget};
+use crate::schema::Page;
+use crate::{App, Element, Message, store, widget};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) enum PanelPage {
@@ -1036,7 +1037,8 @@ mod tests {
     #[test]
     fn editor_zones_wrap_without_putting_groups_outside_the_available_width() {
         use cosmic::Application;
-        use cosmic::iced::advanced::{Layout, layout, renderer::Headless, widget as advanced};
+        use cosmic::iced::advanced::renderer::Headless;
+        use cosmic::iced::advanced::{Layout, layout, widget as advanced};
         use cosmic::iced::{Font, Pixels, Rectangle, Size};
         struct Bounds {
             ids: Vec<advanced::Id>,

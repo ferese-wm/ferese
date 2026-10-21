@@ -23,7 +23,7 @@ mod transaction;
 use diagnostics::{Diagnostics, PrimaryOutcome};
 use output_power::{OutputPower, Power};
 use redraw::{AnimationFallback, SchedulingMetrics};
-use scheduling::*;
+use scheduling::{cancel_output_timers, monotonic_now, request_frame, arm_frame, record_frame_schedule};
 use smithay::backend::allocator::gbm::{GbmAllocator, GbmBufferFlags, GbmDevice};
 use smithay::backend::allocator::{Buffer, Fourcc};
 use smithay::backend::drm::compositor::{DrmCompositor, FrameFlags, PrimaryPlaneElement};

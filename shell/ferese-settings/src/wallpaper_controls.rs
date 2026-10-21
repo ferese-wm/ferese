@@ -488,8 +488,9 @@ mod tests {
     #[test]
     fn preview_slots_keep_their_size_while_loading_and_on_failure() {
         use cosmic::Application;
+        use cosmic::iced::advanced::layout;
         use cosmic::iced::advanced::renderer::Headless;
-        use cosmic::iced::advanced::{layout, widget::Tree};
+        use cosmic::iced::advanced::widget::Tree;
         use cosmic::iced::{Font, Pixels, Size};
 
         let runtime = tokio::runtime::Builder::new_current_thread()
@@ -565,7 +566,8 @@ mod tests {
     fn render_preview_pages_on_both_backends() {
         use cosmic::Application;
         use cosmic::iced::advanced::renderer::{Headless, Renderer as _};
-        use cosmic::iced::advanced::{Layout, layout, mouse, renderer, widget::Tree};
+        use cosmic::iced::advanced::widget::Tree;
+        use cosmic::iced::advanced::{Layout, layout, mouse, renderer};
         use cosmic::iced::{Color, Font, Pixels, Rectangle, Size};
 
         let runtime = tokio::runtime::Builder::new_current_thread()

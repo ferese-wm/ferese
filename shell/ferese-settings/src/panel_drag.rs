@@ -455,7 +455,8 @@ impl Widget<Message, Theme, Renderer> for Editor<'_> {
 mod tests {
     use super::*;
     use crate::store::{Snapshot, set};
-    use cosmic::iced::advanced::{clipboard, renderer::Headless};
+    use cosmic::iced::advanced::clipboard;
+    use cosmic::iced::advanced::renderer::Headless;
     use cosmic::iced::{Font, Pixels};
     use cosmic::widget::{button, column, container, row, text};
 

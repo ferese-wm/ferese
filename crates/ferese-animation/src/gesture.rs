@@ -1,4 +1,5 @@
-use std::{collections::VecDeque, time::Duration};
+use std::collections::VecDeque;
+use std::time::Duration;
 
 #[derive(Default, Debug)]
 pub struct VelocityTracker {

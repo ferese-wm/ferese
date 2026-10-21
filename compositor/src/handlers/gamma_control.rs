@@ -9,7 +9,9 @@ use smithay::reexports::wayland_server::{
     Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource,
 };
 
-use crate::{Ferese, backends::direct::gamma, gamma::Ramp};
+use crate::Ferese;
+use crate::backends::direct::gamma;
+use crate::gamma::Ramp;
 
 pub(crate) fn init_global(display: &DisplayHandle) {
     display.create_global::<Ferese, ZwlrGammaControlManagerV1, ()>(1, ());

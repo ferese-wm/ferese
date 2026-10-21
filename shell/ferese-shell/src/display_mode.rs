@@ -1,4 +1,6 @@
-use super::*;
+use super::{
+    FereseShell, Instant, Length, Message, Task, button, compositor_ipc, container, row, theme,
+};
 use serde_json::{Value, json};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -288,7 +290,8 @@ impl FereseShell {
     }
 
     pub(super) fn display_mode_key(&mut self, key: &cosmic::iced::keyboard::Key) -> Task<Message> {
-        use cosmic::iced::keyboard::{Key, key::Named};
+        use cosmic::iced::keyboard::Key;
+        use cosmic::iced::keyboard::key::Named;
         let current = Mode::ALL
             .iter()
             .position(|mode| *mode == self.display_mode.selected)

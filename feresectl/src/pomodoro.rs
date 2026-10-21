@@ -1,6 +1,9 @@
 use clap::Subcommand;
 use ferese_ipc::activities::{PomodoroAction, PomodoroRequest, VERSION};
-use std::{error::Error, os::unix::net::UnixStream, path::Path, time::Duration};
+use std::error::Error;
+use std::os::unix::net::UnixStream;
+use std::path::Path;
+use std::time::Duration;
 
 #[derive(Debug, Subcommand)]
 pub enum Action {

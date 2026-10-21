@@ -2,7 +2,8 @@ use super::*;
 use smithay::backend::input::UnusedEvent;
 use smithay::backend::winit::WinitVirtualDevice;
 use smithay::input::keyboard::Keycode;
-use smithay::reexports::{calloop::EventLoop, wayland_server::Display};
+use smithay::reexports::calloop::EventLoop;
+use smithay::reexports::wayland_server::Display;
 
 #[derive(Debug)]
 struct TestInput;

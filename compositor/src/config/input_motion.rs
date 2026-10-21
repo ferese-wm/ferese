@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Config, ConfigError, Deserialize, SpringConfig, default_repeat_delay, default_repeat_rate,
+    enabled_by_default,
+};
 
 impl Config {
     pub fn input_settings(&self) -> Result<InputSettings, ConfigError> {

@@ -13,7 +13,8 @@ use smithay::desktop::Window;
 use smithay::output::{Mode, Output, PhysicalProperties, Scale, Subpixel};
 use smithay::reexports::calloop::EventLoop;
 use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_wm_base::XdgWmBase;
-use smithay::reexports::wayland_server::protocol::{wl_compositor::WlCompositor, wl_shm::WlShm};
+use smithay::reexports::wayland_server::protocol::wl_compositor::WlCompositor;
+use smithay::reexports::wayland_server::protocol::wl_shm::WlShm;
 use smithay::reexports::wayland_server::{Display, Resource};
 use smithay::utils::{Rectangle, Transform};
 use smithay::wayland::compositor::with_states;
@@ -852,7 +853,8 @@ fn capture_privacy_pixels_and_policy_transitions() {
 
     // A stationary client's cursor is a separate surface and can outlive its
     // protected toplevel. Never reveal that retained image after an opt-out or close.
-    use smithay::input::{SeatHandler, pointer::CursorImageStatus};
+    use smithay::input::SeatHandler;
+    use smithay::input::pointer::CursorImageStatus;
     use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
     let client = secret.toplevel().unwrap().wl_surface().client().unwrap();
     let compositor = client

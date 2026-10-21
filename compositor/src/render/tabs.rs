@@ -1,4 +1,9 @@
-use super::*;
+use super::{
+    AnimatedWindowRenderElement, CropRenderElement, Ferese, GlesRenderer,
+    MemoryRenderBufferRenderElement, Output, OverviewChromePart, Physical, Point, Rectangle,
+    Relocate, RelocateRenderElement, RenderElementKind, RescaleRenderElement,
+    overview_chrome_element, physical_rect,
+};
 
 pub(super) fn tab_elements(
     state: &mut Ferese,

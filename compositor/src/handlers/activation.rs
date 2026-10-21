@@ -2,7 +2,8 @@ use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
 use smithay::input::Seat;
-use smithay::reexports::wayland_server::{Resource, backend::ClientId};
+use smithay::reexports::wayland_server::Resource;
+use smithay::reexports::wayland_server::backend::ClientId;
 use smithay::utils::Serial;
 
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;

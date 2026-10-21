@@ -1,4 +1,4 @@
-use super::*;
+use super::{AnimatedValue, Duration, Ferese, FocusSwipe, SpringConfig};
 
 #[derive(Clone, PartialEq)]
 enum ViewportOwner {
@@ -223,7 +223,20 @@ impl Ferese {
 
 #[cfg(test)]
 mod tests {
+    use crate::state::SwipeDirection;
+    #[cfg(test)]
+    use ferese_animation::WindowGeometry;
+    #[cfg(test)]
+    use ferese_core::WorkspaceId;
+    #[cfg(test)]
+    use ferese_layout::Direction;
+    #[cfg(test)]
+    use ferese_layout::Rect;
+    #[cfg(test)]
+    use ferese_layout::WindowId;
+
     use super::*;
+    use crate::state::restored_scrolling_world_x;
 
     const TICK: Duration = Duration::from_millis(16);
 

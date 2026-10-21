@@ -2,7 +2,13 @@ use cosmic::iced::border::Shape as BorderShape;
 use cosmic::iced::widget::scrollable::{Direction, Scrollbar};
 use cosmic::widget::{column, scrollable};
 
-use super::*;
+use super::{
+    Anchor, Background, Border, Color, Duration, EffectsBinding, Element, FereseShell, IcedOutput,
+    KeyboardInteractivity, Layer, Length, Limits, Message, SctkLayerSurfaceSettings, Task,
+    accented_icon, alignment, bar_icon, button, color, color_with_opacity, container,
+    destroy_layer_surface, ferese_surface_effects_v1, icon, motion, notifications, row, set_size,
+    status, status_ui, theme, window, wl_output,
+};
 
 const POPUP_WIDTH: u32 = 368;
 const HISTORY_MAX_HEIGHT: f32 = 620.0;
@@ -935,7 +941,8 @@ impl FereseShell {
 mod tests {
     use super::*;
     use cosmic::iced::advanced::renderer::{Headless, Renderer as _};
-    use cosmic::iced::advanced::{Layout, layout, mouse, widget::Tree};
+    use cosmic::iced::advanced::widget::Tree;
+    use cosmic::iced::advanced::{Layout, layout, mouse};
     use cosmic::iced::{Font, Pixels, Rectangle, Size};
 
     #[test]

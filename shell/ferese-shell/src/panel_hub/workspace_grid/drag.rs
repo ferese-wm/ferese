@@ -217,7 +217,8 @@ impl Widget<Action, Theme, cosmic::Renderer> for DragArea<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cosmic::iced::advanced::{clipboard, renderer::Headless};
+    use cosmic::iced::advanced::clipboard;
+    use cosmic::iced::advanced::renderer::Headless;
 
     #[test]
     fn drag_moves_the_pressed_window_once_and_click_still_selects_workspace() {

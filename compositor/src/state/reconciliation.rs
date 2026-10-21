@@ -1,5 +1,25 @@
 //! Exceptional topology publication. Ordinary input/damage never constructs a plan.
-use super::*;
+#[cfg(test)]
+use calloop::EventLoop;
+#[cfg(test)]
+use ferese_animation::AnimatedValue;
+#[cfg(test)]
+use ferese_animation::ClientSize;
+#[cfg(test)]
+use ferese_animation::WindowGeometry;
+#[cfg(test)]
+use ferese_layout::WindowId;
+#[cfg(test)]
+use ferese_protocols::shell::v1::server::ferese_shell_v1::FereseShellV1;
+#[cfg(test)]
+use smithay::desktop::Space;
+#[cfg(test)]
+use smithay::desktop::Window;
+
+use super::{
+    Ferese, HashSet, Logical, Output, OutputGeometry, Point, Rect, WindowPlacement,
+    moved_floating_rect,
+};
 use smithay::output::{Mode, Scale};
 use smithay::utils::Transform;
 
@@ -237,10 +257,17 @@ impl Ferese {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::state::ClientState;
+    use crate::state::SwipeDirection;
+    use crate::state::ViewportPresentation;
+    use crate::state::WorkspaceSlide;
     use smithay::output::{PhysicalProperties, Subpixel};
+    use smithay::reexports::wayland_server::Display;
     use smithay::reexports::wayland_server::Resource;
     use std::io::{Read, Write};
     use std::os::unix::net::UnixStream;
+    use std::sync::Arc;
+    use std::time::Duration;
 
     fn output(name: &str, x: i32, width: i32) -> DesktopOutput {
         DesktopOutput {

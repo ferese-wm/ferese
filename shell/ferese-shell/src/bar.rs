@@ -968,7 +968,8 @@ mod island_tests {
     }
 
     use crate::panel::{ItemId, Panel};
-    use cosmic::iced::advanced::{Layout, layout, renderer::Headless, widget};
+    use cosmic::iced::advanced::renderer::Headless;
+    use cosmic::iced::advanced::{Layout, layout, widget};
     use cosmic::iced::{Font, Pixels, Rectangle, Size};
 
     #[derive(Default)]

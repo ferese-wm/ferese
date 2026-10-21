@@ -1,7 +1,5 @@
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
-};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 #[derive(Clone, Default, Debug)]
 pub(super) struct Cancellation(Arc<AtomicBool>);

@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    AnimatedValue, ClientSize, Duration, Ferese, HashMap, Output, SpringConfig,
+    ViewportPresentation, WindowGeometry, WindowId,
+};
 
 /// Output-local presentation values. Sampling never changes authoritative
 /// geometry, configure barriers, animation clocks, or another output's view.
@@ -457,7 +460,20 @@ fn predict_geometry(
 
 #[cfg(test)]
 mod tests {
+    use crate::state::SwipeDirection;
+    #[cfg(test)]
+    use calloop::EventLoop;
+    #[cfg(test)]
+    use ferese_animation::CrossingPolicy;
+    #[cfg(test)]
+    use ferese_layout::Axis;
+    #[cfg(test)]
+    use ferese_layout::Rect;
+
     use super::*;
+    use crate::state::WorkspaceSlide;
+    use smithay::reexports::wayland_server::Display;
+    use std::time::Instant;
 
     #[test]
     fn pending_resize_waits_without_refresh_cadence_and_recovers() {

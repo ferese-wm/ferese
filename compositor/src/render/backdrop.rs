@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    AnimatedWindowRenderElement, Buffer, CommitCounter, Element, Id, Ordering, Physical, Rectangle,
+    RenderScale, Transform,
+};
 
 #[derive(Clone, Debug, Default)]
 pub(super) struct Backdrop {
@@ -132,6 +135,12 @@ pub(super) fn update(elements: &[AnimatedWindowRenderElement], scale: f64) {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(test)]
+    use smithay::backend::renderer::utils::DamageSet;
+    #[cfg(test)]
+    use smithay::backend::renderer::utils::OpaqueRegions;
+    use std::sync::Arc;
+
     use super::*;
 
     struct TestElement {

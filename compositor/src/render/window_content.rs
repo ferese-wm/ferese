@@ -1,5 +1,27 @@
 //! Live, overview and retained views use the same snapshot mapping and clip.
-use super::*;
+#[cfg(test)]
+use crate::presentation::CornerShape;
+#[cfg(test)]
+use smithay::backend::allocator::Fourcc;
+#[cfg(test)]
+use smithay::backend::renderer::Color32F;
+#[cfg(test)]
+use smithay::backend::renderer::element::Id;
+#[cfg(test)]
+use smithay::backend::renderer::gles::GlesRenderer;
+#[cfg(test)]
+use smithay::backend::renderer::gles::GlesTexture;
+#[cfg(test)]
+use smithay::backend::renderer::utils::CommitCounter;
+#[cfg(test)]
+use smithay::backend::renderer::utils::draw_render_elements;
+#[cfg(test)]
+use smithay::utils::Transform;
+
+use super::{
+    NativeTextureElement, Output, Rectangle, ResizeSnapshot, RoundedClipPrograms, RoundedRect,
+    Size, Texture, Uniform, framebuffer_clip_rect,
+};
 
 pub(super) fn snapshot_element(
     snapshot: &ResizeSnapshot,
@@ -60,6 +82,15 @@ pub(super) fn snapshot_element(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::render::AnimatedWindowRenderElement;
+    use crate::render::RenderResources;
+    use crate::render::corner_program;
+    use smithay::backend::renderer::Bind;
+    use smithay::backend::renderer::ExportMem;
+    use smithay::backend::renderer::Frame;
+    use smithay::backend::renderer::Offscreen;
+    use smithay::backend::renderer::Renderer;
+    use std::time::Duration;
 
     #[test]
     #[ignore = "requires an EGL rendering device"]

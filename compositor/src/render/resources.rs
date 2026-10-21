@@ -1,8 +1,25 @@
 use ferese_core::OutputId;
+#[cfg(test)]
+use smithay::backend::allocator::Fourcc;
+#[cfg(test)]
+use smithay::backend::renderer::Offscreen;
+#[cfg(test)]
+use smithay::backend::renderer::element::Id;
+#[cfg(test)]
+use smithay::backend::renderer::gles::GlesRenderer;
+#[cfg(test)]
+use smithay::backend::renderer::gles::GlesTexture;
+#[cfg(test)]
+use smithay::backend::renderer::utils::CommitCounter;
+
 use ferese_layout::WindowId;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 
-use super::*;
+use super::{
+    BlurProgram, ClosedWindow, CornerShape, ErasedContextId, HashMap, MaterialBuffers,
+    MaterialProgram, OverviewChromePart, OverviewScrim, ResizeSnapshot, RoundedClipPrograms,
+    WindowBorderBuffers, WindowShadowBuffers,
+};
 
 /// Resource ownership follows the lifetime of a window, output, surface or GL
 /// context. Desktop policy and animation values do not live in these caches.
@@ -208,6 +225,11 @@ impl RenderResources {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::render::blur_program;
+    use crate::render::material_program;
+    use crate::render::rounded_clip_program;
+    use smithay::backend::renderer::Renderer;
+    use std::time::Duration;
 
     #[test]
     fn window_removal_releases_all_its_caches_without_removing_other_windows() {

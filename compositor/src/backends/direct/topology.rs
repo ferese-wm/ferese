@@ -1,7 +1,13 @@
 //! Desired device identities survive temporary loss of their DRM resources.
 use std::path::PathBuf;
 
-use super::*;
+use super::{
+    DrmNode, Duration, Ferese, HashMap, HashSet, Instant, OutputMode, Path, PresentationClock,
+    RegistrationToken, Scale, Session, TimeoutAction, Timer, all_gpus, cancel_output_timers,
+    drm_device_key, lid, monotonic_now, open_device, output_transform, refresh_connected_info,
+    refresh_monitor_policy, remember_applied_configuration, remove_device, rescan_device,
+    sync_battery_timer, transaction, validate_desired_outputs,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Availability<Node = DrmNode> {

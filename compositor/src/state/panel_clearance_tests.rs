@@ -1,4 +1,6 @@
 use super::*;
+use crate::state::ClientState;
+use crate::state::DesktopOutput;
 use smithay::output::{Mode, PhysicalProperties, Scale, Subpixel};
 use smithay::reexports::calloop::EventLoop;
 use smithay::reexports::wayland_protocols_wlr::layer_shell::v1::server::zwlr_layer_shell_v1::ZwlrLayerShellV1;

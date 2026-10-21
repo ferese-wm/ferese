@@ -207,7 +207,7 @@ fn window_corner_shader_timing_sample() {
     let mut renderer = renderer();
     let driver = renderer
         .with_context(|gl| {
-            unsafe { std::ffi::CStr::from_ptr(gl.GetString(0x1F01).cast()) }
+            unsafe { std::ffi::CStr::from_ptr(gl.GetString(0x1f01).cast()) }
                 .to_string_lossy()
                 .into_owned()
         })

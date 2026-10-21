@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    ColumnDisplayValue, ColumnWidth, ColumnWidthValue, Config, ConfigError, FocusStrategyValue,
+    GapConfig, LayoutMode, LayoutModeValue, ViewportFocusStrategy,
+};
 
 impl Config {
     pub fn default_column_display(&self) -> ferese_layout::ColumnDisplay {

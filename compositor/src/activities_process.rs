@@ -5,10 +5,8 @@ use ferese_activities::Owner;
 use smithay::reexports::calloop::channel;
 use std::collections::BTreeMap;
 use std::io::Read;
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
-};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 pub(crate) struct Watcher(Arc<AtomicBool>);

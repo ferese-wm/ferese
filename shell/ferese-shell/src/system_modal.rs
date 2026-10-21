@@ -2,7 +2,12 @@ use cosmic::iced::border::Shape as BorderShape;
 use cosmic::iced::widget::Space;
 use cosmic::widget::column;
 
-use super::*;
+use super::{
+    Anchor, Background, Border, Color, EffectsBinding, Element, FereseShell, IcedOutput, Instant,
+    KeyboardInteractivity, Layer, Length, Message, SctkLayerSurfaceSettings, Task, button,
+    color_with_opacity, compositor_ipc, container, destroy_layer_surface,
+    ferese_surface_effects_v1, keybinding_guide, motion, row, status, theme, window, wl_surface,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum PowerAction {
@@ -765,6 +770,7 @@ fn modal_focus_operation<T: Send + 'static>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cosmic::iced::Event;
 
     #[test]
     fn a_cancelled_modal_that_opens_late_is_destroyed_without_closing_its_replacement() {

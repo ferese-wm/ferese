@@ -3,7 +3,8 @@ mod thumbnail;
 
 use cosmic::app::Task;
 use cosmic::iced::advanced::widget::{Id, operation};
-use cosmic::iced::{Alignment, Length, keyboard::key::Named, window};
+use cosmic::iced::keyboard::key::Named;
+use cosmic::iced::{Alignment, Length, window};
 use cosmic::widget::{button, column, container, mouse_area, row, scrollable};
 use cosmic::{Element, theme};
 
@@ -559,7 +560,8 @@ mod tests {
     #[test]
     fn arrows_follow_the_tile_focused_by_tab_in_both_directions_and_narrow_grids() {
         use cosmic::iced::Size;
-        use cosmic::iced::advanced::{Layout, layout, renderer::Headless, widget};
+        use cosmic::iced::advanced::renderer::Headless;
+        use cosmic::iced::advanced::{Layout, layout, widget};
         let renderer = cosmic::iced::futures::executor::block_on(cosmic::Renderer::new(
             cosmic::iced::Font::default(),
             cosmic::iced::Pixels(14.),

@@ -1,6 +1,7 @@
-use cosmic::iced::advanced::Renderer as _;
 use cosmic::iced::advanced::graphics::geometry::{Cache, Path, Renderer as _, Stroke};
-use cosmic::iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, renderer, widget};
+use cosmic::iced::advanced::{
+    Clipboard, Layout, Renderer as _, Shell, Widget, layout, mouse, renderer, widget,
+};
 use cosmic::iced::{Color, Event, Length, Point, Rectangle, Size, Vector};
 use cosmic::{Element, Theme};
 use ferese_panel::scene::{GroupBounds, Parameters, Scene};

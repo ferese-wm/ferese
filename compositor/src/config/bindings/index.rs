@@ -1,4 +1,14 @@
-use super::*;
+#[cfg(test)]
+use crate::config::BindingAction;
+#[cfg(test)]
+use ferese_layout::Direction;
+#[cfg(test)]
+use smithay::input::keyboard::keysyms;
+
+use super::{
+    Binding, BindingIdentity, BindingMatch, BindingModifiers, HashMap, Keycode,
+    binding_identity_for_runtime,
+};
 
 /// Immutable bindings and their keyboard index are replaced together on reload.
 /// The ordered slice remains available for gestures and the shortcut guide.
@@ -87,6 +97,9 @@ impl BindingSet {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::Config;
+    use crate::config::bindings::BindingTrigger;
+    use std::sync::Arc;
 
     fn binding_for(trigger: BindingTrigger, action: BindingAction) -> Binding {
         Binding {

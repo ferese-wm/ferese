@@ -1,9 +1,8 @@
 //! Bounded serialization and delivery outside the compositor event loop.
-use ferese_ipc::{Response, activities::Snapshot};
-use std::sync::{
-    Arc, RwLock,
-    mpsc::{self, SyncSender},
-};
+use ferese_ipc::Response;
+use ferese_ipc::activities::Snapshot;
+use std::sync::mpsc::{self, SyncSender};
+use std::sync::{Arc, RwLock};
 
 type Recipient = (u64, SyncSender<Response>);
 struct Job {

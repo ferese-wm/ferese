@@ -7,7 +7,8 @@ use std::time::Instant;
 
 use calloop::EventLoop;
 use calloop::channel::{Event, sync_channel};
-use ferese_ipc::{Response, media::Snapshot};
+use ferese_ipc::Response;
+use ferese_ipc::media::Snapshot;
 use serde_json::Value;
 
 use crate::Ferese;

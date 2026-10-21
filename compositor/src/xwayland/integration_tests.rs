@@ -681,11 +681,10 @@ fn live_dependencies() -> PathBuf {
 
 mod manager_loop {
     use super::*;
-    use crate::Ferese;
     use crate::config::{XwaylandConfig, XwaylandStartup};
-    use crate::xwayland;
     use crate::xwayland::lifecycle::Phase;
     use crate::xwayland::test_hooks;
+    use crate::{Ferese, xwayland};
     use ferese_ipc::xwayland::{Readiness, State};
     use smithay::reexports::calloop::EventLoop;
     use smithay::reexports::wayland_server::Display;

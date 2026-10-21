@@ -17,7 +17,11 @@ use cosmic::iced::border::Shape as BorderShape;
 use cosmic::widget::column;
 use status::{Action, Snapshot};
 
-use super::*;
+use super::{
+    Background, Border, Color, EffectsBinding, EffectsContext, Element, FereseShell, Instant,
+    Length, Limits, Message, Ordering, ShellTheme, accented_icon, color, color_with_opacity,
+    container, motion, row, status, theme, window, wl_surface,
+};
 
 type MenuHeading<'a> =
     cosmic::widget::Row<'a, cosmic::Action<Message>, cosmic::Theme, cosmic::Renderer>;
@@ -570,12 +574,12 @@ fn notification_controls<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     #[test]
     fn activity_popups_scroll_to_the_last_row_in_regular_panels() {
-        use cosmic::iced::advanced::{
-            Layout, Shell, clipboard, layout, renderer::Headless, widget,
-        };
+        use cosmic::iced::advanced::renderer::Headless;
+        use cosmic::iced::advanced::{Layout, Shell, clipboard, layout, widget};
         use cosmic::iced::{Event, Rectangle, Size, Vector, mouse};
         use ferese_activities::{Data, Owner, Source, Store, Template, Value};
         #[derive(Default)]

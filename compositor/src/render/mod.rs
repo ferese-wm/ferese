@@ -22,9 +22,18 @@ use std::time::Duration;
 pub(crate) use capture::{
     capture_resize_snapshot, capture_window_buffer, capture_window_frame, convert_window_pixels,
 };
-use decorations::*;
-use materials::*;
-use overview::*;
+use decorations::{
+    border_uniforms, color_with_alpha, corner_program, framebuffer_clip_rect,
+    resize_content_behavior, rounded_clip_program, rounded_visual_rect, rounded_window_elements,
+    shadow_bounds, tint_uniforms, window_border_element, window_shadow_element,
+    window_tint_element,
+};
+use materials::{
+    MaterialSurface, append_material_surface, blur_damage, blur_program, blur_uniforms,
+    expanded_blur_region, framebuffer_capture_rect, material_element, material_element_with_role,
+    material_program, material_program_for_corners,
+};
+use overview::{overview_chrome_element, overview_strip_elements};
 pub(crate) use resources::RenderResources;
 use scene::cursor_elements;
 pub(crate) use scene::{
@@ -654,14 +663,18 @@ where
 
 #[cfg(test)]
 mod tests {
+    use super::decorations::border_gradient_line;
+    use crate::presentation::scaled_visual_rect;
+    use crate::render::materials::blur_uniform_names;
+    use crate::render::materials::material_blur_radius;
     use smithay::backend::renderer::damage::OutputDamageTracker;
     use smithay::backend::renderer::element::{Element, Id};
     use smithay::backend::renderer::utils::CommitCounter;
     use smithay::utils::{Buffer, Logical, Physical, Rectangle, Scale, Transform};
 
     use super::{
-        border_gradient_line, color_with_alpha, framebuffer_clip_rect, resize_content_behavior,
-        rounded_visual_rect, scaled_visual_rect, shadow_bounds,
+        color_with_alpha, framebuffer_clip_rect, resize_content_behavior, rounded_visual_rect,
+        shadow_bounds,
     };
 
     #[test]
@@ -782,7 +795,7 @@ mod tests {
         let program = renderer
             .compile_custom_texture_shader(
                 super::corner_shader(super::BLUR_SHADER),
-                &super::blur_uniform_names(),
+                &blur_uniform_names(),
             )
             .unwrap();
         let size = (32, 32).into();
@@ -1184,21 +1197,18 @@ mod tests {
     fn translucent_materials_blur_at_full_opacity() {
         use crate::config::MaterialStyle;
         assert_eq!(
-            super::material_blur_radius(MaterialStyle::Translucent, 0.0, 18.0),
+            material_blur_radius(MaterialStyle::Translucent, 0.0, 18.0),
             0.0
         );
         assert_eq!(
-            super::material_blur_radius(MaterialStyle::Translucent, 1.0, 18.0),
+            material_blur_radius(MaterialStyle::Translucent, 1.0, 18.0),
             18.0
         );
         assert_eq!(
-            super::material_blur_radius(MaterialStyle::Translucent, 0.79, 18.0),
+            material_blur_radius(MaterialStyle::Translucent, 0.79, 18.0),
             18.0
         );
-        assert_eq!(
-            super::material_blur_radius(MaterialStyle::Solid, 0.79, 18.0),
-            0.0
-        );
+        assert_eq!(material_blur_radius(MaterialStyle::Solid, 0.79, 18.0), 0.0);
     }
 
     #[test]

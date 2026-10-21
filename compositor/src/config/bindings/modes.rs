@@ -1,4 +1,10 @@
-use super::*;
+use super::{
+    Binding, BindingAction, BindingConfig, BindingMatch, BindingSet, Config, ConfigError,
+    Deserialize, HashMap, HashSet, InputSettings, Keycode, binding_identity, keysyms,
+    parse_binding, physical_keymap,
+};
+#[cfg(test)]
+use ferese_layout::Direction;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]

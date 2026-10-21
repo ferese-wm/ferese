@@ -120,9 +120,6 @@ use crate::window_rules::{WindowRule, resolve as resolve_window_rules};
 use crate::winit::NestedBackend;
 
 #[cfg(test)]
-use ferese_animation::CrossingPolicy;
-
-#[cfg(test)]
 const SLIDE_SETTLE_TEST_BUDGET: Duration = Duration::from_secs(2);
 
 fn workspace_swipe_is_current(

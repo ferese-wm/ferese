@@ -1,10 +1,19 @@
 //! Validate a device-wide desired topology, then use Smithay for every real commit.
 //! Smithay exposes TEST_ONLY per surface, but not a combined CRTC request. The
 //! one raw request here is validation only; mode/plane ownership stays in Smithay.
-use super::*;
+use super::{
+    ControlDevice, DesiredOutputConfiguration, DirectDevice, DirectOutput, DrmDevice, DrmDeviceFd,
+    DrmMode, DrmNode, Error, Ferese, Fourcc, GbmAllocator, GbmBufferFlags, GbmFramebufferExporter,
+    GlesRenderer, HashMap, HashSet, OutputCompositor, OutputMode, OutputModeSource, OutputScan,
+    OutputSelection, OutputSettings, PrimaryPlaneElement, cancel_output_timers,
+    connected_mode_info, connector, create_direct_output, create_output, crtc, drm_device_key,
+    internal_connector, io, output_transform, property, remember_applied_configuration,
+    rescan_device, validate_desired_outputs,
+};
 use smithay::backend::allocator::Allocator;
 use smithay::backend::drm::exporter::{ExportBuffer, ExportFramebuffer};
-use smithay::reexports::drm::control::{AtomicCommitFlags, ResourceHandle, atomic::AtomicModeReq};
+use smithay::reexports::drm::control::atomic::AtomicModeReq;
+use smithay::reexports::drm::control::{AtomicCommitFlags, ResourceHandle};
 
 fn property<D: ControlDevice, H: ResourceHandle>(
     drm: &D,

@@ -1676,7 +1676,8 @@ mod tests {
     }
     #[test]
     fn pomodoro_controls_fit_and_tab_enter_targets_the_current_session() {
-        use cosmic::iced::advanced::{renderer::Headless, widget::operation};
+        use cosmic::iced::advanced::renderer::Headless;
+        use cosmic::iced::advanced::widget::operation;
         use cosmic::iced::keyboard::{Event as KeyEvent, Key, Location, Modifiers, key};
         use ferese_activities::pomodoro::{Session, Status};
         use ferese_ipc::activities::PomodoroAction;
@@ -2017,9 +2018,8 @@ mod tests {
 
     #[test]
     fn live_activity_keeps_workspace_wheel_handler() {
-        use cosmic::iced::advanced::{
-            Layout, Shell, clipboard, layout, renderer::Headless, widget,
-        };
+        use cosmic::iced::advanced::renderer::Headless;
+        use cosmic::iced::advanced::{Layout, Shell, clipboard, layout, widget};
         use cosmic::iced::{Event, Size, mouse};
         let renderer = cosmic::iced::futures::executor::block_on(cosmic::Renderer::new(
             cosmic::iced::Font::default(),
@@ -2183,9 +2183,11 @@ mod tests {
 
     #[test]
     fn activity_arrows_follow_tab_focus() {
+        use cosmic::iced::Size;
+        use cosmic::iced::advanced::renderer::Headless;
         use cosmic::iced::advanced::widget::operation;
-        use cosmic::iced::advanced::{Layout, layout, renderer::Headless, widget};
-        use cosmic::iced::{Size, keyboard::key::Named};
+        use cosmic::iced::advanced::{Layout, layout, widget};
+        use cosmic::iced::keyboard::key::Named;
         let renderer = cosmic::iced::futures::executor::block_on(cosmic::Renderer::new(
             cosmic::iced::Font::default(),
             cosmic::iced::Pixels(14.),

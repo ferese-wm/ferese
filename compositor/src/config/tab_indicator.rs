@@ -1,4 +1,4 @@
-use super::*;
+use super::{Config, ConfigError, Deserialize, parse_color};
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(default, deny_unknown_fields)]

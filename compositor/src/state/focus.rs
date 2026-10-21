@@ -1,4 +1,4 @@
-use super::*;
+use super::{Ferese, OutputId, WindowId, WindowPlacement};
 
 impl Ferese {
     pub(super) fn focus_candidates(&self) -> Vec<WindowId> {
@@ -142,6 +142,7 @@ impl Ferese {
 mod tests {
     use super::*;
     use crate::state::capture_privacy::tests::window;
+    use smithay::output::Output;
     use smithay::reexports::calloop::EventLoop;
     use std::os::unix::net::UnixStream;
 

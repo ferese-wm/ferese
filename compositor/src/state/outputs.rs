@@ -1,4 +1,4 @@
-use super::*;
+use super::{DesktopOutput, Ferese, Logical, Output, OutputId, Point};
 
 impl Ferese {
     pub(crate) fn defer_output_redraw(&mut self, output: Output) {
@@ -191,6 +191,18 @@ impl Ferese {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(test)]
+    use calloop::EventLoop;
+    #[cfg(test)]
+    use ferese_animation::WindowGeometry;
+    #[cfg(test)]
+    use ferese_layout::Axis;
+    #[cfg(test)]
+    use ferese_layout::Rect;
+    #[cfg(test)]
+    use ferese_layout::WindowId;
+    use smithay::reexports::wayland_server::Display;
+
     use super::*;
 
     use smithay::backend::input::{

@@ -10,9 +10,8 @@ use calloop::EventLoop;
 use calloop::signals::{Signal, Signals};
 use smithay::input::SeatHandler;
 use smithay::input::pointer::{CursorImageStatus, MotionEvent};
-use smithay::reexports::wayland_server::protocol::{
-    wl_compositor::WlCompositor, wl_surface::WlSurface,
-};
+use smithay::reexports::wayland_server::protocol::wl_compositor::WlCompositor;
+use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::reexports::wayland_server::{Display, Resource};
 use smithay::utils::SERIAL_COUNTER;
 

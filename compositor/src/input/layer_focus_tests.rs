@@ -1,13 +1,14 @@
 use super::*;
-use crate::state::ClientState;
 use crate::state::{
-    dispatch_test_client as dispatch, test_client_request as request, test_window as window,
+    ClientState, dispatch_test_client as dispatch, test_client_request as request,
+    test_window as window,
 };
 use smithay::desktop::{LayerSurface, layer_map_for_output};
 use smithay::output::{Mode, Output, PhysicalProperties, Subpixel};
 use smithay::reexports::calloop::EventLoop;
 use smithay::reexports::wayland_protocols_wlr::layer_shell::v1::server::zwlr_layer_shell_v1::ZwlrLayerShellV1;
-use smithay::reexports::wayland_server::protocol::{wl_compositor::WlCompositor, wl_shm::WlShm};
+use smithay::reexports::wayland_server::protocol::wl_compositor::WlCompositor;
+use smithay::reexports::wayland_server::protocol::wl_shm::WlShm;
 use std::io::{Read, Write};
 use std::os::fd::AsRawFd;
 use std::os::unix::net::UnixStream;

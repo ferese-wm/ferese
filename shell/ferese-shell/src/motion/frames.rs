@@ -1,6 +1,12 @@
 //! Surface-local animation sampling. Iced's Wayland backend gates NextFrame
 //! redraws on that surface's frame callback; no animation timer is needed.
-use super::*;
+#[cfg(test)]
+use crate::motion::Settings;
+
+use super::{
+    Clipboard, Element, Event, Layout, Length, Rectangle, Shell, Size, Theme, Vector, Widget,
+    layout, mouse, renderer, widget,
+};
 use std::time::Instant;
 
 pub(crate) struct ContentMeasurement<'a, M> {
@@ -339,9 +345,12 @@ impl<'a, M: 'a> Widget<M, Theme, cosmic::Renderer> for FrameDriven<'a, M> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::motion::PopupMotion;
+    use cosmic::iced::advanced::Renderer;
     use cosmic::iced::advanced::renderer::Headless;
     use cosmic::iced::window::{Event as WindowEvent, RedrawRequest};
-    use std::{cell::RefCell, time::Duration};
+    use std::cell::RefCell;
+    use std::time::Duration;
 
     #[test]
     fn callbacks_sample_every_refresh_without_timers_and_stop_when_settled() {

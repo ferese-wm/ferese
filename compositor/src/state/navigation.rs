@@ -1,4 +1,8 @@
-use super::*;
+use super::{
+    Axis, Direction, Ferese, FocusSwipe, Instant, LayoutMode, OutputId, SpringConfig,
+    SwipeDirection, ViewportPresentation, WindowId, WindowPlacement, WorkspaceId, WorkspaceLayout,
+    WorkspaceSlide, activate_window_workspace, workspace_swipe_is_current,
+};
 
 impl Ferese {
     pub fn focus_direction(&mut self, direction: Direction) {

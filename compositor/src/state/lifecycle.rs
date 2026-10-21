@@ -1,4 +1,4 @@
-use super::*;
+use super::{ClientSize, Ferese, Instant, Window, WlSurface, with_states};
 use smithay::wayland::compositor::{BufferAssignment, SurfaceAttributes};
 
 impl Ferese {

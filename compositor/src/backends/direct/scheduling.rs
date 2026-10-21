@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    DirectOutput, DrmNode, Duration, Ferese, Instant, Monotonic, Output, OutputMode, TimeoutAction,
+    Timer, arm_animation_timer, crtc, render_output, sleep_locked_outputs,
+};
 use crate::frame_scheduler::FramePlan;
 
 pub(super) fn monotonic_now() -> Duration {

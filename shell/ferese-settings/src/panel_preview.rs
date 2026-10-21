@@ -522,9 +522,8 @@ fn preview_button(palette: visuals::Palette, selected: bool) -> cosmic::theme::B
 mod tests {
     use super::*;
     use cosmic::Application;
-    use cosmic::iced::advanced::{
-        Layout, Shell, clipboard, layout, mouse, renderer::Headless, widget,
-    };
+    use cosmic::iced::advanced::renderer::Headless;
+    use cosmic::iced::advanced::{Layout, Shell, clipboard, layout, mouse, widget};
     use cosmic::iced::{Event, Font, Pixels, Point, Rectangle, Size};
 
     #[test]

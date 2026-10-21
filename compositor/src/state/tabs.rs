@@ -1,4 +1,6 @@
-use super::*;
+use super::{
+    Direction, Ferese, Layer, Logical, Point, Rect, WindowId, WorkspaceId, WorkspaceLayout,
+};
 
 impl Ferese {
     pub(crate) fn join_tab(&mut self, direction: Direction) {

@@ -1,9 +1,10 @@
-use super::*;
-use crate::config::TabIndicatorSettings;
-use smithay::reexports::calloop::{
-    RegistrationToken,
-    timer::{TimeoutAction, Timer},
+use super::{
+    AnimatedValue, Duration, Ferese, Instant, Layer, Logical, Output, Point, Rect, SpringConfig,
+    WindowId, WorkspaceLayout,
 };
+use crate::config::TabIndicatorSettings;
+use smithay::reexports::calloop::RegistrationToken;
+use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 
 #[derive(Debug)]
 pub(crate) struct Overlay {

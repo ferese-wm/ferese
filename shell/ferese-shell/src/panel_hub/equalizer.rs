@@ -121,7 +121,8 @@ impl Widget<cosmic::Action<Message>, Theme, cosmic::Renderer> for Equalizer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cosmic::iced::advanced::{clipboard, renderer::Headless};
+    use cosmic::iced::advanced::clipboard;
+    use cosmic::iced::advanced::renderer::Headless;
 
     #[test]
     fn bars_redraw_without_rebuilding_layout_or_publishing_messages() {

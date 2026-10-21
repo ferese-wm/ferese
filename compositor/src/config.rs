@@ -14,18 +14,17 @@ use std::path::PathBuf;
 
 pub(crate) use self::loading::{prepare, prepare_document, read_source, startup};
 pub(crate) use self::xwayland::{XwaylandConfig, XwaylandStartup};
-use appearance::*;
+use appearance::{AppearanceConfig, ThemeConfig, parse_color};
 pub use appearance::{BorderGradient, FocusEffectSettings, MaterialStyle, ThemeSettings};
-pub(crate) use bindings::BindingModes;
-use bindings::*;
 pub use bindings::{Binding, BindingAction};
-pub(crate) use bindings::{BindingSet, physical_keymap};
+use bindings::{BindingConfig, BindingMatch, BindingModeConfig, BindingModifiers};
+pub(crate) use bindings::{BindingModes, BindingSet, physical_keymap};
 use ferese_animation::SpringConfig;
 use ferese_core::LayoutMode;
 use ferese_layout::{ColumnWidth, Direction, GapConfig, ViewportFocusStrategy};
 pub use input_motion::InputSettings;
-use input_motion::*;
-use outputs::*;
+use input_motion::{AnimationsConfig, InputConfig};
+use outputs::OutputProfileConfig;
 pub use outputs::{
     LidPolicy, OutputLayout, OutputModeRequest, OutputProfile, OutputSettings, OutputTransform,
 };
@@ -567,6 +566,10 @@ mod tests {
     }
 
     use super::*;
+    use crate::config::appearance::RgbaColor;
+    use crate::config::bindings::BindingTrigger;
+    use crate::config::bindings::parse_action;
+    use crate::config::input_motion::TouchpadSettings;
 
     #[test]
     fn display_key_has_a_default_binding_and_can_be_rebound() {

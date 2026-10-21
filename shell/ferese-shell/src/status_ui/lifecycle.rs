@@ -1,9 +1,8 @@
 use std::time::Instant;
 
 use cosmic::app::Task;
-use cosmic::iced::Rectangle;
 use cosmic::iced::platform_specific::runtime::wayland::popup::{SctkPopupSettings, SctkPositioner};
-use cosmic::iced::{Limits, window};
+use cosmic::iced::{Limits, Rectangle, window};
 use wayland_client::Proxy;
 
 use super::{Menu, OpenMenu, PopoverAnchor};

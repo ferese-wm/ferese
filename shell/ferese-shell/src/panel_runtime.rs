@@ -8,7 +8,8 @@ use cosmic::iced::window;
 use ferese_panel::adaptive::{Adaptive, WindowState};
 use ferese_panel::{Panel, PanelStyle};
 
-use crate::{FereseShell, Message, control::ShellSnapshot, output_bar_hidden};
+use crate::control::ShellSnapshot;
+use crate::{FereseShell, Message, output_bar_hidden};
 
 pub(super) struct Runtime {
     pub(super) hub: Option<std::cell::RefCell<crate::panel_hub::Runtime>>,

@@ -675,7 +675,8 @@ mod tests {
     #[test]
     fn motion_preserves_accessible_controls_and_translates_tooltip_overlays() {
         use super::*;
-        use cosmic::iced::advanced::{clipboard, renderer::Headless};
+        use cosmic::iced::advanced::clipboard;
+        use cosmic::iced::advanced::renderer::Headless;
         use cosmic::iced::{Font, Pixels, Point};
         let renderer = cosmic::iced::futures::executor::block_on(cosmic::Renderer::new(
             Font::default(),
