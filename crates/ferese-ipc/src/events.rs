@@ -63,6 +63,7 @@ impl Event {
 }
 
 impl Snapshot {
+    #[must_use]
     pub fn changes_since(&self, previous: &Self) -> Vec<Change> {
         let mut changes = Vec::new();
         if self.outputs != previous.outputs {

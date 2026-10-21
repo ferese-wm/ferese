@@ -37,6 +37,7 @@ pub fn heading<'a, M: 'a>(
         .align_y(Alignment::Center)
 }
 
+#[must_use]
 pub fn badge<'a, M: 'a>(
     content: Element<'a, M>,
     accent: Color,
@@ -55,6 +56,7 @@ pub fn badge<'a, M: 'a>(
         .into()
 }
 
+#[must_use]
 pub fn section<'a, M: 'a>(
     content: Element<'a, M>,
     foreground: Color,
@@ -84,6 +86,7 @@ pub fn section_label<'a>(
         .class(cosmic::theme::Text::Color(muted))
 }
 
+#[must_use]
 pub fn separator<'a, M: 'a>(foreground: Color, opacity: f32) -> Element<'a, M> {
     container(cosmic::widget::Space::new().width(Length::Fill).height(1))
         .class(crate::controls::surface(
@@ -93,6 +96,7 @@ pub fn separator<'a, M: 'a>(foreground: Color, opacity: f32) -> Element<'a, M> {
         .into()
 }
 
+#[must_use]
 pub fn switch<'a, M: 'a>(enabled: bool, palette: crate::Palette, opacity: f32) -> Element<'a, M> {
     let (track, thumb) = crate::controls::switch_colors(palette, enabled, false);
     let track_radius = 10.;
@@ -123,6 +127,7 @@ pub fn switch<'a, M: 'a>(enabled: bool, palette: crate::Palette, opacity: f32) -
         .into()
 }
 
+#[must_use]
 pub fn slider(foreground: Color, opacity: f32) -> cosmic::theme::iced::Slider {
     let style = std::rc::Rc::new(move |_: &cosmic::Theme| {
         use cosmic::iced::widget::slider::{Breakpoint, Handle, HandleShape, Rail, Style};

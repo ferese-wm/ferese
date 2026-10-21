@@ -87,15 +87,14 @@ pub enum ResultKind {
     Fail,
     Cancelled,
 }
-fn handle(value: &Option<String>) -> Result<Option<Id>, Box<dyn Error>> {
+fn handle(value: Option<&str>) -> Result<Option<Id>, Box<dyn Error>> {
     value
-        .as_ref()
         .map(|value| serde_json::from_str(value).map_err(Into::into))
         .transpose()
 }
 fn value(
     progress: Option<f32>,
-    message: &Option<String>,
+    message: Option<&str>,
     remaining_ms: Option<u64>,
 ) -> Result<Option<Value>, Box<dyn Error>> {
     if usize::from(progress.is_some())
@@ -107,7 +106,7 @@ fn value(
     }
     Ok(progress
         .map(Value::Progress)
-        .or_else(|| message.clone().map(Value::Text))
+        .or_else(|| message.map(|message| Value::Text(message.to_owned())))
         .or_else(|| {
             remaining_ms.map(|remaining_ms| Value::Countdown {
                 remaining_ms,
@@ -156,7 +155,8 @@ pub fn command(action: &Action, socket: &Path, json_output: bool) -> Result<(), 
             priority,
             lease_ms,
         } => {
-            let value = value(*progress, message, *remaining_ms)?.unwrap_or(Value::Indeterminate);
+            let value = value(*progress, message.as_deref(), *remaining_ms)?
+                .unwrap_or(Value::Indeterminate);
             let data = Data {
                 source: if let Some(source) = source {
                     serde_json::from_value(json!(source))?
@@ -196,8 +196,8 @@ pub fn command(action: &Action, socket: &Path, json_output: bool) -> Result<(), 
             handle: token,
         } => Publish::Update {
             local: local.clone(),
-            handle: handle(token)?,
-            value: value(*progress, message, *remaining_ms)?,
+            handle: handle(token.as_deref())?,
+            value: value(*progress, message.as_deref(), *remaining_ms)?,
             lease_ms: *lease_ms,
         },
         Action::End {
@@ -207,7 +207,7 @@ pub fn command(action: &Action, socket: &Path, json_output: bool) -> Result<(), 
             handle: token,
         } => Publish::End {
             local: local.clone(),
-            handle: handle(token)?,
+            handle: handle(token.as_deref())?,
             result: match result {
                 ResultKind::Ok => State::Done,
                 ResultKind::Fail => State::Failed,
@@ -220,7 +220,7 @@ pub fn command(action: &Action, socket: &Path, json_output: bool) -> Result<(), 
             handle: token,
         } => Publish::Cancel {
             local: local.clone(),
-            handle: handle(token)?,
+            handle: handle(token.as_deref())?,
         },
         Action::Hook {
             local,

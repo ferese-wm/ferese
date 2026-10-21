@@ -75,6 +75,7 @@ impl Profile {
         }
     }
 
+    #[must_use]
     pub fn size(self, mode: Mode, collapsed_height: f64) -> [f64; 2] {
         match mode {
             Mode::Idle => [self.idle_width, collapsed_height],
@@ -114,6 +115,7 @@ pub enum Mode {
 }
 
 impl Mode {
+    #[must_use]
     pub fn expanded(self) -> bool {
         matches!(self, Self::Expanded(_))
     }
@@ -145,7 +147,7 @@ pub struct Hub {
 }
 
 impl Hub {
-    pub fn new(profile: Profile, collapsed_height: f64) -> Result<Self, &'static str> {
+    pub fn try_new(profile: Profile, collapsed_height: f64) -> Result<Self, &'static str> {
         profile.validate()?;
         if !collapsed_height.is_finite() || !(24. ..=128.).contains(&collapsed_height) {
             return Err("hub height must be 24..128");
@@ -196,6 +198,7 @@ impl Hub {
         self.motion.retarget(target)
     }
 
+    #[must_use]
     pub fn mode(&self) -> Mode {
         self.mode
     }
@@ -301,10 +304,12 @@ impl Hub {
         self.active()
     }
 
+    #[must_use]
     pub fn active(&self) -> bool {
         self.motion.active() || self.sample().previous_opacity > 0. || self.sample().opacity < 1.
     }
 
+    #[must_use]
     pub fn sample(&self) -> Sample {
         let fade = |elapsed: Duration| (elapsed.as_secs_f32() / FADE.as_secs_f32()).clamp(0., 1.);
         let opacity = self.initial_opacity
@@ -324,11 +329,13 @@ impl Hub {
         }
     }
 
+    #[must_use]
     pub fn allocation_size(&self) -> [f64; 2] {
         let maximum = self.motion.maximum_size();
         std::array::from_fn(|i| maximum[i].min(self.available[i]))
     }
 
+    #[must_use]
     pub fn target_size(&self) -> [f64; 2] {
         let target = self.motion.target().bounds;
         [target.width, target.height]
@@ -341,7 +348,7 @@ mod tests {
 
     #[test]
     fn workspace_width_changes_preserve_content_and_motion() {
-        let mut hub = Hub::new(Profile::default(), 34.).unwrap();
+        let mut hub = Hub::try_new(Profile::default(), 34.).unwrap();
         hub.retarget_idle(270., [800., 600.]).unwrap();
         hub.advance(Duration::from_millis(60), false);
         let before = hub.sample();
@@ -358,7 +365,7 @@ mod tests {
 
     #[test]
     fn measured_height_preserves_fade_and_motion_and_caps_long_content() {
-        let mut hub = Hub::new(Profile::default(), 34.).unwrap();
+        let mut hub = Hub::try_new(Profile::default(), 34.).unwrap();
         hub.retarget(Mode::Expanded(Content::Controls), [800., 600.])
             .unwrap();
         hub.advance(Duration::from_millis(180), false);
@@ -382,7 +389,7 @@ mod tests {
 
     #[test]
     fn a_content_swap_fades_without_restarting_the_geometry() {
-        let mut hub = Hub::new(Profile::default(), 34.).unwrap();
+        let mut hub = Hub::try_new(Profile::default(), 34.).unwrap();
         hub.retarget(Mode::Expanded(Content::Controls), [800., 600.])
             .unwrap();
         hub.advance(Duration::from_secs(2), false);
@@ -404,7 +411,7 @@ mod tests {
 
     #[test]
     fn content_swap_uses_a_fixed_delay_instead_of_waiting_for_spring_settlement() {
-        let mut hub = Hub::new(Profile::default(), 34.).unwrap();
+        let mut hub = Hub::try_new(Profile::default(), 34.).unwrap();
         assert!(!hub.active());
         hub.retarget(Mode::Expanded(Content::Calendar), [800., 600.])
             .unwrap();
@@ -430,7 +437,7 @@ mod tests {
 
     #[test]
     fn an_interrupted_content_delay_never_reveals_the_cancelled_panel() {
-        let mut hub = Hub::new(Profile::default(), 34.).unwrap();
+        let mut hub = Hub::try_new(Profile::default(), 34.).unwrap();
         hub.retarget(Mode::Expanded(Content::Media), [800., 600.])
             .unwrap();
         hub.advance(Duration::from_millis(80), false);
@@ -448,7 +455,7 @@ mod tests {
 
     #[test]
     fn spring_overshoots_then_settles_within_its_reserved_surface() {
-        let mut hub = Hub::new(Profile::default(), 34.).unwrap();
+        let mut hub = Hub::try_new(Profile::default(), 34.).unwrap();
         hub.retarget(Mode::Expanded(Content::Calendar), [800., 600.])
             .unwrap();
         let allocation = hub.allocation_size();
@@ -468,7 +475,7 @@ mod tests {
 
     #[test]
     fn overshoot_is_clipped_to_small_outputs_and_reduced_motion_removes_all_fades() {
-        let mut hub = Hub::new(Profile::default(), 34.).unwrap();
+        let mut hub = Hub::try_new(Profile::default(), 34.).unwrap();
         hub.retarget(Mode::Expanded(Content::Calendar), [240., 180.])
             .unwrap();
         for _ in 0..60 {
@@ -486,7 +493,7 @@ mod tests {
 
     #[test]
     fn interrupted_expansion_keeps_the_presented_shape() {
-        let mut hub = Hub::new(Profile::default(), 34.).unwrap();
+        let mut hub = Hub::try_new(Profile::default(), 34.).unwrap();
         hub.retarget(Mode::Expanded(Content::Media), [800., 600.])
             .unwrap();
         hub.advance(Duration::from_millis(40), false);
@@ -502,7 +509,7 @@ mod tests {
 
     #[test]
     fn narrow_outputs_and_reduced_motion_keep_the_hub_bounded() {
-        let mut hub = Hub::new(Profile::default(), 30.).unwrap();
+        let mut hub = Hub::try_new(Profile::default(), 30.).unwrap();
         hub.retarget(Mode::Expanded(Content::Calendar), [240., 180.])
             .unwrap();
         hub.advance(Duration::ZERO, true);

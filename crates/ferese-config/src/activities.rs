@@ -77,7 +77,7 @@ pub struct Matched {
     pub group: Option<String>,
 }
 impl Matcher {
-    pub fn new(settings: &Settings) -> Result<Self, String> {
+    pub fn try_new(settings: &Settings) -> Result<Self, String> {
         let mut rules = Vec::new();
         for rule in &settings.rules {
             let regex = regex::RegexBuilder::new(&rule.pattern)
@@ -167,6 +167,7 @@ fn validate_rule(rule: &Rule, regex: &Regex) -> Result<(), String> {
     Ok(())
 }
 impl Settings {
+    #[must_use]
     pub fn limits(&self) -> ferese_activities::Limits {
         ferese_activities::Limits {
             max_visible: self.max_visible,
@@ -191,7 +192,7 @@ impl Settings {
         if self.rules.iter().any(|rule| !names.insert(&rule.name)) {
             return Err("duplicate activity rule".into());
         }
-        Matcher::new(self).map(|_| ())
+        Matcher::try_new(self).map(|_| ())
     }
 }
 
@@ -397,7 +398,7 @@ mod tests {
         let settings = Settings::default();
         assert!(!settings.sources.shell_hook);
         assert!(!settings.sources.process_watch);
-        let matcher = Matcher::new(&settings).unwrap();
+        let matcher = Matcher::try_new(&settings).unwrap();
         assert!(matcher.matches("secret command", "/tmp", &[]).is_none());
         let matched = matcher.matches("cargo test", "/tmp", &[]).unwrap();
         assert_eq!(matched.title, "cargo test");

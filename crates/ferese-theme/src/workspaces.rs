@@ -16,6 +16,7 @@ pub struct Workspace<'a> {
     pub visible_elsewhere: bool,
 }
 
+#[must_use]
 pub fn width(style: WorkspaceStyle) -> f32 {
     match style {
         WorkspaceStyle::Numbers | WorkspaceStyle::Dots => 24.,
@@ -25,6 +26,7 @@ pub fn width(style: WorkspaceStyle) -> f32 {
     }
 }
 
+#[must_use]
 pub fn tooltip_label(workspace: &Workspace<'_>) -> String {
     let name = if workspace.name.is_empty() || workspace.name == workspace.index.to_string() {
         String::new()
@@ -44,6 +46,7 @@ pub fn tooltip_label(workspace: &Workspace<'_>) -> String {
     )
 }
 
+#[must_use]
 pub fn indicator<'a, M: 'a>(
     style: WorkspaceStyle,
     workspace: Workspace<'a>,
@@ -193,6 +196,7 @@ pub fn indicator<'a, M: 'a>(
         .into()
 }
 
+#[must_use]
 pub fn sample<'a, M: 'a>(
     style: WorkspaceStyle,
     palette: Palette,

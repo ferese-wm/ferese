@@ -344,7 +344,7 @@ fn panel_shader_matches_core_outlines_and_resets_for_popovers() {
                         },
                         bounds,
                         &groups,
-                        PixelGrid::new(scale).unwrap(),
+                        PixelGrid::try_new(scale).unwrap(),
                     )
                     .unwrap(),
                 );

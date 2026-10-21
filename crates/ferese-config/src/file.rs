@@ -58,6 +58,7 @@ impl ConfigFile {
         Ok(file)
     }
 
+    #[must_use]
     pub fn source(&self) -> &str {
         &self.source
     }

@@ -186,6 +186,7 @@ pub fn accented(source: &'static [u8], size: u16, foreground: Color, accent: Col
         }))
 }
 
+#[must_use]
 pub fn tint_svg(source: &[u8], foreground: Color, accent: Color) -> Vec<u8> {
     let rgba = |foreground: Color| {
         format!(

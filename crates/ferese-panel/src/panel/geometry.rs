@@ -16,6 +16,7 @@ pub struct GeometryIntent {
 }
 
 impl GeometryIntent {
+    #[must_use]
     pub fn resolve(self, style: crate::PanelStyle) -> PanelGeometry {
         use crate::PanelStyle::*;
         let flush = matches!(style, Notch | Flat | Frame | CornerWrap);

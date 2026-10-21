@@ -121,6 +121,7 @@ pub struct Paint {
 }
 
 impl Paint {
+    #[must_use]
     pub fn effective_gradient(&self) -> Option<&Gradient> {
         if self.style == PaintStyle::Solid {
             None
@@ -153,6 +154,7 @@ pub struct ResolvedTheme {
 }
 
 /// Accessibility takes precedence over a panel's authored opacity.
+#[must_use]
 pub fn effective_panel_opacity(
     inherited: f32,
     custom: Option<f32>,
@@ -166,6 +168,7 @@ pub fn effective_panel_opacity(
 }
 
 impl ResolvedTheme {
+    #[must_use]
     pub fn panel_opacity(&self, custom: Option<f32>) -> f32 {
         let inherited = if self.tokens.material.style == "translucent" {
             self.tokens.material.opacity as f32

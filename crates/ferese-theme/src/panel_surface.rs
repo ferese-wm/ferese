@@ -107,7 +107,7 @@ impl<M> Surface<'_, M> {
             &mut collector,
         );
         let size = layout.bounds().size();
-        let scene = PixelGrid::new(self.options.scale)
+        let scene = PixelGrid::try_new(self.options.scale)
             .and_then(|grid| {
                 ferese_panel::scene::derive(
                     self.options.parameters,

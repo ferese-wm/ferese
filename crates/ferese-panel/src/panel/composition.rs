@@ -33,6 +33,7 @@ pub enum Edge {
 }
 
 impl Edge {
+    #[must_use]
     pub fn key(self) -> &'static str {
         match self {
             Self::Top => "top",
@@ -86,6 +87,7 @@ impl WorkspaceStyle {
         Self::AppIcons,
     ];
 
+    #[must_use]
     pub fn key(self) -> &'static str {
         match self {
             Self::Numbers => "numbers",
@@ -96,6 +98,7 @@ impl WorkspaceStyle {
         }
     }
 
+    #[must_use]
     pub fn label(self) -> &'static str {
         match self {
             Self::Numbers => "Numbers",
@@ -135,6 +138,7 @@ pub enum ItemKind {
 
 impl ItemKind {
     /// Smallest useful allocation before a flexible control moves into overflow.
+    #[must_use]
     pub fn minimum_width(self) -> Option<f32> {
         match self {
             Self::FocusedWindow => Some(48.),
@@ -144,6 +148,7 @@ impl ItemKind {
         }
     }
 
+    #[must_use]
     pub fn label(self) -> &'static str {
         match self {
             Self::Overview => "Overview",
@@ -163,6 +168,7 @@ impl ItemKind {
             Self::Overflow => "Overflow",
         }
     }
+    #[must_use]
     pub fn representations(self) -> &'static [Representation] {
         use Representation::*;
         match self {
@@ -265,6 +271,7 @@ impl<'de> Deserialize<'de> for Item {
 
 impl Item {
     /// Start at the configured preference and retain supported smaller forms.
+    #[must_use]
     pub fn representations(&self) -> Vec<Representation> {
         let supported = self.kind.representations();
         let preferred = self.representation.unwrap_or(supported[0]);
@@ -279,6 +286,7 @@ impl Item {
             alternatives
         }
     }
+    #[must_use]
     pub fn new(id: &str, kind: ItemKind) -> Self {
         Self {
             id: ItemId(id.into()),
@@ -305,6 +313,7 @@ impl Item {
         }
     }
 
+    #[must_use]
     pub fn available(&self, availability: Availability) -> bool {
         if !self.visible {
             return false;
@@ -351,6 +360,7 @@ pub enum GroupSurface {
 }
 
 impl GroupSurface {
+    #[must_use]
     pub fn key(self) -> &'static str {
         match self {
             Self::None => "none",
@@ -519,6 +529,7 @@ impl Default for Panel {
 }
 
 impl Panel {
+    #[must_use]
     pub fn preset(&self) -> Option<PanelStyle> {
         Some(self.style)
     }
@@ -527,6 +538,7 @@ impl Panel {
         self.style = style;
     }
 
+    #[must_use]
     pub fn surface(&self) -> PanelSurface {
         if matches!(self.style, PanelStyle::Flat | PanelStyle::Frame) {
             PanelSurface::Solid
@@ -535,6 +547,7 @@ impl Panel {
         }
     }
 
+    #[must_use]
     pub fn group_surface(&self) -> GroupSurface {
         if self.surface() == PanelSurface::Solid {
             GroupSurface::None
@@ -543,6 +556,7 @@ impl Panel {
         }
     }
 
+    #[must_use]
     pub fn zone_spacing(&self, zone: &Zone) -> f32 {
         if self.style.connected() {
             0.
@@ -551,6 +565,7 @@ impl Panel {
         }
     }
 
+    #[must_use]
     pub fn shape_parameters(&self) -> crate::scene::Parameters {
         crate::scene::Parameters {
             style: self.style,
@@ -567,6 +582,7 @@ impl Panel {
         }
     }
 
+    #[must_use]
     pub fn resolved_geometry(&self) -> PanelGeometry {
         let mut geometry = self.geometry.resolve(self.style);
         if self.style == PanelStyle::Morph && self.morph.attached {
@@ -575,6 +591,7 @@ impl Panel {
         geometry
     }
 
+    #[must_use]
     pub fn exclusive_zone(&self, hidden: bool) -> i32 {
         if hidden {
             0
@@ -584,6 +601,7 @@ impl Panel {
         }
     }
 
+    #[must_use]
     pub fn group_count(&self) -> usize {
         [&self.start, &self.center, &self.end]
             .into_iter()
@@ -592,6 +610,7 @@ impl Panel {
     }
 
     /// Appearance changes do not replace item ownership or measured allocation.
+    #[must_use]
     pub fn same_composition(&self, other: &Self) -> bool {
         let same_zone = |left: &Zone, right: &Zone| {
             left.spacing == right.spacing
@@ -615,12 +634,14 @@ impl Panel {
             && same_zone(&self.end, &other.end)
     }
 
+    #[must_use]
     pub fn resolved_radius(&self, shell_radius: f32) -> CornerRadii {
         self.corner_radius
             .unwrap_or_else(|| CornerRadii::uniform(shell_radius))
     }
 
     /// The overflow trigger is generated, never persisted as a configured item.
+    #[must_use]
     pub fn overflow_group(&self) -> Group {
         Group {
             id: GroupId("_overflow".into()),
@@ -646,6 +667,7 @@ impl Panel {
         }
     }
 
+    #[must_use]
     pub fn item(&self, id: &ItemId) -> Option<&Item> {
         [&self.start, &self.center, &self.end]
             .into_iter()
@@ -655,6 +677,7 @@ impl Panel {
     }
 
     /// Build a stable initial composition; presets are an editor convenience.
+    #[must_use]
     pub fn from_preset(preset: PanelStyle) -> Self {
         use ItemKind::*;
 

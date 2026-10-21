@@ -36,6 +36,7 @@ pub struct ResponseError {
 }
 
 impl Response {
+    #[must_use]
     pub fn success(id: u64, result: Value) -> Self {
         Self {
             version: VERSION,

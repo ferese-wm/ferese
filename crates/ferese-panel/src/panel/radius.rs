@@ -5,6 +5,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 pub struct CornerRadii(pub [f32; 4]);
 
 impl CornerRadii {
+    #[must_use]
     pub fn uniform(radius: f32) -> Self {
         Self([radius; 4])
     }
@@ -18,6 +19,7 @@ impl CornerRadii {
     }
 
     /// A panel touching the top edge must cover its top corners.
+    #[must_use]
     pub fn at_top_edge(mut self, touching: bool) -> Self {
         if touching {
             self.0[0] = 0.;
@@ -26,6 +28,7 @@ impl CornerRadii {
         self
     }
 
+    #[must_use]
     pub fn at_edge(mut self, edge: super::Edge, touching: bool) -> Self {
         if touching {
             match edge {
@@ -44,6 +47,7 @@ impl CornerRadii {
     }
 
     /// Keep every corner within half the shorter surface dimension.
+    #[must_use]
     pub fn clamped(self, width: f32, height: f32) -> Self {
         let limit = width.min(height).max(0.) / 2.;
         Self(self.0.map(|value| value.min(limit)))
@@ -52,6 +56,7 @@ impl CornerRadii {
     /// Scale all corners together when their sums exceed an adjacent edge.
     /// Unlike the symmetric round-box clamp, this permits a large free-side
     /// corner when the corner on the anchored side is square.
+    #[must_use]
     pub fn normalized(self, width: f32, height: f32) -> Self {
         let [tl, tr, br, bl] = self.0;
         let mut factor = 1.0_f64;

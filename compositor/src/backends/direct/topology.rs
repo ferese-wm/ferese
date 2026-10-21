@@ -2,11 +2,11 @@
 use std::path::PathBuf;
 
 use super::{
-    DrmNode, Duration, Ferese, HashMap, HashSet, Instant, OutputMode, Path, PresentationClock,
-    RegistrationToken, Scale, Session, TimeoutAction, Timer, all_gpus, cancel_output_timers,
-    drm_device_key, lid, monotonic_now, open_device, output_transform, refresh_connected_info,
-    refresh_monitor_policy, remember_applied_configuration, remove_device, rescan_device,
-    sync_battery_timer, transaction, validate_desired_outputs,
+    DrmNode, Duration, Ferese, HashMap, HashSet, Instant, OutputMode, Path, RegistrationToken,
+    Scale, Session, TimeoutAction, Timer, all_gpus, cancel_output_timers, drm_device_key, lid,
+    monotonic_now, open_device, output_transform, refresh_connected_info, refresh_monitor_policy,
+    remember_applied_configuration, remove_device, rescan_device, sync_battery_timer, transaction,
+    validate_desired_outputs,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -203,10 +203,9 @@ pub(super) fn reconcile_outputs(state: &mut Ferese, reactivate: bool) {
     backend.topology.dirty = false;
     backend.output_error = None;
     if reactivate {
-        backend
-            .presentation
-            .values_mut()
-            .for_each(PresentationClock::reset_timing);
+        for clock in backend.presentation.values_mut() {
+            clock.reset_timing();
+        }
     }
     if let Some(token) = backend.topology.retry_timer.take() {
         state.loop_handle.remove(token);

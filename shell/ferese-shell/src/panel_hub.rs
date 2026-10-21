@@ -93,7 +93,7 @@ pub(super) struct Runtime {
 
 impl Runtime {
     pub(super) fn new(panel: &Panel) -> Self {
-        let mut hub = Hub::new(panel.morph, panel.resolved_geometry().height.into())
+        let mut hub = Hub::try_new(panel.morph, panel.resolved_geometry().height.into())
             .expect("validated panel hub");
         hub.pin_radii(panel.corner_radius.map(|r| r.0.map(f64::from)))
             .expect("validated panel radii");
@@ -3539,7 +3539,7 @@ mod tests {
                             bounds.height,
                         ),
                         &[],
-                        ferese_panel::shape::PixelGrid::new(1.5).unwrap(),
+                        ferese_panel::shape::PixelGrid::try_new(1.5).unwrap(),
                     )
                     .unwrap();
                     assert_eq!(scene.paint.len(), 3);

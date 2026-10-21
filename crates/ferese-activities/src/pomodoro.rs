@@ -54,6 +54,7 @@ pub enum Phase {
     LongBreak,
 }
 impl Phase {
+    #[must_use]
     pub fn label(self) -> &'static str {
         match self {
             Self::Work => "Work",
@@ -97,6 +98,7 @@ impl Session {
             deadline: Some(now.saturating_add(remaining_ms)),
         })
     }
+    #[must_use]
     pub fn remaining(&self, now: Time) -> u64 {
         self.deadline
             .map_or(self.remaining_ms, |deadline| deadline.saturating_sub(now))

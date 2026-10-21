@@ -18,6 +18,7 @@ pub struct Geometry {
 const COUNT: usize = 18;
 
 impl Geometry {
+    #[must_use]
     pub fn rounded(bounds: Rect, radius: f64) -> Self {
         Self {
             bounds,
@@ -75,7 +76,7 @@ pub struct Motion {
 }
 
 impl Motion {
-    pub fn new(geometry: Geometry) -> Result<Self, &'static str> {
+    pub fn try_new(geometry: Geometry) -> Result<Self, &'static str> {
         Self::with_spring(
             geometry,
             SpringConfig {
@@ -132,10 +133,12 @@ impl Motion {
         })
     }
 
+    #[must_use]
     pub fn current(&self) -> Geometry {
         Geometry::from_values(self.values.map(|value| value.current))
     }
 
+    #[must_use]
     pub fn target(&self) -> Geometry {
         Geometry::from_values(self.values.map(|value| value.target))
     }
@@ -180,7 +183,7 @@ mod tests {
 
     #[test]
     fn interruption_keeps_the_current_geometry_and_velocity() {
-        let mut motion = Motion::new(collapsed()).unwrap();
+        let mut motion = Motion::try_new(collapsed()).unwrap();
         motion.retarget(expanded()).unwrap();
         motion.advance(Duration::from_millis(16), false);
         let before = motion.current();
@@ -197,7 +200,7 @@ mod tests {
 
     #[test]
     fn dimensions_share_one_trajectory_and_stop_requesting_frames() {
-        let mut motion = Motion::new(collapsed()).unwrap();
+        let mut motion = Motion::try_new(collapsed()).unwrap();
         motion.retarget(expanded()).unwrap();
         for _ in 0..12 {
             motion.advance(Duration::from_millis(16), false);
@@ -218,7 +221,7 @@ mod tests {
 
     #[test]
     fn reduced_motion_snaps_an_inflight_animation() {
-        let mut motion = Motion::new(collapsed()).unwrap();
+        let mut motion = Motion::try_new(collapsed()).unwrap();
         motion.retarget(expanded()).unwrap();
         motion.advance(Duration::from_millis(16), false);
         assert!(!motion.advance(Duration::ZERO, true));
@@ -263,7 +266,7 @@ mod tests {
 
     #[test]
     fn invalid_retarget_leaves_motion_untouched() {
-        let mut motion = Motion::new(collapsed()).unwrap();
+        let mut motion = Motion::try_new(collapsed()).unwrap();
         let mut invalid = expanded();
         invalid.bounds.height = f64::NAN;
         assert!(motion.retarget(invalid).is_err());

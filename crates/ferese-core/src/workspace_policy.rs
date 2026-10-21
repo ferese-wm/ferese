@@ -14,6 +14,7 @@ pub struct WorkspaceView {
 }
 
 impl OutputWorkspaceMap {
+    #[must_use]
     pub fn workspace_views(&self, workspaces: &WorkspaceSet) -> Vec<WorkspaceView> {
         self.workspace_views_iter(workspaces).collect()
     }
@@ -47,6 +48,7 @@ impl OutputWorkspaceMap {
             })
     }
 
+    #[must_use]
     pub fn ordered_workspace_ids<'a>(
         &'a self,
         workspaces: &'a WorkspaceSet,
@@ -56,6 +58,7 @@ impl OutputWorkspaceMap {
             .filter(|id| workspaces.workspace(*id).is_some())
     }
 
+    #[must_use]
     pub fn ordered_workspaces(
         &self,
         workspaces: &WorkspaceSet,
@@ -66,6 +69,7 @@ impl OutputWorkspaceMap {
 
     /// Out-of-range numeric selection resolves to the trailing spare. Looking
     /// up a gesture target never creates workspaces or changes history.
+    #[must_use]
     pub fn workspace_at(
         &self,
         workspaces: &WorkspaceSet,

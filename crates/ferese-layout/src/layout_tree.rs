@@ -63,6 +63,7 @@ pub struct Rect {
 }
 
 impl Rect {
+    #[must_use]
     pub const fn new(x: f64, y: f64, width: f64, height: f64) -> Self {
         Self {
             x,
@@ -165,14 +166,17 @@ pub struct LayoutTree {
 }
 
 impl LayoutTree {
+    #[must_use]
     pub fn root(&self) -> Option<NodeId> {
         self.root
     }
 
+    #[must_use]
     pub fn node(&self, id: NodeId) -> Option<&Node> {
         self.nodes.get(&id)
     }
 
+    #[must_use]
     pub fn contains(&self, window: WindowId) -> bool {
         self.windows.contains_key(&window)
     }
@@ -181,6 +185,7 @@ impl LayoutTree {
         self.windows.keys().copied()
     }
 
+    #[must_use]
     pub fn visible_window_count(&self) -> usize {
         fn count(tree: &LayoutTree, node: NodeId) -> usize {
             match tree.nodes.get(&node) {
@@ -197,6 +202,7 @@ impl LayoutTree {
         self.root.map_or(0, |root| count(self, root))
     }
 
+    #[must_use]
     pub fn preferred_window(&self) -> Option<WindowId> {
         let leaf = self.first_window(self.root?).ok()?;
         match self.nodes.get(&leaf)? {
@@ -424,10 +430,12 @@ impl LayoutTree {
         })
     }
 
+    #[must_use]
     pub fn tab_group(&self, window: WindowId) -> Option<TabGroup> {
         self.group_at(*self.parents.get(self.windows.get(&window)?)?)
     }
 
+    #[must_use]
     pub fn tab_groups(&self) -> Vec<TabGroup> {
         let mut groups: Vec<_> = self
             .nodes
@@ -438,6 +446,7 @@ impl LayoutTree {
         groups
     }
 
+    #[must_use]
     pub fn adjacent_tab(&self, window: WindowId, previous: bool) -> Option<WindowId> {
         let group = self.tab_group(window)?;
         let index = group.windows.iter().position(|id| *id == window)?;

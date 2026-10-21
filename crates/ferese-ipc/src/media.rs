@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+#[must_use]
 pub fn now_us() -> u64 {
     let mut time = libc::timespec {
         tv_sec: 0,
@@ -79,6 +80,7 @@ impl Default for Player {
 }
 
 impl Player {
+    #[must_use]
     pub fn label(&self) -> &str {
         if self.title.is_empty() {
             &self.identity
@@ -87,6 +89,7 @@ impl Player {
         }
     }
 
+    #[must_use]
     pub fn can_toggle(&self) -> bool {
         self.can_control
             && if self.status == Playback::Playing {
@@ -96,6 +99,7 @@ impl Player {
             }
     }
 
+    #[must_use]
     pub fn position_at(&self, now_us: u64) -> Option<u64> {
         let mut position = self.position_us? as f64;
         if self.status == Playback::Playing && self.rate.is_finite() {

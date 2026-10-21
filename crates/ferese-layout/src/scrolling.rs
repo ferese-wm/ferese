@@ -90,13 +90,15 @@ impl Column {
         if self.heights.len() != self.windows.len() {
             self.heights.resize(self.windows.len(), 1.0);
         }
-        self.heights.iter_mut().for_each(|height| {
+        for height in &mut self.heights {
             if !height.is_finite() || *height <= 0.0 {
                 *height = 1.0;
             }
-        });
+        }
         let total = self.heights.iter().sum::<f64>();
-        self.heights.iter_mut().for_each(|height| *height /= total);
+        for height in &mut self.heights {
+            *height /= total;
+        }
         self.active = self.active.min(self.windows.len() - 1);
     }
 }
@@ -166,6 +168,7 @@ impl ViewportTarget {
 
     /// Re-evaluate the same target with pending allocated widths held back.
     /// A start-relative request can also use the previous held target.
+    #[must_use]
     pub fn with_held_widths(&self, widths: &[(WindowId, f64, f64)], start: Option<f64>) -> f64 {
         let replacements = widths
             .iter()
@@ -181,6 +184,7 @@ impl ViewportTarget {
         self.target(&replacements, start)
     }
 
+    #[must_use]
     pub fn uses_previous_target(&self) -> bool {
         matches!(self.request, ViewportRequest::Slide(..))
             || (matches!(self.request, ViewportRequest::Reveal(..))
@@ -290,6 +294,7 @@ impl ScrollingLayout {
         Ok(())
     }
 
+    #[must_use]
     pub fn tab_group(&self, window: WindowId) -> Option<crate::TabGroup> {
         let (index, _) = self.window_location(window)?;
         let column = &self.columns[index];
@@ -301,6 +306,7 @@ impl ScrollingLayout {
         })
     }
 
+    #[must_use]
     pub fn adjacent_tab(&self, window: WindowId, previous: bool) -> Option<WindowId> {
         let group = self.tab_group(window)?;
         let index = group.windows.iter().position(|id| *id == window)?;
@@ -308,6 +314,7 @@ impl ScrollingLayout {
         Some(group.windows[(index + step) % group.windows.len()])
     }
 
+    #[must_use]
     pub fn visible_window_count(&self) -> usize {
         self.columns
             .iter()
@@ -325,6 +332,7 @@ impl ScrollingLayout {
         self.default_width = normalized_width(width);
     }
 
+    #[must_use]
     pub fn with_default_width(default_width: ColumnWidth) -> Self {
         Self {
             default_width: normalized_width(default_width),
@@ -337,33 +345,40 @@ impl ScrollingLayout {
         self.request_focus(self.active_window().map(PendingFocusRequest::Reveal));
     }
 
+    #[must_use]
     pub fn default_width(&self) -> ColumnWidth {
         self.default_width
     }
 
+    #[must_use]
     pub fn columns(&self) -> &[Column] {
         &self.columns
     }
 
+    #[must_use]
     pub fn active_column(&self) -> Option<usize> {
         self.active_column
     }
 
+    #[must_use]
     pub fn active_window(&self) -> Option<WindowId> {
         let column = self.columns.get(self.active_column?)?;
         column.windows.get(column.active).copied()
     }
 
+    #[must_use]
     pub fn viewport_x(&self) -> f64 {
         self.viewport_x
     }
 
+    #[must_use]
     pub fn allocated_column_width(&self, window: WindowId) -> Option<f64> {
         self.allocated_widths.get(&window).copied()
     }
 
     /// Whether this target changes when the pending column width is held back.
     /// Allocated widths, rather than cell-grid/native buffer sizes, own the strip.
+    #[must_use]
     pub fn viewport_depends_on_width(&self, window: WindowId, source: f64, target: f64) -> bool {
         (source - target).abs() > 0.001
             && self
@@ -373,6 +388,7 @@ impl ScrollingLayout {
                 .is_some_and(|held| (held - self.viewport_x).abs() > 0.001)
     }
 
+    #[must_use]
     pub fn viewport_target(&self) -> Option<&ViewportTarget> {
         self.viewport_basis.as_ref()
     }
@@ -400,6 +416,7 @@ impl ScrollingLayout {
         self.viewport_basis = Some(next);
     }
 
+    #[must_use]
     pub fn contains(&self, window: WindowId) -> bool {
         self.window_location(window).is_some()
     }

@@ -16,6 +16,7 @@ pub struct OutputGeometry {
 }
 
 impl OutputGeometry {
+    #[must_use]
     pub const fn new(x: i32, y: i32, width: i32, height: i32) -> Self {
         Self {
             x,
@@ -223,6 +224,7 @@ impl OutputWorkspaceMap {
         })
     }
 
+    #[must_use]
     pub fn assigned_workspaces(
         &self,
         output: OutputId,
@@ -233,22 +235,27 @@ impl OutputWorkspaceMap {
             .flat_map(|state| state.workspaces.iter().copied())
     }
 
+    #[must_use]
     pub fn focused_output(&self) -> Option<OutputId> {
         self.focused
     }
 
+    #[must_use]
     pub fn active_workspace(&self, output: OutputId) -> Option<WorkspaceId> {
         self.outputs.get(&output).map(|state| state.active)
     }
 
+    #[must_use]
     pub fn previous_workspace(&self, output: OutputId) -> Option<WorkspaceId> {
         self.outputs.get(&output).and_then(|state| state.previous)
     }
 
+    #[must_use]
     pub fn output_for_workspace(&self, workspace: WorkspaceId) -> Option<OutputId> {
         self.assignments.get(&workspace).copied()
     }
 
+    #[must_use]
     pub fn home_output(&self, workspace: WorkspaceId) -> Option<OutputId> {
         self.homes.get(&workspace).copied()
     }
@@ -295,6 +302,7 @@ impl OutputWorkspaceMap {
         self.outputs.keys().copied()
     }
 
+    #[must_use]
     pub fn geometry(&self, output: OutputId) -> Option<OutputGeometry> {
         self.outputs.get(&output).map(|state| state.geometry)
     }

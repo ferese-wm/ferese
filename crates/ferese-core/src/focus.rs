@@ -50,11 +50,13 @@ pub struct FocusCycle {
 }
 
 impl FocusCycle {
+    #[must_use]
     pub fn new(windows: Vec<WindowId>, current: Option<WindowId>) -> Self {
         let selected = current.filter(|id| windows.contains(id));
         Self { windows, selected }
     }
 
+    #[must_use]
     pub fn windows(&self) -> &[WindowId] {
         &self.windows
     }

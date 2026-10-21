@@ -51,7 +51,7 @@ impl Default for Engine {
             ),
             rules: Arc::new(RwLock::new(Arc::new(Rules {
                 enabled: false,
-                matcher: ferese_config::activities::Matcher::new(&settings)
+                matcher: ferese_config::activities::Matcher::try_new(&settings)
                     .expect("built-in rules"),
             }))),
             monitor: None,
@@ -691,7 +691,7 @@ mod tests {
             .spawn()
             .unwrap();
         let (owner, fd, _) = crate::ipc::activity_owner::inspect(child.id()).unwrap();
-        let matched = ferese_config::activities::Matcher::new(&Default::default())
+        let matched = ferese_config::activities::Matcher::try_new(&Default::default())
             .unwrap()
             .matches("cargo test", "/tmp", &[])
             .unwrap();
@@ -707,7 +707,7 @@ mod tests {
         let mut engine = Engine::default();
         let (owner, fd, _) = crate::ipc::activity_owner::inspect(std::process::id()).unwrap();
         let settings = ferese_config::activities::Settings::default();
-        let matched = ferese_config::activities::Matcher::new(&settings)
+        let matched = ferese_config::activities::Matcher::try_new(&settings)
             .unwrap()
             .matches("cargo test", "/tmp/test", &[])
             .unwrap();
@@ -859,7 +859,7 @@ mod tests {
     #[test]
     fn rule_is_pinned_across_atomic_reload_and_no_raw_metadata_is_published() {
         let settings = ferese_config::activities::Settings::default();
-        let matched = ferese_config::activities::Matcher::new(&settings)
+        let matched = ferese_config::activities::Matcher::try_new(&settings)
             .unwrap()
             .matches("cargo test --secret", "/secret/cwd", &[])
             .unwrap();
@@ -883,7 +883,7 @@ mod tests {
         replacement.rules[0].title = "Replacement".into();
         engine.configure(
             &replacement,
-            ferese_config::activities::Matcher::new(&replacement).unwrap(),
+            ferese_config::activities::Matcher::try_new(&replacement).unwrap(),
         );
         let after = engine.store.entries().next().unwrap();
         assert_eq!(after.data.title, "cargo test");

@@ -5,23 +5,28 @@ use cosmic::{theme, widget};
 
 use crate::{Palette, mix};
 
+#[must_use]
 pub fn surface(background: Color, radius: f32) -> theme::Container<'static> {
     theme::Container::custom(move |_| surface_appearance(background, radius))
 }
 
+#[must_use]
 pub fn button_style(p: Palette, selected: bool) -> theme::Button {
     button_style_with_focus(p, selected, true)
 }
 
+#[must_use]
 pub fn button_style_with_focus(p: Palette, selected: bool, focus_visible: bool) -> theme::Button {
     styled_button(p, selected, false, 1.0, focus_visible)
 }
 
 /// Selection cards share native button states while revealing the modal material.
+#[must_use]
 pub fn material_button_style(p: Palette, selected: bool, material_opacity: f32) -> theme::Button {
     material_button_style_with_focus(p, selected, material_opacity, true)
 }
 
+#[must_use]
 pub fn material_button_style_with_focus(
     p: Palette,
     selected: bool,
@@ -101,10 +106,12 @@ pub(crate) fn switch_colors(palette: Palette, enabled: bool, hovered: bool) -> (
     (track, thumb)
 }
 
+#[must_use]
 pub fn navigation_style(p: Palette, selected: bool) -> theme::Button {
     styled_button(p, selected, true, 1.0, true)
 }
 
+#[must_use]
 pub fn settings_input(p: Palette) -> theme::TextInput {
     let appearance = move |focused: bool, hovered: bool| cosmic::widget::text_input::Appearance {
         shape: Some(BorderShape::Continuous),
@@ -229,6 +236,7 @@ fn styled_button(
 
 /// Authentication actions use normal text while enabled and muted text while disabled.
 /// Keep the disabled fill neutral so contrast correction cannot make it look active.
+#[must_use]
 pub fn authentication_button(palette: Palette) -> theme::Button {
     let paint = move |enabled: bool, interaction: f32, focused: bool| {
         let (fill, foreground) = if enabled {
@@ -260,6 +268,7 @@ pub fn authentication_button(palette: Palette) -> theme::Button {
     }
 }
 
+#[must_use]
 pub fn authentication_input(palette: Palette) -> theme::TextInput {
     let text = palette.text;
     let muted = palette.muted;
@@ -293,6 +302,7 @@ pub fn authentication_input(palette: Palette) -> theme::TextInput {
     }
 }
 
+#[must_use]
 pub fn lock_input(
     radius: f32,
     accent: cosmic::iced::Color,
@@ -361,6 +371,7 @@ pub fn shell_button(
     }
 }
 
+#[must_use]
 pub fn surface_appearance(background: Color, radius: f32) -> container::Style {
     container::Style {
         background: Some(Background::Color(background)),
@@ -373,6 +384,7 @@ pub fn surface_appearance(background: Color, radius: f32) -> container::Style {
     }
 }
 
+#[must_use]
 pub fn notification_button(
     foreground: Color,
     hover: Color,
@@ -396,6 +408,7 @@ pub fn notification_button(
     }
 }
 
+#[must_use]
 pub fn filled_button(fill: Color, foreground: Color, radius: f32, opacity: f32) -> theme::Button {
     let paint = move |outline| button::Style {
         shape: Some(BorderShape::Continuous),

@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 pub const VERSION: u32 = 1;
 
+#[must_use]
 pub fn now_ms() -> u64 {
     let mut time = libc::timespec {
         tv_sec: 0,

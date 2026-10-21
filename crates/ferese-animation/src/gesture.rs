@@ -30,6 +30,7 @@ impl VelocityTracker {
         }
     }
 
+    #[must_use]
     pub fn velocity(&self, now: Duration) -> f64 {
         let Some(&(last, origin)) = self.samples.back() else {
             return 0.0;
@@ -87,6 +88,7 @@ impl VelocityTracker {
     }
 }
 
+#[must_use]
 pub fn project(position: f64, velocity: f64, rate: f64) -> f64 {
     if !velocity.is_finite() || !(0.0..1.0).contains(&rate) || rate == 0.0 {
         return position;
@@ -96,6 +98,7 @@ pub fn project(position: f64, velocity: f64, rate: f64) -> f64 {
 
 /// Nonlinear resistance, bounded by `extent`; the derivative transfers the
 /// velocity of the displayed (resisted) position into the release spring.
+#[must_use]
 pub fn rubber_band(distance: f64, extent: f64, resistance: f64) -> (f64, f64) {
     if !distance.is_finite()
         || !extent.is_finite()

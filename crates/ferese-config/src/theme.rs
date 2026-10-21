@@ -208,6 +208,7 @@ impl Default for Policy {
     }
 }
 
+#[must_use]
 pub fn default_tokens() -> Tokens {
     serde_json::from_value(json!({
             "colors": {"surface_base":"#111821", "surface_raised":"#1E2530", "application_background":"#171E27", "text_primary":"#F4F7FB", "text_muted":"#8793A2",
@@ -224,6 +225,7 @@ pub fn default_tokens() -> Tokens {
         .expect("valid built-in theme")
 }
 
+#[must_use]
 pub fn default_theme() -> ResolvedTheme {
     let mut tokens = default_tokens();
     resolve_gradients(&mut tokens, None);
@@ -527,6 +529,7 @@ pub fn resolve_with_context(
     })
 }
 
+#[must_use]
 pub fn theme_path(directory: &Path, path: &Path) -> PathBuf {
     let path = if let Some(tail) = path.to_str().and_then(|path| path.strip_prefix("~/")) {
         std::env::var_os("HOME")
@@ -690,6 +693,7 @@ pub fn preset(name: &str, appearance: Appearance) -> Result<Tokens, String> {
     Ok(t)
 }
 
+#[must_use]
 pub fn authored_warnings(tokens: &Tokens) -> Vec<String> {
     if let Err(error) = validate(tokens) {
         return vec![error];

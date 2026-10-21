@@ -5,6 +5,7 @@ use cosmic::widget::{column, container, row};
 use cosmic::{Element, theme};
 use jiff::Zoned;
 
+#[must_use]
 pub fn format_bar_time(now: &Zoned) -> String {
     let months = [
         "jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sept", "oct", "nov", "dec",
@@ -20,6 +21,7 @@ pub fn format_bar_time(now: &Zoned) -> String {
         if hour < 12 { "am" } else { "pm" }
     )
 }
+#[must_use]
 pub fn month(today: jiff::civil::Date, offset: i32) -> (jiff::civil::Date, usize, usize) {
     let month_index = i32::from(today.year()) * 12 + i32::from(today.month()) - 1 + offset;
     let year = month_index.div_euclid(12) as i16;
@@ -30,6 +32,7 @@ pub fn month(today: jiff::civil::Date, offset: i32) -> (jiff::civil::Date, usize
     (first, start, days)
 }
 
+#[must_use]
 pub fn grid<'a, M: Clone + 'a>(
     today: jiff::civil::Date,
     offset: i32,
@@ -41,6 +44,7 @@ pub fn grid<'a, M: Clone + 'a>(
     grid_with_density(today, offset, palette, font, opacity, navigation, false)
 }
 
+#[must_use]
 pub fn compact_grid<'a, M: Clone + 'a>(
     today: jiff::civil::Date,
     offset: i32,

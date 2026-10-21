@@ -19,6 +19,7 @@ pub struct Palette {
 }
 
 impl Palette {
+    #[must_use]
     pub fn from_resolved(theme: &ferese_theme_model::ResolvedTheme) -> Self {
         let color = |value: &str| parse_color(value).expect("validated resolved theme color");
         Self {
@@ -50,6 +51,7 @@ impl Palette {
         }
     }
 
+    #[must_use]
     pub fn flat(mut self) -> Self {
         self.background = self.sidebar;
         self.card = self.sidebar;
@@ -138,6 +140,7 @@ impl Palette {
         cosmic::Theme::custom(std::sync::Arc::new(native)).corner_shape(BorderShape::Continuous)
     }
 
+    #[must_use]
     pub fn application_style(self, background: Color) -> cosmic::iced::theme::Style {
         cosmic::iced::theme::Style {
             background_color: background,
@@ -147,6 +150,7 @@ impl Palette {
     }
 }
 
+#[must_use]
 pub fn parse_color(value: &str) -> Option<Color> {
     let hex = value.strip_prefix('#')?;
     let packed = u32::from_str_radix(hex, 16).ok()?;
@@ -163,6 +167,7 @@ pub fn parse_color(value: &str) -> Option<Color> {
     ))
 }
 
+#[must_use]
 pub fn mix(a: Color, b: Color, t: f32) -> Color {
     Color::from_rgb(
         a.r + (b.r - a.r) * t,
@@ -171,6 +176,7 @@ pub fn mix(a: Color, b: Color, t: f32) -> Color {
     )
 }
 
+#[must_use]
 pub fn surface_shade(base: Color) -> Color {
     if crate::luminance(base) > 0.5 {
         Color::BLACK
@@ -179,6 +185,7 @@ pub fn surface_shade(base: Color) -> Color {
     }
 }
 
+#[must_use]
 pub fn material_opacity(theme: &ferese_theme_model::ResolvedTheme) -> f32 {
     if theme.tokens.material.style == "translucent" {
         theme.tokens.material.opacity as f32

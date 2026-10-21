@@ -174,6 +174,7 @@ fn desktop(p: &Palette) -> String {
     )
 }
 
+#[must_use]
 pub fn svg(
     family: &Family,
     variant: Option<Appearance>,
@@ -274,6 +275,7 @@ fn svg_with_radius(
     result
 }
 
+#[must_use]
 pub fn neighbor(index: usize, count: usize, key: &keyboard::key::Named) -> Option<usize> {
     use keyboard::key::Named::*;
     if count == 0 {

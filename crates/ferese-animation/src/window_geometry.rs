@@ -74,14 +74,17 @@ pub struct AnimatedValue {
 }
 
 impl AnimatedValue {
+    #[must_use]
     pub fn needs_update(&self, target: f64) -> bool {
         self.target != target || self.is_animating()
     }
 
+    #[must_use]
     pub fn is_animating(&self) -> bool {
         self.current != self.target || self.velocity != 0.0
     }
 
+    #[must_use]
     pub fn new(value: f64) -> Self {
         let value = finite_or_zero(value);
 
@@ -148,6 +151,7 @@ impl AnimatedValue {
 }
 
 impl AnimatedRect {
+    #[must_use]
     pub fn new(rect: Rect) -> Self {
         Self {
             current: rect,
@@ -228,6 +232,7 @@ impl AnimatedRect {
         }
     }
 
+    #[must_use]
     pub fn is_settled(&self, config: SpringConfig) -> bool {
         let config = config.normalized();
         rect_distance(self.current, self.target) <= config.position_tolerance
@@ -242,6 +247,7 @@ pub struct ClientSize {
 }
 
 impl ClientSize {
+    #[must_use]
     pub fn from_rect(rect: Rect) -> Self {
         Self {
             width: (rect.width.round() as i32).max(1),
@@ -279,16 +285,19 @@ impl ClientGeometry {
         matches_target
     }
 
+    #[must_use]
     pub fn waiting_for_commit(&self) -> bool {
         self.waiting_since.is_some()
     }
 
     /// The hard bound for the current uninterrupted client-buffer wait.
+    #[must_use]
     pub fn commit_deadline(&self) -> Option<Duration> {
         self.waiting_since
             .map(|started| started + CLIENT_COMMIT_TIMEOUT)
     }
 
+    #[must_use]
     pub fn timed_out(&self, now: Duration) -> bool {
         self.waiting_since
             .is_some_and(|started| now.saturating_sub(started) >= CLIENT_COMMIT_TIMEOUT)
@@ -329,6 +338,7 @@ struct ZoomTransition {
 }
 
 impl WindowGeometry {
+    #[must_use]
     pub fn new(rect: Rect, committed_size: Option<ClientSize>) -> Self {
         let rect = normalized_rect(rect);
 
@@ -414,10 +424,12 @@ impl WindowGeometry {
         self.client.request_size(size, now).then_some(size)
     }
 
+    #[must_use]
     pub fn is_zooming(&self) -> bool {
         self.zoom.is_some()
     }
 
+    #[must_use]
     pub fn is_fullscreen(&self) -> bool {
         self.mode == PresentationMode::Fullscreen
     }
@@ -486,6 +498,7 @@ impl WindowGeometry {
         geometry_active
     }
 
+    #[must_use]
     pub fn inverse_visual_point(&self, x: f64, y: f64) -> Option<(f64, f64)> {
         let visual = self.visual.current;
         let (scale_x, scale_y) = self.visual_scale()?;
@@ -493,6 +506,7 @@ impl WindowGeometry {
         Some(((x - visual.x) / scale_x, (y - visual.y) / scale_y))
     }
 
+    #[must_use]
     pub fn visual_scale(&self) -> Option<(f64, f64)> {
         let source = self.client.committed_size?;
         let visual = self.visual.current;

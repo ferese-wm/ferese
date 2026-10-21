@@ -149,7 +149,7 @@ impl Config {
         let binding_modes = self.binding_modes(&input_settings, &bindings)?;
         Ok(crate::RuntimeConfig {
             activity_settings: self.activities.clone(),
-            activity_matcher: ferese_config::activities::Matcher::new(&self.activities)
+            activity_matcher: ferese_config::activities::Matcher::try_new(&self.activities)
                 .map_err(ConfigError::Binding)?,
             lock_idle: self.lock_screen.validate()?,
             night_light: self.night_light.validate().map_err(ConfigError::Binding)?,

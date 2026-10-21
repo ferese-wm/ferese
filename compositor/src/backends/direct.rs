@@ -442,12 +442,11 @@ pub fn init(event_loop: &mut EventLoop<Ferese>, state: &mut Ferese) -> Result<()
                     if let Some(token) = backend.power_retry.take() {
                         handle.remove(token);
                     }
-                    backend
-                        .presentation
-                        .values_mut()
-                        .for_each(PresentationClock::reset_timing);
-                    backend.devices.values_mut().for_each(|device| {
-                        device.outputs.values_mut().for_each(|output| {
+                    for clock in backend.presentation.values_mut() {
+                        clock.reset_timing();
+                    }
+                    for device in backend.devices.values_mut() {
+                        for output in device.outputs.values_mut() {
                             output.gamma.suspend();
                             cancel_output_timers(&handle, output);
                             output.surface.reset_buffers();
@@ -456,9 +455,9 @@ pub fn init(event_loop: &mut EventLoop<Ferese>, state: &mut Ferese) -> Result<()
                             output.capture_texture = None;
                             output.frame_pending = false;
                             output.power.suspended();
-                        });
+                        }
                         device.drm.pause();
-                    });
+                    }
                 }
 
                 state.display_presentation.clear();
@@ -2178,30 +2177,27 @@ fn send_frame_callbacks(state: &mut Ferese, output: &Output) {
         state.lock_frame_callbacks(output);
         return;
     }
-    state
-        .space
-        .elements()
-        .filter(|window| {
-            state
-                .windows
-                .ids()
-                .get(*window)
-                .is_some_and(|id| state.window_belongs_to_output(*id, output))
-        })
-        .for_each(|window| {
-            window.send_frame(output, state.start_time.elapsed(), None, |surface, _| {
-                eligible.get(&surface.into()).cloned()
-            });
+    let visible_windows = state.space.elements().filter(|window| {
+        state
+            .windows
+            .ids()
+            .get(*window)
+            .is_some_and(|id| state.window_belongs_to_output(*id, output))
+    });
+    for window in visible_windows {
+        window.send_frame(output, state.start_time.elapsed(), None, |surface, _| {
+            eligible.get(&surface.into()).cloned()
         });
+    }
     let layers = layer_map_for_output(output)
         .layers()
         .cloned()
         .collect::<Vec<_>>();
-    layers.iter().for_each(|layer| {
+    for layer in &layers {
         layer.send_frame(output, state.start_time.elapsed(), None, |surface, _| {
             eligible.get(&surface.into()).cloned()
         });
-    });
+    }
     state.send_cursor_frame(output);
     state.space.refresh();
     state.popups.cleanup();

@@ -17,6 +17,7 @@ pub fn rgba(s: &str) -> Result<[f64; 4], String> {
     Ok(out)
 }
 
+#[must_use]
 pub fn hex(c: [f64; 4]) -> String {
     format!(
         "#{:02X}{:02X}{:02X}{:02X}",
@@ -27,6 +28,7 @@ pub fn hex(c: [f64; 4]) -> String {
     )
 }
 
+#[must_use]
 pub fn luminance(c: [f64; 4]) -> f64 {
     let linear = |v: f64| {
         if v <= 0.04045 {
@@ -38,11 +40,13 @@ pub fn luminance(c: [f64; 4]) -> f64 {
     0.2126 * linear(c[0]) + 0.7152 * linear(c[1]) + 0.0722 * linear(c[2])
 }
 
+#[must_use]
 pub fn contrast(a: [f64; 4], b: [f64; 4]) -> f64 {
     let (a, b) = (luminance(a), luminance(b));
     (a.max(b) + 0.05) / (a.min(b) + 0.05)
 }
 
+#[must_use]
 pub fn composite(fg: [f64; 4], bg: [f64; 4]) -> [f64; 4] {
     let mut c = [0.; 4];
     for i in 0..3 {
@@ -52,10 +56,12 @@ pub fn composite(fg: [f64; 4], bg: [f64; 4]) -> [f64; 4] {
     c
 }
 
+#[must_use]
 pub fn blend(a: [f64; 4], b: [f64; 4], p: f64) -> [f64; 4] {
     std::array::from_fn(|i| a[i] + (b[i] - a[i]) * p)
 }
 
+#[must_use]
 pub fn readable(preferred: [f64; 4], background: [f64; 4], minimum: f64) -> [f64; 4] {
     let mut preferred = preferred;
     preferred[3] = 1.;
@@ -78,6 +84,7 @@ pub fn readable(preferred: [f64; 4], background: [f64; 4], minimum: f64) -> [f64
     target
 }
 
+#[must_use]
 pub fn readable_across(
     mut preferred: [f64; 4],
     backgrounds: &[[f64; 4]],
@@ -109,6 +116,7 @@ pub fn readable_across(
     target
 }
 
+#[must_use]
 pub fn material_bounds(mut surface: [f64; 4], opacity: f64) -> [[f64; 4]; 2] {
     surface[3] = opacity;
     [

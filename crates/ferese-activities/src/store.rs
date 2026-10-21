@@ -39,6 +39,7 @@ pub enum Value {
 }
 
 impl Value {
+    #[must_use]
     pub fn remaining_ms(&self, now: Time) -> Option<u64> {
         match self {
             Self::Countdown {
@@ -245,6 +246,7 @@ pub struct Activity {
 }
 
 impl Activity {
+    #[must_use]
     pub fn eligible(&self, now: Time, dnd: bool) -> bool {
         now >= self.eligible_at
             && match self.state {
@@ -256,6 +258,7 @@ impl Activity {
             }
     }
 
+    #[must_use]
     pub fn score(&self, now: Time, ceiling: u8) -> u16 {
         u16::from(self.data.priority.min(ceiling))
             + if now < self.eligible_at.saturating_add(BOOST_MS) {
@@ -280,6 +283,7 @@ pub struct Store {
 }
 
 impl Store {
+    #[must_use]
     pub fn new(session: u64) -> Self {
         Self {
             limits: Limits::default(),
@@ -289,6 +293,7 @@ impl Store {
         }
     }
 
+    #[must_use]
     pub fn session(&self) -> u64 {
         self.session
     }
@@ -297,6 +302,7 @@ impl Store {
         self.entries.values()
     }
 
+    #[must_use]
     pub fn resolve(&self, owner: Owner, local: &str) -> Option<&Id> {
         self.entries
             .keys()
@@ -477,6 +483,7 @@ impl Store {
         before != self.entries.len()
     }
 
+    #[must_use]
     pub fn next_deadline(&self, now: Time) -> Option<Time> {
         self.entries
             .values()

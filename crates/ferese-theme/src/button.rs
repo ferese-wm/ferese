@@ -45,6 +45,7 @@ pub(crate) fn accent_button_style(
 }
 
 /// Filled accent buttons and selected rows share this per-state contrast policy.
+#[must_use]
 pub fn accent_button() -> theme::Button {
     theme::Button::Custom {
         active: Box::new(|focused, theme| accent_button_style(theme, State::Active, focused)),

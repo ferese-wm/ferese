@@ -17,6 +17,7 @@ pub enum State {
 }
 
 impl State {
+    #[must_use]
     pub fn is_inactive(self) -> bool {
         matches!(self, Self::Disabled | Self::Idle | Self::Stopped)
     }
@@ -51,6 +52,7 @@ impl Status {
         serde_json::from_value(value)
     }
 
+    #[must_use]
     pub fn to_value(&self) -> Value {
         match serde_json::to_value(self) {
             Ok(value) => value,

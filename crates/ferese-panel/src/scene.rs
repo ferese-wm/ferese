@@ -16,6 +16,7 @@ pub struct Primitive {
 }
 
 impl Primitive {
+    #[must_use]
     pub fn packet(self) -> [f32; 10] {
         let Rect {
             x,
@@ -66,6 +67,7 @@ impl Primitive {
         })
     }
 
+    #[must_use]
     pub fn distance(self, point: [f64; 2]) -> f64 {
         let rect = rectangle_distance(point, self.bounds);
         if self.operation >= 2 {
@@ -103,6 +105,7 @@ fn rectangle_distance(point: [f64; 2], b: Rect) -> f64 {
     x.max(0.).hypot(y.max(0.)) + x.max(y).min(0.)
 }
 
+#[must_use]
 pub fn smooth_min(a: f64, b: f64, strength: f64) -> f64 {
     if strength <= 0. {
         return a.min(b);
@@ -141,16 +144,19 @@ impl Scene {
         zones.into_iter().fold(f64::INFINITY, f64::min).max(-cutout)
     }
 
+    #[must_use]
     pub fn contains(&self, point: [f64; 2]) -> bool {
         self.input.iter().any(|shape| shape.contains(point))
     }
 
+    #[must_use]
     pub fn packets(&self) -> Vec<[f32; 10]> {
         self.paint.iter().map(|p| p.packet()).collect()
     }
 
     /// Horizontal runs at physical-pixel centers. Corners and animated gaps
     /// stay click-through; adjacent equal runs are coalesced into one rectangle.
+    #[must_use]
     pub fn input_rectangles(&self, scale: f64) -> Vec<[i32; 4]> {
         if !scale.is_finite() || scale <= 0. {
             return Vec::new();
@@ -246,7 +252,7 @@ fn add(
     input: bool,
     zone: u8,
 ) -> Result<(), &'static str> {
-    let rounded = RoundedSurface::new(rect, radii, grid)?;
+    let rounded = RoundedSurface::try_new(rect, radii, grid)?;
     if rounded.bounds().width == 0. || rounded.bounds().height == 0. {
         return Ok(());
     }
@@ -320,7 +326,7 @@ pub fn derive(
                 operation: 1,
                 blend_zone: 0,
             });
-            scene.input.push(RoundedSurface::new(
+            scene.input.push(RoundedSurface::try_new(
                 Rect::new(bounds.x, bounds.y, bounds.width, top),
                 CornerRadii::uniform(0.),
                 grid,
@@ -583,8 +589,11 @@ pub fn derive(
         }
         for input in &mut scene.input {
             let [tl, tr, br, bl] = input.radii().0;
-            *input =
-                RoundedSurface::new(mirror(input.bounds()), CornerRadii([bl, br, tr, tl]), grid)?;
+            *input = RoundedSurface::try_new(
+                mirror(input.bounds()),
+                CornerRadii([bl, br, tr, tl]),
+                grid,
+            )?;
         }
         for damage in &mut scene.damage {
             *damage = mirror(*damage);
@@ -624,7 +633,7 @@ mod tests {
             },
             Rect::new(0., 0., 800., 36.),
             &groups(),
-            PixelGrid::new(1.25).unwrap(),
+            PixelGrid::try_new(1.25).unwrap(),
         )
         .unwrap()
     }
@@ -677,7 +686,7 @@ mod tests {
             },
             Rect::new(0., 0., 800., 600.),
             &[],
-            PixelGrid::new(1.25).unwrap(),
+            PixelGrid::try_new(1.25).unwrap(),
         )
         .unwrap();
         assert!(scene.contains([18., 200.]));
@@ -714,7 +723,7 @@ mod tests {
             },
             Rect::new(0., 0., 1600., 1000.),
             &[],
-            PixelGrid::new(1.5).unwrap(),
+            PixelGrid::try_new(1.5).unwrap(),
         )
         .unwrap();
         assert!(scene.distance([800., 20.]) < 0. && scene.distance([800., 500.]) > 0.);
@@ -746,7 +755,7 @@ mod tests {
     fn attached_styles_mirror_the_whole_outline_at_the_bottom() {
         for style in [Style::Notch, Style::Frame, Style::CornerWrap] {
             let bounds = Rect::new(0., 0., 800., if style == Style::Notch { 36. } else { 600. });
-            let grid = PixelGrid::new(1.).unwrap();
+            let grid = PixelGrid::try_new(1.).unwrap();
             let top = derive(
                 Parameters {
                     style,

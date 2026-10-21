@@ -896,7 +896,7 @@ mod region_geometry_tests {
                         },
                         ferese_layout::Rect::new((320. - width) / 2., 0., width, 44.),
                         &[],
-                        PixelGrid::new(scale).unwrap(),
+                        PixelGrid::try_new(scale).unwrap(),
                     )
                     .unwrap();
                     let presentation = crate::effects::PanelPresentation {
@@ -947,7 +947,7 @@ mod region_geometry_tests {
         use ferese_panel::shape::{AnchoredRadii, PixelGrid};
         for scale in [1., 1.25, 1.5, 2.] {
             for edge in [ferese_panel::Edge::Top, ferese_panel::Edge::Bottom] {
-                let mut hub = Hub::new(Profile::default(), 34.).unwrap();
+                let mut hub = Hub::try_new(Profile::default(), 34.).unwrap();
                 for mode in [Mode::Peek, Mode::Idle] {
                     hub.retarget(mode, [400., 300.]).unwrap();
                     for frame in 0..160 {
@@ -977,7 +977,7 @@ mod region_geometry_tests {
                             },
                             bounds,
                             &[],
-                            PixelGrid::new(scale).unwrap(),
+                            PixelGrid::try_new(scale).unwrap(),
                         )
                         .unwrap();
                         // Reproduce the f32 transport and logical capture bounds used by native materials.

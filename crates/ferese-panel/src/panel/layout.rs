@@ -92,12 +92,14 @@ impl Resolution {
         }
     }
 
+    #[must_use]
     pub fn fits(&self, available: f32) -> bool {
         self.required_width() <= available
     }
 
     /// Clamp a requested inset independently for each output. Content may still
     /// overflow on an output too small to fit it even without an inset.
+    #[must_use]
     pub fn side_margin(&self, requested: i32, output_width: i32, padding: f32) -> i32 {
         let maximum = ((output_width as f32 - 2. * padding - self.minimum_width) / 2.)
             .floor()
@@ -106,6 +108,7 @@ impl Resolution {
     }
 }
 
+#[must_use]
 pub fn resolve(
     panel: &Panel,
     measurements: &[Measurement],
@@ -116,6 +119,7 @@ pub fn resolve(
 }
 
 /// Reserve separation between zones while keeping the center on the panel midpoint.
+#[must_use]
 pub fn resolve_with_gap(
     panel: &Panel,
     measurements: &[Measurement],

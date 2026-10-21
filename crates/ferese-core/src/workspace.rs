@@ -39,6 +39,7 @@ impl Default for WorkspaceLayout {
 }
 
 impl WorkspaceLayout {
+    #[must_use]
     pub fn new(
         mode: LayoutMode,
         default_column_width: ColumnWidth,
@@ -61,6 +62,7 @@ impl WorkspaceLayout {
         self
     }
 
+    #[must_use]
     pub fn mode(&self) -> LayoutMode {
         match self {
             Self::Scrolling(_) => LayoutMode::Scrolling,
@@ -68,6 +70,7 @@ impl WorkspaceLayout {
         }
     }
 
+    #[must_use]
     pub fn viewport_x(&self) -> Option<f64> {
         match self {
             Self::Scrolling(layout) => Some(layout.viewport_x()),
@@ -75,6 +78,7 @@ impl WorkspaceLayout {
         }
     }
 
+    #[must_use]
     pub fn preferred_window(&self) -> Option<WindowId> {
         match self {
             Self::Scrolling(layout) => layout.active_window(),
@@ -82,6 +86,7 @@ impl WorkspaceLayout {
         }
     }
 
+    #[must_use]
     pub fn contains(&self, window: WindowId) -> bool {
         match self {
             Self::Scrolling(layout) => layout.contains(window),
@@ -125,6 +130,7 @@ impl WorkspaceLayout {
         }
     }
 
+    #[must_use]
     pub fn tab_group(&self, window: WindowId) -> Option<ferese_layout::TabGroup> {
         match self {
             Self::Tree(tree) => tree.tab_group(window),
@@ -132,6 +138,7 @@ impl WorkspaceLayout {
         }
     }
 
+    #[must_use]
     pub fn adjacent_tab(&self, window: WindowId, previous: bool) -> Option<WindowId> {
         match self {
             Self::Tree(tree) => tree.adjacent_tab(window, previous),
@@ -445,6 +452,7 @@ impl Default for WorkspaceSet {
 }
 
 impl WorkspaceSet {
+    #[must_use]
     pub fn new(
         default_layout_mode: LayoutMode,
         default_column_width: ColumnWidth,
@@ -562,10 +570,12 @@ impl WorkspaceSet {
         }
     }
 
+    #[must_use]
     pub fn active_id(&self) -> WorkspaceId {
         self.active
     }
 
+    #[must_use]
     pub fn active(&self) -> &Workspace {
         self.workspaces
             .get(&self.active)
@@ -596,6 +606,7 @@ impl WorkspaceSet {
         Ok(visible_floating.or(self.active().fullscreen).or(focused))
     }
 
+    #[must_use]
     pub fn workspace(&self, id: WorkspaceId) -> Option<&Workspace> {
         self.workspaces.get(&id)
     }
@@ -608,10 +619,12 @@ impl WorkspaceSet {
         self.workspaces.values()
     }
 
+    #[must_use]
     pub fn workspace_for_window(&self, window: WindowId) -> Option<WorkspaceId> {
         self.window_workspaces.get(&window).copied()
     }
 
+    #[must_use]
     pub fn placement(&self, window: WindowId) -> Option<WindowPlacement> {
         self.placements.get(&window).copied()
     }
@@ -823,6 +836,7 @@ impl WorkspaceSet {
     }
 
     /// Reserve workspace identities in a pure topology plan without creating them.
+    #[must_use]
     pub fn next_workspace_id(&self) -> WorkspaceId {
         WorkspaceId(self.next_id)
     }
@@ -1210,10 +1224,12 @@ fn finite_or_zero(value: f64) -> f64 {
 }
 
 impl Workspace {
+    #[must_use]
     pub fn window_count(&self) -> usize {
         self.layout.window_ids().count() + self.floating.len()
     }
 
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.layout.window_ids().next().is_none() && self.floating.is_empty()
     }

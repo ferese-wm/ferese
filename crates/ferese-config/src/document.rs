@@ -33,10 +33,12 @@ pub fn config_path() -> Option<PathBuf> {
         .map(|p| p.join("ferese/config.kdl"))
 }
 
+#[must_use]
 pub fn default_wallpaper() -> &'static str {
     default_wallpaper_for(theme::Appearance::Dark)
 }
 
+#[must_use]
 pub fn default_wallpaper_for(appearance: theme::Appearance) -> &'static str {
     static LIGHT: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     static DARK: std::sync::OnceLock<String> = std::sync::OnceLock::new();
@@ -292,11 +294,13 @@ impl Document {
         Ok(Self { doc, value })
     }
 
+    #[must_use]
     pub fn value(&self) -> &Value {
         &self.value
     }
 
     /// A runtime view; the original KDL remains available for comment-preserving edits.
+    #[must_use]
     pub fn with_theme(&self, theme: &theme::ResolvedTheme) -> Self {
         let mut document = self.clone();
         document.value["theme"] =
@@ -305,6 +309,7 @@ impl Document {
         document
     }
 
+    #[must_use]
     pub fn get(&self, path: &str) -> Option<&Value> {
         let mut value = &self.value;
 

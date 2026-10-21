@@ -1,5 +1,6 @@
 use cosmic::iced::Color;
 
+#[must_use]
 pub fn luminance(color: Color) -> f32 {
     let linear = |v: f32| {
         if v <= 0.04045 {
@@ -11,6 +12,7 @@ pub fn luminance(color: Color) -> f32 {
     0.2126 * linear(color.r) + 0.7152 * linear(color.g) + 0.0722 * linear(color.b)
 }
 
+#[must_use]
 pub fn contrast(a: Color, b: Color) -> f32 {
     let (a, b) = (luminance(a), luminance(b));
     (a.max(b) + 0.05) / (a.min(b) + 0.05)
@@ -19,6 +21,7 @@ pub fn contrast(a: Color, b: Color) -> f32 {
 /// Resolve a control fill against its surface before selecting its foreground.
 /// The returned fill is opaque, so wallpaper and translucent panels cannot change
 /// the contrast of a small, filled control.
+#[must_use]
 pub fn composite(fill: Color, surface: Color) -> Color {
     let a = fill.a.clamp(0., 1.);
     Color::from_rgb(
@@ -30,6 +33,7 @@ pub fn composite(fill: Color, surface: Color) -> Color {
 
 /// Preserve the user's preferred color when it passes normal-text contrast.
 /// Otherwise black or white always provides at least 4.5:1 on an opaque sRGB fill.
+#[must_use]
 pub fn foreground(background: Color, preferred: Color) -> Color {
     let preferred = composite(preferred, background);
     if contrast(background, preferred) >= 4.5 {
@@ -44,6 +48,7 @@ pub fn foreground(background: Color, preferred: Color) -> Color {
 
 /// Prefer the theme's foreground for filled controls by adjusting the accent's
 /// brightness until the text has enough contrast.
+#[must_use]
 pub fn accent_pair(background: Color, preferred: Color) -> (Color, Color) {
     let on = composite(preferred, background);
     let shade = if luminance(on) > luminance(background) {
@@ -67,6 +72,7 @@ pub fn accent_pair(background: Color, preferred: Color) -> (Color, Color) {
 }
 
 /// Resolve configured accent transparency before passing an opaque color to a toolkit.
+#[must_use]
 pub fn accent_color(accent: Color, surface: Color) -> cosmic::cosmic_theme::palette::Srgb {
     rgba(composite(accent, surface)).color
 }

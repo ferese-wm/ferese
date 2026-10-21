@@ -43,6 +43,7 @@ impl Style {
         Self::WindowHug,
     ];
 
+    #[must_use]
     pub const fn key(self) -> &'static str {
         match self {
             Self::Floating => "floating",
@@ -57,6 +58,7 @@ impl Style {
             Self::WindowHug => "window-hug",
         }
     }
+    #[must_use]
     pub const fn label(self) -> &'static str {
         match self {
             Self::Floating => "Floating",
@@ -71,9 +73,11 @@ impl Style {
             Self::WindowHug => "Window hug",
         }
     }
+    #[must_use]
     pub const fn connected(self) -> bool {
         matches!(self, Self::Capsules | Self::Notch)
     }
+    #[must_use]
     pub const fn detached(self) -> bool {
         matches!(
             self,
@@ -100,6 +104,7 @@ pub enum ZonePosition {
 pub struct AnchoredRadii(pub [f32; 4]);
 
 impl AnchoredRadii {
+    #[must_use]
     pub fn screen_space(self, edge: Edge) -> CornerRadii {
         let [flat_left, flat_right, free_right, free_left] = self.0;
         CornerRadii(match edge {
@@ -173,13 +178,14 @@ pub struct PixelGrid {
 }
 
 impl PixelGrid {
-    pub fn new(scale: f64) -> Result<Self, &'static str> {
+    pub fn try_new(scale: f64) -> Result<Self, &'static str> {
         if !scale.is_finite() || scale <= 0. {
             return Err("output scale must be finite and positive");
         }
         Ok(Self { scale })
     }
 
+    #[must_use]
     pub fn snap(self, position: f64) -> f64 {
         (position * self.scale).round() / self.scale
     }
@@ -218,7 +224,11 @@ pub struct RoundedSurface {
 }
 
 impl RoundedSurface {
-    pub fn new(bounds: Rect, radii: CornerRadii, grid: PixelGrid) -> Result<Self, &'static str> {
+    pub fn try_new(
+        bounds: Rect,
+        radii: CornerRadii,
+        grid: PixelGrid,
+    ) -> Result<Self, &'static str> {
         if radii.validate().is_err() {
             return Err("surface radii must be finite and nonnegative");
         }
@@ -230,16 +240,19 @@ impl RoundedSurface {
         Ok(Self { bounds, radii })
     }
 
+    #[must_use]
     pub fn bounds(self) -> Rect {
         self.bounds
     }
 
+    #[must_use]
     pub fn radii(self) -> CornerRadii {
         self.radii
     }
 
     /// Right and bottom boundaries are excluded so a shared seam belongs to
     /// exactly one surface, rather than both neighbors.
+    #[must_use]
     pub fn contains(self, point: [f64; 2]) -> bool {
         let [x, y] = [point[0] - self.bounds.x, point[1] - self.bounds.y];
         let (width, height) = (self.bounds.width, self.bounds.height);
@@ -339,7 +352,7 @@ mod tests {
     #[test]
     fn shared_boundaries_snap_without_seams_at_fractional_scales() {
         for scale in [1., 1.25, 1.5, 2.] {
-            let grid = PixelGrid::new(scale).unwrap();
+            let grid = PixelGrid::try_new(scale).unwrap();
             for origin in [-1800.3, -0.4, 0., 23.3] {
                 let left = grid.rect(Rect::new(origin, 0., 33.3, 36.)).unwrap();
                 let right = grid.rect(Rect::new(origin + 33.3, 0., 42.7, 36.)).unwrap();
@@ -353,14 +366,14 @@ mod tests {
 
     #[test]
     fn floating_gaps_and_round_corners_do_not_capture_input() {
-        let grid = PixelGrid::new(1.25).unwrap();
-        let left = RoundedSurface::new(
+        let grid = PixelGrid::try_new(1.25).unwrap();
+        let left = RoundedSurface::try_new(
             Rect::new(8., 8., 100., 36.),
             CornerRadii::uniform(18.),
             grid,
         )
         .unwrap();
-        let right = RoundedSurface::new(
+        let right = RoundedSurface::try_new(
             Rect::new(116., 8., 100., 36.),
             CornerRadii::uniform(18.),
             grid,
@@ -381,15 +394,15 @@ mod tests {
 
     #[test]
     fn asymmetric_hit_testing_matches_a_vertically_mirrored_surface() {
-        let grid = PixelGrid::new(1.).unwrap();
+        let grid = PixelGrid::try_new(1.).unwrap();
         let bounds = Rect::new(0., 0., 100., 28.);
-        let top = RoundedSurface::new(
+        let top = RoundedSurface::try_new(
             bounds,
             AnchoredRadii([0., 0., 20., 20.]).screen_space(Edge::Top),
             grid,
         )
         .unwrap();
-        let bottom = RoundedSurface::new(
+        let bottom = RoundedSurface::try_new(
             bounds,
             AnchoredRadii([0., 0., 20., 20.]).screen_space(Edge::Bottom),
             grid,
@@ -409,14 +422,14 @@ mod tests {
 
     #[test]
     fn a_connected_seam_has_exactly_one_input_owner() {
-        let grid = PixelGrid::new(1.5).unwrap();
-        let left = RoundedSurface::new(
+        let grid = PixelGrid::try_new(1.5).unwrap();
+        let left = RoundedSurface::try_new(
             Rect::new(0., 0., 30., 36.),
             CornerRadii([18., 0., 0., 18.]),
             grid,
         )
         .unwrap();
-        let right = RoundedSurface::new(
+        let right = RoundedSurface::try_new(
             Rect::new(30., 0., 40., 36.),
             CornerRadii([0., 18., 18., 0.]),
             grid,
@@ -431,9 +444,9 @@ mod tests {
     #[test]
     fn invalid_runtime_geometry_is_rejected() {
         for scale in [0., -1., f64::NAN, f64::INFINITY] {
-            assert!(PixelGrid::new(scale).is_err());
+            assert!(PixelGrid::try_new(scale).is_err());
         }
-        let grid = PixelGrid::new(1.).unwrap();
+        let grid = PixelGrid::try_new(1.).unwrap();
         for bounds in [
             Rect::new(0., 0., -1., 28.),
             Rect::new(f64::NAN, 0., 10., 28.),
@@ -442,7 +455,7 @@ mod tests {
             assert!(grid.rect(bounds).is_err());
         }
         assert!(
-            RoundedSurface::new(Rect::new(0., 0., 10., 28.), CornerRadii::uniform(-1.), grid)
+            RoundedSurface::try_new(Rect::new(0., 0., 10., 28.), CornerRadii::uniform(-1.), grid)
                 .is_err()
         );
         assert!(

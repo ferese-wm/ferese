@@ -269,7 +269,7 @@ mod tests {
                         zone: ZonePosition::Center,
                         bounds: Rect::new(70.3, 0., 160.4, 44.),
                     }],
-                    PixelGrid::new(scale).unwrap(),
+                    PixelGrid::try_new(scale).unwrap(),
                 )
                 .unwrap();
                 let paths = notch_border(&scene, 0.1 / scale, edge).unwrap();
@@ -325,7 +325,7 @@ mod tests {
                         },
                         Rect::new(30.3, 0., width, height),
                         &[],
-                        PixelGrid::new(scale).unwrap(),
+                        PixelGrid::try_new(scale).unwrap(),
                     )
                     .unwrap();
                     let body = scene.paint[0];
@@ -420,7 +420,7 @@ mod tests {
                 },
                 Rect::new(0., 0., 96., 64.),
                 &groups,
-                PixelGrid::new(1.25).unwrap(),
+                PixelGrid::try_new(1.25).unwrap(),
             )
             .unwrap();
             let contours = contours(&scene, 0.1).unwrap();

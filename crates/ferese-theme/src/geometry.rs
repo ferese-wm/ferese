@@ -1,4 +1,5 @@
 /// Radius of a circular inset. Squircle insets retain an `Outline` and its distance offset.
+#[must_use]
 pub fn inner_radius(outer: f32, padding: f32) -> f32 {
     (outer - padding).max(0.0)
 }

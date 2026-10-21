@@ -34,6 +34,7 @@ pub struct Family {
 }
 
 impl Family {
+    #[must_use]
     pub fn palette(&self, appearance: Appearance) -> Option<&Palette> {
         match appearance {
             Appearance::Light => self.light.as_ref(),
@@ -41,6 +42,7 @@ impl Family {
         }
     }
 
+    #[must_use]
     pub fn availability(&self) -> &'static str {
         match (self.light.is_some(), self.dark.is_some()) {
             (true, true) => "light and dark",

@@ -30,6 +30,7 @@ pub const BUILTINS: [(&str, &str, &str, &str); 6] = [
     ),
 ];
 
+#[must_use]
 pub fn family_id(preset: &str) -> &str {
     BUILTINS
         .iter()
@@ -37,6 +38,7 @@ pub fn family_id(preset: &str) -> &str {
         .map_or(preset, |row| row.0)
 }
 
+#[must_use]
 pub fn variant(id: &str, appearance: Appearance) -> Option<&'static str> {
     if let Some(row) = BUILTINS.iter().find(|row| row.0 == id) {
         return Some(if appearance == Appearance::Light {
@@ -54,6 +56,7 @@ pub fn variant(id: &str, appearance: Appearance) -> Option<&'static str> {
     }
 }
 
+#[must_use]
 pub fn builtins() -> Vec<Family> {
     BUILTINS
         .iter()

@@ -24,6 +24,7 @@ impl Default for MotionSettings {
 }
 
 impl MotionSettings {
+    #[must_use]
     pub fn motion_enabled(self) -> bool {
         self.enabled && !self.reduced_motion
     }
@@ -53,6 +54,7 @@ impl MotionSettings {
     }
 
     /// Only small opacity changes should use a timed duration.
+    #[must_use]
     pub fn duration(self, milliseconds: f64) -> std::time::Duration {
         if !self.motion_enabled() {
             return std::time::Duration::ZERO;

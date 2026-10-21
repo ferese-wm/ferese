@@ -18,6 +18,7 @@ pub enum Presentation {
 }
 
 impl Presentation {
+    #[must_use]
     pub fn style(self) -> Option<PanelStyle> {
         match self {
             Self::Floating => Some(PanelStyle::Floating),
@@ -48,6 +49,7 @@ pub struct Adaptive {
 }
 
 impl Adaptive {
+    #[must_use]
     pub fn new(state: WindowState) -> Self {
         Self {
             current: state.into(),
@@ -55,6 +57,7 @@ impl Adaptive {
         }
     }
 
+    #[must_use]
     pub fn current(&self) -> Presentation {
         self.current
     }
@@ -87,6 +90,7 @@ impl Adaptive {
         }
     }
 
+    #[must_use]
     pub fn deadline(&self) -> Option<Duration> {
         self.pending
             .map(|(_, since)| since.saturating_add(HYSTERESIS))

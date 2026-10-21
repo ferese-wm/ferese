@@ -9,6 +9,7 @@ pub fn current() -> Snapshot {
 }
 
 /// Standalone appearance; it does not represent compositor acceptance.
+#[must_use]
 pub fn fallback() -> Snapshot {
     let theme = ferese_config::theme::default_theme();
     Snapshot {
