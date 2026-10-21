@@ -6,7 +6,7 @@ How that movement behaves depends on what you’re doing. While dragging, the wi
 
 ## Keeping layout, animation, and application buffers in step
 
-The resize example explains why [WindowGeometry](../crates/ferese-animation/src/lib.rs) keeps three states. Its logical rectangle records the destination requested by layout or a presentation mode, such as fullscreen. Its visual rectangle records what is moving toward that destination, including the current bounds and velocity. Client geometry tracks the size Ferese requested from the application and the size the application has committed.
+The resize example explains why [WindowGeometry](../crates/ferese-animation/src/window_geometry.rs) keeps three states. Its logical rectangle records the destination requested by layout or a presentation mode, such as fullscreen. Its visual rectangle records what is moving toward that destination, including the current bounds and velocity. Client geometry tracks the size Ferese requested from the application and the size the application has committed.
 
 Keeping these separate means the compositor can request the destination size as soon as the layout changes. It does not have to wait for the animation to finish before asking the application to draw. The new buffer might arrive before or after the visible rectangle settles, so retained images cover the resize handoff while presentation continues independently.
 
@@ -130,7 +130,7 @@ After settlement, hover redraws reuse animation content when the motion sample h
 
 ## Checking the model against what is drawn
 
-The [animation trace tests](../crates/ferese-animation/src/traces.rs) follow motion through stalls, changing frame cadence, retargeting, resize interruption, and gesture release. Solver tests compare the results with an independent characteristic-root reference, while gesture tests check projection and the rubber-band derivative. Compositor tests then check how that motion is used for presentation ownership, predicted geometry, workspace switching, and reduced motion.
+The [animation trace tests](../crates/ferese-animation/src/window_geometry/traces.rs) follow motion through stalls, changing frame cadence, retargeting, resize interruption, and gesture release. Solver tests compare the results with an independent characteristic-root reference, while gesture tests check projection and the rubber-band derivative. Compositor tests then check how that motion is used for presentation ownership, predicted geometry, workspace switching, and reduced motion.
 
 Rendering checks need to follow the interruptions people can make while using the desktop: reversing a transition, clicking several overview workspaces, closing during resize, or selecting a shell panel before the previous motion settles. At fractional output scales, those checks must also look for separation between content, clip, and border, and for background or blur remaining after shell content exits. Frame traces should confirm that animation requests stop after settlement.
 

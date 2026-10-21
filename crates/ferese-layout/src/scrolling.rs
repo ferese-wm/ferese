@@ -1,8 +1,9 @@
+use crate::layout_tree;
 use std::collections::{HashMap, HashSet};
 
 use crate::{
     ConstraintKind, ConstraintWarning, Direction, GapConfig, LayoutError, LayoutResult, Rect,
-    SizeConstraints, WindowId, normalized_constraints, record_minimum_warnings,
+    SizeConstraints, WindowId,
 };
 
 const DEFAULT_WIDTH: f64 = 0.5;
@@ -670,7 +671,7 @@ impl ScrollingLayout {
                 constraints
                     .get(&window)
                     .copied()
-                    .map(normalized_constraints)
+                    .map(layout_tree::normalized_constraints)
                     .unwrap_or_default()
                     .max_width
                     .map(|maximum| {
@@ -678,7 +679,7 @@ impl ScrollingLayout {
                             constraints
                                 .get(&window)
                                 .copied()
-                                .map(normalized_constraints)
+                                .map(layout_tree::normalized_constraints)
                                 .unwrap_or_default()
                                 .min_width,
                         )
@@ -854,7 +855,7 @@ impl ScrollingLayout {
                     constraints
                         .get(window)
                         .copied()
-                        .map(normalized_constraints)
+                        .map(layout_tree::normalized_constraints)
                         .unwrap_or_default()
                         .min_width
                 })
@@ -948,8 +949,9 @@ impl ScrollingLayout {
                 // Keep the column allocation stable and honor compatible maximums.
                 let mut common = SizeConstraints::default();
                 for id in &column.windows {
-                    let c =
-                        normalized_constraints(constraints.get(id).copied().unwrap_or_default());
+                    let c = layout_tree::normalized_constraints(
+                        constraints.get(id).copied().unwrap_or_default(),
+                    );
                     common.min_width = common.min_width.max(c.min_width);
                     common.min_height = common.min_height.max(c.min_height);
                     common.max_width = match (common.max_width, c.max_width) {
@@ -961,8 +963,8 @@ impl ScrollingLayout {
                         (a, b) => a.or(b),
                     };
                 }
-                let common = normalized_constraints(common);
-                record_minimum_warnings(window, rect, common, &mut result.warnings);
+                let common = layout_tree::normalized_constraints(common);
+                layout_tree::record_minimum_warnings(window, rect, common, &mut result.warnings);
                 apply_maximums(window, &mut rect, common, &mut result.warnings);
                 if column.windows.len() > 1 {
                     result.tab_bars.push(crate::TabBar {
@@ -984,7 +986,9 @@ impl ScrollingLayout {
                 .windows
                 .iter()
                 .map(|window| {
-                    normalized_constraints(constraints.get(window).copied().unwrap_or_default())
+                    layout_tree::normalized_constraints(
+                        constraints.get(window).copied().unwrap_or_default(),
+                    )
                 })
                 .collect::<Vec<_>>();
             let row_heights = constrained_row_heights(column, available_height, &row_constraints);
@@ -998,7 +1002,12 @@ impl ScrollingLayout {
                     row_heights[window_index],
                 );
                 let constraint = row_constraints[window_index];
-                record_minimum_warnings(*window, rect, constraint, &mut result.warnings);
+                layout_tree::record_minimum_warnings(
+                    *window,
+                    rect,
+                    constraint,
+                    &mut result.warnings,
+                );
                 apply_maximums(*window, &mut rect, constraint, &mut result.warnings);
                 y += row_heights[window_index] + inner;
                 result.geometry.insert(*window, rect);

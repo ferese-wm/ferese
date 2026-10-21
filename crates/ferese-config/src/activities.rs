@@ -1,29 +1,10 @@
 //! Activity rules are matched in declaration order, followed by unreplaced
 //! built-ins. Matching metadata is bounded and never stored in the result.
+use crate::document;
 use kdl::KdlNode;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
-
-/// Enable installation defaults without overriding an explicit user opt-out.
-pub fn setup_shell_hook(document: &mut crate::Document) -> Result<bool, crate::Error> {
-    let explicit = document
-        .doc
-        .get("activities")
-        .and_then(kdl::KdlNode::children)
-        .and_then(|sources| sources.get("sources"))
-        .and_then(kdl::KdlNode::children)
-        .and_then(|sources| sources.get("shell-hook"))
-        .and_then(|node| node.get(0))
-        .and_then(kdl::KdlValue::as_bool);
-    if explicit == Some(false) {
-        return Ok(false);
-    }
-    if explicit.is_none() {
-        document.set("activities.sources.shell_hook", json!(true))?;
-    }
-    Ok(true)
-}
 
 use crate::Error;
 
@@ -215,7 +196,7 @@ impl Settings {
 }
 
 fn diagnostic(node: &KdlNode, message: impl std::fmt::Display) -> Error {
-    Error(format!(
+    Error::from(format!(
         "activities at byte {}: {message}",
         node.span().offset()
     ))
@@ -270,11 +251,11 @@ pub(crate) fn parse(node: &KdlNode) -> Result<Value, Error> {
                         property
                             .entries()
                             .iter()
-                            .map(|entry| crate::scalar(entry.value()))
+                            .map(|entry| document::scalar(entry.value()))
                             .collect::<Result<_, _>>()?,
                     )
                 } else {
-                    crate::node_value(property, &key, "rule")
+                    document::node_value(property, &key, "rule")
                         .map_err(|error| diagnostic(property, error))?
                 };
                 if value.insert(key, parsed).is_some() {
@@ -316,7 +297,7 @@ pub(crate) fn parse(node: &KdlNode) -> Result<Value, Error> {
                 return Err(diagnostic(child, "unknown activity node"));
             }
             let field = key.replace('-', "_");
-            let value = crate::node_value(child, &field, "activities")
+            let value = document::node_value(child, &field, "activities")
                 .map_err(|error| diagnostic(child, error))?;
             if values.insert(field, value).is_some() {
                 return Err(diagnostic(child, "duplicate activity setting"));

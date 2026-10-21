@@ -6,7 +6,7 @@ use std::path::Path;
 
 fn prepare(source: &str) -> Result<String, Box<dyn Error>> {
     let mut doc = Document::parse(source)?;
-    if !ferese_config::activities::setup_shell_hook(&mut doc)? {
+    if !doc.setup_shell_hook()? {
         return Ok(source.into());
     }
     if doc.get("panels").is_none() {
