@@ -139,8 +139,12 @@ mod tests {
         use smithay::backend::renderer::element::{Id, Kind};
         use smithay::backend::renderer::{Color32F, ExportMem};
         let device = EGLDevice::enumerate().unwrap().last().expect("EGL device");
+        // SAFETY: The native display comes from a live enumerated EGLDevice and its lifetime is
+        // retained by the EGL objects created here.
         let display = unsafe { EGLDisplay::new(device).unwrap() };
         let context = EGLContext::new(&display).unwrap();
+        // SAFETY: The fresh EGL context is exclusively owned by this renderer; this test issues
+        // GL work only through its renderer methods.
         let mut renderer = unsafe { GlesRenderer::new(context).unwrap() };
         let output = |name: &str| {
             Output::new(

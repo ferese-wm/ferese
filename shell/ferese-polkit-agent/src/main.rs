@@ -206,6 +206,7 @@ fn available_identities(identities: &[Identity]) -> Vec<u32> {
 }
 
 fn choose_identity(available: &[u32]) -> Option<u32> {
+    // SAFETY: geteuid has no pointer arguments or caller-side preconditions.
     let current = unsafe { libc::geteuid() };
     available
         .iter()
@@ -230,6 +231,7 @@ fn process_subject() -> Result<(String, HashMap<String, Value<'static>>), String
     details.insert("pid".to_owned(), Value::from(std::process::id()));
     details.insert(
         "uid".to_owned(),
+        // SAFETY: geteuid has no pointer arguments or caller-side preconditions.
         Value::from(unsafe { libc::geteuid() } as i32),
     );
     details.insert("start-time".to_owned(), Value::from(started));
@@ -311,6 +313,7 @@ async fn run_agent() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // SAFETY: PR_SET_DUMPABLE takes an integer value and does not dereference caller memory.
     unsafe {
         libc::prctl(libc::PR_SET_DUMPABLE, 0);
     }
@@ -551,6 +554,7 @@ mod tests {
         assert_eq!(details["pid"], Value::from(std::process::id()));
         assert_eq!(
             details["uid"],
+            // SAFETY: geteuid has no pointer arguments or caller-side preconditions.
             Value::from(unsafe { libc::geteuid() } as i32)
         );
         assert!(u64::try_from(details["start-time"].clone()).unwrap() > 0);
@@ -558,6 +562,7 @@ mod tests {
 
     #[test]
     fn chooses_current_identity_when_available() {
+        // SAFETY: geteuid has no pointer arguments or caller-side preconditions.
         let current = unsafe { libc::geteuid() };
         let identity = |uid: u32| {
             (

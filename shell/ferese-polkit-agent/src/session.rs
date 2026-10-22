@@ -31,6 +31,8 @@ struct Api {
 
 impl Api {
     fn load() -> Result<Self, String> {
+        // SAFETY: The typed symbols match the system polkit ABI, and the static library handles
+        // keep them loaded for every session.
         unsafe {
             // GLib keeps registered types and their function pointers for the
             // lifetime of the process, including between authentication sessions.
@@ -142,46 +144,77 @@ fn prompt_process(request: AuthenticationRequest) -> Result<PromptProcess, Strin
     Ok(process)
 }
 
+/// # Safety
+/// `data` must be the live Sender retained by SessionGuard, and `prompt` must
+/// be a NUL-terminated string from the polkit request signal.
 unsafe extern "C" fn request_signal(
     _session: Object,
     prompt: *const c_char,
     echo: c_int,
     data: *mut c_void,
 ) {
+    // SAFETY: SessionGuard retains the boxed Sender until the session is cancelled and
+    // unreferenced, after its synchronous signal callbacks finish.
     let tx = unsafe { &*(data as *const Sender<SessionEvent>) };
+    // SAFETY: The polkit request signal provides a live NUL-terminated prompt for the callback
+    // duration.
     let prompt = unsafe { CStr::from_ptr(prompt) }
         .to_string_lossy()
         .into_owned();
     let _ = tx.send(SessionEvent::Request(prompt, echo != 0));
 }
 
+/// # Safety
+/// `data` must be the live Sender retained by SessionGuard, and `text` must
+/// be a NUL-terminated string from the polkit show-info signal.
 unsafe extern "C" fn info(_session: Object, text: *const c_char, data: *mut c_void) {
+    // SAFETY: SessionGuard retains the boxed Sender until the session is cancelled and
+    // unreferenced, after its synchronous signal callbacks finish.
     let tx = unsafe { &*(data as *const Sender<SessionEvent>) };
+    // SAFETY: The polkit text signal provides a live NUL-terminated string for the callback
+    // duration.
     let text = unsafe { CStr::from_ptr(text) }
         .to_string_lossy()
         .into_owned();
     let _ = tx.send(SessionEvent::Info(text));
 }
 
+/// # Safety
+/// `data` must be the live Sender retained by SessionGuard, and `text` must
+/// be a NUL-terminated string from the polkit show-error signal.
 unsafe extern "C" fn error(_session: Object, text: *const c_char, data: *mut c_void) {
+    // SAFETY: SessionGuard retains the boxed Sender until the session is cancelled and
+    // unreferenced, after its synchronous signal callbacks finish.
     let tx = unsafe { &*(data as *const Sender<SessionEvent>) };
+    // SAFETY: The polkit text signal provides a live NUL-terminated string for the callback
+    // duration.
     let text = unsafe { CStr::from_ptr(text) }
         .to_string_lossy()
         .into_owned();
     let _ = tx.send(SessionEvent::Error(text));
 }
 
+/// # Safety
+/// `data` must be the live Sender retained by SessionGuard until this
+/// synchronous polkit completed callback returns.
 unsafe extern "C" fn completed(_session: Object, success: c_int, data: *mut c_void) {
+    // SAFETY: SessionGuard retains the boxed Sender until the session is cancelled and
+    // unreferenced, after its synchronous signal callbacks finish.
     let tx = unsafe { &*(data as *const Sender<SessionEvent>) };
     let _ = tx.send(SessionEvent::Completed(success != 0));
 }
 
+/// # Safety
+/// `session` must be a live GObject. The callback must match the named
+/// signal ABI, and `data` must remain valid until the session is destroyed.
 unsafe fn connect(
     session: Object,
     name: &'static CStr,
     callback: gobject_ffi::GCallback,
     data: *mut c_void,
 ) {
+    // SAFETY: The caller supplies a live session, a static NUL-terminated signal name and a
+    // callback matching that signal; its data remains alive until disconnection.
     unsafe {
         gobject_ffi::g_signal_connect_data(
             session.cast(),
@@ -210,6 +243,8 @@ struct SessionGuard {
 
 impl Drop for SessionGuard {
     fn drop(&mut self) {
+        // SAFETY: This guard owns the session reference and boxed Sender. Cancellation and final
+        // unref finish callbacks before the Sender is reclaimed exactly once.
         unsafe {
             if !self.completed {
                 (self.cancel)(self.object);
@@ -264,11 +299,16 @@ fn run_session(
             },
         )?;
     }
+    // SAFETY: user_new is a typed symbol retained by Api and accepts the selected integer UID.
     let identity = unsafe { (api.user_new)(request.selected_uid as c_int) };
     if identity.is_null() {
         return Err("Could not create polkit identity".into());
     }
+    // SAFETY: identity is a non-null live polkit object and cookie is a NUL-terminated CString
+    // retained for this call.
     let session = unsafe { (api.session_new)(identity, cookie.as_ptr()) };
+    // SAFETY: The caller owns the identity reference returned by user_new; session_new has
+    // retained what it needs.
     unsafe { gobject_ffi::g_object_unref(identity.cast()) };
     if session.is_null() {
         return Err("Could not create polkit session".into());
@@ -283,6 +323,9 @@ fn run_session(
         completed: false,
     };
     let signal_data = signal_data.cast();
+    // SAFETY: The session and boxed signal data outlive all callbacks. Each callback signature
+    // matches its named GLib signal before erasure to GCallback; initiate uses that same live
+    // session.
     unsafe {
         connect(
             session,
@@ -378,6 +421,8 @@ fn run_session(
                         && let Some(response) = response_buffer(&value)
                     {
                         value.zeroize();
+                        // SAFETY: SessionGuard keeps the session alive and response_buffer
+                        // supplies a NUL-terminated response for the synchronous call.
                         unsafe { (api.response)(session, response.as_ptr().cast()) };
                     }
                     value.zeroize();
@@ -408,6 +453,8 @@ fn run_session(
                     .map_err(|e| e.to_string())?
                     .is_some())
         {
+            // SAFETY: SessionGuard still owns this live session and the cancellation symbol
+            // remains loaded.
             unsafe { (api.cancel)(session) };
             stopped = true;
         }
@@ -495,7 +542,11 @@ mod tests {
 
     static RESPONSES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
+    /// # Safety
+    /// `session` must be the live test polkit session with its registered signals.
     unsafe extern "C" fn fake_initiate(session: Object) {
+        // SAFETY: The fake receives a live test session and emits request with the registered
+        // string and integer argument types.
         unsafe {
             gobject_ffi::g_signal_emit_by_name(
                 session.cast(),
@@ -506,14 +557,22 @@ mod tests {
         }
     }
 
+    /// # Safety
+    /// `session` must be the live test polkit session with its registered signals.
     unsafe extern "C" fn fake_cancel(session: Object) {
+        // SAFETY: The fake receives a live test session and emits completed with its registered
+        // gboolean argument type.
         unsafe {
             gobject_ffi::g_signal_emit_by_name(session.cast(), c"completed".as_ptr(), 0 as c_int);
         }
     }
 
+    /// # Safety
+    /// `session` must be the live test polkit session with its registered signals.
     unsafe extern "C" fn fake_response(session: Object, _value: *const c_char) {
         RESPONSES.fetch_add(1, Ordering::SeqCst);
+        // SAFETY: The fake receives a live test session and emits completed with its registered
+        // gboolean argument type.
         unsafe {
             gobject_ffi::g_signal_emit_by_name(session.cast(), c"completed".as_ptr(), 1 as c_int);
         }
@@ -605,7 +664,11 @@ mod tests {
             .unwrap();
     }
 
+    /// # Safety
+    /// `session` must be the live test polkit session with its registered signals.
     unsafe extern "C" fn fake_failed_response(session: Object, _value: *const c_char) {
+        // SAFETY: The fake receives a live test session and emits completed with its registered
+        // gboolean argument type.
         unsafe {
             gobject_ffi::g_signal_emit_by_name(session.cast(), c"completed".as_ptr(), 0 as c_int);
         }

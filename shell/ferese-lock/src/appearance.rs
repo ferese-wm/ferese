@@ -296,6 +296,7 @@ pub fn load_wallpaper(path: &std::path::Path, blur: f32) -> Result<image::Handle
     // Decode and resize scratch buffers have been dropped. Return their freed
     // pages even when glibc would otherwise retain them in an arena.
     #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    // SAFETY: glibc malloc_trim is thread-safe and does not invalidate any live allocation.
     unsafe {
         libc::malloc_trim(0);
     }

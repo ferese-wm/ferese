@@ -275,6 +275,8 @@ fn satellite_receives_exactly_the_owned_listeners_and_no_extra_descriptors() {
     reap(satellite);
 
     // Positive control: with the flag cleared in the forked child, the same descriptor is visible.
+    // SAFETY: F_GETFD only reads flags for the live sentinel descriptor and takes no pointer
+    // argument.
     let flags = unsafe { libc::fcntl(sentinel_fd, libc::F_GETFD) };
     assert_ne!(flags, -1);
     assert_ne!(
@@ -290,6 +292,8 @@ fn satellite_receives_exactly_the_owned_listeners_and_no_extra_descriptors() {
         ("FAKE_SATELLITE_SENTINEL_TARGET", &sentinel_target),
     ]);
     child::test_hook::set_in_child(move || {
+        // SAFETY: The forked child uses async-signal-safe fcntl with scalar flags; its descriptor
+        // table is independent of the parent.
         if unsafe { libc::fcntl(sentinel_fd, libc::F_SETFD, 0) } == -1 {
             return Err(std::io::Error::last_os_error());
         }
@@ -307,6 +311,8 @@ fn satellite_receives_exactly_the_owned_listeners_and_no_extra_descriptors() {
     );
     reap(satellite);
 
+    // SAFETY: F_GETFD only reads flags for the live sentinel descriptor and takes no pointer
+    // argument.
     let flags = unsafe { libc::fcntl(sentinel_fd, libc::F_GETFD) };
     assert_ne!(
         flags & libc::FD_CLOEXEC,

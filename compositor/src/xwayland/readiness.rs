@@ -70,6 +70,8 @@ impl ReadinessSocket {
     pub fn recv_ready(&self, satellite_pid: u32) -> io::Result<bool> {
         let mut buffer = [0_u8; 512];
         let mut control = ControlBuffer {
+            // SAFETY: cmsghdr contains only integer fields and permits an all-zero header before
+            // recvmsg fills it.
             header: unsafe { std::mem::zeroed() },
             payload: [0_u8; CONTROL_CAPACITY],
         };
@@ -77,6 +79,8 @@ impl ReadinessSocket {
             iov_base: buffer.as_mut_ptr().cast(),
             iov_len: buffer.len(),
         };
+        // SAFETY: msghdr permits zero/null fields; all active buffer pointers and lengths are
+        // assigned before recvmsg.
         let mut message: libc::msghdr = unsafe { std::mem::zeroed() };
         message.msg_iov = std::ptr::from_mut(&mut iov);
         message.msg_iovlen = 1;
@@ -220,9 +224,10 @@ mod tests {
     /// Connecting first means the senders can use plain `sendmsg`, whose
     /// glibc export carries no destination address.
     ///
-    /// # Safety
-    /// Async-signal-safe, for use between `fork` and `_exit`.
-    unsafe fn connect_datagram(path: &Path) -> libc::c_int {
+    /// Uses only async-signal-safe operations between `fork` and `_exit`.
+    fn connect_datagram(path: &Path) -> libc::c_int {
+        // SAFETY: All socket address storage is initialized and correctly sized. The connected
+        // descriptor is either returned to its sole owner or closed before returning an error.
         unsafe {
             let fd = libc::socket(libc::AF_UNIX, libc::SOCK_DGRAM, 0);
             if fd < 0 {
@@ -243,7 +248,8 @@ mod tests {
                 std::ptr::from_ref(&address).cast(),
                 // The fixed `sockaddr_un` length is what the kernel expects for
                 // AF_UNIX; `sun_path` is already zero-filled past the name.
-                libc::socklen_t::try_from(std::mem::size_of::<libc::sockaddr_un>()).unwrap(),
+                libc::socklen_t::try_from(std::mem::size_of::<libc::sockaddr_un>())
+                    .expect("sockaddr_un fits socklen_t"),
             ) == -1
             {
                 libc::close(fd);
@@ -264,17 +270,27 @@ mod tests {
     }
 
     fn send_from_child(path: &Path, payload: &[u8]) -> i32 {
-        // SAFETY: the child path performs only socket/bind-free sendto and
-        // _exit, which are async-signal-safe.
+        // SAFETY: the child uses only raw socket/connect/send/_exit calls with
+        // inherited buffers, without allocation or locks.
         unsafe {
             let pid = libc::fork();
             assert!(pid >= 0, "fork must succeed");
             if pid == 0 {
-                let Ok(client) = UnixDatagram::unbound() else {
+                let fd = connect_datagram(path);
+                if fd < 0 {
                     libc::_exit(70);
-                };
-                let sent = client.send_to(payload, path);
-                libc::_exit(if sent.is_ok() { 0 } else { 71 });
+                }
+                let sent = libc::send(
+                    fd,
+                    payload.as_ptr().cast(),
+                    payload.len(),
+                    libc::MSG_NOSIGNAL,
+                );
+                libc::_exit(if sent == payload.len() as isize {
+                    0
+                } else {
+                    71
+                });
             }
             let mut status = 0;
             libc::waitpid(pid, std::ptr::from_mut(&mut status), 0);
@@ -287,6 +303,8 @@ mod tests {
     /// The child stays alive so the receiver can name its PID, and the extra
     /// descriptor must be released by the receiver rather than leaked.
     fn send_with_descriptor_from_child(path: &Path, sentinel: &Path) -> i32 {
+        let name = std::ffi::CString::new(sentinel.as_os_str().as_encoded_bytes())
+            .expect("test sentinel pathname contains no NUL");
         // SAFETY: the child performs only socket/open/sendmsg/_exit, all
         // async-signal-safe.
         unsafe {
@@ -299,10 +317,6 @@ mod tests {
                 }
                 // A descriptor for a known file, so the receiver can prove it
                 // closed exactly this one rather than guessing at a count.
-                let Ok(name) = std::ffi::CString::new(sentinel.as_os_str().as_encoded_bytes())
-                else {
-                    libc::_exit(73);
-                };
                 let spare = libc::open(name.as_ptr(), libc::O_RDONLY);
                 if spare < 0 {
                     libc::_exit(72);
@@ -396,8 +410,9 @@ mod tests {
         );
         let _ = std::fs::remove_file(&sentinel);
 
-        // SAFETY: reaping a direct child that has finished sleeping.
         let mut status = 0;
+        // SAFETY: The status pointer is writable and the PID names a direct child whose wait
+        // status belongs to this test.
         unsafe { libc::waitpid(pid, std::ptr::from_mut(&mut status), 0) };
     }
 
@@ -414,8 +429,9 @@ mod tests {
             "a credential that is not the first control message must still count"
         );
 
-        // SAFETY: reaping a direct child that has finished sleeping.
         let mut status = 0;
+        // SAFETY: The status pointer is writable and the PID names a direct child whose wait
+        // status belongs to this test.
         unsafe { libc::waitpid(pid, std::ptr::from_mut(&mut status), 0) };
     }
 
@@ -426,8 +442,14 @@ mod tests {
         sentinel: &Path,
         count: usize,
     ) -> i32 {
-        // SAFETY: the child performs only socket/open/sendmsg/sleep/_exit, all
-        // async-signal-safe except sleep, which is a bounded wait before exit.
+        let name = std::ffi::CString::new(sentinel.as_os_str().as_encoded_bytes())
+            .expect("test sentinel pathname contains no NUL");
+        assert!(
+            count <= 64,
+            "descriptor flood must fit the aligned control buffer"
+        );
+        // SAFETY: path allocation and bounds checks finish before fork. The child
+        // uses only async-signal-safe socket/open/sendmsg/sleep/_exit operations.
         unsafe {
             let pid = libc::fork();
             assert!(pid >= 0, "fork must succeed");
@@ -436,10 +458,6 @@ mod tests {
                 if fd < 0 {
                     libc::_exit(70);
                 }
-                let Ok(name) = std::ffi::CString::new(sentinel.as_os_str().as_encoded_bytes())
-                else {
-                    libc::_exit(73);
-                };
                 let sentinel_fd = libc::open(name.as_ptr(), libc::O_RDONLY);
                 if sentinel_fd < 0 {
                     libc::_exit(72);
@@ -455,12 +473,13 @@ mod tests {
                 };
                 // A control buffer large enough to *send* the flood; the
                 // receiver's much smaller buffer is what truncates it.
-                let mut control = [0_u8; 1024];
+                // cmsghdr storage also guarantees alignment for CMSG_FIRSTHDR.
+                let mut control: [libc::cmsghdr; 64] = std::mem::zeroed();
                 let mut message: libc::msghdr = std::mem::zeroed();
                 message.msg_iov = std::ptr::from_mut(&mut iov);
                 message.msg_iovlen = 1;
                 message.msg_control = control.as_mut_ptr().cast();
-                message.msg_controllen = control.len() as _;
+                message.msg_controllen = std::mem::size_of_val(&control) as _;
                 let header = libc::CMSG_FIRSTHDR(&message);
                 if header.is_null() {
                     libc::_exit(74);
@@ -493,6 +512,8 @@ mod tests {
 
     /// Send `count` malformed datagrams, each carrying a descriptor.
     fn send_malformed_storm_from_child(path: &Path, sentinel: &Path, count: usize) -> i32 {
+        let name = std::ffi::CString::new(sentinel.as_os_str().as_encoded_bytes())
+            .expect("test sentinel pathname contains no NUL");
         // SAFETY: the child performs only socket/open/sendmsg/_exit, all
         // async-signal-safe.
         unsafe {
@@ -503,10 +524,6 @@ mod tests {
                 if fd < 0 {
                     libc::_exit(70);
                 }
-                let Ok(name) = std::ffi::CString::new(sentinel.as_os_str().as_encoded_bytes())
-                else {
-                    libc::_exit(73);
-                };
                 let sentinel_fd = libc::open(name.as_ptr(), libc::O_RDONLY);
                 if sentinel_fd < 0 {
                     libc::_exit(72);
@@ -573,8 +590,9 @@ mod tests {
         let before = open_fd_count();
         // Far more descriptors than the receiver's 128-byte payload can hold.
         let pid = send_descriptors_beyond_capacity_from_child(&path, &sentinel, 64);
-        // SAFETY: reaping a direct child that has finished sleeping.
         let mut status = 0;
+        // SAFETY: The status pointer is writable and the PID names a direct child whose wait
+        // status belongs to this test.
         unsafe { libc::waitpid(pid, std::ptr::from_mut(&mut status), 0) };
         assert!(
             libc::WIFEXITED(status) && libc::WEXITSTATUS(status) == 0,
@@ -688,8 +706,9 @@ mod tests {
         );
         let _ = std::fs::remove_file(&ready_sentinel);
 
-        // SAFETY: reaping a direct child that has finished sleeping.
         let mut ready_status = 0;
+        // SAFETY: The status pointer is writable and the PID names a direct child whose wait
+        // status belongs to this test.
         unsafe { libc::waitpid(ready_pid, std::ptr::from_mut(&mut ready_status), 0) };
     }
 
@@ -856,15 +875,24 @@ mod tests {
         let socket = ReadinessSocket::create(&runtime, 5).unwrap();
         let path = socket.path().to_owned();
 
+        // SAFETY: The child uses only raw socket/send/usleep/_exit calls with inherited
+        // stack storage, without allocation or returning to the test harness.
         let pid = unsafe {
             let pid = libc::fork();
             assert!(pid >= 0);
             if pid == 0 {
+                let fd = connect_datagram(&path);
+                if fd < 0 {
+                    libc::_exit(70);
+                }
+                let payload = b"RELOADING=1\nSTATUS=starting";
                 for _ in 0..500 {
-                    if let Ok(client) = UnixDatagram::unbound()
-                        && client
-                            .send_to(b"RELOADING=1\nSTATUS=starting", &path)
-                            .is_ok()
+                    if libc::send(
+                        fd,
+                        payload.as_ptr().cast(),
+                        payload.len(),
+                        libc::MSG_NOSIGNAL,
+                    ) == payload.len() as isize
                     {
                         libc::_exit(0);
                     }
@@ -889,6 +917,7 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(2));
         }
 
+        // SAFETY: status is writable and pid names the direct child created by this test.
         unsafe {
             let mut status = 0;
             libc::waitpid(pid, std::ptr::from_mut(&mut status), 0);

@@ -195,6 +195,7 @@ fn private_directory() -> Result<PathBuf, String> {
         }
         Ok(metadata) => {
             use std::os::unix::fs::MetadataExt;
+            // SAFETY: geteuid has no pointer arguments or caller-side preconditions.
             if !metadata.is_dir() || metadata.uid() != unsafe { libc::geteuid() } {
                 return Err("Refusing to stage screenshots in an untrusted directory".into());
             }

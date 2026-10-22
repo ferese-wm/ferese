@@ -146,9 +146,10 @@ fn wait_for_poll(shared: &PollState) -> Option<u64> {
 }
 
 fn wake_status(shared: &PollState) {
-    let mut state = shared.0.lock().unwrap_or_else(|error| error.into_inner());
-    state.4 = state.4.wrapping_add(1);
-    shared.1.notify_one();
+    if let Ok(mut state) = shared.0.lock() {
+        state.4 = state.4.wrapping_add(1);
+        shared.1.notify_one();
+    }
 }
 
 impl Service {
@@ -957,6 +958,26 @@ mod tests {
             stream.as_mut().poll_next(&mut context),
             Poll::Ready(None)
         ));
+    }
+
+    #[test]
+    fn status_wake_does_not_reuse_state_after_a_worker_panics() {
+        let shared = Arc::new((Mutex::new((0, false, None, false, 0)), Condvar::new()));
+        let worker = shared.clone();
+        assert!(
+            thread::spawn(move || {
+                let _guard = worker.0.lock().expect("fresh polling state");
+                panic!("simulate a failed status worker");
+            })
+            .join()
+            .is_err()
+        );
+
+        wake_status(&shared);
+        assert!(
+            shared.0.is_poisoned(),
+            "wake must not recover partially updated state"
+        );
     }
 
     #[test]

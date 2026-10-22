@@ -541,6 +541,8 @@ pub(crate) mod tests {
                 assert_eq!(after, before, "rejected snapshot wrote private pixels");
             }
             // Restore the client's colored buffer for subsequent renderer checks.
+            // SAFETY: before was copied from this checked SHM layout, so the destination has
+            // before.len() writable bytes and does not overlap the owned backup.
             unsafe {
                 std::ptr::copy_nonoverlapping(
                     before.as_ptr(),

@@ -14,6 +14,8 @@ pub(super) fn load(path: &Path) -> Result<Pixels, String> {
     // them here, after decode has dropped its temporaries, on the worker only.
     // The returned pixels have their own mapping and are unaffected by trimming.
     #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    // SAFETY: glibc malloc_trim is thread-safe and does not invalidate live pixel mappings or
+    // allocations.
     unsafe {
         libc::malloc_trim(0);
     }

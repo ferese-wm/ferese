@@ -61,6 +61,7 @@ fn main() -> iced::Result {
     });
 
     // Password-bearing UI processes must not create core dumps.
+    // SAFETY: PR_SET_DUMPABLE takes an integer value and does not dereference caller memory.
     unsafe {
         libc::prctl(libc::PR_SET_DUMPABLE, 0);
     }

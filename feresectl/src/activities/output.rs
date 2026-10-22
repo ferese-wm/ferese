@@ -32,6 +32,7 @@ impl Read for Output {
             };
             // The pipe has exactly one reader. Once readable (or hung up), a
             // pipe read returns available bytes (or EOF) without filling bytes.
+            // SAFETY: fd is a live pollfd and the count of one matches its writable storage.
             let result = unsafe { libc::poll(&mut fd, 1, 20) };
             if result > 0 {
                 return self.pipe.read(bytes);

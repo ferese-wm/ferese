@@ -247,8 +247,9 @@ pub fn command(action: &Action, socket: &Path, json_output: bool) -> Result<(), 
 static CHILD: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 extern "C" fn terminate(signal: i32) {
     let pid = CHILD.load(std::sync::atomic::Ordering::Relaxed);
-    // SAFETY: kill is async-signal-safe; the PID belongs to this wrapper's child.
     if pid > 0 {
+        // SAFETY: kill is async-signal-safe and has no pointer arguments; pid names the wrapper
+        // child.
         unsafe {
             libc::kill(pid, signal);
         }
@@ -325,6 +326,8 @@ pub fn run(
     // Terminal-generated signals reach both processes in the shell's job group.
     // The wrapper waits for the actual child result; the child resets inherited
     // dispositions before exec. SIGTSTP/SIGCONT retain normal job control.
+    // SAFETY: The handler only loads an atomic PID and calls kill. The pre_exec hook only resets
+    // signal dispositions, without allocation or locks.
     unsafe {
         libc::signal(libc::SIGINT, libc::SIG_IGN);
         libc::signal(libc::SIGQUIT, libc::SIG_IGN);
@@ -442,6 +445,8 @@ pub fn run(
     }
     if let Some(signal) = status.signal() {
         // Preserve signal termination as well as the conventional shell status.
+        // SAFETY: signal and raise use a signal obtained from the child exit status and have no
+        // borrowed memory.
         unsafe {
             libc::signal(signal, libc::SIG_DFL);
             libc::raise(signal);

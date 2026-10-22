@@ -163,12 +163,16 @@ async fn peer_watch_keeps_descriptor_flags_and_response_bytes_untouched() {
     use std::os::fd::AsRawFd;
 
     let (bridge, mut server) = pair();
+    // SAFETY: F_GETFL only reads flags for the bridge-owned descriptor and takes no pointer
+    // argument.
     let flags = unsafe { libc::fcntl(bridge.0.shutdown.as_raw_fd(), libc::F_GETFL) };
     server.write_all(b"x").unwrap();
     tokio::time::timeout(Duration::from_secs(1), bridge.closed())
         .await
         .unwrap();
     assert_eq!(
+        // SAFETY: F_GETFL only reads flags for the bridge-owned descriptor and takes no pointer
+        // argument.
         unsafe { libc::fcntl(bridge.0.shutdown.as_raw_fd(), libc::F_GETFL) },
         flags
     );

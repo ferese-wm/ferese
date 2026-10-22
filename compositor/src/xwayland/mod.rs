@@ -806,6 +806,7 @@ pub(crate) fn runtime_directory() -> Result<PathBuf, String> {
 fn validate_runtime_directory(path: &std::path::Path) -> Result<(), String> {
     let metadata = std::fs::symlink_metadata(path)
         .map_err(|error| format!("XDG_RUNTIME_DIR is unusable ({}): {error}", path.display()))?;
+    // SAFETY: geteuid has no pointer arguments or caller-side preconditions.
     let uid = unsafe { libc::geteuid() };
     if !metadata.is_dir()
         || metadata.file_type().is_symlink()

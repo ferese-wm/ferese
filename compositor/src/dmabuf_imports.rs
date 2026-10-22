@@ -306,6 +306,8 @@ mod tests {
         queue.process(&1, |_| failures += 1);
         // SAFETY: F_GETFD observes descriptor validity without modifying it.
         assert_eq!(unsafe { libc::fcntl(fd_removed, libc::F_GETFD) }, -1);
+        // SAFETY: F_GETFD observes an integer descriptor without modifying it or dereferencing
+        // caller memory.
         assert_ne!(unsafe { libc::fcntl(fd_expired, libc::F_GETFD) }, -1);
         queue.remove_if(
             |entry| entry.deadline <= now + MAX_WAIT,
@@ -315,6 +317,8 @@ mod tests {
             |entry| entry.deadline <= now + MAX_WAIT + Duration::from_secs(1),
             |_| failures += 1,
         );
+        // SAFETY: F_GETFD observes an integer descriptor without modifying it or dereferencing
+        // caller memory.
         assert_eq!(unsafe { libc::fcntl(fd_expired, libc::F_GETFD) }, -1);
         assert_eq!(failures, 2);
         assert!(queue.deadline().is_none());

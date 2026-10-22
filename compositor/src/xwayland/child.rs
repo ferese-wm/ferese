@@ -117,6 +117,7 @@ fn satellite_command(
     }
 
     // PR_SET_PDEATHSIG follows the spawning thread; spawn from the compositor thread.
+    // SAFETY: getpid has no pointer arguments or caller-side preconditions.
     let expected_parent = unsafe { libc::getpid() };
     // SAFETY: this child-only hook performs only raw, non-allocating
     // Linux/POSIX operations on prevalidated descriptors. All formatting and
@@ -203,6 +204,8 @@ impl OwnedProcessGroup {
         if self.reaped {
             return Observation::Exited;
         }
+        // SAFETY: siginfo_t is a C record whose scalar and pointer storage permits zero
+        // initialization before waitid fills it.
         let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
         // SAFETY: `info` is a live, correctly aligned local; P_PID with our own
         // pid, and WNOWAIT|WNOHANG leave the status claimable by `wait`.

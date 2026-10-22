@@ -1547,6 +1547,7 @@ mod tests {
 
         let mut events = smithay::reexports::calloop::EventLoop::try_new().unwrap();
         let mut state = crate::startup_tests::state(&mut events);
+        // SAFETY: gettid has no pointer arguments or caller-side preconditions.
         let children_path = format!("/proc/self/task/{}/children", unsafe { libc::gettid() });
         assert!(
             std::fs::read_to_string(&children_path)
@@ -1585,6 +1586,8 @@ mod tests {
         for pid in children {
             let mut status = 0;
             assert_eq!(
+                // SAFETY: status is a live writable integer; waitpid uses only a child PID and
+                // WNOHANG.
                 unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) },
                 -1
             );

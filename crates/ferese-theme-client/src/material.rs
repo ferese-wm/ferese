@@ -32,11 +32,13 @@ impl ModalMaterial {
         else {
             return Err("Dialog materials require Wayland".into());
         };
-        // Iced lends live native handles; this backend borrows its connection.
+        // SAFETY: Iced keeps its Wayland display alive while this material attachment borrows the
+        // connection.
         let backend = unsafe {
             wayland_client::backend::Backend::from_foreign_display(display.display.as_ptr().cast())
         };
         let connection = Connection::from_backend(backend);
+        // SAFETY: The borrowed native window handle identifies a live wl_surface on this display.
         let id = unsafe {
             wayland_client::backend::ObjectId::from_ptr(
                 wl_surface::WlSurface::interface(),
@@ -134,14 +136,15 @@ mod tests {
     impl HasDisplayHandle for Window {
         fn display_handle(&self) -> Result<DisplayHandle<'_>, HandleError> {
             let pointer = NonNull::new(self.connection.backend().display_ptr().cast()).unwrap();
-            // The connection outlives the returned handle.
+            // SAFETY: The display pointer comes from self.connection, which outlives this
+            // borrowed handle.
             Ok(unsafe { DisplayHandle::borrow_raw(WaylandDisplayHandle::new(pointer).into()) })
         }
     }
     impl HasWindowHandle for Window {
         fn window_handle(&self) -> Result<WindowHandle<'_>, HandleError> {
             let pointer = NonNull::new(self.surface.id().as_ptr().cast()).unwrap();
-            // The surface outlives the returned handle.
+            // SAFETY: The wl_surface is owned by self and outlives this borrowed handle.
             Ok(unsafe { WindowHandle::borrow_raw(WaylandWindowHandle::new(pointer).into()) })
         }
     }

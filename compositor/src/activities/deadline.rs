@@ -22,6 +22,7 @@ impl Deadline {
         if fd < 0 {
             return Err(io::Error::last_os_error().into());
         }
+        // SAFETY: timerfd_create succeeded above; this fresh descriptor transfers to one OwnedFd.
         let fd = unsafe { OwnedFd::from_raw_fd(fd) };
         let token = handle.insert_source(
             Generic::new(fd.try_clone()?, Interest::READ, Mode::Level),
@@ -113,11 +114,14 @@ mod tests {
         assert_eq!(unsafe { libc::poll(&raw mut pollfd, 1, 500) }, 1);
         let mut counter = 0_u64;
         assert_eq!(
+            // SAFETY: counter is writable for the requested eight bytes and deadline owns the
+            // timer descriptor.
             unsafe { libc::read(deadline.fd.as_raw_fd(), (&raw mut counter).cast(), 8) },
             8
         );
         assert_eq!(counter, 1);
         deadline.update(None).unwrap();
+        // SAFETY: pollfd is a live writable pollfd and the entry count is one.
         assert_eq!(unsafe { libc::poll(&raw mut pollfd, 1, 0) }, 0);
     }
 }

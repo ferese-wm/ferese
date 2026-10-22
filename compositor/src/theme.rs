@@ -290,11 +290,15 @@ impl Engine {
 
     pub(crate) fn arm_clock(&self, next: Option<Timestamp>) -> io::Result<()> {
         let Some(fd) = &self.clock else { return Ok(()) };
+        // SAFETY: itimerspec contains only integer timespec fields, for which zero is a valid
+        // disarmed timer.
         let mut timer: libc::itimerspec = unsafe { std::mem::zeroed() };
         if let Some(next) = next {
             timer.it_value.tv_sec = next.as_second();
             timer.it_value.tv_nsec = i64::from(next.subsec_nanosecond());
         }
+        // SAFETY: fd retains the timer descriptor and timer is fully initialized; the optional
+        // previous-value pointer may be null.
         let result = unsafe {
             libc::timerfd_settime(
                 fd.as_raw_fd(),
@@ -316,12 +320,16 @@ pub(crate) fn init(
     state: &mut Ferese,
     candidate: Candidate,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    // SAFETY: timerfd_create takes scalar arguments and its result is checked before ownership is
+    // adopted.
     let clock = unsafe {
         libc::timerfd_create(libc::CLOCK_REALTIME, libc::TFD_CLOEXEC | libc::TFD_NONBLOCK)
     };
     if clock < 0 {
         return Err(io::Error::last_os_error().into());
     }
+    // SAFETY: timerfd_create returned a fresh nonnegative descriptor whose ownership transfers to
+    // OwnedFd.
     let clock = unsafe { OwnedFd::from_raw_fd(clock) };
     let source = clock.try_clone()?;
     state.theme_engine.clock = Some(clock);
@@ -330,6 +338,8 @@ pub(crate) fn init(
         |_, _, state| {
             if let Some(clock) = &state.theme_engine.clock {
                 let mut expirations = 0u64;
+                // SAFETY: expirations is writable for the requested eight bytes and clock owns
+                // the descriptor.
                 unsafe { libc::read(clock.as_raw_fd(), (&mut expirations as *mut u64).cast(), 8) };
             }
             state.refresh_theme();
@@ -354,6 +364,8 @@ pub(crate) fn init(
             use std::io::BufRead;
             use std::os::unix::process::CommandExt;
             let mut command = crate::process::command("gsettings");
+            // SAFETY: The pre_exec hook only invokes async-signal-safe prctl and constructs an OS
+            // error on failure, without allocation or locks.
             unsafe {
                 command.pre_exec(|| {
                     if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM) == -1 {

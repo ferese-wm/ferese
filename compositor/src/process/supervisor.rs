@@ -230,6 +230,8 @@ if os.environ['FERESE_CLIENT_RESTART'] == '1':
             rows[1].split_whitespace().next()
         );
         let child_pid = owner.borrow().child.as_ref().unwrap().id();
+        // SAFETY: kill has no pointer arguments and the supervisor retains the unreaped child
+        // owning this PID.
         unsafe {
             libc::kill(child_pid as i32, libc::SIGKILL);
         }

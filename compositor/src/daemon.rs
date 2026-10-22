@@ -278,6 +278,7 @@ mod tests {
         runner.reconcile(&[config], SessionPolicy::Desktop);
         assert!(runner.0.is_empty());
         let deadline = Instant::now() + Duration::from_secs(2);
+        // SAFETY: kill with signal zero only probes an integer PID and has no pointer arguments.
         while unsafe { libc::kill(pid as i32, 0) } == 0 {
             assert!(
                 Instant::now() < deadline,

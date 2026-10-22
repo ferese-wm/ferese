@@ -488,8 +488,12 @@ mod tests {
         let mut events = EventLoop::try_new().unwrap();
         let mut state = crate::startup_tests::state(&mut events);
         let display =
+            // SAFETY: The native display comes from a live enumerated EGLDevice and its lifetime
+            // is retained by the EGL objects created here.
             unsafe { EGLDisplay::new(EGLDevice::enumerate().unwrap().last().unwrap()).unwrap() };
         let context = EGLContext::new(&display).unwrap();
+        // SAFETY: The fresh EGL context is exclusively owned by this renderer; this test issues
+        // GL work only through its renderer methods.
         let mut renderer = unsafe { GlesRenderer::new(context).unwrap() };
         let output = Output::new(
             "nested".into(),

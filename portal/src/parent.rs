@@ -107,11 +107,13 @@ impl Parent {
         else {
             return Err("Portal parenting requires Wayland".into());
         };
-        // The window lends live handles; the borrowed backend never owns the display.
+        // SAFETY: The Iced runtime retains its display connection while this parent attachment
+        // borrows the native handles.
         let backend = unsafe {
             wayland_client::backend::Backend::from_foreign_display(display.display.as_ptr().cast())
         };
         let connection = Connection::from_backend(backend);
+        // SAFETY: The native window handle identifies a live wl_surface on the borrowed display.
         let id = unsafe {
             wayland_client::backend::ObjectId::from_ptr(
                 wl_surface::WlSurface::interface(),

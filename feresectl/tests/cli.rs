@@ -310,6 +310,8 @@ fn run_preserves_child_exit_and_signal_status() {
 fn wrapper_forwards_termination_and_preserves_job_control_group() {
     use std::os::unix::process::{CommandExt, ExitStatusExt};
     let mut command = ctl(&["run", "--", "sh", "-c", "kill -STOP $$; sleep 30"]);
+    // SAFETY: The child hook calls only async-signal-safe setpgid and performs no allocation
+    // before exec.
     unsafe {
         command.pre_exec(|| {
             libc::setpgid(0, 0);
@@ -319,7 +321,11 @@ fn wrapper_forwards_termination_and_preserves_job_control_group() {
     let mut child = command.spawn().unwrap();
     std::thread::sleep(std::time::Duration::from_millis(150));
     let pid = child.id() as i32;
+    // SAFETY: kill has no pointer arguments; the unreaped test child owns this PID and process
+    // group.
     assert_eq!(unsafe { libc::kill(-pid, libc::SIGCONT) }, 0);
+    // SAFETY: kill has no pointer arguments; the unreaped test child owns this PID and process
+    // group.
     assert_eq!(unsafe { libc::kill(pid, libc::SIGTERM) }, 0);
     assert_eq!(child.wait().unwrap().signal(), Some(libc::SIGTERM));
 }
@@ -328,6 +334,8 @@ fn wrapper_forwards_termination_and_preserves_job_control_group() {
 fn terminal_ctrl_c_reaches_child_and_wrapper_returns_sigint() {
     use std::os::unix::process::{CommandExt, ExitStatusExt};
     let mut command = ctl(&["run", "--", "sleep", "30"]);
+    // SAFETY: The child hook calls only async-signal-safe setpgid and performs no allocation
+    // before exec.
     unsafe {
         command.pre_exec(|| {
             libc::setpgid(0, 0);
@@ -336,6 +344,8 @@ fn terminal_ctrl_c_reaches_child_and_wrapper_returns_sigint() {
     }
     let mut child = command.spawn().unwrap();
     std::thread::sleep(std::time::Duration::from_millis(150));
+    // SAFETY: kill has no pointer arguments; the unreaped test child owns this PID and process
+    // group.
     assert_eq!(unsafe { libc::kill(-(child.id() as i32), libc::SIGINT) }, 0);
     assert_eq!(child.wait().unwrap().signal(), Some(libc::SIGINT));
 }
@@ -419,6 +429,8 @@ fn cargo_adapter_completion_does_not_wait_for_descendant_stdout() {
         .trim()
         .parse()
         .unwrap();
+    // SAFETY: kill has no pointer arguments; this is the descendant PID reported by the test
+    // command.
     unsafe {
         libc::kill(descendant, libc::SIGTERM);
     }

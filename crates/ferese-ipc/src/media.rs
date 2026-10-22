@@ -7,6 +7,7 @@ pub fn now_us() -> u64 {
         tv_nsec: 0,
     };
     // CLOCK_MONOTONIC shares one epoch between the compositor and shell.
+    // SAFETY: clock_gettime writes only to the live, aligned timespec passed here.
     if unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut time) } != 0 {
         return 0;
     }

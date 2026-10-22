@@ -197,7 +197,11 @@ fn renderer() -> GlesRenderer {
         .into_iter()
         .find(|device| device.is_software() == software)
         .expect("the requested EGL device");
+    // SAFETY: The native display comes from a live enumerated EGLDevice and its lifetime is
+    // retained by the EGL objects created here.
     let display = unsafe { EGLDisplay::new(device).unwrap() };
+    // SAFETY: The fresh EGL context is exclusively owned by this renderer; this test issues GL
+    // work only through its renderer methods.
     unsafe { GlesRenderer::new(EGLContext::new(&display).unwrap()).unwrap() }
 }
 
@@ -207,6 +211,8 @@ fn window_corner_shader_timing_sample() {
     let mut renderer = renderer();
     let driver = renderer
         .with_context(|gl| {
+            // SAFETY: The current renderer context returns a live NUL-terminated GL_RENDERER
+            // string, copied before leaving with_context.
             unsafe { std::ffi::CStr::from_ptr(gl.GetString(0x1f01).cast()) }
                 .to_string_lossy()
                 .into_owned()

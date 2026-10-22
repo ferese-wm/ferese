@@ -276,6 +276,8 @@ mod tests {
         if done.is_err() {
             // Reap a stuck test child before reporting a failure. The reader
             // still owns Child, so this PID cannot have been reused.
+            // SAFETY: kill has no pointer arguments; the reader still owns the unreaped child,
+            // preventing PID reuse.
             unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
         }
 

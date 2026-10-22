@@ -343,7 +343,11 @@ fn lock_scene_draws_the_pointer_and_delivers_client_cursor_frames() {
         .set_location((20.0, 20.0).into());
 
     let device = EGLDevice::enumerate().unwrap().last().expect("EGL device");
+    // SAFETY: The native display comes from a live enumerated EGLDevice and its lifetime is
+    // retained by the EGL objects created here.
     let display = unsafe { EGLDisplay::new(device).unwrap() };
+    // SAFETY: The fresh EGL context is exclusively owned by this renderer; this test issues GL
+    // work only through its renderer methods.
     let mut renderer = unsafe { GlesRenderer::new(EGLContext::new(&display).unwrap()).unwrap() };
     let mut texture =
         Offscreen::<GlesTexture>::create_buffer(&mut renderer, Fourcc::Abgr8888, (320, 240).into())
@@ -507,8 +511,12 @@ fn capture_privacy_pixels_and_policy_transitions() {
     let id = state.windows.ids()[&secret];
     assert!(state.window_content_ready(&secret));
     let device = EGLDevice::enumerate().unwrap().last().expect("EGL device");
+    // SAFETY: The native display comes from a live enumerated EGLDevice and its lifetime is
+    // retained by the EGL objects created here.
     let display = unsafe { EGLDisplay::new(device).unwrap() };
     let context = EGLContext::new(&display).unwrap();
+    // SAFETY: The fresh EGL context is exclusively owned by this renderer; this test issues GL
+    // work only through its renderer methods.
     let mut renderer = unsafe { GlesRenderer::new(context).unwrap() };
     let mut display_texture =
         Offscreen::<GlesTexture>::create_buffer(&mut renderer, Fourcc::Abgr8888, (320, 240).into())
@@ -1107,8 +1115,12 @@ fn resize_dependencies_protocol_and_pixels() {
         "sampling mutated authoritative state"
     );
     let device = EGLDevice::enumerate().unwrap().last().expect("EGL device");
+    // SAFETY: The native display comes from a live enumerated EGLDevice and its lifetime is
+    // retained by the EGL objects created here.
     let display = unsafe { EGLDisplay::new(device).unwrap() };
     let context = EGLContext::new(&display).unwrap();
+    // SAFETY: The fresh EGL context is exclusively owned by this renderer; this test issues GL
+    // work only through its renderer methods.
     let mut renderer = unsafe { GlesRenderer::new(context).unwrap() };
     let mut display_texture =
         Offscreen::<GlesTexture>::create_buffer(&mut renderer, Fourcc::Abgr8888, (320, 240).into())

@@ -269,12 +269,18 @@ fn launched_clients_unblock_termination_signals_and_keep_private_sockets() {
     }
 
     // Child setup must not unblock the compositor's own signalfd mask.
+    // SAFETY: sigset_t is writable C storage initialized before pthread_sigmask fills its
+    // contents.
     let mut mask = unsafe { std::mem::zeroed() };
     assert_eq!(
+        // SAFETY: mask is writable sigset_t storage; a null input set queries the mask without
+        // changing it.
         unsafe { libc::pthread_sigmask(libc::SIG_BLOCK, std::ptr::null(), &mut mask) },
         0
     );
+    // SAFETY: pthread_sigmask initialized mask above and SIGINT/SIGTERM are valid signal numbers.
     assert_eq!(unsafe { libc::sigismember(&mask, libc::SIGINT) }, 1);
+    // SAFETY: pthread_sigmask initialized mask above and SIGINT/SIGTERM are valid signal numbers.
     assert_eq!(unsafe { libc::sigismember(&mask, libc::SIGTERM) }, 1);
     drop(signals);
 }
@@ -308,6 +314,8 @@ fn explicit_client_exit_is_reaped_without_stopping_the_compositor() {
 
     let mut status = 0;
     assert_eq!(
+        // SAFETY: status is a live writable integer and pid names this fixture child; WNOHANG
+        // cannot block.
         unsafe { libc::waitpid(pid as i32, &mut status, libc::WNOHANG) },
         -1
     );

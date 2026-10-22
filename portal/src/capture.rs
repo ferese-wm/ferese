@@ -422,6 +422,8 @@ impl Dispatch<frame::ZwlrScreencopyFrameV1, ()> for State {
                         return Err(std::io::Error::last_os_error().to_string());
                     }
 
+                    // SAFETY: memfd_create succeeded above and returned a fresh descriptor whose
+                    // ownership transfers to File.
                     let file = unsafe { File::from_raw_fd(fd) };
                     file.set_len(bytes as u64).map_err(|e| e.to_string())?;
                     // SAFETY: the file has the checked mapping length and lives with the mapping.

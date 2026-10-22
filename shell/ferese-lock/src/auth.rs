@@ -26,7 +26,11 @@ struct Credentials {
 const SUCCESS: c_int = 0;
 const CONV_ERR: c_int = 19;
 
-// Linux-PAM owns successful response allocations and frees them using free().
+/// Linux-PAM owns successful response allocations and frees them using free().
+///
+/// # Safety
+/// PAM must supply `count` readable message pointers, a writable output slot and
+/// the live, exclusively borrowed Credentials supplied to the conversation.
 unsafe extern "C" fn converse(
     count: c_int,
     messages: *mut *const Message,
@@ -36,6 +40,8 @@ unsafe extern "C" fn converse(
     if count <= 0 || count > 32 || messages.is_null() || out.is_null() || data.is_null() {
         return CONV_ERR;
     }
+    // SAFETY: PAM supplies count message pointers and a writable response slot. data borrows
+    // Credentials for the synchronous conversation; successful calloc responses transfer to PAM.
     unsafe {
         *out = std::ptr::null_mut();
         let credentials = &mut *(data as *mut Credentials);
@@ -94,6 +100,8 @@ unsafe extern "C" fn converse(
 
 pub fn username() -> Result<String, String> {
     // Never trust USER/LOGNAME for the account being unlocked.
+    // SAFETY: getpwuid_r receives initialized writable locals and the actual buffer length. Its
+    // returned name is read only after success, while the buffer remains alive.
     unsafe {
         let mut entry: libc::passwd = std::mem::zeroed();
         let mut result = std::ptr::null_mut();
@@ -114,6 +122,8 @@ pub fn username() -> Result<String, String> {
 
 pub fn available() -> bool {
     std::path::Path::new("/etc/pam.d/ferese-lock").is_file()
+        // SAFETY: Only the system PAM library is loaded, and no symbols survive the library
+        // handle.
         && unsafe { libloading::Library::new("libpam.so.0") }.is_ok()
 }
 
@@ -135,6 +145,8 @@ fn authenticate_with(user: &str, password: &str, config: Option<&CStr>) -> bool 
         password: secret,
         password_prompts: 0,
     };
+    // SAFETY: The typed symbols match the PAM ABI. Strings, conversation and credentials remain
+    // alive through pam_end, and the library outlives every symbol call.
     unsafe {
         let Ok(library) = libloading::Library::new("libpam.so.0") else {
             return false;
@@ -232,6 +244,8 @@ mod tests {
         };
         let mut prompts = [&first as *const Message, &first as *const Message];
         let mut responses = std::ptr::null_mut();
+        // SAFETY: The message array, response slot and Credentials are live and correctly typed
+        // for converse.
         unsafe {
             assert_eq!(
                 converse(

@@ -59,6 +59,7 @@ impl Drop for CreatedPath {
 
 fn validate_shared_directory(path: &Path) -> io::Result<()> {
     let metadata = fs::symlink_metadata(path)?;
+    // SAFETY: geteuid has no pointer arguments or caller-side preconditions.
     let uid = unsafe { libc::geteuid() };
     if !metadata.is_dir()
         || metadata.file_type().is_symlink()

@@ -13,6 +13,8 @@ pub(crate) fn run() -> Result<(), Box<dyn std::error::Error>> {
             .filter(|fd| *fd >= 3)
         {
             // These session-helper descriptors must never reach ordinary startup apps.
+            // SAFETY: fcntl receives integer descriptor flags, without pointer arguments; invalid
+            // descriptors return an error.
             unsafe {
                 let flags = libc::fcntl(fd, libc::F_GETFD);
                 if flags < 0 || libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC) < 0 {
@@ -76,6 +78,8 @@ pub(crate) fn run() -> Result<(), Box<dyn std::error::Error>> {
             .env_remove("FERESE_PUBLIC_WAYLAND_DISPLAY");
         // Only signal-safe calls run in the child before exec. A pending launcher
         // dies with this helper, while apps already launched by GIO remain independent.
+        // SAFETY: The child hook uses only async-signal-safe prctl, getppid and _exit before
+        // exec.
         unsafe {
             command.pre_exec(move || {
                 if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM) != 0 {

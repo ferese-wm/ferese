@@ -178,6 +178,8 @@ impl Bridge {
                 let mut byte = 0u8;
                 // Per-call nonblocking peek leaves the shared descriptor flags
                 // and response bytes untouched for the request reader.
+                // SAFETY: byte is writable for the requested single byte, and the locked reader
+                // retains the socket descriptor.
                 let result = unsafe {
                     libc::recv(
                         reader.get_ref().as_raw_fd(),

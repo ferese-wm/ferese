@@ -17,6 +17,8 @@ fn random_cookie() -> io::Result<[u8; 16]> {
     let mut cookie = [0_u8; 16];
     let mut filled = 0;
     while filled < cookie.len() {
+        // SAFETY: The remaining cookie slice is writable for exactly the byte count passed to
+        // getrandom.
         let count = unsafe {
             libc::getrandom(
                 cookie[filled..].as_mut_ptr().cast(),
@@ -45,6 +47,8 @@ fn random_cookie() -> io::Result<[u8; 16]> {
 
 fn hostname() -> io::Result<Vec<u8>> {
     let mut buffer = [0_u8; 256];
+    // SAFETY: buffer is writable for exactly buffer.len() bytes; termination is checked before
+    // interpreting its contents.
     if unsafe { libc::gethostname(buffer.as_mut_ptr().cast(), buffer.len()) } != 0 {
         return Err(io::Error::last_os_error());
     }
@@ -66,6 +70,7 @@ fn field(output: &mut impl Write, bytes: &[u8]) -> io::Result<()> {
 impl AuthorityFile {
     pub fn create(runtime_directory: &Path, display: u32) -> io::Result<Self> {
         let metadata = fs::symlink_metadata(runtime_directory)?;
+        // SAFETY: geteuid has no pointer arguments or caller-side preconditions.
         let uid = unsafe { libc::geteuid() };
         if !metadata.is_dir()
             || metadata.file_type().is_symlink()

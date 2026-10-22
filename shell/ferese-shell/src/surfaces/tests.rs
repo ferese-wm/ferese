@@ -159,12 +159,15 @@ fn effects_lifecycle(advertise: bool) {
         use wayland_client::Proxy;
         // Match window::run: each native callback lends the same display through
         // a fresh borrowed backend. Neither wrapper owns the actual display.
+        // SAFETY: connection retains the live display until the borrowed backend and surface are
+        // dropped.
         let borrowed = wayland_client::Connection::from_backend(unsafe {
             wayland_client::backend::Backend::from_foreign_display(
                 connection.backend().display_ptr(),
             )
         });
         assert_ne!(borrowed, connection);
+        // SAFETY: surface is a live wl_surface on the same display retained by connection.
         let id = unsafe {
             wayland_client::backend::ObjectId::from_ptr(
                 wayland_client::protocol::wl_surface::WlSurface::interface(),

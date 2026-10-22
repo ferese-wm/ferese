@@ -113,7 +113,7 @@ impl Files {
         };
         // Filesystem/icon work must not hold the picker's read lock.
         let matcher = Matcher::new(query);
-        let mut icons = icons.lock().unwrap_or_else(|error| error.into_inner());
+        let mut icons = icons.lock().ok();
         paths
             .into_iter()
             .take_while(|_| !cancel.cancelled())
@@ -123,7 +123,7 @@ impl Files {
                     .unwrap_or_default()
                     .to_string_lossy()
                     .into_owned();
-                let icon = Some(icons.file(&path));
+                let icon = icons.as_mut().map(|icons| icons.file(&path));
                 let subtitle = format!("File · {}", path.parent().unwrap_or(&path).display());
                 let path: Arc<std::path::Path> = path.into();
                 Row {
@@ -167,5 +167,23 @@ mod tests {
         let matches = files.query("launcher-note");
         assert!(matches.iter().any(|row| row.title == "launcher-note.txt"));
         assert!(files.query("no-such-file-xyz").is_empty());
+
+        let icons = std::sync::Mutex::new(super::super::icons::FileIcons::default());
+        std::thread::scope(|scope| {
+            let failed = scope
+                .spawn(|| {
+                    let _guard = icons.lock().expect("fresh icon cache");
+                    panic!("simulate an icon worker failure");
+                })
+                .join();
+            assert!(failed.is_err());
+        });
+        let matches = files.search("launcher-note", &Default::default(), &icons);
+        assert!(matches.iter().any(|row| row.title == "launcher-note.txt"));
+        assert!(matches.iter().all(|row| row.icon.is_none()));
+        assert!(
+            icons.is_poisoned(),
+            "search must not reuse the poisoned cache"
+        );
     }
 }

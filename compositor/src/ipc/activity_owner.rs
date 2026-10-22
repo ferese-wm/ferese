@@ -214,6 +214,8 @@ fn pidfd(pid: u32) -> io::Result<OwnedFd> {
     if fd < 0 {
         Err(io::Error::last_os_error())
     } else {
+        // SAFETY: pidfd_open succeeded above and returned a fresh descriptor whose sole ownership
+        // transfers here.
         Ok(unsafe { OwnedFd::from_raw_fd(fd as i32) })
     }
 }
@@ -260,6 +262,7 @@ fn credentials(stream: &UnixStream) -> io::Result<libc::ucred> {
 }
 pub(crate) fn inspect(pid: u32) -> io::Result<(Owner, OwnedFd, Vec<String>)> {
     use std::os::unix::fs::MetadataExt;
+    // SAFETY: geteuid has no pointer arguments or caller-side preconditions.
     if std::fs::metadata(format!("/proc/{pid}"))?.uid() != unsafe { libc::geteuid() } {
         return Err(io::Error::other("process belongs to another user"));
     }
@@ -395,6 +398,7 @@ mod tests {
         let (peer, _) = monitor.verify(&left, false).unwrap();
         assert_eq!(peer.owner.pid, std::process::id());
         let (parent, _) = monitor.verify(&left, true).unwrap();
+        // SAFETY: getppid has no pointer arguments or caller-side preconditions.
         assert_eq!(parent.owner.pid, unsafe { libc::getppid() } as u32);
         let mut child = std::process::Command::new("sleep")
             .arg("0.05")

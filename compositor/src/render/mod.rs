@@ -282,6 +282,9 @@ impl RenderElement<GlesRenderer> for BlurRenderElement {
         // clean captured scene. Recapturing a partly repainted framebuffer
         // would feed previous blurred pixels back into the blur.
         if self.capture_dirty.load(Ordering::Relaxed) {
+            // SAFETY: with_context makes this frame context current. GL writes into live local
+            // scalars, and the capture texture belongs to this renderer with the allocated
+            // framebuffer bounds.
             let error = frame.with_context(|gl| unsafe {
                 gl.GetError();
                 let mut framebuffer = 0;
@@ -690,8 +693,12 @@ mod tests {
             .unwrap()
             .last()
             .expect("an EGL device");
+        // SAFETY: The native display comes from a live enumerated EGLDevice and its lifetime is
+        // retained by the EGL objects created here.
         let display = unsafe { EGLDisplay::new(device).unwrap() };
         let context = EGLContext::new(&display).unwrap();
+        // SAFETY: The fresh EGL context is exclusively owned by this renderer; this test issues
+        // GL work only through its renderer methods.
         let mut renderer = unsafe { GlesRenderer::new(context).unwrap() };
         let program = renderer
             .compile_custom_pixel_shader(
@@ -755,8 +762,12 @@ mod tests {
             .unwrap()
             .last()
             .expect("an EGL device");
+        // SAFETY: The native display comes from a live enumerated EGLDevice and its lifetime is
+        // retained by the EGL objects created here.
         let display = unsafe { EGLDisplay::new(device).unwrap() };
         let context = EGLContext::new(&display).unwrap();
+        // SAFETY: The fresh EGL context is exclusively owned by this renderer; this test issues
+        // GL work only through its renderer methods.
         let mut renderer = unsafe { GlesRenderer::new(context).unwrap() };
         for source in [super::ROUNDED_TEXTURE_SHADER, super::BLUR_SHADER] {
             renderer
@@ -789,8 +800,12 @@ mod tests {
             .unwrap()
             .last()
             .expect("an EGL device");
+        // SAFETY: The native display comes from a live enumerated EGLDevice and its lifetime is
+        // retained by the EGL objects created here.
         let display = unsafe { EGLDisplay::new(device).unwrap() };
         let context = EGLContext::new(&display).unwrap();
+        // SAFETY: The fresh EGL context is exclusively owned by this renderer; this test issues
+        // GL work only through its renderer methods.
         let mut renderer = unsafe { GlesRenderer::new(context).unwrap() };
         let program = renderer
             .compile_custom_texture_shader(

@@ -55,6 +55,8 @@ fn stream(_: &()) -> impl futures::Stream<Item = String> + use<> {
 }
 
 fn watch(send: tokio::sync::mpsc::Sender<String>, cancel: UnixStream) -> io::Result<()> {
+    // SAFETY: timerfd_create takes scalar arguments; owned_fd adopts its result only after
+    // checking success.
     let timer = owned_fd(unsafe {
         libc::timerfd_create(libc::CLOCK_REALTIME, libc::TFD_CLOEXEC | libc::TFD_NONBLOCK)
     })?;
@@ -91,6 +93,8 @@ fn watch(send: tokio::sync::mpsc::Sender<String>, cancel: UnixStream) -> io::Res
             },
         ];
         loop {
+            // SAFETY: fds is writable for exactly fds.len() pollfd entries and remains alive
+            // through poll.
             if unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as _, -1) } >= 0 {
                 break;
             }
@@ -117,6 +121,8 @@ fn owned_fd(fd: libc::c_int) -> io::Result<OwnedFd> {
     if fd < 0 {
         Err(io::Error::last_os_error())
     } else {
+        // SAFETY: Callers pass a newly created descriptor, checked above for success, and
+        // transfer its sole ownership here.
         Ok(unsafe { OwnedFd::from_raw_fd(fd) })
     }
 }
@@ -133,6 +139,8 @@ fn arm(timer: &OwnedFd, deadline: i128) -> io::Result<bool> {
         },
     };
     let flags = libc::TFD_TIMER_ABSTIME | libc::TFD_TIMER_CANCEL_ON_SET;
+    // SAFETY: timer owns the descriptor and spec is a fully initialized itimerspec; a null old-
+    // value pointer is permitted.
     if unsafe { libc::timerfd_settime(timer.as_raw_fd(), flags, &spec, std::ptr::null_mut()) } < 0 {
         let error = io::Error::last_os_error();
         if error.raw_os_error() == Some(libc::ECANCELED) {
@@ -148,6 +156,8 @@ fn arm(timer: &OwnedFd, deadline: i128) -> io::Result<bool> {
 
 fn read_timer(timer: &OwnedFd) -> io::Result<()> {
     let mut expirations = 0u64;
+    // SAFETY: expirations is writable for the eight bytes requested, and timer retains the
+    // descriptor.
     let result = unsafe { libc::read(timer.as_raw_fd(), (&mut expirations as *mut u64).cast(), 8) };
     if result < 0 {
         let error = io::Error::last_os_error();
@@ -241,6 +251,8 @@ struct ZoneWatch {
 
 impl ZoneWatch {
     fn new(paths: &[PathBuf]) -> io::Result<Self> {
+        // SAFETY: inotify_init1 takes scalar flags; owned_fd checks the result before adopting
+        // the descriptor.
         let fd = owned_fd(unsafe { libc::inotify_init1(libc::IN_CLOEXEC | libc::IN_NONBLOCK) })?;
         let mut names = Vec::new();
         for path in paths {
@@ -257,6 +269,8 @@ impl ZoneWatch {
                 | libc::IN_ATTRIB
                 | libc::IN_MOVE_SELF
                 | libc::IN_DELETE_SELF;
+            // SAFETY: fd owns the inotify descriptor and parent is a live NUL-terminated CString
+            // for the call.
             let wd = unsafe { libc::inotify_add_watch(fd.as_raw_fd(), parent.as_ptr(), mask) };
             if wd >= 0 {
                 names.push((wd, name.to_owned()));
@@ -269,6 +283,8 @@ impl ZoneWatch {
         let mut buffer = [0u8; 8192];
         let mut changed = false;
         loop {
+            // SAFETY: buffer is writable for buffer.len() bytes and self.fd owns the descriptor
+            // throughout read.
             let size = unsafe {
                 libc::read(
                     self.fd.as_raw_fd(),
@@ -291,6 +307,8 @@ impl ZoneWatch {
             }
             let mut offset = 0;
             while offset + std::mem::size_of::<libc::inotify_event>() <= size as usize {
+                // SAFETY: The loop bounds check leaves a complete inotify_event header in buffer;
+                // read_unaligned permits its byte alignment.
                 let event = unsafe {
                     (buffer.as_ptr().add(offset) as *const libc::inotify_event).read_unaligned()
                 };
@@ -440,6 +458,8 @@ mod tests {
 
     #[test]
     fn absolute_timer_and_subscription_drop_wake_without_recurring_poll() {
+        // SAFETY: timerfd_create takes scalar arguments; owned_fd adopts its result only after
+        // checking success.
         let timer = owned_fd(unsafe {
             libc::timerfd_create(libc::CLOCK_REALTIME, libc::TFD_CLOEXEC | libc::TFD_NONBLOCK)
         })
@@ -450,6 +470,7 @@ mod tests {
             events: libc::POLLIN,
             revents: 0,
         };
+        // SAFETY: poll is a live writable pollfd and the entry count is one.
         assert_eq!(unsafe { libc::poll(&mut poll, 1, 1000) }, 1);
         read_timer(&timer).unwrap();
         // Reading an already drained timer is harmless (EAGAIN).
