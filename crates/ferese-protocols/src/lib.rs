@@ -1,3 +1,8 @@
+// The scanner's generated modules resolve protocol objects through these namespaces.
+#![allow(
+    clippy::wildcard_imports,
+    reason = "Wayland scanner bindings require protocol imports"
+)]
 #![forbid(unsafe_code)]
 
 /// Semantic surface effects protocol.

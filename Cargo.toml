@@ -27,6 +27,19 @@ edition = "2024"
 license = "MIT"
 rust-version = "1.95"
 
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+unused_must_use = "deny"
+
+[workspace.lints.clippy]
+borrowed_box = "deny"
+must_use_candidate = "warn"
+needless_for_each = "warn"
+ptr_arg = "deny"
+ref_option = "deny"
+undocumented_unsafe_blocks = "deny"
+wildcard_imports = "deny"
+
 [workspace.dependencies]
 ferese-shape = { git = "https://github.com/ferese-wm/ferese-shape", tag = "v0.1.0" }
 bitflags = "2.9.4"

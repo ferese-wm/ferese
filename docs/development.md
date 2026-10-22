@@ -1,5 +1,8 @@
 # Development
 
+Follow the [Rust style rules](development/rust-style.md) when changing workspace code.
+They cover module boundaries, API contracts, ownership and the checks enforced by CI.
+
 Install the [build dependencies](installation.md#requirements), then run:
 
 ```sh

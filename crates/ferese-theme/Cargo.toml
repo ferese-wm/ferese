@@ -5,6 +5,9 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 ferese-layout = { path = "../ferese-layout" }
 ferese-panel = { path = "../ferese-panel" }

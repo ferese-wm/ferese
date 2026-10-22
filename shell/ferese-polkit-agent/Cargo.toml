@@ -5,6 +5,9 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 ferese-theme-client = { path = "../../crates/ferese-theme-client" }
 ferese-ipc = { path = "../../crates/ferese-ipc" }
