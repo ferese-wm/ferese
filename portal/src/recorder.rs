@@ -28,7 +28,8 @@ pub fn event(state: &str, message: Option<&str>, path: Option<&Path>) {
 }
 
 fn option_string(value: String) -> OwnedValue {
-    OwnedValue::try_from(Value::from(value)).unwrap()
+    OwnedValue::try_from(Value::from(value))
+        .expect("the D-Bus value uses an owned supported scalar or collection type")
 }
 
 async fn request<B: serde::Serialize + zbus::zvariant::DynamicType>(

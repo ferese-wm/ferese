@@ -30,7 +30,10 @@ impl Publisher {
                             serde_json::json!(job.snapshot.as_ref()),
                         ));
                     }
-                    let value = &cached.as_ref().unwrap().1;
+                    let value = &cached
+                        .as_ref()
+                        .expect("activity serialization populated the cache for this revision")
+                        .1;
                     // Lock acquisition revokes queued/in-flight serialization.
                     // Hold the guard through delivery to order sends before revocation.
                     deliver(job.epoch, &worker_epoch, job.recipients, value);

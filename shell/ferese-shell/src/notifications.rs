@@ -91,7 +91,10 @@ impl Server {
         hints: HashMap<String, zbus::zvariant::OwnedValue>,
         expire_timeout: i32,
     ) -> zbus::fdo::Result<u32> {
-        let mut registry = self.registry.lock().unwrap();
+        let mut registry = self
+            .registry
+            .lock()
+            .expect("notification ownership registry must remain consistent across callbacks");
         let replacing = registry.live.contains_key(&replaces_id);
         if !replacing && registry.live.len() >= HISTORY_LIMIT {
             return Err(zbus::fdo::Error::LimitsExceeded(
@@ -156,7 +159,10 @@ impl Server {
     }
 
     fn close_notification(&self, id: u32) -> zbus::fdo::Result<()> {
-        let mut registry = self.registry.lock().unwrap();
+        let mut registry = self
+            .registry
+            .lock()
+            .expect("notification ownership registry must remain consistent across callbacks");
         let revision = *registry
             .live
             .get(&id)
@@ -249,7 +255,7 @@ impl Service {
                         continue;
                     }
                     Command::Close(id, revision, reason) => {
-                        if !registry.lock().unwrap().close(id, revision, reason) {
+                        if !registry.lock().expect("notification ownership registry must remain consistent across callbacks").close(id, revision, reason) {
                             continue;
                         }
                         connection.emit_signal(
@@ -261,7 +267,7 @@ impl Service {
                         )
                     }
                     Command::Action(id, revision, action) => {
-                        if registry.lock().unwrap().live.get(&id) != Some(&revision) {
+                        if registry.lock().expect("notification ownership registry must remain consistent across callbacks").live.get(&id) != Some(&revision) {
                             continue;
                         }
                         connection.emit_signal(

@@ -47,7 +47,10 @@ pub fn daemonize() -> Result<(), String> {
 }
 
 fn confirm(child: &mut Child) -> Result<(), String> {
-    let stdout = child.stdout.take().unwrap();
+    let stdout = child
+        .stdout
+        .take()
+        .expect("the child was spawned with piped standard output");
     let (tx, rx) = std::sync::mpsc::sync_channel(1);
     std::thread::spawn(move || {
         let mut reader = BufReader::new(stdout);

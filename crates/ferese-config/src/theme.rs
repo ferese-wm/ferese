@@ -552,8 +552,10 @@ fn token_value(tokens: &Tokens) -> Result<Value, String> {
     let mut value = serde_json::to_value(tokens).map_err(|error| error.to_string())?;
     // Keep authoring defaults available for merging. The wire format omits
     // automatic styles so older snapshots still round-trip unchanged.
-    value["focus_ring"]["style"] = serde_json::to_value(tokens.focus_ring.style).unwrap();
-    value["border"]["style"] = serde_json::to_value(tokens.border.style).unwrap();
+    value["focus_ring"]["style"] = serde_json::to_value(tokens.focus_ring.style)
+        .expect("typed configuration and IPC values must serialize to JSON");
+    value["border"]["style"] = serde_json::to_value(tokens.border.style)
+        .expect("typed configuration and IPC values must serialize to JSON");
     Ok(value)
 }
 
@@ -673,8 +675,16 @@ pub fn preset(name: &str, appearance: Appearance) -> Result<Tokens, String> {
     } else {
         [1.; 4]
     };
-    t.colors.surface_raised = hex(blend(rgba(base).unwrap(), shade, 0.055));
-    t.colors.application_background = hex(blend(rgba(base).unwrap(), shade, 0.025));
+    t.colors.surface_raised = hex(blend(
+        rgba(base).expect("resolved theme colors must be valid hexadecimal RGBA"),
+        shade,
+        0.055,
+    ));
+    t.colors.application_background = hex(blend(
+        rgba(base).expect("resolved theme colors must be valid hexadecimal RGBA"),
+        shade,
+        0.025,
+    ));
     t.colors.text_primary = text.into();
     t.colors.text_muted = muted.into();
     t.colors.accent = accent.into();
@@ -708,8 +718,10 @@ pub fn authored_warnings(tokens: &Tokens) -> Vec<String> {
         ),
     ];
     let check = |foreground: &str, background: &str, minimum: f64| {
-        let foreground = rgba(foreground).unwrap();
-        let background = rgba(background).unwrap();
+        let foreground =
+            rgba(foreground).expect("resolved theme colors must be valid hexadecimal RGBA");
+        let background =
+            rgba(background).expect("resolved theme colors must be valid hexadecimal RGBA");
         contrast(composite(foreground, background), background) >= minimum
     };
     for (name, background) in surfaces {
@@ -813,7 +825,8 @@ fn transform(t: &mut Tokens, accessibility: &Accessibility, warnings: &mut Vec<S
         for target in [[0., 0., 0., 1.], [1.; 4]] {
             for step in 0..=1000 {
                 let distance = f64::from(step) / 1000.;
-                let color = rgba(&hex(blend(requested, target, distance))).unwrap();
+                let color = rgba(&hex(blend(requested, target, distance)))
+                    .expect("hex output must be a valid RGBA color");
                 if acceptable(color) && distance < best_distance {
                     best = Some(color);
                     best_distance = distance;
@@ -858,14 +871,17 @@ fn transform(t: &mut Tokens, accessibility: &Accessibility, warnings: &mut Vec<S
     }
     if accessibility.increase_contrast {
         t.colors.border = hex(readable_across(
-            rgba(&t.colors.border).unwrap(),
+            rgba(&t.colors.border).expect("resolved theme colors must be valid hexadecimal RGBA"),
             &backgrounds,
             3.,
         ));
-        if backgrounds
-            .iter()
-            .any(|background| contrast(rgba(&t.colors.border).unwrap(), *background) < 3.)
-        {
+        if backgrounds.iter().any(|background| {
+            contrast(
+                rgba(&t.colors.border)
+                    .expect("resolved theme colors must be valid hexadecimal RGBA"),
+                *background,
+            ) < 3.
+        }) {
             warnings.push("Border cannot reach 3:1 contrast on all configured surfaces".into());
         }
         resolve_material_contrast(t, minimum);
@@ -889,10 +905,14 @@ fn resolve_gradients(tokens: &mut Tokens, preset_end: Option<&str>) {
     };
 
     let backgrounds = [
-        rgba(&tokens.colors.surface_base).unwrap(),
-        rgba(&tokens.colors.surface_raised).unwrap(),
-        rgba(&tokens.colors.application_background).unwrap(),
-        rgba(&tokens.surface.bar.background).unwrap(),
+        rgba(&tokens.colors.surface_base)
+            .expect("resolved theme colors must be valid hexadecimal RGBA"),
+        rgba(&tokens.colors.surface_raised)
+            .expect("resolved theme colors must be valid hexadecimal RGBA"),
+        rgba(&tokens.colors.application_background)
+            .expect("resolved theme colors must be valid hexadecimal RGBA"),
+        rgba(&tokens.surface.bar.background)
+            .expect("resolved theme colors must be valid hexadecimal RGBA"),
     ];
     for (paint, color, endpoint, focus) in [
         (
@@ -915,7 +935,11 @@ fn resolve_gradients(tokens: &mut Tokens, preset_end: Option<&str>) {
 
         let to = endpoint.map_or_else(|| shade(color), str::to_owned);
         let to = if focus {
-            hex(readable_across(rgba(&to).unwrap(), &backgrounds, 3.))
+            hex(readable_across(
+                rgba(&to).expect("resolved theme colors must be valid hexadecimal RGBA"),
+                &backgrounds,
+                3.,
+            ))
         } else {
             to
         };
@@ -931,10 +955,14 @@ fn resolve_material_contrast(tokens: &mut Tokens, minimum: f64) {
     if tokens.material.style == "solid" {
         return;
     }
-    let surface = rgba(&tokens.colors.surface_base).unwrap();
-    let bar = rgba(&tokens.surface.bar.background).unwrap();
-    let raised = rgba(&tokens.colors.surface_raised).unwrap();
-    let app = rgba(&tokens.colors.application_background).unwrap();
+    let surface = rgba(&tokens.colors.surface_base)
+        .expect("resolved theme colors must be valid hexadecimal RGBA");
+    let bar = rgba(&tokens.surface.bar.background)
+        .expect("resolved theme colors must be valid hexadecimal RGBA");
+    let raised = rgba(&tokens.colors.surface_raised)
+        .expect("resolved theme colors must be valid hexadecimal RGBA");
+    let app = rgba(&tokens.colors.application_background)
+        .expect("resolved theme colors must be valid hexadecimal RGBA");
     let initial = tokens.material.opacity * tokens.material.tint_strength;
     let readable = |backgrounds: &[[f64; 4]]| {
         [[0., 0., 0., 1.], [1.; 4]].into_iter().any(|text| {
@@ -962,7 +990,11 @@ fn resolve_material_contrast(tokens: &mut Tokens, minimum: f64) {
         (&mut tokens.surface.bar.text_primary, bar.as_slice()),
         (&mut tokens.surface.bar.text_muted, bar.as_slice()),
     ] {
-        *color = hex(readable_across(rgba(color).unwrap(), backgrounds, minimum));
+        *color = hex(readable_across(
+            rgba(color).expect("resolved theme colors must be valid hexadecimal RGBA"),
+            backgrounds,
+            minimum,
+        ));
     }
 }
 

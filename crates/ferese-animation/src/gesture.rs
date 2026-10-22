@@ -55,7 +55,7 @@ impl VelocityTracker {
         for col in 0..=degree {
             let pivot = (col..=degree)
                 .max_by(|&a, &b| matrix[a][col].abs().total_cmp(&matrix[b][col].abs()))
-                .unwrap();
+                .expect("the inclusive pivot range contains at least the current column");
             matrix.swap(col, pivot);
             let divisor = matrix[col][col];
             if divisor.abs() < 1e-12 {

@@ -258,7 +258,7 @@ impl Widget<Message, Theme, Renderer> for Editor<'_> {
                         .find_map(|(region, bounds)| {
                             matches!(region, Region::Item(id, _) if id == item).then_some(*bounds)
                         })
-                        .unwrap();
+                        .expect("the active drag branch retains the pressed item and its measured bounds");
                     state.drag = Some(Drag {
                         item: item.clone(),
                         origin: cursor,
@@ -272,7 +272,9 @@ impl Widget<Message, Theme, Renderer> for Editor<'_> {
                 }
             }
             Event::Mouse(mouse::Event::CursorMoved { .. }) if state.drag.is_some() => {
-                let drag = state.drag.as_mut().unwrap();
+                let drag = state.drag.as_mut().expect(
+                    "the active drag branch retains the pressed item and its measured bounds",
+                );
                 if let Some(cursor) = cursor.position() {
                     drag.cursor = cursor;
                     drag.moved |= (cursor.x - drag.origin.x).hypot(cursor.y - drag.origin.y) >= 6.;
@@ -291,7 +293,9 @@ impl Widget<Message, Theme, Renderer> for Editor<'_> {
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left))
                 if state.drag.is_some() =>
             {
-                let drag = state.drag.take().unwrap();
+                let drag = state.drag.take().expect(
+                    "the active drag branch retains the pressed item and its measured bounds",
+                );
                 if drag.moved {
                     if let Some(target) = cursor
                         .position()

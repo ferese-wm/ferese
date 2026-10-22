@@ -31,7 +31,8 @@ impl Lockdown {
     }
 
     pub(crate) async fn watch(self, connection: Connection) {
-        let emitter = SignalEmitter::new(&connection, PATH).unwrap();
+        let emitter = SignalEmitter::new(&connection, PATH)
+            .expect("the portal exports signals at a valid static object path");
         loop {
             tokio::time::sleep(Duration::from_secs(1)).await;
             let mut current = self.0.write().await;
@@ -49,7 +50,9 @@ impl Lockdown {
             drop(current);
             let _ = zbus::fdo::Properties::properties_changed(
                 &emitter,
-                "org.freedesktop.impl.portal.Lockdown".try_into().unwrap(),
+                "org.freedesktop.impl.portal.Lockdown"
+                    .try_into()
+                    .expect("the Lockdown interface has a valid static D-Bus name"),
                 changed,
                 Cow::Borrowed(&[]),
             )

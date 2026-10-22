@@ -132,14 +132,20 @@ impl Loader {
                 loop {
                     let (requests, ready) = &*worker;
                     let mut requests = ready
-                        .wait_while(requests.lock().unwrap(), |requests| {
-                            !requests.closed && requests.pending.is_none()
-                        })
-                        .unwrap();
+                        .wait_while(
+                            requests.lock().expect(
+                                "cursor decode queue must remain consistent across workers",
+                            ),
+                            |requests| !requests.closed && requests.pending.is_none(),
+                        )
+                        .expect("cursor decode queue must remain consistent across workers");
                     if requests.closed {
                         break;
                     }
-                    let request = requests.pending.take().unwrap();
+                    let request = requests
+                        .pending
+                        .take()
+                        .expect("the decode wait completed with a pending cursor request");
                     requests.in_flight = Some(request);
                     drop(requests);
                     let cursor = load(request);
@@ -155,7 +161,11 @@ impl Loader {
                         break;
                     }
                     signal.wakeup();
-                    worker.0.lock().unwrap().in_flight = None;
+                    worker
+                        .0
+                        .lock()
+                        .expect("cursor decode queue must remain consistent across workers")
+                        .in_flight = None;
                 }
             })?;
         Ok(Self { shared, results })
@@ -163,7 +173,11 @@ impl Loader {
 
     pub(crate) fn request(&self, icon: CursorIcon, scale: i32) {
         let request = (icon, scale);
-        let mut requests = self.shared.0.lock().unwrap();
+        let mut requests = self
+            .shared
+            .0
+            .lock()
+            .expect("cursor decode queue must remain consistent across workers");
         if requests.in_flight == Some(request) || requests.pending == Some(request) {
             return;
         }
@@ -174,7 +188,11 @@ impl Loader {
 
 impl Drop for Loader {
     fn drop(&mut self) {
-        let mut requests = self.shared.0.lock().unwrap();
+        let mut requests = self
+            .shared
+            .0
+            .lock()
+            .expect("cursor decode queue must remain consistent across workers");
         requests.closed = true;
         requests.pending = None;
         self.shared.1.notify_one();
@@ -256,7 +274,11 @@ impl crate::Ferese {
                 }) else {
                     break;
                 };
-                bytes -= self.named_cursors.remove(&evict).unwrap().bytes;
+                bytes -= self
+                    .named_cursors
+                    .remove(&evict)
+                    .expect("cursor selection retains the requested or default cursor")
+                    .bytes;
             }
             self.named_cursors.insert(icon, cursor);
             if affects_current {
@@ -299,12 +321,12 @@ impl crate::Ferese {
         if !visible {
             return;
         }
-        let icon = icon.unwrap();
+        let icon = icon.expect("the hidden-cursor branch returned before image selection");
         let cursor = self
             .named_cursors
             .get(&icon)
             .or_else(|| self.named_cursors.get(&CursorIcon::Default))
-            .unwrap();
+            .expect("cursor selection retains the requested or default cursor");
         let (frame, remaining) =
             cursor.sample(now.saturating_duration_since(self.cursor_animation.epoch));
         if self.cursor_animation.frame != frame {

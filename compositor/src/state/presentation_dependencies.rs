@@ -119,7 +119,11 @@ fn tree_reflow_groups(
         groups.insert(*id, group);
         let mut frontier = vec![*id];
         while let Some(id) = frontier.pop() {
-            let bounds = moving.iter().find(|(window, _)| *window == id).unwrap().1;
+            let bounds = moving
+                .iter()
+                .find(|(window, _)| *window == id)
+                .expect("the dependency frontier contains only moving window IDs")
+                .1;
             for (other, candidate) in &moving {
                 if !groups.contains_key(other)
                     && bounds[0].max(candidate[0]) + 0.001 < bounds[2].min(candidate[2])
@@ -448,7 +452,10 @@ impl Ferese {
                 if self.workspaces.workspace_for_window(*slow) != Some(workspace_id) {
                     continue;
                 }
-                let transaction = *self.windows.transaction(slow).unwrap();
+                let transaction = *self
+                    .windows
+                    .transaction(slow)
+                    .expect("the resize candidate retains its active presentation transaction");
                 let commit = ClientCommit {
                     window: *slow,
                     serial: transaction.serial(),
@@ -504,7 +511,14 @@ impl Ferese {
                         self.workspaces.workspace_for_window(**id) == Some(workspace.id)
                             && layout.contains(**id)
                     })
-                    .map(|id| (*id, *self.windows.transaction(id).unwrap()))
+                    .map(|id| {
+                        (
+                            *id,
+                            *self.windows.transaction(id).expect(
+                                "the resize candidate retains its active presentation transaction",
+                            ),
+                        )
+                    })
                     .collect::<Vec<_>>(),
                 previous_viewport.remove(&workspace.id).unwrap_or_default(),
             );

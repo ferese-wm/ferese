@@ -106,7 +106,7 @@ fn pod(object: spa::pod::Object) -> Vec<u8> {
         std::io::Cursor::new(Vec::new()),
         &spa::pod::Value::Object(object),
     )
-    .unwrap()
+    .expect("SPA pod serialization into an owned Vec cannot fail for these object types")
     .0
     .into_inner()
 }
@@ -230,7 +230,7 @@ pub fn run(
                                 width,
                                 height
                             })
-                            .unwrap()
+                            .expect("typed configuration and IPC values must serialize to JSON")
                         );
                         let _ = std::io::stdout().flush();
                     }
@@ -291,8 +291,10 @@ pub fn run(
             ));
             if stream
                 .update_params(&mut [
-                    Pod::from_bytes(&buffers).unwrap(),
-                    Pod::from_bytes(&header).unwrap(),
+                    Pod::from_bytes(&buffers)
+                        .expect("SPA pod bytes were produced by the matching pod serializer"),
+                    Pod::from_bytes(&header)
+                        .expect("SPA pod bytes were produced by the matching pod serializer"),
                 ])
                 .is_err()
             {
@@ -310,7 +312,9 @@ pub fn run(
                 *target.chunk_mut().size_mut() = 0;
                 return;
             }
-            let frame = data.latest.lock().unwrap();
+            let frame = data.latest.lock().expect(
+                "capture frame state must remain consistent across producer and PipeWire callbacks",
+            );
             if (frame.width, frame.height) != data.negotiated {
                 *target.chunk_mut().size_mut() = 0;
                 return;
@@ -344,7 +348,8 @@ pub fn run(
         spa::utils::Direction::Output,
         None,
         pw::stream::StreamFlags::MAP_BUFFERS | pw::stream::StreamFlags::DRIVER,
-        &mut [Pod::from_bytes(&format).unwrap()],
+        &mut [Pod::from_bytes(&format)
+            .expect("SPA pod bytes were produced by the matching pod serializer")],
     )?;
 
     let interval = Duration::from_nanos(1_000_000_000 / 30);
@@ -362,7 +367,7 @@ pub fn run(
                 checked = Instant::now();
                 match capture.frame(&name, cursor, &capture_stop, std::mem::take(&mut spare)) {
                     Ok(frame) if resizable || (frame.width == width && frame.height == height) => {
-                        spare = std::mem::replace(&mut *latest.lock().unwrap(), frame).pixels;
+                        spare = std::mem::replace(&mut *latest.lock().expect("capture frame state must remain consistent across producer and PipeWire callbacks"), frame).pixels;
                         fresh.store(capture_streaming.load(Ordering::Relaxed), Ordering::SeqCst);
                     }
                     Ok(_) => {
@@ -385,12 +390,16 @@ pub fn run(
 
     while !stop.load(Ordering::Relaxed) {
         let size = {
-            let frame = format_frames.lock().unwrap();
+            let frame = format_frames.lock().expect(
+                "capture frame state must remain consistent across producer and PipeWire callbacks",
+            );
             (frame.width, frame.height)
         };
         if resizable && size != requested_size {
             let format = video_format(size.0, size.1);
-            if let Err(error) = stream.update_params(&mut [Pod::from_bytes(&format).unwrap()]) {
+            if let Err(error) = stream.update_params(&mut [Pod::from_bytes(&format)
+                .expect("SPA pod bytes were produced by the matching pod serializer")])
+            {
                 renegotiation_error = Some(error);
                 stop.store(true, Ordering::Relaxed);
                 break;

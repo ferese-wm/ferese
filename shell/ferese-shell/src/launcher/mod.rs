@@ -460,7 +460,10 @@ impl FereseShell {
                 launcher.rows = rows;
                 launcher.file_status = status;
                 let task = self.merge_launcher_windows(true);
-                let launcher = self.launcher.as_mut().unwrap();
+                let launcher = self
+                    .launcher
+                    .as_mut()
+                    .expect("merging launcher windows keeps the active launcher alive");
                 launcher.selected = selected
                     .and_then(|id| launcher.rows.iter().position(|row| row.id == id))
                     .unwrap_or(0);

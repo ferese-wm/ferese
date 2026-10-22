@@ -174,7 +174,11 @@ impl InputCapture {
         self.disable_all();
         let ids = self.sessions.keys().copied().collect::<Vec<_>>();
         for id in ids {
-            self.sessions.get_mut(&id).unwrap().barriers.clear();
+            self.sessions
+                .get_mut(&id)
+                .expect("input capture operations validate their session or waiter before mutation")
+                .barriers
+                .clear();
             self.enqueue(id, json!({"type":"zones", "zone_set":self.zone_set}));
         }
         self.flush();
@@ -246,7 +250,10 @@ impl InputCapture {
                 failed.push(barrier.id);
             }
         }
-        self.sessions.get_mut(&id).unwrap().barriers = accepted;
+        self.sessions
+            .get_mut(&id)
+            .expect("input capture operations validate their session or waiter before mutation")
+            .barriers = accepted;
         Ok(failed)
     }
 
@@ -303,7 +310,10 @@ impl InputCapture {
         self.next_activation = self.next_activation.wrapping_add(1);
         let activation = self.next_activation;
         self.active = Some(id);
-        let session = self.sessions.get_mut(&id).unwrap();
+        let session = self
+            .sessions
+            .get_mut(&id)
+            .expect("input capture operations validate their session or waiter before mutation");
         session.activation = Some(activation);
         self.enqueue(
             id,
@@ -367,7 +377,9 @@ impl InputCapture {
             self.active = None;
             self.last_absolute = None;
             self.restore_focus = true;
-            let session = self.sessions.get_mut(&id).unwrap();
+            let session = self.sessions.get_mut(&id).expect(
+                "input capture operations validate their session or waiter before mutation",
+            );
             let activation = session.activation.take();
             self.enqueue(
                 id,
@@ -380,7 +392,10 @@ impl InputCapture {
 
     pub(crate) fn disable(&mut self, id: u64) -> Result<(), String> {
         self.release(id, None)?;
-        let session = self.sessions.get_mut(&id).unwrap();
+        let session = self
+            .sessions
+            .get_mut(&id)
+            .expect("input capture operations validate their session or waiter before mutation");
         if session.enabled {
             session.enabled = false;
             self.enqueue(id, json!({"type":"disabled"}));
@@ -436,7 +451,9 @@ impl InputCapture {
             })
             .collect::<Vec<_>>();
         for owner in ready {
-            let (request, id, response) = self.waiters.remove(&owner).unwrap();
+            let (request, id, response) = self.waiters.remove(&owner).expect(
+                "input capture operations validate their session or waiter before mutation",
+            );
             let result = if let Some(session) = self.sessions.get_mut(&id) {
                 json!({"events":session.events.drain(..).collect::<Vec<_>>()})
             } else {

@@ -336,7 +336,11 @@ impl FereseShell {
                 presentation.rows = rows;
                 continue;
             }
-            let runtime = output.runtime.hub.as_ref().unwrap();
+            let runtime = output
+                .runtime
+                .hub
+                .as_ref()
+                .expect("this activity action belongs to an output with a Morph hub");
             let name = self
                 .output_for_bar(output.bar)
                 .map(|output| output.name.as_str())

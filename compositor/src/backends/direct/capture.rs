@@ -102,7 +102,11 @@ pub(super) fn capture_mirror(
             continue;
         };
         let element = super::mirror::fitted_texture(
-            output.mirror_capture_texture.as_ref().unwrap().clone(),
+            output
+                .mirror_capture_texture
+                .as_ref()
+                .expect("successful mirror composition populated its capture texture")
+                .clone(),
             &output.output,
             smithay::backend::renderer::element::Id::new(),
             Default::default(),

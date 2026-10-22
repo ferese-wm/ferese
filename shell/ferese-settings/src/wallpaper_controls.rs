@@ -328,7 +328,9 @@ impl App {
             return setting(
                 &self.draft,
                 self.wallpaper.target,
-                path.rsplit('.').next().unwrap(),
+                path.rsplit('.')
+                    .next()
+                    .expect("splitting a field path always yields its final component"),
                 fallback,
             );
         }

@@ -229,7 +229,10 @@ pub(crate) async fn consent(
         .spawn()
         .map_err(|error| error.to_string())?;
     let pid = child.id().ok_or("Missing consent process ID")?;
-    let mut input = child.stdin.take().unwrap();
+    let mut input = child
+        .stdin
+        .take()
+        .expect("the child was spawned with piped standard input");
 
     input
         .write_all(&serde_json::to_vec(&prompt).map_err(|error| error.to_string())?)
@@ -578,7 +581,10 @@ async fn select_window(app: &str, parent: &str) -> Result<Option<u64>, String> {
         .spawn()
         .map_err(|error| error.to_string())?;
     let pid = child.id().ok_or("Missing window selector PID")?;
-    let mut stdin = child.stdin.take().unwrap();
+    let mut stdin = child
+        .stdin
+        .take()
+        .expect("the child was spawned with piped standard input");
     stdin
         .write_all(&serde_json::to_vec(&prompt).map_err(|error| error.to_string())?)
         .await

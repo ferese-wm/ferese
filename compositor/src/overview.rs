@@ -30,7 +30,11 @@ struct FontRequests {
 
 impl FontRequests {
     fn request(&self, family: &str) {
-        *self.latest.lock().unwrap() = family.to_owned();
+        *self
+            .latest
+            .lock()
+            .expect("overview font request state must remain consistent across workers") =
+            family.to_owned();
         let _ = self.wake.try_send(());
     }
 }
@@ -59,7 +63,10 @@ pub(crate) fn init_font_loader(
         .name("ferese-overview-font".into())
         .spawn(move || {
             while requests.recv().is_ok() {
-                let family = worker_latest.lock().unwrap().clone();
+                let family = worker_latest
+                    .lock()
+                    .expect("overview font request state must remain consistent across workers")
+                    .clone();
                 // Rescan on a font change so newly installed fonts remain usable.
                 let mut database = fontdb::Database::new();
                 database.load_system_fonts();
@@ -1049,7 +1056,16 @@ impl Ferese {
                 for (id, target) in overview_layout(window_area(bounds), &windows) {
                     targets.insert(
                         id,
-                        (self.windows.geometry(&id).unwrap().visual.current, target),
+                        (
+                            self.windows
+                                .geometry(&id)
+                                .expect(
+                                    "overview layout includes only windows with resolved geometry",
+                                )
+                                .visual
+                                .current,
+                            target,
+                        ),
                     );
                 }
                 continue;
@@ -1074,7 +1090,12 @@ impl Ferese {
                     .collect::<Vec<_>>();
 
                 for (id, target) in overview_layout(window_area(bounds), &windows) {
-                    let normal = self.windows.geometry(&id).unwrap().visual.current;
+                    let normal = self
+                        .windows
+                        .geometry(&id)
+                        .expect("overview layout includes only windows with resolved geometry")
+                        .visual
+                        .current;
                     // Incoming grids start at their overview size. Translation
                     // belongs to the workspace slide, not a second desktop zoom.
                     let source = if !sliding.is_empty() { target } else { normal };

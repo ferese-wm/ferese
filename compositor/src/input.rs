@@ -1048,7 +1048,10 @@ impl Ferese {
         let keyboard = self.seat.get_keyboard().expect("seat has a keyboard");
         let modifiers = keyboard.modifier_state();
         let raw_symbols = keyboard.with_xkb_state(self, |context| {
-            let xkb = context.xkb().lock().unwrap();
+            let xkb = context
+                .xkb()
+                .lock()
+                .expect("keyboard keymap state must remain consistent across callbacks");
             xkb.raw_syms_for_key_in_layout(keycode, xkb.active_layout())
                 .iter()
                 .map(|symbol| symbol.raw())
@@ -1484,7 +1487,11 @@ fn surface_tree_offset(root: &WlSurface, target: &WlSurface) -> Option<Point<i32
             states
                 .data_map
                 .get::<RendererSurfaceStateUserData>()
-                .and_then(|data| data.lock().unwrap().view())
+                .and_then(|data| {
+                    data.lock()
+                        .expect("Smithay surface metadata must remain consistent across callbacks")
+                        .view()
+                })
                 .map_or(TraversalAction::SkipChildren, |view| {
                     TraversalAction::DoChildren(*location + view.offset)
                 })
@@ -1494,7 +1501,13 @@ fn surface_tree_offset(root: &WlSurface, target: &WlSurface) -> Option<Point<i32
                 && let Some(view) = states
                     .data_map
                     .get::<RendererSurfaceStateUserData>()
-                    .and_then(|data| data.lock().unwrap().view())
+                    .and_then(|data| {
+                        data.lock()
+                            .expect(
+                                "Smithay surface metadata must remain consistent across callbacks",
+                            )
+                            .view()
+                    })
             {
                 found.set(Some(*location + view.offset));
             }

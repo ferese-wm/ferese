@@ -67,7 +67,11 @@ impl Compact {
             + count as f32 * (ICON + TEXT_GAP)
             + count.saturating_sub(1) as f32 * (2. * ITEM_GAP + 1.)
             + if hidden > 0 {
-                ITEM_GAP + self.badge.unwrap().1
+                ITEM_GAP
+                    + self
+                        .badge
+                        .expect("hidden activity count is nonzero only when its badge was measured")
+                        .1
             } else {
                 0.
             };

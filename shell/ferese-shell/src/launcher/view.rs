@@ -51,7 +51,9 @@ impl FereseShell {
                     && let Some(effects) = &launcher.effects
                 {
                     let _ = effects.set_presentation(
-                        &launcher.regions.lock().unwrap(),
+                        &launcher.regions.lock().expect(
+                            "surface rendering state must remain consistent across callbacks",
+                        ),
                         launcher.progress.current as f32,
                         [],
                         ferese_surface_effects_v1::Role::Popover,

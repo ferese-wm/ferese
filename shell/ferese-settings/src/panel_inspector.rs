@@ -140,12 +140,12 @@ impl App {
             .into_iter()
             .flat_map(|zone| &zone.definition(panel).groups)
             .find(|group| group.id == destination.group)
-            .unwrap();
+            .expect("the inspector selection refers to an item or group in the current panel");
         let index = group
             .items
             .iter()
             .position(|candidate| candidate.id == item.id)
-            .unwrap();
+            .expect("the inspector selection refers to an item or group in the current panel");
         rows.push(self.panel_divider())
             .push(
                 self.inspector_actions(
@@ -293,7 +293,7 @@ impl App {
             .groups
             .iter()
             .position(|candidate| candidate.id == group.id)
-            .unwrap();
+            .expect("the inspector selection refers to an item or group in the current panel");
         rows = rows.push(
             self.inspector_actions(
                 (index > 0).then(|| Message::PanelEdit(Action::EarlierGroup(group.id.clone()))),
@@ -335,7 +335,12 @@ impl App {
     fn panel_field(&self, item: &Item, field: Field) -> Element<'static, Message> {
         let p = crate::visuals::Palette::from_resolved(&self.resolved.presented);
         let id = item.id.clone();
-        let name = field.path.rsplit('.').next().unwrap().to_owned();
+        let name = field
+            .path
+            .rsplit('.')
+            .next()
+            .expect("splitting a field path always yields its final component")
+            .to_owned();
         let values = serde_json::to_value(item).expect("serializable panel item");
         match field.kind {
             Kind::Choice { default, choices } => {

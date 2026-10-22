@@ -64,10 +64,12 @@ pub fn builtins() -> Vec<Family> {
             id: (*id).into(),
             name: (*name).into(),
             light: Some(Palette::from(
-                &crate::theme::preset(light, Appearance::Light).unwrap(),
+                &crate::theme::preset(light, Appearance::Light)
+                    .expect("built-in theme families must reference registered presets"),
             )),
             dark: Some(Palette::from(
-                &crate::theme::preset(dark, Appearance::Dark).unwrap(),
+                &crate::theme::preset(dark, Appearance::Dark)
+                    .expect("built-in theme families must reference registered presets"),
             )),
         })
         .collect()

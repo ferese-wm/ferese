@@ -150,7 +150,8 @@ impl Background {
     }
 
     pub(crate) async fn watch(self, connection: Connection) {
-        let emitter = SignalEmitter::new(&connection, PATH).unwrap();
+        let emitter = SignalEmitter::new(&connection, PATH)
+            .expect("the portal exports signals at a valid static object path");
         loop {
             let result = async {
                 let path = ferese_ipc::socket::resolve(None).map_err(|error| error.to_string())?;

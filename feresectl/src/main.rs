@@ -119,7 +119,7 @@ fn theme_command(
         }
         ThemeAction::Mode { mode } => connection.call(
             "theme-set-mode",
-            json!({"mode": mode.to_possible_value().unwrap().get_name()}),
+            json!({"mode": mode.to_possible_value().expect("every ThemeMode variant has a Clap value name").get_name()}),
         )?,
         ThemeAction::Preview { path } => connection.call(
             "theme-preview",

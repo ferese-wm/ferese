@@ -222,7 +222,11 @@ impl BlurRenderElement {
         self.geometry = parameters.sample_geometry;
         self.capture_rect = framebuffer_capture_rect(parameters.sample_framebuffer);
         self.uniforms = blur_uniforms(parameters).into();
-        self.backdrop.lock().unwrap().commit.increment();
+        self.backdrop
+            .lock()
+            .expect("surface rendering state must remain consistent across callbacks")
+            .commit
+            .increment();
     }
 }
 
@@ -232,7 +236,10 @@ impl Element for BlurRenderElement {
     }
 
     fn current_commit(&self) -> CommitCounter {
-        self.backdrop.lock().unwrap().commit
+        self.backdrop
+            .lock()
+            .expect("surface rendering state must remain consistent across callbacks")
+            .commit
     }
 
     fn src(&self) -> Rectangle<f64, Buffer> {

@@ -258,7 +258,9 @@ impl cosmic::Application for App {
         }
         .into();
         let error = initial.as_ref().err().cloned();
-        let current = initial.unwrap_or_else(|_| Snapshot::parse(String::new()).unwrap());
+        let current = initial.unwrap_or_else(|_| {
+            Snapshot::parse(String::new()).expect("an empty Settings document uses valid defaults")
+        });
         let resolved = ferese_theme_client::service::current();
         let font = fonts::interface_font(&resolved.presented.tokens.typography.font_family);
         let native_palette = visuals::Palette::from_resolved(&resolved.presented);
@@ -540,7 +542,10 @@ impl cosmic::Application for App {
                     if let Some((id, appearance)) = &self.gallery_focus
                         && self.gallery_position(id, *appearance) == Some((list, index))
                     {
-                        let (id, appearance) = self.gallery_focus.take().unwrap();
+                        let (id, appearance) = self
+                            .gallery_focus
+                            .take()
+                            .expect("gallery focus was requested before this focus operation");
                         return cosmic::iced::advanced::widget::operate(
                             cosmic::iced::advanced::widget::operation::focusable::focus(
                                 gallery_id(&id, appearance),
@@ -1100,7 +1105,9 @@ impl App {
         {
             return self.apply_wallpaper_edits(wallpaper_controls::edits(
                 wallpaper_controls::Target::Both,
-                path.rsplit('.').next().unwrap(),
+                path.rsplit('.')
+                    .next()
+                    .expect("splitting a field path always yields its final component"),
                 value.clone(),
             ));
         }

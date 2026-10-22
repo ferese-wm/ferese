@@ -164,7 +164,10 @@ impl OpenMenu {
             }
         }
         if let Some(effects) = &self.effects {
-            let regions = self.regions.lock().unwrap();
+            let regions = self
+                .regions
+                .lock()
+                .expect("surface rendering state must remain consistent across callbacks");
             if let Err(error) = effects.set_regions(&regions) {
                 eprintln!("ferese-shell: could not prepare popover material: {error}");
             }
@@ -355,7 +358,9 @@ impl FereseShell {
             |now| {
                 if let Some(effects) = &menu.effects {
                     let _ = effects.set_presentation(
-                        &menu.regions.lock().unwrap(),
+                        &menu.regions.lock().expect(
+                            "surface rendering state must remain consistent across callbacks",
+                        ),
                         menu.motion.progress_at(now),
                         [],
                         super::ferese_surface_effects_v1::Role::Popover,

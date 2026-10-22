@@ -153,11 +153,17 @@ fn read_events(
     for line in lines {
         let Ok(line) = line else { break };
         if let Ok(event) = serde_json::from_str(&line) {
-            queue.lock().unwrap().push_back(event);
+            queue
+                .lock()
+                .expect("authentication prompt queue must remain consistent across workers")
+                .push_back(event);
         }
     }
     // The agent owns this pipe. EOF (including agent death) closes the prompt.
-    queue.lock().unwrap().push_back(PromptEvent::Cancel);
+    queue
+        .lock()
+        .expect("authentication prompt queue must remain consistent across workers")
+        .push_back(PromptEvent::Cancel);
 }
 
 pub fn run() -> Result<(), Box<dyn std::error::Error>> {
@@ -348,7 +354,12 @@ impl cosmic::Application for Prompt {
                 self.material = result.ok();
             }
             Message::Tick => {
-                let events: Vec<_> = self.incoming.lock().unwrap().drain(..).collect();
+                let events: Vec<_> = self
+                    .incoming
+                    .lock()
+                    .expect("authentication prompt queue must remain consistent across workers")
+                    .drain(..)
+                    .collect();
                 let mut refocus = false;
                 for event in events {
                     match event {

@@ -68,7 +68,10 @@ enum Error {
 
 impl Pairing {
     fn begin(&self, target: &str) -> Result<u64, String> {
-        let mut state = self.0.lock().unwrap();
+        let mut state = self
+            .0
+            .lock()
+            .expect("pairing agent state must remain consistent across callbacks");
         if state.target.is_some() {
             return Err("Another device is already pairing.".into());
         }
@@ -78,7 +81,10 @@ impl Pairing {
     }
 
     fn finish(&self, generation: u64) {
-        let mut state = self.0.lock().unwrap();
+        let mut state = self
+            .0
+            .lock()
+            .expect("pairing agent state must remain consistent across callbacks");
         if state.generation == generation {
             state.target = None;
             state.prompt = None;
@@ -87,7 +93,10 @@ impl Pairing {
     }
 
     pub fn cancel_local(&self) -> Option<String> {
-        let mut state = self.0.lock().unwrap();
+        let mut state = self
+            .0
+            .lock()
+            .expect("pairing agent state must remain consistent across callbacks");
         state.generation = state.generation.wrapping_add(1);
         state.prompt = None;
         state.reply = None;
@@ -95,11 +104,18 @@ impl Pairing {
     }
 
     pub fn prompt(&self) -> Option<Prompt> {
-        self.0.lock().unwrap().prompt.clone()
+        self.0
+            .lock()
+            .expect("pairing agent state must remain consistent across callbacks")
+            .prompt
+            .clone()
     }
 
     pub fn reply(&self, id: u64, value: Option<Zeroizing<String>>) {
-        let mut state = self.0.lock().unwrap();
+        let mut state = self
+            .0
+            .lock()
+            .expect("pairing agent state must remain consistent across callbacks");
         if state.prompt.as_ref().is_some_and(|p| p.id == id) {
             if let Some(reply) = state.reply.take() {
                 let _ = reply.send(value);
@@ -126,7 +142,10 @@ impl Pairing {
         sender: Option<&str>,
     ) -> Result<Zeroizing<String>, Error> {
         let (id, rx) = {
-            let mut state = self.0.lock().unwrap();
+            let mut state = self
+                .0
+                .lock()
+                .expect("pairing agent state must remain consistent across callbacks");
             Self::check(&state, device.as_str(), sender)?;
             if state.reply.is_some() {
                 return Err(Error::Rejected(
@@ -159,7 +178,10 @@ impl Pairing {
         text: String,
         sender: Option<&str>,
     ) -> Result<(), Error> {
-        let mut state = self.0.lock().unwrap();
+        let mut state = self
+            .0
+            .lock()
+            .expect("pairing agent state must remain consistent across callbacks");
         Self::check(&state, device.as_str(), sender)?;
         state.serial = state.serial.wrapping_add(1);
         state.prompt = Some(Prompt {
@@ -171,7 +193,10 @@ impl Pairing {
     }
 
     fn dismiss(&self, sender: Option<&str>) -> Result<(), Error> {
-        let mut state = self.0.lock().unwrap();
+        let mut state = self
+            .0
+            .lock()
+            .expect("pairing agent state must remain consistent across callbacks");
         if sender.is_none() || state.owner.as_deref() != sender {
             return Err(Error::Rejected("Unknown sender".into()));
         }
@@ -289,7 +314,10 @@ impl Pairing {
     fn release(&self, #[zbus(header)] header: Header<'_>) -> Result<(), Error> {
         self.dismiss(header.sender().map(|s| s.as_str()))?;
         self.cancel_local();
-        self.0.lock().unwrap().owner = None;
+        self.0
+            .lock()
+            .expect("pairing agent state must remain consistent across callbacks")
+            .owner = None;
         Ok(())
     }
 }
@@ -308,17 +336,29 @@ impl Client {
         .map_err(|e| e.to_string())?;
         let mut registered = self.registered.lock().await;
         if registered.as_ref() == Some(&owner)
-            && self.agent.0.lock().unwrap().owner.as_ref() == Some(&owner)
+            && self
+                .agent
+                .0
+                .lock()
+                .expect("pairing agent state must remain consistent across callbacks")
+                .owner
+                .as_ref()
+                == Some(&owner)
         {
             return Ok(());
         }
-        self.agent.0.lock().unwrap().owner = Some(owner.clone());
+        self.agent
+            .0
+            .lock()
+            .expect("pairing agent state must remain consistent across callbacks")
+            .owner = Some(owner.clone());
         self.connection
             .object_server()
             .at(PATH, self.agent.clone())
             .await
             .map_err(|e| e.to_string())?;
-        let path = OwnedObjectPath::try_from(PATH).unwrap();
+        let path = OwnedObjectPath::try_from(PATH)
+            .expect("the pairing agent has a valid static object path");
         proxy(
             &self.connection,
             "org.bluez",
@@ -341,13 +381,26 @@ impl Client {
         }
         let result = async {
             self.register_agent().await?;
-            if self.agent.0.lock().unwrap().generation != generation {
+            if self
+                .agent
+                .0
+                .lock()
+                .expect("pairing agent state must remain consistent across callbacks")
+                .generation
+                != generation
+            {
                 return Err("Pairing canceled.".into());
             }
             bluetooth::device_call(&self.connection, path, "Pair").await
         }
         .await;
-        let still_active = self.agent.0.lock().unwrap().generation == generation;
+        let still_active = self
+            .agent
+            .0
+            .lock()
+            .expect("pairing agent state must remain consistent across callbacks")
+            .generation
+            == generation;
         self.agent.finish(generation);
         if !still_active {
             return Err("Pairing canceled.".into());

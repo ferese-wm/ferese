@@ -166,7 +166,10 @@ fn object(doc: &KdlDocument, parent: &str) -> Result<Map<String, Value>, Error> 
             let records = result
                 .entry(key)
                 .or_insert_with(|| Value::Array(Vec::new()));
-            records.as_array_mut().unwrap().push(value);
+            records
+                .as_array_mut()
+                .expect("repeated KDL records are stored as arrays")
+                .push(value);
         } else {
             insert(&mut result, key, value)?;
         }
@@ -255,7 +258,10 @@ pub(crate) fn node_value(node: &KdlNode, key: &str, parent: &str) -> Result<Valu
         return Err(Error(format!("{} requires one value", node.name())));
     }
 
-    Ok(args.into_iter().next().unwrap())
+    Ok(args
+        .into_iter()
+        .next()
+        .expect("a scalar KDL node was checked to have one argument"))
 }
 
 #[derive(Clone, Debug)]
@@ -305,7 +311,8 @@ impl Document {
         let mut document = self.clone();
         document.value["theme"] =
             serde_json::to_value(&theme.tokens).expect("serializable theme tokens");
-        document.value["theme"]["appearance"] = serde_json::to_value(theme.appearance).unwrap();
+        document.value["theme"]["appearance"] = serde_json::to_value(theme.appearance)
+            .expect("typed configuration and IPC values must serialize to JSON");
         document
     }
 
@@ -882,7 +889,10 @@ fn kdl_value(value: &Value) -> Result<KdlValue, Error> {
             } else if let Some(i) = n.as_u64() {
                 KdlValue::Integer(i.into())
             } else {
-                KdlValue::Float(n.as_f64().unwrap())
+                KdlValue::Float(
+                    n.as_f64()
+                        .expect("JSON numbers fit the KDL numeric representation"),
+                )
             }
         }
         _ => return Err(Error("Expected a scalar value".into())),

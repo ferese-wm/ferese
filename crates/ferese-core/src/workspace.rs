@@ -544,7 +544,10 @@ impl WorkspaceSet {
             replacements.push((workspace.id, layout));
         }
         for (id, layout) in replacements {
-            self.workspaces.get_mut(&id).unwrap().layout = layout;
+            self.workspaces
+                .get_mut(&id)
+                .expect("replacement layouts were built from existing workspace IDs")
+                .layout = layout;
         }
         self.default_layout_mode = mode;
         self.default_column_width = width;

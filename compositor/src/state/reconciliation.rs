@@ -101,7 +101,12 @@ impl Ferese {
             layout: !plan.affected_outputs.is_empty(),
             focus: plan.focus_changed,
             shell: !plan.affected_outputs.is_empty(),
-            outputs: self.desktop_transition.as_ref().unwrap().redraw.clone(),
+            outputs: self
+                .desktop_transition
+                .as_ref()
+                .expect("desktop transition must be started before publication or retirement")
+                .redraw
+                .clone(),
         };
         let floats = self
             .windows
@@ -213,7 +218,10 @@ impl Ferese {
     }
 
     pub(crate) fn finish_desktop_transition(&mut self, mut changes: DesktopChanges) {
-        self.desktop_transition.as_mut().unwrap().publishing = true;
+        self.desktop_transition
+            .as_mut()
+            .expect("desktop transition must be started before publication or retirement")
+            .publishing = true;
         let activity_output = self.space.outputs().next().map(|output| output.name());
         if let Some(output) = activity_output
             && (self.activities.store.attach_output(&output)
@@ -230,7 +238,10 @@ impl Ferese {
         self.reconcile_layer_keyboard_focus();
         self.refresh_lock_outputs();
         self.refresh_idle_inhibition();
-        let batch = self.desktop_transition.take().unwrap();
+        let batch = self
+            .desktop_transition
+            .take()
+            .expect("desktop transition must be started before publication or retirement");
         changes.outputs.extend(batch.redraw);
         // Animation/layout helpers may request snapshots, but only this point
         // can emit the complete topology generation.

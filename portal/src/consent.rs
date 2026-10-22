@@ -163,7 +163,11 @@ impl cosmic::Application for Consent {
                 if self.prompt.shortcuts.is_empty() {
                     println!("true");
                 } else {
-                    println!("{}", serde_json::to_string(&self.prompt.shortcuts).unwrap());
+                    println!(
+                        "{}",
+                        serde_json::to_string(&self.prompt.shortcuts)
+                            .expect("typed configuration and IPC values must serialize to JSON")
+                    );
                 }
                 let _ = std::io::stdout().flush();
                 return cosmic::iced::exit();

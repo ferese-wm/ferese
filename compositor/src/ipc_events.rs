@@ -78,7 +78,9 @@ impl Subscribers {
             })
             .collect::<Vec<_>>();
         if let Some(last) = events.last_mut() {
-            Arc::get_mut(last).unwrap().last = true;
+            Arc::get_mut(last)
+                .expect("new initial-event records have not been shared with subscribers")
+                .last = true;
         }
         let initial = self
             .subscribers
@@ -98,7 +100,12 @@ impl Subscribers {
             let delivered = if subscriber.initial {
                 subscriber
                     .sender
-                    .try_send(initial.as_ref().unwrap().clone())
+                    .try_send(
+                        initial
+                            .as_ref()
+                            .expect("the initial event batch is built before subscription delivery")
+                            .clone(),
+                    )
                     .is_ok()
             } else {
                 events

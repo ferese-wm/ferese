@@ -108,10 +108,15 @@ fn update_shared<E: Element>(
 ) -> bool {
     // Element queries can read this same backdrop's commit. Snapshot the state,
     // release its lock, then inspect sources. Rendering is the sole writer.
-    let mut backdrop = shared.lock().unwrap().clone();
+    let mut backdrop = shared
+        .lock()
+        .expect("surface rendering state must remain consistent across callbacks")
+        .clone();
     let sources = elements.iter().filter(|element| element.id() != owner);
     let changed = backdrop.update(sources, region, scale);
-    *shared.lock().unwrap() = backdrop;
+    *shared
+        .lock()
+        .expect("surface rendering state must remain consistent across callbacks") = backdrop;
     changed
 }
 

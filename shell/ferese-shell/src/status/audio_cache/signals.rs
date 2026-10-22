@@ -60,18 +60,26 @@ impl Signals {
                 pw::init();
 
                 loop {
-                    if *stop.stopped.lock().unwrap() {
+                    if *stop.stopped.lock().expect(
+                        "audio listener lifecycle state must remain consistent across workers",
+                    ) {
                         break;
                     }
 
                     let _ = monitor(state.clone(), &stop, remote.as_deref());
                     state.set_alive(false);
-                    *stop.sender.lock().unwrap() = None;
-                    let stopped = stop.stopped.lock().unwrap();
+                    *stop.sender.lock().expect(
+                        "audio listener lifecycle state must remain consistent across workers",
+                    ) = None;
+                    let stopped = stop.stopped.lock().expect(
+                        "audio listener lifecycle state must remain consistent across workers",
+                    );
                     let (stopped, _) = stop
                         .wake
                         .wait_timeout_while(stopped, Duration::from_secs(5), |value| !*value)
-                        .unwrap();
+                        .expect(
+                            "audio listener lifecycle state must remain consistent across workers",
+                        );
 
                     if *stopped {
                         break;
@@ -115,10 +123,20 @@ impl Signals {
 
 impl Drop for Signals {
     fn drop(&mut self) {
-        *self.stop.stopped.lock().unwrap() = true;
+        *self
+            .stop
+            .stopped
+            .lock()
+            .expect("audio listener lifecycle state must remain consistent across workers") = true;
         self.stop.wake.notify_one();
 
-        if let Some(sender) = self.stop.sender.lock().unwrap().as_ref() {
+        if let Some(sender) = self
+            .stop
+            .sender
+            .lock()
+            .expect("audio listener lifecycle state must remain consistent across workers")
+            .as_ref()
+        {
             let _ = sender.send(());
         }
     }
@@ -273,9 +291,17 @@ fn monitor(state: Arc<State>, stop: &Stop, remote: Option<&str>) -> Result<(), p
             mainloop.quit();
         }
     });
-    *stop.sender.lock().unwrap() = Some(sender);
+    *stop
+        .sender
+        .lock()
+        .expect("audio listener lifecycle state must remain consistent across workers") =
+        Some(sender);
 
-    if !*stop.stopped.lock().unwrap() {
+    if !*stop
+        .stopped
+        .lock()
+        .expect("audio listener lifecycle state must remain consistent across workers")
+    {
         mainloop.run();
     }
 

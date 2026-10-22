@@ -730,7 +730,7 @@ fn panel_matrices(
                 match permutation
                     .iter()
                     .position(|i| *i == old_corner as f32)
-                    .unwrap()
+                    .expect("the corner transform is a permutation containing every source corner")
                 {
                     0 => 5,
                     1 => 4,

@@ -211,10 +211,14 @@ pub fn notch_border(
     let mut paths = Vec::new();
     while let Some((a, b)) = segments.pop() {
         let mut path = vec![a, b];
-        while let Some(index) = segments
-            .iter()
-            .position(|&(a, _)| close(a, *path.last().unwrap()))
-        {
+        while let Some(index) = segments.iter().position(|&(a, _)| {
+            close(
+                a,
+                *path
+                    .last()
+                    .expect("an outline path starts with two points and only grows"),
+            )
+        }) {
             path.push(segments.swap_remove(index).1);
         }
         while let Some(index) = segments.iter().position(|&(_, b)| close(b, path[0])) {

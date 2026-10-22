@@ -90,7 +90,9 @@ fn auto_context() -> ferese_config::theme::AutoContext {
         Mutex::new(value)
     });
     ferese_config::theme::AutoContext {
-        system: *appearance.lock().unwrap(),
+        system: *appearance
+            .lock()
+            .expect("theme watcher state must remain consistent across workers"),
     }
 }
 
@@ -264,7 +266,10 @@ impl Engine {
                 directory.to_owned()
             })
             .collect();
-        *self.paths.lock().unwrap() = targets;
+        *self
+            .paths
+            .lock()
+            .expect("theme watcher state must remain consistent across workers") = targets;
         if let Some(watcher) = &mut self.watcher {
             for directory in self.watched_directories.difference(&directories) {
                 let _ = watcher.unwatch(directory);
@@ -349,11 +354,14 @@ pub(crate) fn init(
     let (sender, events) = mpsc::sync_channel(1);
     let paths = state.theme_engine.paths.clone();
     if let Some(config) = crate::config::config_path() {
-        paths.lock().unwrap().insert(config);
+        paths
+            .lock()
+            .expect("theme watcher state must remain consistent across workers")
+            .insert(config);
     }
     paths
         .lock()
-        .unwrap()
+        .expect("theme watcher state must remain consistent across workers")
         .insert(PathBuf::from("/etc/localtime"));
     let wakeup = state.loop_signal.clone();
     let system_sender = sender.clone();
@@ -385,7 +393,9 @@ pub(crate) fn init(
                     .output()
                 {
                     if let Some(state) = SYSTEM_APPEARANCE.get() {
-                        *state.lock().unwrap() =
+                        *state
+                            .lock()
+                            .expect("theme watcher state must remain consistent across workers") =
                             system_appearance_value(&String::from_utf8_lossy(&output.stdout));
                     }
                     let _ = system_sender.try_send(());
@@ -398,7 +408,9 @@ pub(crate) fn init(
                     {
                         let value = system_appearance_value(&line);
                         if let Some(state) = SYSTEM_APPEARANCE.get() {
-                            *state.lock().unwrap() = value;
+                            *state.lock().expect(
+                                "theme watcher state must remain consistent across workers",
+                            ) = value;
                         }
                         let _ = system_sender.try_send(());
                         system_wakeup.wakeup();
@@ -434,7 +446,7 @@ fn file_watcher(
             && event.paths.iter().any(|path| {
                 paths
                     .lock()
-                    .unwrap()
+                    .expect("theme watcher state must remain consistent across workers")
                     .iter()
                     .any(|target| target == path || target.starts_with(path))
             })
@@ -575,7 +587,11 @@ impl Ferese {
             }
         }
         if start {
-            let pending = self.theme_engine.pending.take().unwrap();
+            let pending = self
+                .theme_engine
+                .pending
+                .take()
+                .expect("the transition starts only when a theme candidate is pending");
             let from = self.theme_engine.live.presented.clone();
             let previous_wallpaper = pending
                 .wallpaper

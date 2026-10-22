@@ -657,7 +657,11 @@ impl Ferese {
                     self.resize_metrics.begin(
                         id,
                         self.workspaces.workspace_for_window(id),
-                        &self.windows.record(id).unwrap().app_id,
+                        &self
+                            .windows
+                            .record(id)
+                            .expect("the selected window has a registered lifecycle record")
+                            .app_id,
                         now,
                     );
                     self.windows.set_transaction(

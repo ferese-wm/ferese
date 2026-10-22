@@ -257,7 +257,7 @@ fn retire(state: &mut Ferese, output: &mut DirectOutput, node: DrmNode, crtc: cr
     state
         .direct_backend
         .as_mut()
-        .unwrap()
+        .expect("DRM callbacks require an installed direct backend")
         .presentation
         .remove(&(node, crtc));
 }
@@ -296,7 +296,7 @@ impl crate::output_transaction::HardwareTransaction for DeviceTransaction<'_> {
             .staged
             .get_mut(&crtc)
             .or_else(|| self.device.outputs.get_mut(&crtc))
-            .unwrap();
+            .expect("the selected CRTC has a live or staged output in this transaction");
         output
             .surface
             .set_connectors(&[selection.connector.handle()])
@@ -317,8 +317,15 @@ impl crate::output_transaction::HardwareTransaction for DeviceTransaction<'_> {
             // set_connectors: each tests against the other's old value. Stage a
             // replacement surface, retire the old one *before* its first commit
             // (Smithay clears the CRTC on surface drop), then publish metadata.
-            let replacement = self.staged.remove(&crtc).unwrap();
-            let previous = self.device.outputs.get_mut(&crtc).unwrap();
+            let replacement = self
+                .staged
+                .remove(&crtc)
+                .expect("the selected CRTC has a live or staged output in this transaction");
+            let previous = self
+                .device
+                .outputs
+                .get_mut(&crtc)
+                .expect("the selected CRTC has a live or staged output in this transaction");
             previous.surface = replacement.surface;
             previous.dmabuf_feedback = replacement.dmabuf_feedback;
             self.replaced.insert(crtc);
@@ -326,7 +333,7 @@ impl crate::output_transaction::HardwareTransaction for DeviceTransaction<'_> {
         self.staged
             .get_mut(&crtc)
             .or_else(|| self.device.outputs.get_mut(&crtc))
-            .unwrap()
+            .expect("the selected CRTC has a live or staged output in this transaction")
             .surface
             .commit_frame()
             .map_err(|error| error.to_string())
@@ -336,7 +343,7 @@ impl crate::output_transaction::HardwareTransaction for DeviceTransaction<'_> {
         self.device
             .outputs
             .get_mut(&crtc)
-            .unwrap()
+            .expect("the selected CRTC has a live or staged output in this transaction")
             .surface
             .clear()
             .map_err(|error| error.to_string())
@@ -384,7 +391,11 @@ impl crate::output_transaction::HardwareTransaction for DeviceTransaction<'_> {
                 &replacement.settings,
             )
             .map_err(|error| error.to_string())?;
-            let previous = self.device.outputs.get_mut(&crtc).unwrap();
+            let previous = self
+                .device
+                .outputs
+                .get_mut(&crtc)
+                .expect("the selected CRTC has a live or staged output in this transaction");
             previous.surface = replacement.surface;
             previous.dmabuf_feedback = replacement.dmabuf_feedback;
             previous
@@ -426,7 +437,7 @@ impl crate::output_transaction::HardwareTransaction for DeviceTransaction<'_> {
         self.state
             .desktop_transition
             .as_mut()
-            .unwrap()
+            .expect("desktop transition must be started before publication or retirement")
             .redraw
             .insert(output.output.clone());
         output.lock_frame_pending = false;
@@ -504,7 +515,7 @@ pub(super) fn apply_device(
         let mut output = staged
             .remove(crtc)
             .or_else(|| device.outputs.remove(crtc))
-            .unwrap();
+            .expect("the selected CRTC has a live or staged output in this transaction");
         if output.connector != selection.connector.handle() || output.identity != selection.identity
         {
             retire(state, &mut output, node, *crtc);
@@ -551,7 +562,7 @@ pub(super) fn apply_device(
         let clock = state
             .direct_backend
             .as_mut()
-            .unwrap()
+            .expect("DRM callbacks require an installed direct backend")
             .presentation
             .entry((node, *crtc))
             .or_default();
@@ -561,7 +572,10 @@ pub(super) fn apply_device(
     }
     // Retire resources now; the final inventory determines evacuation once.
     for crtc in removals {
-        let mut output = device.outputs.remove(&crtc).unwrap();
+        let mut output = device
+            .outputs
+            .remove(&crtc)
+            .expect("the selected CRTC has a live or staged output in this transaction");
         retire(state, &mut output, node, crtc);
     }
     device.connected_outputs = scan.connected_outputs;
@@ -592,7 +606,7 @@ pub(super) fn retire_disconnected(state: &mut Ferese) {
     let missing = state
         .direct_backend
         .as_ref()
-        .unwrap()
+        .expect("DRM callbacks require an installed direct backend")
         .devices
         .iter()
         .flat_map(|(node, device)| {
@@ -610,10 +624,10 @@ pub(super) fn retire_disconnected(state: &mut Ferese) {
         if let Some(mut output) = state
             .direct_backend
             .as_mut()
-            .unwrap()
+            .expect("DRM callbacks require an installed direct backend")
             .devices
             .get_mut(&node)
-            .unwrap()
+            .expect("the selected DRM device must remain registered during this operation")
             .outputs
             .remove(&crtc)
         {
@@ -629,7 +643,7 @@ pub(super) fn recover_last_output(state: &mut Ferese) {
     if state
         .direct_backend
         .as_ref()
-        .unwrap()
+        .expect("DRM callbacks require an installed direct backend")
         .devices
         .values()
         .any(|device| {
@@ -641,7 +655,10 @@ pub(super) fn recover_last_output(state: &mut Ferese) {
     {
         return;
     }
-    let backend = state.direct_backend.as_ref().unwrap();
+    let backend = state
+        .direct_backend
+        .as_ref()
+        .expect("DRM callbacks require an installed direct backend");
     let requested = backend.desired_outputs.clone();
     let original_error = backend.output_error.clone();
     let mut candidates = backend
@@ -652,7 +669,10 @@ pub(super) fn recover_last_output(state: &mut Ferese) {
         .collect::<Vec<_>>();
     candidates.sort_by_key(|monitor| (!monitor.internal, monitor.key.clone()));
     for candidate in candidates {
-        let backend = state.direct_backend.as_mut().unwrap();
+        let backend = state
+            .direct_backend
+            .as_mut()
+            .expect("DRM callbacks require an installed direct backend");
         backend.desired_outputs = DesiredOutputConfiguration {
             profile: None,
             suspend: requested.suspend,
@@ -687,7 +707,7 @@ pub(super) fn recover_last_output(state: &mut Ferese) {
             if state
                 .direct_backend
                 .as_ref()
-                .unwrap()
+                .expect("DRM callbacks require an installed direct backend")
                 .devices
                 .values()
                 .any(|device| {
@@ -698,13 +718,20 @@ pub(super) fn recover_last_output(state: &mut Ferese) {
                 })
             {
                 remember_applied_configuration(state);
-                state.direct_backend.as_mut().unwrap().output_error = original_error;
+                state
+                    .direct_backend
+                    .as_mut()
+                    .expect("DRM callbacks require an installed direct backend")
+                    .output_error = original_error;
                 tracing::warn!(identity = %candidate.identity, "recovered last usable output with preferred mode");
                 return;
             }
         }
     }
-    let backend = state.direct_backend.as_mut().unwrap();
+    let backend = state
+        .direct_backend
+        .as_mut()
+        .expect("DRM callbacks require an installed direct backend");
     backend.desired_outputs = requested;
     backend.output_error = original_error;
 }

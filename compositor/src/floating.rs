@@ -213,9 +213,13 @@ impl SaveThread {
                 loop {
                     let job = {
                         let (mutex, ready) = &*worker;
-                        let mut state = mutex.lock().unwrap();
+                        let mut state = mutex.lock().expect(
+                            "screenshot writer queue must remain consistent across workers",
+                        );
                         while state.pending.is_none() && !state.closed {
-                            state = ready.wait(state).unwrap();
+                            state = ready.wait(state).expect(
+                                "screenshot writer queue must remain consistent across workers",
+                            );
                         }
                         match state.pending.take() {
                             Some(job) => job,
@@ -237,7 +241,10 @@ impl SaveThread {
 
     fn queue(&self, path: PathBuf, memory: Memory) {
         let (mutex, ready) = &*self.shared;
-        mutex.lock().unwrap().pending = Some((path, memory));
+        mutex
+            .lock()
+            .expect("screenshot writer queue must remain consistent across workers")
+            .pending = Some((path, memory));
         ready.notify_one();
     }
 }
@@ -245,7 +252,10 @@ impl SaveThread {
 impl Drop for SaveThread {
     fn drop(&mut self) {
         let (mutex, ready) = &*self.shared;
-        mutex.lock().unwrap().closed = true;
+        mutex
+            .lock()
+            .expect("screenshot writer queue must remain consistent across workers")
+            .closed = true;
         ready.notify_one();
         // Flush the latest snapshot only during compositor shutdown, after
         // the event loop has stopped. Drag completion never joins this thread.
@@ -265,7 +275,10 @@ impl SaveWorker {
         if self.worker.is_none() {
             self.worker = Some(SaveThread::start(|path, memory| memory.persist(path))?);
         }
-        self.worker.as_ref().unwrap().queue(path, memory.clone());
+        self.worker
+            .as_ref()
+            .expect("screenshot submission initialized the writer before queueing work")
+            .queue(path, memory.clone());
         Ok(())
     }
 }

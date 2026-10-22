@@ -114,26 +114,30 @@ impl IdentityRegistry {
                 Some(base) => format!("{base}@{}", escaped(key)),
                 None => format!("drm:{}", escaped(key)),
             };
-            let preferred = self
-                .known
-                .get(key)
-                .filter(|known| {
-                    base.as_ref()
-                        .is_some_and(|base| *known == base || *known == &qualified)
-                        || (base.is_none() && *known == &qualified)
-                })
-                .cloned()
-                .unwrap_or_else(|| {
-                    if identity
-                        .as_ref()
-                        .is_some_and(|identity| identity.serial.is_some())
-                        && !self.ambiguous.contains(base.as_ref().unwrap())
-                    {
-                        base.clone().unwrap()
-                    } else {
-                        qualified.clone()
-                    }
-                });
+            let preferred =
+                self.known
+                    .get(key)
+                    .filter(|known| {
+                        base.as_ref()
+                            .is_some_and(|base| *known == base || *known == &qualified)
+                            || (base.is_none() && *known == &qualified)
+                    })
+                    .cloned()
+                    .unwrap_or_else(|| {
+                        if identity
+                            .as_ref()
+                            .is_some_and(|identity| identity.serial.is_some())
+                            && !self.ambiguous.contains(base.as_ref().expect(
+                                "a unique serial-bearing monitor has a computed base identity",
+                            ))
+                        {
+                            base.clone().expect(
+                                "a unique serial-bearing monitor has a computed base identity",
+                            )
+                        } else {
+                            qualified.clone()
+                        }
+                    });
             let resolved = if used.insert(preferred.clone()) {
                 preferred
             } else {

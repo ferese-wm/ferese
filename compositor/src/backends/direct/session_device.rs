@@ -23,13 +23,21 @@ impl<S: Session> SessionDevice<S> {
     }
 
     pub fn device_fd(&self) -> io::Result<DeviceFd> {
-        self.fd.as_ref().unwrap().try_clone().map(DeviceFd::from)
+        self.fd
+            .as_ref()
+            .expect("the session device retains its descriptor until Drop")
+            .try_clone()
+            .map(DeviceFd::from)
     }
 }
 
 impl<S: Session> Drop for SessionDevice<S> {
     fn drop(&mut self) {
-        if let Err(error) = self.session.close(self.fd.take().unwrap()) {
+        if let Err(error) = self.session.close(
+            self.fd
+                .take()
+                .expect("the session device retains its descriptor until Drop"),
+        ) {
             tracing::warn!(
                 ?error,
                 "could not release DRM device through the session manager"

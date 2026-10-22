@@ -305,8 +305,12 @@ impl FereseShell {
                         width: bounds.width.round() as i32,
                         height: bounds.height.round() as i32,
                     },
-                    anchor: anchor.try_into().unwrap(),
-                    gravity: gravity.try_into().unwrap(),
+                    anchor: anchor
+                        .try_into()
+                        .expect("popup placement uses supported anchor and gravity combinations"),
+                    gravity: gravity
+                        .try_into()
+                        .expect("popup placement uses supported anchor and gravity combinations"),
                     offset: (0, gap),
                     constraint_adjustment: 3,
                     size_limits: cosmic::iced::Limits::NONE.max_width(320.).max_height(64.),

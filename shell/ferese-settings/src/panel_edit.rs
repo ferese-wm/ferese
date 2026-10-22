@@ -147,7 +147,7 @@ fn locate(panel: &Panel, id: &ItemId) -> Result<(String, usize), String> {
             .groups
             .iter()
             .find(|group| group.id == destination.group)
-            .unwrap();
+            .expect("the selected destination group belongs to its resolved zone");
         if let Some(index) = group.items.iter().position(|item| &item.id == id) {
             return Ok((path, index));
         }
@@ -309,7 +309,7 @@ pub(super) fn plan(snapshot: &Snapshot, action: Action) -> Result<Vec<Edit>, Str
             }
             let group = records(&candidate, &format!("panels.0.{}.groups", zone.key()))[0]["id"]
                 .as_str()
-                .unwrap()
+                .expect("validated panel groups and item kinds have string identifiers")
                 .to_owned();
             edits.extend(plan(
                 &candidate,
@@ -337,7 +337,13 @@ pub(super) fn plan(snapshot: &Snapshot, action: Action) -> Result<Vec<Edit>, Str
             }
             let (path, index) = locate(panel, &id)?;
             if field == "style"
-                && !matches!(panel.item(&id).unwrap().kind, ItemKind::Workspaces { .. })
+                && !matches!(
+                    panel
+                        .item(&id)
+                        .expect("the item edit resolved its stable ID before checking its kind")
+                        .kind,
+                    ItemKind::Workspaces { .. }
+                )
             {
                 return Err("Workspace style belongs to Workspaces items.".into());
             }
@@ -349,11 +355,14 @@ pub(super) fn plan(snapshot: &Snapshot, action: Action) -> Result<Vec<Edit>, Str
             }
             let path = group_path(panel, &destination)?;
             let name = serde_json::to_value(kind).map_err(|error| error.to_string())?;
-            let name = name["kind"].as_str().unwrap();
+            let name = name["kind"]
+                .as_str()
+                .expect("validated panel groups and item kinds have string identifiers");
             let count = destinations(panel)
                 .iter()
                 .map(|destination| {
-                    let path = group_path(panel, destination).unwrap();
+                    let path = group_path(panel, destination)
+                        .expect("catalog destinations refer to existing panel groups");
                     records(snapshot, &path).len()
                 })
                 .sum::<usize>();
@@ -366,7 +375,7 @@ pub(super) fn plan(snapshot: &Snapshot, action: Action) -> Result<Vec<Edit>, Str
                     }
                 })
                 .find(|id| panel.item(&ItemId(id.clone())).is_none())
-                .unwrap();
+                .expect("one more candidate ID than existing items guarantees an unused ID");
             let mut items = records(snapshot, &path);
             items.push(
                 serde_json::to_value(Item::new(&id, kind)).map_err(|error| error.to_string())?,
@@ -381,7 +390,7 @@ pub(super) fn plan(snapshot: &Snapshot, action: Action) -> Result<Vec<Edit>, Str
             let id = (1..=count + 1)
                 .map(|number| format!("{}-{number}", zone.key()))
                 .find(|id| locate_group(panel, &GroupId(id.clone())).is_err())
-                .unwrap();
+                .expect("one more candidate ID than existing items guarantees an unused ID");
             let path = format!("panels.0.{}.groups", zone.key());
             let mut groups = records(snapshot, &path);
             groups.push(serde_json::json!({
@@ -432,7 +441,8 @@ pub(super) fn plan(snapshot: &Snapshot, action: Action) -> Result<Vec<Edit>, Str
                 "padding_vertical" | "padding_horizontal" => {
                     let (zone, index) = locate_group(panel, &id)?;
                     let mut padding =
-                        serde_json::to_value(zone.definition(panel).groups[index].padding).unwrap();
+                        serde_json::to_value(zone.definition(panel).groups[index].padding)
+                            .expect("typed configuration and IPC values must serialize to JSON");
                     padding[usize::from(field == "padding_horizontal")] = value;
                     ("padding".to_owned(), padding)
                 }

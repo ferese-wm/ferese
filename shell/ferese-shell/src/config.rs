@@ -451,8 +451,11 @@ fn parse_document(
 
 impl ShellConfig {
     pub(crate) fn apply_theme(&mut self, theme: &ferese_config::theme::ResolvedTheme) {
-        let config: ThemeConfig =
-            serde_json::from_value(serde_json::to_value(&theme.tokens).unwrap()).unwrap();
+        let config: ThemeConfig = serde_json::from_value(
+            serde_json::to_value(&theme.tokens)
+                .expect("typed configuration and IPC values must serialize to JSON"),
+        )
+        .expect("resolved theme tokens must match their consumer schema");
         self.theme = shell_theme(&config);
         self.theme.appearance = theme.appearance;
         self.theme.high_contrast = theme.accessibility.increase_contrast;

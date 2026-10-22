@@ -136,7 +136,10 @@ impl Agent {
         let cancelled = Arc::new(AtomicBool::new(false));
 
         {
-            let mut active = self.active.lock().unwrap();
+            let mut active = self
+                .active
+                .lock()
+                .expect("authentication session ownership must remain consistent across callbacks");
             if active.contains_key(&cookie) {
                 return Err(zbus::fdo::Error::Failed("Duplicate request".into()));
             }
@@ -166,7 +169,10 @@ impl Agent {
         })
         .await;
 
-        self.active.lock().unwrap().remove(&cookie);
+        self.active
+            .lock()
+            .expect("authentication session ownership must remain consistent across callbacks")
+            .remove(&cookie);
         match result.map_err(|error| zbus::fdo::Error::Failed(error.to_string()))? {
             Ok(true) => Ok(()),
             Ok(false) => Err(zbus::fdo::Error::Failed("Authentication cancelled".into())),
@@ -175,7 +181,12 @@ impl Agent {
     }
 
     fn cancel_authentication(&self, cookie: String) {
-        if let Some(cancelled) = self.active.lock().unwrap().get(&cookie) {
+        if let Some(cancelled) = self
+            .active
+            .lock()
+            .expect("authentication session ownership must remain consistent across callbacks")
+            .get(&cookie)
+        {
             cancelled.store(true, Ordering::Release);
         }
     }

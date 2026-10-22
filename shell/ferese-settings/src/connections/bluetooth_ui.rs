@@ -19,7 +19,9 @@ impl App {
                 column([])
                     .spacing(8)
                     .push(self.label("Bluetooth unavailable", 14.))
-                    .push(self.connection_note(result.as_ref().unwrap_err())),
+                    .push(self.connection_note(result.as_ref().expect_err(
+                        "the unavailable-services branch contains a connection error",
+                    ))),
             );
         };
         let mut body = column([]).spacing(6);

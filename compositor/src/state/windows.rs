@@ -28,9 +28,9 @@ impl Ferese {
             let attributes = states
                 .data_map
                 .get::<XdgToplevelSurfaceData>()
-                .unwrap()
+                .expect("an XDG toplevel must retain its Smithay surface data")
                 .lock()
-                .unwrap();
+                .expect("Smithay surface state must remain consistent across callbacks");
             (
                 attributes.app_id.clone(),
                 attributes.title.clone(),
@@ -350,9 +350,9 @@ impl Ferese {
                 let attributes = states
                     .data_map
                     .get::<XdgToplevelSurfaceData>()
-                    .unwrap()
+                    .expect("an XDG toplevel must retain its Smithay surface data")
                     .lock()
-                    .unwrap();
+                    .expect("Smithay surface state must remain consistent across callbacks");
                 (
                     attributes.app_id.clone(),
                     attributes.title.clone(),

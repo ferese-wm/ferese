@@ -557,7 +557,10 @@ impl FereseShell {
                 .as_ref()
                 .is_some_and(|entry| entry.id == layer_id) =>
             {
-                let entry = self.notification_surface.as_mut().unwrap();
+                let entry = self
+                    .notification_surface
+                    .as_mut()
+                    .expect("the notification update branch matched an existing surface");
 
                 if entry.effects.is_none() {
                     match EffectsBinding::attach_role(
@@ -766,7 +769,10 @@ impl EffectsBinding {
                 queue,
             }));
         }
-        let context = context.as_ref().unwrap().clone();
+        let context = context
+            .as_ref()
+            .expect("surface effects binding initialized its native display context")
+            .clone();
         let effects = context
             .manager
             .as_ref()

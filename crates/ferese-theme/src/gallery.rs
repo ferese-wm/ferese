@@ -17,6 +17,10 @@ pub struct TileOptions {
     pub id: Id,
 }
 
+/// Shows a theme family using its validated appearance palettes.
+///
+/// # Panics
+/// The family must contain a usable palette with valid hexadecimal colors.
 pub fn tile<M: Clone + 'static>(
     family: &Family,
     options: TileOptions,
@@ -36,7 +40,9 @@ pub fn tile<M: Clone + 'static>(
     let label_color = family
         .palette(variant.unwrap_or(Appearance::Light))
         .or(family.dark.as_ref())
-        .map(|palette| crate::parse_color(&palette.text).unwrap())
+        .map(|palette| {
+            crate::parse_color(&palette.text).expect("theme family text is a validated color")
+        })
         .unwrap_or(palette.text);
     let mut caption = row([])
         .spacing(6)
@@ -141,7 +147,9 @@ fn preview_with_radius(
         std::sync::Mutex<std::collections::HashMap<String, (Family, icon::Handle)>>,
     > = std::sync::OnceLock::new();
     let cache = CACHE.get_or_init(Default::default);
-    let mut cache = cache.lock().unwrap();
+    let mut cache = cache
+        .lock()
+        .expect("theme preview cache must not be used after a mutator panics");
     if cache.get(&key).is_none_or(|(cached, _)| cached != family) {
         let handle = icon::from_svg_bytes(
             svg_with_radius(family, variant, active, selected, radius).into_bytes(),
@@ -207,7 +215,7 @@ fn svg_with_radius(
     result.push_str("<clipPath id=\"preview\"><polygon points=\"");
     for [x, y] in points {
         use std::fmt::Write as _;
-        write!(result, "{x:.4},{y:.4} ").unwrap();
+        write!(result, "{x:.4},{y:.4} ").expect("formatting into an owned String cannot fail");
     }
     result.push_str("\"/></clipPath></defs><g clip-path=\"url(#preview)\">");
     for appearance in [Appearance::Light, Appearance::Dark] {
@@ -263,10 +271,11 @@ fn svg_with_radius(
             .palette(active.unwrap_or(Appearance::Dark))
             .or(family.dark.as_ref())
             .or(family.light.as_ref())
-            .unwrap();
+            .expect("a theme family provides at least one appearance palette");
         let foreground = ferese_theme_model::hex(ferese_theme_model::readable(
             [1.; 4],
-            ferese_theme_model::rgba(&p.accent).unwrap(),
+            ferese_theme_model::rgba(&p.accent)
+                .expect("resolved theme colors must be valid hexadecimal RGBA"),
             4.5,
         ));
         result.push_str(&format!(r#"<circle cx="183" cy="16" r="10" fill="{}"/><path d="M178 16l3 3 6-6" fill="none" stroke="{foreground}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>"#, p.accent));

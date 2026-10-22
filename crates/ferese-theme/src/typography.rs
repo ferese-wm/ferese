@@ -6,7 +6,10 @@ pub fn font(family: Option<&str>) -> cosmic::font::Font {
         return cosmic::font::default();
     };
     static FONTS: OnceLock<Mutex<HashMap<String, cosmic::font::Font>>> = OnceLock::new();
-    let mut fonts = FONTS.get_or_init(Default::default).lock().unwrap();
+    let mut fonts = FONTS
+        .get_or_init(Default::default)
+        .lock()
+        .expect("shared font cache must not be used after a mutator panics");
     if let Some(font) = fonts.get(family) {
         return *font;
     }

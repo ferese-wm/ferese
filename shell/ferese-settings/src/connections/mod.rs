@@ -229,7 +229,12 @@ impl Client {
 
     fn cleanup(&self) {
         let target = self.agent.cancel_local();
-        let paths = std::mem::take(&mut *self.discovery.lock().unwrap());
+        let paths = std::mem::take(
+            &mut *self
+                .discovery
+                .lock()
+                .expect("Bluetooth discovery ownership must remain consistent across callbacks"),
+        );
         let connection = self.connection.clone();
         self.runtime.spawn(async move {
             if let Some(path) = target {

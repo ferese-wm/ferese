@@ -21,8 +21,12 @@ fn menu_positioner(
     };
     SctkPositioner {
         anchor_rect: rectangle,
-        anchor: anchor.try_into().unwrap(),
-        gravity: gravity.try_into().unwrap(),
+        anchor: anchor
+            .try_into()
+            .expect("popup placement uses supported anchor and gravity combinations"),
+        gravity: gravity
+            .try_into()
+            .expect("popup placement uses supported anchor and gravity combinations"),
         offset: (rectangle.width / 2, gap),
         size_limits: Limits::NONE
             .max_width(368.0)

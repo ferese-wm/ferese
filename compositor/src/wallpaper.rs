@@ -114,7 +114,15 @@ impl WallpaperState {
         let decode_failed = config.path.is_some() && !owned;
 
         let receiver = if owned {
-            Some(decoder.submit(config.path.clone().unwrap(), wakeup.clone()))
+            Some(
+                decoder.submit(
+                    config
+                        .path
+                        .clone()
+                        .expect("owned wallpaper decoding requires a configured image path"),
+                    wakeup.clone(),
+                ),
+            )
         } else {
             decoder.cancel_pending();
             None

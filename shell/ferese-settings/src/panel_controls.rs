@@ -321,10 +321,13 @@ impl App {
                                 .map(|panel| panel.resolved_geometry())
                                 .unwrap_or_default(),
                         )
-                        .unwrap();
-                        *default = geometry[field.path.rsplit('.').next().unwrap()]
+                        .expect("typed configuration and IPC values must serialize to JSON");
+                        *default =
+                            geometry[field.path.rsplit('.').next().expect(
+                                "splitting a field path always yields its final component",
+                            )]
                             .as_f64()
-                            .unwrap();
+                            .expect("splitting a field path always yields its final component");
                     }
                     let pinned = self.draft.item(&field.path).is_some();
                     let reset = pinned.then_some(Message::PanelEdit(Action::ClearGeometry(

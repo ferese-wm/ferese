@@ -210,7 +210,11 @@ pub(crate) async fn authorize(
         .ok_or_else(|| zbus::fdo::Error::AccessDenied("Missing caller".into()))?;
     let dbus = zbus::fdo::DBusProxy::new(connection).await?;
     let owner = dbus
-        .get_name_owner(FRONTEND.try_into().unwrap())
+        .get_name_owner(
+            FRONTEND
+                .try_into()
+                .expect("the portal frontend has a valid static bus name"),
+        )
         .await
         .map_err(|_| zbus::fdo::Error::AccessDenied("Desktop portal is unavailable".into()))?;
     if sender.as_str() != owner.as_str() {
@@ -608,9 +612,15 @@ async fn picker(prompt: &Prompt) -> Result<Child, String> {
         .kill_on_drop(true)
         .spawn()
         .map_err(|e| e.to_string())?;
-    let mut input = child.stdin.take().unwrap();
+    let mut input = child
+        .stdin
+        .take()
+        .expect("the child was spawned with piped standard input");
     input
-        .write_all(&serde_json::to_vec(prompt).unwrap())
+        .write_all(
+            &serde_json::to_vec(prompt)
+                .expect("typed configuration and IPC values must serialize to JSON"),
+        )
         .await
         .map_err(|e| e.to_string())?;
     drop(input);
@@ -855,7 +865,10 @@ async fn start_streams(
             .spawn()
             .map_err(|e| e.to_string())?;
         let mut line = String::new();
-        let output = child.stdout.take().unwrap();
+        let output = child
+            .stdout
+            .take()
+            .expect("the child was spawned with piped standard output");
         tokio::time::timeout(
             Duration::from_secs(10),
             BufReader::new(output).read_line(&mut line),
@@ -1129,7 +1142,11 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         tokio::time::sleep(Duration::from_secs(1)).await;
         let owner = match zbus::fdo::DBusProxy::new(&connection).await {
             Ok(proxy) => proxy
-                .get_name_owner(FRONTEND.try_into().unwrap())
+                .get_name_owner(
+                    FRONTEND
+                        .try_into()
+                        .expect("the portal frontend has a valid static bus name"),
+                )
                 .await
                 .ok()
                 .map(|name| name.to_string()),

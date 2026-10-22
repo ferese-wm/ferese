@@ -250,7 +250,10 @@ impl FereseShell {
             .as_ref()
             .is_some_and(|surface| !wanted || selected.as_ref() != Some(&surface.output))
         {
-            let surface = self.notification_surface.take().unwrap();
+            let surface = self
+                .notification_surface
+                .take()
+                .expect("notification teardown selected an existing notification surface");
             tasks.push(destroy_layer_surface(surface.id));
         }
         if !wanted {
@@ -630,7 +633,9 @@ impl FereseShell {
                     && let Some(effects) = &surface.effects
                 {
                     let _ = effects.set_presentation(
-                        &surface.regions.lock().unwrap(),
+                        &surface.regions.lock().expect(
+                            "surface rendering state must remain consistent across callbacks",
+                        ),
                         1.0,
                         self.notifications
                             .popup_groups_at(now)

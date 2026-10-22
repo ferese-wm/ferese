@@ -561,7 +561,14 @@ pub(super) fn cursor_elements(
                 states
                     .data_map
                     .get::<CursorImageSurfaceData>()
-                    .map(|attributes| attributes.lock().unwrap().hotspot)
+                    .map(|attributes| {
+                        attributes
+                            .lock()
+                            .expect(
+                                "cursor surface attributes must remain consistent across callbacks",
+                            )
+                            .hotspot
+                    })
                     .unwrap_or_default()
             });
             let physical_location =

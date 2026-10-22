@@ -183,10 +183,10 @@ pub fn resolve_with_gap(
     result.minimum_width = minimum.required_width();
     // Flexible content yields space without changing the stored item preference.
     for (_, item) in &candidates {
-        let Some(measured) = measurements
-            .get(&item.id)
-            .filter(|measured| measured.minimum.is_some())
-        else {
+        let Some(measured) = measurements.get(&item.id) else {
+            continue;
+        };
+        let Some(minimum) = measured.minimum else {
             continue;
         };
         if fits(&result) {
@@ -199,7 +199,7 @@ pub fn resolve_with_gap(
         else {
             continue;
         };
-        let minimum = measured.minimum.unwrap().min(width);
+        let minimum = minimum.min(width);
         result.items.insert(
             measured.id.clone(),
             Placement::Visible {
@@ -352,10 +352,14 @@ pub fn resolve_with_gap(
         let mut high = maximum;
         for _ in 0..20 {
             let width = (low + high) * 0.5;
-            *result.items.get_mut(&measured.id).unwrap() = Placement::Visible {
-                representation,
-                width,
-            };
+            *result
+                .items
+                .get_mut(&measured.id)
+                .expect("visible items retain their allocation during width refinement") =
+                Placement::Visible {
+                    representation,
+                    width,
+                };
             result.update_widths(panel, overflow_width);
             if fits(&result) {
                 low = width
@@ -363,14 +367,21 @@ pub fn resolve_with_gap(
                 high = width
             }
         }
-        *result.items.get_mut(&measured.id).unwrap() = Placement::Visible {
-            representation,
-            width: low,
-        };
+        *result
+            .items
+            .get_mut(&measured.id)
+            .expect("visible items retain their allocation during width refinement") =
+            Placement::Visible {
+                representation,
+                width: low,
+            };
     }
-    result
-        .overflow
-        .sort_by_key(|id| ordered.iter().position(|item| &item.id == id).unwrap());
+    result.overflow.sort_by_key(|id| {
+        ordered
+            .iter()
+            .position(|item| &item.id == id)
+            .expect("overflow contains only authored item IDs")
+    });
     result.update_widths(panel, overflow_width);
     result
 }

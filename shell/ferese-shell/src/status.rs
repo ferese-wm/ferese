@@ -140,8 +140,14 @@ type PollState = (Mutex<(u64, bool, Option<ActionError>, bool, u64)>, Condvar);
 fn wait_for_poll(shared: &PollState) -> Option<u64> {
     let state = shared
         .1
-        .wait_while(shared.0.lock().unwrap(), |state| state.1 && !state.3)
-        .unwrap();
+        .wait_while(
+            shared
+                .0
+                .lock()
+                .expect("status polling state must not be used after a worker panics"),
+            |state| state.1 && !state.3,
+        )
+        .expect("status polling state must not be used after a worker panics");
     (!state.3).then_some(state.0)
 }
 
@@ -184,7 +190,11 @@ impl Service {
             let mut night_light_monitor = night_light::Monitor::start(polling.clone()).ok();
 
             while let Some(before) = wait_for_poll(&polling) {
-                let revision = polling.0.lock().unwrap().4;
+                let revision = polling
+                    .0
+                    .lock()
+                    .expect("status polling state must not be used after a worker panics")
+                    .4;
                 if night_light_monitor.is_none() {
                     night_light_monitor = night_light::Monitor::start(polling.clone()).ok();
                 }
@@ -222,7 +232,10 @@ impl Service {
                 snapshot.audio = audio.read(before);
                 snapshot.network = network.read(before, network::read);
                 snapshot.bluetooth = bluetooth.read(before, bluetooth::read);
-                let state = polling.0.lock().unwrap();
+                let state = polling
+                    .0
+                    .lock()
+                    .expect("status polling state must not be used after a worker panics");
 
                 if state.3 {
                     break;
@@ -282,15 +295,24 @@ impl Service {
 
                 for (id, action) in pending {
                     {
-                        let mut state = shared.0.lock().unwrap();
+                        let mut state = shared
+                            .0
+                            .lock()
+                            .expect("status polling state must not be used after a worker panics");
                         state.0 = id;
                         state.1 = true;
                     }
-                    let settings = settings.lock().unwrap().clone();
+                    let settings = settings
+                        .lock()
+                        .expect("status polling state must not be used after a worker panics")
+                        .clone();
                     let error = execute(&action, settings.as_deref())
                         .err()
                         .map(|message| ActionError { action, message });
-                    let mut state = shared.0.lock().unwrap();
+                    let mut state = shared
+                        .0
+                        .lock()
+                        .expect("status polling state must not be used after a worker panics");
                     state.1 = false;
                     state.2 = error;
                     state.4 = state.4.wrapping_add(1);
@@ -298,7 +320,11 @@ impl Service {
                 }
             }
 
-            shared.0.lock().unwrap().3 = true;
+            shared
+                .0
+                .lock()
+                .expect("status polling state must not be used after a worker panics")
+                .3 = true;
             shared.1.notify_one();
         });
 
@@ -325,7 +351,10 @@ impl Service {
     }
 
     pub fn update_settings(&self, settings: Option<Vec<String>>) {
-        *self.settings.lock().unwrap() = settings;
+        *self
+            .settings
+            .lock()
+            .expect("status polling state must not be used after a worker panics") = settings;
     }
 
     pub fn subscription(&self) -> cosmic::iced::Subscription<Update> {

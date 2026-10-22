@@ -109,22 +109,52 @@ impl SurfaceEffectsState {
     }
 
     fn commit_presentation(&self) {
-        let Some(pending) = self.pending.lock().unwrap().take() else {
+        let Some(pending) = self
+            .pending
+            .lock()
+            .expect("surface effect state must not be used after a mutator panics")
+            .take()
+        else {
             return;
         };
-        *self.role.lock().unwrap() = Some(pending.role);
-        *self.panel.lock().unwrap() = pending.panel;
-        *self.regions.lock().unwrap() = Some(pending.regions);
-        *self.region_opacities.lock().unwrap() = pending.region_opacities;
+        *self
+            .role
+            .lock()
+            .expect("surface effect state must not be used after a mutator panics") =
+            Some(pending.role);
+        *self
+            .panel
+            .lock()
+            .expect("surface effect state must not be used after a mutator panics") = pending.panel;
+        *self
+            .regions
+            .lock()
+            .expect("surface effect state must not be used after a mutator panics") =
+            Some(pending.regions);
+        *self
+            .region_opacities
+            .lock()
+            .expect("surface effect state must not be used after a mutator panics") =
+            pending.region_opacities;
         if !self.dismissing.load(Ordering::Acquire) {
-            *self.opacity.lock().unwrap() = pending.opacity;
+            *self
+                .opacity
+                .lock()
+                .expect("surface effect state must not be used after a mutator panics") =
+                pending.opacity;
         }
         self.generation.fetch_add(1, Ordering::Release);
     }
 
     fn set_role(&self, role: Option<SemanticRole>) -> bool {
-        self.pending.lock().unwrap().take();
-        let mut current = self.role.lock().unwrap();
+        self.pending
+            .lock()
+            .expect("surface effect state must not be used after a mutator panics")
+            .take();
+        let mut current = self
+            .role
+            .lock()
+            .expect("surface effect state must not be used after a mutator panics");
         if *current != role {
             *current = role;
             self.generation.fetch_add(1, Ordering::Release);
@@ -144,7 +174,11 @@ impl SurfaceEffectsUserData {
     }
 
     fn surface(&self) -> Option<WlSurface> {
-        self.0.lock().unwrap().upgrade().ok()
+        self.0
+            .lock()
+            .expect("surface effect state must not be used after a mutator panics")
+            .upgrade()
+            .ok()
     }
 }
 
@@ -182,7 +216,10 @@ impl Dispatch<FereseMaterialManagerV1, ()> for Ferese {
                     states
                         .data_map
                         .insert_if_missing_threadsafe(SurfaceEffectsState::new);
-                    let effects = states.data_map.get::<SurfaceEffectsState>().unwrap();
+                    let effects = states
+                        .data_map
+                        .get::<SurfaceEffectsState>()
+                        .expect("effects state was inserted before this access");
                     effects.attached.swap(true, Ordering::AcqRel)
                 });
                 if attached {
@@ -248,7 +285,7 @@ pub(crate) fn surface_regions(surface: &WlSurface) -> Option<Vec<[f64; 5]>> {
             .get::<SurfaceEffectsState>()?
             .regions
             .lock()
-            .unwrap()
+            .expect("surface effect state must not be used after a mutator panics")
             .clone()
     })
 }
@@ -260,7 +297,7 @@ pub(crate) fn surface_panel_presentation(surface: &WlSurface) -> Option<PanelPre
             .get::<SurfaceEffectsState>()?
             .panel
             .lock()
-            .unwrap()
+            .expect("surface effect state must not be used after a mutator panics")
             .clone()
     })
 }
@@ -296,7 +333,13 @@ pub(crate) fn surface_region_opacities(surface: &WlSurface) -> Vec<u32> {
         states
             .data_map
             .get::<SurfaceEffectsState>()
-            .map(|effects| effects.region_opacities.lock().unwrap().clone())
+            .map(|effects| {
+                effects
+                    .region_opacities
+                    .lock()
+                    .expect("surface effect state must not be used after a mutator panics")
+                    .clone()
+            })
             .unwrap_or_default()
     })
 }
@@ -345,7 +388,10 @@ fn decode_regions(bytes: &[u8]) -> Option<Vec<[f64; 5]>> {
 pub(crate) fn surface_role(surface: &WlSurface) -> Option<(SemanticRole, u64)> {
     with_states(surface, |states| {
         let effects = states.data_map.get::<SurfaceEffectsState>()?;
-        let role = *effects.role.lock().unwrap();
+        let role = *effects
+            .role
+            .lock()
+            .expect("surface effect state must not be used after a mutator panics");
         role.map(|role| (role, effects.generation.load(Ordering::Acquire)))
     })
 }
@@ -388,7 +434,7 @@ impl Dispatch<FereseEffectsManagerV1, ()> for Ferese {
                     states
                         .data_map
                         .get::<SurfaceEffectsState>()
-                        .unwrap()
+                        .expect("effects state was inserted before this access")
                         .attached
                         .swap(true, Ordering::AcqRel)
                 });
@@ -404,7 +450,7 @@ impl Dispatch<FereseEffectsManagerV1, ()> for Ferese {
                         states
                             .data_map
                             .get::<SurfaceEffectsState>()
-                            .unwrap()
+                            .expect("effects state was inserted before this access")
                             .presentation_supported
                             .store(effects.version() >= 3, Ordering::Release)
                     });
@@ -448,7 +494,9 @@ impl Dispatch<FereseSurfaceEffectsV1, SurfaceEffectsUserData> for Ferese {
                 }
                 with_states(&surface, |states| {
                     if let Some(effects) = states.data_map.get::<SurfaceEffectsState>() {
-                        *effects.pending.lock().unwrap() = Some(PendingPresentation {
+                        *effects.pending.lock().expect(
+                            "surface effect state must not be used after a mutator panics",
+                        ) = Some(PendingPresentation {
                             panel: Some(panel),
                             role: SemanticRole::Panel,
                             region_opacities: vec![1000; regions.len()],
@@ -473,7 +521,9 @@ impl Dispatch<FereseSurfaceEffectsV1, SurfaceEffectsUserData> for Ferese {
                 };
                 with_states(&surface, |states| {
                     if let Some(effects) = states.data_map.get::<SurfaceEffectsState>() {
-                        *effects.pending.lock().unwrap() = Some(PendingPresentation {
+                        *effects.pending.lock().expect(
+                            "surface effect state must not be used after a mutator panics",
+                        ) = Some(PendingPresentation {
                             panel: None,
                             role,
                             regions,
@@ -491,7 +541,10 @@ impl Dispatch<FereseSurfaceEffectsV1, SurfaceEffectsUserData> for Ferese {
                     if effects.dismissing.load(Ordering::Acquire) {
                         return false;
                     }
-                    let mut current = effects.opacity.lock().unwrap();
+                    let mut current = effects
+                        .opacity
+                        .lock()
+                        .expect("surface effect state must not be used after a mutator panics");
                     let opacity = opacity.min(1000);
                     if *current == opacity {
                         return false;
@@ -520,7 +573,10 @@ impl Dispatch<FereseSurfaceEffectsV1, SurfaceEffectsUserData> for Ferese {
                     let Some(effects) = states.data_map.get::<SurfaceEffectsState>() else {
                         return false;
                     };
-                    let mut old = effects.region_opacities.lock().unwrap();
+                    let mut old = effects
+                        .region_opacities
+                        .lock()
+                        .expect("surface effect state must not be used after a mutator panics");
                     if *old == opacities {
                         return false;
                     }
@@ -540,7 +596,10 @@ impl Dispatch<FereseSurfaceEffectsV1, SurfaceEffectsUserData> for Ferese {
                     let Some(effects) = states.data_map.get::<SurfaceEffectsState>() else {
                         return false;
                     };
-                    let mut old = effects.regions.lock().unwrap();
+                    let mut old = effects
+                        .regions
+                        .lock()
+                        .expect("surface effect state must not be used after a mutator panics");
                     if old.as_ref() == Some(&regions) {
                         return false;
                     }
@@ -606,11 +665,26 @@ fn detach(surface: &WlSurface) -> bool {
             return false;
         };
         let role_changed = effects.set_role(None);
-        effects.region_opacities.lock().unwrap().clear();
-        effects.pending.lock().unwrap().take();
-        effects.panel.lock().unwrap().take();
+        effects
+            .region_opacities
+            .lock()
+            .expect("surface effect state must not be used after a mutator panics")
+            .clear();
+        effects
+            .pending
+            .lock()
+            .expect("surface effect state must not be used after a mutator panics")
+            .take();
+        effects
+            .panel
+            .lock()
+            .expect("surface effect state must not be used after a mutator panics")
+            .take();
         effects.dismissing.store(false, Ordering::Release);
-        let mut opacity = effects.opacity.lock().unwrap();
+        let mut opacity = effects
+            .opacity
+            .lock()
+            .expect("surface effect state must not be used after a mutator panics");
         let opacity_changed = *opacity != 1000;
         *opacity = 1000;
         let was_attached = effects.attached.swap(false, Ordering::AcqRel);
@@ -624,7 +698,12 @@ pub(crate) fn surface_opacity(surface: &WlSurface) -> f32 {
             .data_map
             .get::<SurfaceEffectsState>()
             .map_or(1.0, |effects| {
-                *effects.opacity.lock().unwrap() as f32 / 1000.0
+                *effects
+                    .opacity
+                    .lock()
+                    .expect("surface effect state must not be used after a mutator panics")
+                    as f32
+                    / 1000.0
             })
     })
 }
@@ -645,7 +724,11 @@ pub(crate) fn begin_surface_dismiss(surface: &WlSurface) -> bool {
 pub(crate) fn fade_dismissed_surface(surface: &WlSurface, opacity: f64) {
     with_states(surface, |states| {
         if let Some(effects) = states.data_map.get::<SurfaceEffectsState>() {
-            *effects.opacity.lock().unwrap() = (opacity.clamp(0.0, 1.0) * 1000.0).round() as u32;
+            *effects
+                .opacity
+                .lock()
+                .expect("surface effect state must not be used after a mutator panics") =
+                (opacity.clamp(0.0, 1.0) * 1000.0).round() as u32;
             effects.generation.fetch_add(1, Ordering::Release);
         }
     });

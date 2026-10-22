@@ -142,7 +142,7 @@ impl Ferese {
                             states
                                 .data_map
                                 .get::<XdgToplevelSurfaceData>()
-                                .is_some_and(|data| data.lock().unwrap().parent.is_some())
+                                .is_some_and(|data| data.lock().expect("Smithay surface metadata must remain consistent across callbacks").parent.is_some())
                         });
                         crate::window_rules::resolve(
                             &self.window_rules,

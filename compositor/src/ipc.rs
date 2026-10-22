@@ -1106,7 +1106,10 @@ impl Ferese {
                 self.refresh_input_capture_zones();
                 let keyboard = self.seat.get_keyboard().expect("seat has keyboard");
                 let keymap = keyboard.with_xkb_state(self, |state| {
-                    let xkb = state.xkb().lock().unwrap();
+                    let xkb = state
+                        .xkb()
+                        .lock()
+                        .expect("keyboard keymap state must remain consistent across callbacks");
                     // SAFETY: the ref-counted keymap does not escape the locked Xkb;
                     // only its owned string is retained for the EIS keyboard.
                     unsafe { xkb.keymap() }
@@ -1708,7 +1711,7 @@ impl Ferese {
             .filter_map(|(window, id)| {
                 let toplevel = window.toplevel()?;
                 let (app_id, title) = with_states(toplevel.wl_surface(), |states| {
-                    let attributes = states.data_map.get::<XdgToplevelSurfaceData>().unwrap().lock().unwrap();
+                    let attributes = states.data_map.get::<XdgToplevelSurfaceData>().expect("an XDG toplevel must retain its Smithay surface data").lock().expect("Smithay surface state must remain consistent across callbacks");
                     (
                         attributes.app_id.clone().unwrap_or_default(),
                         attributes.title.clone().unwrap_or_default(),

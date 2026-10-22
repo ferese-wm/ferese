@@ -16,7 +16,9 @@ pub(super) struct Updates(Arc<(Mutex<Pending>, Condvar)>);
 impl Updates {
     pub fn progress(&self, units: u64) {
         let (lock, wake) = &*self.0;
-        let mut pending = lock.lock().unwrap();
+        let mut pending = lock.lock().expect(
+            "the bounded progress buffer was checked before removing bytes or parsing text",
+        );
         if !pending.closed {
             pending.units = Some(units);
             wake.notify_one();
@@ -36,9 +38,11 @@ impl Publisher {
         std::thread::spawn(move || {
             loop {
                 let (lock, wake) = &*worker.0;
-                let mut pending = lock.lock().unwrap();
+                let mut pending = lock.lock().expect(
+                    "the bounded progress buffer was checked before removing bytes or parsing text",
+                );
                 while pending.units.is_none() && pending.end.is_none() {
-                    pending = wake.wait(pending).unwrap();
+                    pending = wake.wait(pending).expect("the bounded progress buffer was checked before removing bytes or parsing text");
                 }
                 let end = pending.end.take();
                 let units = pending.units.take();
@@ -54,7 +58,7 @@ impl Publisher {
                     Publish::Update {
                         local: local.clone(),
                         handle: Some(handle.clone()),
-                        value: Some(Value::Text(format!("{} units compiled", units.unwrap()))),
+                        value: Some(Value::Text(format!("{} units compiled", units.expect("the bounded progress buffer was checked before removing bytes or parsing text")))),
                         lease_ms: None,
                     }
                 };
@@ -76,7 +80,9 @@ impl Publisher {
     pub fn finish(self, result: State) {
         let (lock, wake) = &*self.updates.0;
         {
-            let mut pending = lock.lock().unwrap();
+            let mut pending = lock.lock().expect(
+                "the bounded progress buffer was checked before removing bytes or parsing text",
+            );
             pending.closed = true;
             pending.units = None;
             pending.end = Some(result);

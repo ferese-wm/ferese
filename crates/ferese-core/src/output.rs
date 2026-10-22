@@ -184,7 +184,15 @@ impl OutputWorkspaceMap {
         let mut removed = self
             .connected_outputs()
             .filter(|id| !desired.contains_key(id))
-            .map(|id| (id, outputs.outputs.remove(&id).unwrap()))
+            .map(|id| {
+                (
+                    id,
+                    outputs
+                        .outputs
+                        .remove(&id)
+                        .expect("workspace reconciliation only accesses connected outputs"),
+                )
+            })
             .collect::<Vec<_>>();
         // Preserve the original focused workspace when several outputs vanish.
         removed.sort_by_key(|(id, _)| (Some(*id) == self.focused, *id));
@@ -196,7 +204,10 @@ impl OutputWorkspaceMap {
         // against the final inventory, where that donor no longer needs it.
         for (id, record) in returning {
             let reclaimed = outputs.reclaim(id, &record);
-            let state = outputs.outputs.get_mut(&id).unwrap();
+            let state = outputs
+                .outputs
+                .get_mut(&id)
+                .expect("workspace reconciliation only accesses connected outputs");
             state.workspaces.extend(reclaimed.iter().copied());
             if reclaimed.contains(&record.active) {
                 state.activate(record.active);
@@ -635,7 +646,7 @@ impl OutputWorkspaceMap {
         self.homes.insert(workspace, output);
         self.outputs
             .get_mut(&output)
-            .unwrap()
+            .expect("workspace reconciliation only accesses connected outputs")
             .workspaces
             .insert(workspace);
         self.bump_revision(workspace);

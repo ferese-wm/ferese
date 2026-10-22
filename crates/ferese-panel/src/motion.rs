@@ -49,9 +49,9 @@ impl Geometry {
     fn from_values(values: [f64; COUNT]) -> Self {
         Self {
             bounds: Rect::new(values[0], values[1], values[2], values[3]),
-            radii: values[4..8].try_into().unwrap(),
-            margin: values[8..12].try_into().unwrap(),
-            thickness: values[12..16].try_into().unwrap(),
+            radii: [values[4], values[5], values[6], values[7]],
+            margin: [values[8], values[9], values[10], values[11]],
+            thickness: [values[12], values[13], values[14], values[15]],
             gap: values[16],
             fusion: values[17],
         }

@@ -19,7 +19,9 @@ impl Read for Output {
             if self
                 .deadline
                 .lock()
-                .unwrap()
+                .expect(
+                    "command output drain deadline must remain consistent across reader and waiter",
+                )
                 .is_some_and(|deadline| Instant::now() >= deadline)
             {
                 // EOF lets BufReader return its final unterminated line too.

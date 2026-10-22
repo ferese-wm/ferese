@@ -115,8 +115,11 @@ impl Config {
         theme: &ferese_config::theme::ResolvedTheme,
     ) -> Result<ThemeSettings, ConfigError> {
         let config = Self {
-            theme: serde_json::from_value(serde_json::to_value(&theme.tokens).unwrap())
-                .expect("resolved theme matches runtime schema"),
+            theme: serde_json::from_value(
+                serde_json::to_value(&theme.tokens)
+                    .expect("typed configuration and IPC values must serialize to JSON"),
+            )
+            .expect("resolved theme matches runtime schema"),
             ..Self::default()
         };
         let mut settings = config.theme_settings()?;

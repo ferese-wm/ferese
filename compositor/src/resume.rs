@@ -39,7 +39,10 @@ struct Cancellation {
 
 impl Cancellation {
     fn cancel(&self) {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self
+            .state
+            .lock()
+            .expect("resume cancellation state must remain consistent across workers");
         state.requested = true;
         let waker = state.waker.take();
         self.changed.notify_all();
@@ -52,7 +55,10 @@ impl Cancellation {
 
     async fn cancelled(&self) {
         future::poll_fn(|context| {
-            let mut state = self.state.lock().unwrap();
+            let mut state = self
+                .state
+                .lock()
+                .expect("resume cancellation state must remain consistent across workers");
             if state.requested {
                 return Poll::Ready(());
             }
@@ -66,8 +72,14 @@ impl Cancellation {
     fn retry(&self, delay: Duration) -> bool {
         let (state, _) = self
             .changed
-            .wait_timeout_while(self.state.lock().unwrap(), delay, |state| !state.requested)
-            .unwrap();
+            .wait_timeout_while(
+                self.state
+                    .lock()
+                    .expect("resume cancellation state must remain consistent across workers"),
+                delay,
+                |state| !state.requested,
+            )
+            .expect("resume cancellation state must remain consistent across workers");
         !state.requested
     }
 }

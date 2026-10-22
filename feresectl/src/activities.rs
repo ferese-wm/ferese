@@ -423,7 +423,9 @@ pub fn run(
     });
     let status = child.wait()?;
     CHILD.store(0, std::sync::atomic::Ordering::Relaxed);
-    *drain_deadline.lock().unwrap() =
+    *drain_deadline
+        .lock()
+        .expect("command output drain deadline must remain consistent across reader and waiter") =
         Some(std::time::Instant::now() + std::time::Duration::from_millis(250));
     if let Some(reader) = reader {
         // Descendants may inherit the pipe after the direct child exits. Drain

@@ -156,7 +156,10 @@ impl Ferese {
             self.windows.update(window, |w| w.maximized = false);
         }
         if self.workspaces.placement(window) == Some(WindowPlacement::Tiled) {
-            let workspace_id = self.workspaces.workspace_for_window(window).unwrap();
+            let workspace_id = self
+                .workspaces
+                .workspace_for_window(window)
+                .expect("a tiled window belongs to a workspace");
             if let Some(workspace) = self.workspaces.workspace_mut(workspace_id)
                 && let WorkspaceLayout::Scrolling(layout) = &mut workspace.layout
             {

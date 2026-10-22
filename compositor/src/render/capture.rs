@@ -106,7 +106,11 @@ pub(crate) fn capture_window_frame(
         .user_data()
         .get_or_insert_threadsafe(|| Arc::new(CaptureTarget::default()))
         .clone();
-    let reusable = cache.0.lock().unwrap().take();
+    let reusable = cache
+        .0
+        .lock()
+        .expect("the reusable capture texture cache must remain consistent across callbacks")
+        .take();
     let mut snapshot = render_window_texture(
         renderer,
         window,
@@ -159,7 +163,11 @@ pub(crate) fn capture_window_frame(
         return Err("Incomplete window readback".into());
     }
     let pixels = source[..bytes].to_vec();
-    *cache.0.lock().unwrap() = Some(snapshot.texture);
+    *cache
+        .0
+        .lock()
+        .expect("the reusable capture texture cache must remain consistent across callbacks") =
+        Some(snapshot.texture);
 
     Ok(crate::handlers::screenshot::CaptureBuffer {
         width: size.w,

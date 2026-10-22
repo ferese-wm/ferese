@@ -436,7 +436,11 @@ impl FereseShell {
         let Content::Power(power) = modal.content else {
             return self.close_system_modal();
         };
-        let approval = modal.inhibitors.as_ref().unwrap().clone();
+        let approval = modal
+            .inhibitors
+            .as_ref()
+            .expect("power confirmation was populated with its inhibitor decision")
+            .clone();
         let action = match power {
             PowerAction::Logout(serial) => {
                 if let Some(control) = &self.control {
@@ -516,7 +520,9 @@ impl FereseShell {
             |now| {
                 if let Some(effects) = &surface.effects {
                     let _ = effects.set_presentation(
-                        &surface.regions.lock().unwrap(),
+                        &surface.regions.lock().expect(
+                            "surface rendering state must remain consistent across callbacks",
+                        ),
                         modal.motion.progress_at(now),
                         [],
                         ferese_surface_effects_v1::Role::Modal,

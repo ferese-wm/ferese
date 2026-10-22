@@ -289,7 +289,11 @@ impl Ferese {
         surface.alive().then(|| {
             (
                 surface.wl_surface().clone(),
-                self.space.output_geometry(output).unwrap().loc.to_f64(),
+                self.space
+                    .output_geometry(output)
+                    .expect("a lock surface is assigned to a mapped output with geometry")
+                    .loc
+                    .to_f64(),
             )
         })
     }
@@ -366,7 +370,10 @@ impl Ferese {
                     .map(|(_, surface)| surface)
             })
             .map(|surface| surface.wl_surface().clone());
-        let keyboard = self.seat.get_keyboard().unwrap();
+        let keyboard = self
+            .seat
+            .get_keyboard()
+            .expect("the compositor seat is initialized with a keyboard");
         if keyboard.current_focus() != surface {
             keyboard.set_focus(self, surface, SERIAL_COUNTER.next_serial());
         }
@@ -493,7 +500,10 @@ impl SessionLockHandler for Ferese {
             touch.unset_grab(self);
             touch.cancel(self);
         }
-        let keyboard = self.seat.get_keyboard().unwrap();
+        let keyboard = self
+            .seat
+            .get_keyboard()
+            .expect("the compositor seat is initialized with a keyboard");
         keyboard.unset_grab(self);
         keyboard.set_focus(self, None, serial);
         self.lock_input_activity();

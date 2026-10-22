@@ -131,7 +131,14 @@ pub(super) fn cursor_on_output(state: &crate::Ferese, output: &smithay::output::
                 states
                     .data_map
                     .get::<CursorImageSurfaceData>()
-                    .map(|attributes| attributes.lock().unwrap().hotspot)
+                    .map(|attributes| {
+                        attributes
+                            .lock()
+                            .expect(
+                                "cursor surface attributes must remain consistent across callbacks",
+                            )
+                            .hotspot
+                    })
                     .unwrap_or_default()
             });
             smithay::desktop::utils::bbox_from_surface_tree(

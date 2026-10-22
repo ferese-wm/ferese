@@ -108,7 +108,8 @@ pub fn readable_across(
         white
     };
     for step in 1..=100 {
-        let color = rgba(&hex(blend(preferred, target, f64::from(step) / 100.))).unwrap();
+        let color = rgba(&hex(blend(preferred, target, f64::from(step) / 100.)))
+            .expect("hex output must be a valid RGBA color");
         if score(color) >= minimum {
             return color;
         }
@@ -137,9 +138,12 @@ fn material_foreground(preferred: [f64; 4], backgrounds: [[f64; 4]; 2]) -> [f64;
     let outside = luminance(result) < luminance(backgrounds[0])
         || luminance(result) > luminance(backgrounds[1]);
     if outside
-        && backgrounds
-            .iter()
-            .all(|background| contrast(rgba(&hex(result)).unwrap(), *background) >= 4.5)
+        && backgrounds.iter().all(|background| {
+            contrast(
+                rgba(&hex(result)).expect("hex output must be a valid RGBA color"),
+                *background,
+            ) >= 4.5
+        })
     {
         result
     } else {
@@ -161,8 +165,8 @@ fn transition_paint(from: &Paint, to: &Paint, from_solid: &str, to_solid: &str, 
     let (a, b) = endpoints(from, from_solid);
     let (c, d) = endpoints(to, to_solid);
     let color = |a: &str, b: &str| {
-        let mut a = rgba(a).unwrap();
-        let mut b = rgba(b).unwrap();
+        let mut a = rgba(a).expect("resolved theme colors must be valid hexadecimal RGBA");
+        let mut b = rgba(b).expect("resolved theme colors must be valid hexadecimal RGBA");
         for channel in 0..3 {
             a[channel] *= a[3];
             b[channel] *= b[3];
@@ -180,13 +184,13 @@ fn transition_paint(from: &Paint, to: &Paint, from_solid: &str, to_solid: &str, 
     let from_angle = from
         .effective_gradient()
         .or(to.effective_gradient())
-        .unwrap()
+        .expect("at least one transition endpoint has a gradient")
         .angle
         .rem_euclid(360.);
     let to_angle = to
         .effective_gradient()
         .or(from.effective_gradient())
-        .unwrap()
+        .expect("at least one transition endpoint has a gradient")
         .angle
         .rem_euclid(360.);
     let delta = (to_angle - from_angle + 180.).rem_euclid(360.) - 180.;
@@ -202,6 +206,10 @@ fn transition_paint(from: &Paint, to: &Paint, from_solid: &str, to_solid: &str, 
 
 impl ResolvedTheme {
     /// Bound contrast across all backdrops instead of interpolating foregrounds.
+    ///
+    /// # Panics
+    /// Both themes must contain valid hexadecimal colors and gradient endpoints,
+    /// as supplied by configuration resolution. Invalid colors panic during blending.
     pub fn transition(&self, to: &Self, progress: f64) -> Self {
         if to.reduced_motion || self.accessibility != to.accessibility || progress >= 1.0 {
             return to.clone();
@@ -212,7 +220,13 @@ impl ResolvedTheme {
         let p = progress.clamp(0., 1.);
         let p = p * p * (3. - 2. * p);
         let mut frame = to.clone();
-        let mix = |a: &str, b: &str| hex(blend(rgba(a).unwrap(), rgba(b).unwrap(), p));
+        let mix = |a: &str, b: &str| {
+            hex(blend(
+                rgba(a).expect("resolved theme colors must be valid hexadecimal RGBA"),
+                rgba(b).expect("resolved theme colors must be valid hexadecimal RGBA"),
+                p,
+            ))
+        };
         frame.tokens.colors.surface_base = mix(
             &self.tokens.colors.surface_base,
             &to.tokens.colors.surface_base,
@@ -256,9 +270,12 @@ impl ResolvedTheme {
         frame.appearance = preferred.appearance;
         if self.appearance == to.appearance {
             let body = [
-                rgba(&frame.tokens.colors.surface_base).unwrap(),
-                rgba(&frame.tokens.colors.surface_raised).unwrap(),
-                rgba(&frame.tokens.colors.application_background).unwrap(),
+                rgba(&frame.tokens.colors.surface_base)
+                    .expect("resolved theme colors must be valid hexadecimal RGBA"),
+                rgba(&frame.tokens.colors.surface_raised)
+                    .expect("resolved theme colors must be valid hexadecimal RGBA"),
+                rgba(&frame.tokens.colors.application_background)
+                    .expect("resolved theme colors must be valid hexadecimal RGBA"),
             ];
             let minimum = if to.accessibility.increase_contrast {
                 7.0
@@ -266,36 +283,46 @@ impl ResolvedTheme {
                 4.5
             };
             frame.tokens.colors.text_primary = hex(readable_across(
-                rgba(&preferred.tokens.colors.text_primary).unwrap(),
+                rgba(&preferred.tokens.colors.text_primary)
+                    .expect("resolved theme colors must be valid hexadecimal RGBA"),
                 &body,
                 minimum,
             ));
             frame.tokens.colors.text_muted = hex(readable_across(
-                rgba(&preferred.tokens.colors.text_muted).unwrap(),
+                rgba(&preferred.tokens.colors.text_muted)
+                    .expect("resolved theme colors must be valid hexadecimal RGBA"),
                 &body,
                 minimum,
             ));
-            let bar = rgba(&frame.tokens.surface.bar.background).unwrap();
+            let bar = rgba(&frame.tokens.surface.bar.background)
+                .expect("resolved theme colors must be valid hexadecimal RGBA");
             frame.tokens.surface.bar.text_primary = hex(readable(
-                rgba(&preferred.tokens.surface.bar.text_primary).unwrap(),
+                rgba(&preferred.tokens.surface.bar.text_primary)
+                    .expect("resolved theme colors must be valid hexadecimal RGBA"),
                 bar,
                 minimum,
             ));
             frame.tokens.surface.bar.text_muted = hex(readable(
-                rgba(&preferred.tokens.surface.bar.text_muted).unwrap(),
+                rgba(&preferred.tokens.surface.bar.text_muted)
+                    .expect("resolved theme colors must be valid hexadecimal RGBA"),
                 bar,
                 minimum,
             ));
             frame.tokens.colors.on_accent = hex(readable(
-                rgba(&preferred.tokens.colors.on_accent).unwrap(),
-                rgba(&frame.tokens.colors.accent).unwrap(),
+                rgba(&preferred.tokens.colors.on_accent)
+                    .expect("resolved theme colors must be valid hexadecimal RGBA"),
+                rgba(&frame.tokens.colors.accent)
+                    .expect("resolved theme colors must be valid hexadecimal RGBA"),
                 4.5,
             ));
             return frame;
         }
-        let base = rgba(&frame.tokens.colors.surface_base).unwrap();
-        let raised = rgba(&frame.tokens.colors.surface_raised).unwrap();
-        let app = rgba(&frame.tokens.colors.application_background).unwrap();
+        let base = rgba(&frame.tokens.colors.surface_base)
+            .expect("resolved theme colors must be valid hexadecimal RGBA");
+        let raised = rgba(&frame.tokens.colors.surface_raised)
+            .expect("resolved theme colors must be valid hexadecimal RGBA");
+        let app = rgba(&frame.tokens.colors.application_background)
+            .expect("resolved theme colors must be valid hexadecimal RGBA");
         let minimum = [base, raised, app]
             .into_iter()
             .map(luminance)
@@ -308,8 +335,10 @@ impl ResolvedTheme {
             frame.tokens.colors.surface_raised = frame.tokens.colors.surface_base.clone();
             frame.tokens.colors.application_background = frame.tokens.colors.surface_base.clone();
         }
-        let surface = rgba(&frame.tokens.colors.surface_base).unwrap();
-        let bar = rgba(&frame.tokens.surface.bar.background).unwrap();
+        let surface = rgba(&frame.tokens.colors.surface_base)
+            .expect("resolved theme colors must be valid hexadecimal RGBA");
+        let bar = rgba(&frame.tokens.surface.bar.background)
+            .expect("resolved theme colors must be valid hexadecimal RGBA");
         let mut opacity = if frame.tokens.material.style == "solid" {
             1.
         } else {
@@ -318,8 +347,10 @@ impl ResolvedTheme {
         for step in 0..=100 {
             let candidate = opacity + (1. - opacity) * f64::from(step) / 100.;
             let backgrounds = material_bounds(surface, candidate);
-            let raised = rgba(&frame.tokens.colors.surface_raised).unwrap();
-            let app = rgba(&frame.tokens.colors.application_background).unwrap();
+            let raised = rgba(&frame.tokens.colors.surface_raised)
+                .expect("resolved theme colors must be valid hexadecimal RGBA");
+            let app = rgba(&frame.tokens.colors.application_background)
+                .expect("resolved theme colors must be valid hexadecimal RGBA");
             let all = [backgrounds[0], backgrounds[1], raised, app];
             let minimum = all.into_iter().map(luminance).fold(f64::INFINITY, f64::min);
             let maximum = all.into_iter().map(luminance).fold(0., f64::max);
@@ -339,38 +370,46 @@ impl ResolvedTheme {
         }
         let surface = material_bounds(surface, opacity);
         let bar = material_bounds(bar, opacity);
-        let raised = rgba(&frame.tokens.colors.surface_raised).unwrap();
-        let app = rgba(&frame.tokens.colors.application_background).unwrap();
+        let raised = rgba(&frame.tokens.colors.surface_raised)
+            .expect("resolved theme colors must be valid hexadecimal RGBA");
+        let app = rgba(&frame.tokens.colors.application_background)
+            .expect("resolved theme colors must be valid hexadecimal RGBA");
         let body_backgrounds = [surface[0], surface[1], raised, app];
         let body_bounds = [
             *body_backgrounds
                 .iter()
                 .min_by(|a, b| luminance(**a).total_cmp(&luminance(**b)))
-                .unwrap(),
+                .expect("material contrast checks contain four background samples"),
             *body_backgrounds
                 .iter()
                 .max_by(|a, b| luminance(**a).total_cmp(&luminance(**b)))
-                .unwrap(),
+                .expect("material contrast checks contain four background samples"),
         ];
         frame.tokens.colors.text_primary = hex(material_foreground(
-            rgba(&preferred.tokens.colors.text_primary).unwrap(),
+            rgba(&preferred.tokens.colors.text_primary)
+                .expect("resolved theme colors must be valid hexadecimal RGBA"),
             body_bounds,
         ));
         frame.tokens.colors.text_muted = hex(material_foreground(
-            rgba(&preferred.tokens.colors.text_muted).unwrap(),
+            rgba(&preferred.tokens.colors.text_muted)
+                .expect("resolved theme colors must be valid hexadecimal RGBA"),
             body_bounds,
         ));
         frame.tokens.surface.bar.text_primary = hex(material_foreground(
-            rgba(&preferred.tokens.surface.bar.text_primary).unwrap(),
+            rgba(&preferred.tokens.surface.bar.text_primary)
+                .expect("resolved theme colors must be valid hexadecimal RGBA"),
             bar,
         ));
         frame.tokens.surface.bar.text_muted = hex(material_foreground(
-            rgba(&preferred.tokens.surface.bar.text_muted).unwrap(),
+            rgba(&preferred.tokens.surface.bar.text_muted)
+                .expect("resolved theme colors must be valid hexadecimal RGBA"),
             bar,
         ));
         frame.tokens.colors.on_accent = hex(readable(
-            rgba(&preferred.tokens.colors.on_accent).unwrap(),
-            rgba(&frame.tokens.colors.accent).unwrap(),
+            rgba(&preferred.tokens.colors.on_accent)
+                .expect("resolved theme colors must be valid hexadecimal RGBA"),
+            rgba(&frame.tokens.colors.accent)
+                .expect("resolved theme colors must be valid hexadecimal RGBA"),
             4.5,
         ));
         frame

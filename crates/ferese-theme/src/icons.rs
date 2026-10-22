@@ -136,7 +136,10 @@ impl TintCache {
             .iter()
             .position(|entry| std::ptr::eq(entry.source, source) && entry.colors == colors)
         {
-            let entry = self.entries.remove(index).unwrap();
+            let entry = self
+                .entries
+                .remove(index)
+                .expect("the cache lookup identifies an existing icon entry");
             let handle = entry.handle.clone();
             self.entries.push_back(entry);
             return handle;
@@ -147,7 +150,11 @@ impl TintCache {
         if bytes <= TINT_CACHE_BYTES {
             while self.entries.len() >= TINT_CACHE_ENTRIES || self.bytes + bytes > TINT_CACHE_BYTES
             {
-                self.bytes -= self.entries.pop_front().unwrap().bytes;
+                self.bytes -= self
+                    .entries
+                    .pop_front()
+                    .expect("cache eviction requires an entry while over budget")
+                    .bytes;
             }
             self.bytes += bytes;
             self.entries.push_back(TintedIcon {

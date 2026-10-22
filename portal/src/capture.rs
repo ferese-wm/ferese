@@ -234,7 +234,10 @@ impl Capture {
         }
 
         frame.destroy();
-        self.state.result.take().unwrap()?;
+        self.state
+            .result
+            .take()
+            .expect("the capture dispatch loop exits after storing its result")?;
 
         let buffer = self
             .state

@@ -295,7 +295,7 @@ impl FereseShell {
         let current = Mode::ALL
             .iter()
             .position(|mode| *mode == self.display_mode.selected)
-            .unwrap();
+            .expect("Mode::ALL contains every selectable display mode");
         let mode = match key {
             Key::Character(character) => character
                 .parse::<usize>()

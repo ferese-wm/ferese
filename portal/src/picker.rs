@@ -250,7 +250,11 @@ impl cosmic::Application for Picker {
                     .map(|i| &self.prompt.sources[*i].name)
                     .collect();
                 if self.prompt.window_capture {
-                    println!("{}", serde_json::to_string(&names).unwrap());
+                    println!(
+                        "{}",
+                        serde_json::to_string(&names)
+                            .expect("typed configuration and IPC values must serialize to JSON")
+                    );
                 } else {
                     let selection = Selection {
                         names: names.into_iter().cloned().collect(),
@@ -262,7 +266,11 @@ impl cosmic::Application for Picker {
                         audio: self.audio,
                         region: self.region,
                     };
-                    println!("{}", serde_json::to_string(&selection).unwrap());
+                    println!(
+                        "{}",
+                        serde_json::to_string(&selection)
+                            .expect("typed configuration and IPC values must serialize to JSON")
+                    );
                 }
                 let _ = std::io::stdout().flush();
                 return cosmic::iced::exit();

@@ -185,7 +185,7 @@ pub fn init(event_loop: &mut EventLoop<Ferese>, state: &mut Ferese) -> Result<()
                                     let _ = renderer
                                         .render(
                                             framebuffer,
-                                            output.current_mode().unwrap().size,
+                                            output.current_mode().expect("a rendered output must have a current mode").size,
                                             output.current_transform(),
                                         )?
                                         .finish()?;

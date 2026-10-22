@@ -44,7 +44,9 @@ impl Appearance {
             ("color-scheme".into(), self.scheme.into()),
             (
                 "accent-color".into(),
-                Value::from(self.accent).try_to_owned().unwrap(),
+                Value::from(self.accent)
+                    .try_to_owned()
+                    .expect("the D-Bus value uses an owned supported scalar or collection type"),
             ),
             ("contrast".into(), self.contrast.into()),
             ("reduced-motion".into(), self.reduced_motion.into()),
@@ -83,7 +85,8 @@ impl Settings {
     }
 
     pub(crate) async fn watch(self, connection: Connection) {
-        let emitter = SignalEmitter::new(&connection, PATH).unwrap();
+        let emitter = SignalEmitter::new(&connection, PATH)
+            .expect("the portal exports signals at a valid static object path");
         loop {
             let connection = tokio::task::spawn_blocking(ferese_ipc::Connection::connect).await;
             if let Ok(Ok(mut connection)) = connection

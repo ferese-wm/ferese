@@ -506,7 +506,12 @@ impl InputCapture {
             return Ok((1, Options::new()));
         }
         let result = self
-            .finish_native_call(connection, &session_handle, &bridge, result.unwrap())
+            .finish_native_call(
+                connection,
+                &session_handle,
+                &bridge,
+                result.expect("the completion loop returned with a native call result"),
+            )
             .await?;
         let zones: Vec<(u32, u32, i32, i32)> = serde_json::from_value(result["zones"].clone())
             .map_err(|_| invalid("Invalid native capture zones"))?;
@@ -582,7 +587,12 @@ impl InputCapture {
             return Ok((1, Options::new()));
         }
         let result = self
-            .finish_native_call(connection, &session_handle, &bridge, result.unwrap())
+            .finish_native_call(
+                connection,
+                &session_handle,
+                &bridge,
+                result.expect("the completion loop returned with a native call result"),
+            )
             .await?;
         let failed_barriers: Vec<u32> = serde_json::from_value(result["failed_barriers"].clone())
             .map_err(|_| invalid("Invalid native barrier response"))?;

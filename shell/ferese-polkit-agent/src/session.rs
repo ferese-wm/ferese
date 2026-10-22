@@ -469,7 +469,9 @@ fn run_session(
     } else if stopped {
         Ok(SessionOutcome::Cancelled)
     } else {
-        Ok(SessionOutcome::Completed(outcome.unwrap()))
+        Ok(SessionOutcome::Completed(outcome.expect(
+            "the session loop finished only after receiving a completion outcome",
+        )))
     }
 }
 

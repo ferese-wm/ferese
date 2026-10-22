@@ -210,7 +210,8 @@ impl GlobalShortcuts {
         session: Arc<Session>,
         bridge: Bridge,
     ) {
-        let emitter = SignalEmitter::new(&connection, PATH).unwrap();
+        let emitter = SignalEmitter::new(&connection, PATH)
+            .expect("the portal exports signals at a valid static object path");
         loop {
             tokio::select! {
                 _ = session.cancel.wait() => break,
@@ -414,7 +415,12 @@ impl GlobalShortcuts {
         self.requests.end(connection, &handle).await;
         Ok((
             0,
-            HashMap::from([("shortcuts".into(), Value::from(result).try_into().unwrap())]),
+            HashMap::from([(
+                "shortcuts".into(),
+                Value::from(result)
+                    .try_into()
+                    .expect("the D-Bus value uses an owned supported scalar or collection type"),
+            )]),
         ))
     }
 
@@ -453,7 +459,8 @@ impl GlobalShortcuts {
                 .await;
             session.state.lock().await.busy = false;
             if let Ok(Some(shortcuts)) = result {
-                let emitter = SignalEmitter::new(&connection, PATH).unwrap();
+                let emitter = SignalEmitter::new(&connection, PATH)
+                    .expect("the portal exports signals at a valid static object path");
                 let _ = Self::shortcuts_changed(&emitter, session_handle, shortcuts).await;
             }
         });
@@ -597,7 +604,9 @@ fn reply(response: Result<Option<Shortcuts>, String>) -> (u32, Options) {
             0,
             HashMap::from([(
                 "shortcuts".into(),
-                Value::from(shortcuts).try_into().unwrap(),
+                Value::from(shortcuts)
+                    .try_into()
+                    .expect("the D-Bus value uses an owned supported scalar or collection type"),
             )]),
         ),
         Ok(None) => (1, Options::new()),
@@ -629,7 +638,10 @@ async fn dialog(
         .stderr(Stdio::inherit())
         .spawn()
         .map_err(|error| error.to_string())?;
-    let mut input = child.stdin.take().unwrap();
+    let mut input = child
+        .stdin
+        .take()
+        .expect("the child was spawned with piped standard input");
     input
         .write_all(&serde_json::to_vec(&prompt).map_err(|error| error.to_string())?)
         .await
@@ -705,7 +717,9 @@ fn save(app: &str, fields: &[ShortcutField]) -> Result<(), String> {
     let Some(path) = cache_path(app) else {
         return Ok(());
     };
-    let directory = path.parent().unwrap();
+    let directory = path
+        .parent()
+        .expect("the portal configuration path identifies a file in a directory");
     std::fs::create_dir_all(directory).map_err(|error| error.to_string())?;
     let mut file = tempfile::NamedTempFile::new_in(directory).map_err(|error| error.to_string())?;
     std::io::Write::write_all(

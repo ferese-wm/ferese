@@ -30,15 +30,21 @@ impl Decoder {
                 loop {
                     let (queue, ready) = &*worker;
                     let mut queue = ready
-                        .wait_while(queue.lock().unwrap(), |queue| {
-                            !queue.closed && queue.pending.is_none()
-                        })
-                        .unwrap();
+                        .wait_while(
+                            queue.lock().expect(
+                                "wallpaper decode queue must remain consistent across workers",
+                            ),
+                            |queue| !queue.closed && queue.pending.is_none(),
+                        )
+                        .expect("wallpaper decode queue must remain consistent across workers");
                     if queue.closed {
                         break;
                     }
 
-                    let request = queue.pending.take().unwrap();
+                    let request = queue
+                        .pending
+                        .take()
+                        .expect("the decode wait completed with a pending wallpaper request");
                     drop(queue);
                     let _ = request.result.send(load(&request.path));
                     if let Some(wakeup) = request.wakeup {
@@ -57,7 +63,10 @@ impl Decoder {
     ) -> mpsc::Receiver<Result<Pixels, String>> {
         let (result, receiver) = mpsc::channel();
         let (queue, ready) = &*self.shared;
-        queue.lock().unwrap().pending = Some(Request {
+        queue
+            .lock()
+            .expect("wallpaper decode queue must remain consistent across workers")
+            .pending = Some(Request {
             path,
             result,
             wakeup,
@@ -67,14 +76,20 @@ impl Decoder {
     }
 
     pub fn cancel_pending(&self) {
-        self.shared.0.lock().unwrap().pending = None;
+        self.shared
+            .0
+            .lock()
+            .expect("wallpaper decode queue must remain consistent across workers")
+            .pending = None;
     }
 }
 
 impl Drop for Decoder {
     fn drop(&mut self) {
         let (queue, ready) = &*self.shared;
-        let mut queue = queue.lock().unwrap();
+        let mut queue = queue
+            .lock()
+            .expect("wallpaper decode queue must remain consistent across workers");
         queue.closed = true;
         queue.pending = None;
         ready.notify_one();

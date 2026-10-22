@@ -170,7 +170,12 @@ impl Client {
     pub(crate) async fn discover(&self, path: String, epoch: u64) -> Result<(), String> {
         // BlueZ discovery is reference counted per D-Bus caller. Never stop
         // discovery owned by another app, and never acquire a lease twice.
-        if self.discovery.lock().unwrap().contains_key(&path) {
+        if self
+            .discovery
+            .lock()
+            .expect("Bluetooth discovery ownership must remain consistent across callbacks")
+            .contains_key(&path)
+        {
             return Ok(());
         }
         adapter_call(&self.connection, &path, "StartDiscovery").await?;
@@ -179,13 +184,18 @@ impl Client {
             return Err("Discovery canceled.".into());
         }
         let lease = std::time::Instant::now();
-        self.discovery.lock().unwrap().insert(path.clone(), lease);
+        self.discovery
+            .lock()
+            .expect("Bluetooth discovery ownership must remain consistent across callbacks")
+            .insert(path.clone(), lease);
         let leases = self.discovery.clone();
         let connection = self.connection.clone();
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_secs(30)).await;
             let owned = {
-                let mut leases = leases.lock().unwrap();
+                let mut leases = leases.lock().expect(
+                    "Bluetooth discovery ownership must remain consistent across callbacks",
+                );
                 if leases.get(&path) == Some(&lease) {
                     leases.remove(&path);
                     true
@@ -201,7 +211,12 @@ impl Client {
     }
 
     pub(crate) async fn stop_discovery(&self) -> Result<(), String> {
-        let paths = std::mem::take(&mut *self.discovery.lock().unwrap());
+        let paths = std::mem::take(
+            &mut *self
+                .discovery
+                .lock()
+                .expect("Bluetooth discovery ownership must remain consistent across callbacks"),
+        );
         let mut result = Ok(());
         for (path, _) in paths {
             if let Err(error) = adapter_call(&self.connection, &path, "StopDiscovery").await {
@@ -212,7 +227,10 @@ impl Client {
     }
 
     pub(crate) fn discovering(&self, path: &str) -> bool {
-        self.discovery.lock().unwrap().contains_key(path)
+        self.discovery
+            .lock()
+            .expect("Bluetooth discovery ownership must remain consistent across callbacks")
+            .contains_key(path)
     }
 }
 

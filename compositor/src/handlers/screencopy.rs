@@ -250,7 +250,10 @@ impl Dispatch<ZwlrScreencopyFrameV1, Arc<FrameData>> for Ferese {
                 state.queue_screencopy(frame, data, buffer, true);
             }
             zwlr_screencopy_frame_v1::Request::Destroy => {
-                data.snapshot.lock().unwrap().take();
+                data.snapshot
+                    .lock()
+                    .expect("surface rendering state must remain consistent across callbacks")
+                    .take();
             }
             _ => unreachable!(),
         }
@@ -265,11 +268,19 @@ impl Ferese {
         buffer: WlBuffer,
         with_damage: bool,
     ) {
-        if data.snapshot.lock().unwrap().is_some() {
+        if data
+            .snapshot
+            .lock()
+            .expect("surface rendering state must remain consistent across callbacks")
+            .is_some()
+        {
             super::window_capture::copy_snapshot(self, frame, data, &buffer);
             return;
         }
-        let mut used = data.used.lock().unwrap();
+        let mut used = data
+            .used
+            .lock()
+            .expect("surface rendering state must remain consistent across callbacks");
         if self.session_lock.active() {
             frame.failed();
             return;

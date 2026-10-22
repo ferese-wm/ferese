@@ -94,8 +94,18 @@ impl Palette {
                 stop.color.a = opacity;
             }
 
-            let from = crate::composite(candidate.stops[0].unwrap().color, self.sidebar);
-            let to = crate::composite(candidate.stops[1].unwrap().color, self.sidebar);
+            let from = crate::composite(
+                candidate.stops[0]
+                    .expect("the constructed linear gradient contains both endpoint stops")
+                    .color,
+                self.sidebar,
+            );
+            let to = crate::composite(
+                candidate.stops[1]
+                    .expect("the constructed linear gradient contains both endpoint stops")
+                    .color,
+                self.sidebar,
+            );
             let lower = Color::from_rgb(from.r.min(to.r), from.g.min(to.g), from.b.min(to.b));
             let upper = Color::from_rgb(from.r.max(to.r), from.g.max(to.g), from.b.max(to.b));
             let lightness = crate::luminance(foreground);

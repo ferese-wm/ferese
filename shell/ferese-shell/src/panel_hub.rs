@@ -844,7 +844,9 @@ impl FereseShell {
                 let body: Element<'_, cosmic::Action<Message>> = match mode {
                     _ if activity.is_some() => self.hub_activity_strip(
                         id,
-                        activity.unwrap(),
+                        activity.expect(
+                            "the activity-specific hub view requires its selected activity",
+                        ),
                         mode == Mode::Peek,
                         intrinsic,
                         opacity,

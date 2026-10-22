@@ -146,7 +146,10 @@ impl PortalSession {
 
     pub(crate) fn begin_owned_query(&mut self, owner: u64) -> u32 {
         let token = self.begin_query();
-        self.query.as_mut().unwrap().owner = Some(owner);
+        self.query
+            .as_mut()
+            .expect("begin_query installs the query before setting its owner")
+            .owner = Some(owner);
         token
     }
 

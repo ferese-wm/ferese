@@ -666,7 +666,10 @@ impl ScrollingLayout {
         let viewport_center = bounds.x + bounds.width / 2.0;
         let window_center = rect.x + rect.width / 2.0;
         self.viewport_x += window_center - viewport_center;
-        let active = self.window_location(window).unwrap().0;
+        let active = self
+            .window_location(window)
+            .expect("geometry resolution confirmed the window belongs to a column")
+            .0;
         let inner = finite_nonnegative(gaps.inner);
         let positions = self
             .columns
@@ -678,7 +681,10 @@ impl ScrollingLayout {
                 Some(position)
             })
             .collect::<Vec<_>>();
-        let viewport_width = self.last_column_sizing.unwrap().viewport_width;
+        let viewport_width = self
+            .last_column_sizing
+            .expect("geometry resolution records the column sizing before centering")
+            .viewport_width;
         self.record_viewport_basis(
             &positions,
             inner,

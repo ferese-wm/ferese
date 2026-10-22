@@ -30,7 +30,9 @@ impl Ferese {
                 let Some(data) = states.data_map.get::<XdgToplevelSurfaceData>() else {
                     return (true, None);
                 };
-                let data = data.lock().unwrap();
+                let data = data
+                    .lock()
+                    .expect("window metadata must remain consistent during privacy checks");
                 let rule = crate::window_rules::resolve(
                     &self.window_rules,
                     data.app_id.as_deref(),

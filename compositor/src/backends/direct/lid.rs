@@ -148,7 +148,11 @@ fn read_acpi() -> Option<bool> {
 
 impl Reader {
     pub fn set_active(&mut self, active: bool) {
-        let generation = self.lease.lock().unwrap().activate(active);
+        let generation = self
+            .lease
+            .lock()
+            .expect("lid policy lease must remain consistent across workers")
+            .activate(active);
         self.suspend_requested = false;
         if active {
             let _ = self.suspend.send(PolicyRequest::Activate(generation));
@@ -167,7 +171,9 @@ impl Reader {
                 let Ok(connection) = connection else { return };
                 while let Ok(request) = suspend_requests.recv() {
                     if let PolicyRequest::Activate(generation) = request {
-                        let current = worker_lease.lock().unwrap();
+                        let current = worker_lease
+                            .lock()
+                            .expect("lid policy lease must remain consistent across workers");
                         if !current.active || current.generation != generation {
                             continue;
                         }
@@ -189,14 +195,17 @@ impl Reader {
                                 reply.body().deserialize::<zbus::zvariant::OwnedFd>()
                             });
                         match inhibitor {
-                            Ok(descriptor) => {
-                                worker_lease.lock().unwrap().accept(generation, descriptor)
-                            }
+                            Ok(descriptor) => worker_lease
+                                .lock()
+                                .expect("lid policy lease must remain consistent across workers")
+                                .accept(generation, descriptor),
                             Err(error) => tracing::warn!(%error, "could not own logind lid policy"),
                         }
                         continue;
                     }
-                    let current = worker_lease.lock().unwrap();
+                    let current = worker_lease
+                        .lock()
+                        .expect("lid policy lease must remain consistent across workers");
                     if !current.active || !current.suspend {
                         continue;
                     }
@@ -221,7 +230,9 @@ impl Reader {
                         tracing::debug!("lid suspend prevented by sleep inhibitor");
                         continue;
                     }
-                    let current = worker_lease.lock().unwrap();
+                    let current = worker_lease
+                        .lock()
+                        .expect("lid policy lease must remain consistent across workers");
                     let requested = current.active && current.suspend;
                     drop(current);
                     if !requested {
@@ -237,7 +248,10 @@ impl Reader {
                         tracing::warn!(%error, "logind rejected lid suspend");
                     }
                 }
-                worker_lease.lock().unwrap().activate(false);
+                worker_lease
+                    .lock()
+                    .expect("lid policy lease must remain consistent across workers")
+                    .activate(false);
             })?;
         let (requests, receiver) = mpsc::channel::<Probe>();
         let (replies, events) = smithay::reexports::calloop::channel::channel();
@@ -306,7 +320,12 @@ fn request(state: &mut Ferese, reactivate: bool, wake: bool) {
         }
     }
     backend.lid_reader.suspend_requested = false;
-    backend.lid_reader.lease.lock().unwrap().suspend = false;
+    backend
+        .lid_reader
+        .lease
+        .lock()
+        .expect("lid policy lease must remain consistent across workers")
+        .suspend = false;
     let probe = backend.lid.begin(reactivate, wake);
     let sent = backend.lid_reader.requests.send(probe).is_ok();
     let timer = state.loop_handle.insert_source(
@@ -322,7 +341,12 @@ fn request(state: &mut Ferese, reactivate: bool, wake: bool) {
     );
 
     if sent && let Ok(token) = timer {
-        state.direct_backend.as_mut().unwrap().lid_reader.deadline = Some(token);
+        state
+            .direct_backend
+            .as_mut()
+            .expect("DRM callbacks require an installed direct backend")
+            .lid_reader
+            .deadline = Some(token);
     } else {
         if let Ok(token) = timer {
             state.loop_handle.remove(token);
@@ -352,7 +376,12 @@ fn complete_refresh(state: &mut Ferese, probe: Probe, value: Option<bool>) {
         backend.topology.reconciling = true;
         state.reset_animation_clock();
         state.lock_input_activity();
-        state.direct_backend.as_mut().unwrap().topology.reconciling = false;
+        state
+            .direct_backend
+            .as_mut()
+            .expect("DRM callbacks require an installed direct backend")
+            .topology
+            .reconciling = false;
     }
 
     reconcile_outputs(state, reactivate);
@@ -364,7 +393,12 @@ pub(super) fn apply_suspend_policy(state: &mut Ferese) {
         return;
     };
     let requested = backend.active && backend.desired_outputs.suspend && backend.lid.closed();
-    backend.lid_reader.lease.lock().unwrap().suspend = requested;
+    backend
+        .lid_reader
+        .lease
+        .lock()
+        .expect("lid policy lease must remain consistent across workers")
+        .suspend = requested;
     if backend.lid_reader.suspend_requested != requested {
         backend.lid_reader.suspend_requested = requested;
         let _ = backend.lid_reader.suspend.send(PolicyRequest::Suspend);

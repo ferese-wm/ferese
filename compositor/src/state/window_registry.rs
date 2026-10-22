@@ -236,7 +236,10 @@ impl WindowRegistry<Window> {
 
         if let Some(surface) = surface {
             self.surface_ids.insert(surface.clone(), id);
-            self.records.get_mut(&id).unwrap().surface = Some(surface.clone());
+            self.records
+                .get_mut(&id)
+                .expect("the selected window has a registered lifecycle record")
+                .surface = Some(surface.clone());
             self.refresh_metadata(&surface);
         }
     }
@@ -245,14 +248,17 @@ impl WindowRegistry<Window> {
         let Some(id) = self.id_for_surface(surface) else {
             return false;
         };
-        let record = self.records.get_mut(&id).unwrap();
+        let record = self
+            .records
+            .get_mut(&id)
+            .expect("the selected window has a registered lifecycle record");
         with_states(surface, |states| {
             let attributes = states
                 .data_map
                 .get::<XdgToplevelSurfaceData>()
-                .unwrap()
+                .expect("an XDG toplevel must retain its Smithay surface data")
                 .lock()
-                .unwrap();
+                .expect("Smithay surface state must remain consistent across callbacks");
             let app_id = attributes.app_id.as_deref().unwrap_or_default();
             let title = attributes.title.as_deref().unwrap_or_default();
             let changed = record.app_id != app_id || record.title != title;

@@ -112,7 +112,7 @@ impl Ferese {
         if let Some(workspace) = self.focus_swipe().map(|swipe| swipe.workspace) {
             self.viewports
                 .get_mut(&workspace)
-                .unwrap()
+                .expect("an active workspace gesture retains its viewport state")
                 .update_gesture(progress);
         }
 
@@ -145,9 +145,9 @@ impl Ferese {
         let swipe = self
             .viewports
             .get_mut(&workspace)
-            .unwrap()
+            .expect("an active workspace gesture retains its viewport state")
             .end_gesture(velocity)
-            .unwrap();
+            .expect("an active workspace gesture retains its viewport state");
         self.presentation_dependencies
             .restore_viewport(workspace, swipe.dependencies.clone());
         let neighbor = self.output_bounds().and_then(|bounds| {
@@ -653,7 +653,10 @@ impl Ferese {
         {
             slide.release_with_velocity(true, self.swipe.release_velocity / self.animation_speed);
             self.last_animation_tick = Instant::now();
-            self.workspace_slides.insert(owner, previous_slide.unwrap());
+            self.workspace_slides.insert(
+                owner,
+                previous_slide.expect("the reversal branch requires an existing workspace slide"),
+            );
             return;
         }
         let slide_direction = slide_direction.or_else(|| {

@@ -329,9 +329,9 @@ pub(crate) fn initial_configure_sent(toplevel: &ToplevelSurface) -> bool {
         states
             .data_map
             .get::<XdgToplevelSurfaceData>()
-            .unwrap()
+            .expect("an XDG toplevel must retain its Smithay surface data")
             .lock()
-            .unwrap()
+            .expect("Smithay surface state must remain consistent across callbacks")
             .initial_configure_sent
     })
 }

@@ -57,8 +57,13 @@ impl Ferese {
         let Some(mut presentation) = self.current_window_presentation(id) else {
             return;
         };
-        let record = self.windows.record(id).unwrap();
-        let geometry = record.geometry.unwrap();
+        let record = self
+            .windows
+            .record(id)
+            .expect("the selected window has a registered lifecycle record");
+        let geometry = record
+            .geometry
+            .expect("presented windows retain their resolved geometry");
         let decorations = geometry.decorations.clamp(0.0, 1.0);
         let handoff_size = (!presentation.scale_content).then(|| {
             presentation

@@ -310,13 +310,18 @@ pub(crate) fn parse(node: &KdlNode) -> Result<Value, Error> {
             .into_iter()
             .filter(|rule| !names.contains(&rule.name)),
     );
-    values.insert("rules".into(), serde_json::to_value(rules).unwrap());
+    values.insert(
+        "rules".into(),
+        serde_json::to_value(rules)
+            .expect("typed configuration and IPC values must serialize to JSON"),
+    );
     let settings: Settings =
         serde_json::from_value(Value::Object(values)).map_err(|error| diagnostic(node, error))?;
     settings
         .validate()
         .map_err(|error| diagnostic(node, error))?;
-    Ok(serde_json::to_value(settings).unwrap())
+    Ok(serde_json::to_value(settings)
+        .expect("typed configuration and IPC values must serialize to JSON"))
 }
 fn builtins() -> Vec<Rule> {
     [

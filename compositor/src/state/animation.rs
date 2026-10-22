@@ -200,9 +200,9 @@ impl Ferese {
             let swipe = self
                 .viewports
                 .get_mut(&workspace)
-                .unwrap()
+                .expect("an active workspace gesture retains its viewport state")
                 .end_gesture(None)
-                .unwrap();
+                .expect("an active workspace gesture retains its viewport state");
             self.presentation_dependencies
                 .restore_viewport(swipe.workspace, swipe.dependencies);
             self.release_presentation_dependencies();
@@ -360,10 +360,12 @@ impl Ferese {
                 }
             }
         }
-        let expired = self
-            .windows
-            .resizing()
-            .any(|id| self.windows.transaction(id).unwrap().expired(now));
+        let expired = self.windows.resizing().any(|id| {
+            self.windows
+                .transaction(id)
+                .expect("the resize candidate retains its active presentation transaction")
+                .expired(now)
+        });
         self.windows.expire_transactions(now);
         if expired {
             self.release_presentation_dependencies();

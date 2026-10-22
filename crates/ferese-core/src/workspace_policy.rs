@@ -41,7 +41,10 @@ impl OutputWorkspaceMap {
                     id,
                     output,
                     index: index as u32 + 1,
-                    window_count: workspaces.workspace(id).unwrap().window_count(),
+                    window_count: workspaces
+                        .workspace(id)
+                        .expect("workspace views enumerate registered workspace IDs")
+                        .window_count(),
                     visible,
                     focused: visible && self.focused_output() == Some(output),
                 }

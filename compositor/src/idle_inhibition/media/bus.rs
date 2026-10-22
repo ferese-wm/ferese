@@ -245,8 +245,12 @@ async fn action(
                 .length_us
                 .map_or(position, |length| position.min(length))
                 .min(i64::MAX as u64) as i64;
-            let track = OwnedObjectPath::try_from(view.track_id.clone().unwrap())
-                .map_err(|error| error.to_string())?;
+            let track = OwnedObjectPath::try_from(
+                view.track_id
+                    .clone()
+                    .expect("media action validation requires an active track"),
+            )
+            .map_err(|error| error.to_string())?;
             connection
                 .call_method(
                     Some(player.owner.as_str()),
@@ -262,7 +266,11 @@ async fn action(
                 .as_f64()
                 .filter(|delta| delta.is_finite() && delta.abs() <= 1.0)
                 .ok_or("Invalid volume change")?;
-            let volume = (view.volume.unwrap() + delta).clamp(0.0, 1.0);
+            let volume = (view
+                .volume
+                .expect("relative volume validation requires the current volume")
+                + delta)
+                .clamp(0.0, 1.0);
             connection
                 .call_method(
                     Some(player.owner.as_str()),

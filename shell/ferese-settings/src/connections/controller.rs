@@ -163,7 +163,12 @@ impl App {
                 }
                 if accepted
                     && !super::agent::valid_answer(
-                        &self.connections.prompt.as_ref().unwrap().kind,
+                        &self
+                            .connections
+                            .prompt
+                            .as_ref()
+                            .expect("the pairing reply branch requires an active prompt")
+                            .kind,
                         &self.connections.pairing_input,
                     )
                 {

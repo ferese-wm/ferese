@@ -66,7 +66,10 @@ impl<K: Eq, C: Eq, T> Queue<K, C, T> {
         mut complete: impl FnMut(Pending<K, C, T>),
     ) {
         for _ in 0..self.pending.len() {
-            let entry = self.pending.pop_front().unwrap();
+            let entry = self
+                .pending
+                .pop_front()
+                .expect("the bounded drain removes at most the original queue length");
             if remove(&entry) {
                 complete(entry);
             } else {

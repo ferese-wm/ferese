@@ -177,7 +177,9 @@ pub fn handle_commit(state: &mut Ferese, surface: &WlSurface) {
         std::sync::Mutex::new(None::<(LayoutState, KeyboardInteractivity)>)
     });
     let (changed, requested_focus) = {
-        let mut previous = previous.lock().unwrap();
+        let mut previous = previous
+            .lock()
+            .expect("layer configure state must remain consistent across callbacks");
         let changed = previous.as_ref().map(|(layout, _)| layout) != Some(&current);
         let requested_focus = policy.keyboard_interactivity == KeyboardInteractivity::OnDemand
             && previous

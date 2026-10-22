@@ -176,11 +176,11 @@ fn slot_mut<'a>(state: &'a mut Ferese, path: &Path) -> &'a mut DeviceState {
     state
         .direct_backend
         .as_mut()
-        .unwrap()
+        .expect("DRM callbacks require an installed direct backend")
         .topology
         .devices
         .get_mut(path)
-        .unwrap()
+        .expect("the discovery path must have a topology slot")
 }
 
 /// The only entry point for applying the current output configuration to DRM.
@@ -250,7 +250,12 @@ pub(super) fn reconcile_outputs(state: &mut Ferese, reactivate: bool) {
     }
 
     for path in paths {
-        let slot = &state.direct_backend.as_ref().unwrap().topology.devices[&path];
+        let slot = &state
+            .direct_backend
+            .as_ref()
+            .expect("DRM callbacks require an installed direct backend")
+            .topology
+            .devices[&path];
         let current_path = observed
             .as_ref()
             .ok()
@@ -261,7 +266,7 @@ pub(super) fn reconcile_outputs(state: &mut Ferese, reactivate: bool) {
                 state
                     .direct_backend
                     .as_ref()
-                    .unwrap()
+                    .expect("DRM callbacks require an installed direct backend")
                     .devices
                     .contains_key(node)
             });
@@ -291,7 +296,10 @@ pub(super) fn reconcile_outputs(state: &mut Ferese, reactivate: bool) {
         }
         let node = match existing {
             Some(node) => node,
-            None => match open_device(state, current_path.unwrap()) {
+            None => match open_device(
+                state,
+                current_path.expect("device discovery found a path before attempting to open it"),
+            ) {
                 Ok(node) => node,
                 Err(error) => {
                     tracing::warn!(%error, ?path, device_path = ?current_path, "DRM device unavailable; will retry");
@@ -306,10 +314,10 @@ pub(super) fn reconcile_outputs(state: &mut Ferese, reactivate: bool) {
             let device = state
                 .direct_backend
                 .as_mut()
-                .unwrap()
+                .expect("DRM callbacks require an installed direct backend")
                 .devices
                 .get_mut(&node)
-                .unwrap();
+                .expect("the selected DRM device must remain registered during this operation");
             device.drm.activate(true).map(|()| {
                 for (crtc, output) in &mut device.outputs {
                     cancel_output_timers(&state.loop_handle, output);
@@ -325,7 +333,7 @@ pub(super) fn reconcile_outputs(state: &mut Ferese, reactivate: bool) {
                     state
                         .desktop_transition
                         .as_mut()
-                        .unwrap()
+                        .expect("desktop transition must be started before publication or retirement")
                         .redraw
                         .insert(output.output.clone());
 
@@ -350,13 +358,13 @@ pub(super) fn reconcile_outputs(state: &mut Ferese, reactivate: bool) {
             let mut output = state
                 .direct_backend
                 .as_mut()
-                .unwrap()
+                .expect("DRM callbacks require an installed direct backend")
                 .devices
                 .get_mut(&node)
-                .unwrap()
+                .expect("the selected DRM device must remain registered during this operation")
                 .outputs
                 .remove(&crtc)
-                .unwrap();
+                .expect("the selected CRTC must remain registered during this operation");
             cancel_output_timers(&state.loop_handle, &mut output);
             if let Some(global) = output.global.take() {
                 state.display_handle.disable_global::<Ferese>(global);
@@ -365,7 +373,7 @@ pub(super) fn reconcile_outputs(state: &mut Ferese, reactivate: bool) {
             state
                 .direct_backend
                 .as_mut()
-                .unwrap()
+                .expect("DRM callbacks require an installed direct backend")
                 .presentation
                 .remove(&(node, crtc));
         }
@@ -376,7 +384,7 @@ pub(super) fn reconcile_outputs(state: &mut Ferese, reactivate: bool) {
     let known_good = state
         .direct_backend
         .as_ref()
-        .unwrap()
+        .expect("DRM callbacks require an installed direct backend")
         .applied_outputs
         .clone();
     if let Err(error) = refresh_monitor_policy(state).and_then(|()| {
@@ -384,14 +392,21 @@ pub(super) fn reconcile_outputs(state: &mut Ferese, reactivate: bool) {
         validate_desired_outputs(state)
     }) {
         tracing::warn!(%error, "monitor policy validation failed; retaining applied outputs");
-        state.direct_backend.as_mut().unwrap().output_error = Some(error);
+        state
+            .direct_backend
+            .as_mut()
+            .expect("DRM callbacks require an installed direct backend")
+            .output_error = Some(error);
         for (path, node) in &ready {
             slot_mut(state, path).degraded(*node, Instant::now());
         }
     } else {
         // Activate destinations before disabling former owners, including across GPUs.
         ready.sort_by_key(|(_, node)| {
-            let backend = state.direct_backend.as_ref().unwrap();
+            let backend = state
+                .direct_backend
+                .as_ref()
+                .expect("DRM callbacks require an installed direct backend");
             let prefix = format!("{}/", drm_device_key(&backend.devices[node].drm));
             let desired = backend
                 .desired_outputs
@@ -416,14 +431,21 @@ pub(super) fn reconcile_outputs(state: &mut Ferese, reactivate: bool) {
                 // Device boundaries are not cross-GPU atomic. Compensate already
                 // applied devices using their last actual hardware settings.
                 if !known_good.outputs.is_empty() {
-                    let backend = state.direct_backend.as_mut().unwrap();
+                    let backend = state
+                        .direct_backend
+                        .as_mut()
+                        .expect("DRM callbacks require an installed direct backend");
                     let requested = backend.desired_outputs.clone();
                     backend.desired_outputs =
                         crate::output_policy::restore_configuration(&known_good, &backend.monitors);
                     for previous in succeeded {
                         let _ = rescan_device(state, previous);
                     }
-                    state.direct_backend.as_mut().unwrap().desired_outputs = requested;
+                    state
+                        .direct_backend
+                        .as_mut()
+                        .expect("DRM callbacks require an installed direct backend")
+                        .desired_outputs = requested;
                 }
                 break;
             }
@@ -431,7 +453,7 @@ pub(super) fn reconcile_outputs(state: &mut Ferese, reactivate: bool) {
         if state
             .direct_backend
             .as_ref()
-            .unwrap()
+            .expect("DRM callbacks require an installed direct backend")
             .output_error
             .is_none()
         {
@@ -441,14 +463,24 @@ pub(super) fn reconcile_outputs(state: &mut Ferese, reactivate: bool) {
 
     transaction::recover_last_output(state);
     let mut desktop_changes = publish_runtime_desktop(state);
-    if std::mem::take(&mut state.direct_backend.as_mut().unwrap().topology.layout_dirty) {
+    if std::mem::take(
+        &mut state
+            .direct_backend
+            .as_mut()
+            .expect("DRM callbacks require an installed direct backend")
+            .topology
+            .layout_dirty,
+    ) {
         desktop_changes.layout = true;
         desktop_changes.shell = true;
         desktop_changes
             .outputs
             .extend(state.space.outputs().cloned());
     }
-    let backend = state.direct_backend.as_mut().unwrap();
+    let backend = state
+        .direct_backend
+        .as_mut()
+        .expect("DRM callbacks require an installed direct backend");
     backend.topology.reconciling = false;
     let retry = backend.topology.retry_deadline(backend.active);
     if std::mem::take(&mut backend.topology.remember_applied) {
@@ -465,7 +497,14 @@ pub(super) fn reconcile_outputs(state: &mut Ferese, reactivate: bool) {
                 reconcile_outputs(state, false);
                 TimeoutAction::Drop
             }) {
-            Ok(token) => state.direct_backend.as_mut().unwrap().topology.retry_timer = Some(token),
+            Ok(token) => {
+                state
+                    .direct_backend
+                    .as_mut()
+                    .expect("DRM callbacks require an installed direct backend")
+                    .topology
+                    .retry_timer = Some(token)
+            }
             Err(error) => tracing::warn!(%error, "could not arm DRM recovery deadline"),
         }
     }
@@ -481,7 +520,7 @@ fn publish_runtime_desktop(state: &mut Ferese) -> crate::state::DesktopChanges {
     let mut outputs = state
         .direct_backend
         .as_ref()
-        .unwrap()
+        .expect("DRM callbacks require an installed direct backend")
         .devices
         .values()
         .flat_map(|device| device.outputs.values())
@@ -525,7 +564,13 @@ fn publish_runtime_desktop(state: &mut Ferese) -> crate::state::DesktopChanges {
     let changes = state
         .publish_desktop(runtime)
         .expect("validated usable output inventory");
-    for device in state.direct_backend.as_mut().unwrap().devices.values_mut() {
+    for device in state
+        .direct_backend
+        .as_mut()
+        .expect("DRM callbacks require an installed direct backend")
+        .devices
+        .values_mut()
+    {
         for output in device.outputs.values_mut() {
             if output.mirror_source.is_none() {
                 if output.global.is_none() {
@@ -579,7 +624,14 @@ pub(super) fn hotplug(state: &mut Ferese) {
             reconcile_outputs(state, false);
             TimeoutAction::Drop
         }) {
-        Ok(token) => state.direct_backend.as_mut().unwrap().topology.settle_timer = Some(token),
+        Ok(token) => {
+            state
+                .direct_backend
+                .as_mut()
+                .expect("DRM callbacks require an installed direct backend")
+                .topology
+                .settle_timer = Some(token)
+        }
         Err(error) => {
             tracing::warn!(%error, "could not debounce output events");
             reconcile_outputs(state, false);

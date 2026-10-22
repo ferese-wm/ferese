@@ -15,7 +15,11 @@ fn prepare(source: &str) -> Result<String, Box<dyn Error>> {
             serde_json::to_value(vec![panel::Panel::default()])?,
         )?;
     }
-    let panels: Vec<panel::Panel> = serde_json::from_value(doc.get("panels").unwrap().clone())?;
+    let panels: Vec<panel::Panel> = serde_json::from_value(
+        doc.get("panels")
+            .expect("setup populated the panel document before validation")
+            .clone(),
+    )?;
     panel::validate(&panels)?;
     for (index, bar) in panels.iter().enumerate() {
         let groups = [&bar.start, &bar.center, &bar.end]
@@ -47,7 +51,11 @@ fn prepare(source: &str) -> Result<String, Box<dyn Error>> {
         if let Some(zone) = zone {
             doc.add(
                 &format!("panels.{index}.{zone}.groups.0.items"),
-                item.as_object().unwrap().clone().into_iter().collect(),
+                item.as_object()
+                    .expect("serialized panel items are JSON objects")
+                    .clone()
+                    .into_iter()
+                    .collect(),
             )?;
         } else {
             doc.add(
@@ -59,7 +67,11 @@ fn prepare(source: &str) -> Result<String, Box<dyn Error>> {
             )?;
         }
     }
-    let panels = serde_json::from_value::<Vec<panel::Panel>>(doc.get("panels").unwrap().clone())?;
+    let panels = serde_json::from_value::<Vec<panel::Panel>>(
+        doc.get("panels")
+            .expect("setup populated the panel document before validation")
+            .clone(),
+    )?;
     panel::validate(&panels)?;
     Ok(doc.to_string())
 }
@@ -72,7 +84,9 @@ pub fn configure(path: &Path) -> Result<(), Box<dyn Error>> {
     }
     let backup = path.with_file_name(format!(
         "{}.before-activities-{}",
-        path.file_name().unwrap().to_string_lossy(),
+        path.file_name()
+            .expect("the configured shell hook path identifies a file")
+            .to_string_lossy(),
         ferese_ipc::activities::now_ms()
     ));
     file.replace(&desired, Some(&backup), |_| Ok(()))?;

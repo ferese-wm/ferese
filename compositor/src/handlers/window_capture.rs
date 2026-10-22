@@ -35,7 +35,9 @@ struct Permit {
 
 impl Permit {
     fn reserve(budget: &Arc<Mutex<Budget>>, bytes: usize) -> Option<Self> {
-        let mut available = budget.lock().unwrap();
+        let mut available = budget
+            .lock()
+            .expect("surface rendering state must remain consistent across callbacks");
         if bytes == 0
             || bytes > MAX_BYTES.saturating_sub(available.bytes)
             || available.frames >= MAX_FRAMES
@@ -53,7 +55,10 @@ impl Permit {
 
 impl Drop for Permit {
     fn drop(&mut self) {
-        let mut budget = self.budget.lock().unwrap();
+        let mut budget = self
+            .budget
+            .lock()
+            .expect("surface rendering state must remain consistent across callbacks");
         budget.bytes -= self.bytes;
         budget.frames -= 1;
     }
@@ -167,21 +172,32 @@ fn finish_conversion(state: &Ferese, result: Conversion) {
     let Some(data) = frame.data::<Arc<FrameData>>() else {
         return;
     };
-    if !frame.is_alive() || *data.used.lock().unwrap() {
+    if !frame.is_alive()
+        || *data
+            .used
+            .lock()
+            .expect("surface rendering state must remain consistent across callbacks")
+    {
         return;
     }
     if state.session_lock.active()
         || !super::screencopy::capture_allowed()
         || !state.capture_window_allowed(snapshot.id, snapshot.epoch)
     {
-        *data.used.lock().unwrap() = true;
+        *data
+            .used
+            .lock()
+            .expect("surface rendering state must remain consistent across callbacks") = true;
         frame.failed();
         return;
     }
 
     let size = (snapshot.pixels.width as u32, snapshot.pixels.height as u32);
     let logical_size = snapshot.logical_size;
-    *data.snapshot.lock().unwrap() = Some(snapshot);
+    *data
+        .snapshot
+        .lock()
+        .expect("surface rendering state must remain consistent across callbacks") = Some(snapshot);
     if manager.is_alive() {
         manager.geometry(&frame, logical_size.0, logical_size.1);
     }
@@ -256,7 +272,8 @@ impl Dispatch<FereseWindowCaptureManagerV1, Global> for Ferese {
             } else if global
                 .worker
                 .try_send(Conversion {
-                    snapshot: snapshot.unwrap(),
+                    snapshot: snapshot
+                        .expect("conversion is queued only after obtaining a capture snapshot"),
                     frame: resource.clone(),
                     manager: manager.clone(),
                 })
@@ -264,10 +281,11 @@ impl Dispatch<FereseWindowCaptureManagerV1, Global> for Ferese {
             {
                 *resource
                     .data::<Arc<FrameData>>()
-                    .unwrap()
+                    .expect("capture frame resources are initialized with their FrameData")
                     .used
                     .lock()
-                    .unwrap() = true;
+                    .expect("surface rendering state must remain consistent across callbacks") =
+                    true;
                 manager.busy(&resource);
                 resource.failed();
             }
@@ -386,7 +404,10 @@ pub(super) fn copy_snapshot(
     data: &FrameData,
     buffer: &WlBuffer,
 ) {
-    let mut used = data.used.lock().unwrap();
+    let mut used = data
+        .used
+        .lock()
+        .expect("surface rendering state must remain consistent across callbacks");
     if *used {
         resource.post_error(
             frame::Error::AlreadyUsed,
@@ -395,7 +416,12 @@ pub(super) fn copy_snapshot(
         return;
     }
     *used = true;
-    let Some(snapshot) = data.snapshot.lock().unwrap().take() else {
+    let Some(snapshot) = data
+        .snapshot
+        .lock()
+        .expect("surface rendering state must remain consistent across callbacks")
+        .take()
+    else {
         resource.failed();
         return;
     };

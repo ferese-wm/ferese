@@ -79,7 +79,11 @@ impl Service {
             return;
         }
         self.requested = key.clone();
-        self.queue.0.lock().unwrap().pending = key;
+        self.queue
+            .0
+            .lock()
+            .expect("artwork decode queue must remain consistent across workers")
+            .pending = key;
         self.queue.1.notify_one();
     }
 
@@ -94,7 +98,11 @@ impl Service {
 
 impl Drop for Service {
     fn drop(&mut self) {
-        self.queue.0.lock().unwrap().stopped = true;
+        self.queue
+            .0
+            .lock()
+            .expect("artwork decode queue must remain consistent across workers")
+            .stopped = true;
         self.queue.1.notify_one();
     }
 }
@@ -107,18 +115,27 @@ fn work(
     let mut cache: VecDeque<Artwork> = VecDeque::new();
     loop {
         let (lock, changed) = &*queue;
-        let mut state = lock.lock().unwrap();
+        let mut state = lock
+            .lock()
+            .expect("artwork decode queue must remain consistent across workers");
         while state.pending.is_none() && !state.stopped {
-            state = changed.wait(state).unwrap();
+            state = changed
+                .wait(state)
+                .expect("artwork decode queue must remain consistent across workers");
         }
 
         if state.stopped {
             return;
         }
-        let key = state.pending.take().unwrap();
+        let key = state
+            .pending
+            .take()
+            .expect("the artwork wait completed with a pending request");
         drop(state);
         let artwork = match cache.iter().position(|art| art.key == key) {
-            Some(index) => cache.remove(index).unwrap(),
+            Some(index) => cache
+                .remove(index)
+                .expect("the cache lookup returned an existing artwork index"),
             None => Artwork {
                 handle: load(&key.uri),
                 key,

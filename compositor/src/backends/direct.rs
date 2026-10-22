@@ -387,7 +387,7 @@ pub fn init(event_loop: &mut EventLoop<Ferese>, state: &mut Ferese) -> Result<()
     state
         .direct_backend
         .as_mut()
-        .unwrap()
+        .expect("DRM callbacks require an installed direct backend")
         .topology
         .observe_devices(&[(
             primary_path.clone(),
@@ -640,25 +640,43 @@ pub(crate) fn set_output_profile(state: &mut Ferese, name: &str) -> Result<(), S
         return Err("profile does not match the connected monitors/lid".into());
     }
     if let Err(error) = validate_live_outputs(state, &state.output_profiles) {
-        state.direct_backend.as_mut().unwrap().manual_outputs = previous;
+        state
+            .direct_backend
+            .as_mut()
+            .expect("DRM callbacks require an installed direct backend")
+            .manual_outputs = previous;
         return Err(error);
     }
     reconcile_outputs(state, false);
-    if let Some(error) = state.direct_backend.as_ref().unwrap().output_error.clone() {
-        state.direct_backend.as_mut().unwrap().manual_outputs = previous;
+    if let Some(error) = state
+        .direct_backend
+        .as_ref()
+        .expect("DRM callbacks require an installed direct backend")
+        .output_error
+        .clone()
+    {
+        state
+            .direct_backend
+            .as_mut()
+            .expect("DRM callbacks require an installed direct backend")
+            .manual_outputs = previous;
         return Err(error);
     }
     if name != "auto"
         && state
             .direct_backend
             .as_ref()
-            .unwrap()
+            .expect("DRM callbacks require an installed direct backend")
             .desired_outputs
             .profile
             .as_deref()
             != Some(name)
     {
-        state.direct_backend.as_mut().unwrap().manual_outputs = previous;
+        state
+            .direct_backend
+            .as_mut()
+            .expect("DRM callbacks require an installed direct backend")
+            .manual_outputs = previous;
         return Err("profile does not match the connected monitors/lid".into());
     }
     arm_output_confirmation(state, known_good, previous);
@@ -698,12 +716,26 @@ pub(crate) fn set_output_layout(
     backend.manual_outputs.internal = None;
     backend.manual_outputs.layout = Some(layout);
     if let Err(error) = validate_live_outputs(state, &state.output_profiles) {
-        state.direct_backend.as_mut().unwrap().manual_outputs = previous;
+        state
+            .direct_backend
+            .as_mut()
+            .expect("DRM callbacks require an installed direct backend")
+            .manual_outputs = previous;
         return Err(error);
     }
     reconcile_outputs(state, false);
-    if let Some(error) = state.direct_backend.as_ref().unwrap().output_error.clone() {
-        state.direct_backend.as_mut().unwrap().manual_outputs = previous;
+    if let Some(error) = state
+        .direct_backend
+        .as_ref()
+        .expect("DRM callbacks require an installed direct backend")
+        .output_error
+        .clone()
+    {
+        state
+            .direct_backend
+            .as_mut()
+            .expect("DRM callbacks require an installed direct backend")
+            .manual_outputs = previous;
         return Err(error);
     }
     arm_output_confirmation(state, known_good, previous);
@@ -732,8 +764,18 @@ pub(crate) fn set_internal_output(state: &mut Ferese, enabled: bool) -> Result<(
     backend.manual_outputs.internal = Some(enabled);
     backend.manual_outputs.layout = None;
     reconcile_outputs(state, false);
-    if let Some(error) = state.direct_backend.as_ref().unwrap().output_error.clone() {
-        state.direct_backend.as_mut().unwrap().manual_outputs = previous;
+    if let Some(error) = state
+        .direct_backend
+        .as_ref()
+        .expect("DRM callbacks require an installed direct backend")
+        .output_error
+        .clone()
+    {
+        state
+            .direct_backend
+            .as_mut()
+            .expect("DRM callbacks require an installed direct backend")
+            .manual_outputs = previous;
         return Err(error);
     }
     arm_output_confirmation(state, known_good, previous);
@@ -750,7 +792,10 @@ fn arm_output_confirmation(
     previous: DesiredOutputConfiguration,
     manual: ManualOverride,
 ) {
-    let backend = state.direct_backend.as_mut().unwrap();
+    let backend = state
+        .direct_backend
+        .as_mut()
+        .expect("DRM callbacks require an installed direct backend");
     if let Some(token) = backend.confirmation_timer.take() {
         state.loop_handle.remove(token);
     }
@@ -781,7 +826,13 @@ fn arm_output_confirmation(
             TimeoutAction::Drop
         },
     ) {
-        Ok(token) => state.direct_backend.as_mut().unwrap().confirmation_timer = Some(token),
+        Ok(token) => {
+            state
+                .direct_backend
+                .as_mut()
+                .expect("DRM callbacks require an installed direct backend")
+                .confirmation_timer = Some(token)
+        }
         Err(error) => {
             tracing::warn!(%error, "could not arm monitor confirmation; reverting");
             let _ = confirm_output_configuration(state, false);
@@ -809,7 +860,13 @@ pub(crate) fn confirm_output_configuration(
         ));
         backend.manual_outputs = manual;
         reconcile_outputs(state, false);
-        if let Some(error) = state.direct_backend.as_ref().unwrap().output_error.clone() {
+        if let Some(error) = state
+            .direct_backend
+            .as_ref()
+            .expect("DRM callbacks require an installed direct backend")
+            .output_error
+            .clone()
+        {
             return Err(error);
         }
     }
@@ -1256,7 +1313,7 @@ fn redraw(
     let outputs = state
         .direct_backend
         .as_ref()
-        .unwrap()
+        .expect("DRM callbacks require an installed direct backend")
         .devices
         .iter()
         .flat_map(|(node, device)| {
@@ -1274,7 +1331,7 @@ fn redraw(
             let scene = state
                 .direct_backend
                 .as_ref()
-                .unwrap()
+                .expect("DRM callbacks require an installed direct backend")
                 .scene_output(state, output);
             selected.is_none_or(|selected| selected.contains(output) || selected.contains(&scene))
                 || state.output_has_animations(&scene)
@@ -1293,7 +1350,7 @@ fn redraw(
     state
         .direct_backend
         .as_mut()
-        .unwrap()
+        .expect("DRM callbacks require an installed direct backend")
         .scheduling_metrics
         .redraw(source, selected.is_none(), requested, outputs.len());
     arm_animation_timer(state);
@@ -1517,7 +1574,11 @@ fn render_output(
                     let damage = damage.map_or_else(
                         || {
                             vec![smithay::utils::Rectangle::from_size(
-                                output.output.current_mode().unwrap().size,
+                                output
+                                    .output
+                                    .current_mode()
+                                    .expect("a rendered output must have a current mode")
+                                    .size,
                             )]
                         },
                         |damage| {
@@ -1641,7 +1702,13 @@ fn render_output(
     restore_device(state, node, device);
     if !submitted
         && scene_output
-            == state.direct_backend.as_ref().unwrap().devices[&node].outputs[&crtc].output
+            == state
+                .direct_backend
+                .as_ref()
+                .expect("DRM callbacks require an installed direct backend")
+                .devices[&node]
+                .outputs[&crtc]
+                .output
     {
         schedule_frame_callbacks(state, node, crtc, plan.present_at);
     }
@@ -1687,7 +1754,11 @@ fn rescan_device(state: &mut Ferese, node: DrmNode) -> Result<bool, ()> {
         .and_then(|scan| transaction::apply_device(state, node, &mut device, scan));
     if let Err(error) = &result {
         tracing::warn!(?node, %error, "output transaction failed; restored known-good outputs where possible");
-        state.direct_backend.as_mut().unwrap().output_error = Some(error.clone());
+        state
+            .direct_backend
+            .as_mut()
+            .expect("DRM callbacks require an installed direct backend")
+            .output_error = Some(error.clone());
         transaction::update_applied_info(&mut device);
     }
     restore_device(state, node, device);
@@ -1695,7 +1766,10 @@ fn rescan_device(state: &mut Ferese, node: DrmNode) -> Result<bool, ()> {
 }
 
 fn refresh_connected_info(state: &mut Ferese) {
-    let backend = state.direct_backend.as_mut().unwrap();
+    let backend = state
+        .direct_backend
+        .as_mut()
+        .expect("DRM callbacks require an installed direct backend");
     for device in backend.devices.values_mut() {
         if let Ok(scan) = select_outputs(
             device,
@@ -1739,7 +1813,10 @@ fn refresh_connected_info(state: &mut Ferese) {
 }
 
 fn remember_applied_configuration(state: &mut Ferese) {
-    let backend = state.direct_backend.as_mut().unwrap();
+    let backend = state
+        .direct_backend
+        .as_mut()
+        .expect("DRM callbacks require an installed direct backend");
     if backend.topology.reconciling {
         // Applied positions are read only after the coherent logical publish.
         backend.topology.remember_applied = true;
@@ -1913,17 +1990,20 @@ fn animation_fallbacks(state: &mut Ferese) -> Vec<(DrmNode, crtc::Handle, Instan
         let scene = state
             .direct_backend
             .as_ref()
-            .unwrap()
+            .expect("DRM callbacks require an installed direct backend")
             .scene_output(state, &identity);
         let animating = enabled && state.output_has_animations(&scene);
-        let backend = state.direct_backend.as_mut().unwrap();
+        let backend = state
+            .direct_backend
+            .as_mut()
+            .expect("DRM callbacks require an installed direct backend");
         let output = backend
             .devices
             .get_mut(&node)
-            .unwrap()
+            .expect("the selected DRM device remains registered during this operation")
             .outputs
             .get_mut(&crtc)
-            .unwrap();
+            .expect("the selected DRM device remains registered during this operation");
         // Preserve recovery of a requested final frame if another output
         // advances this animation to rest before the watchdog is dispatched.
         let active = enabled
@@ -2032,19 +2112,21 @@ fn arm_animation_timer(state: &mut Ferese) {
                     state
                         .direct_backend
                         .as_mut()
-                        .unwrap()
+                        .expect("DRM callbacks require an installed direct backend")
                         .scheduling_metrics
                         .fallback_recoveries += 1;
                     state
                         .direct_backend
                         .as_mut()
-                        .unwrap()
+                        .expect("DRM callbacks require an installed direct backend")
                         .devices
                         .get_mut(&node)
-                        .unwrap()
+                        .expect(
+                            "the selected DRM device must remain registered during this operation",
+                        )
                         .outputs
                         .get_mut(&crtc)
-                        .unwrap()
+                        .expect("the selected CRTC must remain registered during this operation")
                         .animation_fallback = AnimationFallback::default();
                     request_frame(state, node, crtc);
                 }
@@ -2054,7 +2136,10 @@ fn arm_animation_timer(state: &mut Ferese) {
             TimeoutAction::Drop
         }) {
         Ok(token) => {
-            let backend = state.direct_backend.as_mut().unwrap();
+            let backend = state
+                .direct_backend
+                .as_mut()
+                .expect("DRM callbacks require an installed direct backend");
             backend.animation_timer = Some(token);
             backend.animation_deadline = Some(deadline);
             backend.scheduling_metrics.fallback_arms += 1;

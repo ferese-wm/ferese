@@ -157,17 +157,19 @@ impl Inhibit {
                                 let values = HashMap::from([
                                     (
                                         "screensaver-active".into(),
-                                        Value::from(locked).try_into().unwrap(),
+                                        Value::from(locked).try_into().expect("the D-Bus value uses an owned supported scalar or collection type"),
                                     ),
                                     (
                                         "session-state".into(),
-                                        Value::from(phase).try_into().unwrap(),
+                                        Value::from(phase).try_into().expect("the D-Bus value uses an owned supported scalar or collection type"),
                                     ),
                                 ]);
                                 if let Ok(emitter) = SignalEmitter::new(&connection, PATH)
                                     && Self::state_changed(
                                         &emitter,
-                                        OwnedObjectPath::try_from(path.clone()).unwrap(),
+                                        OwnedObjectPath::try_from(path.clone()).expect(
+                                            "session handles were validated as D-Bus object paths",
+                                        ),
                                         values,
                                     )
                                     .await

@@ -503,7 +503,9 @@ impl<M> Widget<M, Theme, cosmic::Renderer> for Motion<'_, M> {
         viewport: &Rectangle,
     ) {
         if let Some(regions) = &self.regions {
-            let mut collected = regions.lock().unwrap();
+            let mut collected = regions
+                .lock()
+                .expect("surface rendering state must remain consistent across callbacks");
             collected.clear();
             self.content.as_widget_mut().operate(
                 tree,
