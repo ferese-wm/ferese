@@ -58,13 +58,17 @@ impl Ferese {
             return;
         }
 
+        let bounds = self.output_bounds();
         let outputs = self.floating_outputs();
         let Some((remembered, work)) = app_id
             .as_deref()
             .and_then(|app| self.floating_memory.get(app))
             .and_then(|entry| {
                 let rect = entry.restore(&outputs)?;
-                let work = outputs.iter().find(|(name, _)| *name == entry.output)?.1;
+                let work = outputs
+                    .iter()
+                    .find(|(name, work)| *name == entry.output && Some(*work) == bounds)?
+                    .1;
                 Some((rect, work))
             })
         else {
@@ -106,10 +110,13 @@ impl Ferese {
             return;
         }
 
-        if let Some(pointer) = self.seat.get_pointer() {
-            self.focus_output_at(pointer.current_location());
-        }
+        let Some(bounds) = self.output_bounds() else {
+            self.add_tiled_window(window);
+            return;
+        };
 
+        // Saved geometry may restore a position on this output, but must not
+        // redirect a new window away from the output the user focused.
         let remembered_work = app_id
             .filter(|app| !crate::window_rules::is_native_dialog(Some(app)))
             .and_then(|app| self.floating_memory.get(app))
@@ -118,18 +125,9 @@ impl Ferese {
                 entry.restore(&outputs)?;
                 outputs
                     .into_iter()
-                    .find(|(name, _)| *name == entry.output)
+                    .find(|(name, work)| *name == entry.output && *work == bounds)
                     .map(|(_, work)| work)
             });
-        if let Some(work) = remembered_work {
-            self.focus_output_at((work.x + work.width / 2.0, work.y + work.height / 2.0).into());
-        }
-
-        let Some(bounds) = self.output_bounds() else {
-            self.add_tiled_window(window);
-            return;
-        };
-
         let id = self.windows.allocate_id();
         let size_rect = client_size(&window)
             .map(|size| natural_floating_rect(bounds, size))
@@ -434,6 +432,11 @@ impl Ferese {
                     .0
                     .as_deref()
                     .and_then(|app| self.floating_memory.get(app))
+                    .filter(|entry| {
+                        self.floating_outputs()
+                            .iter()
+                            .any(|(name, work)| *name == entry.output && *work == bounds)
+                    })
                     .and_then(|entry| entry.restore(&self.floating_outputs()))
                     .is_none()
                 {

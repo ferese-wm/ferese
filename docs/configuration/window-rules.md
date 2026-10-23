@@ -52,9 +52,10 @@ an oversized window keeps its size with its top-left corner reachable.
 Successful move/resize completion saves ordinary floating geometry by app ID in
 `$XDG_STATE_HOME/ferese/floating.json` (normally `~/.local/state/ferese/floating.json`).
 Geometry is stored with the output name and as fractions of its work area, so
-placement survives resolution changes. Restores are skipped if the output is
-missing or less than 25% of the window would be visible. A worker saves the
-latest snapshot, combining pending updates. Completing a drag updates memory
+placement survives resolution changes. New independent windows open on the
+focused output; saved geometry applies only when it belongs to that output and
+at least 25% of the window would be visible. A worker saves the latest snapshot,
+combining pending updates. Completing a drag updates memory
 immediately without waiting for storage.
 Transient dialogs and cancelled drags do not update this memory. Floating → tiled
 → floating also restores the window's last floating geometry. Nested previews

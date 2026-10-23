@@ -70,15 +70,29 @@ pub(crate) fn dispatch(events: &mut EventLoop<'static, Ferese>, state: &mut Fere
 }
 
 pub(crate) fn ack_configure(wire: &mut UnixStream, xdg: u32) -> u32 {
+    ack_configure_with_size(wire, xdg, None).0
+}
+
+fn ack_configure_with_size(
+    wire: &mut UnixStream,
+    xdg: u32,
+    toplevel: Option<u32>,
+) -> (u32, Option<(u32, u32)>) {
     wire.set_nonblocking(true).unwrap();
     let mut bytes = Vec::new();
     let _ = wire.read_to_end(&mut bytes);
     wire.set_nonblocking(false).unwrap();
     let mut serial = None;
+    let mut size = None;
     let mut offset = 0;
     while offset < bytes.len() {
         let object = u32::from_ne_bytes(bytes[offset..offset + 4].try_into().unwrap());
         let header = u32::from_ne_bytes(bytes[offset + 4..offset + 8].try_into().unwrap());
+        if Some(object) == toplevel && header & 0xffff == 0 {
+            let width = u32::from_ne_bytes(bytes[offset + 8..offset + 12].try_into().unwrap());
+            let height = u32::from_ne_bytes(bytes[offset + 12..offset + 16].try_into().unwrap());
+            size = Some((width, height));
+        }
         if object == xdg && header & 0xffff == 0 {
             serial = Some(u32::from_ne_bytes(
                 bytes[offset + 8..offset + 12].try_into().unwrap(),
@@ -88,13 +102,22 @@ pub(crate) fn ack_configure(wire: &mut UnixStream, xdg: u32) -> u32 {
     }
     assert!(serial.is_some(), "missing configure for {xdg}: {bytes:?}");
     request(wire, xdg, 4, &[serial.unwrap()], None);
-    serial.unwrap()
+    (serial.unwrap(), size)
 }
 
 pub(crate) fn window(
     state: &mut Ferese,
     events: &mut EventLoop<'static, Ferese>,
     color: u32,
+) -> (Window, UnixStream) {
+    window_with_app_id(state, events, color, "")
+}
+
+pub(crate) fn window_with_app_id(
+    state: &mut Ferese,
+    events: &mut EventLoop<'static, Ferese>,
+    color: u32,
+    app_id: &str,
 ) -> (Window, UnixStream) {
     let (server, mut wire) = UnixStream::pair().unwrap();
     let client = state
@@ -125,23 +148,47 @@ pub(crate) fn window(
     request(&mut wire, compositor.id().protocol_id(), 0, &[2], None);
     request(&mut wire, shell.id().protocol_id(), 2, &[3, 2], None);
     request(&mut wire, 3, 1, &[4], None);
+    if !app_id.is_empty() {
+        let mut bytes = app_id.as_bytes().to_vec();
+        bytes.push(0);
+        let mut args = vec![bytes.len() as u32];
+        bytes.resize(bytes.len().next_multiple_of(4), 0);
+        args.extend(
+            bytes
+                .chunks_exact(4)
+                .map(|word| u32::from_ne_bytes(word.try_into().unwrap())),
+        );
+        request(&mut wire, 4, 3, &args, None);
+    }
     request(&mut wire, 2, 6, &[], None);
     dispatch(events, state);
-    ack_configure(&mut wire, 3);
+    let (_, configured) = ack_configure_with_size(&mut wire, 3, Some(4));
+    // Application fixtures honor the first configured size, as Settings does.
+    // Existing capture fixtures keep their fixed 64x48 buffer.
+    let (width, height) = if app_id.is_empty() {
+        (64, 48)
+    } else {
+        let (width, height) = configured.expect("initial toplevel configure");
+        (
+            if width > 0 { width } else { 64 },
+            if height > 0 { height } else { 48 },
+        )
+    };
+    let buffer_size = width * height * 4;
     let mut file = tempfile::tempfile().unwrap();
-    file.write_all(&color.to_ne_bytes().repeat(64 * 48))
+    file.write_all(&color.to_ne_bytes().repeat((width * height) as usize))
         .unwrap();
     request(
         &mut wire,
         shm.id().protocol_id(),
         0,
-        &[5, 64 * 48 * 4],
+        &[5, buffer_size],
         Some(file.as_raw_fd()),
     );
-    request(&mut wire, 5, 0, &[6, 0, 64, 48, 64 * 4, 0], None);
-    request(&mut wire, 3, 3, &[0, 0, 64, 48], None);
+    request(&mut wire, 5, 0, &[6, 0, width, height, width * 4, 0], None);
+    request(&mut wire, 3, 3, &[0, 0, width, height], None);
     request(&mut wire, 2, 1, &[6, 0, 0], None);
-    request(&mut wire, 2, 2, &[0, 0, 64, 48], None);
+    request(&mut wire, 2, 2, &[0, 0, width, height], None);
     request(&mut wire, 2, 6, &[], None);
     dispatch(events, state);
     let window = state
