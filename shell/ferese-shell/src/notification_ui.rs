@@ -12,6 +12,64 @@ use super::{
 
 const POPUP_WIDTH: u32 = 368;
 const HISTORY_MAX_HEIGHT: f32 = 620.0;
+const STACK_PEEK: u32 = 6;
+
+fn stack_depth(count: usize) -> u32 {
+    count.saturating_sub(1).min(2) as u32
+}
+
+fn stacked_card<'a>(
+    card: Element<'a, cosmic::Action<Message>>,
+    count: usize,
+    radius: f32,
+    foreground: Color,
+) -> Element<'a, cosmic::Action<Message>> {
+    let depth = stack_depth(count);
+    if depth == 0 {
+        return card;
+    }
+    let mut layers = column([]);
+    for depth in 0..depth {
+        // Start at the face's bottom tangent, then tuck each following edge
+        // inside the previous one. Fixed insets protrude past rounded corners.
+        let inset = radius + (depth * STACK_PEEK) as f32;
+        let back = container(
+            container(
+                cosmic::iced::widget::Space::new()
+                    .width(Length::Fill)
+                    .height(STACK_PEEK as f32),
+            )
+            .width(Length::Fill)
+            .class(theme::Container::custom(move |_| container::Style {
+                background: Some(Background::Color(foreground.scale_alpha(0.045))),
+                border: Border {
+                    shape: BorderShape::Continuous,
+                    radius: [
+                        0.0,
+                        0.0,
+                        radius.min(STACK_PEEK as f32),
+                        radius.min(STACK_PEEK as f32),
+                    ]
+                    .into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            })),
+        )
+        .padding([0.0, inset]);
+        layers = layers.push(back);
+    }
+    // Paint the backing before the clipped face, while keeping its reserved
+    // space in layout. The face alone publishes the compositor material region.
+    cosmic::iced::widget::stack([container(card)
+        .padding(cosmic::iced::Padding {
+            bottom: (depth * STACK_PEEK) as f32,
+            ..Default::default()
+        })
+        .into()])
+    .push_under(container(layers).align_bottom(Length::Fill))
+    .into()
+}
 
 fn popup_height(notice: &notifications::Notice, count: usize) -> u32 {
     let body = if notice.body.is_empty() && count == 1 {
@@ -267,7 +325,7 @@ impl FereseShell {
             .popup_groups()
             .iter()
             .map(|(notice, _, count)| {
-                popup_height(notice, *count) + if *count > 1 { 12 } else { 0 }
+                popup_height(notice, *count) + stack_depth(*count) * STACK_PEEK
             })
             .sum::<u32>()
             + count.saturating_sub(1) as u32 * 8
@@ -573,38 +631,12 @@ impl FereseShell {
                 ..Default::default()
             },
         );
-        let card: Element<'_, cosmic::Action<Message>> = if count > 1 {
-            // With translucent materials, complete backing rectangles show
-            // through the face and multiply its tint. Paint only the exposed
-            // bottom edges, after the card's measured height.
-            let back = move |inset: f32| {
-                container(
-                    container(
-                        cosmic::iced::widget::Space::new()
-                            .width(Length::Fill)
-                            .height(6),
-                    )
-                    .width(Length::Fill)
-                    .class(theme::Container::custom(move |_| container::Style {
-                        background: Some(Background::Color(Color {
-                            a: 0.045 * opacity,
-                            ..foreground
-                        })),
-                        border: Border {
-                            shape: BorderShape::Continuous,
-                            radius: [0.0, 0.0, self.render.radius(6.0), self.render.radius(6.0)]
-                                .into(),
-                            ..Default::default()
-                        },
-                        ..Default::default()
-                    })),
-                )
-                .padding([0.0, inset])
-            };
-            column([card, back(6.0).into(), back(12.0).into()]).into()
-        } else {
-            card
-        };
+        // Only exposed edges are painted, so translucent cards do not tint
+        // the face repeatedly. The count includes the face itself.
+        let radius = palette
+            .material_radius
+            .min(popup_height(notice, count) as f32 / 2.0);
+        let card = stacked_card(card, count, radius, foreground);
         let mut area = cosmic::widget::mouse_area(card)
             .on_enter(cosmic::Action::App(Message::HoverNotification(id, true)))
             .on_exit(cosmic::Action::App(Message::HoverNotification(id, false)));
@@ -949,6 +981,98 @@ mod tests {
     use cosmic::iced::advanced::widget::Tree;
     use cosmic::iced::advanced::{Layout, layout, mouse};
     use cosmic::iced::{Font, Pixels, Rectangle, Size};
+
+    #[test]
+    fn grouped_notification_backing_edges_follow_the_face_corners() {
+        check_backing_edges("tiny-skia");
+    }
+
+    #[test]
+    #[ignore = "requires a GPU or software Vulkan adapter"]
+    fn gpu_grouped_notification_backing_edges_follow_the_face_corners() {
+        check_backing_edges("wgpu");
+    }
+
+    fn check_backing_edges(backend: &str) {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let mut renderer = runtime
+            .block_on(<cosmic::Renderer as Headless>::new(
+                Font::default(),
+                Pixels(14.0),
+                Some(backend),
+            ))
+            .unwrap();
+        for radius in [0.0, 14.0, 21.0, 32.0] {
+            for (count, expected_height) in [(1, 100.0), (2, 106.0), (3, 112.0), (8, 112.0)] {
+                for scale in [1.0, 1.25, 1.5, 1.75] {
+                    let face = card_surface(
+                        cosmic::widget::Space::new().height(100),
+                        false,
+                        container::Style {
+                            background: Some(Color::from_rgba(0.1, 0.1, 0.1, 0.6).into()),
+                            border: Border {
+                                shape: BorderShape::Continuous,
+                                radius: radius.into(),
+                                ..Default::default()
+                            },
+                            ..Default::default()
+                        },
+                    );
+                    let mut card = stacked_card(face, count, radius, Color::WHITE);
+                    let mut tree = Tree::new(card.as_widget());
+                    let node = card.as_widget_mut().layout(
+                        &mut tree,
+                        &renderer,
+                        &layout::Limits::new(Size::ZERO, Size::new(360.0, 160.0)),
+                    );
+                    let bounds = node.bounds();
+                    assert_eq!(bounds.height, expected_height, "count={count}");
+                    renderer.reset(bounds);
+                    card.as_widget().draw(
+                        &tree,
+                        &mut renderer,
+                        &cosmic::Theme::dark(),
+                        &Default::default(),
+                        Layout::new(&node),
+                        mouse::Cursor::Unavailable,
+                        &bounds,
+                    );
+                    let size = Size::new(
+                        (bounds.width * scale).ceil() as u32,
+                        (bounds.height * scale).ceil() as u32,
+                    );
+                    let pixels =
+                        Headless::screenshot(&mut renderer, size, scale, Color::TRANSPARENT);
+                    let alpha = |x: f32, y: f32| {
+                        pixels[(((y * scale) as u32 * size.width + (x * scale) as u32) * 4 + 3)
+                            as usize]
+                    };
+                    assert_eq!(alpha(180.0, 50.0), 153, "backing must not tint the face");
+                    if count > 1 {
+                        assert!(
+                            alpha(180.0, 102.0) > 0,
+                            "backing must remain visible: {backend}, r={radius}, count={count}, scale={scale}, painted bottom={:?}",
+                            pixels
+                                .chunks_exact(4)
+                                .enumerate()
+                                .rfind(|(_, p)| p[3] > 0)
+                                .map(|(i, _)| i / size.width as usize)
+                        );
+                        if radius > 0.0 {
+                            assert_eq!(
+                                alpha(radius / 2.0, 102.0),
+                                0,
+                                "backing protrudes past the face: {backend}, r={radius}, scale={scale}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn notification_insets_reveal_the_modal_material() {
