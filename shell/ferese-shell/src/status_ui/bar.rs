@@ -78,24 +78,28 @@ impl FereseShell {
             );
         }
 
-        if kind == Menu::Notifications
-            && self
+        if kind == Menu::Notifications {
+            // Reading notifications clears the dot. Keep its space so the
+            // resulting panel allocation does not dismiss the new popover.
+            let unread = self
                 .status
                 .notifications
                 .as_ref()
-                .is_some_and(|n| n.count > 0 && !n.dnd)
-        {
-            content = content.push(container(self.render.text("")).width(4).height(4).class(
-                theme::Container::custom(move |_| container::Style {
-                    background: Some(Background::Color(foreground)),
-                    border: Border {
-                        shape: BorderShape::Continuous,
-                        radius: self.render.radius(2.0).into(),
+                .is_some_and(|n| n.count > 0 && !n.dnd);
+            content = content.push(
+                container(cosmic::widget::Space::new())
+                    .width(4)
+                    .height(4)
+                    .class(theme::Container::custom(move |_| container::Style {
+                        background: unread.then_some(Background::Color(foreground)),
+                        border: Border {
+                            shape: BorderShape::Continuous,
+                            radius: self.render.radius(2.0).into(),
+                            ..Default::default()
+                        },
                         ..Default::default()
-                    },
-                    ..Default::default()
-                }),
-            ));
+                    })),
+            );
         }
         let content = bar_content(content, metrics.group_item_height);
         let recording_busy = kind == Menu::Recording && self.recorder.busy();

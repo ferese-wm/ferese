@@ -1597,6 +1597,85 @@ mod tests {
     }
 
     #[test]
+    fn reading_notifications_does_not_reallocate_and_dismiss_the_popover() {
+        use cosmic::Application;
+        use cosmic::iced::advanced::renderer::Headless;
+        use cosmic::iced::advanced::{layout, widget::Tree};
+        use cosmic::iced::{Font, Pixels, Size};
+        use panel_layout::{Placement, Resolution};
+
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let renderer = runtime
+            .block_on(<cosmic::Renderer as Headless>::new(
+                Font::default(),
+                Pixels(14.0),
+                Some("tiny-skia"),
+            ))
+            .unwrap();
+        let mut shell = shell_with_measured_panel();
+        shell.notifications.ready = true;
+        shell.status.notifications = Some(status::Notifications {
+            count: 3,
+            dnd: false,
+        });
+        let item = panel::ItemId("notifications".into());
+        let bar = shell.outputs[0].bar;
+        let resolution = |shell: &FereseShell| {
+            let mut control = shell.view_status_item(status_ui::Menu::Notifications, false, false);
+            let mut tree = Tree::new(control.as_widget());
+            let node = control.as_widget_mut().layout(
+                &mut tree,
+                &renderer,
+                &layout::Limits::new(Size::ZERO, Size::new(200.0, 60.0)),
+            );
+            Resolution {
+                items: [(
+                    item.clone(),
+                    Placement::Visible {
+                        representation: panel::Representation::Icon,
+                        width: node.size().width,
+                    },
+                )]
+                .into(),
+                zone_widths: [0.0, 0.0, node.size().width],
+                ..Default::default()
+            }
+        };
+        shell.outputs[0].panel_resolution = Some(resolution(&shell));
+        drop(shell.open_menu(
+            status_ui::Menu::Notifications,
+            status_ui::PopoverAnchor {
+                parent: bar,
+                panel: shell.config.panels[0].id.clone(),
+                item: Some(item.clone()),
+                rectangle: cosmic::iced::Rectangle {
+                    x: 1000,
+                    y: 0,
+                    width: 40,
+                    height: 36,
+                },
+            },
+        ));
+        let popup = shell.menu.as_ref().expect("first click opens history").id;
+        assert!(shell.notifications.history_open);
+        assert_eq!(shell.status.notifications.as_ref().unwrap().count, 0);
+        let after_reading = resolution(&shell);
+        drop(shell.update(Message::PanelResolved(bar, after_reading)));
+        assert_eq!(
+            shell
+                .menu
+                .as_ref()
+                .expect("clearing the badge must not close history")
+                .id,
+            popup
+        );
+        assert!(shell.notifications.history_open);
+    }
+
+    #[test]
     fn panel_reallocation_dismisses_popovers_in_both_overflow_directions() {
         use cosmic::Application;
         use panel_layout::{Placement, Resolution};
