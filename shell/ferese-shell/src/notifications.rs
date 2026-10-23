@@ -224,6 +224,13 @@ impl Service {
                 None => zbus::blocking::connection::Builder::session(),
             }
             .and_then(|builder| builder.serve_at(PATH, server))
+            // A preview or test sharing the session bus must not replace the
+            // desktop's notification service, or leave it ownerless on exit.
+            .map(|builder| {
+                builder
+                    .allow_name_replacements(false)
+                    .replace_existing_names(false)
+            })
             .and_then(|builder| builder.name(INTERFACE))
             .and_then(|builder| builder.build());
             let connection = match connection {
@@ -1117,6 +1124,22 @@ mod tests {
         let info: (String, String, String, String) =
             proxy.call("GetServerInformation", &()).unwrap();
         assert_eq!(info.0, "Ferese");
+        // A second shell on this bus must fail to claim the name without
+        // displacing the running desktop's notification service.
+        let second = Service::connect(&config, Some(address.trim().to_owned()));
+        assert!(matches!(received(&second), Event::Failed(_)));
+        drop(second);
+        let info: (String, String, String, String) =
+            proxy.call("GetServerInformation", &()).unwrap();
+        assert_eq!(info.0, "Ferese");
+        // Older shells use zbus's default replacement flags. They must not be
+        // able to steal the name either.
+        let replacement = zbus::blocking::connection::Builder::address(address.trim())
+            .unwrap()
+            .name(INTERFACE)
+            .unwrap()
+            .build();
+        assert!(matches!(replacement, Err(zbus::Error::NameTaken)));
         let notify = |replace| -> u32 {
             proxy
                 .call(
