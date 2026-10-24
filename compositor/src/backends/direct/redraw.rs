@@ -246,7 +246,7 @@ mod tests {
         scheduler.request(Duration::ZERO);
         let scheduled = scheduler.plan(Duration::ZERO).unwrap();
         assert_eq!(fallback.deadline(start, interval, true, true), None);
-        let plan = scheduler.begin().unwrap();
+        let plan = scheduler.begin(scheduled.render_at).unwrap();
         assert_eq!(plan, scheduled);
         scheduler.rendered(
             plan,
@@ -297,7 +297,7 @@ mod tests {
             fallback.deadline(deadline, interval, needs_final_frame, true),
             None
         );
-        scheduler.begin().unwrap();
+        scheduler.begin(deadline.duration_since(start)).unwrap();
         assert!(!scheduler.has_pending_request());
     }
 

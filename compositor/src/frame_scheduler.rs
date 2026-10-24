@@ -3,6 +3,7 @@ use std::time::Duration;
 
 const MIN_RENDER: Duration = Duration::from_millis(2);
 const TIMER_MARGIN: Duration = Duration::from_millis(1);
+const WAKEUP_DECAY: Duration = Duration::from_secs(1);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct FramePlan {
@@ -25,6 +26,8 @@ pub(crate) struct FrameScheduler {
     render_variance: Duration,
     last_sample: Option<Duration>,
     extra_margin: Duration,
+    wakeup_delay: Duration,
+    last_wakeup: Option<Duration>,
     pub missed_deadlines: u64,
 }
 
@@ -42,6 +45,8 @@ impl FrameScheduler {
             render_variance: Duration::ZERO,
             last_sample: None,
             extra_margin: Duration::ZERO,
+            wakeup_delay: Duration::ZERO,
+            last_wakeup: None,
             missed_deadlines: 0,
         }
     }
@@ -68,9 +73,25 @@ impl FrameScheduler {
             // A cold GPU is less predictable. Start immediately on idle wakeup.
             self.interval
         } else {
-            (self.render_estimate + self.render_variance * 2 + TIMER_MARGIN + self.extra_margin)
-                .min(self.interval)
+            (self.render_estimate
+                + self.render_variance * 2
+                + TIMER_MARGIN
+                + self.extra_margin
+                + self.wakeup_margin(now))
+            .min(self.interval)
         }
+    }
+
+    fn wakeup_margin(&self, now: Duration) -> Duration {
+        if self.wakeup_delay.is_zero() {
+            return Duration::ZERO;
+        }
+        let elapsed = self
+            .last_wakeup
+            .map_or(Duration::ZERO, |last| now.saturating_sub(last));
+        // Forget transient contention by elapsed time, independent of refresh rate.
+        self.wakeup_delay
+            .mul_f64((-elapsed.as_secs_f64() / WAKEUP_DECAY.as_secs_f64()).exp())
     }
 
     fn phase_at_or_after(&self, time: Duration) -> Duration {
@@ -134,8 +155,15 @@ impl FrameScheduler {
         Some(plan)
     }
 
-    pub fn begin(&mut self) -> Option<FramePlan> {
+    pub fn begin(&mut self, now: Duration) -> Option<FramePlan> {
         let plan = self.scheduled.take()?;
+        if plan.phase_known {
+            // Rendering cost starts after dispatch. Account separately for time
+            // spent waiting for a CPU or for earlier event-loop callbacks.
+            let late = now.saturating_sub(plan.render_at).min(self.interval);
+            self.wakeup_delay = self.wakeup_margin(now).max(late);
+            self.last_wakeup = Some(now);
+        }
         self.requested_at = None;
         self.last_target = Some(plan.present_at);
         Some(plan)
@@ -259,7 +287,7 @@ mod tests {
         assert_eq!((plan.render_at, plan.present_at), (ms(107), ms(110)));
         scheduler.request(ms(102));
         assert_eq!(scheduler.plan(ms(102)), Some(plan));
-        assert_eq!(scheduler.begin(), Some(plan));
+        assert_eq!(scheduler.begin(plan.render_at), Some(plan));
         scheduler.rendered(plan, ms(108), ms(1), true);
         scheduler.request(ms(109));
         assert_eq!(scheduler.plan(ms(109)), None);
@@ -274,7 +302,7 @@ mod tests {
         scheduler.request(ms(10_100));
         let plan = scheduler.plan(ms(10_100)).unwrap();
         assert_eq!(plan.render_at, ms(10_100));
-        scheduler.begin();
+        scheduler.begin(plan.render_at);
         scheduler.rendered(plan, ms(10_101), ms(1), true);
         scheduler.presented(ms(10_110));
         assert_eq!(scheduler.missed_deadlines, 0);
@@ -286,7 +314,7 @@ mod tests {
         scheduler.presented(ms(100));
         scheduler.request(ms(101));
         let plan = scheduler.plan(ms(101)).unwrap();
-        scheduler.begin();
+        scheduler.begin(plan.render_at);
         scheduler.rendered(plan, ms(108), ms(1), true);
         assert_eq!(scheduler.presented(ms(130)), Some(plan));
         assert_eq!(scheduler.missed_deadlines, 2);
@@ -295,11 +323,80 @@ mod tests {
     }
 
     #[test]
+    fn late_timer_dispatch_moves_the_next_render_earlier_without_skipping_a_refresh() {
+        let mut scheduler = FrameScheduler::new(ms(10));
+        scheduler.presented(ms(100));
+        scheduler.request(ms(101));
+        let first = scheduler.plan(ms(101)).unwrap();
+        assert_eq!(first.render_at, ms(107));
+        let dispatch = first.render_at + ms(3);
+        assert_eq!(scheduler.begin(dispatch), Some(first));
+        scheduler.rendered(first, dispatch + ms(2), ms(2), true);
+        scheduler.presented(ms(120));
+        assert_eq!(scheduler.missed_deadlines, 1);
+
+        scheduler.request(ms(120));
+        let next = scheduler.plan(ms(120)).unwrap();
+        assert_eq!(next.present_at, ms(130), "retain the next physical refresh");
+        assert!(
+            next.render_at + ms(3) + ms(2) <= next.present_at - TIMER_MARGIN,
+            "the next frame must budget both the observed wakeup delay and rendering"
+        );
+        assert_eq!(
+            scheduler.plan(ms(121)),
+            Some(next),
+            "new input must not postpone the plan"
+        );
+    }
+
+    #[test]
+    fn wakeup_history_decays_by_time_is_bounded_and_resets_with_the_output() {
+        let mut fast = FrameScheduler::new(ms(5));
+        let mut slow = FrameScheduler::new(ms(20));
+        let mut margins = Vec::new();
+        for scheduler in [&mut fast, &mut slow] {
+            scheduler.presented(ms(100));
+            scheduler.request(ms(101));
+            let plan = scheduler.plan(ms(101)).unwrap();
+            let now = plan.render_at + ms(3);
+            scheduler.begin(now);
+            assert_eq!(scheduler.wakeup_margin(now), ms(3));
+            margins.push(scheduler.wakeup_margin(now + ms(1000)));
+            assert!(scheduler.wakeup_margin(now + ms(5000)) < Duration::from_micros(21));
+            scheduler.reset(ms(10));
+            assert_eq!(scheduler.wakeup_margin(now), Duration::ZERO);
+        }
+        assert_eq!(
+            margins[0], margins[1],
+            "decay must not depend on display refresh rate"
+        );
+        let mut scheduler = FrameScheduler::new(ms(10));
+        scheduler.presented(ms(100));
+        scheduler.request(ms(101));
+        let plan = scheduler.plan(ms(101)).unwrap();
+        let now = plan.render_at + ms(200);
+        scheduler.begin(now);
+        assert_eq!(scheduler.wakeup_margin(now), ms(10));
+        assert!(scheduler.budget(now) <= ms(10));
+    }
+
+    #[test]
+    fn unknown_phase_does_not_train_wakeup_history_or_move_a_pending_plan() {
+        let mut scheduler = FrameScheduler::new(ms(10));
+        scheduler.request(ms(100));
+        let plan = scheduler.plan(ms(100)).unwrap();
+        assert!(!plan.phase_known);
+        assert_eq!(scheduler.plan(ms(120)), Some(plan));
+        scheduler.begin(ms(130));
+        assert_eq!(scheduler.wakeup_margin(ms(130)), Duration::ZERO);
+    }
+
+    #[test]
     fn first_retirement_aligns_the_next_frame_to_the_observed_refresh() {
         let mut scheduler = FrameScheduler::new(ms(10));
         scheduler.request(ms(100));
         let plan = scheduler.plan(ms(100)).unwrap();
-        scheduler.begin();
+        scheduler.begin(plan.render_at);
         scheduler.rendered(plan, ms(102), ms(2), true);
         scheduler.presented(ms(103));
 
@@ -313,7 +410,7 @@ mod tests {
         scheduler.presented(ms(100));
         scheduler.request(ms(101));
         let plan = scheduler.plan(ms(101)).unwrap();
-        scheduler.begin();
+        scheduler.begin(plan.render_at);
         scheduler.rendered(plan, ms(108), ms(1), false);
         scheduler.callback_sent(ms(110));
         scheduler.request(ms(108));
@@ -330,7 +427,7 @@ mod tests {
         scheduler.presented(ms(100));
         scheduler.request(ms(101));
         let unchanged = scheduler.plan(ms(101)).unwrap();
-        scheduler.begin();
+        scheduler.begin(unchanged.render_at);
         scheduler.rendered(unchanged, ms(108), ms(1), false);
         let callback_at = scheduler
             .callback_deadline(ms(108), unchanged.present_at)
@@ -339,7 +436,7 @@ mod tests {
 
         scheduler.request(ms(109));
         let changed = scheduler.plan(ms(109)).unwrap();
-        scheduler.begin();
+        scheduler.begin(changed.render_at);
         scheduler.rendered(changed, ms(118), ms(1), true);
 
         // The old timer is dispatched late, after a new frame was queued.
@@ -393,7 +490,7 @@ mod tests {
         scheduler.presented(ms(100));
         scheduler.request(ms(101));
         let plan = scheduler.plan(ms(101)).unwrap();
-        scheduler.begin();
+        scheduler.begin(plan.render_at);
         scheduler.rendered(plan, ms(108), ms(1), true);
         scheduler.request(ms(109));
         assert_eq!(scheduler.presented(ms(90)), Some(plan));
@@ -416,7 +513,7 @@ mod tests {
         unknown.request(ms(100));
         let plan = unknown.plan(ms(100)).unwrap();
         assert_eq!(unknown.forecast_time(ms(101), plan), None);
-        unknown.begin();
+        unknown.begin(plan.render_at);
         unknown.rendered(plan, ms(102), ms(2), true);
         unknown.presented(ms(130));
         assert_eq!(

@@ -126,7 +126,7 @@ fn dispatch_frame(state: &mut Ferese, node: DrmNode, crtc: crtc::Handle, identit
         return;
     }
 
-    let Some(plan) = output.scheduler.begin() else {
+    let Some(plan) = output.scheduler.begin(monotonic_now()) else {
         return;
     };
 

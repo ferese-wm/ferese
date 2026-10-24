@@ -543,7 +543,7 @@ mod tests {
             for tick in 0..(hz * 3 / 10) {
                 let now = interval * tick as u32;
                 if scheduler.plan(now).is_some() {
-                    let plan = scheduler.begin().unwrap();
+                    let plan = scheduler.begin(now).unwrap();
                     attempts += 1;
                     scheduler.rendered(plan, now, Duration::ZERO, false);
                     if state.sample_frame(&output, Duration::ZERO).animating {
