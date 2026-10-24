@@ -30,8 +30,11 @@ Apps requesting multiple sources can select up to eight.
 A shared display includes everything visible on it, including notifications.
 Window sharing captures only the selected app's content and subsurfaces, even if
 the window is covered or on another workspace. It excludes separate popups and
-compositor decorations. The video size follows window resizes; closing the window
-ends sharing.
+compositor decorations. Window streams preserve backing pixel density across
+the captured surface tree when it exceeds the display scale. For example, a 2×
+application buffer stays at 2× in the stream on a 1.75× display, avoiding a
+fractional downsample before the recording app scales it. The video size follows
+window resizes and backing buffer density changes; closing the window ends sharing.
 
 The picker follows your shell colors, font, corners, opacity, and blur.
 
@@ -64,9 +67,19 @@ see the [package lists](installation.md#requirements).
 The installer supplies Ferese's portal backend and selects it for screen sharing.
 Log into a new Ferese session after installation.
 
-Streams run at up to 30 fps with hidden or embedded cursors. Frames are copied
-through CPU-accessible buffers. Large streams or several simultaneous streams
-can therefore use substantial CPU and memory bandwidth.
+Streams negotiate their frame rate with the recording app, with a default of
+30 fps and a ceiling of 60 fps. To set a different ceiling, give the portal
+process `FERESE_CAPTURE_MAX_FPS` with an integer from 1 to 240. This controls
+capture independently of the display refresh rate; it does not make an idle
+desktop generate frames.
+
+On supported GPUs, Ferese renders directly into DMA-BUF buffers shared with
+PipeWire and waits for GPU completion before handing them to the recording app.
+If GPU buffers are unavailable, capture uses shared memory without the portal's
+intermediate frame copies. Both paths wait for source damage, while a resumed
+consumer receives an initial image even if the desktop has stayed unchanged.
+For troubleshooting, `FERESE_CAPTURE_FORCE_SHM=1` selects shared memory; large
+or rapidly changing captures on this path still incur GPU readback costs.
 
 ## Troubleshooting
 

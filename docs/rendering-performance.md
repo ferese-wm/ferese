@@ -87,3 +87,188 @@ window-capture readback separately. Current effect metrics are placeholders;
 `capture_us` covers monitor capture batches only. Exact cursor-only KMS updates
 and detailed scanout rejection causes require additional upstream observability.
 Broader primary-plane and overlay policies still need hardware validation.
+
+## Capture scene reuse
+
+With `FERESE_TRACE_PERFORMANCE=1`, both backends emit `capture scene outcomes`
+through the `ferese::render` log target. Each report covers one retained output
+view, with separate counts for cursor-hidden and cursor-embedded capture, and
+resets its counters after roughly five seconds of capture activity.
+
+`preparations` counts successful filtered-scene preparations, `scene_reuses`
+counts checks that skipped rebuilding that scene, and `compositions` counts
+renders with nonempty capture damage. A pending damage-waiting frame may be
+checked repeatedly without a delivery. A preparation can also find unchanged
+pixels, so it need not increase the composition count. These counters describe the
+capture source; they do not count PipeWire deliveries, measure GPU time or
+describe window-only capture. For a mirror, they describe its filtered source
+before fitting it to the target output.
+
+An unchanged view reuses its retained GPU image before constructing capture
+render elements. Surface commits, layout changes, animation ticks and privacy
+changes invalidate it, including the final animation frame. Cursor updates
+invalidate only views that embed the cursor. Output identity, scale, transform
+and geometry are checked as well, so a remapped or reconfigured output cannot
+reuse the previous view by mistake. Capture requests alone do not invalidate
+the image, and multiple mutations before a request uses it are coalesced.
+
+This is conservative invalidation: an unrelated redraw may still cause a
+preparation, after which damage tracking can find unchanged pixels. It does not
+reuse the display swapchain or partially update consumer buffers. DMA-BUF and
+shared-memory delivery still write complete frames, which keeps a recycled
+buffer from exposing pixels left by a previous use.
+
+## IPC snapshot CPU benchmark
+
+The ignored release test below measures construction of unchanged desktop event
+snapshots with the default theme. It warms up the state, then reports three runs
+of 2,000 snapshots. Keep the runtime and state directories private so the test
+cannot connect to your desktop or write its configuration.
+
+```sh
+ipc_benchmark_runtime=$(mktemp -d)
+env -u FERESE_SOCKET \
+    XDG_RUNTIME_DIR="$ipc_benchmark_runtime" \
+    XDG_CONFIG_HOME="$ipc_benchmark_runtime" \
+    XDG_STATE_HOME="$ipc_benchmark_runtime" \
+    XDG_CACHE_HOME="$ipc_benchmark_runtime" \
+    FERESE_STARTUP_TEST_CHILD=ipc_events::tests::profile_unchanged_event_snapshots \
+    cargo test --release --locked -p ferese profile_unchanged_event_snapshots -- --ignored --nocapture
+rm -rf -- "$ipc_benchmark_runtime"
+```
+
+Compare the reported `elapsed_us` values on the same machine and build profile.
+These timings cover CPU snapshot construction, while the DRM procedure above
+measures rendering and presentation under real desktop workloads.
+
+For populated desktops, replace `profile_unchanged_event_snapshots` with
+`profile_populated_event_publication` in both the test filter and
+`FERESE_STARTUP_TEST_CHILD`. This test creates one output and private Wayland
+clients, then measures three runs of 2,000 unchanged publication checks with
+0, 1, 20 and 100 windows. Setup and the initial subscription event happen before
+timing. Window records stay typed through comparison and serialize only when
+an event is sent, avoiding JSON objects for checks that produce no update.
+The benchmark includes construction, comparison and disposal of each snapshot,
+while socket serialization and subscriber processing are excluded. Keep CPU
+affinity identical when comparing binaries on machines with mixed core types.
+
+## Shell snapshot handoff benchmark
+
+The shell's ignored release test measures delivery of a completed desktop
+snapshot from the control thread to the UI. It uses a private socket pair and
+tests snapshots with 1, 20 and 100 windows, reporting three runs of 2,000
+handoffs for each size.
+
+```sh
+cargo test --release --locked -p ferese-shell profile_snapshot_handoff -- --ignored --nocapture
+```
+
+Snapshot preparation happens before timing; delivery, polling and destruction
+are included. Compare runs on the same machine without concurrent builds.
+The benchmark excludes protocol decoding, UI layout and drawing, so its results
+describe this handoff's CPU cost rather than overall shell responsiveness.
+
+## Monitor capture benchmark
+
+Monitor captures keep their own damage history alongside the capture texture.
+The first frame fills the texture, and later frames redraw only damaged regions
+before readback. Cursor inclusion, disappearing surfaces and output changes are
+resolved against the capture scene, independently of the displayed image.
+Cursor-included and cursor-hidden streams retain separate targets, so alternating
+between them does not invalidate otherwise unchanged captures. Mirrored captures
+also track damage in their filtered source composition before fitting it to the
+mirror output.
+
+Run the ignored release benchmark on a hardware EGL device:
+
+```sh
+cargo test --release --locked -p ferese profile_output_capture -- --ignored --nocapture
+```
+
+It creates a synthetic 3840×2160 scene with overlapping translucent panes and
+tests unchanged frames, cursor movement and full-background changes. Each case
+warms up for 60 frames and reports three runs of 60 frames. With `readback=true`,
+timing includes a full-frame GPU readback and a copy into CPU memory. With
+`readback=false`, a one-pixel readback waits for GPU completion while avoiding
+the full-frame transfer cost. These are elapsed times through the renderer,
+rather than GPU timestamp measurements.
+
+Compare old and new release binaries in alternating runs on the same GPU, and
+record other GPU workloads. The test captures no desktop content and excludes
+PipeWire delivery, encoding and network transport, so it cannot establish an
+end-to-end OBS or call-frame latency improvement.
+
+## Window capture conversion benchmark
+
+The one-shot window capture path converts premultiplied readback pixels to straight
+ARGB. Streaming performs this conversion in its GPU transfer shader. Opaque pixels need only a channel swap, while partial
+alpha uses a 64 KiB table compiled into read-only storage. The table preserves
+the original rounded and saturated conversion without divisions in the frame
+loop or runtime allocation for lookup data.
+
+```sh
+cargo test --release --locked -p ferese profile_window_conversion -- --ignored --nocapture
+```
+
+The test measures 1080p and 4K frames with opaque content, translucent edges,
+uniform translucency and varying alpha. Each case warms up for three frames,
+then reports three runs of three frames. Input colours vary across the frame,
+and the benchmark restores the premultiplied input before each conversion,
+outside the timed interval. Compare release builds with matching CPU affinity
+and record competing CPU workloads.
+
+These timings isolate pixel conversion. GPU readback, copying into client
+buffers, PipeWire delivery and encoding require separate measurements; use
+live thread CPU samples to identify how much conversion contributes to a
+running sharing session.
+
+
+## Native stream validation
+
+Streaming uses `ext-image-copy-capture-v1` with persistent capture sessions and a
+four-buffer PipeWire pool. The compositor writes into those buffers directly,
+using DMA-BUF when allocation and format negotiation permit it, or anonymous
+shared memory otherwise. A pending capture waits for source damage, and each
+completed buffer is delivered once. DMA-BUF frames become available only after
+the exported GPU fence signals; cancellation, privacy changes and source removal
+also invalidate pending delivery.
+
+The isolated window test captures synthetic clients through a real PipeWire
+consumer, checks silence while content is static, then requests distinct updates.
+It starts a callback-driven animation on an inactive workspace, reconnects
+without changing the source, resizes while paused, verifies the replacement pool
+and revokes the window's capture permission. A monitor stream
+then exercises damage waiting and real updates through the filtered output path.
+Set `FERESE_TEST_CAPTURE_TRANSPORT` to `shm` or `dma` to require that memory type
+in the native consumer, rather than merely accepting an available transport.
+DMA-BUF checks require a hardware-backed nested compositor and access to its
+render node.
+
+Set `FERESE_TEST_CAPTURE_OBS_BUFFERS=1` with either transport to exercise OBS's
+memory-type bitmask and mapped-buffer requirements. This catches negotiation
+failures that a consumer offering just one memory type can miss.
+
+```sh
+FERESE_TEST_WINDOW_CAPTURE=1 FERESE_TEST_CAPTURE_TRANSPORT=shm \
+  python3 scripts/tests/test_window_capture_isolated.py
+FERESE_TEST_WINDOW_CAPTURE=1 FERESE_TEST_CAPTURE_TRANSPORT=dma \
+  python3 scripts/tests/test_window_capture_isolated.py
+cargo test --locked -p ferese render::capture::stream_gpu_tests -- --ignored
+```
+
+The GPU tests compare all 65,536 alpha/channel combinations against the CPU
+conversion and check all eight output transforms with both texture orientations.
+Native streaming tests establish buffer transport and pixel correctness; measure
+CPU, GPU and encoding workloads separately before attributing a change in total
+streaming performance to capture alone.
+
+The recorder retains the last owned image and timestamps one final reference when
+recording stops, so a static desktop keeps its full duration without requesting
+or encoding duplicate frames throughout the idle interval. The regression test
+covers an explicit stop, EOS from the capture source and continuous audio while
+the video stays static:
+
+```sh
+cargo test --locked -p xdg-desktop-portal-ferese --bin ferese-record \
+  recorder::tests::encoder_preserves_the_duration_of_a_static_capture -- --ignored
+```

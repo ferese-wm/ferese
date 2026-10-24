@@ -78,6 +78,7 @@ With release binaries built, run isolated integration checks:
 ```sh
 FERESE_TEST_SHORTCUTS=1 python3 scripts/tests/test_shortcuts_isolated.py
 FERESE_TEST_WINDOW_CAPTURE=1 python3 scripts/tests/test_window_capture_isolated.py
+FERESE_TEST_WINDOW_CAPTURE_SCALE=1 python3 scripts/tests/test_window_capture_scale_isolated.py
 FERESE_TEST_INHIBIT=1 python3 scripts/tests/test_inhibit_isolated.py
 FERESE_TEST_RESTORE=1 python3 scripts/tests/test_restore_isolated.py
 FERESE_TEST_WINDOW_STREAM=1 python3 scripts/tests/test_window_stream_isolated.py
