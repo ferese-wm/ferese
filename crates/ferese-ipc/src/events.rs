@@ -33,7 +33,7 @@ pub struct Window {
 /// A coherent logical desktop view. Desktop objects are redacted while locked.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub struct Snapshot {
-    pub outputs: Value,
+    pub outputs: Arc<Value>,
     pub workspaces: Value,
     pub windows: Vec<Window>,
     pub focus: Value,
@@ -80,9 +80,9 @@ impl Snapshot {
     #[must_use]
     pub fn changes_since(&self, previous: &Self) -> Vec<Change> {
         let mut changes = Vec::new();
-        if self.outputs != previous.outputs {
+        if !Arc::ptr_eq(&self.outputs, &previous.outputs) && self.outputs != previous.outputs {
             changes.push(Change::OutputsChanged {
-                outputs: self.outputs.clone(),
+                outputs: self.outputs.as_ref().clone(),
             });
         }
         if self.workspaces != previous.workspaces {
@@ -122,6 +122,36 @@ impl Snapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shared_outputs_preserve_wire_fields_and_detect_value_changes() {
+        let outputs = serde_json::json!([{
+            "id": 1, "connector": "HDMI-A-1", "scale": 1.75,
+            "available_modes": [{"width": 3840, "height": 2160, "preferred": true}],
+            "configuration_error": null
+        }]);
+        let wire = serde_json::json!({
+            "outputs": outputs, "workspaces": [], "windows": [], "focus": null,
+            "config": {"revision": 0, "error": null}, "theme": null,
+            "lock": {"phase": "unlocked", "sleeping": false}
+        });
+        let snapshot: Snapshot = serde_json::from_value(wire.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&snapshot).unwrap(), wire);
+        let mut next = snapshot.clone();
+        assert!(Arc::ptr_eq(&snapshot.outputs, &next.outputs));
+        assert!(next.changes_since(&snapshot).is_empty());
+        next.outputs = Arc::new(outputs.clone());
+        assert!(next.changes_since(&snapshot).is_empty());
+        next.outputs = serde_json::json!([]).into();
+        let changes = next.changes_since(&snapshot);
+        assert_eq!(
+            serde_json::to_value(&changes).unwrap(),
+            serde_json::json!([
+                {"type": "outputs_changed", "outputs": []}
+            ])
+        );
+        assert_eq!(*snapshot.outputs, outputs);
+    }
 
     #[test]
     fn typed_windows_preserve_snapshot_and_replacement_wire_fields() {

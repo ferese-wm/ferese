@@ -14,6 +14,7 @@ use ferese_core::LayoutMode;
 use ferese_ipc::{Request, Response, VERSION};
 
 pub(crate) mod activity_owner;
+pub(crate) mod outputs;
 mod transport;
 use ferese_layout::Direction;
 use serde_json::{Value, json};
@@ -1620,15 +1621,41 @@ impl Ferese {
 
     pub(crate) fn ipc_event_snapshot(&self) -> ferese_ipc::events::Snapshot {
         let locked = self.session_lock.active();
-        let mut outputs = self.outputs_json();
-        if locked {
-            for output in outputs.as_array_mut().into_iter().flatten() {
-                if let Some(fields) = output.as_object_mut() {
-                    fields.remove("workspace");
-                    fields.remove("focused");
+        let outputs = if let Some(backend) = &self.direct_backend {
+            let state = outputs::State {
+                connected: &backend.connected_outputs,
+                focused: self.output_workspaces.focused_output(),
+                error: backend.output_configuration_error(),
+                confirmation_pending: backend.confirmation_pending(),
+                low_power: backend.low_power,
+            };
+            let presentations = backend.connected_outputs.iter().map(|info| {
+                let mapped = self.output_by_identity(&info.identity);
+                let id = self.persistent_output_id(&info.identity);
+                outputs::Presentation {
+                    id,
+                    geometry: mapped.and_then(|output| self.space.output_geometry(output)),
+                    workspace: id.and_then(|id| self.output_workspaces.active_workspace(id)),
+                    scale: mapped
+                        .map(|output| output.current_scale().fractional_scale())
+                        .unwrap_or(info.scale),
+                    transform: mapped
+                        .map(|output| transform_name(output.current_transform()))
+                        .unwrap_or_else(|| configured_transform_name(info.transform)),
                 }
+            });
+            self.ipc_events
+                .outputs
+                .borrow_mut()
+                .get_or_update(state, presentations, locked, || self.outputs_json())
+        } else {
+            // Nested outputs have no connector inventory or DRM mode lists.
+            let mut value = self.outputs_json();
+            if locked {
+                outputs::redact(&mut value);
             }
-        }
+            Arc::new(value)
+        };
         let windows = if locked {
             Vec::new()
         } else {

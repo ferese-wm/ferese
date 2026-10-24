@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::mpsc::SyncSender;
@@ -18,6 +19,7 @@ pub(crate) struct Subscribers {
     previous: Option<Snapshot>,
     generation: u64,
     pub(crate) config_revision: u64,
+    pub(crate) outputs: RefCell<crate::ipc::outputs::Cache>,
 }
 
 impl Subscribers {
@@ -43,6 +45,7 @@ impl Subscribers {
         self.subscribers.remove(&owner);
         if self.subscribers.is_empty() {
             self.previous = None;
+            self.outputs.get_mut().clear();
         }
     }
 
@@ -121,6 +124,9 @@ impl Subscribers {
             delivered
         });
         self.previous = self.active().then_some(snapshot);
+        if !self.active() {
+            self.outputs.get_mut().clear();
+        }
     }
 }
 
@@ -246,7 +252,7 @@ mod tests {
 
     fn snapshot() -> Snapshot {
         Snapshot {
-            outputs: json!([]),
+            outputs: json!([]).into(),
             workspaces: json!([]),
             windows: Vec::new(),
             focus: json!(null),
@@ -272,7 +278,7 @@ mod tests {
         ));
         hub.publish(state.clone());
         assert!(matches!(receive.try_recv(), Err(TryRecvError::Empty)));
-        state.outputs = json!([{"id": 2}]);
+        state.outputs = json!([{"id": 2}]).into();
         state.workspaces = json!([{"output": 2}]);
         state.focus = json!({"output": 2});
         hub.publish(state);
@@ -356,7 +362,7 @@ mod tests {
         let mut state = snapshot();
         hub.publish(state.clone());
         receive.try_recv().unwrap();
-        state.outputs = json!([{"id": 1}]);
+        state.outputs = json!([{"id": 1}]).into();
         state.workspaces = json!([{"output": 1}]);
         state.windows = vec![ferese_ipc::events::Window {
             id: 7,

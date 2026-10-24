@@ -527,7 +527,7 @@ mod tests {
                 last: true,
                 change: Change::Snapshot {
                     desktop: Box::new(ferese_ipc::events::Snapshot {
-                        outputs: serde_json::json!([]),
+                        outputs: serde_json::json!([]).into(),
                         workspaces: serde_json::json!([]),
                         windows: vec![window(1, "one.desktop", true, 1)],
                         focus: serde_json::json!({"window":1}),

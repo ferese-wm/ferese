@@ -246,7 +246,7 @@ impl DirectBackendState {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ConnectedOutputInfo {
     pub connector: String,
     pub connected: bool,
@@ -266,7 +266,7 @@ pub(crate) struct ConnectedOutputInfo {
     pub configured_position: Option<[i32; 2]>,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct ConnectedModeInfo {
     pub width: u16,
     pub height: u16,
