@@ -29,6 +29,8 @@ const BTN_RIGHT: u32 = 0x111;
 #[cfg(test)]
 pub(crate) mod binding_mode_tests;
 #[cfg(test)]
+mod launcher_touch_tests;
+#[cfg(test)]
 mod layer_focus_tests;
 
 pub(crate) struct LockedPointerHint {

@@ -29,6 +29,17 @@ fn layer_with_policy(
     interactivity: u32,
     level: u32,
 ) -> (LayerSurface, UnixStream) {
+    layer_with_namespace(state, events, output, interactivity, level, "bar")
+}
+
+pub(super) fn layer_with_namespace(
+    state: &mut Ferese,
+    events: &mut EventLoop<'static, Ferese>,
+    output: &Output,
+    interactivity: u32,
+    level: u32,
+    namespace: &str,
+) -> (LayerSurface, UnixStream) {
     let initial_focus = state.seat.get_keyboard().unwrap().current_focus();
     let (server, mut wire) = UnixStream::pair().unwrap();
     let client = state
@@ -57,13 +68,15 @@ fn layer_with_policy(
         )
         .unwrap();
     request(&mut wire, compositor.id().protocol_id(), 0, &[2], None);
-    request(
-        &mut wire,
-        layers.id().protocol_id(),
-        0,
-        &[3, 2, 0, level, 4, u32::from_ne_bytes(*b"bar\0")],
-        None,
+    let mut name = namespace.as_bytes().to_vec();
+    name.push(0);
+    let mut args = vec![3, 2, 0, level, name.len() as u32];
+    name.resize(name.len().next_multiple_of(4), 0);
+    args.extend(
+        name.chunks_exact(4)
+            .map(|word| u32::from_ne_bytes(word.try_into().unwrap())),
     );
+    request(&mut wire, layers.id().protocol_id(), 0, &args, None);
     request(&mut wire, 3, 0, &[64, 48], None);
     request(&mut wire, 3, 1, &[1 | 4], None); // Top left.
     request(&mut wire, 3, 4, &[interactivity], None);
@@ -274,7 +287,7 @@ fn on_demand_layer_focus_follows_opening_and_outside_clicks() {
     );
 }
 
-fn fixture() -> (Ferese, EventLoop<'static, Ferese>, Output) {
+pub(super) fn fixture() -> (Ferese, EventLoop<'static, Ferese>, Output) {
     fixture_with_animations(false)
 }
 

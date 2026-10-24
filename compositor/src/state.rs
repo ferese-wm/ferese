@@ -3,6 +3,7 @@ mod capture_privacy;
 #[cfg(test)]
 pub(crate) use capture_privacy::tests::{
     dispatch as dispatch_test_client, request as test_client_request, window as test_window,
+    window_with_app_id as test_window_with_app_id,
 };
 mod floating;
 mod focus;
