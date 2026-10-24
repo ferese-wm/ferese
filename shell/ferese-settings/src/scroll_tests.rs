@@ -560,6 +560,7 @@ fn gpu_panel_text_survives_preview_clipping_and_scrolling() {
                         scale,
                         theme.cosmic().bg_color().into(),
                     );
+                    let palette = visuals::Palette::from_resolved(&app.resolved.presented);
                     for (label, rect, clip) in labels.labels {
                         let clip = clip.unwrap_or(bounds);
                         if rect.width <= 0.
@@ -571,7 +572,7 @@ fn gpu_panel_text_survives_preview_clipping_and_scrolling() {
                         {
                             continue;
                         }
-                        let mut ink = 0;
+                        let mut colors = std::collections::HashMap::<[u8; 3], usize>::new();
                         for y in (rect.y * scale).ceil() as u32
                             ..((rect.y + rect.height) * scale).floor() as u32
                         {
@@ -579,14 +580,37 @@ fn gpu_panel_text_survives_preview_clipping_and_scrolling() {
                                 ..((rect.x + rect.width) * scale).floor() as u32
                             {
                                 let index = ((y * physical.width + x) * 4) as usize;
-                                if pixels[index..index + 3]
-                                    .iter()
-                                    .any(|channel| *channel > 140)
-                                {
-                                    ink += 1;
-                                }
+                                let rgb = pixels[index..index + 3].try_into().unwrap();
+                                *colors.entry(rgb).or_default() += 1;
                             }
                         }
+                        // The most common color is the local background. Compare
+                        // against the actual text palette so muted glyphs count,
+                        // while a blank label fails on both dark and light surfaces.
+                        let background = *colors.iter().max_by_key(|(_, count)| *count).unwrap().0;
+                        let distance = |color: [u8; 3]| {
+                            color
+                                .into_iter()
+                                .zip(background)
+                                .map(|(a, b)| a.abs_diff(b))
+                                .max()
+                                .unwrap()
+                        };
+                        let threshold = [palette.text, palette.muted]
+                            .into_iter()
+                            .map(|color| {
+                                let [r, g, b, _] = color.into_rgba8();
+                                distance([r, g, b])
+                            })
+                            .min()
+                            .unwrap()
+                            .saturating_div(2)
+                            .max(1);
+                        let ink: usize = colors
+                            .into_iter()
+                            .filter(|(color, _)| distance(*color) >= threshold)
+                            .map(|(_, count)| count)
+                            .sum();
                         assert!(
                             ink > 12,
                             "missing panel text {label:?}: state={selection} width={width} scale={scale} offset={offset} bounds={rect:?}"
