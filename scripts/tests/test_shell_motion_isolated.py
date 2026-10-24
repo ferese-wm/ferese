@@ -2,6 +2,7 @@
 
 FERESE_TEST_SHELL_MOTION=1 python3 scripts/tests/test_shell_motion_isolated.py
 Set FERESE_TEST_BAR_LAYOUT=floating to also test island masks and live switching.
+Set FERESE_TEST_SHELL_BACKEND=wgpu to exercise GPU rendering.
 Uses release binaries by default. Requires a Wayland host, dbus-daemon and gdbus.
 Protocol traces contain only this test's shell traffic, never the host desktop.
 """
@@ -44,6 +45,7 @@ class ShellMotionTest(unittest.TestCase):
             config = root / "config/ferese"
             config.mkdir(parents=True)
             bar_layout = os.environ.get("FERESE_TEST_BAR_LAYOUT", "flat")
+            shell_backend = os.environ.get("FERESE_TEST_SHELL_BACKEND", "tiny-skia")
             self.assertIn(bar_layout, ("flat", "floating"))
             config_file = config / "config.kdl"
             config_file.write_text(
@@ -185,7 +187,7 @@ class ShellMotionTest(unittest.TestCase):
                                  stdout=subprocess.PIPE, stderr=log, text=True)
                     env["DBUS_SESSION_BUS_ADDRESS"] = bus.stdout.readline().strip()
                     compositor = launch([str(binary), "--backend", "nested", "--grant-effects", "--grant-shell-control",
-                                         "--", "env", "WAYLAND_DEBUG=client", "ICED_BACKEND=tiny-skia", str(shell)],
+                                         "--", "env", "WAYLAND_DEBUG=client", f"ICED_BACKEND={shell_backend}", str(shell)],
                                         stdout=log, stderr=log)
                     wait_for(lambda: (ipc_socket(runtime)).is_socket())
                     wait_for(lambda: dbus("GetServerInformation", check=False).returncode == 0)

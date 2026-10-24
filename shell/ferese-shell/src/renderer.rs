@@ -12,9 +12,9 @@ pub(crate) fn configure_shell() {
     APP_BACKEND.set(backend).expect("renderer configured once");
 
     if use_shell_default {
-        // Small shell surfaces do not need a second GPU device and shader setup.
+        // Prefer GPU rendering; retain software rendering for unsupported devices.
         // SAFETY: main calls this before starting any threads.
-        unsafe { std::env::set_var("ICED_BACKEND", "tiny-skia,wgpu") };
+        unsafe { std::env::set_var("ICED_BACKEND", "wgpu,tiny-skia") };
     }
 }
 
@@ -40,9 +40,60 @@ mod tests {
     use super::*;
 
     #[test]
-    fn settings_does_not_inherit_the_shells_automatic_software_renderer() {
+    fn shell_prefers_wgpu_and_preserves_explicit_renderer_choices() {
+        const CHILD: &str = "FERESE_TEST_RENDERER_CHILD";
+        if std::env::var_os(CHILD).is_some() {
+            let original = std::env::var_os("ICED_BACKEND");
+            configure_shell();
+            assert_eq!(
+                std::env::var_os("ICED_BACKEND"),
+                Some(original.clone().unwrap_or_else(|| "wgpu,tiny-skia".into()))
+            );
+            let mut app = Command::new("ferese-settings");
+            configure_app(&mut app);
+            assert_eq!(
+                app.get_envs()
+                    .find(|(key, _)| *key == "ICED_BACKEND")
+                    .unwrap()
+                    .1,
+                original.as_deref()
+            );
+            return;
+        }
+        // Each child configures its environment before the toolkit starts.
+        for backend in [
+            None,
+            Some("tiny-skia"),
+            Some("wgpu"),
+            Some("tiny-skia,wgpu"),
+        ] {
+            let mut child = Command::new(std::env::current_exe().unwrap());
+            child
+                .args([
+                    "--exact",
+                    "renderer::tests::shell_prefers_wgpu_and_preserves_explicit_renderer_choices",
+                    "--test-threads=1",
+                ])
+                .env(CHILD, "1");
+            if let Some(backend) = backend {
+                child.env("ICED_BACKEND", backend);
+            } else {
+                child.env_remove("ICED_BACKEND");
+            }
+            let output = child.output().unwrap();
+            assert!(
+                output.status.success(),
+                "backend {backend:?}:\n{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    }
+
+    #[test]
+    fn settings_does_not_inherit_the_shells_automatic_renderer_preference() {
         let mut command = Command::new("ferese-settings");
-        command.env("ICED_BACKEND", "tiny-skia,wgpu");
+        command.env("ICED_BACKEND", "wgpu,tiny-skia");
         apply_app_backend(&mut command, None);
         assert_eq!(
             command

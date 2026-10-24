@@ -101,6 +101,7 @@ impl From<panel::PanelGeometry> for BarMetrics {
 }
 
 fn main() -> cosmic::iced::Result {
+    renderer::configure_shell();
     let theme_snapshot = ferese_theme_client::service::current();
     let (mut config, startup_error) = match config::load(&theme_snapshot) {
         Ok(config) => (config, None),
@@ -112,8 +113,6 @@ fn main() -> cosmic::iced::Result {
             (ShellConfig::default(), Some(notice))
         }
     };
-    renderer::configure_shell();
-
     let compositor_wallpaper = std::env::var_os("FERESE_COMPOSITOR_WALLPAPER").is_some();
     if compositor_wallpaper {
         // The compositor owns one GPU image, shared across output renderers;
