@@ -494,14 +494,20 @@ impl Ferese {
             return;
         }
         // A drag can finish on another output without changing workspace ownership.
+        // Equal overlap does not identify a monitor; retain the workspace owner.
+        let owner = self
+            .floating_work_area_for_window(id)
+            .map(|(output, _)| output.name());
         let Some((output, work)) = self
             .floating_outputs()
             .into_iter()
-            .max_by(|(_, a), (_, b)| {
+            .max_by(|(a_name, a), (b_name, b)| {
                 let area = |work| {
                     crate::floating::intersection(rect, work).map_or(0., |r| r.width * r.height)
                 };
-                area(*a).total_cmp(&area(*b))
+                area(*a).total_cmp(&area(*b)).then_with(|| {
+                    (owner.as_ref() == Some(a_name)).cmp(&(owner.as_ref() == Some(b_name)))
+                })
             })
             .filter(|(_, work)| crate::floating::intersection(rect, *work).is_some())
         else {

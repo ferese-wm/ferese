@@ -507,6 +507,88 @@ fn floating_rule_restores_geometry_on_the_windows_output() {
 }
 
 #[test]
+fn floating_memory_round_trip_preserves_output_identity() {
+    if !crate::startup_tests::private_runtime(
+        "state::window_lifecycle_tests::floating_memory_round_trip_preserves_output_identity",
+    ) {
+        return;
+    }
+    for second_x in [0, 400] {
+        for on_second in [false, true] {
+            let (mut events, mut state, first, second) = floating_launch_fixture();
+            state.space.map_output(&second, (second_x, 0));
+            let owner = if on_second { &second } else { &first };
+            let output_id = state.output_ids[owner];
+            let workspace = state.output_workspaces.active_workspace(output_id).unwrap();
+            state.activate_output_workspace(output_id, workspace);
+            let (window, wire) = super::capture_privacy::tests::window_with_app_id(
+                &mut state,
+                &mut events,
+                0xff112233,
+                "dev.ferese.Settings",
+            );
+            let id = state.windows.ids()[&window];
+            // The whole rectangle fits both outputs, so area alone cannot
+            // decide which monitor's placement memory should own it.
+            let saved = Rect::new(f64::from(second_x) + 100., 80., 240., 160.);
+            state.workspaces.set_floating_rect(id, saved).unwrap();
+            state.relayout_window(id);
+            state.remember_floating(&window);
+            assert_eq!(
+                state
+                    .floating_memory
+                    .get("dev.ferese.Settings")
+                    .unwrap()
+                    .output,
+                owner.name(),
+                "owner={} second_x={second_x}",
+                owner.name(),
+            );
+            drop(wire);
+            dispatch(&mut events, &mut state);
+            assert!(state.windows.ids().is_empty());
+            state.activate_output_workspace(output_id, workspace);
+            let (restored, _wire) = super::capture_privacy::tests::window_with_app_id(
+                &mut state,
+                &mut events,
+                0xff112233,
+                "dev.ferese.Settings",
+            );
+            let id = state.windows.ids()[&restored];
+            assert_eq!(state.windows.geometry(&id).unwrap().logical, saved);
+        }
+    }
+}
+
+#[test]
+fn floating_memory_follows_a_drag_to_another_output() {
+    if !crate::startup_tests::private_runtime(
+        "state::window_lifecycle_tests::floating_memory_follows_a_drag_to_another_output",
+    ) {
+        return;
+    }
+    let (mut events, mut state, first, second) = floating_launch_fixture();
+    let owner = state.output_ids[&first];
+    let workspace = state.output_workspaces.active_workspace(owner).unwrap();
+    state.activate_output_workspace(owner, workspace);
+    let (window, _wire) = super::capture_privacy::tests::window_with_app_id(
+        &mut state,
+        &mut events,
+        0xff112233,
+        "dev.ferese.Settings",
+    );
+    let id = state.windows.ids()[&window];
+    let saved = Rect::new(900., 80., 240., 160.);
+    state.workspaces.set_floating_rect(id, saved).unwrap();
+    state.relayout_window(id);
+    state.remember_floating(&window);
+    assert_eq!(state.workspaces.workspace_for_window(id), Some(workspace));
+    let memory = state.floating_memory.get("dev.ferese.Settings").unwrap();
+    assert_eq!(memory.output, second.name());
+    assert_eq!(memory.restore(&state.floating_outputs()), Some(saved));
+}
+
+#[test]
 fn keyboard_floating_move_and_resize_work_in_both_layouts() {
     if !crate::startup_tests::private_runtime(
         "state::window_lifecycle_tests::keyboard_floating_move_and_resize_work_in_both_layouts",
