@@ -11,6 +11,7 @@ import tempfile
 import termios
 import time
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -30,6 +31,25 @@ class ActivityHooks(unittest.TestCase):
 
     def test_bash_publisher_failure_does_not_skip_the_next_command(self):
         self.check_interactive_commands('bash', 'array', extdebug=True, publisher_status=71)
+
+    def test_bash_startup_restores_the_prompt_after_system_configuration(self):
+        bash = shutil.which('bash')
+        system_prompt = "PS1='SYSTEM_PROMPT> '\n"
+        with tempfile.TemporaryDirectory() as directory:
+            wrapper = Path(directory) / 'bash'
+            wrapper.write_text(
+                '#!/usr/bin/env python3\n'
+                'import os, sys\n'
+                'from pathlib import Path\n'
+                'args = sys.argv[1:]\n'
+                'if "--rcfile" in args:\n'
+                '    startup = Path(args[args.index("--rcfile") + 1])\n'
+                f'    startup.write_text({system_prompt!r} + startup.read_text())\n'
+                f'os.execv({bash!r}, [{bash!r}, *args])\n'
+            )
+            wrapper.chmod(0o755)
+            with mock.patch.dict(os.environ, PATH=directory + ':' + os.environ['PATH']):
+                self.check_interactive_commands('bash')
 
     def check_interactive_commands(self, shell, prompt=None, installed=False, extdebug=False, publisher_status=0):
         with tempfile.TemporaryDirectory() as directory:
@@ -57,11 +77,15 @@ class ActivityHooks(unittest.TestCase):
                     setup += 'shopt -s extdebug\n'
             if not installed:
                 setup += source_hook * 2
+            if shell == 'bash':
+                # System bashrc runs before --rcfile and may replace an exported PS1.
+                setup += "PS1='ACTIVITY_PROMPT> '\n"
             startup.write_text(setup)
             master, slave = pty.openpty()
             env = dict(os.environ, HOME=directory, XDG_CONFIG_HOME=directory, HISTFILE='/dev/null',
                        PATH=str(root) + ':' + os.environ['PATH'], ACTIVITY_TEST_LOG=str(log),
-                       ACTIVITY_TEST_STATUS=str(statuses), TERM='dumb', PS1='ACTIVITY_PROMPT> ')
+                       ACTIVITY_TEST_STATUS=str(statuses), TERM='dumb')
+            env.pop('PS1', None)
             command = (['bash', '--noprofile', '--rcfile', str(startup), '-i'] if shell == 'bash' else
                        ['fish', '--no-config', '-i', '--init-command', f'function fish_prompt; printf "ACTIVITY_PROMPT> "; end; source {startup}'])
             process = subprocess.Popen(command, env=env, stdin=slave, stdout=slave, stderr=slave,
