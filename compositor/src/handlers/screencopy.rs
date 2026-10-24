@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -22,6 +23,8 @@ use crate::Ferese;
 
 const BYTES_PER_PIXEL: usize = 4;
 
+type DamageHistory = Arc<Mutex<HashMap<(Output, bool), u64>>>;
+
 #[derive(Debug)]
 pub(crate) struct FrameData {
     pub(super) output: Option<Output>,
@@ -29,6 +32,7 @@ pub(crate) struct FrameData {
     pub(super) overlay_cursor: bool,
     pub(super) used: Mutex<bool>,
     pub(super) snapshot: Mutex<Option<super::window_capture::Snapshot>>,
+    pub(super) history: Option<DamageHistory>,
 }
 
 #[derive(Debug)]
@@ -38,6 +42,7 @@ pub(crate) struct PendingScreencopy {
     region: Rectangle<i32, Buffer>,
     overlay_cursor: bool,
     with_damage: bool,
+    history: Option<DamageHistory>,
 }
 
 #[derive(Debug)]
@@ -140,6 +145,7 @@ impl PendingScreencopy {
             // The compositor-owned path deliberately omits the cursor.
             overlay_cursor: false,
             with_damage: false,
+            history: None,
         }
     }
 
@@ -187,17 +193,17 @@ impl GlobalDispatch<ZwlrScreencopyManagerV1, ()> for Ferese {
         _global_data: &(),
         data_init: &mut DataInit<'_, Self>,
     ) {
-        data_init.init(resource, ());
+        data_init.init(resource, DamageHistory::default());
     }
 }
 
-impl Dispatch<ZwlrScreencopyManagerV1, ()> for Ferese {
+impl Dispatch<ZwlrScreencopyManagerV1, DamageHistory> for Ferese {
     fn request(
         _state: &mut Self,
         _client: &Client,
         _manager: &ZwlrScreencopyManagerV1,
         request: zwlr_screencopy_manager_v1::Request,
-        _data: &(),
+        history: &DamageHistory,
         _display: &DisplayHandle,
         data_init: &mut DataInit<'_, Self>,
     ) {
@@ -207,7 +213,14 @@ impl Dispatch<ZwlrScreencopyManagerV1, ()> for Ferese {
                 overlay_cursor,
                 output,
             } => {
-                create_frame(data_init, frame, output, None, overlay_cursor != 0);
+                create_frame(
+                    data_init,
+                    frame,
+                    output,
+                    None,
+                    overlay_cursor != 0,
+                    history.clone(),
+                );
             }
             zwlr_screencopy_manager_v1::Request::CaptureOutputRegion {
                 frame,
@@ -224,6 +237,7 @@ impl Dispatch<ZwlrScreencopyManagerV1, ()> for Ferese {
                     output,
                     Some(Rectangle::new((x, y).into(), (width, height).into())),
                     overlay_cursor != 0,
+                    history.clone(),
                 );
             }
             zwlr_screencopy_manager_v1::Request::Destroy => {}
@@ -307,6 +321,12 @@ impl Ferese {
             return;
         };
 
+        if let Some(history) = &data.history {
+            history
+                .lock()
+                .expect("capture damage history mutex poisoned")
+                .retain(|(output, _), _| self.output_ids.contains_key(output));
+        }
         self.pending_screencopies.push(PendingScreencopy {
             sink: CaptureSink::Shm {
                 frame: frame.clone(),
@@ -316,8 +336,24 @@ impl Ferese {
             region: data.region,
             overlay_cursor: data.overlay_cursor,
             with_damage,
+            history: data.history.clone(),
         });
-        crate::backends::direct::render_on(self, &[output]);
+        crate::backends::direct::schedule_capture(self, &[output]);
+    }
+
+    pub(crate) fn prune_screencopies(&mut self) {
+        self.pending_screencopies.retain(|capture| {
+            if let CaptureSink::Shm { frame, buffer } = &capture.sink {
+                if !frame.is_alive() {
+                    return false;
+                }
+                if !buffer.is_alive() {
+                    frame.failed();
+                    return false;
+                }
+            }
+            true
+        });
     }
 
     pub(crate) fn process_screencopies<R>(
@@ -330,6 +366,17 @@ impl Ferese {
     where
         R: ExportMem,
     {
+        self.process_screencopies_with_revision(renderer, framebuffer, output, overlay_cursor, None)
+    }
+
+    pub(crate) fn process_screencopies_with_revision<R: ExportMem>(
+        &mut self,
+        renderer: &mut R,
+        framebuffer: &R::Framebuffer<'_>,
+        output: &Output,
+        overlay_cursor: bool,
+        revision: Option<u64>,
+    ) -> bool {
         let mut remaining = Vec::new();
         let mut framebuffer_binding_changed = false;
         let captures = std::mem::take(&mut self.pending_screencopies);
@@ -347,10 +394,33 @@ impl Ferese {
                 continue;
             }
 
+            let key = (output.clone(), overlay_cursor);
+            if capture.history.is_some() && revision.is_none() {
+                remaining.push(capture);
+                continue;
+            }
+            if capture.with_damage {
+                let previous = capture.history.as_ref().and_then(|history| {
+                    history
+                        .lock()
+                        .expect("capture damage history mutex poisoned")
+                        .get(&key)
+                        .copied()
+                });
+                if revision.is_none() || previous == revision {
+                    remaining.push(capture);
+                    continue;
+                }
+            }
             framebuffer_binding_changed = true;
             if complete_capture(renderer, framebuffer, &capture, self.start_time.elapsed()).is_err()
             {
                 capture.fail();
+            } else if let (Some(history), Some(revision)) = (&capture.history, revision) {
+                history
+                    .lock()
+                    .expect("capture damage history mutex poisoned")
+                    .insert(key, revision);
             }
         }
 
@@ -359,10 +429,11 @@ impl Ferese {
     }
 
     pub(crate) fn has_pending_screencopy(&self, output: &Output, overlay_cursor: bool) -> bool {
-        self.pending_screencopies.iter().any(|capture| {
-            capture.output == *output
-                && cursor_overlay_matches(capture.overlay_cursor, overlay_cursor)
-        })
+        self.image_capture.pending_output(output, overlay_cursor)
+            || self.pending_screencopies.iter().any(|capture| {
+                capture.output == *output
+                    && cursor_overlay_matches(capture.overlay_cursor, overlay_cursor)
+            })
     }
 
     pub(crate) fn fail_screencopies(&mut self, output: &Output, overlay_cursor: bool) {
@@ -391,6 +462,7 @@ fn create_frame(
     wl_output: smithay::reexports::wayland_server::protocol::wl_output::WlOutput,
     requested: Option<Rectangle<i32, Logical>>,
     overlay_cursor: bool,
+    history: DamageHistory,
 ) {
     let Some(output) = Output::from_resource(&wl_output) else {
         let frame = data_init.init(
@@ -401,6 +473,7 @@ fn create_frame(
                 overlay_cursor,
                 used: Mutex::new(true),
                 snapshot: Mutex::new(None),
+                history: Some(history.clone()),
             }),
         );
         frame.failed();
@@ -415,6 +488,7 @@ fn create_frame(
                 overlay_cursor,
                 used: Mutex::new(true),
                 snapshot: Mutex::new(None),
+                history: Some(history.clone()),
             }),
         );
         frame.failed();
@@ -428,6 +502,7 @@ fn create_frame(
         overlay_cursor,
         used: Mutex::new(false),
         snapshot: Mutex::new(None),
+        history: Some(history.clone()),
     });
     let frame = data_init.init(frame, data);
 

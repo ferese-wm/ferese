@@ -209,6 +209,8 @@ fn after_dispatch_with_redraw(
 ) {
     crate::backends::direct::gamma::sync_night_light(state);
     state.process_pending_dmabuf_imports();
+    state.prune_screencopies();
+    state.refresh_capture_sessions();
     state.update_named_cursor(std::time::Instant::now());
     state.poll_theme();
     if state.session_lock.active() || state.input_capture.active() {

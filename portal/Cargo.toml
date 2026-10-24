@@ -40,6 +40,8 @@ serde.workspace = true
 serde_json.workspace = true
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "process", "io-util", "net"] }
 wayland-client.workspace = true
-wayland-protocols = { version = "0.32", features = ["client", "unstable"] }
+wayland-protocols = { version = "0.32", features = ["client", "unstable", "staging"] }
 wayland-protocols-wlr.workspace = true
 zbus = { version = "5.19.0", default-features = false, features = ["tokio"] }
+
+gbm = { version = "0.18", default-features = false }

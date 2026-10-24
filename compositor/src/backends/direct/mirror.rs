@@ -79,6 +79,13 @@ pub(super) fn compose(
     source: &Output,
     elements: &[crate::render::AnimatedWindowRenderElement],
 ) -> Result<(), smithay::backend::renderer::gles::GlesError> {
+    configure_canvas(canvas, source);
+    let framebuffer = capture::render_texture(renderer, texture, canvas, elements)?;
+    drop(framebuffer);
+    Ok(())
+}
+
+pub(super) fn configure_canvas(canvas: &Output, source: &Output) {
     let source_mode = source.current_mode().expect("source has a mode");
     canvas.change_current_state(
         Some(OutputMode {
@@ -89,9 +96,6 @@ pub(super) fn compose(
         Some(source.current_scale()),
         None,
     );
-    let framebuffer = capture::render_capture(renderer, texture, canvas, elements)?;
-    drop(framebuffer);
-    Ok(())
 }
 
 pub(super) fn fitted_texture(

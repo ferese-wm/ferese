@@ -1,19 +1,13 @@
-use std::fs::File;
-use std::os::fd::{AsFd, AsRawFd, FromRawFd};
+use std::os::fd::AsRawFd;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use ferese_protocols::window_capture::v1::client::ferese_window_capture_manager_v1 as window_manager;
-use memmap2::MmapMut;
 use serde::{Deserialize, Serialize};
-use wayland_client::protocol::{wl_buffer, wl_output, wl_registry, wl_shm, wl_shm_pool};
+use wayland_client::protocol::{wl_output, wl_registry, wl_shm};
 use wayland_client::{Connection, Dispatch, EventQueue, QueueHandle, WEnum};
-use wayland_protocols_wlr::screencopy::v1::client::{
-    zwlr_screencopy_frame_v1 as frame, zwlr_screencopy_manager_v1 as manager,
-};
-
-pub const BUSY: &str = "Window capture snapshot pool is busy";
+use wayland_protocols_wlr::screencopy::v1::client::zwlr_screencopy_manager_v1 as manager;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Source {
@@ -34,33 +28,9 @@ impl Source {
 
 struct Output {
     global: u32,
-    proxy: wl_output::WlOutput,
+    _proxy: wl_output::WlOutput,
     source: Source,
     transform: wl_output::Transform,
-}
-
-pub struct Frame {
-    pub logical_size: Option<(u32, u32)>,
-    pub width: u32,
-    pub height: u32,
-    pub stride: u32,
-    pub pixels: Vec<u8>,
-}
-
-struct Buffer {
-    _file: File,
-    map: MmapMut,
-    proxy: wl_buffer::WlBuffer,
-    width: u32,
-    height: u32,
-    stride: u32,
-    format: wl_shm::Format,
-}
-
-impl Drop for Buffer {
-    fn drop(&mut self) {
-        self.proxy.destroy();
-    }
 }
 
 #[derive(Default)]
@@ -69,18 +39,12 @@ struct State {
     manager: Option<manager::ZwlrScreencopyManagerV1>,
     window_manager: Option<window_manager::FereseWindowCaptureManagerV1>,
     shm: Option<wl_shm::WlShm>,
-    buffer: Option<Buffer>,
-    result: Option<Result<(), String>>,
-    flipped: bool,
-    logical_size: Option<(u32, u32)>,
-    busy: bool,
 }
 
 pub struct Capture {
     connection: Connection,
     queue: EventQueue<State>,
     state: State,
-    selected_output: Option<u32>,
 }
 
 impl Capture {
@@ -96,7 +60,6 @@ impl Capture {
             connection,
             queue,
             state: State::default(),
-            selected_output: None,
         };
         // Two syncs deliver registry bindings and output metadata without an
         // uninterruptible roundtrip on a stalled compositor.
@@ -134,14 +97,6 @@ impl Capture {
             .map(|output| output.global)
     }
 
-    pub fn pin_output(&mut self, name: &str, generation: u32) -> Result<(), String> {
-        if self.generation(name) != Some(generation) {
-            return Err("Shared monitor was replaced".into());
-        }
-        self.selected_output = Some(generation);
-        Ok(())
-    }
-
     pub fn validate_sources(
         &mut self,
         selected: &[(String, u32)],
@@ -168,99 +123,6 @@ impl Capture {
                 source
             })
             .collect()
-    }
-
-    pub fn frame(
-        &mut self,
-        name: &str,
-        cursor: bool,
-        stop: &AtomicBool,
-        mut pixels: Vec<u8>,
-    ) -> Result<Frame, String> {
-        self.state.result = None;
-        self.state.flipped = false;
-        self.state.logical_size = None;
-        self.state.busy = false;
-        let (frame, transform) = if let Some(id) = name
-            .strip_prefix("window:")
-            .and_then(|id| id.parse::<u64>().ok())
-        {
-            let manager = self
-                .state
-                .window_manager
-                .as_ref()
-                .ok_or("Window capture is unavailable")?;
-            (
-                manager.capture_window(
-                    (id >> 32) as u32,
-                    id as u32,
-                    cursor as u32,
-                    &self.queue.handle(),
-                    (),
-                ),
-                wl_output::Transform::Normal,
-            )
-        } else {
-            let output = self
-                .state
-                .outputs
-                .iter()
-                .find(|o| o.source.name == name)
-                .ok_or("Shared monitor disconnected")?;
-            if self
-                .selected_output
-                .is_some_and(|selected| selected != output.global)
-            {
-                return Err("Shared monitor was replaced".into());
-            }
-            self.selected_output = Some(output.global);
-            let manager = self
-                .state
-                .manager
-                .as_ref()
-                .ok_or("Monitor capture is unavailable")?;
-            (
-                manager.capture_output(cursor as i32, &output.proxy, &self.queue.handle(), ()),
-                output.transform,
-            )
-        };
-        let deadline = Instant::now() + Duration::from_secs(5);
-
-        while self.state.result.is_none() {
-            if let Err(error) = self.dispatch(stop, deadline) {
-                frame.destroy();
-                return Err(error);
-            }
-        }
-
-        frame.destroy();
-        self.state
-            .result
-            .take()
-            .expect("the capture dispatch loop exits after storing its result")?;
-
-        let buffer = self
-            .state
-            .buffer
-            .as_ref()
-            .ok_or("Capture supplied no buffer")?;
-        let (width, height) = copy_oriented_pixels(
-            &buffer.map,
-            buffer.width,
-            buffer.height,
-            buffer.stride,
-            transform,
-            self.state.flipped,
-            &mut pixels,
-        );
-
-        Ok(Frame {
-            logical_size: self.state.logical_size,
-            width,
-            height,
-            stride: width * 4,
-            pixels,
-        })
     }
 
     fn dispatch(&mut self, stop: &AtomicBool, deadline: Instant) -> Result<(), String> {
@@ -321,7 +183,7 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
                 "wl_output" => state.outputs.push(Output {
                     global: name,
                     transform: wl_output::Transform::Normal,
-                    proxy: registry.bind(name, version.min(4), qh, name),
+                    _proxy: registry.bind(name, version.min(4), qh, name),
                     source: Source {
                         name: format!("output-{name}"),
                         label: "Display".into(),
@@ -387,100 +249,6 @@ impl Dispatch<wl_output::WlOutput, u32> for State {
     }
 }
 
-impl Dispatch<frame::ZwlrScreencopyFrameV1, ()> for State {
-    fn event(
-        state: &mut Self,
-        frame: &frame::ZwlrScreencopyFrameV1,
-        event: frame::Event,
-        _: &(),
-        _: &Connection,
-        qh: &QueueHandle<Self>,
-    ) {
-        match event {
-            frame::Event::Buffer {
-                format: WEnum::Value(format),
-                width,
-                height,
-                stride,
-            } => {
-                let result = (|| {
-                    if format != wl_shm::Format::Argb8888 && format != wl_shm::Format::Xrgb8888 {
-                        return Err("Unsupported capture pixel format".into());
-                    }
-
-                    let bytes = buffer_size(width, height, stride)?;
-                    if let Some(buffer) = &state.buffer
-                        && (buffer.width, buffer.height, buffer.stride, buffer.format)
-                            == (width, height, stride, format)
-                    {
-                        frame.copy(&buffer.proxy);
-                        return Ok(());
-                    }
-                    // SAFETY: fixed NUL-terminated name and a newly owned memfd.
-                    let fd = unsafe {
-                        libc::memfd_create(c"ferese-screencast".as_ptr(), libc::MFD_CLOEXEC)
-                    };
-
-                    if fd < 0 {
-                        return Err(std::io::Error::last_os_error().to_string());
-                    }
-
-                    // SAFETY: memfd_create succeeded above and returned a fresh descriptor whose
-                    // ownership transfers to File.
-                    let file = unsafe { File::from_raw_fd(fd) };
-                    file.set_len(bytes as u64).map_err(|e| e.to_string())?;
-                    // SAFETY: the file has the checked mapping length and lives with the mapping.
-                    let map = unsafe { MmapMut::map_mut(&file) }.map_err(|e| e.to_string())?;
-                    let pool = state
-                        .shm
-                        .as_ref()
-                        .ok_or("Missing shared memory global")?
-                        .create_pool(file.as_fd(), bytes as i32, qh, ());
-                    let proxy = pool.create_buffer(
-                        0,
-                        width as i32,
-                        height as i32,
-                        stride as i32,
-                        format,
-                        qh,
-                        (),
-                    );
-
-                    pool.destroy();
-                    frame.copy(&proxy);
-                    state.buffer = Some(Buffer {
-                        _file: file,
-                        map,
-                        proxy,
-                        width,
-                        height,
-                        stride,
-                        format,
-                    });
-
-                    Ok::<(), String>(())
-                })();
-
-                if let Err(e) = result {
-                    state.result = Some(Err(e));
-                }
-            }
-            frame::Event::Ready { .. } => state.result = Some(Ok(())),
-            frame::Event::Failed => {
-                state.result = Some(Err(if state.busy {
-                    BUSY.into()
-                } else {
-                    "Capture ended: session locked, source closed, or compositor unavailable".into()
-                }))
-            }
-            frame::Event::Flags {
-                flags: WEnum::Value(flags),
-            } => state.flipped = flags.contains(frame::Flags::YInvert),
-            _ => (),
-        }
-    }
-}
-
 fn swaps_axes(transform: wl_output::Transform) -> bool {
     matches!(
         transform,
@@ -494,6 +262,7 @@ fn swaps_axes(transform: wl_output::Transform) -> bool {
 // Screencopy supplies output-buffer coordinates. Normalize both the output's
 // presentation transform and the independent YInvert storage flag before
 // publishing upright, tightly packed BGRx frames to PipeWire.
+#[cfg(test)]
 fn copy_oriented_pixels(
     source: &[u8],
     width: u32,
@@ -545,6 +314,7 @@ fn copy_oriented_pixels(
     (out_width, out_height)
 }
 
+#[cfg(test)]
 fn buffer_size(width: u32, height: u32, stride: u32) -> Result<usize, String> {
     let row = width.checked_mul(4).ok_or("Capture dimensions overflow")?;
     let bytes = stride
@@ -572,27 +342,8 @@ impl Dispatch<wayland_client::protocol::wl_callback::WlCallback, Arc<AtomicBool>
 }
 
 wayland_client::delegate_noop!(State: ignore wl_shm::WlShm);
-wayland_client::delegate_noop!(State: ignore wl_shm_pool::WlShmPool);
-wayland_client::delegate_noop!(State: ignore wl_buffer::WlBuffer);
 wayland_client::delegate_noop!(State: ignore manager::ZwlrScreencopyManagerV1);
-impl Dispatch<window_manager::FereseWindowCaptureManagerV1, ()> for State {
-    fn event(
-        state: &mut Self,
-        _: &window_manager::FereseWindowCaptureManagerV1,
-        event: window_manager::Event,
-        _: &(),
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
-        match event {
-            window_manager::Event::Geometry { width, height, .. } => {
-                state.logical_size = Some((width, height))
-            }
-            window_manager::Event::Busy { .. } => state.busy = true,
-            _ => (),
-        }
-    }
-}
+wayland_client::delegate_noop!(State: ignore window_manager::FereseWindowCaptureManagerV1);
 
 #[cfg(test)]
 mod tests {
@@ -622,7 +373,6 @@ mod tests {
                         connection,
                         queue,
                         state: State::default(),
-                        selected_output: None,
                     };
                     capture.validate_sources(&[], &flag).unwrap_err()
                 }

@@ -177,6 +177,24 @@ impl DirectBackendState {
         )
     }
 
+    pub(crate) fn clear_stream_capture_targets(&mut self) {
+        for device in self.devices.values_mut() {
+            crate::render::clear_stream_capture_targets(&mut device.renderer);
+        }
+    }
+
+    pub(crate) fn capture_renderer(&mut self, output: &Output) -> Option<&mut GlesRenderer> {
+        self.devices
+            .values_mut()
+            .find(|device| {
+                device
+                    .outputs
+                    .values()
+                    .any(|candidate| &candidate.output == output)
+            })
+            .map(|device| &mut device.renderer)
+    }
+
     pub(crate) fn capture_window_buffer(
         &mut self,
         window: &smithay::desktop::Window,
@@ -295,13 +313,13 @@ struct DirectOutput {
     identity: String,
     mirror_source: Option<String>,
     mirror_texture: Option<GlesTexture>,
-    mirror_capture_texture: Option<GlesTexture>,
+    mirror_capture_texture: [Option<capture::CaptureTarget>; 2],
     mirror_canvas: Option<Output>,
     mirror_id: smithay::backend::renderer::element::Id,
     mirror_commit: CommitCounter,
     surface: OutputCompositor,
     primary_commit: Option<CommitCounter>,
-    capture_texture: Option<GlesTexture>,
+    capture_texture: [Option<capture::CaptureTarget>; 2],
     render_metrics: RenderMetrics,
     diagnostics: Diagnostics,
     dmabuf_feedback: feedback::OutputFeedback,
@@ -452,7 +470,7 @@ pub fn init(event_loop: &mut EventLoop<Ferese>, state: &mut Ferese) -> Result<()
                             output.surface.reset_buffers();
                             output.dmabuf_feedback.invalidate();
                             output.primary_commit = None;
-                            output.capture_texture = None;
+                            output.capture_texture = Default::default();
                             output.frame_pending = false;
                             output.power.suspended();
                         }
@@ -1226,16 +1244,33 @@ pub(crate) fn wake_locked_outputs(state: &mut Ferese) {
 
 #[track_caller]
 pub fn render_all(state: &mut Ferese) {
+    for output in state.space.outputs() {
+        capture::changes::content_changed(output);
+    }
     redraw(state, None, std::panic::Location::caller());
 }
 
 #[track_caller]
 pub(crate) fn render_on(state: &mut Ferese, outputs: &[Output]) {
+    for output in outputs {
+        capture::changes::content_changed(output);
+    }
+    redraw(state, Some(outputs), std::panic::Location::caller());
+}
+
+/// Consumer demand schedules a frame without invalidating retained scene pixels.
+#[track_caller]
+pub(crate) fn schedule_capture(state: &mut Ferese, outputs: &[Output]) {
     redraw(state, Some(outputs), std::panic::Location::caller());
 }
 
 #[track_caller]
 pub(crate) fn render_cursor(state: &mut Ferese) {
+    // Include nested outputs and both sides of an output crossing. This does not
+    // invalidate the content revision used by cursor-hidden captures.
+    for output in state.space.outputs() {
+        capture::changes::cursor_changed(output);
+    }
     let outputs = cursor_affected_outputs(state);
     redraw(state, Some(&outputs), std::panic::Location::caller());
 }
@@ -2603,13 +2638,13 @@ fn create_direct_output(
         identity,
         mirror_source,
         mirror_texture: None,
-        mirror_capture_texture: None,
+        mirror_capture_texture: Default::default(),
         mirror_canvas: None,
         mirror_id: smithay::backend::renderer::element::Id::new(),
         mirror_commit: CommitCounter::default(),
         surface,
         primary_commit: None,
-        capture_texture: None,
+        capture_texture: Default::default(),
         render_metrics,
         diagnostics,
         dmabuf_feedback,

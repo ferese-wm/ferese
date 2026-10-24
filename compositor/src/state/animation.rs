@@ -191,6 +191,17 @@ impl Ferese {
             return false;
         }
 
+        // Mark before advancing so the final settling frame invalidates capture
+        // too, even if output_has_animations becomes false during this tick.
+        for output in self.space.outputs() {
+            if crate::backends::direct::capture::changes::tracked(output)
+                && (self.output_has_animations(output)
+                    || self.output_has_pending_visual_changes(output))
+            {
+                crate::backends::direct::capture::changes::content_changed(output);
+            }
+        }
+
         let delta = delta.mul_f64(self.animation_speed);
         if let Some(workspace) = self
             .focus_swipe()

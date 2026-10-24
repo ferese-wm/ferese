@@ -3,6 +3,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
+use ferese_ipc::events::Window;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UnixStream;
 use tokio::sync::RwLock;
@@ -197,7 +198,7 @@ impl Background {
 // Tokio owns the socket so cancelling the watch task also closes an idle stream.
 struct BackgroundEvents {
     stream: UnixStream,
-    windows: serde_json::Value,
+    windows: Vec<Window>,
     changed: bool,
 }
 
@@ -238,7 +239,7 @@ impl BackgroundEvents {
         .map_err(|_| "Event subscription timed out".to_owned())??;
         Ok(Self {
             stream,
-            windows: serde_json::json!([]),
+            windows: Vec::new(),
             changed: false,
         })
     }
@@ -257,10 +258,9 @@ impl BackgroundEvents {
                 self.changed = true;
             }
             Change::FocusChanged { focus } => {
-                for window in self.windows.as_array_mut().into_iter().flatten() {
-                    window["focused"] = serde_json::json!(
-                        focus["window"].is_number() && window["id"] == focus["window"]
-                    );
+                let focused = focus["window"].as_u64();
+                for window in &mut self.windows {
+                    window.focused = focused == Some(window.id);
                 }
                 self.changed = true;
             }
@@ -364,14 +364,15 @@ async fn background_consent(app: &str, name: &str) -> Result<Option<Options>, St
     )])))
 }
 
-fn app_states(windows: &serde_json::Value) -> HashMap<String, u32> {
+fn app_states(windows: &[Window]) -> HashMap<String, u32> {
     let mut apps: HashMap<String, u32> = HashMap::new();
-    for window in windows.as_array().into_iter().flatten() {
-        let Some(app) = window["app_id"].as_str().filter(|app| !app.is_empty()) else {
+    for window in windows {
+        let app = window.app_id.as_str();
+        if app.is_empty() {
             continue;
-        };
+        }
         let app = app.strip_suffix(".desktop").unwrap_or(app).to_owned();
-        let state = if window["focused"] == true { 2 } else { 1 };
+        let state = if window.focused { 2 } else { 1 };
         apps.entry(app)
             .and_modify(|old| *old = (*old).max(state))
             .or_insert(state);
@@ -480,6 +481,18 @@ fn desktop_argument(argument: &str) -> Result<String, String> {
 mod tests {
     use super::*;
 
+    fn window(id: u64, app: &str, focused: bool, workspace: u64) -> Window {
+        Window {
+            id,
+            app_id: app.into(),
+            title: format!("Window {id}"),
+            focused,
+            workspace,
+            floating: false,
+            fullscreen: false,
+        }
+    }
+
     async fn send_frame(peer: &mut UnixStream, value: &impl serde::Serialize) {
         let mut bytes = Vec::new();
         ferese_ipc::write_frame(&mut bytes, value).unwrap();
@@ -516,10 +529,10 @@ mod tests {
                     desktop: Box::new(ferese_ipc::events::Snapshot {
                         outputs: serde_json::json!([]),
                         workspaces: serde_json::json!([]),
-                        windows: serde_json::json!([{"id":1,"app_id":"one.desktop","focused":true}]),
+                        windows: vec![window(1, "one.desktop", true, 1)],
                         focus: serde_json::json!({"window":1}),
                         config: Default::default(),
-                        theme: serde_json::Value::Null,
+                        theme: serde_json::Value::Null.into(),
                         lock: ferese_ipc::events::LockState {
                             phase: "unlocked".into(),
                             sleeping: false,
@@ -533,10 +546,10 @@ mod tests {
             events.next().await.unwrap().unwrap(),
             HashMap::from([("one".into(), 2)])
         );
-        let windows = serde_json::json!([
-            {"id":1,"app_id":"one.desktop","focused":true},
-            {"id":2,"app_id":"two","focused":false}
-        ]);
+        let windows = vec![
+            window(1, "one.desktop", true, 1),
+            window(2, "two", false, 2),
+        ];
         send_frame(
             &mut peer,
             &Event {
@@ -577,7 +590,7 @@ mod tests {
                 generation: 2,
                 last: true,
                 change: Change::WindowsChanged {
-                    windows: serde_json::json!([]),
+                    windows: Vec::new(),
                 },
             },
         )
@@ -595,7 +608,7 @@ mod tests {
         let (stream, mut peer) = UnixStream::pair().unwrap();
         let mut events = BackgroundEvents {
             stream,
-            windows: serde_json::json!([]),
+            windows: Vec::new(),
             changed: false,
         };
         peer.write_u32((ferese_ipc::MAX_PAYLOAD_SIZE + 1) as u32)
@@ -608,17 +621,17 @@ mod tests {
 
     #[test]
     fn application_state_groups_windows_and_keeps_inactive_workspaces_running() {
-        let windows = serde_json::json!([
-            {"app_id":"org.test.App.desktop","focused":false,"mapped":false},
-            {"app_id":"org.test.App","focused":true,"mapped":true},
-            {"app_id":"org.test.Other","focused":false,"mapped":true},
-            {"app_id":"","focused":false}
-        ]);
+        let windows = vec![
+            window(1, "org.test.App.desktop", false, 2),
+            window(2, "org.test.App", true, 1),
+            window(3, "org.test.Other", false, 3),
+            window(4, "", false, 1),
+        ];
         assert_eq!(
             app_states(&windows),
             HashMap::from([("org.test.App".into(), 2), ("org.test.Other".into(), 1)])
         );
-        assert!(app_states(&serde_json::json!([])).is_empty());
+        assert!(app_states(&[]).is_empty());
     }
 
     #[test]

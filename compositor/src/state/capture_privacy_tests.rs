@@ -296,7 +296,12 @@ fn pixels(
                 output.clone(),
                 Rectangle::from_size((320, 240).into()),
             ));
-        let mut target = Some(texture.clone());
+        // Retain damage history as well as pixels: changing privacy policy
+        // must erase content already present in the reused capture target.
+        let mut target = std::mem::take(&mut state.nested_capture_texture);
+        target[0].get_or_insert_with(|| {
+            crate::backends::direct::capture::CaptureTarget::new(texture.clone(), output)
+        });
         crate::backends::direct::capture::capture_output(
             state,
             renderer,
@@ -304,6 +309,7 @@ fn pixels(
             output,
             &scene,
         );
+        state.nested_capture_texture = target;
         let mut result = receiver.try_recv().unwrap().result.unwrap().pixels;
         for pixel in result.chunks_exact_mut(4) {
             pixel.swap(0, 2);
@@ -749,13 +755,15 @@ fn capture_privacy_pixels_and_policy_transitions() {
             Rectangle::new((32, 24).into(), (160, 120).into()),
         ));
     let scene = state.sample_frame(&output, Duration::ZERO);
+    let mut target = std::mem::take(&mut state.nested_capture_texture);
     crate::backends::direct::capture::capture_output(
         &mut state,
         &mut renderer,
-        &mut Some(capture_texture.clone()),
+        &mut target,
         &output,
         &scene,
     );
+    state.nested_capture_texture = target;
     let region = receiver.try_recv().unwrap().result.unwrap();
     assert_eq!((region.width, region.height), (160, 120));
     assert!(

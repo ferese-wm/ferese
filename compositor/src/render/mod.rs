@@ -20,7 +20,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 pub(crate) use capture::{
-    capture_resize_snapshot, capture_window_buffer, capture_window_frame, convert_window_pixels,
+    capture_resize_snapshot, capture_stream_texture, capture_stream_window, capture_window_buffer,
+    capture_window_frame, clear_stream_capture_targets, convert_window_pixels,
 };
 use decorations::{
     border_uniforms, color_with_alpha, corner_program, framebuffer_clip_rect,
@@ -37,8 +38,7 @@ use overview::{overview_chrome_element, overview_strip_elements};
 pub(crate) use resources::RenderResources;
 use scene::cursor_elements;
 pub(crate) use scene::{
-    animated_window_elements, capture_output_elements, frame_effect_metrics, layer_surfaces,
-    sampled_output_elements,
+    capture_output_elements, frame_effect_metrics, layer_surfaces, sampled_output_elements,
 };
 pub(crate) use shader::SharedPixelShaderElement;
 use smithay::backend::allocator::Fourcc;

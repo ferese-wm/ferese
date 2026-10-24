@@ -4,8 +4,8 @@ use std::io::{Read, Write};
 use std::os::fd::AsRawFd;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::recording::{Audio, Recording};
@@ -515,20 +515,29 @@ fn encode(
                     .is_some_and(|event| matches!(event.view(), gst::EventView::Eos(_)))
                 {
                     ended.store(true, Ordering::Relaxed);
+                    // Finish through the encoder queue after appending the last
+                    // image's timestamp, even when the capture source vanished.
+                    return gst::PadProbeReturn::Drop;
                 }
                 gst::PadProbeReturn::Ok
             });
 
         let announced = Arc::new(AtomicBool::new(false));
         let notice = announced.clone();
+        let last_frame = Arc::new(Mutex::new(None));
+        let observed_frame = last_frame.clone();
         source
             .static_pad("src")
             .ok_or("Capture has no video output")?
-            .add_probe(gst::PadProbeType::BUFFER, move |_, info| {
-                if info.buffer().is_some_and(|b| b.size() > 0)
-                    && !notice.swap(true, Ordering::Relaxed)
-                {
-                    event("recording", None, None);
+            .add_probe(gst::PadProbeType::BUFFER, move |pad, info| {
+                if let Some(buffer) = info.buffer().filter(|buffer| buffer.size() > 0) {
+                    *observed_frame
+                        .lock()
+                        .expect("last recording frame mutex poisoned") =
+                        Some((buffer.to_owned(), pad.current_caps()));
+                    if !notice.swap(true, Ordering::Relaxed) {
+                        event("recording", None, None);
+                    }
                 }
                 gst::PadProbeReturn::Ok
             });
@@ -548,10 +557,35 @@ fn encode(
                 finishing = Some(Instant::now());
                 // Inject after the capture source: it may already have disappeared
                 // when the portal closes on lock or monitor removal.
-                let _ = queue
+                let input = queue
                     .static_pad("sink")
-                    .ok_or("Encoder queue has no input")?
-                    .send_event(gst::event::Eos::new());
+                    .ok_or("Encoder queue has no input")?;
+                {
+                    // Serialize at the queue input, where an idle source holds
+                    // no stream lock. The source pad itself can stay locked while
+                    // waiting for its next frame, so locking it would stall stop.
+                    let _input_lock = input.stream_lock();
+                    let last = last_frame
+                        .lock()
+                        .expect("last recording frame mutex poisoned")
+                        .take();
+                    if let (Some((mut buffer, caps)), Some(now)) =
+                        (last, pipeline.current_running_time())
+                        && caps == input.current_caps()
+                        && buffer.pts().is_some_and(|pts| {
+                            now > pts + buffer.duration().unwrap_or(gst::ClockTime::ZERO)
+                        })
+                    {
+                        // make_mut copies the buffer header while sharing its
+                        // owned pixel memory; it does not copy a full video frame.
+                        let tail = buffer.make_mut();
+                        tail.set_pts(now);
+                        tail.set_dts(None);
+                        tail.set_duration(gst::ClockTime::from_nseconds(1));
+                        let _ = input.chain(buffer);
+                    }
+                    let _ = input.send_event(gst::event::Eos::new());
+                }
                 for (source, queue) in &audio_inputs {
                     // Audio devices are still alive when video is revoked.
                     // Let each source order EOS after its own startup events and
@@ -654,6 +688,131 @@ mod tests {
         let result = encode(source, Vec::new(), None, directory.path(), stop);
         stopper.join().unwrap();
         assert_video_decodes(&result.unwrap());
+    }
+
+    #[test]
+    #[ignore = "requires GStreamer video plugins"]
+    fn encoder_preserves_the_duration_of_a_static_capture() {
+        gst::init().unwrap();
+        for (source_eos, with_audio) in [(false, false), (true, false), (false, true)] {
+            let directory = tempfile::tempdir().unwrap();
+            let source = gst::ElementFactory::make("appsrc")
+                .property("is-live", true)
+                .property("do-timestamp", true)
+                .property("format", gst::Format::Time)
+                .property(
+                    "caps",
+                    gst::Caps::builder("video/x-raw")
+                        .field("format", "BGRx")
+                        .field("width", 64i32)
+                        .field("height", 48i32)
+                        .field("framerate", gst::Fraction::new(30, 1))
+                        .build(),
+                )
+                .build()
+                .unwrap();
+            let stop = Arc::new(AtomicBool::new(false));
+            let producer = source.clone();
+            let request_stop = stop.clone();
+            let worker = std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(150));
+                let mut image = gst::Buffer::with_size(64 * 48 * 4).unwrap();
+                image
+                    .get_mut()
+                    .unwrap()
+                    .map_writable()
+                    .unwrap()
+                    .as_mut_slice()
+                    .fill(0x80);
+                assert_eq!(
+                    producer.emit_by_name::<gst::FlowReturn>("push-buffer", &[&image]),
+                    gst::FlowReturn::Ok
+                );
+                // The source stays alive without producing a duplicate image.
+                std::thread::sleep(Duration::from_millis(if with_audio { 4000 } else { 1200 }));
+                if source_eos {
+                    assert_eq!(
+                        producer.emit_by_name::<gst::FlowReturn>("end-of-stream", &[]),
+                        gst::FlowReturn::Ok
+                    );
+                } else {
+                    request_stop.store(true, Ordering::Relaxed);
+                }
+            });
+            let audio = if with_audio {
+                vec![
+                    gst::ElementFactory::make("audiotestsrc")
+                        .property("is-live", true)
+                        .build()
+                        .unwrap(),
+                ]
+            } else {
+                Vec::new()
+            };
+            let path = encode(source, audio, None, directory.path(), stop).unwrap();
+            worker.join().unwrap();
+            let audio_branch = if with_audio {
+                "demux.audio_0 ! queue ! opusdec ! audioconvert ! audioresample ! audio/x-raw,format=F32LE,rate=48000,channels=1 ! fakesink name=audio sync=false"
+            } else {
+                ""
+            };
+            let decoder = gst::parse::launch(&format!("filesrc location={} ! matroskademux name=demux demux.video_0 ! queue ! vp8dec ! fakesink name=video sync=false {audio_branch}", path.display())).unwrap().downcast::<gst::Pipeline>().unwrap();
+            let audio_bytes = Arc::new(std::sync::atomic::AtomicU64::new(0));
+            if with_audio {
+                let bytes = audio_bytes.clone();
+                decoder
+                    .by_name("audio")
+                    .unwrap()
+                    .static_pad("sink")
+                    .unwrap()
+                    .add_probe(gst::PadProbeType::BUFFER, move |_, info| {
+                        if let Some(buffer) = info.buffer() {
+                            bytes.fetch_add(buffer.size() as u64, Ordering::Relaxed);
+                        }
+                        gst::PadProbeReturn::Ok
+                    });
+            }
+            let end = Arc::new(std::sync::atomic::AtomicU64::new(0));
+            let observed = end.clone();
+            decoder
+                .by_name("video")
+                .unwrap()
+                .static_pad("sink")
+                .unwrap()
+                .add_probe(gst::PadProbeType::BUFFER, move |_, info| {
+                    if let Some(buffer) = info.buffer() {
+                        let time = buffer.pts().unwrap_or(gst::ClockTime::ZERO)
+                            + buffer.duration().unwrap_or(gst::ClockTime::ZERO);
+                        observed.fetch_max(time.nseconds(), Ordering::Relaxed);
+                    }
+                    gst::PadProbeReturn::Ok
+                });
+            decoder.set_state(gst::State::Playing).unwrap();
+            let result = decoder.bus().unwrap().timed_pop_filtered(
+                gst::ClockTime::from_seconds(5),
+                &[gst::MessageType::Eos, gst::MessageType::Error],
+            );
+            decoder.set_state(gst::State::Null).unwrap();
+            assert!(
+                matches!(
+                    result.as_ref().map(|message| message.view()),
+                    Some(gst::MessageView::Eos(_))
+                ),
+                "static recording did not decode: {result:?}"
+            );
+            if with_audio {
+                assert!(
+                    audio_bytes.load(Ordering::Relaxed) >= 3 * 48_000 * 4,
+                    "static video interrupted audio: {} decoded bytes",
+                    audio_bytes.load(Ordering::Relaxed)
+                );
+            }
+            assert!(
+                end.load(Ordering::Relaxed) >= 1_000_000_000,
+                "recording lost the idle interval: last decoded frame ends at {} ns",
+                end.load(Ordering::Relaxed)
+            );
+        }
     }
 
     #[test]

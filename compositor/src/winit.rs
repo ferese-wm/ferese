@@ -16,7 +16,7 @@ use smithay::utils::{Physical, Rectangle, Size, Transform};
 
 use crate::Ferese;
 use crate::metrics::{FrameEffectMetrics, RenderMetrics};
-use crate::render::{animated_window_elements, frame_effect_metrics, layer_surfaces};
+use crate::render::{frame_effect_metrics, layer_surfaces, sampled_output_elements};
 
 pub(crate) type NestedBackend = Rc<RefCell<winit::WinitGraphicsBackend<GlesRenderer>>>;
 type DamageRenderResult = Result<
@@ -144,7 +144,8 @@ pub fn init(event_loop: &mut EventLoop<Ferese>, state: &mut Ferese) -> Result<()
                     let rendered = (|| -> DamageRenderResult {
                         {
                             let (renderer, mut framebuffer) = backend.bind()?;
-                            let elements = animated_window_elements(state, renderer, &output);
+                            let scene = state.sample_frame(&output, Duration::ZERO);
+                            let elements = sampled_output_elements(state, renderer, &output, true, &scene);
                             let effects = frame_effect_metrics(&elements, output.current_scale().fractional_scale());
                             let result = damage_tracker.render_output(
                                 renderer,
@@ -164,8 +165,7 @@ pub fn init(event_loop: &mut EventLoop<Ferese>, state: &mut Ferese) -> Result<()
                                     if state.has_pending_screencopy(&output, false)
                                         || state.has_pending_screencopy(&output, true)
                                     {
-                                        let scene = state.sample_frame(&output, Duration::ZERO);
-                                        let mut capture_texture = state.nested_capture_texture.take();
+                                        let mut capture_texture = std::mem::take(&mut state.nested_capture_texture);
                                         crate::backends::direct::capture::capture_output(
                                             state,
                                             renderer,

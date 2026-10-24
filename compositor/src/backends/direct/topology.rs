@@ -324,7 +324,7 @@ pub(super) fn reconcile_outputs(state: &mut Ferese, reactivate: bool) {
                     output.surface.reset_buffers();
                     output.dmabuf_feedback.invalidate();
                     output.primary_commit = None;
-                    output.capture_texture = None;
+                    output.capture_texture = Default::default();
                     output.frame_pending = false;
                     output.lock_frame_pending = false;
                     output.power.suspended();

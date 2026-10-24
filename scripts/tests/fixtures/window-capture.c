@@ -18,6 +18,9 @@ static struct wl_buffer *buffer;
 static int width = 640, height = 480;
 static int private_capture_seen;
 static int covered;
+static unsigned updates;
+static unsigned animation_frames;
+static void make_buffer(void);
 
 static void ping(void *data, struct xdg_wm_base *base, uint32_t serial) {
     (void)data;
@@ -28,7 +31,9 @@ static const struct xdg_wm_base_listener wm_listener = {.ping = ping};
 static void global(void *data, struct wl_registry *registry, uint32_t name,
                    const char *interface, uint32_t version) {
     (void)data; (void)version;
-    if (!strcmp(interface, "ferese_window_capture_manager_v1")) private_capture_seen = 1;
+    if (!strcmp(interface, "ferese_window_capture_manager_v1") ||
+        !strcmp(interface, "ext_image_copy_capture_manager_v1") ||
+        !strcmp(interface, "ext_output_image_capture_source_manager_v1")) private_capture_seen = 1;
     if (!strcmp(interface, "wl_compositor"))
         compositor = wl_registry_bind(registry, name, &wl_compositor_interface, 4);
     else if (!strcmp(interface, "wl_shm"))
@@ -73,12 +78,30 @@ static void make_buffer(void) {
     for (size_t i = 0; i < (size_t)width * height; i++) {
         pixels[i] = covered ? 0xff00ff00 : (i % width < 80 ? 0x80800000 : (i / width < (size_t)height / 2 ? 0xffff0000 : 0xff0000ff));
     }
+    if (updates) pixels[(size_t)(height / 2) * width + width / 2] = 0xff000000 | updates;
     struct wl_shm_pool *pool = wl_shm_create_pool(shm, fd, bytes);
     buffer = wl_shm_pool_create_buffer(pool, 0, width, height, width * 4, WL_SHM_FORMAT_ARGB8888);
     wl_shm_pool_destroy(pool);
     close(fd);
     munmap(pixels, bytes);
 }
+
+static void animate(void *data, struct wl_callback *callback, uint32_t time) {
+    (void)data; (void)time;
+    wl_callback_destroy(callback);
+    updates++;
+    wl_buffer_destroy(buffer);
+    make_buffer();
+    wl_surface_attach(surface, buffer, 0, 0);
+    wl_surface_damage(surface, width / 2, height / 2, 1, 1);
+    if (--animation_frames) {
+        struct wl_callback *next = wl_surface_frame(surface);
+        static const struct wl_callback_listener listener = {.done = animate};
+        wl_callback_add_listener(next, &listener, NULL);
+    }
+    wl_surface_commit(surface);
+}
+static const struct wl_callback_listener animation_listener = {.done = animate};
 
 int main(int argc, char **argv) {
     struct wl_display *display = wl_display_connect(NULL);
@@ -97,17 +120,34 @@ int main(int argc, char **argv) {
     xdg_toplevel_set_app_id(top, "ferese.test.window-capture");
     xdg_toplevel_set_title(top, covered ? "Occluding window" : "Capture target");
     wl_surface_commit(surface);
-    if (argc > 1 && !strcmp(argv[1], "resize")) {
+    if ((argc > 1 && (!strcmp(argv[1], "resize") || !strcmp(argv[1], "interactive"))) || (argc > 2 && !strcmp(argv[2], "interactive"))) {
         while (1) {
             wl_display_flush(display);
             struct pollfd fds[2] = {{wl_display_get_fd(display), POLLIN, 0}, {STDIN_FILENO, POLLIN, 0}};
             if (poll(fds, 2, -1) < 0) break;
+            if ((fds[0].revents | fds[1].revents) & (POLLERR | POLLHUP | POLLNVAL)) break;
             if (fds[0].revents & POLLIN && wl_display_dispatch(display) < 0) break;
             if (fds[1].revents & POLLIN) {
                 char command;
                 if (read(STDIN_FILENO, &command, 1) != 1) break;
-                if (command == 'r') {
-                    width = 480; height = 320;
+                if (command == 'a') {
+                    animation_frames = 3;
+                    struct wl_callback *next = wl_surface_frame(surface);
+                    wl_callback_add_listener(next, &animation_listener, NULL);
+                    // Start an animation by requesting a callback; pixels have
+                    // not changed yet. A capture must not leave this waiting.
+                    wl_surface_commit(surface);
+                }
+                if (command == 'd') {
+                    updates++;
+                    wl_buffer_destroy(buffer);
+                    make_buffer();
+                    wl_surface_attach(surface, buffer, 0, 0);
+                    wl_surface_damage(surface, width / 2, height / 2, 1, 1);
+                    wl_surface_commit(surface);
+                }
+                if (command == 'r' || command == 'o') {
+                    width = 480 + (command == 'o'); height = 320 + (command == 'o');
                     wl_buffer_destroy(buffer);
                     make_buffer();
                     xdg_surface_set_window_geometry(xdg, 0, 0, width, height);

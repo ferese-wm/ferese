@@ -557,7 +557,7 @@ pub(super) fn apply_device(
         cancel_output_timers(&state.loop_handle, &mut output);
         output.frame_pending = false;
         output.primary_commit = None;
-        output.capture_texture = None;
+        output.capture_texture = Default::default();
         output.power.suspended();
         let clock = state
             .direct_backend

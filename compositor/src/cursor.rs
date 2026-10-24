@@ -208,6 +208,12 @@ pub(crate) struct Animation {
     pub(crate) buffer_scale: i32,
 }
 
+impl Animation {
+    pub(crate) fn capture_revision(&self) -> (Option<CursorIcon>, Instant, usize) {
+        (self.icon, self.epoch, self.frame)
+    }
+}
+
 impl Default for Animation {
     fn default() -> Self {
         Self {

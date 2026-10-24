@@ -34,11 +34,12 @@ class PortalTest(unittest.TestCase):
             runtime.mkdir(mode=0o700)
             config = root / "config/ferese"
             config.mkdir(parents=True)
-            (config / "config.kdl").write_text('window-rule app-id="dev.ferese.ScreenShare" floating=#true\n')
+            (config / "config.kdl").write_text('window-rule app-id="dev.ferese.ScreenShare" floating=#true\nwindow-rule app-id="ferese.test.window-capture" floating=#true\n')
             display = Path(os.environ["WAYLAND_DISPLAY"])
             if not display.is_absolute():
                 display = Path(os.environ["XDG_RUNTIME_DIR"]) / display
             env = dict(os.environ, XDG_RUNTIME_DIR=str(runtime), XDG_CONFIG_HOME=str(root / "config"),
+                       XDG_STATE_HOME=str(root / "state"), XDG_CACHE_HOME=str(root / "cache"), XDG_DATA_HOME=str(root / "data"),
                        WAYLAND_DISPLAY=str(display), FERESE_ENABLE_SCREENCOPY="1",
                        PIPEWIRE_RUNTIME_DIR=os.environ["XDG_RUNTIME_DIR"], XDG_CURRENT_DESKTOP="Ferese",
                        XDG_DESKTOP_PORTAL_DIR=str(repo / "packaging/portal"))
@@ -68,6 +69,14 @@ class PortalTest(unittest.TestCase):
                 return json.loads(worker.stdout.readline())["node"]
 
             def consume(node, fd=None):
+                import threading
+                producing = threading.Event()
+                def update_source():
+                    while not producing.wait(.05):
+                        fixture.stdin.write(b"d")
+                        fixture.stdin.flush()
+                updates = threading.Thread(target=update_source)
+                updates.start()
                 source = f'pipewiresrc path={node} num-buffers=15'
                 if fd is not None:
                     source += f' fd={fd}'
@@ -90,6 +99,8 @@ class PortalTest(unittest.TestCase):
                     self.assertGreater(timestamps[-1] - timestamps[0], Gst.SECOND // 5)
                 finally:
                     pipeline.set_state(Gst.State.NULL)
+                    producing.set()
+                    updates.join(timeout=2)
 
             try:
                 launch("compositor", [str(compositor_binary), "--backend", "nested"])
@@ -98,6 +109,14 @@ class PortalTest(unittest.TestCase):
                 until(lambda: ipc_socket(runtime).is_socket())
                 env["WAYLAND_DISPLAY"] = str(sockets()[0])
                 env = ipc_environment(env)
+                protocols = subprocess.check_output(["pkg-config", "--variable=pkgdatadir", "wayland-protocols"], text=True).strip()
+                xml = str(Path(protocols) / "stable/xdg-shell/xdg-shell.xml")
+                for kind, output in [("client-header", "xdg-shell-client-protocol.h"), ("private-code", "xdg-shell-protocol.c")]:
+                    subprocess.run(["wayland-scanner", kind, xml, str(root / output)], check=True)
+                flags = subprocess.check_output(["pkg-config", "--cflags", "--libs", "wayland-client"], text=True).split()
+                subprocess.run(["cc", "-Wall", "-Wextra", "-I", str(root), str(repo / "scripts/tests/fixtures/window-capture.c"),
+                                str(root / "xdg-shell-protocol.c"), "-o", str(root / "source"), *flags], check=True)
+                fixture = launch("source", [str(root / "source"), "interactive"], stdin=subprocess.PIPE)
                 # Private bus, including the real portal frontend and permission store.
                 bus = launch("bus", ["dbus-daemon", "--session", "--nofork", "--print-address=1"], stdout=subprocess.PIPE)
                 env["DBUS_SESSION_BUS_ADDRESS"] = bus.stdout.readline().decode().strip()

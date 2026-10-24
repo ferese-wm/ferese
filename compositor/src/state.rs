@@ -458,8 +458,9 @@ pub struct Ferese {
     pub(crate) render: crate::render::RenderResources,
     pub(crate) capture_render: crate::render::RenderResources,
     pub(crate) capture_last_used: Option<Instant>,
-    pub(crate) nested_capture_texture: Option<smithay::backend::renderer::gles::GlesTexture>,
+    pub(crate) nested_capture_texture: [Option<crate::backends::direct::capture::CaptureTarget>; 2],
     pub(crate) capture_epoch: u64,
+    pub(crate) image_capture: crate::handlers::image_capture::CaptureSessions,
     capture_protected_windows: HashSet<WindowId>,
     capture_protected_cursor: Option<WlSurface>,
     pub(crate) daemons: Option<std::rc::Rc<std::cell::RefCell<crate::daemon::Runner>>>,
@@ -733,6 +734,7 @@ impl Ferese {
 
         let mut activities = crate::activities::Engine::default();
         activities.configure(&config.activity_settings, config.activity_matcher.clone());
+        let image_capture = crate::handlers::image_capture::CaptureSessions::new(&display_handle);
         let mut state = Self {
             session_lock_state,
             session_lock: crate::session_lock::Lock::default(),
@@ -778,8 +780,9 @@ impl Ferese {
             render: Default::default(),
             capture_render: Default::default(),
             capture_last_used: None,
-            nested_capture_texture: None,
+            nested_capture_texture: Default::default(),
             capture_epoch: 0,
+            image_capture,
             capture_protected_windows: HashSet::new(),
             capture_protected_cursor: None,
             display_presentation: Default::default(),

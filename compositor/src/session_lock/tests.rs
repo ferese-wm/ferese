@@ -894,7 +894,7 @@ fn ipc_events_follow_lock_lifecycle_without_exposing_desktop_objects() {
     fixture.state.publish_ipc_events();
     let snapshot = fixture.state.ipc_event_snapshot();
     assert!(snapshot.workspaces.as_array().unwrap().is_empty());
-    assert!(snapshot.windows.as_array().unwrap().is_empty());
+    assert!(snapshot.windows.is_empty());
     assert!(snapshot.focus.is_null());
     assert_eq!(snapshot.lock.phase, "acquiring");
     assert!(receive.try_iter().any(

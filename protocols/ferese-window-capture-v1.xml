@@ -7,7 +7,7 @@
     requires session opt-in and fails while locked. Window IDs are compositor
     lifetime IDs and never resolve to replacement windows.
   </description>
-  <interface name="ferese_window_capture_manager_v1" version="1">
+  <interface name="ferese_window_capture_manager_v1" version="2">
     <request name="destroy" type="destructor"/>
     <request name="capture_window">
       <description summary="snapshot a managed window">
@@ -36,6 +36,35 @@
         captured frame, even if the window resizes before it is copied.
       </description>
       <arg name="frame" type="object" interface="zwlr_screencopy_frame_v1"/>
+      <arg name="width" type="uint"/>
+      <arg name="height" type="uint"/>
+    </event>
+    <request name="create_source" since="2">
+      <description summary="create a persistent window capture source">
+        Creates a source for ext-image-copy-capture-v1. Unlike a snapshot,
+        a session waits for content damage and negotiates reusable buffers.
+        Invalid, closed or protected windows produce a stopped session.
+      </description>
+      <arg name="window_hi" type="uint"/>
+      <arg name="window_lo" type="uint"/>
+      <arg name="source" type="new_id" interface="ext_image_capture_source_v1"/>
+    </request>
+    <request name="refresh_source" since="2">
+      <description summary="request an initial image after a consumer resumes">
+        Invalidates the last delivered image for this source's sessions, so
+        a resumed PipeWire consumer receives an initial image even when the
+        source is unchanged. Outstanding buffers keep their ownership and GPU
+        synchronization; this request never cancels a capture in flight.
+        Subsequent frames continue to wait for source damage.
+      </description>
+      <arg name="source" type="object" interface="ext_image_capture_source_v1"/>
+    </request>
+    <event name="source_geometry" since="2">
+      <description summary="logical dimensions of the capture source">
+        The current logical window size, sent when the source is created.
+        Subsequent pixel-size changes are announced by the capture session.
+      </description>
+      <arg name="source" type="object" interface="ext_image_capture_source_v1"/>
       <arg name="width" type="uint"/>
       <arg name="height" type="uint"/>
     </event>

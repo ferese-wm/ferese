@@ -2,6 +2,7 @@ pub(crate) mod activation;
 mod compositor;
 mod dispatch;
 pub(crate) mod gamma_control;
+pub(crate) mod image_capture;
 mod input_method;
 mod layer_shell;
 pub(crate) mod screencopy;

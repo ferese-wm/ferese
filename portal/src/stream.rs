@@ -1,7 +1,12 @@
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::io::{Read, Write};
+use std::os::fd::AsRawFd;
+use std::ptr::NonNull;
+use std::rc::Rc;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use pipewire as pw;
 use pipewire::properties::properties;
@@ -9,7 +14,10 @@ use pipewire::spa;
 use serde::{Deserialize, Serialize};
 use spa::pod::Pod;
 
-use crate::capture::{Capture, Frame};
+mod capture;
+mod rate;
+use capture::{Capture, Completion};
+use rate::FrameRate;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Ready {
@@ -20,80 +28,94 @@ pub struct Ready {
     pub height: u32,
 }
 
+struct PoolBuffer {
+    generation: u64,
+    buffer: capture::Buffer,
+}
+
+#[derive(Clone, Copy)]
+struct HeldBuffer {
+    raw: NonNull<pw::sys::pw_buffer>,
+    generation: u64,
+}
+
 struct Data {
-    latest: Arc<Mutex<Frame>>,
+    capture: Rc<RefCell<Capture>>,
     stop: Arc<AtomicBool>,
-    streaming: Arc<AtomicBool>,
-    fresh: Arc<AtomicBool>,
-    announced: bool,
+    rate: Arc<FrameRate>,
+    buffers: HashMap<usize, PoolBuffer>,
+    held: Option<HeldBuffer>,
+    generation: u64,
     sequence: u64,
+    active: bool,
+    announced: bool,
     negotiated: (u32, u32),
+    dma: bool,
+    force_shm: bool,
+    renegotiate: bool,
+    negotiating: bool,
+    next_capture: Instant,
 }
 
-// pipewire-rs exposes read-only metadata through Buffer. Own a dequeued raw
-// buffer here so header writes retain exclusive access and every exit requeues it.
-struct OutputBuffer<'a> {
-    stream: &'a pw::stream::Stream,
-    raw: std::ptr::NonNull<pw::sys::pw_buffer>,
-}
-impl<'a> OutputBuffer<'a> {
-    fn dequeue(stream: &'a pw::stream::Stream) -> Option<Self> {
-        // SAFETY: called on the owning PipeWire loop; the guard queues exactly once.
-        let raw = std::ptr::NonNull::new(unsafe { stream.dequeue_raw_buffer() })?;
-        Some(Self { stream, raw })
-    }
-    fn data(&mut self) -> Option<&mut spa::buffer::Data> {
-        // SAFETY: the dequeued buffer is exclusively ours until Drop. SPA Data
-        // is repr(transparent), and PipeWire owns the mapped allocation.
-        unsafe {
-            let buffer = self.raw.as_ref().buffer.as_mut()?;
-            if buffer.n_datas == 0 || buffer.datas.is_null() {
-                return None;
+impl Data {
+    fn complete(&mut self, stream: &pw::stream::Stream, completion: Completion) {
+        let Some(held) = self.held.take() else {
+            return;
+        };
+        let Some(pool) = self
+            .buffers
+            .get(&(held.raw.as_ptr() as usize))
+            .filter(|pool| pool.generation == held.generation)
+        else {
+            // The completed image belongs to a retired pool. Refresh once more
+            // so the replacement pool receives its own initial image, then
+            // resume damage waiting. Never queue the retired raw pointer.
+            if let Err(error) = self.capture.borrow_mut().refresh() {
+                eprintln!("Could not refresh replacement capture buffers: {error}");
+                self.stop.store(true, Ordering::Relaxed);
             }
-            buffer.datas.cast::<spa::buffer::Data>().as_mut()
-        }
-    }
-    fn timestamp(&mut self, sequence: u64) {
-        // SAFETY: mutable access is exclusive, the metadata lookup checks its size,
-        // and clock_gettime writes only to our initialized stack timespec.
-        unsafe {
-            let buffer = self.raw.as_ref().buffer;
-            if buffer.is_null() {
-                return;
+            return;
+        };
+        let mut deliver = matches!(completion, Completion::Ready)
+            && self.active
+            && !self.capture.borrow().stopped();
+        match completion {
+            Completion::Retry => {
+                self.renegotiate = self.negotiated != self.capture.borrow().constraints().size
             }
-            let header = spa::sys::spa_buffer_find_meta_data(
-                buffer,
-                spa::sys::SPA_META_Header,
-                std::mem::size_of::<spa::sys::spa_meta_header>(),
-            )
-            .cast::<spa::sys::spa_meta_header>();
-            if let Some(header) = header.as_mut() {
-                let mut now = libc::timespec {
-                    tv_sec: 0,
-                    tv_nsec: 0,
-                };
-                header.pts = if libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut now) == 0 {
-                    now.tv_sec * 1_000_000_000 + now.tv_nsec
+            Completion::Failed(error) => {
+                if self.dma && !self.capture.borrow().stopped() {
+                    eprintln!("DMA-BUF capture unavailable ({error}); using shared memory");
+                    self.force_shm = true;
+                    self.renegotiate = true;
                 } else {
-                    -1
-                };
-                header.flags = 0;
-                header.offset = 0;
-                header.dts_offset = 0;
-                header.seq = sequence;
+                    eprintln!("{error}");
+                    self.stop.store(true, Ordering::Relaxed);
+                }
+                deliver = false;
             }
+            Completion::Ready => (),
         }
-    }
-}
-impl Drop for OutputBuffer<'_> {
-    fn drop(&mut self) {
-        // SAFETY: raw came from this stream and has not yet been queued.
+        let raw = held.raw;
+        // SAFETY: this pointer is still registered with the same allocation
+        // generation and exclusively dequeued by us. All callbacks run on the
+        // owning PipeWire loop; remove_buffer invalidates the registry entry.
         unsafe {
-            self.stream.queue_raw_buffer(self.raw.as_ptr());
+            let buffer = raw.as_ref().buffer.as_mut().expect("registered SPA buffer");
+            let data = &mut *buffer.datas;
+            if let Some(chunk) = data.chunk.as_mut() {
+                chunk.offset = 0;
+                chunk.size = if deliver { pool.buffer.bytes } else { 0 };
+                chunk.stride = pool.buffer.stride as i32;
+            }
+            if deliver {
+                timestamp(raw, self.sequence);
+                self.sequence = self.sequence.wrapping_add(1);
+            }
+            stream.queue_raw_buffer(raw.as_ptr());
         }
     }
 }
-
 fn int_property(key: u32, value: i32) -> spa::pod::Property {
     spa::pod::Property {
         key,
@@ -111,7 +133,7 @@ fn pod(object: spa::pod::Object) -> Vec<u8> {
     .into_inner()
 }
 
-fn video_format(width: u32, height: u32) -> Vec<u8> {
+fn video_format(width: u32, height: u32, rate: &FrameRate) -> Vec<u8> {
     pod(spa::pod::object!(
         spa::utils::SpaTypes::ObjectParamFormat,
         spa::param::ParamType::EnumFormat,
@@ -137,10 +159,105 @@ fn video_format(width: u32, height: u32) -> Vec<u8> {
         ),
         spa::pod::property!(
             spa::param::format::FormatProperties::VideoFramerate,
+            Choice,
+            Range,
             Fraction,
-            spa::utils::Fraction { num: 30, denom: 1 }
+            rate.fraction(),
+            spa::utils::Fraction { num: 1, denom: 1 },
+            spa::utils::Fraction {
+                num: rate.maximum,
+                denom: 1
+            }
         )
     ))
+}
+
+fn timestamp(raw: std::ptr::NonNull<pw::sys::pw_buffer>, sequence: u64) {
+    // SAFETY: mutable access is exclusive, the metadata lookup checks its size,
+    // and clock_gettime writes only to our initialized stack timespec.
+    unsafe {
+        let buffer = raw.as_ref().buffer;
+        if buffer.is_null() {
+            return;
+        }
+        let header = spa::sys::spa_buffer_find_meta_data(
+            buffer,
+            spa::sys::SPA_META_Header,
+            std::mem::size_of::<spa::sys::spa_meta_header>(),
+        )
+        .cast::<spa::sys::spa_meta_header>();
+        if let Some(header) = header.as_mut() {
+            let mut now = libc::timespec {
+                tv_sec: 0,
+                tv_nsec: 0,
+            };
+            header.pts = if libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut now) == 0 {
+                now.tv_sec * 1_000_000_000 + now.tv_nsec
+            } else {
+                -1
+            };
+            header.flags = 0;
+            header.offset = 0;
+            header.dts_offset = 0;
+            header.seq = sequence;
+        }
+    }
+}
+
+fn buffer_params((width, height): (u32, u32), dma: bool) -> Vec<u8> {
+    pod(spa::pod::object!(
+        spa::utils::SpaTypes::ObjectParamBuffers,
+        spa::param::ParamType::Buffers,
+        int_property(spa::sys::SPA_PARAM_BUFFERS_buffers, 4),
+        int_property(spa::sys::SPA_PARAM_BUFFERS_blocks, 1),
+        int_property(
+            spa::sys::SPA_PARAM_BUFFERS_size,
+            (width * height * 4) as i32
+        ),
+        int_property(spa::sys::SPA_PARAM_BUFFERS_stride, (width * 4) as i32),
+        int_property(spa::sys::SPA_PARAM_BUFFERS_align, 16),
+        // This is a set of supported memory types, not an exact integer.
+        // Consumers such as OBS offer a scalar mask with several bits;
+        // a flags choice lets SPA intersect it with our one supported type.
+        spa::pod::Property {
+            key: spa::sys::SPA_PARAM_BUFFERS_dataType,
+            flags: spa::pod::PropertyFlags::empty(),
+            value: spa::pod::Value::Choice(spa::pod::ChoiceValue::Int(spa::utils::Choice(
+                spa::utils::ChoiceFlags::empty(),
+                spa::utils::ChoiceEnum::Flags {
+                    default: 1
+                        << if dma {
+                            spa::sys::SPA_DATA_DmaBuf
+                        } else {
+                            spa::sys::SPA_DATA_MemFd
+                        },
+                    flags: Vec::new(),
+                },
+            ),)),
+        }
+    ))
+}
+
+fn formats(size: (u32, u32), rate: &FrameRate, dma: bool) -> Vec<Vec<u8>> {
+    let shm = video_format(size.0, size.1, rate);
+    if !dma {
+        return vec![shm];
+    }
+    let (_, mut format) = spa::pod::deserialize::PodDeserializer::deserialize_any_from(&shm)
+        .expect("serialized video format");
+    if let spa::pod::Value::Object(ref mut object) = format {
+        object.properties.push(spa::pod::Property {
+            key: spa::sys::SPA_FORMAT_VIDEO_modifier,
+            flags: spa::pod::PropertyFlags::MANDATORY,
+            value: spa::pod::Value::Long(0),
+        });
+    }
+    let dma =
+        spa::pod::serialize::PodSerializer::serialize(std::io::Cursor::new(Vec::new()), &format)
+            .expect("serializable video format")
+            .0
+            .into_inner();
+    vec![dma, shm]
 }
 
 pub fn run(
@@ -148,35 +265,30 @@ pub fn run(
     cursor: bool,
     generation: Option<u32>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let configured_rate = std::env::var("FERESE_CAPTURE_MAX_FPS").ok();
+    let rate = Arc::new(FrameRate::new(configured_rate.as_deref())?);
     let stop = Arc::new(AtomicBool::new(false));
+    let (cancel_read, mut cancel_write) = std::os::unix::net::UnixStream::pair()?;
+    cancel_read.set_nonblocking(true)?;
     let pipe_stop = stop.clone();
     std::thread::spawn(move || {
         let mut byte = [0u8];
         let _ = std::io::stdin().read(&mut byte);
         pipe_stop.store(true, Ordering::Relaxed);
+        let _ = cancel_write.write_all(&[1]);
     });
-    let mut capture = Capture::connect(&stop)?;
-    if let Some(generation) = generation {
-        capture.pin_output(&name, generation)?;
-    }
-    let deadline = Instant::now() + Duration::from_secs(5);
-    let first = loop {
-        match capture.frame(&name, cursor, &stop, Vec::new()) {
-            Err(error) if error == crate::capture::BUSY && Instant::now() < deadline => {
-                std::thread::sleep(Duration::from_millis(10));
-            }
-            result => break result?,
-        }
-    };
-    let (width, height) = (first.width, first.height);
-    let logical_size = first.logical_size;
-    let resizable = name.starts_with("window:");
-    let latest = Arc::new(Mutex::new(first));
-    let streaming = Arc::new(AtomicBool::new(false));
-
-    let fresh = Arc::new(AtomicBool::new(false));
+    let capture = Rc::new(RefCell::new(Capture::connect(
+        &name, cursor, generation, &stop,
+    )?));
+    let size = capture.borrow().constraints().size;
+    let logical_size = capture.borrow().logical_size();
+    let force_shm = std::env::var_os("FERESE_CAPTURE_FORCE_SHM").is_some_and(|value| value == "1");
+    let attempted_dma = !force_shm && capture.borrow().dma_supported();
+    // Verify GBM allocation before advertising DMA-BUF to the consumer. Failure
+    // here leaves the same capture session usable through its SHM constraints.
+    let dma = attempted_dma && capture.borrow_mut().allocate(true).is_ok();
+    let force_shm = force_shm || (attempted_dma && !dma);
     pw::init();
-
     let mainloop = pw::main_loop::MainLoopRc::new(None)?;
     let context = pw::context::ContextRc::new(&mainloop, None)?;
     let core = context.connect_rc(None)?;
@@ -184,37 +296,46 @@ pub fn run(
         &core,
         "Ferese ScreenCast",
         properties! {
-            "media.class" => "Video/Source",
-            "media.type" => "Video",
-            "media.category" => "Capture",
-            "media.role" => "Screen",
-            "node.name" => format!("ferese.screencast.{}", std::process::id()),
-            "node.description" => format!("Ferese — {name}"),
-            "node.virtual" => "true",
-            "node.want-driver" => "true",
-            "node.always-process" => "false",
-            "node.pause-on-idle" => "true",
-            "node.latency" => "1/30",
+            "media.class" => "Video/Source", "media.type" => "Video", "media.category" => "Capture",
+            "media.role" => "Screen", "node.name" => format!("ferese.screencast.{}", std::process::id()),
+            "node.description" => format!("Ferese — {name}"), "node.virtual" => "true",
+            "node.want-driver" => "true", "node.always-process" => "false", "node.pause-on-idle" => "true",
+            "node.latency" => format!("{}/{}", rate.fraction().denom, rate.fraction().num),
         },
     )?;
-    let format_frames = latest.clone();
-    let data = Data {
-        latest: latest.clone(),
+    let data = Rc::new(RefCell::new(Data {
+        capture: capture.clone(),
         stop: stop.clone(),
-        streaming: streaming.clone(),
-        fresh: fresh.clone(),
-        announced: false,
+        rate: rate.clone(),
+        buffers: HashMap::new(),
+        held: None,
+        generation: 0,
         sequence: 0,
-        negotiated: (width, height),
-    };
+        active: false,
+        announced: false,
+        negotiated: size,
+        dma,
+        force_shm,
+        renegotiate: false,
+        negotiating: false,
+        next_capture: Instant::now(),
+    }));
     let _listener = stream
-        .add_local_listener_with_user_data(data)
+        .add_local_listener_with_user_data(data.clone())
         .state_changed(move |stream, data, _, state| {
-            data.fresh.store(false, Ordering::SeqCst);
-            data.streaming.store(
-                matches!(state, pw::stream::StreamState::Streaming),
-                Ordering::Relaxed,
-            );
+            let mut data = data.borrow_mut();
+            let active = matches!(state, pw::stream::StreamState::Streaming);
+            if active
+                && !data.active
+                && let Err(error) = data.capture.borrow_mut().refresh()
+            {
+                eprintln!("Could not resume capture: {error}");
+                data.stop.store(true, Ordering::Relaxed);
+            }
+            if active && !data.active {
+                data.next_capture = Instant::now();
+            }
+            data.active = active;
             match state {
                 pw::stream::StreamState::Paused | pw::stream::StreamState::Streaming
                     if !data.announced =>
@@ -227,16 +348,16 @@ pub fn run(
                             serde_json::to_string(&Ready {
                                 logical_size,
                                 node,
-                                width,
-                                height
+                                width: size.0,
+                                height: size.1
                             })
-                            .expect("typed configuration and IPC values must serialize to JSON")
+                            .expect("serializable capture readiness")
                         );
                         let _ = std::io::stdout().flush();
                     }
                 }
                 pw::stream::StreamState::Unconnected if data.announced => {
-                    data.stop.store(true, Ordering::Relaxed);
+                    data.stop.store(true, Ordering::Relaxed)
                 }
                 pw::stream::StreamState::Error(error) => {
                     eprintln!("PipeWire stream: {error}");
@@ -245,44 +366,51 @@ pub fn run(
                 _ => (),
             }
         })
-        .param_changed(move |stream, data, id, param| {
+        .param_changed(|stream, shared, id, param| {
             if id != spa::param::ParamType::Format.as_raw() {
                 return;
             }
-            let Some(param) = param else { return };
+            let Some(param) = param else {
+                return;
+            };
             let mut format = spa::param::video::VideoInfoRaw::default();
+            let mut data = shared.borrow_mut();
             if format.parse(param).is_err()
-                || format.size().width == 0
-                || format.size().height == 0
-                || (!resizable && (format.size().width, format.size().height) != (width, height))
-                || u64::from(format.size().width) * u64::from(format.size().height) * 4
-                    > 128 * 1024 * 1024
                 || format.format() != spa::param::video::VideoFormat::BGRx
+                || (format.size().width, format.size().height)
+                    != data.capture.borrow().constraints().size
+                || data.rate.negotiate(format.framerate()).is_err()
             {
                 data.stop.store(true, Ordering::Relaxed);
                 return;
             }
-            let (width, height) = (format.size().width, format.size().height);
-            data.negotiated = (width, height);
-            let buffers = pod(spa::pod::object!(
-                spa::utils::SpaTypes::ObjectParamBuffers,
-                spa::param::ParamType::Buffers,
-                int_property(spa::sys::SPA_PARAM_BUFFERS_buffers, 4),
-                int_property(spa::sys::SPA_PARAM_BUFFERS_blocks, 1),
-                int_property(
-                    spa::sys::SPA_PARAM_BUFFERS_size,
-                    (width * height * 4) as i32
-                ),
-                int_property(spa::sys::SPA_PARAM_BUFFERS_stride, (width * 4) as i32),
-                int_property(spa::sys::SPA_PARAM_BUFFERS_align, 16)
-            ));
+            data.negotiated = (format.size().width, format.size().height);
+            data.dma = format
+                .flags()
+                .contains(spa::param::video::VideoFlags::MODIFIER);
+            if data.dma && (data.force_shm || format.modifier() != 0) {
+                data.stop.store(true, Ordering::Relaxed);
+                return;
+            }
+            data.negotiating = false;
+            let selected = data.rate.fraction();
+            let properties =
+                properties! { "node.latency" => format!("{}/{}", selected.denom, selected.num) };
+            // SAFETY: this loop owns the stream; PipeWire copies the live dictionary.
+            unsafe {
+                pw::sys::pw_stream_update_properties(
+                    stream.as_raw_ptr(),
+                    properties.dict().as_raw_ptr(),
+                );
+            }
+            let buffers = buffer_params(data.negotiated, data.dma);
             let header = pod(spa::pod::object!(
                 spa::utils::SpaTypes::ObjectParamMeta,
                 spa::param::ParamType::Meta,
                 spa::pod::Property {
                     key: spa::sys::SPA_PARAM_META_type,
                     flags: spa::pod::PropertyFlags::empty(),
-                    value: spa::pod::Value::Id(spa::utils::Id(spa::sys::SPA_META_Header)),
+                    value: spa::pod::Value::Id(spa::utils::Id(spa::sys::SPA_META_Header))
                 },
                 int_property(
                     spa::sys::SPA_PARAM_META_size,
@@ -291,145 +419,298 @@ pub fn run(
             ));
             if stream
                 .update_params(&mut [
-                    Pod::from_bytes(&buffers)
-                        .expect("SPA pod bytes were produced by the matching pod serializer"),
-                    Pod::from_bytes(&header)
-                        .expect("SPA pod bytes were produced by the matching pod serializer"),
+                    Pod::from_bytes(&buffers).expect("serialized buffer constraints"),
+                    Pod::from_bytes(&header).expect("serialized metadata constraints"),
                 ])
                 .is_err()
             {
                 data.stop.store(true, Ordering::Relaxed);
             }
         })
-        .process(|stream, data| {
-            let Some(mut buffer) = OutputBuffer::dequeue(stream) else {
-                return;
-            };
-            let Some(target) = buffer.data() else {
-                return;
-            };
-            if data.stop.load(Ordering::Relaxed) || !data.fresh.load(Ordering::SeqCst) {
-                *target.chunk_mut().size_mut() = 0;
-                return;
-            }
-            let frame = data.latest.lock().expect(
-                "capture frame state must remain consistent across producer and PipeWire callbacks",
-            );
-            if (frame.width, frame.height) != data.negotiated {
-                *target.chunk_mut().size_mut() = 0;
-                return;
-            }
-            let row = frame.width as usize * 4;
-            let bytes = row * frame.height as usize;
-            let Some(destination) = target.data() else {
-                return;
-            };
-            if destination.len() < bytes {
+        .add_buffer(|_, shared, raw| {
+            let mut data = shared.borrow_mut();
+            if raw.is_null() || data.buffers.len() >= 8 {
                 data.stop.store(true, Ordering::Relaxed);
                 return;
             }
-            for (dst, src) in destination[..bytes]
-                .chunks_exact_mut(row)
-                .zip(frame.pixels.chunks_exact(frame.stride as usize))
-            {
-                dst.copy_from_slice(&src[..row]);
+            let result = data.capture.borrow_mut().allocate(data.dma);
+            match result {
+                Ok(buffer) => {
+                    // SAFETY: PipeWire grants mutable access during add_buffer.
+                    // ALLOC_BUFFERS delegates fd ownership to us until remove_buffer.
+                    unsafe {
+                        let Some(spa) = (*raw).buffer.as_mut() else {
+                            data.stop.store(true, Ordering::Relaxed);
+                            return;
+                        };
+                        if spa.n_datas != 1 || spa.datas.is_null() {
+                            data.stop.store(true, Ordering::Relaxed);
+                            return;
+                        }
+                        let target = &mut *spa.datas;
+                        target.type_ = if data.dma {
+                            spa::sys::SPA_DATA_DmaBuf
+                        } else {
+                            spa::sys::SPA_DATA_MemFd
+                        };
+                        target.flags = spa::sys::SPA_DATA_FLAG_READWRITE;
+                        target.fd = i64::from(buffer.fd.as_raw_fd());
+                        target.mapoffset = 0;
+                        target.maxsize = buffer.bytes;
+                        target.data = std::ptr::null_mut();
+                        if let Some(chunk) = target.chunk.as_mut() {
+                            chunk.offset = 0;
+                            chunk.size = 0;
+                            chunk.stride = buffer.stride as i32;
+                        }
+                    }
+                    data.generation = data.generation.wrapping_add(1);
+                    let generation = data.generation;
+                    data.buffers
+                        .insert(raw as usize, PoolBuffer { generation, buffer });
+                }
+                Err(error) if data.dma => {
+                    eprintln!("DMA-BUF allocation failed ({error}); using shared memory");
+                    data.force_shm = true;
+                    data.renegotiate = true;
+                }
+                Err(error) => {
+                    eprintln!("Capture allocation failed: {error}");
+                    data.stop.store(true, Ordering::Relaxed);
+                }
             }
-            *target.chunk_mut().offset_mut() = 0;
-            *target.chunk_mut().size_mut() = bytes as u32;
-            *target.chunk_mut().stride_mut() = row as i32;
-            buffer.timestamp(data.sequence);
-            data.sequence = data.sequence.wrapping_add(1);
+        })
+        .remove_buffer(|_, shared, raw| {
+            shared.borrow_mut().buffers.remove(&(raw as usize));
+        })
+        .process(|stream, shared| {
+            let mut data = shared.borrow_mut();
+            if !data.active
+                || data.held.is_some()
+                || data.negotiating
+                || Instant::now() < data.next_capture
+                || data.stop.load(Ordering::Relaxed)
+            {
+                return;
+            }
+            // SAFETY: called only on the owning loop. The registry and held token
+            // retain exclusive ownership until completion, removal or disconnect.
+            let Some(raw) = NonNull::new(unsafe { stream.dequeue_raw_buffer() }) else {
+                return;
+            };
+            let key = raw.as_ptr() as usize;
+            let result = data
+                .buffers
+                .get(&key)
+                .filter(|pool| pool.buffer.size == data.capture.borrow().constraints().size)
+                .map(|pool| {
+                    (
+                        pool.generation,
+                        data.capture.borrow_mut().submit(&pool.buffer),
+                    )
+                });
+            if let Some((generation, Ok(()))) = result {
+                data.held = Some(HeldBuffer { raw, generation });
+                data.next_capture = Instant::now() + data.rate.interval();
+            } else {
+                // SAFETY: this buffer was just dequeued and hasn't been handed to
+                // Wayland. Return it empty; old dimensions cannot reach consumers.
+                unsafe {
+                    if let Some(chunk) = (*(*raw.as_ptr()).buffer)
+                        .datas
+                        .as_mut()
+                        .and_then(|data| data.chunk.as_mut())
+                    {
+                        chunk.size = 0;
+                    }
+                    stream.queue_raw_buffer(raw.as_ptr());
+                }
+            }
         })
         .register()?;
-
-    let format = video_format(width, height);
-
+    let capture_io = capture.clone();
+    let _capture_io = mainloop.loop_().add_io(
+        capture.borrow().poll_fd()?,
+        spa::support::system::IoFlags::IN,
+        move |_| capture_io.borrow_mut().dispatch(),
+    );
+    let _cancel_io =
+        mainloop
+            .loop_()
+            .add_io(cancel_read, spa::support::system::IoFlags::IN, |_| {});
+    let advertised = formats(size, &rate, dma);
+    let mut parameters: Vec<_> = advertised
+        .iter()
+        .map(|format| Pod::from_bytes(format).expect("serialized video format"))
+        .collect();
+    // RT_PROCESS stays disabled: PipeWire callbacks, Wayland dispatch and the
+    // buffer registry all belong to this single main loop.
     stream.connect(
         spa::utils::Direction::Output,
         None,
-        pw::stream::StreamFlags::MAP_BUFFERS | pw::stream::StreamFlags::DRIVER,
-        &mut [Pod::from_bytes(&format)
-            .expect("SPA pod bytes were produced by the matching pod serializer")],
+        pw::stream::StreamFlags::ALLOC_BUFFERS | pw::stream::StreamFlags::DRIVER,
+        &mut parameters,
     )?;
+    let mut next_frame = Instant::now();
+    while !stop.load(Ordering::Relaxed) && !capture.borrow().stopped() {
+        capture.borrow_mut().dispatch();
+        let completion = capture.borrow_mut().completion();
+        if let Some(completion) = completion {
+            data.borrow_mut().complete(&stream, completion);
+        }
+        let changed = capture.borrow_mut().take_changed();
+        if changed && !name.starts_with("window:") && capture.borrow().constraints().size != size {
+            eprintln!("Shared monitor changed size; start sharing again");
+            break;
+        }
+        let renegotiate = {
+            let mut data = data.borrow_mut();
+            std::mem::take(&mut data.renegotiate) || changed
+        };
+        if renegotiate {
+            data.borrow_mut().negotiating = true;
+            let advertised = formats(
+                capture.borrow().constraints().size,
+                &rate,
+                !data.borrow().force_shm && capture.borrow().dma_supported(),
+            );
+            let mut params: Vec<_> = advertised
+                .iter()
+                .map(|format| Pod::from_bytes(format).expect("serialized video format"))
+                .collect();
+            stream.update_params(&mut params)?;
+        }
+        let can_capture = {
+            let data = data.borrow();
+            data.active && data.held.is_none() && !data.renegotiate && !data.negotiating
+        };
+        let deadline = next_frame.max(data.borrow().next_capture);
+        if can_capture && Instant::now() >= deadline {
+            stream.trigger_process()?;
+            next_frame = Instant::now() + rate.interval();
+        }
+        let timeout = if can_capture {
+            pw::loop_::Timeout::Finite(
+                next_frame
+                    .max(data.borrow().next_capture)
+                    .saturating_duration_since(Instant::now()),
+            )
+        } else {
+            pw::loop_::Timeout::Infinite
+        };
+        mainloop.loop_().iterate(timeout);
+    }
+    let _ = stream.disconnect();
+    Ok(())
+}
 
-    let interval = Duration::from_nanos(1_000_000_000 / 30);
-    let capture_stop = stop.clone();
-    let capture_streaming = streaming.clone();
-    let capture_thread = std::thread::spawn(move || {
-        let mut spare = Vec::new();
-        let mut checked = Instant::now() - Duration::from_secs(1);
-        while !capture_stop.load(Ordering::Relaxed) {
-            let start = Instant::now();
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-            if capture_streaming.load(Ordering::Relaxed)
-                || checked.elapsed() >= Duration::from_secs(1)
-            {
-                checked = Instant::now();
-                match capture.frame(&name, cursor, &capture_stop, std::mem::take(&mut spare)) {
-                    Ok(frame) if resizable || (frame.width == width && frame.height == height) => {
-                        spare = std::mem::replace(&mut *latest.lock().expect("capture frame state must remain consistent across producer and PipeWire callbacks"), frame).pixels;
-                        fresh.store(capture_streaming.load(Ordering::Relaxed), Ordering::SeqCst);
-                    }
-                    Ok(_) => {
-                        eprintln!("Shared monitor changed size; start sharing again");
-                        capture_stop.store(true, Ordering::Relaxed);
-                    }
-                    Err(error) if error == crate::capture::BUSY => (),
-                    Err(error) => {
-                        eprintln!("{error}");
-                        capture_stop.store(true, Ordering::Relaxed);
-                    }
+    #[test]
+    fn buffer_types_intersect_obs_masks_in_either_negotiation_order() {
+        // PipeWire expands OBS's MemPtr bit to also permit MemFd transport.
+        let obs_mask = (1 << spa::sys::SPA_DATA_MemPtr)
+            | (1 << spa::sys::SPA_DATA_MemFd)
+            | (1 << spa::sys::SPA_DATA_DmaBuf);
+        let consumer = pod(spa::pod::object!(
+            spa::utils::SpaTypes::ObjectParamBuffers,
+            spa::param::ParamType::Buffers,
+            int_property(spa::sys::SPA_PARAM_BUFFERS_dataType, obs_mask)
+        ));
+        for dma in [false, true] {
+            let producer = buffer_params((735, 840), dma);
+            for reverse in [false, true] {
+                let (offer, filter) = if reverse {
+                    (&consumer, &producer)
+                } else {
+                    (&producer, &consumer)
+                };
+                let mut bytes = vec![0; 1024];
+                let builder = spa::pod::builder::Builder::new(&mut bytes);
+                let mut result = std::ptr::null_mut();
+                // SAFETY: both input pods and the builder's writable storage
+                // remain alive throughout filtering and reading the result.
+                let status = unsafe {
+                    spa::sys::spa_pod_filter(
+                        builder.as_raw_ptr(),
+                        &mut result,
+                        Pod::from_bytes(offer).unwrap().as_raw_ptr(),
+                        Pod::from_bytes(filter).unwrap().as_raw_ptr(),
+                    )
+                };
+                assert!(
+                    status >= 0,
+                    "SPA rejected dma={dma} reverse={reverse}: {status}"
+                );
+                assert!(!result.is_null());
+                // SAFETY: successful filtering initialized this pod in the
+                // still-live builder storage; no subsequent writes occur.
+                let filtered = unsafe { Pod::from_raw(result) };
+                let (_, value) = spa::pod::deserialize::PodDeserializer::deserialize_any_from(
+                    filtered.as_bytes(),
+                )
+                .unwrap();
+                let spa::pod::Value::Object(object) = value else {
+                    panic!("buffer parameters must remain an object")
+                };
+                let types = object
+                    .properties
+                    .iter()
+                    .find(|property| property.key == spa::sys::SPA_PARAM_BUFFERS_dataType)
+                    .unwrap();
+                let expected = 1
+                    << if dma {
+                        spa::sys::SPA_DATA_DmaBuf
+                    } else {
+                        spa::sys::SPA_DATA_MemFd
+                    };
+                match &types.value {
+                    spa::pod::Value::Int(mask) => assert_eq!(*mask, expected),
+                    spa::pod::Value::Choice(spa::pod::ChoiceValue::Int(spa::utils::Choice(
+                        _,
+                        choice,
+                    ))) => match choice {
+                        spa::utils::ChoiceEnum::Flags { default, .. }
+                        | spa::utils::ChoiceEnum::None(default) => assert_eq!(*default, expected),
+                        other => panic!("unexpected filtered choice: {other:?}"),
+                    },
+                    other => panic!("unexpected filtered mask: {other:?}"),
                 }
             }
-            std::thread::sleep(interval.saturating_sub(start.elapsed()));
         }
-    });
-    let mut next_frame = Instant::now();
-    let mut requested_size = (width, height);
-    let mut renegotiation_error = None;
+    }
 
-    while !stop.load(Ordering::Relaxed) {
-        let size = {
-            let frame = format_frames.lock().expect(
-                "capture frame state must remain consistent across producer and PipeWire callbacks",
-            );
-            (frame.width, frame.height)
-        };
-        if resizable && size != requested_size {
-            let format = video_format(size.0, size.1);
-            if let Err(error) = stream.update_params(&mut [Pod::from_bytes(&format)
-                .expect("SPA pod bytes were produced by the matching pod serializer")])
-            {
-                renegotiation_error = Some(error);
-                stop.store(true, Ordering::Relaxed);
-                break;
+    #[test]
+    fn dma_is_an_explicit_format_with_a_shared_memory_alternative() {
+        let rate = FrameRate::new(None).unwrap();
+        let offers = formats((640, 480), &rate, true);
+        assert_eq!(offers.len(), 2);
+        for (index, offer) in offers.iter().enumerate() {
+            let (_, value) =
+                spa::pod::deserialize::PodDeserializer::deserialize_any_from(offer).unwrap();
+            let spa::pod::Value::Object(object) = value else {
+                panic!("video format must be an object");
+            };
+            let modifier = object
+                .properties
+                .iter()
+                .find(|property| property.key == spa::sys::SPA_FORMAT_VIDEO_modifier);
+            if index == 0 {
+                let modifier = modifier.expect("DMA-BUF requires an explicit modifier");
+                assert!(modifier.flags.contains(spa::pod::PropertyFlags::MANDATORY));
+                assert_eq!(modifier.value, spa::pod::Value::Long(0));
+            } else {
+                assert!(
+                    modifier.is_none(),
+                    "SHM must not inherit the DMA-BUF modifier"
+                );
             }
-            requested_size = size;
+            assert!(object.properties.iter().any(|property| property.key
+                == spa::sys::SPA_FORMAT_VIDEO_framerate
+                && matches!(property.value, spa::pod::Value::Choice(_))));
         }
-        let active = streaming.load(Ordering::Relaxed);
-        let timeout = if active {
-            next_frame
-                .saturating_duration_since(Instant::now())
-                .min(Duration::from_millis(10))
-        } else {
-            Duration::from_millis(10)
-        };
-        mainloop
-            .loop_()
-            .iterate(pw::loop_::Timeout::Finite(timeout));
-        if streaming.load(Ordering::Relaxed) && Instant::now() >= next_frame {
-            let _ = stream.trigger_process();
-            next_frame = Instant::now() + interval;
-        } else if !streaming.load(Ordering::Relaxed) {
-            next_frame = Instant::now();
-        }
+        assert_eq!(formats((640, 480), &rate, false), vec![offers[1].clone()]);
     }
-
-    let _ = stream.disconnect();
-    let _ = capture_thread.join();
-    if let Some(error) = renegotiation_error {
-        return Err(error.into());
-    }
-
-    Ok(())
 }

@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex};
 use ferese_layout::WindowId;
 use ferese_protocols::window_capture::v1::server::ferese_window_capture_manager_v1 as manager;
 use ferese_protocols::window_capture::v1::server::ferese_window_capture_manager_v1::FereseWindowCaptureManagerV1;
+use smithay::backend::renderer::utils::{RendererSurfaceStateUserData, SurfaceView};
 use smithay::reexports::wayland_protocols_wlr::screencopy::v1::server::zwlr_screencopy_frame_v1 as frame;
 use smithay::reexports::wayland_protocols_wlr::screencopy::v1::server::zwlr_screencopy_frame_v1::ZwlrScreencopyFrameV1;
 use smithay::reexports::wayland_server::protocol::wl_buffer::WlBuffer;
@@ -11,7 +12,8 @@ use smithay::reexports::wayland_server::protocol::wl_shm;
 use smithay::reexports::wayland_server::{
     Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource,
 };
-use smithay::utils::Rectangle;
+use smithay::utils::{Logical, Point, Rectangle};
+use smithay::wayland::compositor::{TraversalAction, with_surface_tree_downward};
 use smithay::wayland::shm::with_buffer_contents_mut;
 
 use super::screencopy::FrameData;
@@ -20,6 +22,15 @@ use crate::Ferese;
 
 const MAX_BYTES: usize = 128 * 1024 * 1024;
 const MAX_FRAMES: usize = 8;
+
+fn capture_scale(output_scale: f64, buffer_scale: i32, view: SurfaceView) -> f64 {
+    if view.dst.w <= 0 || view.dst.h <= 0 {
+        return output_scale;
+    }
+    let native_x = view.src.size.w * f64::from(buffer_scale) / f64::from(view.dst.w);
+    let native_y = view.src.size.h * f64::from(buffer_scale) / f64::from(view.dst.h);
+    output_scale.max(native_x).max(native_y)
+}
 
 #[derive(Debug, Default)]
 pub(crate) struct Budget {
@@ -155,7 +166,7 @@ pub(super) fn init_global(
     }
 
     display.create_global::<Ferese, FereseWindowCaptureManagerV1, Global>(
-        1,
+        2,
         Global {
             budget: Arc::default(),
             worker,
@@ -237,6 +248,44 @@ impl Dispatch<FereseWindowCaptureManagerV1, Global> for Ferese {
         _: &DisplayHandle,
         data_init: &mut DataInit<'_, Self>,
     ) {
+        if let manager::Request::RefreshSource { source } = request {
+            if let Some(source) =
+                smithay::wayland::image_capture_source::ImageCaptureSource::from_resource(&source)
+            {
+                state.refresh_capture_source(&source);
+            }
+            return;
+        }
+        if let manager::Request::CreateSource {
+            window_hi,
+            window_lo,
+            source,
+        } = request
+        {
+            use smithay::wayland::image_capture_source::{
+                ImageCaptureSource, ImageCaptureSourceData,
+            };
+            let id = WindowId((u64::from(window_hi) << 32) | u64::from(window_lo));
+            let capture = ImageCaptureSource::new();
+            capture
+                .user_data()
+                .insert_if_missing(|| super::image_capture::Source::Window(id));
+            let resource = data_init.init(
+                source,
+                ImageCaptureSourceData {
+                    source: capture.clone(),
+                },
+            );
+            capture.add_instance(&resource);
+            if let Some(info) = state.window_capture_info(id) {
+                manager.source_geometry(
+                    &resource,
+                    info.geometry.size.w as u32,
+                    info.geometry.size.h as u32,
+                );
+            }
+            return;
+        }
         if let manager::Request::CaptureWindow {
             window_hi,
             window_lo,
@@ -262,6 +311,7 @@ impl Dispatch<FereseWindowCaptureManagerV1, Global> for Ferese {
                     overlay_cursor: false,
                     used: Mutex::new(failed),
                     snapshot: Mutex::new(None),
+                    history: None,
                 }),
             );
             if failed {
@@ -293,14 +343,16 @@ impl Dispatch<FereseWindowCaptureManagerV1, Global> for Ferese {
     }
 }
 
+pub(crate) struct WindowInfo {
+    pub window: smithay::desktop::Window,
+    pub output: smithay::output::Output,
+    pub geometry: Rectangle<i32, Logical>,
+    pub scale: f64,
+    pub bytes: usize,
+}
+
 impl Ferese {
-    fn window_snapshot(
-        &mut self,
-        id: WindowId,
-        overlay_cursor: bool,
-        budget: &Arc<Mutex<Budget>>,
-        busy: &mut bool,
-    ) -> Option<Snapshot> {
+    pub(super) fn window_capture_info(&self, id: WindowId) -> Option<WindowInfo> {
         if self.session_lock.active() || !super::screencopy::capture_allowed() {
             return None;
         }
@@ -323,7 +375,34 @@ impl Ferese {
             .0
             .clone();
         let geometry = window.geometry();
-        let scale = output.current_scale().fractional_scale();
+        let output_scale = output.current_scale().fractional_scale();
+        // A low-density parent can contain higher-density content. Match the
+        // rendered surface tree, excluding buffers outside the captured geometry.
+        let mut scale = output_scale;
+        if let Some(toplevel) = window.toplevel() {
+            with_surface_tree_downward(
+                toplevel.wl_surface(),
+                Point::<f64, Logical>::default(),
+                |_, states, location| {
+                    let Some(data) = states.data_map.get::<RendererSurfaceStateUserData>() else {
+                        return TraversalAction::SkipChildren;
+                    };
+                    let data = data
+                        .lock()
+                        .expect("Smithay surface metadata must remain consistent across callbacks");
+                    let Some(view) = data.view() else {
+                        return TraversalAction::SkipChildren;
+                    };
+                    let location = *location + view.offset.to_f64();
+                    if Rectangle::new(location, view.dst.to_f64()).overlaps(geometry.to_f64()) {
+                        scale = capture_scale(scale, data.buffer_scale(), view);
+                    }
+                    TraversalAction::DoChildren(location)
+                },
+                |_, _, _| {},
+                |_, _, _| true,
+            );
+        }
         let size: smithay::utils::Size<i32, smithay::utils::Physical> =
             geometry.size.to_physical_precise_round(scale);
         let bytes = usize::try_from(size.w)
@@ -333,33 +412,65 @@ impl Ferese {
         if bytes == 0 || bytes > MAX_BYTES {
             return None;
         }
+        Some(WindowInfo {
+            window,
+            output,
+            geometry,
+            scale,
+            bytes,
+        })
+    }
+
+    pub(super) fn window_capture_cursor(
+        &self,
+        id: WindowId,
+        window: &smithay::desktop::Window,
+        geometry: Rectangle<i32, Logical>,
+    ) -> Option<Rectangle<i32, Logical>> {
+        if !self.overview.is_presenting() && !self.capture_cursor_protected() {
+            self.seat.get_pointer().and_then(|pointer| {
+                let location = pointer.current_location();
+                if self.window_under_visual(location).as_ref() != Some(window) {
+                    return None;
+                }
+                let (x, y) = self.inverse_presented_window_point(id, location.x, location.y)?;
+                let surface_point = smithay::utils::Point::from((x, y)) + geometry.loc.to_f64();
+                let (surface, _) = window
+                    .surface_under(surface_point, smithay::desktop::WindowSurfaceType::ALL)?;
+                if pointer.current_focus().as_ref() != Some(&surface) {
+                    return None;
+                }
+                Some(Rectangle::new(
+                    (location - smithay::utils::Point::from((x, y))).to_i32_round(),
+                    geometry.size,
+                ))
+            })
+        } else {
+            None
+        }
+    }
+
+    fn window_snapshot(
+        &mut self,
+        id: WindowId,
+        overlay_cursor: bool,
+        budget: &Arc<Mutex<Budget>>,
+        busy: &mut bool,
+    ) -> Option<Snapshot> {
+        let WindowInfo {
+            window,
+            output,
+            geometry,
+            scale,
+            bytes,
+        } = self.window_capture_info(id)?;
         let Some(permit) = Permit::reserve(budget, bytes) else {
             *busy = true;
             return None;
         };
-        let cursor =
-            if overlay_cursor && !self.overview.is_presenting() && !self.capture_cursor_protected()
-            {
-                self.seat.get_pointer().and_then(|pointer| {
-                    let location = pointer.current_location();
-                    if self.window_under_visual(location).as_ref() != Some(&window) {
-                        return None;
-                    }
-                    let (x, y) = self.inverse_presented_window_point(id, location.x, location.y)?;
-                    let surface_point = smithay::utils::Point::from((x, y)) + geometry.loc.to_f64();
-                    let (surface, _) = window
-                        .surface_under(surface_point, smithay::desktop::WindowSurfaceType::ALL)?;
-                    if pointer.current_focus().as_ref() != Some(&surface) {
-                        return None;
-                    }
-                    Some(Rectangle::new(
-                        (location - smithay::utils::Point::from((x, y))).to_i32_round(),
-                        geometry.size,
-                    ))
-                })
-            } else {
-                None
-            };
+        let cursor = overlay_cursor
+            .then(|| self.window_capture_cursor(id, &window, geometry))
+            .flatten();
         let result = if let Some(backend) = self.nested_backend.clone() {
             let mut backend = backend.try_borrow_mut().ok()?;
             crate::render::capture_window_frame(
@@ -476,6 +587,40 @@ pub(super) fn copy_snapshot(
 pub(crate) mod tests {
     use super::*;
 
+    #[test]
+    fn sharing_preserves_backing_density_at_fractional_display_scales() {
+        let integer = SurfaceView {
+            src: Rectangle::from_size((640., 480.).into()),
+            dst: (640, 480).into(),
+            offset: (0, 0).into(),
+        };
+        let viewport = SurfaceView {
+            src: Rectangle::from_size((1280., 960.).into()),
+            ..integer
+        };
+        for output_scale in [1., 1.25, 1.5, 1.75, 2.] {
+            assert_eq!(capture_scale(output_scale, 2, integer), 2.);
+            assert_eq!(capture_scale(output_scale, 1, viewport), 2.);
+        }
+        assert_eq!(capture_scale(2.5, 2, integer), 2.5);
+        let fractional = SurfaceView {
+            src: Rectangle::from_size((1120., 840.).into()),
+            ..integer
+        };
+        assert_eq!(capture_scale(1.25, 1, fractional), 1.75);
+        assert_eq!(capture_scale(1.75, 1, fractional), 1.75);
+    }
+
+    #[test]
+    fn sharing_uses_the_viewport_crop_instead_of_the_whole_buffer() {
+        let cropped = SurfaceView {
+            src: Rectangle::new((320., 240.).into(), (640., 480.).into()),
+            dst: (640, 480).into(),
+            offset: (0, 0).into(),
+        };
+        assert_eq!(capture_scale(1.75, 1, cropped), 1.75);
+    }
+
     /// Exercise both asynchronous publication boundaries using real resources.
     pub(crate) fn check_deferred_snapshot(
         state: &Ferese,
@@ -505,6 +650,7 @@ pub(crate) mod tests {
                 overlay_cursor: false,
                 used: Mutex::new(false),
                 snapshot: Mutex::new(None),
+                history: None,
             })
         };
         let (worker, _requests) = std::sync::mpsc::sync_channel(1);

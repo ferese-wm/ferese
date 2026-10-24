@@ -10,8 +10,8 @@ workspace = true
 
 [features]
 default = ["client", "server"]
-client = ["dep:wayland-client", "wayland-protocols-wlr/client"]
-server = ["dep:wayland-server", "wayland-protocols-wlr/server"]
+client = ["dep:wayland-client", "wayland-protocols-wlr/client", "wayland-protocols/client"]
+server = ["dep:wayland-server", "wayland-protocols-wlr/server", "wayland-protocols/server"]
 
 [dependencies]
 bitflags.workspace = true
@@ -20,3 +20,5 @@ wayland-client = { workspace = true, optional = true }
 wayland-scanner.workspace = true
 wayland-server = { workspace = true, optional = true }
 wayland-protocols-wlr.workspace = true
+
+wayland-protocols = { version = "0.32", features = ["staging"] }

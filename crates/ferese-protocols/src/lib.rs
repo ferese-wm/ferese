@@ -195,10 +195,12 @@ pub mod window_capture {
             pub mod client {
                 use wayland_client;
                 use wayland_client::protocol::*;
+                use wayland_protocols::ext::image_capture_source::v1::client::*;
                 use wayland_protocols_wlr::screencopy::v1::client::*;
 
                 pub mod __interfaces {
                     use wayland_client::protocol::__interfaces::*;
+                    use wayland_protocols::ext::image_capture_source::v1::client::__interfaces::*;
                     use wayland_protocols_wlr::screencopy::v1::client::__interfaces::*;
 
                     wayland_scanner::generate_interfaces!(
@@ -214,11 +216,13 @@ pub mod window_capture {
 
             #[cfg(feature = "server")]
             pub mod server {
+                use wayland_protocols::ext::image_capture_source::v1::server::*;
                 use wayland_protocols_wlr::screencopy::v1::server::*;
                 use wayland_server;
                 use wayland_server::protocol::*;
 
                 pub mod __interfaces {
+                    use wayland_protocols::ext::image_capture_source::v1::server::__interfaces::*;
                     use wayland_protocols_wlr::screencopy::v1::server::__interfaces::*;
                     use wayland_server::protocol::__interfaces::*;
 

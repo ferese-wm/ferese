@@ -2,6 +2,7 @@ use super::{DesktopOutput, Ferese, Logical, Output, OutputId, Point};
 
 impl Ferese {
     pub(crate) fn defer_output_redraw(&mut self, output: Output) {
+        crate::backends::direct::capture::changes::content_changed(&output);
         if !self.output_redraw_pending.contains(&output) {
             self.output_redraw_pending.push(output);
         }
