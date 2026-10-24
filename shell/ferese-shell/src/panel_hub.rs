@@ -594,6 +594,8 @@ impl FereseShell {
         let panel = self.panel_for_bar(id);
         let effects = entry.effects.as_ref();
         let bounds = sample.geometry.bounds;
+        let grid = ferese_panel::shape::PixelGrid::try_new(entry.scale)
+            .expect("panel output scale is positive and finite");
         let (target_size, previous_size) = {
             let runtime = entry.runtime.hub.as_ref().expect("Morph runtime").borrow();
             (runtime.hub.target_size(), runtime.previous.size)
@@ -626,8 +628,10 @@ impl FereseShell {
         }
         let body = container(layers)
             .id("ferese-panel-hub")
-            .width(bounds.width as f32)
-            .height(bounds.height as f32)
+            // Snap dimensions before centering. Snapping the two edges of an
+            // unsnapped hub can alternate its width by a pixel on odd surfaces.
+            .width(grid.snap(bounds.width) as f32)
+            .height(grid.snap(bounds.height) as f32)
             .clip(true);
         let root = container(body)
             .center_x(Length::Fill)
@@ -4401,6 +4405,72 @@ mod tests {
                             baseline = Some(bounds);
                         }
                     }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn hub_dimensions_snap_before_centering_on_odd_and_even_backing_surfaces() {
+        use cosmic::iced::advanced::renderer::Headless;
+        #[derive(Default)]
+        struct Bounds(Option<Rectangle>);
+        impl widget::Operation for Bounds {
+            fn traverse(&mut self, children: &mut dyn FnMut(&mut dyn widget::Operation)) {
+                children(self);
+            }
+            fn container(&mut self, id: Option<&widget::Id>, bounds: Rectangle) {
+                if id == Some(&widget::Id::new("ferese-panel-hub")) {
+                    self.0 = Some(bounds);
+                }
+            }
+        }
+        let renderer = cosmic::iced::futures::executor::block_on(cosmic::Renderer::new(
+            cosmic::iced::Font::default(),
+            cosmic::iced::Pixels(14.),
+            Some("tiny-skia"),
+        ))
+        .unwrap();
+        let mut shell = shell();
+        let id = shell.outputs[0].bar;
+        let sample = shell.outputs[0]
+            .runtime
+            .hub
+            .as_ref()
+            .unwrap()
+            .borrow()
+            .hub
+            .sample();
+        for scale in [1., 1.25, 1.5, 1.75] {
+            shell.outputs[0].scale = scale;
+            for backing_width in [329., 330., 401.] {
+                for delta in [-0.02, 0., 0.02] {
+                    let mut sample = sample;
+                    sample.geometry.bounds.width = 320. + delta;
+                    sample.geometry.bounds.height = 48. + delta;
+                    let mut view = shell.view_hub_at(id, sample, None, None);
+                    let mut tree = widget::Tree::new(&view);
+                    let node = view.as_widget_mut().layout(
+                        &mut tree,
+                        &renderer,
+                        &layout::Limits::new(Size::ZERO, Size::new(backing_width, 230.)),
+                    );
+                    let mut bounds = Bounds::default();
+                    view.as_widget_mut().operate(
+                        &mut tree,
+                        Layout::new(&node),
+                        &renderer,
+                        &mut bounds,
+                    );
+                    let bounds = bounds.0.unwrap();
+                    assert_eq!(
+                        bounds.width, 320.,
+                        "scale={scale}, backing={backing_width}, delta={delta}"
+                    );
+                    assert_eq!(
+                        bounds.height, 48.,
+                        "scale={scale}, backing={backing_width}, delta={delta}"
+                    );
                 }
             }
         }
