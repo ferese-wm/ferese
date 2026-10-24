@@ -72,9 +72,10 @@ impl Ferese {
         let Some(window) = self.focused_window else {
             return;
         };
-        let Some(bounds) = self.output_bounds() else {
+        let Some((output, bounds)) = self.floating_work_area() else {
             return;
         };
+        let output = output.name();
         let mut floating_rect = match self.workspaces.placement(window) {
             Some(WindowPlacement::Tiled) => self
                 .tiled_layout(bounds)
@@ -94,6 +95,7 @@ impl Ferese {
                 floating_rect = self.place_floating(
                     &handle,
                     Some(window),
+                    &output,
                     bounds,
                     (floating_rect.width, floating_rect.height),
                     None,
@@ -305,10 +307,14 @@ impl Ferese {
     }
 
     pub(super) fn output_bounds(&self) -> Option<Rect> {
+        self.floating_work_area().map(|(_, work)| work)
+    }
+
+    pub(super) fn floating_work_area(&self) -> Option<(&Output, Rect)> {
         let output = self
             .focused_output()
             .or_else(|| self.space.outputs().next())?;
-        self.output_bounds_for(output)
+        self.output_bounds_for(output).map(|work| (output, work))
     }
 
     pub(super) fn floating_outputs(&self) -> Vec<(String, Rect)> {
@@ -377,17 +383,13 @@ impl Ferese {
         &mut self,
         window: &Window,
         id: Option<WindowId>,
+        output: &str,
         work: Rect,
         size: (f64, f64),
         overrides: Option<(Option<f64>, Option<f64>)>,
     ) -> Rect {
         use crate::floating::{centered, clamp_to_work, intersection, min_overlap};
         let outputs = self.floating_outputs();
-        let output = outputs
-            .iter()
-            .find(|(_, area)| *area == work)
-            .map(|(name, _)| name.as_str())
-            .unwrap_or("unknown");
         let (app, parent) = Self::floating_metadata(window);
         let parent_rect = parent
             .as_ref()
@@ -492,14 +494,20 @@ impl Ferese {
             return;
         }
         // A drag can finish on another output without changing workspace ownership.
+        // Equal overlap does not identify a monitor; retain the workspace owner.
+        let owner = self
+            .floating_work_area_for_window(id)
+            .map(|(output, _)| output.name());
         let Some((output, work)) = self
             .floating_outputs()
             .into_iter()
-            .max_by(|(_, a), (_, b)| {
+            .max_by(|(a_name, a), (b_name, b)| {
                 let area = |work| {
                     crate::floating::intersection(rect, work).map_or(0., |r| r.width * r.height)
                 };
-                area(*a).total_cmp(&area(*b))
+                area(*a).total_cmp(&area(*b)).then_with(|| {
+                    (owner.as_ref() == Some(a_name)).cmp(&(owner.as_ref() == Some(b_name)))
+                })
             })
             .filter(|(_, work)| crate::floating::intersection(rect, *work).is_some())
         else {
@@ -553,14 +561,22 @@ impl Ferese {
     }
 
     pub(super) fn floating_bounds_for_window(&self, window: WindowId) -> Option<Rect> {
+        self.floating_work_area_for_window(window)
+            .map(|(_, work)| work)
+    }
+
+    pub(super) fn floating_work_area_for_window(
+        &self,
+        window: WindowId,
+    ) -> Option<(&Output, Rect)> {
         let output_id = self
             .workspaces
             .workspace_for_window(window)
             .and_then(|workspace| self.output_workspaces.output_for_workspace(workspace));
         output_id
             .and_then(|id| self.outputs_by_id.get(&id))
-            .and_then(|output| self.output_bounds_for(output))
-            .or_else(|| self.output_bounds())
+            .and_then(|output| self.output_bounds_for(output).map(|work| (output, work)))
+            .or_else(|| self.floating_work_area())
     }
 
     pub(crate) fn output_bounds_for(&self, output: &Output) -> Option<Rect> {
