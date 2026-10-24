@@ -58,19 +58,16 @@ impl Ferese {
             return;
         }
 
-        let bounds = self.output_bounds();
+        let Some((output, work)) = self.floating_work_area() else {
+            return;
+        };
+        let output = output.name();
         let outputs = self.floating_outputs();
-        let Some((remembered, work)) = app_id
+        let Some(remembered) = app_id
             .as_deref()
             .and_then(|app| self.floating_memory.get(app))
-            .and_then(|entry| {
-                let rect = entry.restore(&outputs)?;
-                let work = outputs
-                    .iter()
-                    .find(|(name, work)| *name == entry.output && Some(*work) == bounds)?
-                    .1;
-                Some((rect, work))
-            })
+            .filter(|entry| entry.output == output)
+            .and_then(|entry| entry.restore(&outputs))
         else {
             return;
         };
@@ -80,6 +77,7 @@ impl Ferese {
         let rect = self.place_floating(
             window,
             None,
+            &output,
             work,
             (remembered.width, remembered.height),
             Some((rule.width, rule.height)),
@@ -110,24 +108,19 @@ impl Ferese {
             return;
         }
 
-        let Some(bounds) = self.output_bounds() else {
+        let Some((output, bounds)) = self.floating_work_area() else {
             self.add_tiled_window(window);
             return;
         };
+        let output = output.name();
 
         // Saved geometry may restore a position on this output, but must not
         // redirect a new window away from the output the user focused.
-        let remembered_work = app_id
+        let remembered_rect = app_id
             .filter(|app| !crate::window_rules::is_native_dialog(Some(app)))
             .and_then(|app| self.floating_memory.get(app))
-            .and_then(|entry| {
-                let outputs = self.floating_outputs();
-                entry.restore(&outputs)?;
-                outputs
-                    .into_iter()
-                    .find(|(name, work)| *name == entry.output && *work == bounds)
-                    .map(|(_, work)| work)
-            });
+            .filter(|entry| entry.output == output)
+            .and_then(|entry| entry.restore(&self.floating_outputs()));
         let id = self.windows.allocate_id();
         let size_rect = client_size(&window)
             .map(|size| natural_floating_rect(bounds, size))
@@ -135,6 +128,7 @@ impl Ferese {
         let rect = self.place_floating(
             &window,
             None,
+            &output,
             bounds,
             (size_rect.width, size_rect.height),
             None,
@@ -161,7 +155,7 @@ impl Ferese {
         if rule.width.is_none()
             && rule.height.is_none()
             && client_size(&window).is_none()
-            && remembered_work.is_none()
+            && remembered_rect.is_none()
         {
             self.windows
                 .update(id, |w| w.natural_floating_pending = true);
@@ -221,10 +215,11 @@ impl Ferese {
             return;
         };
 
-        let Some(bounds) = self.floating_bounds_for_window(parent) else {
+        let Some((output, bounds)) = self.floating_work_area_for_window(parent) else {
             self.add_tiled_window(window);
             return;
         };
+        let output = output.name();
 
         let parent_rect = self.presented_window_rect(parent).unwrap_or(bounds);
         let visible_parent = crate::floating::intersection(parent_rect, bounds).unwrap_or(bounds);
@@ -234,6 +229,7 @@ impl Ferese {
         let rect = self.place_floating(
             &window,
             None,
+            &output,
             bounds,
             (size_rect.width, size_rect.height),
             None,
@@ -384,9 +380,10 @@ impl Ferese {
             return;
         };
 
-        let Some(bounds) = self.floating_bounds_for_window(id) else {
+        let Some((output, bounds)) = self.floating_work_area_for_window(id) else {
             return;
         };
+        let output = output.name();
 
         if rule == Default::default() {
             return;
@@ -414,7 +411,10 @@ impl Ferese {
             tracing::warn!(%error, ?id, ?workspace, "failed to apply window workspace rule");
         }
 
-        let bounds = self.floating_bounds_for_window(id).unwrap_or(bounds);
+        let (output, bounds) = self
+            .floating_work_area_for_window(id)
+            .map(|(output, work)| (output.name(), work))
+            .unwrap_or((output, bounds));
 
         let should_float = rule
             .floating
@@ -432,11 +432,7 @@ impl Ferese {
                     .0
                     .as_deref()
                     .and_then(|app| self.floating_memory.get(app))
-                    .filter(|entry| {
-                        self.floating_outputs()
-                            .iter()
-                            .any(|(name, work)| *name == entry.output && *work == bounds)
-                    })
+                    .filter(|entry| entry.output == output)
                     .and_then(|entry| entry.restore(&self.floating_outputs()))
                     .is_none()
                 {
@@ -450,6 +446,7 @@ impl Ferese {
                 rect = self.place_floating(
                     window,
                     Some(id),
+                    &output,
                     bounds,
                     (rect.width, rect.height),
                     Some((rule.width, rule.height)),
@@ -508,10 +505,10 @@ impl Ferese {
                 );
                 return None;
             }
-            self.floating_bounds_for_window(parent)
-                .map(|bounds| (parent, bounds))
+            self.floating_work_area_for_window(parent)
+                .map(|(output, bounds)| (parent, output.name(), bounds))
         });
-        let Some((parent, bounds)) = placement else {
+        let Some((parent, output, bounds)) = placement else {
             if removed {
                 self.relayout();
             }
@@ -526,6 +523,7 @@ impl Ferese {
         let rect = self.place_floating(
             window,
             Some(id),
+            &output,
             bounds,
             (size_rect.width, size_rect.height),
             None,
@@ -771,11 +769,13 @@ impl Ferese {
                 self.workspaces.placement(id),
                 Some(WindowPlacement::Floating { .. })
             )
-            && let Some(bounds) = self.floating_bounds_for_window(id)
+            && let Some((output, bounds)) = self.floating_work_area_for_window(id)
         {
+            let output = output.name();
             let rect = self.place_floating(
                 window,
                 Some(id),
+                &output,
                 bounds,
                 (f64::from(size.width), f64::from(size.height)),
                 Some((Some(f64::from(size.width)), Some(f64::from(size.height)))),

@@ -424,51 +424,85 @@ fn floating_launch_restores_geometry_only_on_the_focused_output() {
     ) {
         return;
     }
-    for restore_on_focused_output in [false, true] {
+    for second_x in [800, 400, 0] {
+        for restore_on_focused_output in [true, false] {
+            let (mut events, mut state, first, second) = floating_launch_fixture();
+            state.space.map_output(&second, (second_x, 0));
+            let saved_output = if restore_on_focused_output {
+                &second
+            } else {
+                &first
+            };
+            let saved_work = state.output_bounds_for(saved_output).unwrap();
+            let saved = Rect::new(saved_work.x + 100., saved_work.y + 80., 240., 160.);
+            state.floating_memory.save(
+                "dev.ferese.Settings".into(),
+                crate::floating::Remembered::new(saved_output.name(), saved, saved_work),
+            );
+            let output_id = state.output_ids[&second];
+            let destination = state.output_workspaces.active_workspace(output_id).unwrap();
+            state.activate_output_workspace(output_id, destination);
+            let (window, _wire) = super::capture_privacy::tests::window_with_app_id(
+                &mut state,
+                &mut events,
+                0xff112233,
+                "dev.ferese.Settings",
+            );
+            let id = state.windows.ids()[&window];
+            assert_eq!(state.output_workspaces.focused_output(), Some(output_id));
+            assert_eq!(state.workspaces.workspace_for_window(id), Some(destination));
+            let rect = state.windows.geometry(&id).unwrap().logical;
+            let bounds = state.output_bounds_for(&second).unwrap();
+            assert_eq!(crate::floating::intersection(rect, bounds), Some(rect));
+            if restore_on_focused_output {
+                assert_eq!(rect, saved, "second output at x={second_x}");
+            } else {
+                assert_eq!(
+                    (rect.width, rect.height),
+                    (64., 48.),
+                    "memory belongs to the other output; second output at x={second_x}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn floating_rule_restores_geometry_on_the_windows_output() {
+    if !crate::startup_tests::private_runtime(
+        "state::window_lifecycle_tests::floating_rule_restores_geometry_on_the_windows_output",
+    ) {
+        return;
+    }
+    for second_x in [800, 0] {
         let (mut events, mut state, first, second) = floating_launch_fixture();
-        let saved_output = if restore_on_focused_output {
-            &second
-        } else {
-            &first
-        };
-        let saved_work = state.output_bounds_for(saved_output).unwrap();
-        let saved = Rect::new(saved_work.x + 100., saved_work.y + 80., 240., 160.);
-        state.floating_memory.save(
-            "dev.ferese.Settings".into(),
-            crate::floating::Remembered::new(saved_output.name(), saved, saved_work),
+        state.space.map_output(&second, (second_x, 0));
+        let owner = state.output_ids[&second];
+        let workspace = state.output_workspaces.active_workspace(owner).unwrap();
+        state.activate_output_workspace(owner, workspace);
+        let (window, _wire) = window(&mut state, &mut events, 0xff112233);
+        let id = state.windows.ids()[&window];
+        let work = state.output_bounds_for(&second).unwrap();
+        let saved = Rect::new(work.x + 100., work.y + 80., 240., 160.);
+        state.windows.update(id, |record| {
+            record.floating_memory =
+                Some(crate::floating::Remembered::new(second.name(), saved, work));
+        });
+        let focused = state.output_ids[&first];
+        state.activate_output_workspace(
+            focused,
+            state.output_workspaces.active_workspace(focused).unwrap(),
         );
-        // Keep the pointer on the launch output to isolate saved-placement
-        // redirection from the separate keyboard-versus-pointer regression.
-        let pointer = state.seat.get_pointer().unwrap();
-        pointer.motion(
-            &mut state,
-            None,
-            &MotionEvent {
-                location: (900., 100.).into(),
-                serial: SERIAL_COUNTER.next_serial(),
-                time: smithay::backend::input::InputTime::from_millis(1),
+        state.apply_window_rule_result(
+            &window,
+            crate::window_rules::WindowRuleResult {
+                floating: Some(true),
+                ..Default::default()
             },
         );
-        state.focus_output_at(pointer.current_location());
-        let output_id = state.output_ids[&second];
-        let destination = state.output_workspaces.active_workspace(output_id).unwrap();
-        let (window, _wire) = super::capture_privacy::tests::window_with_app_id(
-            &mut state,
-            &mut events,
-            0xff112233,
-            "dev.ferese.Settings",
-        );
-        let id = state.windows.ids()[&window];
-        assert_eq!(state.output_workspaces.focused_output(), Some(output_id));
-        assert_eq!(state.workspaces.workspace_for_window(id), Some(destination));
-        let rect = state.windows.geometry(&id).unwrap().logical;
-        let bounds = state.output_bounds_for(&second).unwrap();
-        assert_eq!(crate::floating::intersection(rect, bounds), Some(rect));
-        if restore_on_focused_output {
-            assert_eq!(rect, saved);
-        } else {
-            assert_eq!((rect.width, rect.height), (64., 48.));
-        }
+        assert_eq!(state.output_workspaces.focused_output(), Some(focused));
+        assert_eq!(state.workspaces.workspace_for_window(id), Some(workspace));
+        assert_eq!(state.windows.geometry(&id).unwrap().logical, saved);
     }
 }
 
