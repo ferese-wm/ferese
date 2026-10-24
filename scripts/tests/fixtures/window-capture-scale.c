@@ -18,6 +18,8 @@ static struct xdg_wm_base *wm;
 static struct wp_viewporter *viewporter;
 static struct wl_surface *surface;
 static struct wl_buffer *buffer;
+static int logical_width = 640;
+static int logical_height = 480;
 
 static void ping(void *data, struct xdg_wm_base *base, uint32_t serial) {
     (void)data;
@@ -49,7 +51,7 @@ static const struct wl_registry_listener registry_listener = {global, removed};
 static void configure(void *data, struct xdg_surface *xdg, uint32_t serial) {
     (void)data;
     xdg_surface_ack_configure(xdg, serial);
-    xdg_surface_set_window_geometry(xdg, 0, 0, 640, 480);
+    xdg_surface_set_window_geometry(xdg, 0, 0, logical_width, logical_height);
     wl_surface_attach(surface, buffer, 0, 0);
     wl_surface_damage_buffer(surface, 0, 0, INT32_MAX, INT32_MAX);
     wl_surface_commit(surface);
@@ -73,9 +75,15 @@ int main(int argc, char **argv) {
     if (wl_display_roundtrip(display) < 0 || !compositor || !shm || !wm || !viewporter) return 3;
     int integer = !strcmp(argv[1], "integer");
     int fractional = !strcmp(argv[1], "fractional");
+    int rounded = !strcmp(argv[1], "fractional-rounded");
+    int ceiled = !strcmp(argv[1], "fractional-ceiled");
     int cropped = !strcmp(argv[1], "cropped");
-    int width = fractional ? 1120 : 1280;
-    int height = fractional ? 840 : 960;
+    if (rounded || ceiled) {
+        logical_width = 2182;
+        logical_height = 1195;
+    }
+    int width = rounded || ceiled ? 3819 : fractional ? 1120 : 1280;
+    int height = rounded ? 2091 : ceiled ? 2092 : fractional ? 840 : 960;
     int fd = memfd_create("window-capture-scale", MFD_CLOEXEC);
     size_t bytes = (size_t)width * height * 4;
     if (fd < 0 || ftruncate(fd, bytes)) return 4;
@@ -83,7 +91,8 @@ int main(int argc, char **argv) {
     if (pixels == MAP_FAILED) return 5;
     for (int y = 0; y < height; y++)
         for (int x = 0; x < width; x++)
-            pixels[y * width + x] = x % 2 ? 0xffffffff : 0xff000000;
+            pixels[y * width + x] = (x + ((rounded || ceiled) ? y : 0)) % 2
+                ? 0xffffffff : 0xff000000;
     struct wl_shm_pool *pool = wl_shm_create_pool(shm, fd, bytes);
     buffer = wl_shm_pool_create_buffer(pool, 0, width, height, width * 4, WL_SHM_FORMAT_ARGB8888);
     wl_shm_pool_destroy(pool);
@@ -116,7 +125,7 @@ int main(int argc, char **argv) {
         wl_surface_set_buffer_scale(surface, 2);
     } else {
         struct wp_viewport *viewport = wp_viewporter_get_viewport(viewporter, surface);
-        wp_viewport_set_destination(viewport, 640, 480);
+        wp_viewport_set_destination(viewport, logical_width, logical_height);
         if (cropped)
             wp_viewport_set_source(viewport, wl_fixed_from_int(320), wl_fixed_from_int(240),
                                    wl_fixed_from_int(640), wl_fixed_from_int(480));

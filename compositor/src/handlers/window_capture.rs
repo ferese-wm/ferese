@@ -27,9 +27,34 @@ fn capture_scale(output_scale: f64, buffer_scale: i32, view: SurfaceView) -> f64
     if view.dst.w <= 0 || view.dst.h <= 0 {
         return output_scale;
     }
-    let native_x = view.src.size.w * f64::from(buffer_scale) / f64::from(view.dst.w);
-    let native_y = view.src.size.h * f64::from(buffer_scale) / f64::from(view.dst.h);
-    output_scale.max(native_x).max(native_y)
+    let width = view.src.size.w * f64::from(buffer_scale);
+    let height = view.src.size.h * f64::from(buffer_scale);
+    let logical_width = f64::from(view.dst.w);
+    let logical_height = f64::from(view.dst.h);
+    let matches_native = |scale: f64| {
+        (logical_width * scale).round() == width && (logical_height * scale).round() == height
+    };
+    // Fractional clients round their backing dimensions independently. Taking
+    // the larger density can add a pixel on the other axis and filter every
+    // row or column, even though the client already rendered at this scale.
+    if matches_native(output_scale) {
+        return output_scale;
+    }
+    let scale = output_scale
+        .max(width / logical_width)
+        .max(height / logical_height);
+    if matches_native(scale) {
+        return scale;
+    }
+    // Prefer a common density whose rounded dimensions preserve both axes.
+    // Stay strictly below the upper rounding boundary, including FP error.
+    let upper = ((width + 0.5) / logical_width).min((height + 0.5) / logical_height);
+    let adjusted = upper * (1.0 - 8.0 * f64::EPSILON);
+    if adjusted >= output_scale && matches_native(adjusted) {
+        adjusted
+    } else {
+        scale
+    }
 }
 
 #[derive(Debug, Default)]
@@ -619,6 +644,23 @@ pub(crate) mod tests {
             offset: (0, 0).into(),
         };
         assert_eq!(capture_scale(1.75, 1, cropped), 1.75);
+    }
+
+    #[test]
+    fn sharing_preserves_independently_rounded_fractional_buffers() {
+        for (width, height) in [(3819., 2091.), (3819., 2092.)] {
+            let view = SurfaceView {
+                src: Rectangle::from_size((width, height).into()),
+                dst: (2182, 1195).into(),
+                offset: (0, 0).into(),
+            };
+            for output_scale in [1.25, 1.5, 1.75] {
+                let scale = capture_scale(output_scale, 1, view);
+                assert!(scale >= output_scale);
+                assert_eq!((2182. * scale).round(), width);
+                assert_eq!((1195. * scale).round(), height);
+            }
+        }
     }
 
     /// Exercise both asynchronous publication boundaries using real resources.

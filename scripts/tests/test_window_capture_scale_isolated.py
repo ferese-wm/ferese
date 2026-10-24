@@ -96,7 +96,9 @@ class WindowCaptureScale(unittest.TestCase):
                                     "an integer 2x host masks the original downsampling bug")
                     for mode, density in [("integer", 2), ("viewport", 2),
                                           ("fractional", 1.75), ("cropped", 1),
-                                          ("subsurface", 2), ("subsurface-outside", 1)]:
+                                          ("subsurface", 2), ("subsurface-outside", 1),
+                                          ("fractional-rounded", 1.75),
+                                          ("fractional-ceiled", 1.75)]:
                         with self.subTest(mode=mode, output_scale=scale):
                             client = launch([str(root / "client"), mode], stdin=subprocess.PIPE)
                             window = wait_for(lambda: next((w for w in call("windows")
@@ -109,6 +111,10 @@ class WindowCaptureScale(unittest.TestCase):
                             ready = json.loads(worker.stdout.readline())
                             expected = (round(640 * max(scale, density)),
                                         round(480 * max(scale, density)))
+                            if mode == "fractional-rounded":
+                                expected = (3819, 2091)
+                            elif mode == "fractional-ceiled":
+                                expected = (3819, 2092)
                             self.assertEqual((ready["width"], ready["height"]), expected,
                                              "window sharing discarded native backing pixels")
                             raw = root / f"{mode}.bgrx"
@@ -134,6 +140,17 @@ class WindowCaptureScale(unittest.TestCase):
                                                  "content outside the window was captured")
                             elif density >= scale:
                                 for index in (0, 2):
+                                    if mode.startswith("fractional-"):
+                                        for y in (0, height // 2, height - 1):
+                                            start = (index * width * height + y * width) * 4
+                                            row = pixels[start:start + width * 4]
+                                            expected_row = b"".join(
+                                                bytes((255, 255, 255, 255)) if (x + y) % 2
+                                                else bytes((0, 0, 0, 255))
+                                                for x in range(width))
+                                            self.assertEqual(row, expected_row,
+                                                             "rounded native pixels were filtered")
+                                        continue
                                     start = (index * width * height + height // 2 * width) * 4
                                     row = pixels[start:start + width * 4]
                                     self.assertEqual(row, bytes((0, 0, 0, 255, 255, 255, 255, 255)) * (width // 2),

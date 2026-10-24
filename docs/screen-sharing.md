@@ -35,6 +35,9 @@ the captured surface tree when it exceeds the display scale. For example, a 2×
 application buffer stays at 2× in the stream on a 1.75× display, avoiding a
 fractional downsample before the recording app scales it. The video size follows
 window resizes and backing buffer density changes; closing the window ends sharing.
+At fractional scales, clients can round the two backing dimensions separately.
+Capture preserves those pixel dimensions rather than adding a row or column
+by applying the larger axis density to both axes, which would soften text.
 
 The picker follows your shell colors, font, corners, opacity, and blur.
 
