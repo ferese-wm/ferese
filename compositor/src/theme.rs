@@ -1,3 +1,4 @@
+use std::cell::OnceCell;
 use std::collections::{HashMap, HashSet};
 use std::io;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
@@ -138,6 +139,7 @@ impl Default for LiveTheme {
 pub(crate) struct Engine {
     pub(crate) live: LiveTheme,
     pub(crate) revision: u64,
+    event_value: OnceCell<Arc<Value>>,
     waiters: HashMap<u64, (u64, mpsc::SyncSender<Response>)>,
     watcher: Option<RecommendedWatcher>,
     watched_directories: HashSet<PathBuf>,
@@ -207,7 +209,24 @@ impl Engine {
         serde_json::to_value(snapshot).expect("serializable theme snapshot")
     }
 
+    /// Share the logical event payload until the next theme publication.
+    pub(crate) fn event_value(&self) -> Arc<Value> {
+        self.event_value
+            .get_or_init(|| {
+                Arc::new(json!({
+                    "mode": self.live.mode,
+                    "theme": self.live.theme,
+                    "families": self.live.families,
+                    "warnings": self.live.warnings,
+                    "error": self.live.error,
+                    "fallback_note": self.live.fallback_note,
+                }))
+            })
+            .clone()
+    }
+
     fn publish(&mut self) {
+        self.event_value.take();
         self.revision = self.revision.wrapping_add(1);
         let value = self.value();
         for (_, (id, response)) in self.waiters.drain() {
@@ -216,6 +235,7 @@ impl Engine {
     }
 
     pub(crate) fn startup_failed(&mut self, path: Option<&Path>, error: String) {
+        self.event_value.take();
         let path = path
             .map(|path| path.display().to_string())
             .unwrap_or_else(|| "configuration".into());
@@ -791,6 +811,42 @@ mod tests {
             Some("unknown field group_surface")
         );
         assert_eq!(engine.revision, 3);
+    }
+
+    #[test]
+    fn event_values_reuse_storage_and_follow_theme_and_error_publication() {
+        let mut engine = Engine::default();
+        let original = engine.event_value();
+        let mut expected = engine.value();
+        for key in ["version", "revision", "presented"] {
+            expected.as_object_mut().unwrap().remove(key);
+        }
+        assert_eq!(original.as_ref(), &expected);
+        assert!(Arc::ptr_eq(&original, &engine.event_value()));
+
+        engine.live.mode = Mode::Light;
+        engine.publish();
+        let light = engine.event_value();
+        assert!(!Arc::ptr_eq(&original, &light));
+        assert_eq!(light["mode"], "light");
+        assert_eq!(
+            original["mode"], "dark",
+            "queued snapshots remain immutable"
+        );
+
+        engine.reject("invalid theme".into());
+        let rejected = engine.event_value();
+        assert_eq!(rejected["error"], "invalid theme");
+        assert!(light["error"].is_null());
+        engine.startup_failed(None, "invalid startup configuration".into());
+        let startup = engine.event_value();
+        assert!(
+            startup["error"]
+                .as_str()
+                .unwrap()
+                .contains("invalid startup configuration")
+        );
+        assert!(Arc::ptr_eq(&startup, &engine.event_value()));
     }
 
     #[test]

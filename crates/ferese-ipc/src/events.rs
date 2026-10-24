@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -16,15 +18,27 @@ pub struct LockState {
     pub sleeping: bool,
 }
 
+/// Window metadata included in desktop event snapshots.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct Window {
+    pub id: u64,
+    pub app_id: String,
+    pub title: String,
+    pub focused: bool,
+    pub workspace: u64,
+    pub floating: bool,
+    pub fullscreen: bool,
+}
+
 /// A coherent logical desktop view. Desktop objects are redacted while locked.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub struct Snapshot {
     pub outputs: Value,
     pub workspaces: Value,
-    pub windows: Value,
+    pub windows: Vec<Window>,
     pub focus: Value,
     pub config: ConfigState,
-    pub theme: Value,
+    pub theme: Arc<Value>,
     pub lock: LockState,
 }
 
@@ -35,7 +49,7 @@ pub enum Change {
     Snapshot { desktop: Box<Snapshot> },
     OutputsChanged { outputs: Value },
     WorkspacesChanged { workspaces: Value },
-    WindowsChanged { windows: Value },
+    WindowsChanged { windows: Vec<Window> },
     FocusChanged { focus: Value },
     ConfigChanged { config: ConfigState },
     ThemeChanged { theme: Value },
@@ -91,9 +105,9 @@ impl Snapshot {
                 config: self.config.clone(),
             });
         }
-        if self.theme != previous.theme {
+        if !Arc::ptr_eq(&self.theme, &previous.theme) && self.theme != previous.theme {
             changes.push(Change::ThemeChanged {
-                theme: self.theme.clone(),
+                theme: self.theme.as_ref().clone(),
             });
         }
         if self.lock != previous.lock {
@@ -108,6 +122,75 @@ impl Snapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn typed_windows_preserve_snapshot_and_replacement_wire_fields() {
+        let windows = serde_json::json!([{
+            "id": u64::MAX,
+            "app_id": "org.example.Editor.desktop",
+            "title": "Chapter \"one\"\n第二课",
+            "focused": true,
+            "workspace": u64::MAX - 1,
+            "floating": true,
+            "fullscreen": false
+        }]);
+        let snapshot = serde_json::json!({
+            "outputs": [], "workspaces": [], "windows": windows,
+            "focus": {"window": u64::MAX},
+            "config": {"revision": 0, "error": null},
+            "theme": null, "lock": {"phase": "unlocked", "sleeping": false}
+        });
+        for change in [
+            serde_json::json!({"type": "snapshot", "desktop": snapshot}),
+            serde_json::json!({"type": "windows_changed", "windows": windows}),
+        ] {
+            let decoded: Change = serde_json::from_value(change.clone()).unwrap();
+            assert_eq!(serde_json::to_value(&decoded).unwrap(), change);
+            let decoded_windows = match decoded {
+                Change::Snapshot { desktop } => desktop.windows,
+                Change::WindowsChanged { windows } => windows,
+                _ => unreachable!(),
+            };
+            assert_eq!(
+                decoded_windows,
+                vec![Window {
+                    id: u64::MAX,
+                    app_id: "org.example.Editor.desktop".into(),
+                    title: "Chapter \"one\"\n第二课".into(),
+                    focused: true,
+                    workspace: u64::MAX - 1,
+                    floating: true,
+                    fullscreen: false,
+                }]
+            );
+        }
+    }
+
+    #[test]
+    fn shared_themes_preserve_the_wire_format_and_compare_by_value_after_replacement() {
+        let wire = serde_json::json!({
+            "outputs": [], "workspaces": [], "windows": [], "focus": null,
+            "config": {"revision": 0, "error": null},
+            "theme": {"mode": "dark"},
+            "lock": {"phase": "unlocked", "sleeping": false}
+        });
+        let snapshot: Snapshot = serde_json::from_value(wire.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&snapshot).unwrap(), wire);
+        let mut next = snapshot.clone();
+        assert!(Arc::ptr_eq(&snapshot.theme, &next.theme));
+        assert!(next.changes_since(&snapshot).is_empty());
+        next.theme = Arc::new(next.theme.as_ref().clone());
+        assert!(!Arc::ptr_eq(&snapshot.theme, &next.theme));
+        assert!(next.changes_since(&snapshot).is_empty());
+        next.theme = serde_json::json!({"mode": "light"}).into();
+        assert_eq!(
+            next.changes_since(&snapshot),
+            [Change::ThemeChanged {
+                theme: serde_json::json!({"mode": "light"})
+            }]
+        );
+    }
+
     #[test]
     fn events_round_trip_with_an_independent_schema_version() {
         let event = Event {

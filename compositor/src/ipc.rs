@@ -1630,24 +1630,31 @@ impl Ferese {
             }
         }
         let windows = if locked {
-            json!([])
+            Vec::new()
         } else {
-            Value::Array(self.windows.ordered_ids().filter_map(|id| {
-                let record = self.windows.record(id)?;
-                let workspace = self.workspaces.workspace_for_window(id)?;
-                Some(json!({
-                    "id": id.0, "app_id": record.app_id, "title": record.title,
-                    "focused": self.focused_window == Some(id), "workspace": workspace.0,
-                    "floating": matches!(self.workspaces.placement(id), Some(ferese_core::WindowPlacement::Floating { .. })),
-                    "fullscreen": self.workspaces.workspace(workspace).is_some_and(|workspace| workspace.fullscreen == Some(id)),
-                }))
-            }).collect())
+            self.windows
+                .ordered_ids()
+                .filter_map(|id| {
+                    let record = self.windows.record(id)?;
+                    let workspace = self.workspaces.workspace_for_window(id)?;
+                    Some(ferese_ipc::events::Window {
+                        id: id.0,
+                        app_id: record.app_id.clone(),
+                        title: record.title.clone(),
+                        focused: self.focused_window == Some(id),
+                        workspace: workspace.0,
+                        floating: matches!(
+                            self.workspaces.placement(id),
+                            Some(ferese_core::WindowPlacement::Floating { .. })
+                        ),
+                        fullscreen: self
+                            .workspaces
+                            .workspace(workspace)
+                            .is_some_and(|workspace| workspace.fullscreen == Some(id)),
+                    })
+                })
+                .collect()
         };
-        let live = &self.theme_engine.live;
-        let theme = json!({
-            "mode": live.mode, "theme": live.theme, "families": live.families,
-            "warnings": live.warnings, "error": live.error, "fallback_note": live.fallback_note,
-        });
         ferese_ipc::events::Snapshot {
             outputs,
             workspaces: if locked {
@@ -1669,7 +1676,7 @@ impl Ferese {
                 revision: self.ipc_events.config_revision,
                 error: self.theme_engine.live.error.clone(),
             },
-            theme,
+            theme: self.theme_engine.event_value(),
             lock: self.session_lock.event_state(),
         }
     }
@@ -2512,7 +2519,15 @@ mod tests {
                 generation: 1,
                 last: true,
                 change: ferese_ipc::events::Change::WindowsChanged {
-                    windows: json!([{"title": "x".repeat(900_000)}]),
+                    windows: vec![ferese_ipc::events::Window {
+                        id: 1,
+                        app_id: "org.example.Test".into(),
+                        title: "x".repeat(900_000),
+                        focused: false,
+                        workspace: 1,
+                        floating: false,
+                        fullscreen: false,
+                    }],
                 },
             }))
             .unwrap();

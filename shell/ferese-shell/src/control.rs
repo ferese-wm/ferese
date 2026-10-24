@@ -520,7 +520,7 @@ impl Dispatch<FereseShellV1, ()> for ControlState {
             {
                 let _ = state
                     .sender
-                    .send(ControlUpdate::Snapshot(state.pending.clone()));
+                    .send(ControlUpdate::Snapshot(std::mem::take(&mut state.pending)));
             }
             ferese_shell_v1::Event::LogoutRequested {
                 serial,
@@ -654,6 +654,107 @@ mod tests {
             title: "Same title".into(),
             state: flags.into(),
         }
+    }
+
+    #[test]
+    #[ignore = "manual release benchmark for shell snapshot handoff"]
+    fn profile_snapshot_handoff() {
+        let (control, mut state, queue, _peer) = control_fixture();
+        for window_count in [1, 20, 100] {
+            let template = ShellSnapshot {
+                windows: (0..window_count)
+                    .map(|id| WindowSnapshot {
+                        id,
+                        workspace: 1,
+                        geometry: Some([0., 0., 800., 600.]),
+                        app_id: "org.example.Editor".into(),
+                        title: format!("Document {id} — Ferese workspace"),
+                        focused: id == 0,
+                        urgent: false,
+                        fullscreen: false,
+                        maximized: false,
+                        floating: false,
+                    })
+                    .collect(),
+                ..ShellSnapshot::default()
+            };
+            for run in 1..=3 {
+                // Decoding is outside the timed handoff, as it is unchanged.
+                let snapshots: Vec<_> = (0..2000).map(|_| template.clone()).collect();
+                let started = std::time::Instant::now();
+                for snapshot in snapshots {
+                    state.pending = snapshot;
+                    state.serial = Some(1);
+                    dispatch_event(
+                        &control,
+                        &mut state,
+                        &queue,
+                        ferese_shell_v1::Event::SnapshotEnd { serial: 1 },
+                    );
+                    std::hint::black_box(control.poll().snapshot.unwrap());
+                }
+                // Include destruction of the last pending snapshot in both builds.
+                state.pending = ShellSnapshot::default();
+                eprintln!(
+                    "snapshot_handoff_benchmark windows={window_count} run={run} iterations=2000 elapsed_us={}",
+                    started.elapsed().as_micros()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn completed_snapshots_transfer_their_storage_and_remain_independent() {
+        let (control, mut state, queue, _peer) = control_fixture();
+        dispatch_event(
+            &control,
+            &mut state,
+            &queue,
+            ferese_shell_v1::Event::SnapshotBegin { serial: 1 },
+        );
+        dispatch_event(&control, &mut state, &queue, window_event(10, 0));
+        let windows = state.pending.windows.as_ptr();
+        let app_id = state.pending.windows[0].app_id.as_ptr();
+        let title = state.pending.windows[0].title.as_ptr();
+        assert!(control.poll().snapshot.is_none());
+        dispatch_event(
+            &control,
+            &mut state,
+            &queue,
+            ferese_shell_v1::Event::SnapshotEnd { serial: 1 },
+        );
+        let first = control.poll().snapshot.unwrap();
+        assert_eq!(first.windows.as_ptr(), windows);
+        assert_eq!(first.windows[0].app_id.as_ptr(), app_id);
+        assert_eq!(first.windows[0].title.as_ptr(), title);
+        for (begin, end, id) in [(2, 99, 20), (3, 3, 30)] {
+            dispatch_event(
+                &control,
+                &mut state,
+                &queue,
+                ferese_shell_v1::Event::SnapshotBegin { serial: begin },
+            );
+            dispatch_event(&control, &mut state, &queue, window_event(id, 0));
+            assert!(control.poll().snapshot.is_none());
+            dispatch_event(
+                &control,
+                &mut state,
+                &queue,
+                ferese_shell_v1::Event::SnapshotEnd { serial: end },
+            );
+            let next = control.poll().snapshot;
+            if begin == end {
+                let next = next.unwrap();
+                assert_eq!(next.windows.len(), 1);
+                assert_eq!(next.windows[0].id, id);
+            } else {
+                assert!(next.is_none(), "mismatched serials must not publish");
+            }
+        }
+        assert_eq!(first.windows.len(), 1);
+        assert_eq!(first.windows[0].id, 10);
+        assert_eq!(first.windows[0].app_id, "dev.ferese.Test");
+        assert_eq!(first.windows[0].title, "Same title");
     }
 
     #[test]

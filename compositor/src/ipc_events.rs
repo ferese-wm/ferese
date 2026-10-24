@@ -63,6 +63,9 @@ impl Subscribers {
                 .values()
                 .any(|subscriber| subscriber.initial)
         {
+            // Keep the latest shared payload even when a theme publication
+            // produced equal logical values, so later comparisons stay cheap.
+            self.previous = self.active().then_some(snapshot);
             return;
         }
         self.generation = self.generation.wrapping_add(1);
@@ -144,14 +147,111 @@ mod tests {
     use serde_json::json;
     use std::sync::mpsc::{TryRecvError, sync_channel};
 
+    #[test]
+    #[ignore = "manual release benchmark for IPC snapshot construction"]
+    fn profile_unchanged_event_snapshots() {
+        let name = "ipc_events::tests::profile_unchanged_event_snapshots";
+        if !crate::startup_tests::private_runtime(name) {
+            return;
+        }
+        let mut events = smithay::reexports::calloop::EventLoop::try_new().unwrap();
+        let state = crate::startup_tests::state(&mut events);
+        for _ in 0..100 {
+            std::hint::black_box(state.ipc_event_snapshot());
+        }
+        for run in 1..=3 {
+            let started = std::time::Instant::now();
+            for _ in 0..2000 {
+                std::hint::black_box(state.ipc_event_snapshot());
+            }
+            eprintln!(
+                "event_snapshot_benchmark run={run} iterations=2000 elapsed_us={}",
+                started.elapsed().as_micros()
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "manual release benchmark for populated IPC publication"]
+    fn profile_populated_event_publication() {
+        use crate::state::DesktopOutput;
+        use smithay::output::{Mode, Output, PhysicalProperties, Scale, Subpixel};
+        use smithay::utils::Transform;
+
+        if !crate::startup_tests::private_runtime(
+            "ipc_events::tests::profile_populated_event_publication",
+        ) {
+            return;
+        }
+        let mut events = smithay::reexports::calloop::EventLoop::try_new().unwrap();
+        let mut state = crate::startup_tests::state(&mut events);
+        let output = DesktopOutput {
+            output: Output::new(
+                "benchmark".into(),
+                PhysicalProperties {
+                    serial_number: String::new(),
+                    size: (0, 0).into(),
+                    subpixel: Subpixel::Unknown,
+                    make: "test".into(),
+                    model: "test".into(),
+                },
+            ),
+            identity: "benchmark".into(),
+            mode: Mode {
+                size: (1920, 1080).into(),
+                refresh: 60_000,
+            },
+            transform: Transform::Normal,
+            scale: Scale::Fractional(1.0),
+            position: (0, 0).into(),
+        };
+        state.begin_desktop_transition();
+        let changes = state.publish_desktop(vec![output]).unwrap();
+        state.finish_desktop_transition(changes);
+        let mut clients = Vec::new();
+        for window_count in [0, 1, 20, 100] {
+            while clients.len() < window_count {
+                let (window, client) =
+                    crate::state::test_window(&mut state, &mut events, 0xff204060);
+                let id = state.windows.ids()[&window];
+                let record = state.windows.record_mut(id).unwrap();
+                record.app_id = "org.example.Editor".into();
+                record.title = format!("Document {} — publication benchmark", id.0);
+                clients.push(client);
+            }
+            let (sender, receive) = sync_channel(QUEUE_CAPACITY);
+            state.ipc_events.subscribe(1, sender).unwrap();
+            state.publish_ipc_events();
+            assert!(matches!(
+                receive.try_recv().unwrap().change,
+                Change::Snapshot { .. }
+            ));
+            for _ in 0..100 {
+                state.publish_ipc_events();
+            }
+            for run in 1..=3 {
+                let started = std::time::Instant::now();
+                for _ in 0..2000 {
+                    state.publish_ipc_events();
+                }
+                eprintln!(
+                    "event_publication_benchmark windows={window_count} run={run} iterations=2000 elapsed_us={}",
+                    started.elapsed().as_micros()
+                );
+            }
+            assert!(matches!(receive.try_recv(), Err(TryRecvError::Empty)));
+            state.ipc_events.remove(1);
+        }
+    }
+
     fn snapshot() -> Snapshot {
         Snapshot {
             outputs: json!([]),
             workspaces: json!([]),
-            windows: json!([]),
+            windows: Vec::new(),
             focus: json!(null),
             config: ConfigState::default(),
-            theme: json!({}),
+            theme: json!({}).into(),
             lock: LockState {
                 phase: "unlocked".into(),
                 sleeping: false,
@@ -184,6 +284,24 @@ mod tests {
                 .all(|event| event.generation == events[0].generation)
         );
         assert!(!events[0].last && !events[1].last && events[2].last);
+    }
+
+    #[test]
+    fn equal_theme_publications_retain_shared_storage_without_emitting_events() {
+        let mut hub = Subscribers::default();
+        let (sender, receive) = sync_channel(QUEUE_CAPACITY);
+        hub.subscribe(1, sender).unwrap();
+        let first = snapshot();
+        hub.publish(first.clone());
+        receive.try_recv().unwrap();
+        let generation = hub.generation;
+        let mut next = first;
+        next.theme = Arc::new(next.theme.as_ref().clone());
+        let payload = next.theme.clone();
+        hub.publish(next);
+        assert!(matches!(receive.try_recv(), Err(TryRecvError::Empty)));
+        assert_eq!(hub.generation, generation);
+        assert!(Arc::ptr_eq(&hub.previous.as_ref().unwrap().theme, &payload));
     }
 
     #[test]
@@ -240,10 +358,18 @@ mod tests {
         receive.try_recv().unwrap();
         state.outputs = json!([{"id": 1}]);
         state.workspaces = json!([{"output": 1}]);
-        state.windows = json!([{"id": 7, "title": "Terminal"}]);
+        state.windows = vec![ferese_ipc::events::Window {
+            id: 7,
+            app_id: "org.example.Terminal".into(),
+            title: "Terminal".into(),
+            focused: false,
+            workspace: 1,
+            floating: false,
+            fullscreen: false,
+        }];
         state.focus = json!({"window": 7});
         state.config.revision = 1;
-        state.theme = json!({"mode": "light"});
+        state.theme = json!({"mode": "light"}).into();
         state.lock.phase = "locked".into();
         hub.publish(state);
         let events = receive.try_iter().collect::<Vec<_>>();

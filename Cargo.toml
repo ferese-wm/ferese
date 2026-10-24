@@ -61,7 +61,7 @@ smithay = { git = "https://github.com/Smithay/smithay", rev = "8a270232f1bfc416c
 ] }
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
-serde = { version = "1.0.228", features = ["derive"] }
+serde = { version = "1.0.228", features = ["derive", "rc"] }
 serde_json = "1.0.145"
 tempfile = "3.23.0"
 xcursor = "0.3.11"
