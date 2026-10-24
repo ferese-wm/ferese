@@ -29,6 +29,7 @@ mod portal_session;
 mod portal_shortcuts;
 mod presentation;
 mod presentation_policy;
+mod priority;
 mod private_client;
 mod process;
 mod reload;
@@ -82,6 +83,9 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let launch = LaunchConfig::from_environment()
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
+    if launch.backend == backends::BackendKind::Drm {
+        priority::init();
+    }
     let config_path = config::config_path();
     let startup = config::startup(config_path.as_deref())?;
     if let Some(error) = &startup.error {
