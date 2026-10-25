@@ -550,6 +550,11 @@ fn encode(
         let mut finishing = None;
         let started = Instant::now();
         let mut failure = None;
+        // Aggregator-based muxers schedule live audio without waiting for video.
+        // CollectPads-based muxers need an occasional frame to release audio.
+        let needs_video_heartbeat = gst::glib::Type::from_name("GstAggregator")
+            .is_none_or(|aggregator| !mux.type_().is_a(aggregator));
+        let mut last_heartbeat = gst::ClockTime::ZERO;
 
         loop {
             if stop.load(Ordering::Relaxed) && finishing.is_none() {
@@ -596,6 +601,38 @@ fn encode(
                             .ok_or("Audio queue has no input")?
                             .send_event(gst::event::Eos::new());
                     }
+                }
+            }
+
+            if finishing.is_none()
+                && needs_video_heartbeat
+                && !audio_inputs.is_empty()
+                && let Some(now) = pipeline.current_running_time()
+                && now > last_heartbeat + gst::ClockTime::SECOND
+            {
+                let input = queue
+                    .static_pad("sink")
+                    .ok_or("Encoder queue has no input")?;
+                let _input_lock = input.stream_lock();
+                let last = last_frame
+                    .lock()
+                    .expect("last recording frame mutex poisoned");
+                if let Some((buffer, caps)) = last.as_ref()
+                    && *caps == input.current_caps()
+                    && buffer
+                        .pts()
+                        .is_some_and(|pts| now > pts + gst::ClockTime::SECOND)
+                {
+                    // Reuse owned pixels at 1 Hz; never request another capture
+                    // or let a sparse video track stall the bounded audio queues.
+                    let mut image = buffer.clone();
+                    let header = image.make_mut();
+                    header.set_pts(now);
+                    header.set_dts(None);
+                    header.set_duration(None);
+                    header.unset_flags(gst::BufferFlags::DISCONT);
+                    let _ = input.chain(image);
+                    last_heartbeat = now;
                 }
             }
 
@@ -694,7 +731,8 @@ mod tests {
     #[ignore = "requires GStreamer video plugins"]
     fn encoder_preserves_the_duration_of_a_static_capture() {
         gst::init().unwrap();
-        for (source_eos, with_audio) in [(false, false), (true, false), (false, true)] {
+        for (source_eos, with_audio) in [(false, false), (true, false), (false, true), (true, true)]
+        {
             let directory = tempfile::tempdir().unwrap();
             let source = gst::ElementFactory::make("appsrc")
                 .property("is-live", true)
@@ -774,6 +812,8 @@ mod tests {
             }
             let end = Arc::new(std::sync::atomic::AtomicU64::new(0));
             let observed = end.clone();
+            let frames = Arc::new(std::sync::atomic::AtomicU64::new(0));
+            let observed_frames = frames.clone();
             decoder
                 .by_name("video")
                 .unwrap()
@@ -781,6 +821,7 @@ mod tests {
                 .unwrap()
                 .add_probe(gst::PadProbeType::BUFFER, move |_, info| {
                     if let Some(buffer) = info.buffer() {
+                        observed_frames.fetch_add(1, Ordering::Relaxed);
                         let time = buffer.pts().unwrap_or(gst::ClockTime::ZERO)
                             + buffer.duration().unwrap_or(gst::ClockTime::ZERO);
                         observed.fetch_max(time.nseconds(), Ordering::Relaxed);
@@ -806,7 +847,16 @@ mod tests {
                     "static video interrupted audio: {} decoded bytes",
                     audio_bytes.load(Ordering::Relaxed)
                 );
+                assert!(
+                    end.load(Ordering::Relaxed) >= 3_500_000_000,
+                    "static video did not cover the audio recording"
+                );
             }
+            assert!(
+                frames.load(Ordering::Relaxed) <= 6,
+                "static capture encoded unnecessary duplicate frames: {}",
+                frames.load(Ordering::Relaxed)
+            );
             assert!(
                 end.load(Ordering::Relaxed) >= 1_000_000_000,
                 "recording lost the idle interval: last decoded frame ends at {} ns",
