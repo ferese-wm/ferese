@@ -1823,6 +1823,7 @@ dependencies = [
  "ferese-shape",
  "fontdb",
  "futures-lite",
+ "glam 0.33.12",
  "image",
  "jiff",
  "libc",

@@ -1,7 +1,7 @@
 use super::{
     AnimatedWindowRenderElement, Arc, AtomicBool, BlurRenderElement, Ferese, Fourcc, GlesRenderer,
-    GlesTexture, MaterialParameters, Offscreen, Output, Rectangle, Renderer, RoundedRect, Size,
-    Texture, blur_program, expanded_blur_region, framebuffer_capture_rect, framebuffer_clip_rect,
+    GlesTexture, MaterialParameters, Offscreen, Output, Rectangle, Renderer, RoundedRect, Texture,
+    blur_program, expanded_blur_region, framebuffer_capture_rect, framebuffer_clip_rect,
 };
 
 #[derive(Debug)]
@@ -79,7 +79,7 @@ pub(super) fn window_blur_element(
         .or_default()
         .blur;
     let capture_rect = framebuffer_capture_rect(parameters.sample_framebuffer);
-    let capture_size = Size::from((capture_rect[2], capture_rect[3]));
+    let capture_size = super::blur_cache::size(capture_rect, parameters.blur);
     if buffers
         .get(&key)
         .is_none_or(|cached| cached.element.texture.size() != capture_size)
@@ -94,9 +94,20 @@ pub(super) fn window_blur_element(
                     return None;
                 }
             };
+        let scratch =
+            match Offscreen::<GlesTexture>::create_buffer(renderer, Fourcc::Abgr8888, capture_size)
+            {
+                Ok(texture) => texture,
+                Err(error) => {
+                    tracing::warn!(%error, "window blur allocation failed");
+                    buffers.remove(&key);
+                    return None;
+                }
+            };
         let element = BlurRenderElement::new(
             texture,
-            program.0,
+            scratch,
+            program,
             &parameters,
             Arc::new(AtomicBool::new(true)),
         );

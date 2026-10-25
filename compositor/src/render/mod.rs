@@ -1,4 +1,5 @@
 mod backdrop;
+mod blur_cache;
 mod capture;
 mod closing;
 mod window_blur;
@@ -176,11 +177,12 @@ pub(crate) fn window_corner_shape(_window: &smithay::desktop::Window) -> CornerS
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct BlurProgram(GlesTexProgram);
+pub(crate) struct BlurProgram(GlesTexProgram, GlesTexProgram);
 
 #[derive(Clone, Debug)]
 struct BlurCapture {
     texture: GlesTexture,
+    scratch: GlesTexture,
     dirty: Arc<AtomicBool>,
     geometry: Rectangle<i32, Logical>,
 }
@@ -189,7 +191,9 @@ struct BlurCapture {
 struct BlurRenderElement {
     capture_dirty: Arc<AtomicBool>,
     texture: GlesTexture,
-    program: GlesTexProgram,
+    scratch: GlesTexture,
+    program: BlurProgram,
+    blur: f32,
     id: Id,
     backdrop: Arc<std::sync::Mutex<backdrop::Backdrop>>,
     geometry: Rectangle<i32, Logical>,
@@ -200,14 +204,17 @@ struct BlurRenderElement {
 impl BlurRenderElement {
     fn new(
         texture: GlesTexture,
-        program: GlesTexProgram,
+        scratch: GlesTexture,
+        program: BlurProgram,
         parameters: &MaterialParameters,
         capture_dirty: Arc<AtomicBool>,
     ) -> Self {
         Self {
             capture_dirty,
             texture,
+            scratch,
             program,
+            blur: parameters.blur,
             id: Id::new(),
             backdrop: Arc::default(),
             geometry: parameters.sample_geometry,
@@ -217,9 +224,12 @@ impl BlurRenderElement {
     }
 
     fn update(&mut self, parameters: &MaterialParameters) {
-        if self.capture_rect != framebuffer_capture_rect(parameters.sample_framebuffer) {
+        if self.capture_rect != framebuffer_capture_rect(parameters.sample_framebuffer)
+            || self.blur != parameters.blur
+        {
             self.capture_dirty.store(true, Ordering::Relaxed);
         }
+        self.blur = parameters.blur;
         self.geometry = parameters.sample_geometry;
         self.capture_rect = framebuffer_capture_rect(parameters.sample_framebuffer);
         self.uniforms = blur_uniforms(parameters).into();
@@ -284,61 +294,15 @@ impl RenderElement<GlesRenderer> for BlurRenderElement {
         opaque_regions: &[Rectangle<i32, Physical>],
         _cache: Option<&smithay::utils::user_data::UserDataMap>,
     ) -> Result<(), GlesError> {
-        let texture = self.texture.tex_id();
-        let [x, y, width, height] = self.capture_rect;
-        // Buffer-age restoration and unrelated partial damage must reuse the
-        // clean captured scene. Recapturing a partly repainted framebuffer
-        // would feed previous blurred pixels back into the blur.
         if self.capture_dirty.load(Ordering::Relaxed) {
-            // SAFETY: with_context makes this frame context current. GL writes into live local
-            // scalars, and the capture texture belongs to this renderer with the allocated
-            // framebuffer bounds.
-            let error = frame.with_context(|gl| unsafe {
-                gl.GetError();
-                let mut framebuffer = 0;
-                let mut previous_read_buffer = 0;
-                gl.GetIntegerv(
-                    smithay::backend::renderer::gles::ffi::READ_FRAMEBUFFER_BINDING,
-                    &mut framebuffer,
-                );
-                gl.GetIntegerv(
-                    smithay::backend::renderer::gles::ffi::READ_BUFFER,
-                    &mut previous_read_buffer,
-                );
-                gl.ReadBuffer(if framebuffer == 0 {
-                    smithay::backend::renderer::gles::ffi::BACK
-                } else {
-                    smithay::backend::renderer::gles::ffi::COLOR_ATTACHMENT0
-                });
-                gl.BindTexture(smithay::backend::renderer::gles::ffi::TEXTURE_2D, texture);
-                gl.TexParameteri(
-                    smithay::backend::renderer::gles::ffi::TEXTURE_2D,
-                    smithay::backend::renderer::gles::ffi::TEXTURE_WRAP_S,
-                    smithay::backend::renderer::gles::ffi::CLAMP_TO_EDGE as i32,
-                );
-                gl.TexParameteri(
-                    smithay::backend::renderer::gles::ffi::TEXTURE_2D,
-                    smithay::backend::renderer::gles::ffi::TEXTURE_WRAP_T,
-                    smithay::backend::renderer::gles::ffi::CLAMP_TO_EDGE as i32,
-                );
-                gl.CopyTexSubImage2D(
-                    smithay::backend::renderer::gles::ffi::TEXTURE_2D,
-                    0,
-                    0,
-                    0,
-                    x,
-                    y,
-                    width,
-                    height,
-                );
-                gl.BindTexture(smithay::backend::renderer::gles::ffi::TEXTURE_2D, 0);
-                let error = gl.GetError();
-                gl.ReadBuffer(previous_read_buffer as u32);
-                error
-            })?;
-            if error != smithay::backend::renderer::gles::ffi::NO_ERROR {
-                tracing::warn!(error, "backdrop framebuffer capture failed");
-            }
+            blur_cache::refresh(
+                frame,
+                &self.texture,
+                &self.scratch,
+                &self.program.1,
+                self.capture_rect,
+                self.blur,
+            )?;
             self.capture_dirty.store(false, Ordering::Relaxed);
         }
 
@@ -350,7 +314,7 @@ impl RenderElement<GlesRenderer> for BlurRenderElement {
             opaque_regions,
             Transform::Normal,
             1.0,
-            Some(&self.program),
+            Some(&self.program.0),
             &self.uniforms,
         )
     }
@@ -844,7 +808,6 @@ mod tests {
                 Uniform::new("material_radii", [0.0f32; 4]),
                 Uniform::new("texture_size", [32.0f32, 32.0]),
                 Uniform::new("capture_origin", [0.0f32, 0.0]),
-                Uniform::new("blur_radius", 12.0f32),
                 Uniform::new("presentation_alpha", 1.0f32),
                 Uniform::new("background_opacity", opacity),
                 Uniform::new("tint", [tint, tint, tint, strength]),

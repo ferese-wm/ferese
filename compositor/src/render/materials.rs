@@ -355,7 +355,7 @@ pub(super) fn material_element_with_role(
         .then(|| blur_program(&mut state.render, renderer))
         .flatten();
     let capture_rect = framebuffer_capture_rect(parameters.sample_framebuffer);
-    let capture_size = Size::from((capture_rect[2], capture_rect[3]));
+    let capture_size = super::blur_cache::size(capture_rect, parameters.blur);
     let output_id = state.output_id(output).or_else(|| {
         output
             .user_data()
@@ -380,11 +380,17 @@ pub(super) fn material_element_with_role(
                 error
             })
             .ok();
-            if let Some(texture) = texture {
+            let scratch = texture.as_ref().and_then(|_| {
+                Offscreen::<GlesTexture>::create_buffer(renderer, Fourcc::Abgr8888, capture_size)
+                    .map_err(|error| tracing::warn!(%error, "backdrop scratch allocation failed"))
+                    .ok()
+            });
+            if let (Some(texture), Some(scratch)) = (texture, scratch) {
                 buffers.captures.insert(
                     capture_key.clone(),
                     BlurCapture {
                         texture,
+                        scratch,
                         dirty: Arc::new(AtomicBool::new(true)),
                         geometry: sample_geometry,
                     },
@@ -409,7 +415,8 @@ pub(super) fn material_element_with_role(
         if let Some((capture, program)) = &capture {
             MaterialElement::Blur(BlurRenderElement::new(
                 capture.texture.clone(),
-                program.0.clone(),
+                capture.scratch.clone(),
+                program.clone(),
                 &parameters,
                 capture.dirty.clone(),
             ))
@@ -517,10 +524,29 @@ pub(super) fn blur_program(
     {
         return Some(program.clone());
     }
+    if !renderer
+        .capabilities()
+        .contains(&smithay::backend::renderer::gles::Capability::Blit)
+    {
+        return None;
+    }
     match renderer.compile_custom_texture_shader(corner_shader(BLUR_SHADER), &blur_uniform_names())
     {
         Ok(program) => {
-            let program = BlurProgram(program);
+            let filter = match renderer.compile_custom_texture_shader(
+                include_str!("shaders/blur_filter.frag"),
+                &[
+                    UniformName::new("cache_size", UniformType::_2f),
+                    UniformName::new("sample_step", UniformType::_2f),
+                ],
+            ) {
+                Ok(filter) => filter,
+                Err(error) => {
+                    tracing::warn!(%error, "backdrop filter unavailable");
+                    return None;
+                }
+            };
+            let program = BlurProgram(program, filter);
             resources.contexts.entry(context).or_default().blur = Some(program.clone());
             Some(program)
         }
@@ -537,7 +563,6 @@ pub(super) fn blur_uniform_names() -> Vec<UniformName<'static>> {
         UniformName::new("material_radii", UniformType::_4f),
         UniformName::new("texture_size", UniformType::_2f),
         UniformName::new("capture_origin", UniformType::_2f),
-        UniformName::new("blur_radius", UniformType::_1f),
         UniformName::new("presentation_alpha", UniformType::_1f),
         UniformName::new("background_opacity", UniformType::_1f),
         UniformName::new("tint", UniformType::_4f),
@@ -558,7 +583,6 @@ pub(super) fn blur_uniforms(p: &MaterialParameters) -> Vec<Uniform<'static>> {
             "capture_origin",
             [p.sample_framebuffer[0], p.sample_framebuffer[1]],
         ),
-        Uniform::new("blur_radius", p.blur),
         Uniform::new("presentation_alpha", p.presentation_alpha),
         Uniform::new("background_opacity", p.background_opacity),
         Uniform::new("tint", p.tint),

@@ -1043,7 +1043,6 @@ fn floating_blur_sampling_halo_does_not_paint_neighboring_islands() {
                 Uniform::new("material_radii", [16. * scale as f32; 4]),
                 Uniform::new("texture_size", [rect.size.w as f32, rect.size.h as f32]),
                 Uniform::new("capture_origin", [capture[0], capture[1]]),
-                Uniform::new("blur_radius", halo),
                 Uniform::new("presentation_alpha", 1.0_f32),
                 Uniform::new("background_opacity", 0.6_f32),
                 Uniform::new("tint", [0.1_f32, 0.1, 0.1, 0.5]),
@@ -1106,6 +1105,196 @@ fn floating_blur_sampling_halo_does_not_paint_neighboring_islands() {
                 }
             }
             assert!(painted > 100, "fixture must paint its own island");
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires an EGL rendering device"]
+fn cached_blur_matches_gaussian_and_restores_the_frame_on_every_transform() {
+    use smithay::backend::renderer::ImportMem;
+    let mut renderer = renderer();
+    let mut resources = RenderResources::default();
+    let program = blur_program(&mut resources, &mut renderer).unwrap();
+    let extent = 128;
+    let full = Rectangle::from_size((extent, extent).into());
+    let pixels = (0..extent * extent)
+        .flat_map(|i| {
+            let x = i % extent;
+            let y = i / extent;
+            [
+                if x < 64 { 255 } else { 0 },
+                (y * 2) as u8,
+                if (x / 8 + y / 8) % 2 == 0 { 255 } else { 0 },
+                255,
+            ]
+        })
+        .collect::<Vec<_>>();
+    let source = renderer
+        .import_memory(&pixels, Fourcc::Abgr8888, (extent, extent).into(), false)
+        .unwrap();
+    let mut target_texture: GlesTexture = renderer
+        .create_buffer(Fourcc::Abgr8888, (extent, extent).into())
+        .unwrap();
+    for transform in [
+        Transform::Normal,
+        Transform::_90,
+        Transform::_180,
+        Transform::_270,
+        Transform::Flipped,
+        Transform::Flipped90,
+        Transform::Flipped180,
+        Transform::Flipped270,
+    ] {
+        for radius in [6.0, 24.0, 27.0, 39.6, 48.0] {
+            let rect = [16, 16, 96, 96];
+            let cache_size = super::blur_cache::size(rect, radius);
+            let cache: GlesTexture = renderer
+                .create_buffer(Fourcc::Abgr8888, cache_size)
+                .unwrap();
+            let scratch: GlesTexture = renderer
+                .create_buffer(Fourcc::Abgr8888, cache_size)
+                .unwrap();
+            let mut target = renderer.bind(&mut target_texture).unwrap();
+            let mut frame = renderer
+                .render(&mut target, (extent, extent).into(), transform)
+                .unwrap();
+            frame
+                .render_texture_from_to(
+                    &source,
+                    Rectangle::from_size(source.size().to_f64()),
+                    full,
+                    &[full],
+                    &[full],
+                    Transform::Normal,
+                    1.0,
+                    None,
+                    &[],
+                )
+                .unwrap();
+            let _ = frame.finish().unwrap();
+            let original = renderer
+                .copy_framebuffer(
+                    &target,
+                    Rectangle::from_size((extent, extent).into()),
+                    Fourcc::Abgr8888,
+                )
+                .unwrap();
+            let original = renderer.map_texture(&original).unwrap().to_vec();
+            let mut frame = renderer
+                .render(&mut target, (extent, extent).into(), transform)
+                .unwrap();
+            let state = |frame: &mut GlesFrame<'_, '_>| {
+                frame
+                    .with_context(|gl| {
+                        let mut values = [0; 7];
+                        // SAFETY: GL writes into live, correctly sized scalar/array slots.
+                        unsafe {
+                            gl.GetIntegerv(
+                                smithay::backend::renderer::gles::ffi::READ_FRAMEBUFFER_BINDING,
+                                &mut values[0],
+                            );
+                            gl.GetIntegerv(
+                                smithay::backend::renderer::gles::ffi::DRAW_FRAMEBUFFER_BINDING,
+                                &mut values[1],
+                            );
+                            gl.GetIntegerv(
+                                smithay::backend::renderer::gles::ffi::VIEWPORT,
+                                values[2..6].as_mut_ptr(),
+                            );
+                            values[6] = gl
+                                .IsEnabled(smithay::backend::renderer::gles::ffi::SCISSOR_TEST)
+                                as i32;
+                        }
+                        values
+                    })
+                    .unwrap()
+            };
+            let before = state(&mut frame);
+            super::blur_cache::refresh(&mut frame, &cache, &scratch, &program.1, rect, radius)
+                .unwrap();
+            assert_eq!(state(&mut frame), before, "frame state: {transform:?}");
+            let marker = Rectangle::from_size((4, 4).into());
+            frame
+                .draw_solid(marker, &[marker], [1.0, 0.0, 1.0, 1.0].into())
+                .unwrap();
+            let _ = frame.finish().unwrap();
+            let output = renderer
+                .copy_framebuffer(
+                    &target,
+                    Rectangle::from_size((extent, extent).into()),
+                    Fourcc::Abgr8888,
+                )
+                .unwrap();
+            let output = renderer.map_texture(&output).unwrap();
+            let changed = output
+                .chunks_exact(4)
+                .zip(original.chunks_exact(4))
+                .filter(|(a, b)| a != b)
+                .count();
+            assert!(
+                (1..=16).contains(&changed),
+                "cache writes escaped into the frame: {transform:?} ({changed} pixels)"
+            );
+            let mapping = renderer
+                .copy_texture(&cache, Rectangle::from_size(cache_size), Fourcc::Abgr8888)
+                .unwrap();
+            let filtered = renderer.map_texture(&mapping).unwrap();
+            let factor = 96 / cache_size.w;
+            let downsample = |x: i32, y: i32, channel: usize| {
+                let x = x.clamp(0, cache_size.w - 1) * factor + 16;
+                let y = y.clamp(0, cache_size.h - 1) * factor + 16;
+                // GL's linear blit samples the center of each destination pixel.
+                let x = x + (factor - 1) / 2;
+                let y = y + (factor - 1) / 2;
+                let taps = if factor % 2 == 1 { 1 } else { 2 };
+                let mut sum = 0.0;
+                for dy in 0..taps {
+                    for dx in 0..taps {
+                        sum +=
+                            original[(((y + dy) * extent + x + dx) * 4) as usize + channel] as f64;
+                    }
+                }
+                sum / f64::from(taps * taps)
+            };
+            let weights = (-12_i32..=12)
+                .map(|i| (-f64::from(i * i) / 32.0).exp())
+                .collect::<Vec<_>>();
+            let total: f64 = weights.iter().sum();
+            let step = radius as f64 / 12.0 / f64::from(factor);
+            let sample = |x: f64, y: f64, channel: usize| {
+                let (ix, iy) = (x.floor() as i32, y.floor() as i32);
+                let (fx, fy) = (x - x.floor(), y - y.floor());
+                downsample(ix, iy, channel) * (1.0 - fx) * (1.0 - fy)
+                    + downsample(ix + 1, iy, channel) * fx * (1.0 - fy)
+                    + downsample(ix, iy + 1, channel) * (1.0 - fx) * fy
+                    + downsample(ix + 1, iy + 1, channel) * fx * fy
+            };
+            for (x, y) in [
+                (1, 1),
+                (cache_size.w / 2, cache_size.h / 2),
+                (cache_size.w - 2, cache_size.h - 2),
+            ] {
+                for channel in 0..3 {
+                    let mut expected = 0.0;
+                    for (j, wy) in weights.iter().enumerate() {
+                        for (i, wx) in weights.iter().enumerate() {
+                            expected += sample(
+                                f64::from(x) + (i as f64 - 12.0) * step,
+                                f64::from(y) + (j as f64 - 12.0) * step,
+                                channel,
+                            ) * wx
+                                * wy
+                                / (total * total);
+                        }
+                    }
+                    let actual = filtered[((y * cache_size.w + x) * 4) as usize + channel];
+                    assert!(
+                        (f64::from(actual) - expected).abs() < 4.0,
+                        "{transform:?} radius={radius} ({x},{y}) channel={channel}: actual={actual} expected={expected}"
+                    );
+                }
+            }
         }
     }
 }
