@@ -56,6 +56,18 @@ pub(super) struct ContextPrograms {
 }
 
 impl RenderResources {
+    pub(crate) fn retain_workspace_windows(
+        &mut self,
+        windows: &std::collections::HashSet<WindowId>,
+    ) {
+        self.windows.retain(|id, _| windows.contains(id));
+        for output in self.outputs.values_mut() {
+            output
+                .chrome
+                .retain(|(id, _), _| windows.contains(&WindowId(*id)));
+        }
+    }
+
     pub(super) fn prepare_window_corners(&mut self, id: WindowId, shape: CornerShape) -> bool {
         let buffers = self.windows.entry(id).or_default();
 

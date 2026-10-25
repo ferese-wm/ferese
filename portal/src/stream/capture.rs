@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use ferese_protocols::window_capture::v1::client::ferese_window_capture_manager_v1 as window_manager;
 use wayland_client::protocol::{wl_buffer, wl_output, wl_registry, wl_shm, wl_shm_pool};
-use wayland_client::{Connection, Dispatch, EventQueue, QueueHandle, WEnum};
+use wayland_client::{Connection, Dispatch, EventQueue, Proxy, QueueHandle, WEnum};
 use wayland_protocols::ext::image_capture_source::v1::client::{
     ext_image_capture_source_v1 as source,
     ext_output_image_capture_source_manager_v1 as output_manager,
@@ -94,6 +94,7 @@ pub(super) struct Capture {
     frame: Option<frame::ExtImageCopyCaptureFrameV1>,
     pub device: Option<gbm::Device<File>>,
     device_id: Option<u64>,
+    workspace: bool,
 }
 
 impl Capture {
@@ -121,30 +122,37 @@ impl Capture {
                 dispatch(&connection, &mut queue, &mut state, 20)?;
             }
         }
-        let source = if let Some(id) = name
-            .strip_prefix("window:")
-            .and_then(|value| value.parse::<u64>().ok())
-        {
-            state
+        let source = match crate::capture::SourceKind::parse(name) {
+            crate::capture::SourceKind::Window(id) => state
                 .windows
                 .as_ref()
                 .ok_or("Persistent window capture is unavailable")?
-                .create_source((id >> 32) as u32, id as u32, &qh, ())
-        } else {
-            let (&id, (output, _)) = state
-                .outputs
-                .iter()
-                .find(|(_, (_, output_name))| output_name == name)
-                .ok_or("Shared display disconnected")?;
-            if generation.is_some_and(|generation| generation != id) {
-                return Err("Shared display was replaced".into());
+                .create_source((id >> 32) as u32, id as u32, &qh, ()),
+            crate::capture::SourceKind::Workspace(id) => {
+                let manager = state
+                    .windows
+                    .as_ref()
+                    .filter(|manager| manager.version() >= 3)
+                    .ok_or("Workspace capture is unavailable")?;
+                manager.create_workspace_source((id >> 32) as u32, id as u32, &qh, ())
             }
-            state.selected = Some(id);
-            state
-                .output_manager
-                .as_ref()
-                .ok_or("Persistent display capture is unavailable")?
-                .create_source(output, &qh, ())
+            crate::capture::SourceKind::Invalid => return Err("Invalid capture source".into()),
+            crate::capture::SourceKind::Monitor => {
+                let (&id, (output, _)) = state
+                    .outputs
+                    .iter()
+                    .find(|(_, (_, output_name))| output_name == name)
+                    .ok_or("Shared display disconnected")?;
+                if generation.is_some_and(|generation| generation != id) {
+                    return Err("Shared display was replaced".into());
+                }
+                state.selected = Some(id);
+                state
+                    .output_manager
+                    .as_ref()
+                    .ok_or("Persistent display capture is unavailable")?
+                    .create_source(output, &qh, ())
+            }
         };
         let options = if cursor {
             manager::Options::PaintCursors
@@ -184,6 +192,10 @@ impl Capture {
             frame: None,
             device,
             device_id,
+            workspace: matches!(
+                crate::capture::SourceKind::parse(name),
+                crate::capture::SourceKind::Workspace(_)
+            ),
         })
     }
 
@@ -231,6 +243,18 @@ impl Capture {
         }
         Some(completion)
     }
+    pub(super) fn set_active(&mut self, active: bool) -> Result<(), String> {
+        if self.workspace {
+            self.state
+                .windows
+                .as_ref()
+                .ok_or("Workspace capture manager disappeared")?
+                .set_source_active(&self.source, u32::from(active));
+            self.connection.flush().map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    }
+
     pub(super) fn refresh(&mut self) -> Result<(), String> {
         self.state
             .windows
@@ -271,6 +295,14 @@ impl Capture {
             }
             let fd = bo.fd().map_err(|error| error.to_string())?;
             let stride = bo.stride_for_plane(0);
+            let max_stride = width
+                .checked_mul(4)
+                .and_then(|row| row.checked_add(4095))
+                .map(|row| row & !4095)
+                .ok_or("DMA-BUF row is too large")?;
+            if stride > max_stride {
+                return Err("DMA-BUF stride exceeds the capture memory reservation".into());
+            }
             let offset = bo.offset(0);
             if offset != 0 {
                 return Err("Unsupported DMA-BUF plane offset".into());
@@ -453,7 +485,7 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
                     state.output_manager = Some(registry.bind(name, 1, qh, ()))
                 }
                 "ferese_window_capture_manager_v1" if version >= 2 => {
-                    state.windows = Some(registry.bind(name, 2, qh, ()))
+                    state.windows = Some(registry.bind(name, version.min(3), qh, ()))
                 }
                 "wl_shm" => state.shm = Some(registry.bind(name, 1, qh, ())),
                 "zwp_linux_dmabuf_v1" if version >= 3 => {

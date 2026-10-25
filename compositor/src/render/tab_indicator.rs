@@ -113,17 +113,17 @@ pub(super) fn elements(
     state: &mut Ferese,
     renderer: &mut GlesRenderer,
     output: &Output,
+    output_geometry: Rectangle<i32, Logical>,
+    frame: &crate::state::FrameScene,
     bar: &TabBar,
     content: Rect,
     alpha: f32,
     capture: bool,
 ) -> Vec<AnimatedWindowRenderElement> {
-    let Some(g) = state.tab_indicator_geometry(bar, content) else {
+    let Some(g) = state.tab_indicator_geometry_for_frame(bar, content, frame) else {
         return Vec::new();
     };
-    let Some(output_geometry) = state.space.output_geometry(output) else {
-        return Vec::new();
-    };
+
     let scale = output.current_scale().fractional_scale();
     let settings = state.tab_indicator_settings;
     let anchor = bar.group.windows[0];

@@ -32,7 +32,7 @@ pub(crate) fn sampled_output_elements(
     include_cursor: bool,
     frame: &crate::state::FrameScene,
 ) -> Vec<AnimatedWindowRenderElement> {
-    scene_elements(state, renderer, output, include_cursor, frame, false)
+    scene_elements(state, renderer, output, include_cursor, frame, false, None)
 }
 
 pub(crate) fn capture_output_elements(
@@ -46,8 +46,32 @@ pub(crate) fn capture_output_elements(
     // display rendering. Only the capture scene can populate these caches.
     crate::backends::direct::capture::touch_cache(state);
     std::mem::swap(&mut state.render, &mut state.capture_render);
-    let elements = scene_elements(state, renderer, output, include_cursor, frame, true);
+    let elements = scene_elements(state, renderer, output, include_cursor, frame, true, None);
     std::mem::swap(&mut state.render, &mut state.capture_render);
+    elements
+}
+
+/// The caller supplies resources owned by this capture view. No display or
+/// other workspace's blur/snapshot cache may populate this scene.
+pub(crate) fn capture_workspace_elements(
+    state: &mut Ferese,
+    renderer: &mut GlesRenderer,
+    view: &crate::handlers::workspace_capture::WorkspaceSource,
+    include_cursor: bool,
+    frame: &crate::state::FrameScene,
+    resources: &mut super::RenderResources,
+) -> Vec<AnimatedWindowRenderElement> {
+    std::mem::swap(&mut state.render, resources);
+    let elements = scene_elements(
+        state,
+        renderer,
+        &view.render_output,
+        include_cursor,
+        frame,
+        true,
+        Some(view),
+    );
+    std::mem::swap(&mut state.render, resources);
     elements
 }
 
@@ -58,6 +82,7 @@ fn scene_elements(
     include_cursor: bool,
     frame: &crate::state::FrameScene,
     capture: bool,
+    workspace: Option<&crate::handlers::workspace_capture::WorkspaceSource>,
 ) -> Vec<AnimatedWindowRenderElement> {
     if state.session_lock.active() {
         let Some(geometry) = state.space.output_geometry(output) else {
@@ -138,7 +163,10 @@ fn scene_elements(
         );
         return elements;
     }
-    let Some(output_geometry) = state.space.output_geometry(output) else {
+    let Some(output_geometry) = workspace
+        .map(|view| view.geometry)
+        .or_else(|| state.space.output_geometry(output))
+    else {
         return Vec::new();
     };
     let scale = output.current_scale().fractional_scale();
@@ -155,7 +183,9 @@ fn scene_elements(
         } else {
             &[Layer::Overlay, Layer::Top]
         };
-    elements.extend(layer_elements(state, renderer, output, upper_layers));
+    if workspace.is_none() {
+        elements.extend(layer_elements(state, renderer, output, upper_layers));
+    }
     if frame.overview.is_presenting() {
         elements.extend(overview_strip_elements(
             state,
@@ -170,14 +200,22 @@ fn scene_elements(
     let prepare_window = |window: &Window| {
         // Configure immediately, but present the frame/shadow only after
         // the first buffer commit has settled the actual client geometry.
-        if (capture && state.capture_protected(window)) || !state.window_content_ready(window) {
+        let ready = if workspace.is_some() {
+            crate::state::window_has_buffer(window)
+        } else {
+            state.window_content_ready(window)
+        };
+        if (capture && state.capture_protected(window)) || !ready {
             return None;
         }
         let id = *state.windows.ids().get(window)?;
         // Scrolling columns may sit outside their monitor's rectangle.
         // They must not reappear on a neighboring output just because
         // their global animated coordinates overlap it.
-        if !state.window_belongs_to_output(id, output) {
+        if workspace.map_or_else(
+            || !state.window_belongs_to_output(id, output),
+            |workspace| state.workspaces.workspace_for_window(id) != Some(workspace.id),
+        ) {
             return None;
         }
         let sample = frame.windows.get(&id)?;
@@ -194,12 +232,23 @@ fn scene_elements(
             presentation_alpha,
         ))
     };
-    let mut windows = if state.overview.is_active() {
+    let mut windows = if workspace.is_none() && state.overview.is_active() {
         state
             .windows
             .overview_windows()
             .filter_map(prepare_window)
             .collect::<Vec<_>>()
+    } else if workspace.is_some() {
+        let mut windows = frame
+            .windows
+            .keys()
+            .filter_map(|id| state.windows.window(*id))
+            .filter_map(prepare_window)
+            .collect::<Vec<_>>();
+        windows.sort_by_key(|(_, id, sample, ..)| {
+            std::cmp::Reverse(state.workspace_capture_stack(*id, sample.geometry))
+        });
+        windows
     } else {
         state
             .space
@@ -219,27 +268,38 @@ fn scene_elements(
         windows[..=index].rotate_right(1);
     }
 
-    let mut closing = super::closing::grouped_elements(
-        state,
-        renderer,
-        output,
-        windows.iter().map(|(_, id, ..)| *id),
-        frame.delta,
-    );
+    let mut closing = if workspace.is_some() {
+        Default::default()
+    } else {
+        super::closing::grouped_elements(
+            state,
+            renderer,
+            output,
+            windows.iter().map(|(_, id, ..)| *id),
+            frame.delta,
+        )
+    };
     for (window, id, sample, visual, decoration_progress, presentation_alpha) in windows {
         if let Some(group) = closing.remove(&Some(id)) {
             elements.extend(group);
         }
         elements.extend(super::tabs::tab_elements(
-            state, renderer, output, frame, id, capture,
+            state,
+            renderer,
+            output,
+            output_geometry,
+            frame,
+            id,
+            capture,
         ));
         let constrain = rounded_visual_rect(visual, output_geometry.loc);
         let material_surface = window
             .toplevel()
             .map(|toplevel| toplevel.wl_surface())
             .filter(|surface| {
-                crate::effects::surface_role(surface)
-                    .is_some_and(|(role, _)| role == crate::effects::SemanticRole::Modal)
+                workspace.is_none()
+                    && crate::effects::surface_role(surface)
+                        .is_some_and(|(role, _)| role == crate::effects::SemanticRole::Modal)
             });
         let window_radius = if material_surface.is_some() {
             state.theme_settings.material_radius
@@ -428,13 +488,15 @@ fn scene_elements(
     if let Some(group) = closing.remove(&None) {
         elements.extend(group);
     }
-    elements.extend(layer_elements(
-        state,
-        renderer,
-        output,
-        &[Layer::Bottom, Layer::Background],
-    ));
-    state.prepare_theme_wallpaper(renderer, output);
+    if workspace.is_none() {
+        elements.extend(layer_elements(
+            state,
+            renderer,
+            output,
+            &[Layer::Bottom, Layer::Background],
+        ));
+    }
+    state.prepare_theme_wallpaper(renderer, workspace.map_or(output, |view| &view.output));
     let progress = state.theme_progress();
     let wallpaper = state.wallpaper.element(renderer, output);
     let has_wallpaper = wallpaper.is_some();

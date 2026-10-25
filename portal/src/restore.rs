@@ -148,6 +148,7 @@ impl Restore {
             || app.len() > 512
             || sources.is_empty()
             || sources.len() > 16
+            || sources.iter().any(|source| !source.is_monitor())
             || !(1..=2).contains(&mode)
         {
             return None;

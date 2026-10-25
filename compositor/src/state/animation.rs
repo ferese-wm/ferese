@@ -202,6 +202,20 @@ impl Ferese {
             }
         }
 
+        for workspace in self.image_capture.captured_workspaces() {
+            if let Some(output) = self
+                .output_workspaces
+                .output_for_workspace(workspace)
+                .and_then(|id| self.outputs_by_id.get(&id))
+                && self.output_id(output).is_some_and(|id| {
+                    self.output_workspaces.active_workspace(id) == Some(workspace)
+                })
+                && (self.output_has_animations(output)
+                    || self.output_has_pending_visual_changes(output))
+            {
+                self.image_capture.workspace_geometry_changed(workspace);
+            }
+        }
         let delta = delta.mul_f64(self.animation_speed);
         if let Some(workspace) = self
             .focus_swipe()

@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use ferese_protocols::window_capture::v1::client::ferese_window_capture_manager_v1 as window_manager;
 use serde::{Deserialize, Serialize};
 use wayland_client::protocol::{wl_output, wl_registry, wl_shm};
-use wayland_client::{Connection, Dispatch, EventQueue, QueueHandle, WEnum};
+use wayland_client::{Connection, Dispatch, EventQueue, Proxy, QueueHandle, WEnum};
 use wayland_protocols_wlr::screencopy::v1::client::zwlr_screencopy_manager_v1 as manager;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -20,9 +20,62 @@ pub struct Source {
     pub scale: i32,
 }
 
+/// Decode opaque worker names in one place. Unknown/malformed private names
+/// must never fall through to monitor capture or remembered display consent.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SourceKind {
+    Monitor,
+    Window(u64),
+    Workspace(u64),
+    Invalid,
+}
+impl SourceKind {
+    pub fn parse(name: &str) -> Self {
+        if let Some(id) = name.strip_prefix("window:") {
+            id.parse().map(Self::Window).unwrap_or(Self::Invalid)
+        } else if let Some(id) = name.strip_prefix("workspace:") {
+            id.parse().map(Self::Workspace).unwrap_or(Self::Invalid)
+        } else {
+            Self::Monitor
+        }
+    }
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Monitor => "Displays",
+            Self::Window(_) => "Windows",
+            Self::Workspace(_) => "Workspaces",
+            Self::Invalid => "Unavailable",
+        }
+    }
+    pub fn category(self) -> u8 {
+        match self {
+            Self::Monitor => 0,
+            Self::Workspace(_) => 1,
+            Self::Window(_) => 2,
+            Self::Invalid => 3,
+        }
+    }
+}
 impl Source {
+    pub fn kind(&self) -> SourceKind {
+        SourceKind::parse(&self.name)
+    }
+    pub fn is_monitor(&self) -> bool {
+        self.kind() == SourceKind::Monitor
+    }
     pub fn window_id(&self) -> Option<u64> {
-        self.name.strip_prefix("window:")?.parse().ok()
+        if let SourceKind::Window(id) = self.kind() {
+            Some(id)
+        } else {
+            None
+        }
+    }
+    pub fn workspace_id(&self) -> Option<u64> {
+        if let SourceKind::Workspace(id) = self.kind() {
+            Some(id)
+        } else {
+            None
+        }
     }
 }
 
@@ -83,6 +136,13 @@ impl Capture {
             self.dispatch(stop, deadline)?;
         }
         Ok(())
+    }
+
+    pub fn supports_workspaces(&self) -> bool {
+        self.state
+            .window_manager
+            .as_ref()
+            .is_some_and(|manager| manager.version() >= 3)
     }
 
     pub fn supports_windows(&self) -> bool {
@@ -195,7 +255,7 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
                     },
                 }),
                 "ferese_window_capture_manager_v1" => {
-                    state.window_manager = Some(registry.bind(name, 1, qh, ()))
+                    state.window_manager = Some(registry.bind(name, version.min(3), qh, ()))
                 }
                 "wl_shm" => state.shm = Some(registry.bind(name, 1, qh, ())),
                 "zwlr_screencopy_manager_v1" => {

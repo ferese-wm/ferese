@@ -7,6 +7,7 @@ use super::{
 /// geometry, configure barriers, animation clocks, or another output's view.
 pub(crate) struct FrameScene {
     pub windows: HashMap<WindowId, WindowFrame>,
+    pub capture_tabs: Option<Vec<ferese_layout::TabBar>>,
     pub overview: crate::overview::OverviewMotion,
     // Plane selection and scheduling reuse the activity sampled with this scene.
     pub animating: bool,
@@ -356,6 +357,113 @@ impl Ferese {
             })
     }
 
+    pub(crate) fn workspace_capture_visible(
+        &self,
+        workspace: ferese_core::WorkspaceId,
+        output: ferese_core::OutputId,
+    ) -> bool {
+        self.output_workspaces.active_workspace(output) == Some(workspace)
+            && !self.workspace_slides.contains_key(&output)
+    }
+
+    pub(crate) fn workspace_capture_stack(
+        &self,
+        id: WindowId,
+        geometry: WindowGeometry,
+    ) -> (u8, usize) {
+        let floating = matches!(
+            self.workspaces.placement(id),
+            Some(ferese_core::WindowPlacement::Floating { .. })
+        );
+        let above = self
+            .floating_above_fullscreen
+            .get(&id)
+            .is_some_and(|parent| {
+                self.workspaces
+                    .workspace_for_window(id)
+                    .and_then(|workspace| self.workspaces.workspace(workspace))
+                    .is_some_and(|workspace| workspace.fullscreen == Some(*parent))
+            });
+        (
+            crate::stacking::layer_priority(floating, false, geometry.is_fullscreen(), above),
+            self.window_stack.rank(id),
+        )
+    }
+
+    /// An independent workspace view. Global overview, output switching and
+    /// focus on another workspace do not enter this presentation.
+    pub(crate) fn sample_workspace_frame(
+        &self,
+        workspace: ferese_core::WorkspaceId,
+        output: &Output,
+    ) -> FrameScene {
+        let rectangles = self.workspace_preview_rects_for(Some(workspace));
+        let visible = self.output_id(output).is_some_and(|output| {
+            self.output_workspaces.active_workspace(output) == Some(workspace)
+        });
+        let focused = self
+            .workspaces
+            .workspace(workspace)
+            .and_then(|workspace| workspace.last_focused);
+        let mut windows = HashMap::with_capacity(rectangles.len());
+        for (id, rect) in rectangles {
+            let Some(record) = self.windows.record(id) else {
+                continue;
+            };
+            let Some(committed) = self.windows.window(id).and_then(super::client_size) else {
+                continue;
+            };
+            let mut geometry = record
+                .geometry
+                .unwrap_or_else(|| WindowGeometry::new(rect, Some(committed)));
+            if !visible {
+                // A hidden window can have no display presentation yet. Resolve
+                // only this value; do not issue a client configure or map it.
+                geometry = WindowGeometry::new(rect, Some(committed));
+                let fullscreen = self
+                    .workspaces
+                    .workspace(workspace)
+                    .is_some_and(|workspace| workspace.fullscreen == Some(id));
+                let mode = if fullscreen {
+                    super::PresentationMode::Fullscreen
+                } else if record.maximized {
+                    super::PresentationMode::Maximized
+                } else {
+                    super::PresentationMode::Normal
+                };
+                let _ = geometry.set_presentation_mode(rect, mode, Duration::ZERO);
+                geometry.settle_presentation();
+                geometry.presentation_changed = false;
+            }
+            let emphasis = AnimatedValue::new(if focused == Some(id) { 1.0 } else { 0.0 });
+            let presentation = crate::presentation::WindowPresentation {
+                id,
+                bounds: geometry.visual,
+                opacity: AnimatedValue::new(1.0),
+                focus_alpha: 1.0,
+                dim: 0.0,
+                emphasis,
+                shadow: emphasis,
+                scale_content: false,
+                native_size: None,
+            };
+            windows.insert(
+                id,
+                WindowFrame {
+                    geometry,
+                    presentation,
+                },
+            );
+        }
+        FrameScene {
+            windows,
+            capture_tabs: Some(self.workspace_preview_tabs(workspace)),
+            overview: Default::default(),
+            animating: false,
+            delta: Duration::ZERO,
+        }
+    }
+
     pub(crate) fn sample_frame(&self, output: &Output, horizon: Duration) -> FrameScene {
         let animating = self.output_has_animations(output);
         let delta = if self.animations_enabled && animating {
@@ -430,6 +538,7 @@ impl Ferese {
 
         FrameScene {
             windows,
+            capture_tabs: None,
             overview,
             animating,
             delta,
