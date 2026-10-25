@@ -130,3 +130,86 @@ fn capture_admission_accounts_for_the_pool_and_transfer_targets() {
     assert!(stream_bytes((3840, 2160).into()) < MAX_STREAM_BYTES);
     assert!(stream_bytes((i32::MAX, i32::MAX).into()) > MAX_STREAM_BYTES);
 }
+
+#[test]
+fn workspace_tab_metadata_invalidates_only_owning_capture() {
+    if !crate::startup_tests::private_runtime(
+        "handlers::image_capture::workspace_tests::workspace_tab_metadata_invalidates_only_owning_capture",
+    ) {
+        return;
+    }
+    use smithay::wayland::compositor::with_states;
+    use smithay::wayland::shell::xdg::{XdgShellHandler, XdgToplevelSurfaceData};
+
+    for hidden in [false, true] {
+        for title in [false, true] {
+            let (mut events, mut state, output) = fixture();
+            let (first, _first_client) =
+                crate::state::test_window(&mut state, &mut events, 0xffff0000);
+            state.toggle_column_tabbed();
+            let (_second, _second_client) =
+                crate::state::test_window(&mut state, &mut events, 0xff00ff00);
+            state.consume_focused_window();
+            let workspace = state.workspaces.active_id();
+            let scene = state.sample_workspace_frame(workspace, &output);
+            assert!(!scene.capture_tabs.as_ref().unwrap().is_empty());
+            assert!(state.space.element_location(&first).is_none());
+
+            state.switch_workspace(2);
+            let (_other, _other_client) =
+                crate::state::test_window(&mut state, &mut events, 0xff0000ff);
+            let other_workspace = state.workspaces.active_id();
+            if !hidden {
+                state.switch_workspace(1);
+            }
+            for id in [workspace, other_workspace] {
+                for cursor in [false, true] {
+                    let mut view = WorkspaceCapture::new(
+                        WorkspaceSource::new(&state, id).unwrap(),
+                        state.capture_epoch,
+                    );
+                    view.prepared = Some(view.content);
+                    view.scene = Some(state.sample_workspace_frame(id, &output));
+                    view.scene_dirty = false;
+                    state.image_capture.workspaces.insert((id, cursor), view);
+                }
+            }
+            let epoch = state.capture_epoch;
+            let top = first.toplevel().unwrap();
+            with_states(top.wl_surface(), |states| {
+                let mut metadata = states
+                    .data_map
+                    .get::<XdgToplevelSurfaceData>()
+                    .unwrap()
+                    .lock()
+                    .unwrap();
+                if title {
+                    metadata.title = Some("Updated tab title".into());
+                } else {
+                    metadata.title = None;
+                    metadata.app_id = Some("org.test.UpdatedApp".into());
+                }
+            });
+            if title {
+                state.title_changed(top.clone());
+            } else {
+                state.app_id_changed(top.clone());
+            }
+            assert_eq!(state.capture_epoch, epoch);
+            for cursor in [false, true] {
+                let view = &state.image_capture.workspaces[&(workspace, cursor)];
+                assert_ne!(
+                    view.prepared,
+                    Some(view.content),
+                    "tab metadata must invalidate its capture (hidden={hidden}, title={title})"
+                );
+                assert!(
+                    !view.scene_dirty,
+                    "metadata must not force a layout resample"
+                );
+                let other = &state.image_capture.workspaces[&(other_workspace, cursor)];
+                assert_eq!(other.prepared, Some(other.content));
+            }
+        }
+    }
+}
