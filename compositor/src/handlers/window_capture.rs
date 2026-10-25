@@ -191,7 +191,7 @@ pub(super) fn init_global(
     }
 
     display.create_global::<Ferese, FereseWindowCaptureManagerV1, Global>(
-        2,
+        3,
         Global {
             budget: Arc::default(),
             worker,
@@ -273,6 +273,52 @@ impl Dispatch<FereseWindowCaptureManagerV1, Global> for Ferese {
         _: &DisplayHandle,
         data_init: &mut DataInit<'_, Self>,
     ) {
+        if let manager::Request::CreateWorkspaceSource {
+            workspace_hi,
+            workspace_lo,
+            source,
+        } = request
+        {
+            use smithay::wayland::image_capture_source::{
+                ImageCaptureSource, ImageCaptureSourceData,
+            };
+            let id =
+                ferese_core::WorkspaceId((u64::from(workspace_hi) << 32) | u64::from(workspace_lo));
+            let capture = ImageCaptureSource::new();
+            let view = super::workspace_capture::WorkspaceSource::new(state, id);
+            if let Some(view) = &view {
+                capture
+                    .user_data()
+                    .insert_if_missing(|| super::image_capture::Source::Workspace(view.clone()));
+            }
+            let resource = data_init.init(
+                source,
+                ImageCaptureSourceData {
+                    source: capture.clone(),
+                },
+            );
+            capture.add_instance(&resource);
+            if let Some(view) = view {
+                manager.source_geometry(
+                    &resource,
+                    view.geometry.size.w as u32,
+                    view.geometry.size.h as u32,
+                );
+            }
+            return;
+        }
+        if let manager::Request::SetSourceActive { source, active } = request {
+            if let Some(source) =
+                smithay::wayland::image_capture_source::ImageCaptureSource::from_resource(&source)
+            {
+                source
+                    .user_data()
+                    .get_or_insert_threadsafe(super::image_capture::SourcePaused::default)
+                    .0
+                    .store(active != 1, std::sync::atomic::Ordering::Relaxed);
+            }
+            return;
+        }
         if let manager::Request::RefreshSource { source } = request {
             if let Some(source) =
                 smithay::wayland::image_capture_source::ImageCaptureSource::from_resource(&source)

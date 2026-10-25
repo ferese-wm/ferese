@@ -704,6 +704,16 @@ async fn start_streams(
         sources.extend(crate::desktop::sharing_window_sources(&windows)?);
     }
     let outputs = capture_ipc(&cancel, &work, "get-outputs", serde_json::json!({})).await?;
+    let workspaces = if source_types & 1 != 0 && !bar_controlled && discovery.supports_workspaces()
+    {
+        let workspaces =
+            capture_ipc(&cancel, &work, "get-workspaces", serde_json::json!({})).await?;
+        sources.extend(crate::workspace::sources(&workspaces, &outputs)?);
+        Some(workspaces)
+    } else {
+        None
+    };
+    sources.sort_by_key(|source| source.kind().category());
     let rememberable = sources
         .iter()
         .filter(|source| {
@@ -769,7 +779,7 @@ async fn start_streams(
         .await?;
 
         let region = if selection.region {
-            if selected.len() != 1 || selected[0].window_id().is_some() {
+            if selected.len() != 1 || !selected[0].is_monitor() {
                 return Err("Region recording requires one display".into());
             }
             let mut command = child_command_for("slurp")?;
@@ -808,7 +818,7 @@ async fn start_streams(
 
     let monitors = selected
         .iter()
-        .filter(|source| source.window_id().is_none())
+        .filter(|source| source.is_monitor())
         .cloned()
         .collect::<Vec<_>>();
     if !crate::restore::selection_unchanged(&monitors, &outputs, &fresh_outputs) {
@@ -838,7 +848,13 @@ async fn start_streams(
 
     for source in &selected {
         let mut command = child_command()?;
-        if let Some(id) = source.window_id() {
+        if let Some(id) = source.workspace_id() {
+            command.args([
+                "--stream-workspace",
+                &id.to_string(),
+                if cursor { "embedded" } else { "hidden" },
+            ]);
+        } else if let Some(id) = source.window_id() {
             command.args([
                 "--stream-window",
                 &id.to_string(),
@@ -904,6 +920,18 @@ async fn start_streams(
         return Err("A selected stream ended during startup".into());
     }
 
+    if let Some(before) = &workspaces {
+        let after = capture_ipc(&cancel, &work, "get-workspaces", serde_json::json!({})).await?;
+        if !crate::workspace::selection_unchanged(
+            &selected,
+            before,
+            &outputs,
+            &after,
+            &final_outputs,
+        ) {
+            return Err("A selected workspace changed during approval or startup".into());
+        }
+    }
     let final_windows = capture_ipc(&cancel, &work, "get-windows", serde_json::json!({})).await?;
     let recording = if bar_controlled {
         let crop = region
@@ -941,7 +969,17 @@ async fn start_streams(
     let streams = streams
         .into_iter()
         .map(|(name, ready)| {
-            let metadata = if name.starts_with("window:") {
+            let metadata = if let crate::capture::SourceKind::Workspace(_) =
+                crate::capture::SourceKind::parse(&name)
+            {
+                let source = selected
+                    .iter()
+                    .find(|source| source.name == name)
+                    .ok_or("Unknown workspace stream")?;
+                crate::workspace::metadata(source, &ready)
+            } else if let crate::capture::SourceKind::Window(_) =
+                crate::capture::SourceKind::parse(&name)
+            {
                 let source = selected
                     .iter()
                     .find(|source| source.name == name)
