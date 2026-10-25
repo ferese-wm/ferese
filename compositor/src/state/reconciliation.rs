@@ -385,6 +385,103 @@ mod tests {
     }
 
     #[test]
+    fn shell_title_interest_suppresses_background_churn_and_refreshes_on_subscription() {
+        if !crate::startup_tests::private_runtime(
+            "state::reconciliation::tests::shell_title_interest_suppresses_background_churn_and_refreshes_on_subscription",
+        ) {
+            return;
+        }
+        use crate::shell_control::ShellData;
+        use crate::state::capture_privacy::tests::window;
+        use ferese_protocols::shell::v1::server::ferese_shell_v1::FereseShellV1;
+
+        let mut event_loop = EventLoop::try_new().unwrap();
+        let mut state = crate::startup_tests::state(&mut event_loop);
+        state.begin_desktop_transition();
+        let changes = state
+            .publish_desktop(vec![output("titles", 0, 1200)])
+            .unwrap();
+        state.finish_desktop_transition(changes);
+        let (background, _background_wire) = window(&mut state, &mut event_loop, 0xff112233);
+        let (focused, _focused_wire) = window(&mut state, &mut event_loop, 0xff334455);
+        let background = state.windows.ids()[&background];
+        let focused = state.windows.ids()[&focused];
+        assert!(state.activate_managed_window(focused));
+        let (server, mut wire) = UnixStream::pair().unwrap();
+        let client = state
+            .display_handle
+            .insert_client(server, Arc::new(ClientState::default()))
+            .unwrap();
+        let shell = client
+            .create_resource::<FereseShellV1, ShellData, Ferese>(
+                &state.display_handle,
+                11,
+                ShellData::default(),
+            )
+            .unwrap();
+        state.shell_resources.push(shell.downgrade());
+        state.send_shell_snapshots();
+        events(&mut state, &mut wire);
+        let initial = state.shell_snapshot_serial;
+        state.windows.record_mut(background).unwrap().title = "Default subscription".into();
+        state.send_shell_snapshots();
+        assert!(
+            state.shell_snapshot_serial > initial,
+            "new controllers initially receive all titles"
+        );
+        events(&mut state, &mut wire);
+
+        let opcode = FereseShellV1::interface()
+            .requests
+            .iter()
+            .position(|request| request.name == "set_background_title_updates")
+            .unwrap() as u32;
+        request(&mut wire, shell.id().protocol_id(), opcode, &[0]);
+        event_loop
+            .dispatch(Duration::from_millis(10), &mut state)
+            .unwrap();
+        events(&mut state, &mut wire);
+        let idle = state.shell_snapshot_serial;
+        for number in 0..100 {
+            state.windows.record_mut(background).unwrap().title = format!("spinner {number}");
+            state.send_shell_snapshots();
+        }
+        assert_eq!(state.shell_snapshot_serial, idle);
+        assert!(events(&mut state, &mut wire).is_empty());
+
+        request(&mut wire, shell.id().protocol_id(), opcode, &[1]);
+        event_loop
+            .dispatch(Duration::from_millis(10), &mut state)
+            .unwrap();
+        assert!(state.shell_snapshot_serial > idle);
+        let snapshot = events(&mut state, &mut wire);
+        let bytes: Vec<_> = snapshot
+            .iter()
+            .flat_map(|(_, _, words)| words.iter().flat_map(|word| word.to_ne_bytes()))
+            .collect();
+        assert!(
+            bytes
+                .windows(b"spinner 99".len())
+                .any(|bytes| bytes == b"spinner 99"),
+            "opening a list must receive the latest suppressed title"
+        );
+
+        request(&mut wire, shell.id().protocol_id(), opcode, &[0]);
+        event_loop
+            .dispatch(Duration::from_millis(10), &mut state)
+            .unwrap();
+        events(&mut state, &mut wire);
+        let before = state.shell_snapshot_serial;
+        state.windows.record_mut(focused).unwrap().title = "Focused title".into();
+        state.send_shell_snapshots();
+        assert!(state.shell_snapshot_serial > before);
+        let before = state.shell_snapshot_serial;
+        assert!(state.activate_managed_window(background));
+        state.send_shell_snapshots();
+        assert!(state.shell_snapshot_serial > before);
+    }
+
+    #[test]
     fn planned_geometry_matches_smithay_at_fractional_scale_and_rotation() {
         for transform in [Transform::Normal, Transform::_90, Transform::Flipped270] {
             let mut entry = output("geometry", -500, 1920);
@@ -453,7 +550,11 @@ mod tests {
             .insert_client(server, Arc::new(ClientState::default()))
             .unwrap();
         let shell = client
-            .create_resource::<FereseShellV1, (), Ferese>(&state.display_handle, 6, ())
+            .create_resource::<FereseShellV1, crate::shell_control::ShellData, Ferese>(
+                &state.display_handle,
+                6,
+                Default::default(),
+            )
             .unwrap();
         state.shell_resources.push(shell.downgrade());
         state.send_shell_snapshots();

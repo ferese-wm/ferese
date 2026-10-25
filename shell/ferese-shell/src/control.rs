@@ -1,3 +1,4 @@
+use std::cell::Cell;
 use std::error::Error;
 use std::os::fd::{FromRawFd, RawFd};
 use std::os::unix::net::UnixStream;
@@ -77,6 +78,7 @@ pub(crate) struct ShellControl {
     shell: FereseShellV1,
     updates: Receiver<ControlUpdate>,
     wake: Wake,
+    background_title_updates: Cell<bool>,
 }
 
 pub(crate) struct ControlPoll {
@@ -149,8 +151,9 @@ impl ShellControl {
         let connection = control_connection()?;
         let (globals, mut queue) = registry_queue_init::<ControlState>(&connection)?;
         let qh = queue.handle();
-        let manager = globals.bind::<FereseShellManagerV1, _, _>(&qh, 7..=10, ())?;
+        let manager = globals.bind::<FereseShellManagerV1, _, _>(&qh, 11..=11, ())?;
         let shell = manager.get_shell(&qh, ());
+        shell.set_background_title_updates(0);
         let (sender, updates) = mpsc::channel();
         let wake = Wake(Arc::new(tokio::sync::Notify::new()));
         let mut state = ControlState::new(UpdateSender {
@@ -172,7 +175,15 @@ impl ShellControl {
             shell,
             updates,
             wake,
+            background_title_updates: Cell::new(false),
         })
+    }
+
+    pub(crate) fn set_background_title_updates(&self, enabled: bool) {
+        if self.background_title_updates.replace(enabled) != enabled {
+            self.shell.set_background_title_updates(u32::from(enabled));
+            let _ = self.connection.flush();
+        }
     }
 
     pub(crate) fn subscription(&self) -> cosmic::iced::Subscription<()> {
@@ -598,13 +609,24 @@ mod tests {
         wayland_client::EventQueue<ControlState>,
         UnixStream,
     ) {
+        control_fixture_version(6)
+    }
+
+    fn control_fixture_version(
+        version: u32,
+    ) -> (
+        ShellControl,
+        ControlState,
+        wayland_client::EventQueue<ControlState>,
+        UnixStream,
+    ) {
         let (socket, mut peer) = UnixStream::pair().unwrap();
         peer.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
         let connection = Connection::from_socket(socket).unwrap();
         let queue = connection.new_event_queue::<ControlState>();
         let qh = queue.handle();
         let registry = connection.display().get_registry(&qh, ());
-        let manager = registry.bind::<FereseShellManagerV1, _, _>(1, 6, &qh, ());
+        let manager = registry.bind::<FereseShellManagerV1, _, _>(1, version, &qh, ());
         let shell = manager.get_shell(&qh, ());
         let (sender, updates) = mpsc::channel();
         let wake = Wake(Arc::new(tokio::sync::Notify::new()));
@@ -623,8 +645,31 @@ mod tests {
             shell,
             updates,
             wake,
+            background_title_updates: Cell::new(true),
         };
         (control, state, queue, peer)
+    }
+
+    #[test]
+    fn background_title_subscription_sends_only_changed_preferences() {
+        let (control, _state, _queue, mut peer) = control_fixture_version(11);
+        for enabled in [true, false, false, true, true] {
+            control.set_background_title_updates(enabled);
+        }
+        for enabled in [0_u32, 1] {
+            let (object, opcode, args) = read_request(&mut peer);
+            let request = &FereseShellV1::interface().requests[usize::from(opcode)];
+            assert_eq!(object, control.shell.id().protocol_id());
+            assert_eq!(request.name, "set_background_title_updates");
+            assert_eq!(args, enabled.to_ne_bytes());
+        }
+        peer.set_read_timeout(Some(Duration::from_millis(20)))
+            .unwrap();
+        let error = peer.read(&mut [0; 8]).unwrap_err();
+        assert!(matches!(
+            error.kind(),
+            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+        ));
     }
 
     fn dispatch_event(
