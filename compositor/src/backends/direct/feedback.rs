@@ -159,6 +159,7 @@ fn candidate_geometry(
         && has_storage()
 }
 
+#[derive(Clone)]
 struct OutputView<'a> {
     global: DmabufGlobal,
     feedback: &'a OutputFeedback,
@@ -187,16 +188,19 @@ fn select<'a>(
 }
 
 pub(crate) fn refresh(state: &mut Ferese) {
+    if state.dmabuf_feedback.requested().next().is_none() {
+        return;
+    }
     let mut preferred = HashMap::new();
     if let Some(backend) = state.direct_backend.as_ref() {
-        for (surface, global) in state.dmabuf_feedback.requested() {
-            let id = Id::from(surface);
-            let outputs = backend
-                .devices
-                .values()
-                .flat_map(|device| device.outputs.values().map(move |output| (device, output)))
-                .filter(|(_, output)| state.output_id(&output.output).is_some());
-            let views = outputs.map(|(device, output)| {
+        // Eligibility belongs to an output, so compute it once for all subscribers.
+        let outputs = backend
+            .devices
+            .values()
+            .flat_map(|device| device.outputs.values().map(move |output| (device, output)))
+            .filter(|(_, output)| state.output_id(&output.output).is_some());
+        let views: Vec<_> = outputs
+            .map(|(device, output)| {
                 let eligible = (backend.can_render()
                     && device.drm.is_active()
                     && output.power.can_render()
@@ -233,9 +237,14 @@ pub(crate) fn refresh(state: &mut Ferese) {
                     feedback: &output.dmabuf_feedback,
                     eligible,
                 }
-            });
-            if let Some(feedback) = select(global, &id, views) {
-                preferred.insert(surface.clone(), feedback.clone());
+            })
+            .collect();
+        if views.iter().any(|view| view.eligible.is_some()) {
+            for (surface, global) in state.dmabuf_feedback.requested() {
+                let id = Id::from(surface);
+                if let Some(feedback) = select(global, &id, views.iter().cloned()) {
+                    preferred.insert(surface.clone(), feedback.clone());
+                }
             }
         }
     }

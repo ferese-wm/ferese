@@ -161,7 +161,7 @@ fn subscriptions_update_deduplicate_and_retire_device_preferences() {
     state.display_handle.flush_clients().unwrap();
     assert!(
         messages(&mut wire).is_empty(),
-        "Smithay suppresses unchanged feedback"
+        "unchanged feedback must not be published again"
     );
 
     request(&mut wire, 8, 3, &[10, 2], None);
@@ -227,6 +227,9 @@ fn subscriptions_update_deduplicate_and_retire_device_preferences() {
     );
     drop(wire);
     dispatch(&mut events, &mut state);
-    state.dmabuf_feedback.refresh(&HashMap::new());
-    assert_eq!(state.dmabuf_feedback.requested().count(), 0);
+    assert_eq!(
+        state.dmabuf_feedback.requested().count(),
+        0,
+        "surface destruction must remove subscriptions without a refresh scan"
+    );
 }

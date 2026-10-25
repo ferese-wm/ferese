@@ -6,7 +6,7 @@ use std::ptr::NonNull;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use pipewire as pw;
 use pipewire::properties::properties;
@@ -537,16 +537,18 @@ pub fn run(
             }
         })
         .register()?;
-    let capture_io = capture.clone();
+    // Readiness wakes the loop; dispatch once at its top, alongside deadlines
+    // and PipeWire callbacks, instead of draining the same queue twice.
     let _capture_io = mainloop.loop_().add_io(
         capture.borrow().poll_fd()?,
         spa::support::system::IoFlags::IN,
-        move |_| capture_io.borrow_mut().dispatch(),
+        |_| {},
     );
     let _cancel_io =
         mainloop
             .loop_()
             .add_io(cancel_read, spa::support::system::IoFlags::IN, |_| {});
+    let frame_timer = mainloop.loop_().add_timer(|_| {});
     let advertised = formats(size, &rate, dma);
     let mut parameters: Vec<_> = advertised
         .iter()
@@ -602,26 +604,99 @@ pub fn run(
         let deadline = next_frame.max(data.borrow().next_capture);
         if can_capture && Instant::now() >= deadline {
             stream.trigger_process()?;
-            next_frame = Instant::now() + rate.interval();
+            next_frame = next_frame_deadline(deadline, Instant::now(), rate.interval());
         }
-        let timeout = if can_capture {
-            pw::loop_::Timeout::Finite(
-                next_frame
-                    .max(data.borrow().next_capture)
-                    .saturating_duration_since(Instant::now()),
-            )
-        } else {
-            pw::loop_::Timeout::Infinite
-        };
-        mainloop.loop_().iterate(timeout);
+        update_frame_timer(
+            &frame_timer,
+            can_capture.then(|| next_frame.max(data.borrow().next_capture)),
+        )?;
+        mainloop.loop_().iterate(pw::loop_::Timeout::Infinite);
     }
     let _ = stream.disconnect();
+    Ok(())
+}
+
+fn next_frame_deadline(deadline: Instant, now: Instant, interval: Duration) -> Instant {
+    let next = deadline + interval;
+    if next > now {
+        // Preserve cadence when a timer wakes slightly late.
+        next
+    } else {
+        // Resume after a pause or slow frame without a burst of catch-up frames.
+        now + interval
+    }
+}
+
+fn update_frame_timer(
+    timer: &pw::loop_::TimerSource<'_>,
+    deadline: Option<Instant>,
+) -> Result<(), spa::utils::result::Error> {
+    // Loop timeouts truncate to milliseconds and spin near a frame deadline.
+    // A timer preserves sub-millisecond waits without changing frame pacing.
+    let delay = deadline.map(|deadline| {
+        deadline
+            .saturating_duration_since(Instant::now())
+            // Zero disarms a PipeWire timer; an overdue frame must wake instead.
+            .max(Duration::from_nanos(1))
+    });
+    timer.update_timer(delay, None).into_result()?;
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn frame_clock_preserves_cadence_but_does_not_catch_up_after_stalls() {
+        let start = Instant::now();
+        let interval = Duration::from_nanos(16_666_667);
+        let mut deadline = start;
+        for frame in 1..=240 {
+            deadline =
+                next_frame_deadline(deadline, deadline + Duration::from_micros(200), interval);
+            assert_eq!(deadline, start + interval * frame);
+        }
+        for delay in [interval, Duration::from_secs(2)] {
+            let resumed = deadline + delay;
+            assert_eq!(
+                next_frame_deadline(deadline, resumed, interval),
+                resumed + interval
+            );
+        }
+    }
+
+    #[test]
+    fn frame_timer_wakes_once_for_due_frames_and_disarms_while_paused() {
+        let mainloop = pw::main_loop::MainLoopRc::new(None).unwrap();
+        let expirations = Rc::new(std::cell::Cell::new(0));
+        let received = expirations.clone();
+        let timer = mainloop.loop_().add_timer(move |count| {
+            received.set(received.get() + count);
+        });
+        for delay in [Duration::ZERO, Duration::from_micros(100)] {
+            update_frame_timer(&timer, Some(Instant::now() + delay)).unwrap();
+            let expected = expirations.get() + 1;
+            let limit = Instant::now() + Duration::from_secs(1);
+            while expirations.get() < expected && Instant::now() < limit {
+                mainloop
+                    .loop_()
+                    .iterate(pw::loop_::Timeout::Finite(Duration::from_millis(10)));
+            }
+            assert_eq!(expirations.get(), expected);
+            mainloop
+                .loop_()
+                .iterate(pw::loop_::Timeout::Finite(Duration::from_millis(5)));
+            assert_eq!(expirations.get(), expected, "frame timer must be one-shot");
+        }
+        update_frame_timer(&timer, Some(Instant::now())).unwrap();
+        update_frame_timer(&timer, None).unwrap();
+        let previous = expirations.get();
+        mainloop
+            .loop_()
+            .iterate(pw::loop_::Timeout::Finite(Duration::from_millis(5)));
+        assert_eq!(expirations.get(), previous, "paused capture must not wake");
+    }
 
     #[test]
     fn buffer_types_intersect_obs_masks_in_either_negotiation_order() {

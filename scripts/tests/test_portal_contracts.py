@@ -174,6 +174,20 @@ def private_bus_checks(standalone=False):
             assert "disable-printing #true" in config.read_text()
             call("org.freedesktop.DBus.Properties", "Set", GLib.Variant("(ssv)", ("org.freedesktop.impl.portal.Lockdown", "disable-printing", GLib.Variant("b", False))))
 
+            # A D-Bus write must invalidate the polling cache. Restoring the
+            # previously observed file still has to undo the in-memory write.
+            cached_policy = config.read_text()
+            time.sleep(1.2)
+            call("org.freedesktop.DBus.Properties", "Set", GLib.Variant("(ssv)", ("org.freedesktop.impl.portal.Lockdown", "disable-printing", GLib.Variant("b", True))))
+            config.write_text(cached_policy)
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                printing, = call("org.freedesktop.DBus.Properties", "Get", GLib.Variant("(ss)", ("org.freedesktop.impl.portal.Lockdown", "disable-printing")), "(v)")
+                if printing is False:
+                    break
+                time.sleep(.02)
+            assert printing is False, "restoring cached policy did not undo the D-Bus write"
+
             policy_signals = []
             subscription = bus.signal_subscribe(NAME, "org.freedesktop.DBus.Properties", "PropertiesChanged", PATH,
                                                 None, Gio.DBusSignalFlags.NONE, lambda *args: policy_signals.append(args[-1].unpack()))

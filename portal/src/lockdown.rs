@@ -23,11 +23,19 @@ const KEYS: [&str; 7] = [
 ];
 
 #[derive(Clone)]
-pub(crate) struct Lockdown(Arc<RwLock<[bool; 7]>>);
+pub(crate) struct Lockdown(Arc<RwLock<Policy>>);
+
+struct Policy {
+    values: [bool; 7],
+    source: Option<String>,
+}
 
 impl Lockdown {
     pub(crate) fn new() -> Self {
-        Self(Arc::new(RwLock::new(load().unwrap_or_default())))
+        Self(Arc::new(RwLock::new(Policy {
+            values: load().unwrap_or_default(),
+            source: None,
+        })))
     }
 
     pub(crate) async fn watch(self, connection: Connection) {
@@ -36,17 +44,22 @@ impl Lockdown {
         loop {
             tokio::time::sleep(Duration::from_secs(1)).await;
             let mut current = self.0.write().await;
-            let Some(next) = load() else { continue };
-            if *current == next {
+            let Some(path) = ferese_config::config_path() else {
+                continue;
+            };
+            let Some(next) = load_changed(&path, &mut current.source) else {
+                continue;
+            };
+            if current.values == next {
                 continue;
             }
             let changed = KEYS
                 .iter()
                 .enumerate()
-                .filter(|(index, _)| current[*index] != next[*index])
+                .filter(|(index, _)| current.values[*index] != next[*index])
                 .map(|(index, key)| (*key, Value::from(next[index])))
                 .collect::<HashMap<_, _>>();
-            *current = next;
+            current.values = next;
             drop(current);
             let _ = zbus::fdo::Properties::properties_changed(
                 &emitter,
@@ -72,7 +85,9 @@ impl Lockdown {
         crate::backend::authorize(connection, &header).await?;
         let mut current = self.0.write().await;
         store(index, value).map_err(zbus::fdo::Error::Failed)?;
-        current[index] = value;
+        current.values[index] = value;
+        // Restoring a previously observed file must undo this write too.
+        current.source = None;
         Ok(())
     }
 }
@@ -81,7 +96,7 @@ impl Lockdown {
 impl Lockdown {
     #[zbus(property, name = "disable-printing")]
     async fn disable_printing(&self) -> bool {
-        self.0.read().await[0]
+        self.0.read().await.values[0]
     }
 
     #[zbus(property, name = "disable-printing")]
@@ -96,7 +111,7 @@ impl Lockdown {
 
     #[zbus(property, name = "disable-save-to-disk")]
     async fn disable_save_to_disk(&self) -> bool {
-        self.0.read().await[1]
+        self.0.read().await.values[1]
     }
 
     #[zbus(property, name = "disable-save-to-disk")]
@@ -111,7 +126,7 @@ impl Lockdown {
 
     #[zbus(property, name = "disable-application-handlers")]
     async fn disable_application_handlers(&self) -> bool {
-        self.0.read().await[2]
+        self.0.read().await.values[2]
     }
 
     #[zbus(property, name = "disable-application-handlers")]
@@ -126,7 +141,7 @@ impl Lockdown {
 
     #[zbus(property, name = "disable-location")]
     async fn disable_location(&self) -> bool {
-        self.0.read().await[3]
+        self.0.read().await.values[3]
     }
 
     #[zbus(property, name = "disable-location")]
@@ -141,7 +156,7 @@ impl Lockdown {
 
     #[zbus(property, name = "disable-camera")]
     async fn disable_camera(&self) -> bool {
-        self.0.read().await[4]
+        self.0.read().await.values[4]
     }
 
     #[zbus(property, name = "disable-camera")]
@@ -156,7 +171,7 @@ impl Lockdown {
 
     #[zbus(property, name = "disable-microphone")]
     async fn disable_microphone(&self) -> bool {
-        self.0.read().await[5]
+        self.0.read().await.values[5]
     }
 
     #[zbus(property, name = "disable-microphone")]
@@ -171,7 +186,7 @@ impl Lockdown {
 
     #[zbus(property, name = "disable-sound-output")]
     async fn disable_sound_output(&self) -> bool {
-        self.0.read().await[6]
+        self.0.read().await.values[6]
     }
 
     #[zbus(property, name = "disable-sound-output")]
@@ -205,6 +220,21 @@ fn load() -> Option<[bool; 7]> {
 }
 
 fn load_path(path: &Path) -> Option<[bool; 7]> {
+    values(&ferese_config::Document::parse(&read_source(path)?).ok()?)
+}
+
+fn load_changed(path: &Path, previous: &mut Option<String>) -> Option<[bool; 7]> {
+    let source = read_source(path)?;
+    if previous.as_ref() == Some(&source) {
+        return None;
+    }
+    // Compare contents so atomic saves and edits with unchanged timestamps work.
+    // Remember invalid edits too, while retaining the last valid policy.
+    *previous = Some(source);
+    values(&ferese_config::Document::parse(previous.as_deref()?).ok()?)
+}
+
+fn read_source(path: &Path) -> Option<String> {
     let mut source = String::new();
     match std::fs::File::open(path) {
         Ok(file) => {
@@ -218,7 +248,7 @@ fn load_path(path: &Path) -> Option<[bool; 7]> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(_) => return None,
     }
-    values(&ferese_config::Document::parse(&source).ok()?)
+    Some(source)
 }
 
 fn store(index: usize, value: bool) -> Result<(), String> {
@@ -245,6 +275,67 @@ fn store_path(path: &Path, index: usize, value: bool) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn polling_reloads_only_changed_contents_and_recovers_after_invalid_edits() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("config.kdl");
+        let mut source = None;
+        assert_eq!(load_changed(&path, &mut source), Some([false; 7]));
+        assert_eq!(load_changed(&path, &mut source), None);
+
+        store_path(&path, 4, true).unwrap();
+        assert!(load_changed(&path, &mut source).unwrap()[4]);
+        assert_eq!(load_changed(&path, &mut source), None);
+
+        for invalid in ["portals {", "portals { lockdown { disable-camera 1; }; }"] {
+            std::fs::write(&path, invalid).unwrap();
+            assert_eq!(load_changed(&path, &mut source), None);
+            assert_eq!(source.as_deref(), Some(invalid));
+            assert_eq!(load_changed(&path, &mut source), None);
+        }
+
+        // Replacing the file must recover even after a malformed edit.
+        let replacement = directory.path().join("replacement.kdl");
+        std::fs::write(
+            &replacement,
+            "portals { lockdown { disable-camera #true; }; }",
+        )
+        .unwrap();
+        std::fs::rename(replacement, &path).unwrap();
+        assert!(load_changed(&path, &mut source).unwrap()[4]);
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(load_changed(&path, &mut source), Some([false; 7]));
+        store_path(&path, 4, true).unwrap();
+        assert!(load_changed(&path, &mut source).unwrap()[4]);
+    }
+
+    #[test]
+    fn polling_detects_same_size_edits_and_retries_failed_reads() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("config.kdl");
+        let mut source = None;
+        std::fs::write(&path, "portals { lockdown { disable-camera #true ; }; }").unwrap();
+        assert!(load_changed(&path, &mut source).unwrap()[4]);
+        let modified = std::fs::metadata(&path).unwrap().modified().unwrap();
+        std::fs::write(&path, "portals { lockdown { disable-camera #false; }; }").unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(modified)
+            .unwrap();
+        assert!(!load_changed(&path, &mut source).unwrap()[4]);
+
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
+        let previous = source.clone();
+        assert_eq!(load_changed(&path, &mut source), None);
+        assert_eq!(source, previous);
+        std::fs::remove_dir(&path).unwrap();
+        store_path(&path, 4, true).unwrap();
+        assert!(load_changed(&path, &mut source).unwrap()[4]);
+    }
 
     #[test]
     fn policy_save_respects_other_config_writers_and_preserves_their_changes() {
