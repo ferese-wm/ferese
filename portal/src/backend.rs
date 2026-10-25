@@ -1195,6 +1195,13 @@ fn validate_selection(
 }
 
 async fn supervise(mut children: Vec<Child>, cancel: Arc<Cancel>) {
+    // EOF on stdin tells a capture worker to stop. Child::wait closes its
+    // attached stdin before waiting, so retain the control pipes separately
+    // for the lifetime of the sharing session.
+    let _control_pipes: Vec<_> = children
+        .iter_mut()
+        .filter_map(|child| child.stdin.take())
+        .collect();
     {
         use futures_util::{StreamExt, stream::FuturesUnordered};
         let mut exits: FuturesUnordered<_> = children.iter_mut().map(Child::wait).collect();
@@ -1322,6 +1329,45 @@ mod tests {
         assert_eq!(entries[0].sources, ["Workspace 1"]);
         backend.sessions.lock().await.clear();
         assert_eq!(status.get_snapshot().await, "[]");
+    }
+
+    #[tokio::test]
+    async fn supervision_keeps_capture_control_pipes_open_until_cancelled() {
+        let mut child = Command::new("sh")
+            .args([
+                "-c",
+                "printf 'ready\\n'; cat >/dev/null; printf 'closed\\n'",
+            ])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        let pid = child.id().unwrap();
+        let mut output = BufReader::new(child.stdout.take().unwrap());
+        let cancel = Arc::new(Cancel::default());
+        let supervisor = tokio::spawn(supervise(vec![child], cancel.clone()));
+        let mut line = String::new();
+        tokio::time::timeout(Duration::from_secs(2), output.read_line(&mut line))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(line, "ready\n");
+        line.clear();
+        let premature_exit =
+            tokio::time::timeout(Duration::from_millis(250), output.read_line(&mut line)).await;
+        let running = !supervisor.is_finished();
+        cancel.stop();
+        tokio::time::timeout(Duration::from_secs(2), supervisor)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            premature_exit.is_err(),
+            "capture control pipe closed early: {line:?}"
+        );
+        assert!(running, "capture supervisor exited before cancellation");
+        assert!(!std::path::Path::new(&format!("/proc/{pid}")).exists());
     }
 
     #[tokio::test]
