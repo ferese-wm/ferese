@@ -372,8 +372,8 @@ impl Ferese {
 mod routing_tests {
     use super::*;
     use crate::input::{
-        ButtonEvent, ButtonState, Event, InputBackend, InputEvent, PointerButtonEvent,
-        SERIAL_COUNTER,
+        AbsolutePositionEvent, ButtonEvent, ButtonState, Event, InputBackend, InputEvent,
+        PointerButtonEvent, PointerMotionEvent, SERIAL_COUNTER,
     };
     use smithay::backend::input::UnusedEvent;
     use smithay::backend::winit::WinitVirtualDevice;
@@ -385,8 +385,8 @@ mod routing_tests {
         type PointerButtonEvent = Button;
         type KeyboardKeyEvent = UnusedEvent;
         type PointerAxisEvent = UnusedEvent;
-        type PointerMotionEvent = UnusedEvent;
-        type PointerMotionAbsoluteEvent = UnusedEvent;
+        type PointerMotionEvent = Motion;
+        type PointerMotionAbsoluteEvent = Motion;
         type GestureSwipeBeginEvent = UnusedEvent;
         type GestureSwipeUpdateEvent = UnusedEvent;
         type GestureSwipeEndEvent = UnusedEvent;
@@ -407,6 +407,51 @@ mod routing_tests {
         type SwitchToggleEvent = UnusedEvent;
         type SpecialEvent = UnusedEvent;
     }
+
+    #[derive(Debug)]
+    struct Motion(f64, f64);
+
+    impl Event<Input> for Motion {
+        fn time(&self) -> smithay::backend::input::InputTime {
+            smithay::backend::input::InputTime::from_millis(1)
+        }
+        fn device(&self) -> WinitVirtualDevice {
+            WinitVirtualDevice
+        }
+    }
+
+    impl PointerMotionEvent<Input> for Motion {
+        fn delta_x(&self) -> f64 {
+            self.0
+        }
+        fn delta_y(&self) -> f64 {
+            self.1
+        }
+        fn delta_x_unaccel(&self) -> f64 {
+            self.0
+        }
+        fn delta_y_unaccel(&self) -> f64 {
+            self.1
+        }
+    }
+
+    impl AbsolutePositionEvent<Input> for Motion {
+        fn x(&self) -> f64 {
+            self.0
+        }
+        fn y(&self) -> f64 {
+            self.1
+        }
+        fn x_transformed(&self, _width: i32) -> f64 {
+            self.0
+        }
+        fn y_transformed(&self, _height: i32) -> f64 {
+            self.1
+        }
+    }
+
+    impl smithay::backend::input::PointerMotionAbsoluteEvent<Input> for Motion {}
+
     #[derive(Debug)]
     struct Button(bool);
     impl Event<Input> for Button {
@@ -428,6 +473,167 @@ mod routing_tests {
                 ButtonState::Released
             }
         }
+    }
+
+    #[test]
+    fn mouse_motion_within_a_window_preserves_shortcut_focus() {
+        if !crate::startup_tests::private_runtime(
+            "input::pointer::routing_tests::mouse_motion_within_a_window_preserves_shortcut_focus",
+        ) {
+            return;
+        }
+        for absolute in [false, true] {
+            let (mut state, mut events, _output) = crate::input::layer_focus_tests::fixture();
+            state
+                .reload_config_source(
+                    r#"
+                    animations { enabled #false; }
+                    input { focus-follows-mouse #true; }
+                    scrolling { default-column-width 0.3; }
+                    binding "Super+Shift+WheelUp" action="focus" argument="left"
+                    binding "Super+MouseBack" action="focus" argument="left"
+                    "#
+                    .into(),
+                )
+                .unwrap();
+            let (first, _first_wire) =
+                crate::state::test_window(&mut state, &mut events, 0xff112233);
+            let (second, _second_wire) =
+                crate::state::test_window(&mut state, &mut events, 0xff334455);
+            let (third, _third_wire) =
+                crate::state::test_window(&mut state, &mut events, 0xff556677);
+            let first_id = state.windows.ids()[&first];
+            let second_id = state.windows.ids()[&second];
+            let third_id = state.windows.ids()[&third];
+            let pointer = state.seat.get_pointer().unwrap();
+            let keyboard = state.seat.get_keyboard().unwrap();
+            let motion = |state: &mut Ferese, x, y| {
+                let current = pointer.current_location();
+                state.process_input_event::<Input>(if absolute {
+                    InputEvent::PointerMotionAbsolute {
+                        event: Motion(x, y),
+                    }
+                } else {
+                    InputEvent::PointerMotion {
+                        event: Motion(x - current.x, y - current.y),
+                    }
+                });
+            };
+            let rect = state.presented_window_rect(third_id).unwrap();
+            let (x, y) = (rect.x + 20., rect.y + 20.);
+            motion(&mut state, x, y);
+            assert_eq!(state.focused_window, Some(third_id));
+
+            crate::input::binding_mode_tests::key(&mut state, 133, true); // Super.
+            crate::input::binding_mode_tests::key(&mut state, 50, true); // Shift.
+            assert_eq!(
+                state.filter_pointer_scroll(
+                    "mouse".into(),
+                    AxisSource::Wheel,
+                    [0., -15.],
+                    [None, Some(-120.)],
+                    [false; 2],
+                ),
+                [false, true]
+            );
+            assert_eq!(state.focused_window, Some(second_id));
+            motion(&mut state, x + 1., y);
+            assert_eq!(
+                state.focused_window,
+                Some(second_id),
+                "wheel focus must survive mouse jitter"
+            );
+
+            crate::input::binding_mode_tests::key(&mut state, 50, false);
+            state.process_input_event::<Input>(InputEvent::PointerButton {
+                event: Button(true),
+            });
+            assert_eq!(state.focused_window, Some(first_id));
+            motion(&mut state, x + 2., y);
+            assert_eq!(
+                state.focused_window,
+                Some(first_id),
+                "side-button focus must survive mouse jitter"
+            );
+            state.process_input_event::<Input>(InputEvent::PointerButton {
+                event: Button(false),
+            });
+            crate::input::binding_mode_tests::key(&mut state, 133, false);
+            motion(&mut state, x + 3., y);
+            assert_eq!(
+                state.focused_window,
+                Some(first_id),
+                "releasing modifiers must preserve the selection"
+            );
+            assert_eq!(
+                keyboard.current_focus(),
+                Some(first.toplevel().unwrap().wl_surface().clone())
+            );
+
+            let rect = state.presented_window_rect(second_id).unwrap();
+            motion(&mut state, rect.x + 20., rect.y + 20.);
+            assert_eq!(
+                state.focused_window,
+                Some(second_id),
+                "entering a different window must focus it"
+            );
+            motion(&mut state, x, y);
+            assert_eq!(state.focused_window, Some(third_id));
+
+            state.focus_direction(ferese_layout::Direction::Left);
+            motion(&mut state, x + 1., y);
+            assert_eq!(state.focused_window, Some(second_id));
+            // A click still explicitly focuses the window under the pointer.
+            state.process_input_event::<Input>(InputEvent::PointerButton {
+                event: Button(true),
+            });
+            assert_eq!(state.focused_window, Some(third_id));
+            state.process_input_event::<Input>(InputEvent::PointerButton {
+                event: Button(false),
+            });
+        }
+    }
+
+    #[test]
+    fn viewport_scroll_under_pointer_does_not_restore_hover_focus() {
+        if !crate::startup_tests::private_runtime(
+            "input::pointer::routing_tests::viewport_scroll_under_pointer_does_not_restore_hover_focus",
+        ) {
+            return;
+        }
+        let (mut state, mut events, _output) = crate::input::layer_focus_tests::fixture();
+        state.input_settings.focus_follows_mouse = true;
+        let (first, _first_wire) = crate::state::test_window(&mut state, &mut events, 0xff112233);
+        let (_second, _second_wire) =
+            crate::state::test_window(&mut state, &mut events, 0xff334455);
+        let (third, _third_wire) = crate::state::test_window(&mut state, &mut events, 0xff556677);
+        let first_id = state.windows.ids()[&first];
+        let rect = state
+            .presented_window_rect(state.windows.ids()[&third])
+            .unwrap();
+        let pointer = state.seat.get_pointer().unwrap();
+        state.process_input_event::<Input>(InputEvent::PointerMotionAbsolute {
+            event: Motion(rect.x + 20., rect.y + 20.),
+        });
+        assert_eq!(
+            state.window_under_visual(pointer.current_location()),
+            Some(third.clone())
+        );
+        state.focus_direction(ferese_layout::Direction::Left);
+        state.focus_direction(ferese_layout::Direction::Left);
+        assert_eq!(state.focused_window, Some(first_id));
+        assert_ne!(
+            state.window_under_visual(pointer.current_location()),
+            Some(third)
+        );
+        state.process_input_event::<Input>(InputEvent::PointerMotion {
+            event: Motion(1., 0.),
+        });
+        assert_eq!(
+            state.focused_window,
+            Some(first_id),
+            "layout movement beneath the pointer is not a hover entry"
+        );
     }
 
     #[test]

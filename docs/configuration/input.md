@@ -9,9 +9,11 @@
 | `repeat-rate` | integer > 0 | `25` | Repeats per second |
 | `repeat-delay-ms` | integer ≥ 0 | `600` | Delay before repeat |
 
-With focus-follows-mouse enabled, hovering a visible part of a window changes
-keyboard focus without raising it or moving the scrolling viewport. Clicking or
-using directional keyboard focus brings the selected window into view.
+With focus-follows-mouse enabled, moving into a visible part of another window
+changes keyboard focus without raising it or moving the scrolling viewport.
+If you select a window with a shortcut, moving the pointer within its current
+window keeps that selection until you cross into another window or click.
+Clicking or using directional focus brings the selected window into view.
 
 In Overview (`Super+Tab`), click a window preview or a miniature inside a workspace
 card to activate that exact window. Hover highlights the target; directional

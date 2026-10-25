@@ -531,7 +531,8 @@ impl Ferese {
                     return;
                 };
                 let pointer = self.seat.get_pointer().expect("seat has a pointer");
-                if self.capture_pointer_motion(pointer.current_location(), position, true) {
+                let previous_position = pointer.current_location();
+                if self.capture_pointer_motion(previous_position, position, true) {
                     return;
                 }
                 let position = self.constrain_pointer_position(&pointer, position);
@@ -547,7 +548,7 @@ impl Ferese {
                     },
                 );
                 pointer.frame(self);
-                self.focus_window_under_pointer(&pointer, position);
+                self.focus_window_under_pointer(&pointer, previous_position, position);
                 self.activate_focused_pointer_constraint(&pointer);
                 crate::backends::direct::render_cursor(self);
             }
@@ -593,7 +594,7 @@ impl Ferese {
                     },
                 );
                 pointer.frame(self);
-                self.focus_window_under_pointer(&pointer, location);
+                self.focus_window_under_pointer(&pointer, position, location);
                 self.activate_focused_pointer_constraint(&pointer);
                 crate::backends::direct::render_cursor(self);
             }
@@ -1262,6 +1263,7 @@ impl Ferese {
     fn focus_window_under_pointer(
         &mut self,
         pointer: &PointerHandle<Self>,
+        previous_position: Point<f64, Logical>,
         position: Point<f64, Logical>,
     ) {
         if self.session_lock.active() {
@@ -1301,6 +1303,15 @@ impl Ferese {
             return;
         };
         if self.windows.ids().get(&window).copied() == self.focused_window {
+            return;
+        }
+        // Only entering a window changes hover focus. Motion within the same
+        // window must not undo a keyboard, wheel or side-button selection.
+        // Hit-test both positions against the current layout so a viewport
+        // animation beneath the pointer does not count as entering a window.
+        if self.window_under_visual(previous_position).as_ref() == Some(&window)
+            && self.layer_under(previous_position).is_none()
+        {
             return;
         }
 

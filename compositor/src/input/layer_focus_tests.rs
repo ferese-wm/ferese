@@ -262,7 +262,7 @@ fn on_demand_layer_focus_follows_opening_and_outside_clicks() {
         Some(panel.wl_surface().clone()),
         SERIAL_COUNTER.next_serial(),
     );
-    state.focus_window_under_pointer(&pointer, on_window);
+    state.focus_window_under_pointer(&pointer, pointer.current_location(), on_window);
     assert_eq!(
         keyboard.current_focus(),
         Some(panel.wl_surface().clone()),
