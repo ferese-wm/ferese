@@ -6,6 +6,7 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 pub(crate) mod capture;
+mod context;
 mod crtc_assignment;
 mod diagnostics;
 pub(crate) mod feedback;
@@ -29,7 +30,7 @@ use smithay::backend::allocator::{Buffer, Fourcc};
 use smithay::backend::drm::compositor::{DrmCompositor, FrameFlags, PrimaryPlaneElement};
 use smithay::backend::drm::exporter::gbm::GbmFramebufferExporter;
 use smithay::backend::drm::{DrmDevice, DrmDeviceFd, DrmEvent, DrmEventTime, DrmNode, NodeType};
-use smithay::backend::egl::{EGLContext, EGLDisplay};
+use smithay::backend::egl::EGLDisplay;
 use smithay::backend::input::InputEvent;
 use smithay::backend::libinput::{LibinputInputBackend, LibinputSessionInterface};
 use smithay::backend::renderer::element::{RenderElement, UnderlyingStorage};
@@ -1004,7 +1005,7 @@ fn open_device(state: &mut Ferese, path: &Path) -> Result<DrmNode, Box<dyn Error
     let gbm = GbmDevice::new(fd)?;
     // SAFETY: GBM owns a valid DRM descriptor for the lifetime of the EGL display.
     let egl_display = unsafe { EGLDisplay::new(gbm.clone())? };
-    let egl_context = EGLContext::new(&egl_display)?;
+    let egl_context = context::try_new(&egl_display)?;
     // SAFETY: the new context is not current on another thread and remains renderer-owned.
     let renderer = unsafe { GlesRenderer::new(egl_context)? };
     state.shm_state.update_formats(renderer.shm_formats());

@@ -47,8 +47,23 @@ impl XdgShellHandler for Ferese {
             }
             self.refresh_idle_inhibition();
             self.send_shell_snapshots();
-            for output in self.surface_outputs(surface.wl_surface()) {
-                self.defer_output_redraw(output);
+            // Ordinary titles belong to the shell; only compositor-drawn labels
+            // need output damage. Privacy changes already invalidate above.
+            let tab_title = self
+                .windows
+                .id_for_surface(surface.wl_surface())
+                .is_some_and(|id| {
+                    self.workspaces
+                        .workspace_for_window(id)
+                        .is_some_and(|workspace| {
+                            self.visible_tab_bars(workspace)
+                                .any(|bar| bar.group.windows.contains(&id))
+                        })
+                });
+            if self.overview.is_presenting() || tab_title {
+                for output in self.surface_outputs(surface.wl_surface()) {
+                    self.defer_output_redraw(output);
+                }
             }
         }
     }

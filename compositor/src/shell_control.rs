@@ -6,13 +6,26 @@ use ferese_protocols::shell::v1::server::{ferese_shell_manager_v1, ferese_shell_
 use smithay::reexports::wayland_server::{
     Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource,
 };
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::Ferese;
 use crate::private_client::ClientCapabilities;
 use crate::state::ClientState;
 
 pub(crate) fn init_global(display: &DisplayHandle) {
-    display.create_global::<Ferese, FereseShellManagerV1, _>(10, ());
+    display.create_global::<Ferese, FereseShellManagerV1, _>(11, ());
+}
+
+pub(crate) struct ShellData {
+    background_title_updates: AtomicBool,
+}
+
+impl Default for ShellData {
+    fn default() -> Self {
+        Self {
+            background_title_updates: AtomicBool::new(true),
+        }
+    }
 }
 
 pub(crate) fn config_chunks(source: &str) -> Vec<&str> {
@@ -70,7 +83,7 @@ impl Dispatch<FereseShellManagerV1, ()> for Ferese {
     ) {
         match request {
             ferese_shell_manager_v1::Request::GetShell { id } => {
-                let shell = data_init.init(id, ());
+                let shell = data_init.init(id, ShellData::default());
 
                 shell.capabilities(1);
                 if shell.version() >= 2
@@ -88,20 +101,28 @@ impl Dispatch<FereseShellManagerV1, ()> for Ferese {
     }
 }
 
-impl Dispatch<FereseShellV1, ()> for Ferese {
+impl Dispatch<FereseShellV1, ShellData> for Ferese {
     fn request(
         state: &mut Self,
         _client: &Client,
         shell: &FereseShellV1,
         request: ferese_shell_v1::Request,
-        _data: &(),
+        data: &ShellData,
         _display: &DisplayHandle,
         _data_init: &mut DataInit<'_, Self>,
     ) {
-        if state.session_lock.active() {
-            return;
-        }
         match request {
+            ferese_shell_v1::Request::SetBackgroundTitleUpdates { enabled } => {
+                if data
+                    .background_title_updates
+                    .swap(enabled != 0, Ordering::Relaxed)
+                    != (enabled != 0)
+                    && !state.session_lock.active()
+                {
+                    state.send_shell_snapshot(shell);
+                }
+            }
+            _ if state.session_lock.active() => {}
             ferese_shell_v1::Request::Thumbnail {
                 token,
                 window_hi,
@@ -222,7 +243,7 @@ impl Dispatch<FereseShellV1, ()> for Ferese {
         state: &mut Self,
         _client: smithay::reexports::wayland_server::backend::ClientId,
         shell: &FereseShellV1,
-        _data: &(),
+        _data: &ShellData,
     ) {
         if state.logout_owner.as_ref() == Some(&shell.id()) {
             state.cancel_logout_confirmation();
@@ -410,10 +431,17 @@ impl Ferese {
             self.last_shell_snapshot = None;
             return;
         }
+        let background_title_updates = self.shell_resources.iter().any(|resource| {
+            resource.upgrade().is_ok_and(|shell| {
+                shell
+                    .data::<ShellData>()
+                    .is_some_and(|data| data.background_title_updates.load(Ordering::Relaxed))
+            })
+        });
         if self
             .last_shell_snapshot
             .as_ref()
-            .is_some_and(|snapshot| self.shell_snapshot_matches(snapshot))
+            .is_some_and(|snapshot| self.shell_snapshot_matches(snapshot, background_title_updates))
         {
             return;
         }
@@ -428,7 +456,11 @@ impl Ferese {
         self.last_shell_snapshot = Some(snapshot);
     }
 
-    fn shell_snapshot_matches(&self, snapshot: &ShellSnapshot) -> bool {
+    fn shell_snapshot_matches(
+        &self,
+        snapshot: &ShellSnapshot,
+        background_title_updates: bool,
+    ) -> bool {
         if snapshot.workspace_preview_revision != self.workspace_preview_revision
             || snapshot.binding_mode.as_deref() != self.binding_modes.active()
         {
@@ -495,7 +527,9 @@ impl Ferese {
             if previous.id != id
                 || previous.workspace != workspace
                 || previous.app_id != app_id
-                || previous.title != title
+                || ((background_title_updates
+                    || state.contains(ferese_shell_v1::WindowState::Focused))
+                    && previous.title != title)
                 || previous.state != state
                 || previous.source_geometry != self.shell_window_geometry(id)
             {
@@ -907,7 +941,7 @@ mod tests {
         for _ in 0..100 {
             // Building a snapshot for metadata changes must reuse layout geometry.
             assert_eq!(state.shell_snapshot(), original);
-            assert!(state.shell_snapshot_matches(&original));
+            assert!(state.shell_snapshot_matches(&original, true));
         }
 
         assert_eq!(state.preview_cache_stats(), initial_cache);
@@ -915,25 +949,25 @@ mod tests {
             .workspaces
             .insert_window(WindowId(99), ferese_layout::Axis::Horizontal, 0.5)
             .unwrap();
-        assert!(!state.shell_snapshot_matches(&original));
+        assert!(!state.shell_snapshot_matches(&original, true));
         let occupied = state.shell_snapshot();
         assert_eq!(state.preview_cache_stats().0, initial_cache.0 + 1);
-        assert!(state.shell_snapshot_matches(&occupied));
+        assert!(state.shell_snapshot_matches(&occupied, true));
         let output_id = state.output_ids[&output];
         let next = state.workspaces.create_workspace();
         state
             .output_workspaces
             .assign_workspace(output_id, next)
             .unwrap();
-        assert!(!state.shell_snapshot_matches(&occupied));
+        assert!(!state.shell_snapshot_matches(&occupied, true));
         let assigned = state.shell_snapshot();
         state
             .output_workspaces
             .switch_workspace(output_id, next)
             .unwrap();
-        assert!(!state.shell_snapshot_matches(&assigned));
+        assert!(!state.shell_snapshot_matches(&assigned, true));
         let selected = state.shell_snapshot();
-        assert!(state.shell_snapshot_matches(&selected));
+        assert!(state.shell_snapshot_matches(&selected, true));
         assert_eq!(
             state.output_workspaces.active_workspace(output_id),
             Some(next)
@@ -983,7 +1017,7 @@ mod tests {
             )
             .unwrap();
         assert!(
-            !state.shell_snapshot_matches(&selected),
+            !state.shell_snapshot_matches(&selected, true),
             "hidden previews must invalidate even with no visible window geometry to change"
         );
         assert_ne!(
@@ -991,7 +1025,7 @@ mod tests {
             hidden_before
         );
         let refreshed = state.shell_snapshot();
-        assert!(state.shell_snapshot_matches(&refreshed));
+        assert!(state.shell_snapshot_matches(&refreshed, true));
         state
             .reload_config_source(
                 "layout { inner-gap 30; outer-gap 40; smart-gaps #false; }; input { repeat-rate 35; }".into(),
@@ -1002,7 +1036,7 @@ mod tests {
             "unrelated settings do not invalidate layouts"
         );
         state.unregister_output(&output);
-        assert!(!state.shell_snapshot_matches(&refreshed));
+        assert!(!state.shell_snapshot_matches(&refreshed, true));
         state.workspace_preview_rects();
         assert_eq!(
             state.preview_cache_stats().1,

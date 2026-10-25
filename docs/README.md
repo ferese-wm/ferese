@@ -45,7 +45,6 @@ and [guides at that tag](https://github.com/ferese-wm/ferese/tree/v0.1.0-beta/do
 - [Publishing activities](development/activities.md): IPC schema, ownership, limits and templates.
 - [Rust style](development/rust-style.md): module boundaries, ownership, API contracts and enforced checks.
 - [Animation model](animation-model.md): geometry, spring motion, gestures and prediction.
-- [Rendering diagnostics](rendering-performance.md): outcome counters, capture cost and repeatable hardware baselines.
 - [Output management tests](output-management-testing.md): profiles, hotplug and DRM failures.
 - [Client soak testing](native-soak-testing.md).
 - [Website development](../site/README.md).

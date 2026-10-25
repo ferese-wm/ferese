@@ -125,7 +125,11 @@ fn outside_launcher_touches_are_consumed_until_up_or_cancel() {
         .insert_client(server, Arc::new(crate::state::ClientState::default()))
         .unwrap();
     let shell = client
-        .create_resource::<FereseShellV1, (), Ferese>(&state.display_handle, 10, ())
+        .create_resource::<FereseShellV1, crate::shell_control::ShellData, Ferese>(
+            &state.display_handle,
+            10,
+            Default::default(),
+        )
         .unwrap();
     state.shell_resources.push(shell.downgrade());
     state.process_input_event::<TouchInput>(InputEvent::TouchDown {

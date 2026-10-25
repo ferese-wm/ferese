@@ -22,7 +22,7 @@
     DEALINGS IN THE SOFTWARE.
   </copyright>
 
-  <interface name="ferese_shell_manager_v1" version="10">
+  <interface name="ferese_shell_manager_v1" version="11">
     <description summary="create a capability-scoped Ferese shell controller">
       This private global is visible only to clients granted the shell-control
       capability. It does not assign a Wayland surface role.
@@ -35,7 +35,7 @@
     <request name="destroy" type="destructor"/>
   </interface>
 
-  <interface name="ferese_shell_v1" version="10">
+  <interface name="ferese_shell_v1" version="11">
     <description summary="managed-window metadata and shell control">
       Window, workspace, and output identifiers are unsigned 64-bit values
       encoded as high and low 32-bit words. Each snapshot atomically replaces
@@ -244,5 +244,17 @@
     <event name="dismiss_launcher" since="10">
       <description summary="discard launcher state before locking"/>
     </event>
+    <request name="set_background_title_updates" since="11">
+      <description summary="watch titles used by window lists">
+        When enabled is zero, changes to unfocused window titles alone do not
+        trigger snapshots. Focused titles and all other window metadata still
+        trigger updates. Snapshots always contain the current titles of every
+        window, and changing this preference sends a fresh snapshot immediately
+        while the session is unlocked.
+        Updates are enabled initially. Disable them while no window list is
+        visible to avoid repainting the panel for background title animations.
+      </description>
+      <arg name="enabled" type="uint"/>
+    </request>
   </interface>
 </protocol>

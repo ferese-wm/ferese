@@ -113,7 +113,9 @@ class BackgroundPortal(unittest.TestCase):
 
                 def snapshot(peer, app):
                     send(peer, {"version": 1, "generation": 0, "last": True, "type": "snapshot", "desktop": {
-                        "outputs": [], "workspaces": [], "windows": [{"id": 1, "app_id": app, "focused": True}],
+                        "outputs": [], "workspaces": [], "windows": [{
+                            "id": 1, "app_id": app, "title": app, "focused": True,
+                            "workspace": 1, "floating": False, "fullscreen": False}],
                         "focus": {"window": 1}, "config": {"revision": 0, "error": None}, "theme": None,
                         "lock": {"phase": "unlocked", "sleeping": False}}})
 

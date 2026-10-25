@@ -1109,6 +1109,19 @@ impl cosmic::Application for FereseShell {
             }
         };
         self.flush_config_error();
+        if let Some(control) = &self.control {
+            control.set_background_title_updates(
+                self.launcher.is_some()
+                    || self.outputs.iter().any(|output| {
+                        output.runtime.hub.as_ref().is_some_and(|hub| {
+                            hub.borrow().hub.mode()
+                                == ferese_panel::morph::Mode::Expanded(
+                                    ferese_panel::morph::Content::Workspaces,
+                                )
+                        })
+                    }),
+            );
+        }
         task
     }
 

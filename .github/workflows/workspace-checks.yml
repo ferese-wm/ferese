@@ -52,11 +52,13 @@ jobs:
           FERESE_TEST_PORTAL_INTERFACES: ${{ github.workspace }}/build/portal-contracts/data
           FERESE_TEST_PORTAL_BACKGROUND: "1"
         run: python3 -m unittest discover -s scripts/tests -v
-      - name: Test capture privacy, resize dependencies and cursor composition
+      - name: Test EGL initialization, capture privacy and cursor composition
         env:
           LIBGL_ALWAYS_SOFTWARE: "1"
           EGL_PLATFORM: surfaceless
         run: |
+          cargo +1.95.0 test --locked -p ferese backends::direct::context::tests -- --include-ignored --nocapture
+          cargo +1.95.0 test --locked -p ferese backends::direct::capture::tests::unchanged_capture_skips_preparation_without_losing_source_updates -- --ignored --nocapture
           cargo +1.95.0 test --locked -p ferese state::capture_privacy::tests -- --ignored --nocapture
           cargo +1.95.0 test --locked -p ferese backends::direct::capture::tests::capture_recomposes_cursor_without_touching_the_display_target -- --ignored --nocapture
           cargo +1.95.0 test --locked -p ferese winit::tests::capture_failure_restores_display_target_and_subsequent_frames_render -- --ignored --nocapture
@@ -89,8 +91,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y weston xwayland x11-utils xauth dbus-daemon \
             build-essential pkg-config clang libclang-dev libxcb1-dev libxcb-cursor-dev libxkbcommon-dev \
-            libwayland-dev libgbm1 libseat1 libinput10 libpipewire-0.3-0t64 \
-            libegl1 libegl-mesa0 libgl1-mesa-dri fonts-dejavu-core
+            libwayland-dev wayland-protocols libgbm1 libseat1 libinput10 libpipewire-0.3-0t64 \
+            libegl1 libegl-mesa0 libgl1-mesa-dri mesa-vulkan-drivers fonts-dejavu-core
       - name: Create the shared X11 socket directory
         run: sudo install -d -m 1777 -o root -g root /tmp/.X11-unix
       - uses: actions/download-artifact@v8

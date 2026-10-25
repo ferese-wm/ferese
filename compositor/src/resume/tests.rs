@@ -165,6 +165,11 @@ fn reconnect_reconciles_a_resume_missed_during_the_outage() {
     *address.lock().unwrap() = "unix:path=/nonexistent/ferese-test-bus".into();
     bus.stop();
     attempts.recv_timeout(Duration::from_secs(1)).unwrap();
+    // The old listener has stopped, so no more subscription probes can arrive.
+    // Slow delivery can queue several before confirm_subscription returns.
+    for event in events.try_iter() {
+        assert_eq!(event, Refresh::Resumed);
+    }
 
     let replacement = Bus::new();
     let manager = replacement.manager();
