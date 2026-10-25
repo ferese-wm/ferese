@@ -60,6 +60,7 @@ def main():
                 cases = [
                     ("shell-flat", "shell_motion", {"FERESE_TEST_SHELL_MOTION": "1", "FERESE_TEST_BAR_LAYOUT": "flat"}),
                     ("shell-floating", "shell_motion", {"FERESE_TEST_SHELL_MOTION": "1", "FERESE_TEST_BAR_LAYOUT": "floating"}),
+                    ("shell-titles", "shell_title_updates", {"FERESE_TEST_SHELL_TITLES": "1"}),
                     ("invalid-config", "startup_config", {"FERESE_TEST_STARTUP_CONFIG": "1"}),
                     ("activities", "activities", {"FERESE_TEST_ACTIVITIES": "1"}),
                 ]
