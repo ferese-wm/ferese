@@ -428,7 +428,7 @@ mod tests {
         );
         state.space.map_output(&output, (0, 0));
         state.register_output(&output, "capture-cache".into());
-        let (_window, _client) = crate::state::test_window(&mut state, &mut events, 0xffff0000);
+        let (window, _client) = crate::state::test_window(&mut state, &mut events, 0xffff0000);
         state.advance_animations(Instant::now());
         let device = EGLDevice::enumerate().unwrap().last().expect("EGL device");
         // SAFETY: the device and display outlive this exclusively owned context.
@@ -468,6 +468,27 @@ mod tests {
         }
         assert_eq!(target.as_ref().unwrap().preparations, 1);
         assert_eq!(target.as_ref().unwrap().reuses, 100);
+        assert_eq!(pixels(&mut renderer, &mut target), original);
+        let toplevel = window.toplevel().unwrap();
+        smithay::wayland::compositor::with_states(toplevel.wl_surface(), |states| {
+            states
+                .data_map
+                .get::<smithay::wayland::shell::xdg::XdgToplevelSurfaceData>()
+                .unwrap()
+                .lock()
+                .unwrap()
+                .title = Some("Metadata without new pixels".into());
+        });
+        <Ferese as smithay::wayland::shell::xdg::XdgShellHandler>::title_changed(
+            &mut state,
+            toplevel.clone(),
+        );
+        prepare(&mut state, &mut renderer, &mut target);
+        assert_eq!(
+            target.as_ref().unwrap().preparations,
+            1,
+            "a title change must reuse the captured pixels"
+        );
         assert_eq!(pixels(&mut renderer, &mut target), original);
         super::super::render_cursor(&mut state);
         prepare(&mut state, &mut renderer, &mut target);

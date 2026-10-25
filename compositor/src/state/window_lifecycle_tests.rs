@@ -36,6 +36,105 @@ fn fixture() -> (
     (events, state, output)
 }
 
+fn set_title(
+    events: &mut smithay::reexports::calloop::EventLoop<'static, Ferese>,
+    state: &mut Ferese,
+    wire: &mut std::os::unix::net::UnixStream,
+    title: &str,
+) {
+    let mut text = title.as_bytes().to_vec();
+    text.push(0);
+    let length = text.len() as u32;
+    text.resize(text.len().next_multiple_of(4), 0);
+    let mut args = vec![length];
+    args.extend(
+        text.chunks_exact(4)
+            .map(|bytes| u32::from_ne_bytes(bytes.try_into().unwrap())),
+    );
+    // The window fixture creates its xdg_toplevel as object 4; set_title is opcode 2.
+    request(wire, 4, 2, &args, None);
+    dispatch(events, state);
+}
+
+#[test]
+fn title_only_changes_do_not_schedule_plain_window_redraws() {
+    if !crate::startup_tests::private_runtime(
+        "state::window_lifecycle_tests::title_only_changes_do_not_schedule_plain_window_redraws",
+    ) {
+        return;
+    }
+    let (mut events, mut state, _output) = fixture();
+    let (app, mut wire) = window(&mut state, &mut events, 0xff112233);
+    let id = state.windows.ids()[&app];
+    state.output_redraw_pending.clear();
+    for number in 0..20 {
+        let title = format!("spinner {number}");
+        set_title(&mut events, &mut state, &mut wire, &title);
+        assert_eq!(state.windows.record(id).unwrap().title, title);
+        assert!(
+            state.output_redraw_pending.is_empty(),
+            "metadata alone must not invalidate the output or its capture scene"
+        );
+    }
+}
+
+#[test]
+fn title_changes_redraw_tab_headers_and_overview_labels() {
+    if !crate::startup_tests::private_runtime(
+        "state::window_lifecycle_tests::title_changes_redraw_tab_headers_and_overview_labels",
+    ) {
+        return;
+    }
+    let (mut events, mut state, output) = fixture();
+    state.toggle_layout_mode();
+    let (first, mut first_wire) = window(&mut state, &mut events, 0xff112233);
+    let (_second, _second_wire) = window(&mut state, &mut events, 0xff445566);
+    state.consume_focused_window();
+    let workspace = state.workspaces.active_id();
+    assert_eq!(state.visible_tab_bars(workspace).count(), 1);
+    assert!(state.space.element_location(&first).is_none());
+    state.output_redraw_pending.clear();
+    set_title(
+        &mut events,
+        &mut state,
+        &mut first_wire,
+        "Inactive tab title",
+    );
+    assert!(state.output_redraw_pending.contains(&output));
+
+    state.leave_tab();
+    state.set_overview_active(true);
+    assert!(state.overview.is_presenting());
+    state.output_redraw_pending.clear();
+    set_title(&mut events, &mut state, &mut first_wire, "Overview label");
+    assert!(state.output_redraw_pending.contains(&output));
+}
+
+#[test]
+fn title_privacy_transitions_still_invalidate_capture_and_output() {
+    if !crate::startup_tests::private_runtime(
+        "state::window_lifecycle_tests::title_privacy_transitions_still_invalidate_capture_and_output",
+    ) {
+        return;
+    }
+    let (mut events, mut state, output) = fixture();
+    let (app, mut wire) = window(&mut state, &mut events, 0xff112233);
+    let id = state.windows.ids()[&app];
+    state
+        .reload_config_source(
+            "window-rule title=\"Private\" block-out-from-screencasts=#true".into(),
+        )
+        .unwrap();
+    for (title, protected) in [("Private", true), ("Public", false)] {
+        let epoch = state.capture_epoch;
+        state.output_redraw_pending.clear();
+        set_title(&mut events, &mut state, &mut wire, title);
+        assert_eq!(state.capture_protected_windows.contains(&id), protected);
+        assert!(state.capture_epoch > epoch);
+        assert!(state.output_redraw_pending.contains(&output));
+    }
+}
+
 #[test]
 fn tree_resize_does_not_hold_motion_in_an_unchanged_neighboring_branch() {
     if !crate::startup_tests::private_runtime(
