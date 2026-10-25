@@ -254,6 +254,13 @@ impl FrameScheduler {
             .map_or(now, |last| last + self.interval)
             .max(target)
             .max(now);
+        // DRM may report a completed flip slightly before its presentation
+        // timestamp. Wait for that refresh, rather than advancing a full slot.
+        if let Some(presented) = self.last_presented
+            && earliest <= presented + tolerance
+        {
+            return Some(earliest.max(presented));
+        }
         Some(self.phase_at_or_after(earliest))
     }
 
@@ -482,6 +489,38 @@ mod tests {
         assert_eq!(scheduler.callback_deadline(now, now).unwrap(), now);
         scheduler.callback_sent(now);
         assert_eq!(scheduler.callback_deadline(now, now).unwrap(), ms(120));
+    }
+
+    #[test]
+    fn early_page_flip_notification_releases_callbacks_in_the_current_refresh() {
+        let interval = Duration::from_nanos(1_000_000_000 / 60);
+        for early_us in [80, 499, 501, 700, 1_000] {
+            let mut scheduler = FrameScheduler::new(interval);
+            let mut presented = Duration::from_secs(1);
+            scheduler.presented(presented);
+            scheduler.callback_sent(presented + Duration::from_micros(80));
+            for _ in 0..120 {
+                presented += interval;
+                scheduler.presented(presented);
+                let dispatch = presented - Duration::from_micros(early_us);
+                let deadline = scheduler.callback_deadline(dispatch, dispatch).unwrap();
+                assert!(
+                    deadline <= presented,
+                    "{early_us} us early: callback delayed by {:?}",
+                    deadline.saturating_sub(presented),
+                );
+                assert_eq!(
+                    scheduler.callback_deadline(deadline, deadline),
+                    Some(deadline)
+                );
+                scheduler.callback_sent(deadline);
+                assert!(
+                    scheduler.callback_deadline(deadline, deadline).unwrap()
+                        >= presented + interval,
+                    "one presentation must not release callbacks twice",
+                );
+            }
+        }
     }
 
     #[test]
