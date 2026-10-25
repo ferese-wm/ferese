@@ -16,7 +16,7 @@ Open http://localhost:8080 for the homepage. Rebuild and refresh the browser
 after changing the site sources.
 
 - `site/index.html` and `site/home.css`: homepage and desktop screenshots.
-- `site/styles.css`: shared dark appearance, typography and navigation.
+- `site/styles.css`: shared colors, typography and navigation.
 - `docs/*.md` and its configuration/development topic directories: guide sources published to the wiki.
 - `scripts/build-site.py`: copies homepage assets and writes handbook redirects.
 - `scripts/build-wiki.py`: validates and generates wiki pages.

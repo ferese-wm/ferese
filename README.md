@@ -15,10 +15,6 @@ Ferese is a Linux desktop built in Rust with Smithay. It includes a window manag
 desktop shell, Settings and a lock screen, with shared configuration and theming.
 Choose a layout per workspace and configure the desktop through Settings or a KDL file.
 
-**Version 0.1.0** is the first stable release. See the [release notes](docs/releases/v0.1.0.md)
-for what's included. Packages target Fedora 44 and Arch Linux on x86_64.
-This README and the wiki describe `main`.
-
 ![Ferese desktop with the launcher, build progress, Appearance settings and terminal windows](docs/images/screenshots/ferese-desktop.png)
 
 [Screenshots](https://github.com/ferese-wm/ferese/wiki/Screenshots)

@@ -121,8 +121,11 @@ class WorkspaceCapture(unittest.TestCase):
                     time.sleep(1.5)
                     baseline = idle_cpu([compositor], seconds=1.0)[0]
 
-                    def worker():
-                        child = launch([str(PORTAL), "--stream-workspace", str(workspace), "hidden"],
+                    def worker(include_shell=False):
+                        command = [str(PORTAL), "--stream-workspace", str(workspace), "hidden"]
+                        if include_shell:
+                            command.append("--include-shell")
+                        child = launch(command,
                                        stdin=subprocess.PIPE, stdout=subprocess.PIPE)
                         with selectors.DefaultSelector() as selector:
                             selector.register(child.stdout, selectors.EVENT_READ)
@@ -182,8 +185,9 @@ class WorkspaceCapture(unittest.TestCase):
                     animation_count = count()
                     time.sleep(.2)
                     self.assertEqual(count(), animation_count, "static workspace emitted duplicates")
-                    # Independent consumers share the composed view and both update.
-                    other_stream, other_ready = worker()
+                    # Opting into the shell must still exclude the active desktop
+                    # when the selected workspace is hidden. Both views update.
+                    other_stream, other_ready = worker(include_shell=True)
                     second_raw = root / "second.bgrx"
                     other_consumer = consumer(second_raw, other_ready["node"])
                     until(lambda: count(second_raw) == 1, "second consumer did not receive cached frame")

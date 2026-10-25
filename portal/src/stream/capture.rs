@@ -102,6 +102,7 @@ impl Capture {
         name: &str,
         cursor: bool,
         generation: Option<u32>,
+        include_shell: bool,
         stop: &AtomicBool,
     ) -> Result<Self, String> {
         let connection = Connection::connect_to_env().map_err(|error| error.to_string())?;
@@ -134,7 +135,19 @@ impl Capture {
                     .as_ref()
                     .filter(|manager| manager.version() >= 3)
                     .ok_or("Workspace capture is unavailable")?;
-                manager.create_workspace_source((id >> 32) as u32, id as u32, &qh, ())
+                if include_shell {
+                    if manager.version() < 4 {
+                        return Err("Workspace shell capture is unavailable".into());
+                    }
+                    manager.create_workspace_source_with_shell(
+                        (id >> 32) as u32,
+                        id as u32,
+                        &qh,
+                        (),
+                    )
+                } else {
+                    manager.create_workspace_source((id >> 32) as u32, id as u32, &qh, ())
+                }
             }
             crate::capture::SourceKind::Invalid => return Err("Invalid capture source".into()),
             crate::capture::SourceKind::Monitor => {
@@ -485,7 +498,7 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
                     state.output_manager = Some(registry.bind(name, 1, qh, ()))
                 }
                 "ferese_window_capture_manager_v1" if version >= 2 => {
-                    state.windows = Some(registry.bind(name, version.min(3), qh, ()))
+                    state.windows = Some(registry.bind(name, version.min(4), qh, ()))
                 }
                 "wl_shm" => state.shm = Some(registry.bind(name, 1, qh, ())),
                 "zwp_linux_dmabuf_v1" if version >= 3 => {

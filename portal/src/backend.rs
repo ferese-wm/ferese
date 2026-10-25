@@ -774,8 +774,14 @@ async fn start_streams(
         .ok()?;
         Some((selected, restore.effective_mode(requested_persistence)))
     });
-    let (selected, persist_mode, audio, region) = if let Some((selected, persist_mode)) = restored {
-        (selected, persist_mode, crate::recording::Audio::Off, None)
+    let approved_selection = if let Some((selected, persist_mode)) = restored {
+        (
+            selected,
+            persist_mode,
+            crate::recording::Audio::Off,
+            None,
+            false,
+        )
     } else {
         let prompt = Prompt {
             app: if bar_controlled { "Ferese" } else { app }.to_owned(),
@@ -785,6 +791,7 @@ async fn start_streams(
             parent: parent.into(),
             window_capture: false,
             recording: bar_controlled,
+            workspace_shell: workspaces.is_some() && discovery.supports_workspace_shell(),
             persist_mode: if rememberable.is_empty() {
                 0
             } else {
@@ -803,6 +810,11 @@ async fn start_streams(
             return Err("Invalid persistence selection".into());
         }
         let selected = validate_selection(&prompt.sources, &selection.names, multiple)?;
+        if selection.include_shell
+            && !prompt.allows_shell(selection.names.iter().map(String::as_str))
+        {
+            return Err("Shell capture requires approval for a supported workspace source".into());
+        }
         if !bar_controlled && (selection.audio != crate::recording::Audio::Off || selection.region)
         {
             return Err("Recording options are only available to the native recorder".into());
@@ -849,9 +861,16 @@ async fn start_streams(
         } else {
             None
         };
-        (selected, selection.persist_mode, selection.audio, region)
+        (
+            selected,
+            selection.persist_mode,
+            selection.audio,
+            region,
+            selection.include_shell,
+        )
     };
 
+    let (selected, persist_mode, audio, region, include_shell) = approved_selection;
     let mut reply = Options::new();
     let fresh_outputs = capture_ipc(&cancel, &work, "get-outputs", serde_json::json!({})).await?;
 
@@ -893,6 +912,9 @@ async fn start_streams(
                 &id.to_string(),
                 if cursor { "embedded" } else { "hidden" },
             ]);
+            if include_shell {
+                command.arg("--include-shell");
+            }
         } else if let Some(id) = source.window_id() {
             command.args([
                 "--stream-window",

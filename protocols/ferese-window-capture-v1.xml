@@ -7,7 +7,7 @@
     requires session opt-in and fails while locked. Window IDs are compositor
     lifetime IDs and never resolve to replacement windows.
   </description>
-  <interface name="ferese_window_capture_manager_v1" version="3">
+  <interface name="ferese_window_capture_manager_v1" version="4">
     <request name="destroy" type="destructor"/>
     <request name="capture_window">
       <description summary="snapshot a managed window">
@@ -90,6 +90,19 @@
       </description>
       <arg name="source" type="object" interface="ext_image_capture_source_v1"/>
       <arg name="active" type="uint"/>
+    </request>
+    <request name="create_workspace_source_with_shell" since="4">
+      <description summary="capture a workspace with its visible desktop layers">
+        Like create_workspace_source, but includes desktop layers and their
+        popups while this workspace is visible on its original output. Layers
+        are excluded during workspace transitions and overview, and whenever
+        another workspace is visible. The workspace's windows keep streaming.
+        This requires explicit user approval; clients must not fall back to
+        display capture when this request is unavailable.
+      </description>
+      <arg name="workspace_hi" type="uint"/>
+      <arg name="workspace_lo" type="uint"/>
+      <arg name="source" type="new_id" interface="ext_image_capture_source_v1"/>
     </request>
   </interface>
 </protocol>

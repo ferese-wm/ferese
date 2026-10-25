@@ -269,6 +269,7 @@ pub fn run(
     name: String,
     cursor: bool,
     generation: Option<u32>,
+    include_shell: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let configured_rate = std::env::var("FERESE_CAPTURE_MAX_FPS").ok();
     let rate = Arc::new(FrameRate::new(configured_rate.as_deref())?);
@@ -283,7 +284,11 @@ pub fn run(
         let _ = cancel_write.write_all(&[1]);
     });
     let capture = Rc::new(RefCell::new(Capture::connect(
-        &name, cursor, generation, &stop,
+        &name,
+        cursor,
+        generation,
+        include_shell,
+        &stop,
     )?));
     let size = capture.borrow().constraints().size;
     let logical_size = capture.borrow().logical_size();

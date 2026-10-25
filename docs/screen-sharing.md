@@ -79,8 +79,14 @@ by applying the larger axis density to both axes, which would soften text.
 
 A shared workspace stays attached to its identity when you switch elsewhere. It
 includes that workspace's windows, their popups and decorations, and the wallpaper.
-It excludes desktop layers (including panels and notifications), overview, and
-windows protected by capture rules. Authentication windows are protected by default.
+Panels, launcher and notifications are excluded by default. Turn on **Include
+shell** in the sharing picker to include them while that workspace is visible.
+Switching away or opening overview hides the shell from the stream, while the
+selected workspace's windows keep sharing. The option needs approval each time
+and is available only with a compositor that supports it.
+
+Overview and windows protected by capture rules stay excluded. Authentication
+windows are protected by default.
 Scrolling shares the workspace viewport, not the entire offscreen canvas. Capture
 does not activate the workspace, move focus, or resize hidden applications.
 
@@ -146,12 +152,14 @@ or rapidly changing captures on this path still incur GPU readback costs.
 ## Workspace capture resources
 
 Workspace sources reuse the existing image-copy-capture and PipeWire transport.
-Each workspace/cursor view has one retained GPU image with independent damage
-history and render resources. At most one changed workspace is composed per
-event-loop dispatch, yielding to input and display deadlines between views. Matching consumers reuse its composition and keep
-separate output buffers. Surface commits invalidate only their owning workspace;
-layout samples are reused until geometry changes. Consumer demand alone does not
-invalidate the image.
+Each combination of workspace, cursor and shell options has its own retained GPU
+image with independent damage history and render resources. At most one changed
+workspace is composed per event-loop dispatch, yielding to input and display
+deadlines between views. Matching consumers reuse its composition and keep
+separate output buffers. Window commits invalidate only their owning workspace.
+Views that include the visible shell also track output changes; layout samples
+are reused until geometry changes. Consumer demand alone does not invalidate the
+image.
 
 Hidden applications receive paced frame callbacks only while their content
 contributes to an active capture. An unchanged source waits for damage. A paused

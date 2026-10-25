@@ -23,20 +23,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     match args.as_slice() {
         [flag, name, cursor] if flag == "--stream" => {
-            stream::run(name.clone(), cursor == "embedded", None)
+            stream::run(name.clone(), cursor == "embedded", None, false)
         }
         [flag, id, cursor] if flag == "--stream-workspace" => {
             let id: u64 = id.parse()?;
-            stream::run(format!("workspace:{id}"), cursor == "embedded", None)
+            stream::run(format!("workspace:{id}"), cursor == "embedded", None, false)
+        }
+        [flag, id, cursor, option]
+            if flag == "--stream-workspace" && option == "--include-shell" =>
+        {
+            let id: u64 = id.parse()?;
+            stream::run(format!("workspace:{id}"), cursor == "embedded", None, true)
         }
         [flag, id, cursor] if flag == "--stream-window" => {
             let id: u64 = id.parse()?;
-            stream::run(format!("window:{id}"), cursor == "embedded", None)
+            stream::run(format!("window:{id}"), cursor == "embedded", None, false)
         }
         [flag, name, cursor, generation] if flag == "--stream" => stream::run(
             name.clone(),
             cursor == "embedded",
             Some(generation.parse()?),
+            false,
         ),
         [flag] if flag == "--sources" => {
             let capture = capture::Capture::connect(&std::sync::atomic::AtomicBool::new(false))?;

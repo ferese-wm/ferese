@@ -356,7 +356,12 @@ pub(super) fn material_element_with_role(
         .flatten();
     let capture_rect = framebuffer_capture_rect(parameters.sample_framebuffer);
     let capture_size = Size::from((capture_rect[2], capture_rect[3]));
-    let output_id = state.output_id(output)?;
+    let output_id = state.output_id(output).or_else(|| {
+        output
+            .user_data()
+            .get::<crate::handlers::workspace_capture::CaptureOutputId>()
+            .map(|id| id.0)
+    })?;
     let capture_key = (context.clone(), output_id, index);
     let buffers = state.render.surfaces.entry(surface.clone()).or_default();
     let capture = if let Some(blur_program) = blur_program {

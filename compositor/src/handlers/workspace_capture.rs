@@ -13,6 +13,7 @@ use crate::backends::direct::capture::CaptureTarget;
 #[derive(Clone)]
 pub(crate) struct WorkspaceSource {
     pub id: WorkspaceId,
+    pub include_shell: bool,
     pub output: Output,
     pub render_output: Output,
     native_size: Size<i32, smithay::utils::Physical>,
@@ -23,7 +24,7 @@ pub(crate) struct WorkspaceSource {
 }
 
 impl WorkspaceSource {
-    pub fn new(state: &Ferese, id: WorkspaceId) -> Option<Self> {
+    pub fn new(state: &Ferese, id: WorkspaceId, include_shell: bool) -> Option<Self> {
         state.workspaces.workspace(id)?;
         let owner = state.output_workspaces.output_for_workspace(id)?;
         let output = state
@@ -66,6 +67,7 @@ impl WorkspaceSource {
             .insert_if_missing(|| CaptureOutputId(owner));
         Some(Self {
             id,
+            include_shell,
             output: output.clone(),
             render_output,
             geometry,
@@ -90,6 +92,25 @@ impl WorkspaceSource {
             && self.output.current_transform() == self.transform
     }
 
+    pub fn shell_visible(&self, state: &Ferese) -> bool {
+        self.include_shell
+            && !state.session_lock.active()
+            && !state.overview.is_presenting()
+            && state.desktop_transition.is_none()
+            && state
+                .output_id(&self.output)
+                .is_some_and(|output| state.workspace_capture_visible(self.id, output))
+    }
+
+    fn shell_stamp(
+        &self,
+        state: &Ferese,
+    ) -> Option<crate::backends::direct::capture::changes::Stamp> {
+        self.shell_visible(state).then(|| {
+            crate::backends::direct::capture::changes::Stamp::new(state, &self.output, false)
+        })
+    }
+
     pub fn cursor_visible(&self, state: &Ferese) -> bool {
         !state.overview.is_presenting()
             && !state.input_capture.active()
@@ -109,6 +130,7 @@ pub(super) struct WorkspaceCapture {
     pub content: u64,
     pub prepared: Option<u64>,
     pub cursor: Option<super::image_capture::CursorStamp>,
+    shell: Option<crate::backends::direct::capture::changes::Stamp>,
     pub epoch: u64,
     pub next_frame: Instant,
     pub callbacks_checked: Option<u64>,
@@ -131,6 +153,7 @@ impl WorkspaceCapture {
             content: 0,
             prepared: None,
             cursor: None,
+            shell: None,
             epoch,
             next_frame: Instant::now(),
             callbacks_checked: None,
@@ -352,7 +375,9 @@ pub(super) fn process(
     let cursor_stamp = cursor
         .then(|| state.capture_cursor_stamp(view.source.geometry))
         .flatten();
-    let changed = view.prepared != Some(view.content)
+    let shell = view.source.shell_stamp(state);
+    let changed = view.shell != shell
+        || view.prepared != Some(view.content)
         || view.epoch != state.capture_epoch
         || view.cursor != cursor_stamp;
     let interval = super::workspace_capture::interval();
@@ -373,6 +398,7 @@ pub(super) fn process(
         match result {
             Ok(image) => {
                 view.cursor = cursor_stamp;
+                view.shell = shell;
                 view.next_frame = now + interval;
                 Some(image)
             }
@@ -432,6 +458,68 @@ pub(super) fn process(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shell_damage_tracks_only_the_visible_consented_output() {
+        if !crate::startup_tests::private_runtime(
+            "handlers::workspace_capture::tests::shell_damage_tracks_only_the_visible_consented_output",
+        ) {
+            return;
+        }
+        let mut events = smithay::reexports::calloop::EventLoop::try_new().unwrap();
+        let mut state = crate::startup_tests::state(&mut events);
+        let output = Output::new(
+            "shell-capture".into(),
+            smithay::output::PhysicalProperties {
+                size: (0, 0).into(),
+                subpixel: smithay::output::Subpixel::Unknown,
+                make: String::new(),
+                model: String::new(),
+                serial_number: String::new(),
+            },
+        );
+        output.change_current_state(
+            Some(smithay::output::Mode {
+                size: (800, 600).into(),
+                refresh: 60_000,
+            }),
+            None,
+            None,
+            None,
+        );
+        state.space.map_output(&output, (0, 0));
+        state.register_output(&output, "shell-capture".into());
+        let (_window, _client) = crate::state::test_window(&mut state, &mut events, 0xffff0000);
+        let workspace = state.workspaces.active_id();
+        let plain = WorkspaceSource::new(&state, workspace, false).unwrap();
+        let shell = WorkspaceSource::new(&state, workspace, true).unwrap();
+        let before = shell.shell_stamp(&state);
+        assert!(before.is_some());
+        assert!(plain.shell_stamp(&state).is_none());
+        crate::backends::direct::schedule_capture(&mut state, std::slice::from_ref(&output));
+        assert_eq!(
+            before,
+            shell.shell_stamp(&state),
+            "consumer demand must not invalidate pixels"
+        );
+        crate::backends::direct::render_on(&mut state, std::slice::from_ref(&output));
+        assert_ne!(
+            before,
+            shell.shell_stamp(&state),
+            "layer redraws must invalidate the shell view"
+        );
+        state.toggle_overview();
+        assert!(shell.shell_stamp(&state).is_none());
+        state.toggle_overview();
+        state.advance_animations(std::time::Instant::now() + Duration::from_secs(10));
+        state.switch_workspace(2);
+        assert!(shell.shell_stamp(&state).is_none());
+        crate::backends::direct::render_on(&mut state, &[output]);
+        assert!(
+            shell.shell_stamp(&state).is_none(),
+            "another workspace's shell must not wake capture"
+        );
+    }
 
     #[test]
     fn workspace_canvas_is_bounded_and_preserves_fractional_and_portrait_geometry() {

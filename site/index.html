@@ -3,14 +3,16 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#111821">
-  <meta name="description" content="Ferese is a Wayland desktop for Linux with scrolling and tree tiling, an included shell, and shared configuration. Packages for Fedora and Arch Linux.">
+  <meta name="theme-color" content="#151618">
+  <meta name="description" content="Ferese is a configurable Wayland desktop for Linux. Scrolling and tiling layouts, its own shell and launcher, and shared appearance settings throughout.">
   <meta property="og:title" content="Ferese | A configurable Wayland desktop">
-  <meta property="og:description" content="Scrolling and tree tiling with an included desktop shell, Settings and lock screen. Packages for Fedora and Arch Linux.">
+  <meta property="og:description" content="A Linux desktop with its own shell, launcher and settings. Arrange your windows, follow builds from the panel, and change the theme across the desktop.">
   <meta property="og:type" content="website">
+  <meta property="og:url" content="https://ferese-wm.github.io/ferese/">
   <meta property="og:image" content="https://ferese-wm.github.io/ferese/assets/screenshots/ferese-desktop.png">
-  <meta property="og:image:width" content="2880">
-  <meta property="og:image:height" content="1800">
+  <meta property="og:image:width" content="2881">
+  <meta property="og:image:height" content="1801">
+  <meta property="og:image:alt" content="Ferese with its launcher, Appearance settings and a build running in the panel.">
   <meta name="twitter:card" content="summary_large_image">
   <title>Ferese | A configurable Wayland desktop</title>
   <link rel="icon" href="assets/branding/ferese.svg" type="image/svg+xml">
@@ -20,51 +22,130 @@
   <link rel="stylesheet" href="home.css">
 </head>
 <body>
-  <svg class="icon-definitions" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><defs>
-    <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></symbol>
-    <symbol id="i-external" viewBox="0 0 24 24"><path d="M7 17 17 7M7 7h10v10"/></symbol>
-  </defs></svg>
   <a class="skip" href="#main">Skip to content</a>
-  <header class="site-header">
-    <div class="header-inner page-width">
-      <a class="brand" href="#main" aria-label="Ferese home"><img src="assets/branding/ferese.svg" width="34" height="34" alt=""><span>Ferese</span></a>
-      <nav aria-label="Main navigation"><a href="#make-room">The desktop</a><a href="#appearance">Appearance</a><a href="https://github.com/ferese-wm/ferese/wiki">Documentation</a></nav>
-      <div class="header-actions"><a class="small-button" href="https://github.com/ferese-wm/ferese/wiki/Installation">Get Ferese</a></div>
-    </div>
+  <header class="site-header page-width">
+    <a class="brand" href="#main" aria-label="Ferese home">
+      <img src="assets/branding/ferese.svg" width="38" height="38" alt="">
+      <span>Ferese</span>
+    </a>
+    <nav aria-label="Main navigation">
+      <a class="desktop-nav" href="#desktop">The desktop</a>
+      <a href="https://github.com/ferese-wm/ferese/wiki"><span class="nav-long">Documentation</span><span class="nav-short">Docs</span></a>
+      <a href="https://github.com/ferese-wm/ferese">GitHub</a>
+      <a class="nav-install" href="#install">Get Ferese <span aria-hidden="true">↓</span></a>
+    </nav>
   </header>
+
   <main id="main">
     <section class="hero page-width" aria-labelledby="hero-title">
-      <h1 id="hero-title">A configurable Wayland desktop.</h1>
-      <p class="hero-description">Ferese is a Wayland desktop for Linux with an included shell, Settings and lock screen. Choose a layout per workspace and configure it all in Settings or a KDL file.</p>
-      <p class="release-note"><a href="https://github.com/ferese-wm/ferese/releases/tag/v0.1.0">0.1.0</a> is the first stable release, with packages for Fedora 44 and Arch Linux on x86_64. This page and the wiki describe the development version.</p>
-      <div class="hero-actions"><a class="primary-button" href="https://github.com/ferese-wm/ferese/wiki/Installation">Get Ferese <svg class="icon"><use href="#i-arrow"/></svg></a><a class="inline-link" href="#desktop-preview">Take a look <svg class="icon down"><use href="#i-arrow"/></svg></a></div>
-      <div class="desktop-stage" id="desktop-preview">
-        <div class="desktop-capture" id="desktop-capture">
-          <a href="assets/screenshots/ferese-desktop.png" target="_blank" rel="noopener" aria-label="View the Ferese desktop screenshot at full resolution"><img src="assets/screenshots/ferese-desktop.png" width="2881" height="1801" alt="Ferese desktop with the launcher, build progress in the panel, Appearance settings and terminal windows." fetchpriority="high" decoding="async"></a>
+      <div class="hero-intro">
+        <h1 id="hero-title">A configurable<br>Wayland desktop.</h1>
+        <div class="hero-copy">
+          <p>Ferese includes its own shell, launcher and settings, with a shared theme and animations throughout the desktop. Choose a layout for each workspace and configure it through Settings or a KDL file.</p>
+          <div class="hero-actions">
+            <a class="button" href="#install">Get Ferese <span aria-hidden="true">↓</span></a>
+            <a class="text-link" href="https://github.com/ferese-wm/ferese/wiki/Installation#preview-and-logs">Try in a Wayland session <span aria-hidden="true">↗</span></a>
+          </div>
         </div>
       </div>
-    </section>
-    <section class="layout-section page-width" id="make-room" aria-labelledby="layout-title">
-      <div class="section-heading"><h2 id="layout-title">Choose a layout<br>per workspace.</h2><p>Scroll through columns of windows, or divide the screen with tree tiling. Floating windows remember their size and position. Open Overview to find a window across your workspaces.</p></div>
-      <figure class="feature-capture overview-capture">
-        <a href="assets/screenshots/ferese-overview.webp" target="_blank" rel="noopener" aria-label="View the Overview screenshot at full resolution"><img src="assets/screenshots/ferese-overview-1440.webp" srcset="assets/screenshots/ferese-overview-960.webp 960w, assets/screenshots/ferese-overview-1440.webp 1440w, assets/screenshots/ferese-overview.webp 2880w" sizes="(max-width: 700px) calc(100vw - 40px), (max-width: 1200px) calc(100vw - 80px), 1120px" width="2880" height="1800" alt="Ferese Overview showing three workspaces and open terminal and reading windows over the city wallpaper." loading="lazy" decoding="async"></a>
-        <figcaption>Overview with open windows and three workspace previews.</figcaption>
+      <figure class="desktop-figure">
+        <a class="screenshot" href="assets/screenshots/ferese-desktop.png" target="_blank" rel="noopener" aria-label="Open the Ferese desktop screenshot at full size">
+          <img src="assets/screenshots/ferese-desktop.png" width="2881" height="1801" alt="Ferese with the launcher open, a cargo build in the panel, Appearance settings and terminal windows." fetchpriority="high" decoding="async">
+        </a>
+        <figcaption><span>The launcher, Appearance settings and a build in progress.</span><a href="assets/screenshots/ferese-desktop.png" target="_blank" rel="noopener">View full size <span aria-hidden="true">↗</span></a></figcaption>
       </figure>
     </section>
-    <section class="appearance-section" id="appearance" aria-labelledby="appearance-title"><div class="page-width">
-      <div class="centered-heading"><h2 id="appearance-title">Change the desktop theme.</h2><p>Set colours, fonts and corner shapes for the shell, Settings and lock screen. Theme changes apply live.</p></div>
-    </div></section>
-    <section class="details-section page-width" aria-label="Panel and media features">
-      <article class="detail-feature">
-        <h3>Arrange your panel.</h3><p>Arrange items in groups, choose their surfaces, and put your panel at the top or bottom of the screen. New panel styles are available in the development version.</p>
+
+    <section class="feature-row page-width" id="desktop" aria-labelledby="windows-title">
+      <div class="feature-copy">
+        <h2 id="windows-title">Arrange windows<br> by workspace.</h2>
+        <p>Scroll through columns of windows, use tree tiling to divide the screen, or let a window float. Each workspace can have its own layout, with tabs for keeping related windows together.</p>
+        <p>Move and resize with the mouse or keyboard. When you need to find something, Overview shows your windows and workspaces in one place.</p>
+        <a class="text-link" href="https://github.com/ferese-wm/ferese/wiki/Shortcuts-and-Gestures">Shortcuts and gestures <span aria-hidden="true">↗</span></a>
+      </div>
+      <figure>
+        <a class="screenshot" href="assets/screenshots/ferese-overview.webp" target="_blank" rel="noopener" aria-label="Open the Overview screenshot at full size">
+          <img src="assets/screenshots/ferese-overview-1440.webp" srcset="assets/screenshots/ferese-overview-960.webp 960w, assets/screenshots/ferese-overview-1440.webp 1440w, assets/screenshots/ferese-overview.webp 2880w" sizes="(max-width: 760px) calc(100vw - 40px), (max-width: 1280px) 56vw, 672px" width="1440" height="900" alt="Overview with open windows below a strip of three workspace previews." loading="lazy" decoding="async">
+        </a>
+        <figcaption>Overview. Select a window to return to it.</figcaption>
+      </figure>
+    </section>
+
+    <section class="daily-tools page-width" aria-label="Launcher and Live Activities">
+      <article>
+        <a class="detail-image launcher-image" href="assets/screenshots/ferese-desktop.png" target="_blank" rel="noopener" aria-label="See the launcher in the full desktop screenshot">
+          <img src="assets/screenshots/ferese-desktop.png" width="2881" height="1801" alt="The compact launcher with a search field and Apps, Files and Windows browse controls." loading="lazy" decoding="async">
+        </a>
+        <h2>The launcher</h2>
+        <p>Find an app, a file or an open window without leaving the keyboard. The launcher also runs desktop actions, so you can take a screenshot or change the theme from the same search field.</p>
       </article>
-      <article class="detail-feature">
-        <h3>Control playback from the panel.</h3><p>See what's playing and pause or skip a track, right from your panel.</p>
+      <article>
+        <a class="detail-image activity-image" href="assets/screenshots/ferese-desktop.png" target="_blank" rel="noopener" aria-label="See Live Activities in the full desktop screenshot">
+          <img src="assets/screenshots/ferese-desktop.png" width="2881" height="1801" alt="A cargo build shown as an in-progress Live Activity in the panel." loading="lazy" decoding="async">
+        </a>
+        <h2>Follow a build from the panel.</h2>
+        <p>Live Activities keeps command and build progress visible while you work in another window. The panel can also hold your music controls, a focus timer and screen-sharing status.</p>
+        <a class="text-link" href="https://github.com/ferese-wm/ferese/wiki/Live-Activities">Set up Live Activities <span aria-hidden="true">↗</span></a>
       </article>
     </section>
-    <div class="gallery-link page-width"><a class="inline-link" href="https://github.com/ferese-wm/ferese/wiki/Screenshots">See all desktop screenshots <svg class="icon"><use href="#i-arrow"/></svg></a></div>
-    <section class="start-section page-width" aria-labelledby="start-title"><img class="start-logo" src="assets/branding/ferese.svg" width="74" height="74" alt=""><h2 id="start-title">Try Ferese.</h2><p>Download Ferese 0.1.0 for Fedora 44 or Arch Linux, or build from source. You can preview Ferese inside an existing Wayland session.</p><div class="hero-actions"><a class="primary-button" href="https://github.com/ferese-wm/ferese/releases/tag/v0.1.0">Download Ferese <svg class="icon"><use href="#i-arrow"/></svg></a><a class="inline-link" href="https://github.com/ferese-wm/ferese/wiki/Installation">Build and preview <svg class="icon"><use href="#i-external"/></svg></a></div></section>
+
+    <section class="feature-row appearance-row page-width" id="appearance" aria-labelledby="appearance-title">
+      <div class="feature-copy">
+        <h2 id="appearance-title">Make it your desktop.</h2>
+        <p>Choose a light or dark theme, then adjust the colors, fonts, corners and motion. The shell, Settings and lock screen follow the same appearance settings, and changes apply as you make them.</p>
+        <p>Your panel can be a full-width bar, separate floating groups, or Morph, a compact hub that expands when you open it. Arrange its controls in Settings.</p>
+        <a class="text-link" href="https://github.com/ferese-wm/ferese/wiki/Configuration">Explore the configuration <span aria-hidden="true">↗</span></a>
+      </div>
+      <figure>
+        <a class="screenshot" href="assets/screenshots/ferese-appearance.webp" target="_blank" rel="noopener" aria-label="Open the Appearance settings screenshot at full size">
+          <img src="assets/screenshots/ferese-appearance-1440.webp" srcset="assets/screenshots/ferese-appearance-960.webp 960w, assets/screenshots/ferese-appearance-1440.webp 1440w, assets/screenshots/ferese-appearance.webp 2880w" sizes="(max-width: 760px) calc(100vw - 40px), (max-width: 1280px) 56vw, 672px" width="1440" height="900" alt="Appearance settings showing six themes with paired light and dark colors, plus corner and accent controls." loading="lazy" decoding="async">
+        </a>
+        <figcaption>Appearance settings. <a href="https://github.com/ferese-wm/ferese/wiki/Screenshots">More desktop screenshots <span aria-hidden="true">↗</span></a></figcaption>
+      </figure>
+    </section>
+
+    <section class="install-section" id="install" aria-labelledby="install-title">
+      <div class="page-width">
+        <div class="install-intro">
+          <div>
+            <h2 id="install-title">Get Ferese.</h2>
+            <p>You can try Ferese inside your current Wayland session before logging into it as your desktop.</p>
+          </div>
+          <a class="text-link" href="https://github.com/ferese-wm/ferese/releases">Releases and notes <span aria-hidden="true">↗</span></a>
+        </div>
+        <div class="install-options">
+          <article>
+            <h3>Fedora 44</h3>
+            <p>Download the RPM from the release assets and follow the package installation guide.</p>
+            <a class="text-link" href="https://github.com/ferese-wm/ferese/releases">Find the Fedora package <span aria-hidden="true">↗</span></a>
+          </article>
+          <article>
+            <h3>Arch Linux</h3>
+            <p>Download the Arch package from the same release. Packages target x86_64.</p>
+            <a class="text-link" href="https://github.com/ferese-wm/ferese/releases">Find the Arch package <span aria-hidden="true">↗</span></a>
+          </article>
+          <article>
+            <h3>Other distributions</h3>
+            <p>Build from source with the dependencies and instructions in the installation guide.</p>
+            <a class="text-link" href="https://github.com/ferese-wm/ferese/wiki/Installation">Build and install <span aria-hidden="true">↗</span></a>
+          </article>
+        </div>
+        <p class="install-note">Upgrading? Log out of Ferese before replacing your installation. See the <a href="https://github.com/ferese-wm/ferese/wiki/Packages-and-Releases#install-a-release-package">package installation guide</a> for the steps.</p>
+      </div>
+    </section>
   </main>
-  <footer class="site-footer page-width"><a class="brand" href="#main" aria-label="Ferese home"><img src="assets/branding/ferese.svg" width="28" height="28" alt=""><span>Ferese</span></a><span>Rust and Smithay · MIT license</span><nav aria-label="Footer navigation"><a href="https://github.com/ferese-wm/ferese/wiki">Documentation</a><a href="https://github.com/ferese-wm/ferese">GitHub <svg class="icon"><use href="#i-external"/></svg></a></nav></footer>
+
+  <footer class="site-footer page-width">
+    <div class="footer-project">
+      <a class="brand" href="#main" aria-label="Back to the top"><img src="assets/branding/ferese.svg" width="28" height="28" alt=""><span>Ferese</span></a>
+      <p>Built with Rust and Smithay. Open source under the MIT license.</p>
+    </div>
+    <nav aria-label="Project links">
+      <a href="https://github.com/ferese-wm/ferese">Source code</a>
+      <a href="https://github.com/ferese-wm/ferese/issues">Report an issue</a>
+      <a href="https://github.com/ferese-wm/ferese/issues/5">Roadmap</a>
+    </nav>
+    <p class="version-note">This website and the wiki describe the development version. Check the release notes for your installed version.</p>
+  </footer>
 </body>
 </html>

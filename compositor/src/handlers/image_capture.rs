@@ -190,7 +190,7 @@ pub(crate) struct CaptureSessions {
     callback_deadline: Option<Instant>,
     workspace_callbacks: HashMap<ferese_core::WorkspaceId, Instant>,
     workspaces:
-        HashMap<(ferese_core::WorkspaceId, bool), super::workspace_capture::WorkspaceCapture>,
+        HashMap<(ferese_core::WorkspaceId, bool, bool), super::workspace_capture::WorkspaceCapture>,
 }
 
 fn authorized(client: &Client) -> bool {
@@ -225,21 +225,21 @@ impl CaptureSessions {
         }
     }
     pub(crate) fn workspace_changed(&mut self, id: ferese_core::WorkspaceId) {
-        for ((workspace, _), view) in &mut self.workspaces {
+        for ((workspace, _, _), view) in &mut self.workspaces {
             if *workspace == id {
                 view.content_changed();
             }
         }
     }
     pub(crate) fn workspace_geometry_changed(&mut self, id: ferese_core::WorkspaceId) {
-        for ((workspace, _), view) in &mut self.workspaces {
+        for ((workspace, _, _), view) in &mut self.workspaces {
             if *workspace == id {
                 view.invalidate();
             }
         }
     }
     pub(crate) fn captured_workspaces(&self) -> Vec<ferese_core::WorkspaceId> {
-        self.workspaces.keys().map(|(id, _)| *id).collect()
+        self.workspaces.keys().map(|(id, _, _)| *id).collect()
     }
 
     pub(crate) fn new(display: &DisplayHandle) -> Self {
@@ -562,7 +562,11 @@ impl Ferese {
                     active.session.source().user_data().get::<Source>()
                 {
                     // GPU resources belong to the renderer that created them.
-                    workspaces.remove(&(source.id, active.session.draw_cursor()));
+                    workspaces.remove(&(
+                        source.id,
+                        active.session.draw_cursor(),
+                        source.include_shell,
+                    ));
                 }
                 active.size = size;
                 active.dma_node = dma_node;
@@ -582,7 +586,11 @@ impl Ferese {
                 && source_active(&active.session.source())
             {
                 let source = source.clone();
-                let key = (source.id, active.session.draw_cursor());
+                let key = (
+                    source.id,
+                    active.session.draw_cursor(),
+                    source.include_shell,
+                );
                 if let Some(frame) = active.pending.take() {
                     let view = workspaces.entry(key).or_insert_with(|| {
                         super::workspace_capture::WorkspaceCapture::new(
@@ -733,10 +741,10 @@ impl Ferese {
             }
             true
         });
-        workspaces.retain(|(id, cursor), view| {
+        workspaces.retain(|(id, cursor, include_shell), view| {
             let matches = |active: &Active| {
                 active.session.draw_cursor() == *cursor
-                    && matches!(active.session.source().user_data().get::<Source>(), Some(Source::Workspace(source)) if source.id == *id)
+                    && matches!(active.session.source().user_data().get::<Source>(), Some(Source::Workspace(source)) if source.id == *id && source.include_shell == *include_shell)
             };
             if !sessions.iter().any(matches) { return false; }
             let pending = sessions.iter().any(|active| matches(active)
@@ -754,7 +762,7 @@ impl Ferese {
         });
         self.image_capture
             .workspace_callbacks
-            .retain(|id, _| workspaces.keys().any(|(workspace, _)| id == workspace));
+            .retain(|id, _| workspaces.keys().any(|(workspace, _, _)| id == workspace));
         self.image_capture.workspaces = workspaces;
         self.image_capture.active = sessions;
         if let Some(delay) = callback_delay {

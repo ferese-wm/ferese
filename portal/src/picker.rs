@@ -25,9 +25,22 @@ pub struct Prompt {
     pub rememberable: Vec<String>,
     #[serde(default)]
     pub recording: bool,
+    #[serde(default)]
+    pub workspace_shell: bool,
 }
 
 impl Prompt {
+    pub(crate) fn allows_shell<'a>(&self, names: impl IntoIterator<Item = &'a str>) -> bool {
+        self.workspace_shell
+            && !self.window_capture
+            && !self.recording
+            && names.into_iter().any(|name| {
+                self.sources
+                    .iter()
+                    .any(|source| source.workspace_id().is_some() && source.name == name)
+            })
+    }
+
     fn source_list_height(&self) -> f32 {
         let visible = &self.sources[..self.sources.len().min(4)];
         let mut sections = 0;
@@ -55,6 +68,8 @@ pub(crate) struct Selection {
     pub audio: Audio,
     #[serde(default)]
     pub region: bool,
+    #[serde(default)]
+    pub include_shell: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -66,6 +81,7 @@ enum Message {
     Remember,
     Audio(Audio),
     Region,
+    IncludeShell,
     Share,
     Cancel,
 }
@@ -79,6 +95,7 @@ struct Picker {
     remember: bool,
     audio: Audio,
     region: bool,
+    include_shell: bool,
     background: cosmic::iced::Color,
     palette: ferese_theme::Palette,
     font: cosmic::font::Font,
@@ -102,7 +119,8 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     let height = 180.
         + prompt.source_list_height()
         + if prompt.persist_mode > 0 { 48. } else { 0. }
-        + if prompt.recording { 190. } else { 0. };
+        + if prompt.recording { 190. } else { 0. }
+        + if prompt.workspace_shell { 80. } else { 0. };
     cosmic::app::run::<Picker>(
         Settings::default()
             .size(cosmic::iced::Size::new(400., height))
@@ -155,6 +173,7 @@ impl cosmic::Application for Picker {
             remember: false,
             audio: Audio::Off,
             region: false,
+            include_shell: false,
             background,
             palette,
             font,
@@ -239,10 +258,14 @@ impl cosmic::Application for Picker {
                     self.selected.push(index);
                 }
                 self.remember &= self.can_remember();
+                self.include_shell &= self.can_include_shell();
             }
             Message::Remember if self.can_remember() => self.remember = !self.remember,
             Message::Audio(audio) if self.prompt.recording => self.audio = audio,
             Message::Region if self.prompt.recording => self.region = !self.region,
+            Message::IncludeShell if self.can_include_shell() => {
+                self.include_shell = !self.include_shell
+            }
             Message::Share if !self.selected.is_empty() => {
                 let names: Vec<_> = self
                     .selected
@@ -265,6 +288,7 @@ impl cosmic::Application for Picker {
                         },
                         audio: self.audio,
                         region: self.region,
+                        include_shell: self.include_shell && self.can_include_shell(),
                     };
                     println!(
                         "{}",
@@ -372,14 +396,28 @@ impl cosmic::Application for Picker {
                 "Choose a display, then record it in full or select a region."
             } else if self.prompt.window_capture {
                 "Only the selected window will be captured."
-            } else if self.prompt.sources.iter().any(|source| source.workspace_id().is_some()) {
-                "A workspace stays shared when you switch away. Desktop panels and notifications are excluded."
+            } else if self.selected.iter().any(|index| self.prompt.sources[*index].workspace_id().is_some()) {
+                if self.include_shell {
+                    "Panels, launcher and notifications are included while the workspace is visible. Switching away or opening overview hides the shell from the stream; the workspace keeps sharing."
+                } else {
+                    "The workspace keeps sharing when you switch away. Panels, launcher and notifications are excluded."
+                }
             } else {
                 "Displays share everything visible. Windows share only their own content."
             })
             .size(12)
             .width(Length::Fill),
         );
+        if self.can_include_shell() {
+            content = content.push(
+                row![
+                    self.text("Include shell").width(Length::Fill),
+                    ferese_theme::controls::switch(self.include_shell, self.palette)
+                        .on_press(Message::IncludeShell),
+                ]
+                .align_y(Alignment::Center),
+            );
+        }
         if self.prompt.recording {
             content = content.push(
                 row![
@@ -483,6 +521,14 @@ impl cosmic::Application for Picker {
 }
 
 impl Picker {
+    fn can_include_shell(&self) -> bool {
+        self.prompt.allows_shell(
+            self.selected
+                .iter()
+                .map(|index| self.prompt.sources[*index].name.as_str()),
+        )
+    }
+
     fn can_remember(&self) -> bool {
         !self.selected.is_empty()
             && self.selected.len() <= 16
@@ -519,4 +565,49 @@ pub(crate) fn appearance() -> (
         },
         palette,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn prompt() -> Prompt {
+        serde_json::from_value(serde_json::json!({
+            "app": "test", "multiple": true, "workspace_shell": true,
+            "sources": [
+                {"name":"workspace:1", "label":"Workspace 1", "width":800, "height":600, "x":0, "y":0, "scale":1},
+                {"name":"DP-1", "label":"Display", "width":800, "height":600, "x":0, "y":0, "scale":1},
+                {"name":"window:2", "label":"Window", "width":80, "height":60, "x":0, "y":0, "scale":1}
+            ]
+        })).unwrap()
+    }
+
+    #[test]
+    fn shell_requires_a_selected_workspace_and_compositor_support() {
+        let mut prompt = prompt();
+        assert!(!prompt.allows_shell([]));
+        assert!(!prompt.allows_shell(["DP-1", "window:2"]));
+        assert!(!prompt.allows_shell(["workspace:99"]));
+        assert!(prompt.allows_shell(["workspace:1"]));
+        assert!(prompt.allows_shell(["workspace:1", "DP-1"]));
+        prompt.workspace_shell = false;
+        assert!(!prompt.allows_shell(["workspace:1"]));
+        prompt.workspace_shell = true;
+        prompt.recording = true;
+        assert!(!prompt.allows_shell(["workspace:1"]));
+        prompt.recording = false;
+        prompt.window_capture = true;
+        assert!(!prompt.allows_shell(["workspace:1"]));
+    }
+
+    #[test]
+    fn older_picker_messages_do_not_enable_shell_capture() {
+        let selection: Selection =
+            serde_json::from_str(r#"{"names":["workspace:1"],"persist_mode":0}"#).unwrap();
+        assert!(!selection.include_shell);
+        let mut value = serde_json::to_value(prompt()).unwrap();
+        value.as_object_mut().unwrap().remove("workspace_shell");
+        let prompt: Prompt = serde_json::from_value(value).unwrap();
+        assert!(!prompt.allows_shell(["workspace:1"]));
+    }
 }

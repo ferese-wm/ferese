@@ -191,7 +191,7 @@ pub(super) fn init_global(
     }
 
     display.create_global::<Ferese, FereseWindowCaptureManagerV1, Global>(
-        3,
+        4,
         Global {
             budget: Arc::default(),
             worker,
@@ -273,6 +273,21 @@ impl Dispatch<FereseWindowCaptureManagerV1, Global> for Ferese {
         _: &DisplayHandle,
         data_init: &mut DataInit<'_, Self>,
     ) {
+        let (request, include_shell) = match request {
+            manager::Request::CreateWorkspaceSourceWithShell {
+                workspace_hi,
+                workspace_lo,
+                source,
+            } => (
+                manager::Request::CreateWorkspaceSource {
+                    workspace_hi,
+                    workspace_lo,
+                    source,
+                },
+                true,
+            ),
+            request => (request, false),
+        };
         if let manager::Request::CreateWorkspaceSource {
             workspace_hi,
             workspace_lo,
@@ -285,7 +300,7 @@ impl Dispatch<FereseWindowCaptureManagerV1, Global> for Ferese {
             let id =
                 ferese_core::WorkspaceId((u64::from(workspace_hi) << 32) | u64::from(workspace_lo));
             let capture = ImageCaptureSource::new();
-            let view = super::workspace_capture::WorkspaceSource::new(state, id);
+            let view = super::workspace_capture::WorkspaceSource::new(state, id, include_shell);
             if let Some(view) = &view {
                 capture
                     .user_data()

@@ -29,7 +29,7 @@ pub(crate) fn tracked(output: &Output) -> bool {
 /// Also compare output configuration: mode changes can precede a redraw request.
 /// Keeping the source identity prevents a remapped mirror from reusing its old view.
 #[derive(Debug, PartialEq)]
-pub(super) struct Stamp {
+pub(crate) struct Stamp {
     output: Output,
     content: u64,
     cursor: Option<u64>,

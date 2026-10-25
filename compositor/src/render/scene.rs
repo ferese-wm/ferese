@@ -177,14 +177,23 @@ fn scene_elements(
     } else {
         Vec::new()
     };
+    let layer_output = workspace.map_or(output, |view| &view.output);
+    let include_layers = workspace.is_none_or(|view| view.shell_visible(state));
     let upper_layers: &[Layer] =
-        if !state.layer_visible_for_frame(output, Layer::Top, frame.overview.is_presenting()) {
+        if !state.layer_visible_for_frame(layer_output, Layer::Top, frame.overview.is_presenting())
+        {
             &[Layer::Overlay]
         } else {
             &[Layer::Overlay, Layer::Top]
         };
-    if workspace.is_none() {
-        elements.extend(layer_elements(state, renderer, output, upper_layers));
+    if include_layers {
+        elements.extend(layer_elements(
+            state,
+            renderer,
+            output,
+            layer_output,
+            upper_layers,
+        ));
     }
     if frame.overview.is_presenting() {
         elements.extend(overview_strip_elements(
@@ -488,11 +497,12 @@ fn scene_elements(
     if let Some(group) = closing.remove(&None) {
         elements.extend(group);
     }
-    if workspace.is_none() {
+    if include_layers {
         elements.extend(layer_elements(
             state,
             renderer,
             output,
+            layer_output,
             &[Layer::Bottom, Layer::Background],
         ));
     }
@@ -518,10 +528,12 @@ pub(crate) fn layer_surfaces(output: &Output) -> Vec<LayerSurface> {
     layer_map_for_output(output).layers().cloned().collect()
 }
 
-pub(super) fn layer_elements(
+// Workspace capture reads the real layer map but renders onto its own scaled canvas.
+fn layer_elements(
     state: &mut Ferese,
     renderer: &mut GlesRenderer,
     output: &Output,
+    layer_output: &Output,
     requested_layers: &[Layer],
 ) -> Vec<AnimatedWindowRenderElement> {
     let scale = output.current_scale().fractional_scale();
@@ -530,7 +542,7 @@ pub(super) fn layer_elements(
     };
     let output_crop = layer_output_crop(mode.size, output.current_transform());
     let layers = {
-        let map = layer_map_for_output(output);
+        let map = layer_map_for_output(layer_output);
 
         requested_layers
             .iter()
