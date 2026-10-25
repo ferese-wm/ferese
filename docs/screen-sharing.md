@@ -23,6 +23,44 @@ If recording fails, a notification reports the error and any unfinished
 
 ## Start sharing
 
+### Panel status
+
+Add **Capture status** in Settings → Panel & Shell → Edit panel → Add item.
+You can move it between groups, hide it, or choose Full, Compact or Icon.
+New panel presets include it. Add it yourself if you use a saved layout.
+
+The item appears when an app starts capturing a source you've approved through
+the desktop portal. Click it to see the application and shared sources.
+OBS preview capture shows **Sharing**, even when OBS is not broadcasting.
+Ferese's built-in recorder keeps its separate Recording item. In Morph, capture
+status appears in the hub when the Capture status item is enabled.
+
+OBS has a monochrome app icon. Other capture apps use the sharing icon, and both
+follow the active panel theme. The red dot means an output is live or recording.
+Sharing, paused recording, and reconnecting alone do not show that dot.
+Choose Full for elapsed time, Compact for status text, or Icon for just the icon
+and status dot. Click the item for separate stream and recording times.
+
+To show OBS **LIVE**, **REC**, paused recording, and reconnecting states, enable
+OBS's WebSocket server under Tools → WebSocket Server Settings, then create
+`$XDG_CONFIG_HOME/ferese/obs.json` (normally `~/.config/ferese/obs.json`):
+
+```json
+{"enabled": true, "port": 4455, "password": "your OBS WebSocket password"}
+```
+
+Set the file's permissions to `600` and restart the shell. Ferese connects only
+to `127.0.0.1`, reads output status, and never starts or stops OBS outputs.
+It connects only if this configuration exists and is enabled. If OBS disconnects,
+its output status clears. Any portal sharing session stays visible.
+
+Ferese updates capture and OBS status when it receives an event. Elapsed time
+uses a local one-second timer while a running output's indicator can be shown.
+Sharing and paused-only recording need no timer. If configured OBS is unavailable,
+connection retries back off to once per minute.
+
+### Choose a source
+
 Select a Wayland screen-sharing source in your application. In Ferese's picker,
 choose a display, workspace, or window and click **Share**. Nothing is selected initially.
 Apps requesting multiple sources can select up to eight.

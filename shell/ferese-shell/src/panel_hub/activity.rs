@@ -26,7 +26,17 @@ impl FereseShell {
     }
 
     pub(super) fn hub_priority(&self) -> Option<Peek> {
-        if matches!(
+        self.hub_priority_with_capture(self.capture_item_enabled())
+    }
+
+    pub(super) fn hub_priority_for(&self, id: window::Id) -> Option<Peek> {
+        self.hub_priority_with_capture(self.capture_item_visible(id))
+    }
+
+    fn hub_priority_with_capture(&self, capture: bool) -> Option<Peek> {
+        if capture && self.capture_status.active() {
+            Some(Peek::Capture)
+        } else if matches!(
             self.recorder.state,
             recording::State::Recording(_) | recording::State::Saving
         ) {
@@ -37,7 +47,12 @@ impl FereseShell {
     }
 
     pub(super) fn hub_peek_content(&self, id: window::Id) -> (Peek, f64) {
-        if let Some(priority) = self.hub_priority() {
+        if let Some(priority) = self.hub_priority_for(id) {
+            if priority == Peek::Capture {
+                let label = self.capture_status.bar_label(false);
+                let width = (label.chars().count() as f64 * 7. + 72.).clamp(240., 440.);
+                return (priority, width);
+            }
             return (
                 priority,
                 if priority == Peek::Recording && self.hub_low_battery().is_some() {
@@ -94,14 +109,19 @@ impl FereseShell {
         if self.snapshot.binding_mode.is_some() {
             return Task::none();
         }
-        let priority = self.hub_priority();
         let changes: Vec<_> = self
             .outputs
             .iter()
             .filter(|entry| entry.runtime.hub.is_some())
-            .map(|entry| (entry.bar, self.hub_peek_content(entry.bar)))
+            .map(|entry| {
+                (
+                    entry.bar,
+                    self.hub_peek_content(entry.bar),
+                    self.hub_priority_for(entry.bar),
+                )
+            })
             .collect();
-        Task::batch(changes.into_iter().map(|(id, peek)| {
+        Task::batch(changes.into_iter().map(|(id, peek, priority)| {
             Task::batch([
                 self.transition_hub(id, Event::Activity { priority, peek }),
                 self.transition_hub(id, Event::Resize),
@@ -138,6 +158,25 @@ impl FereseShell {
                     } else {
                         Alignment::Start
                     })
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center)
+            .width(width)
+            .into();
+        }
+        if priority == Peek::Capture && self.capture_status.active() {
+            let foreground =
+                crate::color(self.config.theme.for_bar().text_primary).scale_alpha(opacity);
+            let mut label = self.capture_status.bar_label(false);
+            if matches!(self.recorder.state, recording::State::Recording(_)) {
+                label.push_str(" + REC");
+            }
+            return row![
+                self.capture_indicator(18, foreground, opacity),
+                self.render
+                    .text(label)
+                    .size(13)
+                    .class(theme::Text::Color(foreground)),
             ]
             .spacing(8)
             .align_y(Alignment::Center)

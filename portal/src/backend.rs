@@ -79,6 +79,7 @@ struct Session {
     source_types: u32,
     bar_controlled: bool,
     recording: Option<crate::recording::Recording>,
+    sources: Vec<String>,
     persist_mode: u32,
     restore: Option<crate::restore::Restore>,
     cancel: Arc<Cancel>,
@@ -97,6 +98,35 @@ impl Default for Backend {
             sessions: Arc::default(),
             work: Arc::new(Semaphore::new(MAX_SESSIONS)),
         }
+    }
+}
+
+// This interface reports approved capture sessions, not broadcast status.
+struct CaptureStatus(Backend);
+
+#[zbus::interface(name = "org.ferese.CaptureStatus")]
+impl CaptureStatus {
+    async fn get_snapshot(&self) -> String {
+        let sessions = self.0.sessions.lock().await;
+        let mut entries: Vec<_> = sessions
+            .values()
+            .filter(|session| session.phase == Phase::Running && !session.bar_controlled)
+            .map(|session| ferese_ipc::capture::Session {
+                app: session.app.clone(),
+                sources: session.sources.clone(),
+            })
+            .collect();
+        entries.sort_by(|a, b| (&a.app, &a.sources).cmp(&(&b.app, &b.sources)));
+        serde_json::to_string(&entries).expect("capture status is serializable")
+    }
+
+    #[zbus(signal)]
+    async fn changed(emitter: &SignalEmitter<'_>) -> zbus::Result<()>;
+}
+
+async fn capture_status_changed(connection: &Connection) {
+    if let Ok(emitter) = SignalEmitter::new(connection, ferese_ipc::capture::PATH) {
+        let _ = CaptureStatus::changed(&emitter).await;
     }
 }
 
@@ -262,6 +292,9 @@ impl Backend {
         let session = self.sessions.lock().await.remove(path);
         if let Some(session) = session {
             session.cancel.stop();
+            if session.phase == Phase::Running && !session.bar_controlled {
+                capture_status_changed(connection).await;
+            }
             if let Ok(emitter) = SignalEmitter::new(connection, path) {
                 let _ = SessionObject::closed(&emitter).await;
             }
@@ -346,6 +379,7 @@ impl Backend {
                 source_types: 1,
                 bar_controlled: false,
                 recording: None,
+                sources: Vec::new(),
                 persist_mode: 0,
                 restore: None,
                 cancel: Arc::default(),
@@ -493,12 +527,16 @@ impl Backend {
             .await;
 
         match result {
-            Ok((children, streams, mut reply, recording))
+            Ok((children, streams, mut reply, recording, sources))
                 if !cancel.stopped.load(Ordering::SeqCst) =>
             {
                 if let Some(session) = self.sessions.lock().await.get_mut(session_handle.as_str()) {
                     session.phase = Phase::Running;
                     session.recording = recording;
+                    session.sources = sources;
+                }
+                if !bar_controlled {
+                    capture_status_changed(connection).await;
                 }
                 let backend = self.clone();
                 let connection = connection.clone();
@@ -680,6 +718,7 @@ async fn start_streams(
         Vec<(u32, Options)>,
         Options,
         Option<crate::recording::Recording>,
+        Vec<String>,
     ),
     StartError,
 > {
@@ -1000,7 +1039,18 @@ async fn start_streams(
         })
         .collect::<Result<Vec<_>, _>>()?;
 
-    Ok((children, streams, reply, recording))
+    let labels = selected
+        .iter()
+        .map(|source| {
+            source
+                .label
+                .chars()
+                .filter(|c| !c.is_control())
+                .take(160)
+                .collect()
+        })
+        .collect();
+    Ok((children, streams, reply, recording, labels))
 }
 
 fn window_metadata(source: &Source, ready: &Ready) -> Result<Options, String> {
@@ -1123,15 +1173,13 @@ fn validate_selection(
 }
 
 async fn supervise(mut children: Vec<Child>, cancel: Arc<Cancel>) {
-    loop {
-        if cancel.stopped.load(Ordering::SeqCst)
-            || children
-                .iter_mut()
-                .any(|c| !matches!(c.try_wait(), Ok(None)))
-        {
-            break;
+    {
+        use futures_util::{StreamExt, stream::FuturesUnordered};
+        let mut exits: FuturesUnordered<_> = children.iter_mut().map(Child::wait).collect();
+        tokio::select! {
+            _ = cancel.wait() => (),
+            _ = exits.next() => (),
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
     }
 
     cancel.stop();
@@ -1153,6 +1201,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let connection = zbus::connection::Builder::session()?
         .name("org.freedesktop.impl.portal.desktop.ferese")?
         .serve_at(PATH, backend.clone())?
+        .serve_at(ferese_ipc::capture::PATH, CaptureStatus(backend.clone()))?
         .serve_at(PATH, settings.clone())?
         .serve_at(PATH, crate::desktop::Screenshot(requests.clone()))?
         .serve_at(PATH, crate::desktop::Wallpaper(requests.clone()))?
@@ -1214,6 +1263,71 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn capture_status_includes_only_running_external_sessions() {
+        let backend = Backend::default();
+        for (index, phase, bar_controlled) in [
+            (0, Phase::Created, false),
+            (1, Phase::Starting, false),
+            (2, Phase::Running, false),
+            (3, Phase::Running, true),
+        ] {
+            backend.sessions.lock().await.insert(
+                index.to_string(),
+                Session {
+                    owner: ":1.1".into(),
+                    app: "com.obsproject.Studio".into(),
+                    phase,
+                    multiple: false,
+                    cursor: false,
+                    source_types: 1,
+                    bar_controlled,
+                    recording: None,
+                    sources: vec!["Workspace 1".into()],
+                    persist_mode: 0,
+                    restore: None,
+                    cancel: Arc::default(),
+                    work: Arc::new(backend.work.clone().try_acquire_owned().unwrap()),
+                },
+            );
+        }
+        let status = CaptureStatus(backend.clone());
+        let entries: Vec<ferese_ipc::capture::Session> =
+            serde_json::from_str(&status.get_snapshot().await).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].app, "com.obsproject.Studio");
+        assert_eq!(entries[0].sources, ["Workspace 1"]);
+        backend.sessions.lock().await.clear();
+        assert_eq!(status.get_snapshot().await, "[]");
+    }
+
+    #[tokio::test]
+    async fn worker_exit_or_cancel_reaps_every_capture_child() {
+        for cancel_first in [false, true] {
+            let mut children = Vec::new();
+            children.push(
+                Command::new("sleep")
+                    .arg("60")
+                    .kill_on_drop(true)
+                    .spawn()
+                    .unwrap(),
+            );
+            if !cancel_first {
+                children.push(Command::new("true").kill_on_drop(true).spawn().unwrap());
+            }
+            let pid = children[0].id().unwrap();
+            let cancel = Arc::new(Cancel::default());
+            if cancel_first {
+                cancel.stop();
+            }
+            tokio::time::timeout(Duration::from_secs(2), supervise(children, cancel.clone()))
+                .await
+                .unwrap();
+            assert!(cancel.stopped.load(Ordering::SeqCst));
+            assert!(!std::path::Path::new(&format!("/proc/{pid}")).exists());
+        }
+    }
 
     #[tokio::test]
     async fn cancelled_async_work_holds_session_capacity_until_worker_exits() {

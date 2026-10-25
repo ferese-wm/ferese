@@ -60,11 +60,39 @@ impl FereseShell {
         } else {
             theme.text_muted
         });
-        let indicator = if kind == Menu::Battery {
+        let mut indicator = if kind == Menu::Battery {
             self.battery_indicator(theme, 1.0, battery_percentage)
         } else {
             accented_icon(source, metrics.icon_size, foreground, color(theme.accent)).into()
         };
+        if kind == Menu::Notifications {
+            let unread = self
+                .status
+                .notifications
+                .as_ref()
+                .is_some_and(|n| n.count > 0 && !n.dnd);
+            let dot = container(cosmic::widget::Space::new())
+                .width(4)
+                .height(4)
+                .class(theme::Container::custom(move |_| container::Style {
+                    background: unread.then_some(Background::Color(foreground)),
+                    border: Border {
+                        shape: BorderShape::Continuous,
+                        radius: self.render.radius(2.0).into(),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }));
+            // Keep the popup anchor stable when reading clears the badge.
+            indicator = cosmic::iced::widget::stack![
+                indicator,
+                container(dot)
+                    .width(metrics.icon_size)
+                    .height(metrics.icon_size)
+                    .align_x(Alignment::End),
+            ]
+            .into();
+        }
         let mut content = row![indicator].spacing(4).align_y(Alignment::Center);
 
         if kind == Menu::Recording
@@ -77,32 +105,13 @@ impl FereseShell {
                     .class(theme::Text::Color(foreground)),
             );
         }
-
-        if kind == Menu::Notifications {
-            // Reading notifications clears the dot. Keep its space so the
-            // resulting panel allocation does not dismiss the new popover.
-            let unread = self
-                .status
-                .notifications
-                .as_ref()
-                .is_some_and(|n| n.count > 0 && !n.dnd);
-            content = content.push(
-                container(cosmic::widget::Space::new())
-                    .width(4)
-                    .height(4)
-                    .class(theme::Container::custom(move |_| container::Style {
-                        background: unread.then_some(Background::Color(foreground)),
-                        border: Border {
-                            shape: BorderShape::Continuous,
-                            radius: self.render.radius(2.0).into(),
-                            ..Default::default()
-                        },
-                        ..Default::default()
-                    })),
-            );
-        }
         let content = bar_content(content, metrics.group_item_height);
         let recording_busy = kind == Menu::Recording && self.recorder.busy();
+        let icon_width = if kind == Menu::Battery {
+            crate::battery_indicator::WIDTH
+        } else {
+            f32::from(metrics.icon_size)
+        };
         let control = button::custom(content)
             .name(if recording_busy {
                 self.recorder.label().into()
@@ -111,10 +120,7 @@ impl FereseShell {
             } else {
                 status_label(kind, &self.status)
             })
-            .padding([
-                0.0,
-                ((metrics.height - f32::from(metrics.icon_size)) * 0.5).max(4.0),
-            ])
+            .padding([0.0, ((metrics.height - icon_width) * 0.5).max(4.0)])
             .height(metrics.group_item_height)
             .on_press_with_rectangle(move |offset, bounds| {
                 if kind == Menu::Recording {
@@ -165,6 +171,7 @@ fn status_label(kind: Menu, s: &Snapshot) -> String {
         Menu::Calendar => "Calendar".into(),
         Menu::Overflow => "More panel items".into(),
         Menu::Recording => "Screen recording".into(),
+        Menu::CaptureStatus => "Capture status".into(),
         Menu::Media => "Now playing".into(),
         Menu::Battery => s.battery.as_ref().map_or_else(
             || "Battery: unavailable".into(),
@@ -226,6 +233,7 @@ pub(super) fn status_icon(kind: Menu, s: &Snapshot) -> (&'static [u8], bool) {
         Menu::Calendar => (ferese_theme::icons::CALENDAR, true),
         Menu::Overflow => (ferese_theme::icons::CHEVRON_DOWN, true),
         Menu::Recording => (ferese_theme::icons::RECORD, true),
+        Menu::CaptureStatus => (ferese_theme::icons::DISPLAY, true),
         Menu::Media => (ferese_theme::icons::MEDIA, true),
         Menu::Battery => {
             let Some(b) = &s.battery else {
@@ -263,6 +271,63 @@ pub(super) fn status_icon(kind: Menu, s: &Snapshot) -> (&'static [u8], bool) {
 mod tests {
     use super::*;
     use crate::status;
+
+    #[test]
+    fn status_hitboxes_stay_aligned_when_badges_and_battery_values_change() {
+        use cosmic::iced::Size;
+        use cosmic::iced::advanced::renderer::Headless;
+        use cosmic::iced::advanced::{layout, widget};
+
+        let renderer = cosmic::iced::futures::executor::block_on(cosmic::Renderer::new(
+            cosmic::iced::Font::default(),
+            cosmic::iced::Pixels(14.),
+            Some("tiny-skia"),
+        ))
+        .unwrap();
+        let mut shell = crate::tests::shell_with_measured_panel();
+        let measure = |shell: &FereseShell, kind, percentage| {
+            let mut view = shell.view_status_item(kind, percentage, false);
+            let mut tree = widget::Tree::new(&view);
+            view.as_widget_mut()
+                .layout(
+                    &mut tree,
+                    &renderer,
+                    &layout::Limits::new(Size::ZERO, Size::new(1000., 1000.)),
+                )
+                .size()
+        };
+        for height in [28., 36., 48.] {
+            shell.config.panels[0].geometry.height = Some(height);
+            let ordinary = measure(&shell, Menu::System, false);
+            for (count, dnd) in [(0, false), (3, false), (0, false), (3, true)] {
+                shell.status.notifications = Some(status::Notifications { count, dnd });
+                assert_eq!(
+                    measure(&shell, Menu::Notifications, false),
+                    ordinary,
+                    "notification badges must stay inside the normal icon hitbox"
+                );
+            }
+            for percent in [0, 9, 50, 100] {
+                shell.status.battery = Some(status::Battery {
+                    percent,
+                    status: "Discharging".into(),
+                });
+                for percentage in [false, true] {
+                    let battery = measure(&shell, Menu::Battery, percentage);
+                    assert_eq!(battery.height, ordinary.height);
+                    assert!(
+                        battery.width <= ordinary.width.max(38.5),
+                        "battery adds excess horizontal padding: {battery:?} vs {ordinary:?}"
+                    );
+                    assert!(
+                        battery.width >= crate::battery_indicator::WIDTH + 8.,
+                        "battery must retain space around the body and terminal"
+                    );
+                }
+            }
+        }
+    }
+
     #[test]
     fn icons_follow_real_states() {
         let mut s = Snapshot {

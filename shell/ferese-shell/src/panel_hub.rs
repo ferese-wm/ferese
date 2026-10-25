@@ -42,6 +42,7 @@ pub(super) fn content_width(panel: &Panel, size: Option<(i32, i32)>) -> f64 {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Peek {
     Recording,
+    Capture,
     Battery,
     Media,
     Date,
@@ -284,7 +285,7 @@ impl FereseShell {
                 entered,
                 enabled: self.panel_for_bar(id).morph.peek_on_hover,
                 peek: self.hub_peek_content(id),
-                priority: self.hub_priority(),
+                priority: self.hub_priority_for(id),
             },
         )
     }
@@ -343,7 +344,7 @@ impl FereseShell {
         };
         if self.snapshot.binding_mode.is_some()
             || self.bar_hidden(id)
-            || self.hub_priority().is_some()
+            || self.hub_priority_for(id).is_some()
             || !matches!(
                 self.hub_mode(id),
                 Some(Mode::Idle | Mode::Peek | Mode::Toast)
@@ -479,7 +480,7 @@ impl FereseShell {
         {
             return runtime.hub.target_size()[0].min(runtime.available[0]) as f32;
         }
-        let artwork_width = if self.hub_priority().is_some() {
+        let artwork_width = if self.hub_priority_for(id).is_some() {
             64.
         } else if self
             .media
@@ -720,7 +721,7 @@ impl FereseShell {
         let content: Element<'_, cosmic::Action<Message>> = match mode {
             Mode::Idle | Mode::Peek
                 if self.has_compact_activities(id)
-                    && self.hub_priority().is_none()
+                    && self.hub_priority_for(id).is_none()
                     && !(mode == Mode::Peek && peek == Peek::Workspaces) =>
             {
                 self.activity_compact(id, opacity, intrinsic)
@@ -736,10 +737,12 @@ impl FereseShell {
                     .clock
                     .split_once(", ")
                     .map_or(self.clock.as_str(), |(_, time)| time);
-                let priority = self.hub_priority();
+                let priority = self.hub_priority_for(id);
                 let activity = if mode == Mode::Idle {
                     priority
-                } else if mode == Mode::Peek && matches!(peek, Peek::Recording | Peek::Battery) {
+                } else if mode == Mode::Peek
+                    && matches!(peek, Peek::Recording | Peek::Capture | Peek::Battery)
+                {
                     Some(peek)
                 } else {
                     None
@@ -766,7 +769,7 @@ impl FereseShell {
                         .map_or_else(|| time.to_owned(), |notice| notice.title.clone())
                 } else if mode == Mode::Peek {
                     match peek {
-                        Peek::Recording | Peek::Battery => String::new(),
+                        Peek::Recording | Peek::Capture | Peek::Battery => String::new(),
                         Peek::Media => self.media.snapshot.selected.as_ref().map_or_else(
                             || "Playback ended".to_owned(),
                             |player| player.label().to_owned(),
@@ -806,16 +809,17 @@ impl FereseShell {
                     .to_owned()
                 };
                 let kind = if let Some(activity) = activity {
-                    if activity == Peek::Recording {
-                        status_ui::Menu::Overflow
-                    } else {
-                        status_ui::Menu::Battery
+                    match activity {
+                        Peek::Capture => status_ui::Menu::CaptureStatus,
+                        Peek::Recording => status_ui::Menu::Overflow,
+                        _ => status_ui::Menu::Battery,
                     }
                 } else if mode == Mode::Toast {
                     status_ui::Menu::Notifications
                 } else if mode == Mode::Peek {
                     match peek {
                         Peek::Recording => status_ui::Menu::Overflow,
+                        Peek::Capture => status_ui::Menu::CaptureStatus,
                         Peek::Battery => status_ui::Menu::Battery,
                         Peek::Media => status_ui::Menu::Media,
                         Peek::Date => status_ui::Menu::Workspaces,
@@ -857,7 +861,7 @@ impl FereseShell {
                     ),
                     Mode::Peek => {
                         let leading = match peek {
-                            Peek::Recording | Peek::Battery => {
+                            Peek::Recording | Peek::Capture | Peek::Battery => {
                                 unreachable!("activity strip handled above")
                             }
                             Peek::Media => self.hub_music_art(opacity),
@@ -952,6 +956,10 @@ impl FereseShell {
                         .center_y(content_height),
                 )
                 .name(match activity {
+                    Some(Peek::Capture) => format!(
+                        "{}. Open capture status",
+                        self.capture_status.label().unwrap_or_default()
+                    ),
                     Some(Peek::Recording) => format!(
                         "{}. Open recording controls",
                         self.recorder.elapsed().map_or_else(
@@ -1246,6 +1254,10 @@ impl FereseShell {
             ItemKind::QuickSettings => (icons::morph::SETTINGS, Some(status_ui::Menu::System)),
             ItemKind::NightLight => (ferese_theme::icons::MOON, Some(status_ui::Menu::NightLight)),
             ItemKind::Network => (icons::WIFI, Some(status_ui::Menu::Network)),
+            ItemKind::CaptureStatus if self.capture_status.active() => (
+                self.capture_status.icon(),
+                Some(status_ui::Menu::CaptureStatus),
+            ),
             ItemKind::Recording => (
                 match self.recorder.state {
                     crate::recording::State::Selecting => icons::RECORD_CANCEL,

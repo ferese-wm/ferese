@@ -4,6 +4,7 @@ use cosmic::widget::{Space, container, row};
 use cosmic::{Element, theme};
 
 const BODY_WIDTH: f32 = 28.;
+pub(crate) const WIDTH: f32 = BODY_WIDTH + 1. + 1.5;
 
 impl FereseShell {
     pub(crate) fn battery_indicator(

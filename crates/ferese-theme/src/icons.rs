@@ -74,6 +74,7 @@ pub const RECORD_CANCEL: &[u8] = include_bytes!("../assets/icons/status/record-c
 pub const RECORD_SAVING: &[u8] = include_bytes!("../assets/icons/status/record-saving.svg");
 pub const RECORD_STOP: &[u8] = include_bytes!("../assets/icons/status/record-stop.svg");
 pub const RECORD: &[u8] = include_bytes!("../assets/icons/status/record.svg");
+pub const OBS: &[u8] = include_bytes!("../assets/icons/status/obs.svg");
 pub const RESTART: &[u8] = include_bytes!("../assets/icons/status/restart.svg");
 pub const SETTINGS: &[u8] = include_bytes!("../assets/icons/status/settings.svg");
 pub const SUSPEND: &[u8] = include_bytes!("../assets/icons/status/suspend.svg");

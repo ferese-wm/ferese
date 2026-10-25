@@ -203,6 +203,7 @@ disappears when that output has no window title to show.
 | Network | `network` | Opens Wi-Fi controls |
 | Audio | `audio` | Opens audio controls |
 | Recording | `recording` | Opens recording controls or stops the active recording |
+| Capture status | `capture-status` | Shows screen sharing and optional OBS output status. Supports Full, Compact and Icon. |
 | Notifications | `notifications` | Opens notifications |
 | Battery | `battery` | `percentage`: boolean, default `#true` |
 | Clock | `clock` | Full, Compact and Icon representations |

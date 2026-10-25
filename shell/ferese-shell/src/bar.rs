@@ -94,6 +94,7 @@ impl FereseShell {
         let effects = output.and_then(|output| output.effects.as_ref());
         let compositor_material = effects.is_some();
         let availability = Availability {
+            capture: self.capture_status.active(),
             activities: self.activity_available(id),
             media: self.media.snapshot.selected.is_some(),
             network: self.status.network.is_some(),
@@ -488,6 +489,7 @@ impl FereseShell {
             }
             ItemKind::Network => self.view_status_item(status_ui::Menu::Network, false, selected),
             ItemKind::Audio => self.view_status_item(status_ui::Menu::Audio, false, selected),
+            ItemKind::CaptureStatus => self.view_capture_status(representation, selected),
             ItemKind::Recording => {
                 self.view_status_item(status_ui::Menu::Recording, false, selected)
             }

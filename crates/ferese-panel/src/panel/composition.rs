@@ -126,6 +126,7 @@ pub enum ItemKind {
     Network,
     Audio,
     Recording,
+    CaptureStatus,
     Notifications,
     Battery {
         #[serde(default = "yes")]
@@ -161,6 +162,7 @@ impl ItemKind {
             Self::Network => "Network",
             Self::Audio => "Audio",
             Self::Recording => "Recording",
+            Self::CaptureStatus => "Capture status",
             Self::Notifications => "Notifications",
             Self::Battery { .. } => "Battery",
             Self::Clock => "Clock",
@@ -172,7 +174,9 @@ impl ItemKind {
     pub fn representations(self) -> &'static [Representation] {
         use Representation::*;
         match self {
-            Self::Activities | Self::Media | Self::Clock => &[Wide, Compact, Icon],
+            Self::Activities | Self::Media | Self::Clock | Self::CaptureStatus => {
+                &[Wide, Compact, Icon]
+            }
             Self::Battery { percentage: true } => &[Wide, Icon],
             Self::Workspaces { .. } | Self::FocusedWindow => &[Wide],
             _ => &[Icon],
@@ -321,6 +325,7 @@ impl Item {
         match self.kind {
             ItemKind::Activities => availability.activities,
             ItemKind::Media => availability.media,
+            ItemKind::CaptureStatus => availability.capture,
             ItemKind::Network => availability.network,
             ItemKind::Audio => availability.audio,
             ItemKind::Notifications => availability.notifications,
@@ -333,6 +338,7 @@ impl Item {
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Availability {
+    pub capture: bool,
     pub media: bool,
     pub activities: bool,
     pub network: bool,
@@ -698,6 +704,7 @@ impl Panel {
             item("network", Network),
             item("audio", Audio),
             item("recording", Recording),
+            item("capture-status", CaptureStatus),
             item("notifications", Notifications),
             item("battery", Battery { percentage: true }),
         ];
@@ -817,6 +824,7 @@ mod tests {
             "network",
             "audio",
             "recording",
+            "capture-status",
             "notifications",
             "battery",
             "clock",
@@ -858,6 +866,7 @@ mod tests {
         );
         assert_eq!(
             visible(Availability {
+                capture: true,
                 activities: true,
                 media: true,
                 network: true,
@@ -870,7 +879,7 @@ mod tests {
                 .map(|item| item.id.0.as_str())
                 .collect::<Vec<_>>()
         );
-        assert_eq!(items(&panel).len(), 13);
+        assert_eq!(items(&panel).len(), 14);
     }
 
     #[test]

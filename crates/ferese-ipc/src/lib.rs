@@ -1,5 +1,6 @@
 //! Framed IPC messages and the services exposed over compositor connections.
 pub mod activities;
+pub mod capture;
 mod connection;
 pub mod events;
 mod frame;

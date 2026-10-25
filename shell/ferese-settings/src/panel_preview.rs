@@ -7,6 +7,7 @@ use ferese_theme::panel::{Sample, Spacing, frame};
 use crate::{App, Element, Message, panel_controls, visuals};
 
 const SAMPLE_AVAILABILITY: Availability = Availability {
+    capture: true,
     activities: true,
     media: true,
     network: true,
@@ -407,6 +408,7 @@ impl App {
             ItemKind::Network => icons::WIFI_FULL,
             ItemKind::Audio => icons::VOLUME_HIGH,
             ItemKind::Recording => icons::RECORD,
+            ItemKind::CaptureStatus => icons::DISPLAY,
             ItemKind::Notifications => icons::NOTIFICATIONS,
             ItemKind::Battery { .. } => icons::BATTERY_75,
             ItemKind::Clock => icons::CALENDAR,

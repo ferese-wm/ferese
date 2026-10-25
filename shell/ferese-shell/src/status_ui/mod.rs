@@ -48,6 +48,7 @@ pub enum Menu {
     Battery,
     Calendar,
     Recording,
+    CaptureStatus,
     Media,
     Notifications,
     System,
@@ -101,6 +102,7 @@ impl Menu {
             Self::Battery => "Battery",
             Self::Calendar => "Calendar",
             Self::Recording => "Screen recording",
+            Self::CaptureStatus => "Capture status",
             Self::Media => "Now playing",
             Self::Notifications => "Notifications",
         }
@@ -113,7 +115,7 @@ impl Menu {
             Self::Bluetooth => status.bluetooth.is_some(),
             Self::Audio => status.audio.is_some(),
             Self::Battery => status.battery.is_some(),
-            Self::Calendar | Self::Recording | Self::Media => true,
+            Self::Calendar | Self::Recording | Self::CaptureStatus | Self::Media => true,
             Self::Notifications => status.notifications.is_some(),
             Self::System | Self::Overflow | Self::Workspaces | Self::Activities => true,
         }
@@ -300,6 +302,33 @@ impl FereseShell {
                 }
                 rows
             }
+            Menu::CaptureStatus => {
+                for detail in self.capture_status.details() {
+                    rows = rows.push(
+                        self.render
+                            .text(detail)
+                            .size(13)
+                            .class(theme::Text::Color(style.primary)),
+                    );
+                }
+                if let Some(elapsed) = self.recorder.elapsed() {
+                    rows = rows.push(
+                        self.render
+                            .text(format!("Ferese · REC {elapsed}"))
+                            .size(13)
+                            .class(theme::Text::Color(style.primary)),
+                    );
+                }
+                if !self.capture_status.active() {
+                    rows = rows.push(
+                        self.render
+                            .text("No active screen sharing or OBS output")
+                            .size(13)
+                            .class(theme::Text::Color(style.muted)),
+                    );
+                }
+                rows
+            }
             Menu::Recording => rows.push(menu_button(
                 self.render,
                 if self.recorder.busy() {
@@ -443,6 +472,7 @@ impl FereseShell {
             }
             Menu::Notifications => notification_controls(self, rows, style, false),
             Menu::Activities => rows.push(self.activity_list(menu.anchor.parent, p)),
+            Menu::CaptureStatus => rows.push(self.view_hub_menu(kind, p)),
             Menu::Recording | Menu::Workspaces => rows,
             Menu::Overflow => self.view_panel_overflow(rows),
             Menu::Media => media::view(self, rows, style),
@@ -580,6 +610,79 @@ fn notification_controls<'a>(
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[test]
+    fn capture_status_popover_shows_application_and_source() {
+        use cosmic::iced::advanced::renderer::Headless;
+        use cosmic::iced::advanced::{Layout, layout, widget};
+        use cosmic::iced::{Rectangle, Size};
+        #[derive(Default)]
+        struct Labels(Vec<String>);
+        impl widget::Operation for Labels {
+            fn traverse(&mut self, visit: &mut dyn FnMut(&mut dyn widget::Operation)) {
+                visit(self);
+            }
+            fn text(&mut self, _: Option<&widget::Id>, _: Rectangle, text: &str) {
+                self.0.push(text.into());
+            }
+        }
+        let renderer = cosmic::iced::futures::executor::block_on(cosmic::Renderer::new(
+            cosmic::iced::Font::default(),
+            cosmic::iced::Pixels(14.),
+            Some("tiny-skia"),
+        ))
+        .unwrap();
+        let mut app = crate::tests::shell_with_measured_panel();
+        app.capture_status
+            .apply(crate::capture_status::Event::Sharing(vec![
+                ferese_ipc::capture::Session {
+                    app: "com.obsproject.Studio".into(),
+                    sources: vec!["Workspace 2".into()],
+                },
+            ]));
+        let bar = app.outputs[0].bar;
+        drop(app.open_menu(
+            Menu::CaptureStatus,
+            PopoverAnchor {
+                parent: bar,
+                panel: app.config.panels[0].id.clone(),
+                item: None,
+                rectangle: Rectangle {
+                    x: 0,
+                    y: 0,
+                    width: 100,
+                    height: 28,
+                },
+            },
+        ));
+        for hub in [false, true] {
+            let mut view = if hub {
+                app.view_hub_menu(Menu::CaptureStatus, 1.)
+            } else {
+                app.view_status_menu_at(Instant::now() + Duration::from_secs(1))
+            };
+            let mut tree = widget::Tree::new(&view);
+            let node = view.as_widget_mut().layout(
+                &mut tree,
+                &renderer,
+                &layout::Limits::new(Size::ZERO, Size::new(300., 500.)),
+            );
+            let mut labels = Labels::default();
+            view.as_widget_mut()
+                .operate(&mut tree, Layout::new(&node), &renderer, &mut labels);
+            assert!(
+                labels.0.iter().any(|text| text == "OBS · Sharing"),
+                "{hub}: {:?}",
+                labels.0
+            );
+            assert!(
+                labels.0.iter().any(|text| text == "Workspace 2"),
+                "{hub}: {:?}",
+                labels.0
+            );
+            assert!(!labels.0.iter().any(|text| text.contains("LIVE")));
+        }
+    }
 
     #[test]
     fn activity_popups_scroll_to_the_last_row_in_regular_panels() {

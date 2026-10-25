@@ -6,6 +6,7 @@ mod surfaces;
 use bar::{bar_content, output_bar_hidden};
 use surfaces::{EffectsBinding, EffectsContext, native_wayland_surface};
 
+mod capture_status;
 mod clock;
 mod compositor_ipc;
 mod config;
@@ -167,6 +168,7 @@ struct FereseShell {
     status_service: status::Service,
     status: status::Snapshot,
     recorder: recording::Recorder,
+    capture_status: capture_status::Model,
     media: media::Model,
     activities: activities::Model,
     calendar_offset: i32,
@@ -237,6 +239,7 @@ enum Message {
     ),
     ClockChanged(String),
     RecorderEvent(recording::Event),
+    CaptureStatus(capture_status::Event),
     RecorderElapsed,
     MediaUpdated(std::sync::Arc<ferese_ipc::media::Snapshot>),
     MediaAction(serde_json::Value),
@@ -354,6 +357,7 @@ impl cosmic::Application for FereseShell {
             status_service: status::Service::start(config.status.settings_command.clone()),
             status: status::Snapshot::default(),
             recorder: recording::Recorder::default(),
+            capture_status: capture_status::Model::new(),
             media: media::Model::default(),
             activities: activities::Model::default(),
             calendar_offset: 0,
@@ -453,6 +457,16 @@ impl cosmic::Application for FereseShell {
             self.media_tick_subscription().map(|_| Message::MediaTick),
             self.media.art.subscription().map(Message::MediaArt),
             self.recorder.subscription().map(Message::RecorderEvent),
+            if self.capture_item_enabled() {
+                self.capture_status
+                    .subscription()
+                    .map(Message::CaptureStatus)
+            } else {
+                Subscription::none()
+            },
+            self.capture_status
+                .tick_subscription(self.capture_timer_visible())
+                .map(|_| Message::RecorderElapsed),
             self.recorder
                 .elapsed_subscription()
                 .map(|_| Message::RecorderElapsed),
@@ -947,6 +961,10 @@ impl cosmic::Application for FereseShell {
                 self.recorder.handle(event);
                 self.sync_hub_activity()
             }
+            Message::CaptureStatus(event) => {
+                self.capture_status.apply(event);
+                self.sync_hub_activity()
+            }
             Message::RecorderElapsed => Task::none(),
             Message::PanelScale(id, scale) => {
                 if let Some(entry) = self.outputs.iter_mut().find(|entry| entry.bar == id)
@@ -1368,6 +1386,7 @@ mod tests {
             status_service: status::Service::start(None),
             status: Default::default(),
             recorder: Default::default(),
+            capture_status: Default::default(),
             media: Default::default(),
             activities: Default::default(),
             calendar_offset: 0,
