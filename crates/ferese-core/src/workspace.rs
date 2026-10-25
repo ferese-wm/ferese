@@ -123,6 +123,31 @@ impl WorkspaceLayout {
         }
     }
 
+    pub fn place_window(
+        &mut self,
+        window: WindowId,
+        target: WindowId,
+        placement: ferese_layout::DropPlacement,
+    ) -> Result<(), LayoutError> {
+        match self {
+            Self::Tree(layout) => layout.place_window(window, target, placement),
+            Self::Scrolling(layout) => layout.place_window(window, target, placement),
+        }
+    }
+
+    pub fn resize_edge(
+        &mut self,
+        window: WindowId,
+        edge: Direction,
+        delta: f64,
+        bounds: Rect,
+    ) -> Result<bool, LayoutError> {
+        match self {
+            Self::Tree(layout) => layout.resize_edge(window, edge, delta, bounds),
+            Self::Scrolling(layout) => layout.resize_edge(window, edge, delta, bounds),
+        }
+    }
+
     pub fn remove(&mut self, window: WindowId) -> Result<(), LayoutError> {
         match self {
             Self::Scrolling(layout) => layout.remove(window),

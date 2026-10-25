@@ -1,6 +1,10 @@
+mod window;
+pub(crate) use window::WindowInteraction;
+mod pointer;
 use ferese_layout::Direction;
+pub(crate) use pointer::ScrollBindings;
 use smithay::backend::input::{
-    AbsolutePositionEvent, Axis, AxisSource, ButtonState, Event, GestureBeginEvent,
+    AbsolutePositionEvent, Axis, AxisSource, ButtonState, Device, Event, GestureBeginEvent,
     GestureEndEvent, GestureSwipeUpdateEvent as _, InputBackend, InputEvent, KeyState,
     KeyboardKeyEvent, PointerAxisEvent, PointerButtonEvent, PointerMotionEvent, Switch,
     SwitchState, SwitchToggleEvent, TouchEvent,
@@ -20,11 +24,10 @@ use smithay::wayland::pointer_constraints::{PointerConstraint, with_pointer_cons
 use crate::Ferese;
 use crate::config::BindingAction;
 use crate::gestures::SwipeDirection;
-use crate::grabs::{MoveSurfaceGrab, ResizeEdge, ResizeSurfaceGrab};
+use crate::grabs::ResizeEdge;
 use crate::process::spawn_client;
 
 const BTN_LEFT: u32 = 0x110;
-const BTN_RIGHT: u32 = 0x111;
 
 #[cfg(test)]
 pub(crate) mod binding_mode_tests;
@@ -130,6 +133,11 @@ impl Ferese {
     }
 
     pub fn process_input_event<I: InputBackend>(&mut self, event: InputEvent<I>) {
+        self.process_input_event_inner(event);
+        self.poll_window_interaction();
+    }
+
+    fn process_input_event_inner<I: InputBackend>(&mut self, event: InputEvent<I>) {
         if self.input_capture.active() {
             self.set_binding_mode("default");
         }
@@ -372,6 +380,11 @@ impl Ferese {
                             };
                         }
                         let symbol = keysym.modified_sym().raw();
+                        if state == KeyState::Pressed && symbol == keysyms::KEY_Escape && let Some(operation) = data.pointer_operation.as_mut() {
+                            operation.cancelled = true;
+                            data.intercepted_keys.insert(keycode);
+                            return FilterResult::Intercept(());
+                        }
                         if data.binding_modes.active().is_some() && symbol == keysyms::KEY_Escape {
                             if state == KeyState::Pressed {
                                 data.intercepted_keys.insert(keycode);
@@ -586,15 +599,19 @@ impl Ferese {
             }
             InputEvent::PointerButton { event, .. } => {
                 self.last_pointer_time = event.time();
-                if self.input_capture.active() {
-                    if self.input_capture.captures(2) {
-                        self.input_capture.push(serde_json::json!({"type":"button", "button":event.button_code(), "pressed":event.state() == ButtonState::Pressed}));
-                    }
-                    return;
+                if event.state() == ButtonState::Pressed {
+                    // A disconnected device may never deliver its consumed release.
+                    self.consumed_pointer_buttons.remove(&event.button_code());
                 }
                 if event.state() == ButtonState::Released
                     && self.consumed_pointer_buttons.remove(&event.button_code())
                 {
+                    return;
+                }
+                if self.input_capture.active() {
+                    if self.input_capture.captures(2) {
+                        self.input_capture.push(serde_json::json!({"type":"button", "button":event.button_code(), "pressed":event.state() == ButtonState::Pressed}));
+                    }
                     return;
                 }
                 let pointer = self.seat.get_pointer().expect("seat has a pointer");
@@ -709,8 +726,11 @@ impl Ferese {
                 }
 
                 if event.state() == ButtonState::Pressed
-                    && self.start_floating_pointer_grab(&pointer, event.button_code(), serial)
+                    && self.handle_pointer_binding(&pointer, event.button_code(), serial)
                 {
+                    if self.consumed_pointer_buttons.contains(&event.button_code()) {
+                        return;
+                    }
                     pointer.button(
                         self,
                         &ButtonEvent {
@@ -764,47 +784,82 @@ impl Ferese {
                     }
                     return;
                 }
+                let consumed = self.filter_pointer_scroll(
+                    event.device().id(),
+                    source,
+                    [horizontal, vertical],
+                    [
+                        event.amount_v120(Axis::Horizontal),
+                        event.amount_v120(Axis::Vertical),
+                    ],
+                    [
+                        source == AxisSource::Finger && event.amount(Axis::Horizontal) == Some(0.0),
+                        source == AxisSource::Finger && event.amount(Axis::Vertical) == Some(0.0),
+                    ],
+                );
+                let horizontal = if consumed[0] { 0.0 } else { horizontal };
+                let vertical = if consumed[1] { 0.0 } else { vertical };
+                if consumed == [true, true] {
+                    return;
+                }
                 let pointer = self.seat.get_pointer().expect("seat has a pointer");
-                if self.scroll_tab_indicator(
-                    pointer.current_location(),
-                    if vertical != 0.0 {
-                        vertical
-                    } else {
-                        horizontal
-                    },
-                ) {
+                if !pointer.is_grabbed()
+                    && self.scroll_tab_indicator(
+                        pointer.current_location(),
+                        if vertical != 0.0 {
+                            vertical
+                        } else {
+                            horizontal
+                        },
+                    )
+                {
                     return;
                 }
-                if self.scroll_overview_strip(
-                    pointer.current_location(),
-                    if horizontal != 0.0 {
-                        horizontal
-                    } else {
-                        vertical
-                    },
-                ) {
+                if !pointer.is_grabbed()
+                    && self.scroll_overview_strip(
+                        pointer.current_location(),
+                        if horizontal != 0.0 {
+                            horizontal
+                        } else {
+                            vertical
+                        },
+                    )
+                {
                     return;
                 }
+                let ([horizontal, vertical], scaled_v120) = self.scale_mouse_scroll(
+                    event.device().id(),
+                    source,
+                    [horizontal, vertical],
+                    [
+                        (!consumed[0])
+                            .then(|| event.amount_v120(Axis::Horizontal))
+                            .flatten(),
+                        (!consumed[1])
+                            .then(|| event.amount_v120(Axis::Vertical))
+                            .flatten(),
+                    ],
+                );
                 let mut frame = AxisFrame::new(event.time()).source(source);
                 if horizontal != 0.0 {
                     frame = frame.value(Axis::Horizontal, horizontal);
-                    if let Some(value) = event.amount_v120(Axis::Horizontal) {
-                        frame = frame.v120(Axis::Horizontal, value as i32);
+                    if let Some(value) = scaled_v120[0] {
+                        frame = frame.v120(Axis::Horizontal, value);
                     }
                 }
 
                 if vertical != 0.0 {
                     frame = frame.value(Axis::Vertical, vertical);
-                    if let Some(value) = event.amount_v120(Axis::Vertical) {
-                        frame = frame.v120(Axis::Vertical, value as i32);
+                    if let Some(value) = scaled_v120[1] {
+                        frame = frame.v120(Axis::Vertical, value);
                     }
                 }
 
                 if source == AxisSource::Finger {
-                    if event.amount(Axis::Horizontal) == Some(0.0) {
+                    if !consumed[0] && event.amount(Axis::Horizontal) == Some(0.0) {
                         frame = frame.stop(Axis::Horizontal);
                     }
-                    if event.amount(Axis::Vertical) == Some(0.0) {
+                    if !consumed[1] && event.amount(Axis::Vertical) == Some(0.0) {
                         frame = frame.stop(Axis::Vertical);
                     }
                 }
@@ -925,23 +980,13 @@ impl Ferese {
         true
     }
 
-    fn start_floating_pointer_grab(
+    fn start_pointer_window_grab(
         &mut self,
         pointer: &PointerHandle<Self>,
         button: u32,
         serial: Serial,
+        resize: bool,
     ) -> bool {
-        if self.session_lock.active()
-            || pointer.is_grabbed()
-            || !matches!(button, BTN_LEFT | BTN_RIGHT)
-            || !self
-                .seat
-                .get_keyboard()
-                .is_some_and(|keyboard| keyboard.modifier_state().logo)
-        {
-            return false;
-        }
-
         let location = pointer.current_location();
         if self.layer_under(location).is_some() {
             return false;
@@ -949,46 +994,21 @@ impl Ferese {
         let Some(window) = self.window_under_visual(location) else {
             return false;
         };
-        if !self.is_floating_window(&window) {
-            return false;
-        }
         let Some(rect) = self.visual_rect_for_window(&window) else {
             return false;
         };
-
         self.focus_window_at(location, serial, true);
-        let start_data = GrabStartData {
-            focus: None,
-            button,
-            location,
-        };
-
-        if button == BTN_LEFT {
-            pointer.set_grab(
-                self,
-                MoveSurfaceGrab {
-                    start_data,
-                    window,
-                    initial_location: rect.loc,
-                    initial_size: rect.size,
-                    finished: false,
-                    snap_x: Default::default(),
-                    snap_y: Default::default(),
-                },
-                serial,
-                Focus::Clear,
-            );
-        } else {
-            let edge = ResizeEdge::at(location, rect);
-            pointer.set_grab(
-                self,
-                ResizeSurfaceGrab::new(start_data, window, edge, rect),
-                serial,
-                Focus::Clear,
-            );
-        }
-
-        true
+        self.begin_window_interaction(
+            pointer,
+            window,
+            GrabStartData {
+                focus: None,
+                button,
+                location,
+            },
+            serial,
+            resize.then(|| ResizeEdge::at(location, rect)),
+        )
     }
 
     fn absolute_event_position<I, E>(&self, event: &E) -> Option<Point<f64, Logical>>
@@ -1383,7 +1403,8 @@ impl Ferese {
 
     fn execute_binding(&mut self, action: BindingAction) {
         match action {
-            BindingAction::None => {}
+            // Interactive pointer actions are dispatched with the originating button.
+            BindingAction::None | BindingAction::PointerMove | BindingAction::PointerResize => {}
             BindingAction::BindingMode(name) => self.set_binding_mode(&name),
             BindingAction::Spawn(argv) => {
                 if let Some(child) = spawn_client(

@@ -1,4 +1,3 @@
-use smithay::desktop::Window;
 use smithay::input::pointer::{
     AxisFrame, ButtonEvent, GestureHoldBeginEvent, GestureHoldEndEvent, GesturePinchBeginEvent,
     GesturePinchEndEvent, GesturePinchUpdateEvent, GestureSwipeBeginEvent, GestureSwipeEndEvent,
@@ -6,22 +5,16 @@ use smithay::input::pointer::{
     RelativeMotionEvent,
 };
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
-use smithay::utils::{Logical, Point, Size};
+use smithay::utils::{Logical, Point};
 
 use crate::Ferese;
-use crate::floating::AxisSnap;
 
-pub struct MoveSurfaceGrab {
+pub(crate) struct WindowPointerGrab {
     pub start_data: GrabStartData<Ferese>,
-    pub window: Window,
-    pub initial_location: Point<i32, Logical>,
-    pub initial_size: Size<i32, Logical>,
     pub finished: bool,
-    pub snap_x: AxisSnap,
-    pub snap_y: AxisSnap,
 }
 
-impl PointerGrab<Ferese> for MoveSurfaceGrab {
+impl PointerGrab<Ferese> for WindowPointerGrab {
     fn motion(
         &mut self,
         data: &mut Ferese,
@@ -30,36 +23,21 @@ impl PointerGrab<Ferese> for MoveSurfaceGrab {
         event: &MotionEvent,
     ) {
         handle.motion(data, None, event);
-        let location = self.initial_location.to_f64() + (event.location - self.start_data.location);
-        let raw = ferese_layout::Rect::new(
-            location.x,
-            location.y,
-            self.initial_size.w as f64,
-            self.initial_size.h as f64,
-        );
-        let (xs, ys) = data.floating_snap_lines(&self.window, raw);
-        let location = if data.floating_snap_bypassed() {
-            self.snap_x.clear();
-            self.snap_y.clear();
-            location
-        } else {
-            Point::from((
-                self.snap_x.apply(raw.x, raw.width, &xs),
-                self.snap_y.apply(raw.y, raw.height, &ys),
-            ))
+        if !self.finished
+            && let Some(operation) = data.pointer_operation.as_mut()
+        {
+            operation.location = event.location;
         }
-        .to_i32_round();
-        data.set_floating_window_geometry(&self.window, location, self.initial_size);
     }
 
     fn relative_motion(
         &mut self,
         data: &mut Ferese,
         handle: &mut PointerInnerHandle<'_, Ferese>,
-        focus: Option<(WlSurface, Point<f64, Logical>)>,
+        _focus: Option<(WlSurface, Point<f64, Logical>)>,
         event: &RelativeMotionEvent,
     ) {
-        handle.relative_motion(data, focus, event);
+        handle.relative_motion(data, None, event);
     }
 
     fn button(
@@ -68,21 +46,46 @@ impl PointerGrab<Ferese> for MoveSurfaceGrab {
         handle: &mut PointerInnerHandle<'_, Ferese>,
         event: &ButtonEvent,
     ) {
+        if let Some(operation) = data.pointer_operation.as_mut() {
+            if event.state == smithay::backend::input::ButtonState::Pressed {
+                operation.pressed.insert(event.button);
+                if event.button == 0x111 && event.button != self.start_data.button {
+                    operation.toggle_drop_mode();
+                }
+            } else {
+                operation.pressed.remove(&event.button);
+            }
+        }
         handle.button(data, event);
-        if handle.current_pressed().is_empty() {
+        if event.button == self.start_data.button
+            && event.state == smithay::backend::input::ButtonState::Released
+        {
             self.finished = true;
-            data.remember_floating(&self.window);
-            handle.unset_grab(self, data, event.serial, event.time, true);
+            if let Some(operation) = data.pointer_operation.as_mut() {
+                operation.finished = true;
+            }
+        }
+        // Extra buttons are drained with focus cleared, so their releases cannot
+        // reach a client that never received the corresponding presses.
+        if handle.current_pressed().is_empty() {
+            handle.unset_grab(self, data, event.serial, event.time, false);
         }
     }
 
     fn axis(
         &mut self,
         data: &mut Ferese,
-        handle: &mut PointerInnerHandle<'_, Ferese>,
+        _handle: &mut PointerInnerHandle<'_, Ferese>,
         frame: AxisFrame,
     ) {
-        handle.axis(data, frame);
+        if let Some(operation) = data.pointer_operation.as_mut() {
+            let amount = if frame.axis.0 != 0.0 {
+                frame.axis.0
+            } else {
+                frame.axis.1
+            };
+            operation.scroll(amount);
+        }
     }
 
     fn frame(&mut self, data: &mut Ferese, handle: &mut PointerInnerHandle<'_, Ferese>) {
@@ -166,10 +169,12 @@ impl PointerGrab<Ferese> for MoveSurfaceGrab {
     }
 
     fn unset(&mut self, data: &mut Ferese) {
-        if self.finished {
-            return;
+        // Resolve focus after the layout settles and the pointer mutex is released.
+        data.window_grab_focus_pending = true;
+        if !self.finished
+            && let Some(operation) = data.pointer_operation.as_mut()
+        {
+            operation.cancelled = true;
         }
-
-        data.set_floating_window_geometry(&self.window, self.initial_location, self.initial_size);
     }
 }

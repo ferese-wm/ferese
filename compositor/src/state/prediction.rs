@@ -155,6 +155,15 @@ impl Ferese {
             0.03 * opacity.velocity,
         );
         bounds.current = crate::presentation::scaled_visual_rect(bounds.current, presence_scale);
+        if let Some(rect) = self
+            .pointer_operation
+            .as_ref()
+            .filter(|operation| operation.id == id)
+            .and_then(|operation| operation.visual)
+        {
+            bounds.current = rect;
+            bounds.velocity = Default::default();
+        }
         bounds.target = bounds.current;
         let (focus_alpha, dim) = self.window_focus_effect(id, delta, overview.opacity());
         crate::presentation::WindowPresentation {
@@ -195,6 +204,21 @@ impl Ferese {
                         ))
                     })
             })
+            .chain(
+                self.pointer_operation
+                    .as_ref()
+                    .filter(|operation| {
+                        operation.visual.is_some()
+                            && self.workspaces.workspace_for_window(operation.id).and_then(
+                                |workspace| self.output_workspaces.output_for_workspace(workspace),
+                            ) != self.output_id(output)
+                    })
+                    .and_then(|operation| {
+                        self.windows
+                            .record(operation.id)
+                            .map(|record| (operation.id, record, false))
+                    }),
+            )
     }
 
     pub(crate) fn output_has_pending_visual_changes(&self, output: &Output) -> bool {

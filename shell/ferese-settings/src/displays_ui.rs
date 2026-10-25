@@ -152,7 +152,7 @@ impl App {
                         default: 1.,
                         min: 0.75,
                         max: 3.,
-                        step: 0.25,
+                        step: 0.05,
                         suffix: "×",
                         integer: false,
                     },

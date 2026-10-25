@@ -7,9 +7,11 @@ use super::{
 
 mod index;
 mod modes;
+mod pointer;
 pub(crate) use index::BindingSet;
 pub(super) use modes::BindingModeConfig;
 pub(crate) use modes::BindingModes;
+pub(crate) use pointer::{PointerTrigger, ScrollDirection};
 
 impl Config {
     fn binding_commands(&self) -> HashMap<String, Vec<String>> {
@@ -120,6 +122,7 @@ pub(super) fn parse_binding(
     let trigger = match identity.match_mode {
         BindingMatch::Keysym => BindingTrigger::Keysym(identity.key),
         BindingMatch::Physical => BindingTrigger::Physical(Keycode::new(identity.key)),
+        BindingMatch::Pointer => BindingTrigger::Pointer(PointerTrigger::from_key(identity.key)),
         BindingMatch::Swipe => BindingTrigger::Swipe {
             fingers: identity.key / 4,
             direction: [
@@ -131,6 +134,15 @@ pub(super) fn parse_binding(
         },
     };
 
+    if matches!(
+        action,
+        BindingAction::PointerMove | BindingAction::PointerResize
+    ) && !matches!(trigger, BindingTrigger::Pointer(PointerTrigger::Button(_)))
+    {
+        return Err(ConfigError::Binding(
+            "pointer-move and pointer-resize require a mouse button".into(),
+        ));
+    }
     Ok(Binding {
         modifiers: identity.modifiers,
         trigger,
@@ -143,6 +155,18 @@ pub(super) fn binding_identity(
     keymap: &xkb::Keymap,
 ) -> Result<BindingIdentity, ConfigError> {
     let (modifiers, key) = parse_chord(&configured.keys)?;
+    if let Some(trigger) = PointerTrigger::parse(&key)? {
+        if configured.match_mode != BindingMatch::Keysym {
+            return Err(ConfigError::Binding(
+                "mouse bindings cannot use physical key matching".into(),
+            ));
+        }
+        return Ok(BindingIdentity {
+            modifiers,
+            match_mode: BindingMatch::Pointer,
+            key: trigger.key(),
+        });
+    }
     if let Some((fingers, direction)) = parse_swipe(&key) {
         if configured.match_mode == BindingMatch::Physical
             || modifiers != BindingModifiers::default()
@@ -168,7 +192,7 @@ pub(super) fn binding_identity(
                     configured.keys
                 ))
             })?,
-        BindingMatch::Swipe => {
+        BindingMatch::Swipe | BindingMatch::Pointer => {
             return Err(ConfigError::Binding(
                 "gesture keys must use Swipe3Left/Right/Up/Down (3–5 fingers)".into(),
             ));
@@ -186,6 +210,7 @@ pub(super) fn binding_identity_for_runtime(binding: &Binding) -> BindingIdentity
     let (match_mode, key) = match binding.trigger {
         BindingTrigger::Keysym(key) => (BindingMatch::Keysym, key),
         BindingTrigger::Physical(key) => (BindingMatch::Physical, key.raw()),
+        BindingTrigger::Pointer(trigger) => (BindingMatch::Pointer, trigger.key()),
         BindingTrigger::Swipe { fingers, direction } => {
             (BindingMatch::Swipe, fingers * 4 + direction as u32)
         }
@@ -292,6 +317,14 @@ pub(super) fn parse_action(
     };
 
     match action {
+        "pointer-move" | "pointer-resize" => {
+            no_argument()?;
+            Ok(if action == "pointer-move" {
+                BindingAction::PointerMove
+            } else {
+                BindingAction::PointerResize
+            })
+        }
         "binding-mode" => Ok(BindingAction::BindingMode(required_argument()?.to_owned())),
         "none" => {
             no_argument()?;
@@ -447,6 +480,8 @@ pub(super) fn parse_workspace(argument: &str) -> Result<u8, ConfigError> {
 
 pub(super) fn default_bindings() -> Vec<BindingConfig> {
     let mut bindings = vec![
+        binding("Super+MouseLeft", "pointer-move", None),
+        binding("Super+MouseRight", "pointer-resize", None),
         binding("Super+Space", "toggle-launcher", None),
         binding("Super+Enter", "spawn", Some("terminal")),
         binding("Super+Shift+S", "spawn", Some("screenshot")),
@@ -538,6 +573,7 @@ pub struct Binding {
 pub(super) enum BindingTrigger {
     Keysym(u32),
     Physical(Keycode),
+    Pointer(PointerTrigger),
     Swipe {
         fingers: u32,
         direction: crate::gestures::SwipeDirection,
@@ -563,6 +599,8 @@ pub enum BindingAction {
     FocusLastWindow,
     FocusFloating,
     FocusMru(bool),
+    PointerMove,
+    PointerResize,
     Move(ferese_layout::Direction),
     Resize(ferese_layout::Direction),
     SwitchWorkspace(u8),
@@ -664,7 +702,7 @@ impl Binding {
             && match self.trigger {
                 BindingTrigger::Keysym(expected) => keysyms.contains(&expected),
                 BindingTrigger::Physical(expected) => expected == keycode,
-                BindingTrigger::Swipe { .. } => false,
+                BindingTrigger::Swipe { .. } | BindingTrigger::Pointer(_) => false,
             }
     }
 
@@ -704,6 +742,8 @@ impl Binding {
                 "Next window in focus history"
             }
             .into(),
+            BindingAction::PointerMove => "Drag window".into(),
+            BindingAction::PointerResize => "Resize window with pointer".into(),
             BindingAction::Move(direction) => format!("Move window {direction:?}"),
             BindingAction::Resize(direction) => format!("Resize window {direction:?}"),
             BindingAction::SwitchWorkspace(index) => format!("Go to workspace {index}"),
@@ -757,6 +797,7 @@ impl Binding {
             }
         }
         parts.push(match self.trigger {
+            BindingTrigger::Pointer(trigger) => trigger.label(),
             BindingTrigger::Keysym(symbol) => {
                 let name = xkb::keysym_get_name(xkb::Keysym::new(symbol));
                 match name.as_str() {
@@ -798,6 +839,8 @@ pub(super) enum BindingMatch {
     Keysym,
     Physical,
     Swipe,
+    #[serde(skip)]
+    Pointer,
 }
 
 #[derive(Clone, Debug, Deserialize)]

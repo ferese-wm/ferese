@@ -6,6 +6,25 @@ use super::{
 };
 
 impl Ferese {
+    pub(crate) fn window_interaction_allowed(
+        &self,
+        id: WindowId,
+        workspace: ferese_core::WorkspaceId,
+    ) -> bool {
+        self.workspaces
+            .workspace(workspace)
+            .is_some_and(|workspace| {
+                workspace.fullscreen.is_none_or(|fullscreen| {
+                    id != fullscreen
+                        && self.floating_above_fullscreen.get(&id) == Some(&fullscreen)
+                        && matches!(
+                            self.workspaces.placement(id),
+                            Some(WindowPlacement::Floating { .. })
+                        )
+                })
+            })
+    }
+
     pub(super) fn adjust_floating_direction(
         &mut self,
         id: WindowId,
@@ -238,18 +257,24 @@ impl Ferese {
         location: Point<i32, Logical>,
         size: Size<i32, Logical>,
     ) {
+        self.set_floating_window_rect(
+            window,
+            Rect::new(
+                location.x as f64,
+                location.y as f64,
+                size.w.max(1) as f64,
+                size.h.max(1) as f64,
+            ),
+        );
+    }
+
+    pub(crate) fn set_floating_window_rect(&mut self, window: &Window, rect: Rect) {
         let Some(id) = self.windows.ids().get(window).copied() else {
             return;
         };
         self.windows
             .update(id, |w| w.resize_anchor.take())
             .flatten();
-        let rect = Rect::new(
-            location.x as f64,
-            location.y as f64,
-            size.w.max(1) as f64,
-            size.h.max(1) as f64,
-        );
 
         if let Err(error) = self.workspaces.set_floating_rect(id, rect) {
             tracing::error!(%error, ?id, "failed to update floating window geometry");
@@ -288,7 +313,10 @@ impl Ferese {
         self.windows.update(id, |record| record.world_x = None);
         self.windows
             .update(id, |record| record.coupled_width = None);
-        self.map_window_geometry(window.clone(), location);
+        self.map_window_geometry(
+            window.clone(),
+            (rect.x.round() as i32, rect.y.round() as i32).into(),
+        );
         self.sync_window_stacking();
         // Move/resize/cancel callbacks run with Smithay's pointer mutex held.
         // Cursor rendering reads current_location(), which would lock it again.

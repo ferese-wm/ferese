@@ -1,17 +1,5 @@
-use smithay::desktop::Window;
-use smithay::input::pointer::{
-    AxisFrame, ButtonEvent, GestureHoldBeginEvent, GestureHoldEndEvent, GesturePinchBeginEvent,
-    GesturePinchEndEvent, GesturePinchUpdateEvent, GestureSwipeBeginEvent, GestureSwipeEndEvent,
-    GestureSwipeUpdateEvent, GrabStartData, MotionEvent, PointerGrab, PointerInnerHandle,
-    RelativeMotionEvent,
-};
 use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
-use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::utils::{Logical, Point, Rectangle, Size};
-use smithay::wayland::compositor::with_states;
-use smithay::wayland::shell::xdg::SurfaceCachedState;
-
-use crate::Ferese;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ResizeEdge(xdg_toplevel::ResizeEdge);
@@ -23,6 +11,15 @@ impl From<xdg_toplevel::ResizeEdge> for ResizeEdge {
 }
 
 impl ResizeEdge {
+    pub(crate) fn cursor(self) -> smithay::input::pointer::CursorIcon {
+        use smithay::input::pointer::CursorIcon;
+        match (self.left(), self.right(), self.top(), self.bottom()) {
+            (true, _, true, _) | (_, true, _, true) => CursorIcon::NwseResize,
+            (true, _, _, true) | (_, true, true, _) => CursorIcon::NeswResize,
+            (true, _, _, _) | (_, true, _, _) => CursorIcon::EwResize,
+            _ => CursorIcon::NsResize,
+        }
+    }
     pub fn at(point: Point<f64, Logical>, rect: Rectangle<i32, Logical>) -> Self {
         use xdg_toplevel::ResizeEdge::*;
         let x = (point.x - rect.loc.x as f64) / rect.size.w.max(1) as f64;
@@ -46,7 +43,7 @@ impl ResizeEdge {
             _ => Bottom,
         })
     }
-    fn left(self) -> bool {
+    pub(crate) fn left(self) -> bool {
         matches!(
             self.0,
             xdg_toplevel::ResizeEdge::Left
@@ -55,7 +52,7 @@ impl ResizeEdge {
         )
     }
 
-    fn right(self) -> bool {
+    pub(crate) fn right(self) -> bool {
         matches!(
             self.0,
             xdg_toplevel::ResizeEdge::Right
@@ -64,7 +61,7 @@ impl ResizeEdge {
         )
     }
 
-    fn top(self) -> bool {
+    pub(crate) fn top(self) -> bool {
         matches!(
             self.0,
             xdg_toplevel::ResizeEdge::Top
@@ -73,7 +70,7 @@ impl ResizeEdge {
         )
     }
 
-    fn bottom(self) -> bool {
+    pub(crate) fn bottom(self) -> bool {
         matches!(
             self.0,
             xdg_toplevel::ResizeEdge::Bottom
@@ -83,274 +80,7 @@ impl ResizeEdge {
     }
 }
 
-pub struct ResizeSurfaceGrab {
-    start_data: GrabStartData<Ferese>,
-    window: Window,
-    edges: ResizeEdge,
-    initial_rect: Rectangle<i32, Logical>,
-    last_size: Size<i32, Logical>,
-    finished: bool,
-    snap_x: crate::floating::AxisSnap,
-    snap_y: crate::floating::AxisSnap,
-}
-
-impl ResizeSurfaceGrab {
-    pub fn new(
-        start_data: GrabStartData<Ferese>,
-        window: Window,
-        edges: ResizeEdge,
-        initial_rect: Rectangle<i32, Logical>,
-    ) -> Self {
-        Self {
-            start_data,
-            window,
-            edges,
-            initial_rect,
-            last_size: initial_rect.size,
-            finished: false,
-            snap_x: Default::default(),
-            snap_y: Default::default(),
-        }
-    }
-}
-
-impl PointerGrab<Ferese> for ResizeSurfaceGrab {
-    fn motion(
-        &mut self,
-        data: &mut Ferese,
-        handle: &mut PointerInnerHandle<'_, Ferese>,
-        _focus: Option<(WlSurface, Point<f64, Logical>)>,
-        event: &MotionEvent,
-    ) {
-        handle.motion(data, None, event);
-        let mut delta = event.location - self.start_data.location;
-        let initial = self.initial_rect;
-        let raw_left = initial.loc.x as f64 + if self.edges.left() { delta.x } else { 0. };
-        let raw_top = initial.loc.y as f64 + if self.edges.top() { delta.y } else { 0. };
-        let raw_right = initial.loc.x as f64
-            + initial.size.w as f64
-            + if self.edges.right() { delta.x } else { 0. };
-        let raw_bottom = initial.loc.y as f64
-            + initial.size.h as f64
-            + if self.edges.bottom() { delta.y } else { 0. };
-        let raw = ferese_layout::Rect::new(
-            raw_left,
-            raw_top,
-            (raw_right - raw_left).max(1.),
-            (raw_bottom - raw_top).max(1.),
-        );
-        let (xs, ys) = data.floating_snap_lines(&self.window, raw);
-        if data.floating_snap_bypassed() {
-            self.snap_x.clear();
-            self.snap_y.clear();
-        } else {
-            if self.edges.left() || self.edges.right() {
-                let moving = if self.edges.left() {
-                    raw_left
-                } else {
-                    raw_right
-                };
-                delta.x += self.snap_x.apply(moving, 0., &xs) - moving;
-            }
-            if self.edges.top() || self.edges.bottom() {
-                let moving = if self.edges.top() {
-                    raw_top
-                } else {
-                    raw_bottom
-                };
-                delta.y += self.snap_y.apply(moving, 0., &ys) - moving;
-            }
-        }
-        let surface = self
-            .window
-            .toplevel()
-            .expect("managed window has a toplevel");
-        let (minimum, maximum) = with_states(surface.wl_surface(), |states| {
-            let mut cached = states.cached_state.get::<SurfaceCachedState>();
-            let state = cached.current();
-            (state.min_size, state.max_size)
-        });
-        let (minimum, maximum) = data.effective_size_constraints(
-            &self.window,
-            (minimum.w, minimum.h),
-            (maximum.w, maximum.h),
-        );
-        self.last_size = constrained_size(
-            self.initial_rect.size,
-            delta,
-            self.edges,
-            minimum,
-            (maximum.0, maximum.1),
-        );
-        let rect = resized_rect(self.initial_rect, self.last_size, self.edges);
-        data.set_floating_window_geometry(&self.window, rect.loc, rect.size);
-        if let Some(id) = data.windows.ids().get(&self.window).copied() {
-            data.windows.update(id, |w| {
-                w.resize_anchor = Some((
-                    self.edges.left(),
-                    self.edges.top(),
-                    ferese_layout::Rect::new(
-                        initial.loc.x as f64,
-                        initial.loc.y as f64,
-                        initial.size.w as f64,
-                        initial.size.h as f64,
-                    ),
-                ))
-            });
-        }
-
-        surface.with_pending_state(|state| {
-            state.states.set(xdg_toplevel::State::Resizing);
-            state.size = Some(self.last_size);
-        });
-        surface.send_pending_configure();
-    }
-
-    fn relative_motion(
-        &mut self,
-        data: &mut Ferese,
-        handle: &mut PointerInnerHandle<'_, Ferese>,
-        focus: Option<(WlSurface, Point<f64, Logical>)>,
-        event: &RelativeMotionEvent,
-    ) {
-        handle.relative_motion(data, focus, event);
-    }
-
-    fn button(
-        &mut self,
-        data: &mut Ferese,
-        handle: &mut PointerInnerHandle<'_, Ferese>,
-        event: &ButtonEvent,
-    ) {
-        handle.button(data, event);
-        if handle.current_pressed().is_empty() {
-            self.finished = true;
-            data.remember_floating(&self.window);
-            handle.unset_grab(self, data, event.serial, event.time, true);
-            let surface = self
-                .window
-                .toplevel()
-                .expect("managed window has a toplevel");
-            surface.with_pending_state(|state| {
-                state.states.unset(xdg_toplevel::State::Resizing);
-                state.size = Some(self.last_size);
-            });
-            surface.send_pending_configure();
-        }
-    }
-
-    fn axis(
-        &mut self,
-        data: &mut Ferese,
-        handle: &mut PointerInnerHandle<'_, Ferese>,
-        frame: AxisFrame,
-    ) {
-        handle.axis(data, frame);
-    }
-
-    fn frame(&mut self, data: &mut Ferese, handle: &mut PointerInnerHandle<'_, Ferese>) {
-        handle.frame(data);
-    }
-
-    fn gesture_swipe_begin(
-        &mut self,
-        data: &mut Ferese,
-        handle: &mut PointerInnerHandle<'_, Ferese>,
-        event: &GestureSwipeBeginEvent,
-    ) {
-        handle.gesture_swipe_begin(data, event);
-    }
-
-    fn gesture_swipe_update(
-        &mut self,
-        data: &mut Ferese,
-        handle: &mut PointerInnerHandle<'_, Ferese>,
-        event: &GestureSwipeUpdateEvent,
-    ) {
-        handle.gesture_swipe_update(data, event);
-    }
-
-    fn gesture_swipe_end(
-        &mut self,
-        data: &mut Ferese,
-        handle: &mut PointerInnerHandle<'_, Ferese>,
-        event: &GestureSwipeEndEvent,
-    ) {
-        handle.gesture_swipe_end(data, event);
-    }
-
-    fn gesture_pinch_begin(
-        &mut self,
-        data: &mut Ferese,
-        handle: &mut PointerInnerHandle<'_, Ferese>,
-        event: &GesturePinchBeginEvent,
-    ) {
-        handle.gesture_pinch_begin(data, event);
-    }
-
-    fn gesture_pinch_update(
-        &mut self,
-        data: &mut Ferese,
-        handle: &mut PointerInnerHandle<'_, Ferese>,
-        event: &GesturePinchUpdateEvent,
-    ) {
-        handle.gesture_pinch_update(data, event);
-    }
-
-    fn gesture_pinch_end(
-        &mut self,
-        data: &mut Ferese,
-        handle: &mut PointerInnerHandle<'_, Ferese>,
-        event: &GesturePinchEndEvent,
-    ) {
-        handle.gesture_pinch_end(data, event);
-    }
-
-    fn gesture_hold_begin(
-        &mut self,
-        data: &mut Ferese,
-        handle: &mut PointerInnerHandle<'_, Ferese>,
-        event: &GestureHoldBeginEvent,
-    ) {
-        handle.gesture_hold_begin(data, event);
-    }
-
-    fn gesture_hold_end(
-        &mut self,
-        data: &mut Ferese,
-        handle: &mut PointerInnerHandle<'_, Ferese>,
-        event: &GestureHoldEndEvent,
-    ) {
-        handle.gesture_hold_end(data, event);
-    }
-
-    fn start_data(&self) -> &GrabStartData<Ferese> {
-        &self.start_data
-    }
-
-    fn unset(&mut self, data: &mut Ferese) {
-        if self.finished {
-            return;
-        }
-
-        let surface = self
-            .window
-            .toplevel()
-            .expect("managed window has a toplevel");
-        surface.with_pending_state(|state| {
-            state.states.unset(xdg_toplevel::State::Resizing);
-            state.size = Some(self.initial_rect.size);
-        });
-        surface.send_pending_configure();
-        data.set_floating_window_geometry(
-            &self.window,
-            self.initial_rect.loc,
-            self.initial_rect.size,
-        );
-    }
-}
-
-fn constrained_size(
+pub(crate) fn constrained_size(
     initial: Size<i32, Logical>,
     delta: Point<f64, Logical>,
     edges: ResizeEdge,
@@ -392,7 +122,7 @@ fn constrained_size(
         .into()
 }
 
-fn resized_rect(
+pub(crate) fn resized_rect(
     initial: Rectangle<i32, Logical>,
     size: Size<i32, Logical>,
     edges: ResizeEdge,

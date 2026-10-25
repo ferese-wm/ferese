@@ -121,6 +121,12 @@ enum ViewportRequest {
     WidthCycle(usize),
     Slide(usize, usize),
     Center(usize, Option<f64>),
+    Resize {
+        column: usize,
+        anchor: f64,
+        anchor_right: bool,
+        maximum: Option<f64>,
+    },
 }
 
 impl ViewportTarget {
@@ -161,6 +167,18 @@ impl ViewportTarget {
                     positions[active].1.min(maximum)
                 });
                 layout.viewport_x = positions[active].0 + width / 2.0 - self.viewport_width / 2.0
+            }
+            ViewportRequest::Resize {
+                column,
+                anchor,
+                anchor_right,
+                maximum,
+            } => {
+                let width = maximum.map_or(positions[column].1, |maximum| {
+                    positions[column].1.min(maximum)
+                });
+                layout.viewport_x =
+                    positions[column].0 + if anchor_right { width } else { 0.0 } - anchor;
             }
         }
         layout.viewport_x
@@ -204,6 +222,14 @@ enum PendingViewportRequest {
     // Width cycling takes precedence. Keep the focus request only in case a
     // subsequent no-op cycle cancels the width request before layout resolves.
     WidthCycle(Option<PendingFocusRequest>),
+    // Resolve the opposite edge from the previous strip position and allocation
+    // after applying client limits. Negative offsets keep the first column anchored.
+    Resize {
+        window: WindowId,
+        origin: f64,
+        width: f64,
+        anchor_right: bool,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -242,11 +268,18 @@ impl ScrollingLayout {
         match self.pending_viewport {
             Some(PendingViewportRequest::Focus(request)) => Some(request),
             Some(PendingViewportRequest::WidthCycle(request)) => request,
-            None => None,
+            None | Some(PendingViewportRequest::Resize { .. }) => None,
         }
     }
 
     fn request_focus(&mut self, request: Option<PendingFocusRequest>) {
+        // Direct manipulation keeps its edge anchor through the next solve.
+        if matches!(
+            self.pending_viewport,
+            Some(PendingViewportRequest::Resize { .. })
+        ) {
+            return;
+        }
         self.pending_viewport = if matches!(
             self.pending_viewport,
             Some(PendingViewportRequest::WidthCycle(_))
@@ -371,6 +404,37 @@ impl ScrollingLayout {
         self.viewport_x
     }
 
+    /// Pan without changing focus, keeping the viewport inside the column strip.
+    pub fn scroll_viewport(&mut self, delta: f64) -> bool {
+        let Some(sizing) = self.last_column_sizing else {
+            return false;
+        };
+        if !delta.is_finite() || delta == 0.0 {
+            return false;
+        }
+        let width = self
+            .columns
+            .iter()
+            .map(|column| {
+                column
+                    .windows
+                    .first()
+                    .and_then(|id| self.allocated_widths.get(id))
+                    .copied()
+                    .unwrap_or_else(|| sizing.resolve(column.width))
+            })
+            .sum::<f64>()
+            + sizing.inner_gap * self.columns.len().saturating_sub(1) as f64;
+        let next = (self.viewport_x + delta).clamp(0.0, (width - sizing.viewport_width).max(0.0));
+        if next == self.viewport_x {
+            return false;
+        }
+        self.viewport_x = next;
+        self.pending_viewport = None;
+        self.viewport_basis = None;
+        true
+    }
+
     #[must_use]
     pub fn allocated_column_width(&self, window: WindowId) -> Option<f64> {
         self.allocated_widths.get(&window).copied()
@@ -448,6 +512,133 @@ impl ScrollingLayout {
 
         debug_assert!(self.validate().is_ok());
         Ok(())
+    }
+
+    pub fn place_window(
+        &mut self,
+        window: WindowId,
+        target: WindowId,
+        placement: crate::DropPlacement,
+    ) -> Result<(), LayoutError> {
+        use crate::DropPlacement::*;
+        let (source, _) = self
+            .window_location(window)
+            .ok_or(LayoutError::UnknownWindow(window))?;
+        if !self.contains(target) {
+            return Err(LayoutError::UnknownWindow(target));
+        }
+        if window == target {
+            return Ok(());
+        }
+        let width = self.columns[source].width;
+        self.remove(window)?;
+        let (column, row) = self
+            .window_location(target)
+            .expect("target survives removing another window");
+        match placement {
+            Left | Right => {
+                let index = column + usize::from(placement == Right);
+                let mut entry = Column::new(window, width);
+                entry.display = self.default_display;
+                self.columns.insert(index, entry);
+                self.active_column = Some(index);
+            }
+            Above | Below | Tab => {
+                let entry = &mut self.columns[column];
+                let index = row + usize::from(placement != Above);
+                entry.windows.insert(index, window);
+                // Split the destination row's weight rather than collapsing it.
+                let weight = entry.heights[row] / 2.0;
+                entry.heights[row] = weight;
+                entry.heights.insert(index, weight);
+                entry.normalize_heights();
+                entry.display = if placement == Tab {
+                    ColumnDisplay::Tabbed
+                } else {
+                    ColumnDisplay::Stacked
+                };
+                entry.active = index;
+                self.active_column = Some(column);
+            }
+        }
+        self.request_reveal(Some(window));
+        debug_assert!(self.validate().is_ok());
+        Ok(())
+    }
+
+    pub fn resize_edge(
+        &mut self,
+        window: WindowId,
+        edge: Direction,
+        delta: f64,
+        bounds: Rect,
+    ) -> Result<bool, LayoutError> {
+        let (column, row) = self
+            .window_location(window)
+            .ok_or(LayoutError::UnknownWindow(window))?;
+        if !delta.is_finite() {
+            return Ok(false);
+        }
+        if matches!(edge, Direction::Left | Direction::Right) {
+            let size = self.last_column_sizing.unwrap_or(ColumnSizing {
+                viewport_width: bounds.width,
+                inner_gap: 0.0,
+            });
+            let width = self
+                .allocated_column_width(window)
+                .unwrap_or_else(|| size.resolve(self.columns[column].width));
+            let origin = self.columns[..column]
+                .iter()
+                .map(|column| {
+                    self.allocated_column_width(column.windows[0])
+                        .unwrap_or_else(|| size.resolve(column.width))
+                        + size.inner_gap
+                })
+                .sum::<f64>()
+                - self.viewport_x;
+            let change = if edge == Direction::Left {
+                -delta
+            } else {
+                delta
+            };
+            let next = (width + change).clamp(
+                size.resolve(ColumnWidth::Proportion(MIN_COLUMN_WIDTH))
+                    .max(1.0),
+                size.resolve(ColumnWidth::Proportion(MAX_COLUMN_WIDTH))
+                    .max(1.0),
+            );
+            if next == width {
+                return Ok(false);
+            }
+            self.columns[column].width = ColumnWidth::Fixed(next);
+            self.pending_viewport = Some(PendingViewportRequest::Resize {
+                window,
+                origin,
+                width,
+                anchor_right: edge == Direction::Left,
+            });
+            return Ok(true);
+        }
+        let entry = &mut self.columns[column];
+        if entry.display == ColumnDisplay::Tabbed {
+            return Ok(false);
+        }
+        let neighbor = match edge {
+            Direction::Up => row.checked_sub(1),
+            Direction::Down => (row + 1 < entry.windows.len()).then_some(row + 1),
+            _ => None,
+        };
+        let Some(neighbor) = neighbor else {
+            return Ok(false);
+        };
+        let pair = entry.heights[row] + entry.heights[neighbor];
+        let change = (if edge == Direction::Up { -delta } else { delta }) / bounds.height.max(1.0);
+        let minimum = MIN_ROW_HEIGHT.min(pair / 2.0);
+        let height = (entry.heights[row] + change).clamp(minimum, pair - minimum);
+        let changed = height != entry.heights[row];
+        entry.heights[row] = height;
+        entry.heights[neighbor] = pair - height;
+        Ok(changed)
     }
 
     pub fn remove(&mut self, window: WindowId) -> Result<(), LayoutError> {
@@ -897,6 +1088,42 @@ impl ScrollingLayout {
             self.last_column_sizing.map(|sizing| sizing.viewport_width) != Some(viewport_width);
         self.last_column_sizing = Some(sizing);
         match self.pending_viewport.take() {
+            Some(PendingViewportRequest::Resize {
+                window,
+                origin,
+                width,
+                anchor_right,
+            }) => {
+                if let Some((column, _)) = self.window_location(window) {
+                    let constraint = if self.columns[column].display == ColumnDisplay::Tabbed {
+                        tab_constraints(&self.columns[column], constraints)
+                    } else {
+                        layout_tree::normalized_constraints(
+                            constraints.get(&window).copied().unwrap_or_default(),
+                        )
+                    };
+                    let maximum = constraint.max_width;
+                    let previous_width = maximum.map_or(width, |maximum| width.min(maximum));
+                    let anchor = origin + if anchor_right { previous_width } else { 0.0 };
+                    let next_width = maximum.map_or(column_positions[column].1, |maximum| {
+                        column_positions[column].1.min(maximum)
+                    });
+                    self.record_viewport_basis(
+                        &column_positions,
+                        inner,
+                        viewport_width,
+                        ViewportRequest::Resize {
+                            column,
+                            anchor,
+                            anchor_right,
+                            maximum,
+                        },
+                    );
+                    self.viewport_x = column_positions[column].0
+                        + if anchor_right { next_width } else { 0.0 }
+                        - anchor;
+                }
+            }
             Some(PendingViewportRequest::WidthCycle(_)) => {
                 if let Some(active) = self.active_column {
                     self.record_viewport_basis(
@@ -970,23 +1197,7 @@ impl ScrollingLayout {
                 );
                 // All tabs use one size, even when their client constraints differ.
                 // Keep the column allocation stable and honor compatible maximums.
-                let mut common = SizeConstraints::default();
-                for id in &column.windows {
-                    let c = layout_tree::normalized_constraints(
-                        constraints.get(id).copied().unwrap_or_default(),
-                    );
-                    common.min_width = common.min_width.max(c.min_width);
-                    common.min_height = common.min_height.max(c.min_height);
-                    common.max_width = match (common.max_width, c.max_width) {
-                        (Some(a), Some(b)) => Some(a.min(b)),
-                        (a, b) => a.or(b),
-                    };
-                    common.max_height = match (common.max_height, c.max_height) {
-                        (Some(a), Some(b)) => Some(a.min(b)),
-                        (a, b) => a.or(b),
-                    };
-                }
-                let common = layout_tree::normalized_constraints(common);
+                let common = tab_constraints(column, constraints);
                 layout_tree::record_minimum_warnings(window, rect, common, &mut result.warnings);
                 apply_maximums(window, &mut rect, common, &mut result.warnings);
                 if column.windows.len() > 1 {
@@ -1329,6 +1540,28 @@ fn finite_nonnegative(value: f64) -> f64 {
     } else {
         0.0
     }
+}
+
+fn tab_constraints(
+    column: &Column,
+    constraints: &HashMap<WindowId, SizeConstraints>,
+) -> SizeConstraints {
+    let mut common = SizeConstraints::default();
+    for id in &column.windows {
+        let c =
+            layout_tree::normalized_constraints(constraints.get(id).copied().unwrap_or_default());
+        common.min_width = common.min_width.max(c.min_width);
+        common.min_height = common.min_height.max(c.min_height);
+        common.max_width = match (common.max_width, c.max_width) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        };
+        common.max_height = match (common.max_height, c.max_height) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        };
+    }
+    layout_tree::normalized_constraints(common)
 }
 
 fn apply_maximums(
