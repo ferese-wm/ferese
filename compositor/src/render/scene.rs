@@ -194,7 +194,7 @@ fn scene_elements(
             presentation_alpha,
         ))
     };
-    let windows = if state.overview.is_active() {
+    let mut windows = if state.overview.is_active() {
         state
             .windows
             .overview_windows()
@@ -208,6 +208,16 @@ fn scene_elements(
             .filter_map(prepare_window)
             .collect::<Vec<_>>()
     };
+
+    if let Some(operation) = state
+        .pointer_operation
+        .as_ref()
+        .filter(|operation| operation.visual.is_some())
+        && let Some(index) = windows.iter().position(|(_, id, ..)| *id == operation.id)
+    {
+        // A dragged tile stays above floating windows, even after a relayout.
+        windows[..=index].rotate_right(1);
+    }
 
     let mut closing = super::closing::grouped_elements(
         state,

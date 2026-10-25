@@ -22,15 +22,19 @@ Run `feresectl launcher toggle` to open or close it from a script.
 
 | Action | Result |
 | --- | --- |
-| Super + left-button drag on a floating window | Move the window |
-| Super + right-button drag on a floating window | Resize the edge or corner selected by the starting 3×3 region |
+| Super + left-button drag | Move a floating or tiled window |
+| Super + right-button drag | Resize the edge or corner selected by the starting 3×3 region |
+| Right-click while moving | Switch the drop between floating and tiled |
+| Escape during a drag | Cancel the move or resize |
 | Hold Shift during a move or resize | Bypass edge snapping |
 | Super + Shift + Space | Switch the focused window between tiled and floating |
 
 You can drag from inside the window; a title bar or resize border is not required.
-To place an app freely, toggle it to floating, then Super-drag it.
-The central resize region selects the nearest corner. Moving and resizing snap
-to nearby edges; continuing to drag beyond 20 logical pixels releases the snap.
+Drop a tiled window beside another window to reorder it, or in its center to
+join a tab group. Drag across monitors to move to the workspace shown there.
+Scroll or hold at a horizontal screen edge to reach more scrolling columns.
+The central resize region selects the nearest corner. Floating windows snap to
+nearby edges; continuing to drag beyond 20 logical pixels releases the snap.
 
 ## Focus, move, and resize
 

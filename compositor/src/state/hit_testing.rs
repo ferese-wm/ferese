@@ -214,6 +214,19 @@ impl Ferese {
     }
 
     pub(crate) fn window_belongs_to_output(&self, window: WindowId, output: &Output) -> bool {
+        if let Some(rect) = self
+            .pointer_operation
+            .as_ref()
+            .filter(|operation| operation.id == window)
+            .and_then(|operation| operation.visual)
+        {
+            return self.space.output_geometry(output).is_some_and(|area| {
+                rect.x < (area.loc.x + area.size.w) as f64
+                    && rect.x + rect.width > area.loc.x as f64
+                    && rect.y < (area.loc.y + area.size.h) as f64
+                    && rect.y + rect.height > area.loc.y as f64
+            });
+        }
         let Some(output_id) = self.output_id(output) else {
             return false;
         };

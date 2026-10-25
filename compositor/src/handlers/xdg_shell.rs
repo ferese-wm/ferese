@@ -19,7 +19,7 @@ use smithay::wayland::shell::xdg::{
 };
 
 use crate::Ferese;
-use crate::grabs::{MoveSurfaceGrab, ResizeEdge, ResizeSurfaceGrab};
+use crate::grabs::ResizeEdge;
 
 impl XdgShellHandler for Ferese {
     fn xdg_shell_state(&mut self) -> &mut XdgShellState {
@@ -136,26 +136,7 @@ impl XdgShellHandler for Ferese {
         else {
             return;
         };
-        let Some(initial_rect) = self.visual_rect_for_window(&window) else {
-            return;
-        };
-        if !self.is_floating_window(&window) {
-            return;
-        }
-        pointer.set_grab(
-            self,
-            MoveSurfaceGrab {
-                start_data,
-                window,
-                initial_location: initial_rect.loc,
-                initial_size: initial_rect.size,
-                finished: false,
-                snap_x: Default::default(),
-                snap_y: Default::default(),
-            },
-            serial,
-            Focus::Clear,
-        );
+        self.begin_window_interaction(&pointer, window, start_data, serial, None);
     }
 
     fn resize_request(
@@ -189,18 +170,15 @@ impl XdgShellHandler for Ferese {
         else {
             return;
         };
-        let Some(rect) = self.visual_rect_for_window(&window) else {
-            return;
-        };
-        if !self.is_floating_window(&window) {
-            return;
+        if edges != xdg_toplevel::ResizeEdge::None {
+            self.begin_window_interaction(
+                &pointer,
+                window,
+                start_data,
+                serial,
+                Some(ResizeEdge::from(edges)),
+            );
         }
-        pointer.set_grab(
-            self,
-            ResizeSurfaceGrab::new(start_data, window, ResizeEdge::from(edges), rect),
-            serial,
-            Focus::Clear,
-        );
     }
 
     fn maximize_request(&mut self, surface: ToplevelSurface) {

@@ -1,10 +1,10 @@
 use super::capture_privacy::tests::{ack_configure, dispatch, request, window};
 use super::*;
-use smithay::input::pointer::{Focus, GrabStartData, MotionEvent};
+use smithay::input::pointer::{GrabStartData, MotionEvent};
 use smithay::reexports::wayland_server::Resource;
 use smithay::utils::SERIAL_COUNTER;
 
-fn fixture() -> (
+pub(super) fn fixture() -> (
     smithay::reexports::calloop::EventLoop<'static, Ferese>,
     Ferese,
     Output,
@@ -1228,21 +1228,17 @@ fn malformed_resize_limits_disconnect_only_the_client_and_motion_survives() {
         state.focused_window = Some(id);
         state.toggle_focused_floating();
         let pointer = state.seat.get_pointer().unwrap();
-        pointer.set_grab(
-            &mut state,
-            crate::grabs::ResizeSurfaceGrab::new(
-                GrabStartData {
-                    focus: None,
-                    button: 0x110,
-                    location: (100.0, 100.0).into(),
-                },
-                window,
-                xdg_toplevel::ResizeEdge::BottomRight.into(),
-                Rectangle::new((100, 100).into(), (64, 48).into()),
-            ),
+        assert!(state.begin_window_interaction(
+            &pointer,
+            window,
+            GrabStartData {
+                focus: None,
+                button: 0x110,
+                location: (100.0, 100.0).into()
+            },
             SERIAL_COUNTER.next_serial(),
-            Focus::Clear,
-        );
+            Some(xdg_toplevel::ResizeEdge::BottomRight.into()),
+        ));
         request(&mut wire, 4, 8, &[minimum.0 as u32, minimum.1 as u32], None);
         request(&mut wire, 4, 7, &[maximum.0 as u32, maximum.1 as u32], None);
         request(&mut wire, 2, 6, &[], None);
@@ -1261,6 +1257,7 @@ fn malformed_resize_limits_disconnect_only_the_client_and_motion_survives() {
             SERIAL_COUNTER.next_serial(),
             smithay::backend::input::InputTime::from_millis(2),
         );
+        state.poll_window_interaction();
         wire.set_nonblocking(true).unwrap();
         let mut messages = Vec::new();
         let _ = wire.read_to_end(&mut messages);

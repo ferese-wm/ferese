@@ -11,6 +11,8 @@ mod hit_testing;
 mod layout;
 mod navigation;
 mod outputs;
+#[cfg(test)]
+mod pointer_tests;
 mod reconciliation;
 pub(crate) mod tab_indicator;
 mod tabs;
@@ -488,6 +490,9 @@ pub struct Ferese {
     pub(crate) tab_indicator_settings: crate::config::TabIndicatorSettings,
     pub(crate) tab_bars: HashMap<WorkspaceId, Vec<ferese_layout::TabBar>>,
     pub(crate) consumed_pointer_buttons: HashSet<u32>,
+    pub(crate) pointer_scroll: crate::input::ScrollBindings,
+    pub(crate) pointer_operation: Option<crate::input::WindowInteraction>,
+    pub(crate) window_grab_focus_pending: bool,
     pub(crate) pending_layer_focus: Option<(WlSurface, Instant)>,
     pub(crate) consumed_touch_slots: HashSet<smithay::backend::input::TouchSlot>,
     pub(crate) focus_history: ferese_core::FocusHistory,
@@ -812,6 +817,9 @@ impl Ferese {
             tab_indicator_settings: config.tab_indicator,
             tab_bars: HashMap::new(),
             consumed_pointer_buttons: HashSet::new(),
+            pointer_scroll: Default::default(),
+            pointer_operation: None,
+            window_grab_focus_pending: false,
             pending_layer_focus: None,
             consumed_touch_slots: HashSet::new(),
             focus_history: Default::default(),
@@ -1022,7 +1030,9 @@ impl Ferese {
             self.advance_animations(Instant::now());
         }
 
-        let touchpad_changed = self.input_settings.touchpad != config.input_settings.touchpad;
+        let pointer_settings_changed = self.input_settings.touchpad
+            != config.input_settings.touchpad
+            || self.input_settings.mouse != config.input_settings.mouse;
         let outputs_changed = self.output_profiles != config.output_profiles;
         if let Some(workspaces) = workspaces {
             self.workspaces = workspaces;
@@ -1089,7 +1099,7 @@ impl Ferese {
             crate::daemon::Runner::refresh(&runner, self);
         }
 
-        if touchpad_changed {
+        if pointer_settings_changed {
             crate::backends::direct::reload_input_devices(self);
         }
 

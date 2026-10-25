@@ -74,6 +74,7 @@ static const struct wl_registry_listener registry_listener = {global, removed};
 static void configure(void *data, struct xdg_surface *xdg, uint32_t serial) {
     (void)data;
     xdg_surface_ack_configure(xdg, serial);
+    if (!mapped) return;
     xdg_surface_set_window_geometry(xdg, 0, 0, width, height);
     wl_surface_attach(surface, buffer, 0, 0);
     wl_surface_damage(surface, 0, 0, width, height);

@@ -375,7 +375,7 @@ impl App {
                     );
                 }
                 Page::Shortcuts => {
-                    body = body.push(self.note("Keyboard and swipe bindings share the same actions. Use Swipe3Up, Swipe3Down, Swipe3Left, or Swipe3Right as a shortcut (also supports 4 or 5 fingers). Actions include toggle-overview, spawn, focus, move, workspace-next, workspace-previous, workspace-back-and-forth, and none. Leave Argument empty for actions such as toggle-overview or none."));
+                    body = body.push(self.note("Keyboard, mouse and swipe bindings share the same actions. Mouse shortcuts can use MouseLeft, MouseRight, MouseMiddle, MouseBack, MouseForward or WheelUp/Down/Left/Right with modifiers. Use pointer-move or pointer-resize for dragging. Swipes use Swipe3Up, Swipe3Down, Swipe3Left or Swipe3Right (also supports 4 or 5 fingers). Actions such as toggle-overview and none need no argument."));
                     let mut gestures = row([]).spacing(6);
                     for (keys, label) in [
                         ("Swipe3Up", "Customize swipe up"),

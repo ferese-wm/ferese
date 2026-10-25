@@ -279,6 +279,134 @@ impl LayoutTree {
         Ok(window_node)
     }
 
+    /// Reinsert a window beside a target, or into its tab group.
+    pub fn place_window(
+        &mut self,
+        window: WindowId,
+        target: WindowId,
+        placement: crate::DropPlacement,
+    ) -> Result<(), LayoutError> {
+        use crate::DropPlacement::*;
+        if !self.contains(window) {
+            return Err(LayoutError::UnknownWindow(window));
+        }
+        if !self.contains(target) {
+            return Err(LayoutError::UnknownWindow(target));
+        }
+        if window == target {
+            return Ok(());
+        }
+        if placement == Tab {
+            return self.stack_window(window, target);
+        }
+        let mut next = self.clone();
+        next.remove(window)?;
+        let axis = if matches!(placement, Left | Right) {
+            Axis::Horizontal
+        } else {
+            Axis::Vertical
+        };
+        let leaf = next.insert(window, Some(target), axis, 0.5)?;
+        if matches!(placement, Left | Above) {
+            let parent = next.parents[&leaf];
+            if let Some(Node::Split { first, second, .. }) = next.nodes.get_mut(&parent) {
+                std::mem::swap(first, second);
+            }
+        }
+        next.validate()?;
+        *self = next;
+        Ok(())
+    }
+
+    /// Move a selected split edge by a signed logical-pixel distance.
+    pub fn resize_edge(
+        &mut self,
+        window: WindowId,
+        edge: Direction,
+        delta: f64,
+        bounds: Rect,
+    ) -> Result<bool, LayoutError> {
+        let mut child = *self
+            .windows
+            .get(&window)
+            .ok_or(LayoutError::UnknownWindow(window))?;
+        if !delta.is_finite() {
+            return Ok(false);
+        }
+        while let Some(parent) = self.parents.get(&child).copied() {
+            let matches = match self.nodes.get(&parent) {
+                Some(Node::Split {
+                    axis: Axis::Horizontal,
+                    first,
+                    second,
+                    ..
+                }) => {
+                    (edge == Direction::Right && *first == child)
+                        || (edge == Direction::Left && *second == child)
+                }
+                Some(Node::Split {
+                    axis: Axis::Vertical,
+                    first,
+                    second,
+                    ..
+                }) => {
+                    (edge == Direction::Down && *first == child)
+                        || (edge == Direction::Up && *second == child)
+                }
+                _ => false,
+            };
+            if matches {
+                let mut path = Vec::new();
+                let mut node = parent;
+                while let Some(ancestor) = self.parents.get(&node).copied() {
+                    path.push((ancestor, node));
+                    node = ancestor;
+                }
+                let mut area = bounds;
+                for (ancestor, descendant) in path.into_iter().rev() {
+                    if let Some(Node::Split {
+                        axis, ratio, first, ..
+                    }) = self.nodes.get(&ancestor)
+                    {
+                        match axis {
+                            Axis::Horizontal => {
+                                let part = area.width * ratio;
+                                if *first == descendant {
+                                    area.width = part;
+                                } else {
+                                    area.x += part;
+                                    area.width -= part;
+                                }
+                            }
+                            Axis::Vertical => {
+                                let part = area.height * ratio;
+                                if *first == descendant {
+                                    area.height = part;
+                                } else {
+                                    area.y += part;
+                                    area.height -= part;
+                                }
+                            }
+                        }
+                    }
+                }
+                if let Some(Node::Split { ratio, .. }) = self.nodes.get_mut(&parent) {
+                    let extent = if matches!(edge, Direction::Left | Direction::Right) {
+                        area.width
+                    } else {
+                        area.height
+                    };
+                    let next = normalized_ratio(*ratio + delta / extent.max(1.0));
+                    let changed = next != *ratio;
+                    *ratio = next;
+                    return Ok(changed);
+                }
+            }
+            child = parent;
+        }
+        Ok(false)
+    }
+
     pub fn remove(&mut self, window: WindowId) -> Result<(), LayoutError> {
         let leaf = self
             .windows

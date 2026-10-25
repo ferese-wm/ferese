@@ -371,6 +371,37 @@ impl ScrollingLayout {
         self.viewport_x
     }
 
+    /// Pan without changing focus, keeping the viewport inside the column strip.
+    pub fn scroll_viewport(&mut self, delta: f64) -> bool {
+        let Some(sizing) = self.last_column_sizing else {
+            return false;
+        };
+        if !delta.is_finite() || delta == 0.0 {
+            return false;
+        }
+        let width = self
+            .columns
+            .iter()
+            .map(|column| {
+                column
+                    .windows
+                    .first()
+                    .and_then(|id| self.allocated_widths.get(id))
+                    .copied()
+                    .unwrap_or_else(|| sizing.resolve(column.width))
+            })
+            .sum::<f64>()
+            + sizing.inner_gap * self.columns.len().saturating_sub(1) as f64;
+        let next = (self.viewport_x + delta).clamp(0.0, (width - sizing.viewport_width).max(0.0));
+        if next == self.viewport_x {
+            return false;
+        }
+        self.viewport_x = next;
+        self.pending_viewport = None;
+        self.viewport_basis = None;
+        true
+    }
+
     #[must_use]
     pub fn allocated_column_width(&self, window: WindowId) -> Option<f64> {
         self.allocated_widths.get(&window).copied()
@@ -448,6 +479,111 @@ impl ScrollingLayout {
 
         debug_assert!(self.validate().is_ok());
         Ok(())
+    }
+
+    pub fn place_window(
+        &mut self,
+        window: WindowId,
+        target: WindowId,
+        placement: crate::DropPlacement,
+    ) -> Result<(), LayoutError> {
+        use crate::DropPlacement::*;
+        let (source, _) = self
+            .window_location(window)
+            .ok_or(LayoutError::UnknownWindow(window))?;
+        if !self.contains(target) {
+            return Err(LayoutError::UnknownWindow(target));
+        }
+        if window == target {
+            return Ok(());
+        }
+        let width = self.columns[source].width;
+        self.remove(window)?;
+        let (column, row) = self
+            .window_location(target)
+            .expect("target survives removing another window");
+        match placement {
+            Left | Right => {
+                let index = column + usize::from(placement == Right);
+                let mut entry = Column::new(window, width);
+                entry.display = self.default_display;
+                self.columns.insert(index, entry);
+                self.active_column = Some(index);
+            }
+            Above | Below | Tab => {
+                let entry = &mut self.columns[column];
+                let index = row + usize::from(placement != Above);
+                entry.windows.insert(index, window);
+                // Split the destination row's weight rather than collapsing it.
+                let weight = entry.heights[row] / 2.0;
+                entry.heights[row] = weight;
+                entry.heights.insert(index, weight);
+                entry.normalize_heights();
+                if placement == Tab {
+                    entry.display = ColumnDisplay::Tabbed;
+                }
+                entry.active = index;
+                self.active_column = Some(column);
+            }
+        }
+        self.request_reveal(Some(window));
+        debug_assert!(self.validate().is_ok());
+        Ok(())
+    }
+
+    pub fn resize_edge(
+        &mut self,
+        window: WindowId,
+        edge: Direction,
+        delta: f64,
+        bounds: Rect,
+    ) -> Result<bool, LayoutError> {
+        let (column, row) = self
+            .window_location(window)
+            .ok_or(LayoutError::UnknownWindow(window))?;
+        if !delta.is_finite() {
+            return Ok(false);
+        }
+        let entry = &mut self.columns[column];
+        if matches!(edge, Direction::Left | Direction::Right) {
+            let size = self.last_column_sizing.unwrap_or(ColumnSizing {
+                viewport_width: bounds.width,
+                inner_gap: 0.0,
+            });
+            let width = size.resolve(entry.width);
+            let change = if edge == Direction::Left {
+                -delta
+            } else {
+                delta
+            };
+            let next = (width + change).clamp(
+                size.resolve(ColumnWidth::Proportion(MIN_COLUMN_WIDTH))
+                    .max(1.0),
+                size.resolve(ColumnWidth::Proportion(MAX_COLUMN_WIDTH))
+                    .max(1.0),
+            );
+            entry.width = ColumnWidth::Fixed(next);
+            return Ok(next != width);
+        }
+        if entry.display == ColumnDisplay::Tabbed {
+            return Ok(false);
+        }
+        let neighbor = match edge {
+            Direction::Up => row.checked_sub(1),
+            Direction::Down => (row + 1 < entry.windows.len()).then_some(row + 1),
+            _ => None,
+        };
+        let Some(neighbor) = neighbor else {
+            return Ok(false);
+        };
+        let pair = entry.heights[row] + entry.heights[neighbor];
+        let change = (if edge == Direction::Up { -delta } else { delta }) / bounds.height.max(1.0);
+        let minimum = MIN_ROW_HEIGHT.min(pair / 2.0);
+        let height = (entry.heights[row] + change).clamp(minimum, pair - minimum);
+        let changed = height != entry.heights[row];
+        entry.heights[row] = height;
+        entry.heights[neighbor] = pair - height;
+        Ok(changed)
     }
 
     pub fn remove(&mut self, window: WindowId) -> Result<(), LayoutError> {

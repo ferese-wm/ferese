@@ -424,6 +424,7 @@ pub fn init(event_loop: &mut EventLoop<Ferese>, state: &mut Ferese) -> Result<()
             }
 
             InputEvent::DeviceRemoved { device } => {
+                state.cancel_window_interaction();
                 if let Some(backend) = state.direct_backend.as_mut() {
                     backend
                         .input_devices
@@ -437,6 +438,7 @@ pub fn init(event_loop: &mut EventLoop<Ferese>, state: &mut Ferese) -> Result<()
         .handle()
         .insert_source(notifier, move |event, _, state| match event {
             SessionEvent::PauseSession => {
+                state.cancel_window_interaction();
                 state.set_binding_mode("default");
                 let handle = state.loop_handle.clone();
                 if let Some(backend) = state.direct_backend.as_mut() {
@@ -522,6 +524,57 @@ pub fn init(event_loop: &mut EventLoop<Ferese>, state: &mut Ferese) -> Result<()
 
 fn configure_libinput_device(state: &Ferese, device: &mut LibinputDevice) {
     let settings = state.input_settings.touchpad;
+    let touchpad = device.config_tap_finger_count() > 0 || device.config_dwt_is_available();
+    let mouse = state.input_settings.mouse;
+    if touchpad {
+        if device.config_accel_is_available()
+            && let Err(error) = device.config_accel_set_speed(settings.accel_speed)
+        {
+            tracing::warn!(device = %device.name(), ?error, "failed to configure touchpad acceleration");
+        }
+        use smithay::reexports::input::SendEventsMode;
+        let mode = if settings.disable_while_mouse_connected {
+            SendEventsMode::DISABLED_ON_EXTERNAL_MOUSE
+        } else {
+            SendEventsMode::ENABLED
+        };
+        if device
+            .config_send_events_modes()
+            .contains(SendEventsMode::DISABLED_ON_EXTERNAL_MOUSE)
+            && let Err(error) = device.config_send_events_set_mode(mode)
+        {
+            tracing::warn!(device = %device.name(), ?error, "failed to configure touchpad external-mouse policy");
+        }
+    }
+    if !touchpad && device.has_capability(smithay::reexports::input::DeviceCapability::Pointer) {
+        if device.config_accel_is_available() {
+            if let Err(error) = device.config_accel_set_speed(mouse.accel_speed) {
+                tracing::warn!(device = %device.name(), ?error, "failed to configure mouse acceleration");
+            }
+            use smithay::reexports::input::AccelProfile;
+            let profile = match mouse.accel_profile {
+                Some(crate::config::AccelerationProfile::Adaptive) => Some(AccelProfile::Adaptive),
+                Some(crate::config::AccelerationProfile::Flat) => Some(AccelProfile::Flat),
+                None => device.config_accel_default_profile(),
+            };
+            if let Some(profile) =
+                profile.filter(|profile| device.config_accel_profiles().contains(profile))
+                && let Err(error) = device.config_accel_set_profile(profile)
+            {
+                tracing::warn!(device = %device.name(), ?error, "failed to configure mouse acceleration profile");
+            }
+        }
+        if device.config_left_handed_is_available()
+            && let Err(error) = device.config_left_handed_set(mouse.left_handed)
+        {
+            tracing::warn!(device = %device.name(), ?error, "failed to configure mouse handedness");
+        }
+        if device.config_middle_emulation_is_available()
+            && let Err(error) = device.config_middle_emulation_set_enabled(mouse.middle_emulation)
+        {
+            tracing::warn!(device = %device.name(), ?error, "failed to configure middle button emulation");
+        }
+    }
 
     if device.config_tap_finger_count() > 0
         && let Err(error) = device.config_tap_set_enabled(settings.tap)
@@ -529,7 +582,11 @@ fn configure_libinput_device(state: &Ferese, device: &mut LibinputDevice) {
         tracing::warn!(device = %device.name(), ?error, "failed to configure tap-to-click");
     }
     if device.config_scroll_has_natural_scroll()
-        && let Err(error) = device.config_scroll_set_natural_scroll_enabled(settings.natural_scroll)
+        && let Err(error) = device.config_scroll_set_natural_scroll_enabled(if touchpad {
+            settings.natural_scroll
+        } else {
+            mouse.natural_scroll
+        })
     {
         tracing::warn!(device = %device.name(), ?error, "failed to configure natural scrolling");
     }

@@ -61,9 +61,20 @@ input {
 
     touchpad {
         tap #true
+        accel-speed 0.0
         natural-scroll #true
         disable-while-typing #true
+        disable-while-mouse-connected #false
         swipe-threshold 80
+    }
+    mouse {
+        natural-scroll #false
+        accel-speed 0.0
+        left-handed #false
+        middle-emulation #false
+        scroll-factor 1.0
+        drag-threshold 4.0
+        scroll-cooldown-ms 150
     }
 }
 
