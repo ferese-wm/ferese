@@ -212,6 +212,7 @@ fn after_dispatch_with_redraw(
     mut redraw: impl FnMut(&mut Ferese, RedrawRequest<'_>),
 ) {
     crate::backends::direct::gamma::sync_night_light(state);
+    state.poll_window_interaction();
     state.process_pending_dmabuf_imports();
     state.prune_screencopies();
     state.refresh_capture_sessions();

@@ -299,6 +299,7 @@ impl Ferese {
     }
 
     pub(crate) fn prepare_lock_input(&mut self) {
+        self.cancel_window_interaction();
         // Reject desktop grabs installed after acquisition, but keep the lock
         // owner's implicit click grab intact until its button release.
         if let Some(keyboard) = self.seat.get_keyboard()
@@ -482,6 +483,7 @@ impl SessionLockHandler for Ferese {
             );
         }
         self.set_overview_active(false);
+        self.cancel_window_interaction();
         let serial = SERIAL_COUNTER.next_serial();
         if let Some(pointer) = self.seat.get_pointer() {
             pointer.unset_grab(self, serial, smithay::backend::input::InputTime::now());

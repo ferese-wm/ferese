@@ -10,27 +10,30 @@ use super::{
     binding_identity_for_runtime,
 };
 
-/// Immutable bindings and their keyboard index are replaced together on reload.
+/// Immutable bindings and their lookup index are replaced together on reload.
 /// The ordered slice remains available for gestures and the shortcut guide.
 #[derive(Clone)]
 pub(crate) struct BindingSet {
     ordered: Vec<Binding>,
-    keyboard: HashMap<BindingIdentity, usize>,
+    index: HashMap<BindingIdentity, usize>,
 }
 
 impl From<Vec<Binding>> for BindingSet {
     fn from(ordered: Vec<Binding>) -> Self {
-        let mut keyboard = HashMap::with_capacity(ordered.len());
+        let mut index = HashMap::with_capacity(ordered.len());
 
-        for (index, binding) in ordered.iter().enumerate() {
+        for (position, binding) in ordered.iter().enumerate() {
             let identity = binding_identity_for_runtime(binding);
 
-            if identity.match_mode != BindingMatch::Swipe {
-                keyboard.entry(identity).or_insert(index);
+            if matches!(
+                identity.match_mode,
+                BindingMatch::Keysym | BindingMatch::Physical | BindingMatch::Pointer
+            ) {
+                index.entry(identity).or_insert(position);
             }
         }
 
-        Self { ordered, keyboard }
+        Self { ordered, index }
     }
 }
 
@@ -43,6 +46,26 @@ impl std::ops::Deref for BindingSet {
 }
 
 impl BindingSet {
+    pub(crate) fn binding_for_pointer(
+        &self,
+        trigger: super::PointerTrigger,
+        modifiers: smithay::input::keyboard::ModifiersState,
+    ) -> Option<&Binding> {
+        let modifiers = BindingModifiers {
+            logo: modifiers.logo,
+            ctrl: modifiers.ctrl,
+            alt: modifiers.alt,
+            shift: modifiers.shift,
+        };
+        self.index
+            .get(&BindingIdentity {
+                modifiers,
+                match_mode: BindingMatch::Pointer,
+                key: trigger.key(),
+            })
+            .map(|index| &self.ordered[*index])
+    }
+
     pub(crate) fn binding_for_key(
         &self,
         keycode: Keycode,
@@ -58,13 +81,13 @@ impl BindingSet {
             alt,
             shift,
         };
-        let physical = self.keyboard.get(&BindingIdentity {
+        let physical = self.index.get(&BindingIdentity {
             modifiers,
             match_mode: BindingMatch::Physical,
             key: keycode.raw(),
         });
         let symbolic = symbols.iter().filter_map(|&key| {
-            self.keyboard.get(&BindingIdentity {
+            self.index.get(&BindingIdentity {
                 modifiers,
                 match_mode: BindingMatch::Keysym,
                 key,

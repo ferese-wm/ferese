@@ -117,6 +117,7 @@ class Presentation(unittest.TestCase):
                 self.assertEqual(count("idle"), idle)
                 target.stdin.write(b"u")
                 target.stdin.flush()
+                windows(0)
                 time.sleep(.6)
                 self.assertGreater(count("idle"), idle, "unmapped inhibitor must stop inhibiting")
                 target.stdin.close()

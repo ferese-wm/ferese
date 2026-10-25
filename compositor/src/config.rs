@@ -19,10 +19,11 @@ pub use appearance::{BorderGradient, FocusEffectSettings, MaterialStyle, ThemeSe
 pub use bindings::{Binding, BindingAction};
 use bindings::{BindingConfig, BindingMatch, BindingModeConfig, BindingModifiers};
 pub(crate) use bindings::{BindingModes, BindingSet, physical_keymap};
+pub(crate) use bindings::{PointerTrigger, ScrollDirection};
 use ferese_animation::SpringConfig;
 use ferese_core::LayoutMode;
 use ferese_layout::{ColumnWidth, Direction, GapConfig, ViewportFocusStrategy};
-pub use input_motion::InputSettings;
+pub use input_motion::{AccelerationProfile, InputSettings};
 use input_motion::{AnimationsConfig, InputConfig};
 use outputs::OutputProfileConfig;
 pub use outputs::{
@@ -1134,13 +1135,16 @@ mod tests {
             config.input_settings().unwrap(),
             InputSettings {
                 focus_follows_mouse: true,
+                mouse: Default::default(),
                 xkb_layout: "us,de".to_owned(),
                 xkb_variant: ",nodeadkeys".to_owned(),
                 xkb_options: vec!["grp:alt_shift_toggle".to_owned()],
                 repeat_rate: 30,
                 repeat_delay_ms: 450,
                 touchpad: TouchpadSettings {
+                    accel_speed: 0.0,
                     tap: false,
+                    disable_while_mouse_connected: false,
                     natural_scroll: false,
                     disable_while_typing: true,
                     swipe_threshold: 80,
@@ -1303,7 +1307,7 @@ mod tests {
         let input = config.input_settings().unwrap();
         let bindings = config.bindings(&input).unwrap();
 
-        assert_eq!(bindings.len(), 63);
+        assert_eq!(bindings.len(), 65);
         for (shift, action) in [
             (false, BindingAction::ToggleMaximized),
             (true, BindingAction::ToggleFullscreen),
@@ -1362,7 +1366,7 @@ mod tests {
 
         let input = replaced.input_settings().unwrap();
         let bindings = replaced.bindings(&input).unwrap();
-        assert_eq!(bindings.len(), 63);
+        assert_eq!(bindings.len(), 65);
         assert!(bindings.iter().any(|binding| {
             binding.action
                 == BindingAction::Spawn(
@@ -1372,7 +1376,7 @@ mod tests {
 
         let input = unbound.input_settings().unwrap();
         let bindings = unbound.bindings(&input).unwrap();
-        assert_eq!(bindings.len(), 62);
+        assert_eq!(bindings.len(), 64);
         assert!(
             !bindings
                 .iter()
