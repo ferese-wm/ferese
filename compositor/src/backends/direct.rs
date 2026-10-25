@@ -1244,6 +1244,7 @@ pub(crate) fn wake_locked_outputs(state: &mut Ferese) {
 
 #[track_caller]
 pub fn render_all(state: &mut Ferese) {
+    state.image_capture.invalidate_workspaces();
     for output in state.space.outputs() {
         capture::changes::content_changed(output);
     }
@@ -1320,6 +1321,18 @@ pub(crate) fn render_surface(
         return;
     }
 
+    let capture_root = state
+        .popups
+        .find_popup(&root)
+        .and_then(|popup| smithay::desktop::find_popup_root_surface(&popup).ok())
+        .unwrap_or_else(|| root.clone());
+    if let Some(workspace) = state
+        .windows
+        .id_for_surface(&capture_root)
+        .and_then(|id| state.workspaces.workspace_for_window(id))
+    {
+        state.image_capture.workspace_changed(workspace);
+    }
     let outputs = state.surface_outputs(&root);
     render_on(state, &outputs);
 }

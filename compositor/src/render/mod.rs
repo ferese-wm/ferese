@@ -38,7 +38,8 @@ use overview::{overview_chrome_element, overview_strip_elements};
 pub(crate) use resources::RenderResources;
 use scene::cursor_elements;
 pub(crate) use scene::{
-    capture_output_elements, frame_effect_metrics, layer_surfaces, sampled_output_elements,
+    capture_output_elements, capture_workspace_elements, frame_effect_metrics, layer_surfaces,
+    sampled_output_elements,
 };
 pub(crate) use shader::SharedPixelShaderElement;
 use smithay::backend::allocator::Fourcc;

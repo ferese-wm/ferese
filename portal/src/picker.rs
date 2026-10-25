@@ -34,10 +34,10 @@ impl Prompt {
         let mut previous_kind = None;
         if !self.window_capture {
             for source in visible {
-                let is_window = source.window_id().is_some();
-                if previous_kind != Some(is_window) {
+                let kind = source.kind().category();
+                if previous_kind != Some(kind) {
                     sections += 1;
-                    previous_kind = Some(is_window);
+                    previous_kind = Some(kind);
                 }
             }
         }
@@ -94,7 +94,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     let prompt: Prompt = serde_json::from_str(&input)?;
 
-    if prompt.sources.is_empty() || prompt.sources.len() > 144 {
+    if prompt.sources.is_empty() || prompt.sources.len() > 272 {
         return Err("No shareable displays".into());
     }
 
@@ -328,25 +328,20 @@ impl cosmic::Application for Picker {
         let mut sources = column([]).spacing(6);
         let mut previous_kind = None;
         for (index, source) in self.prompt.sources.iter().enumerate() {
-            let is_window = self.prompt.window_capture || source.window_id().is_some();
-            if !self.prompt.window_capture && previous_kind != Some(is_window) {
-                sources = sources.push(
-                    self.text(if is_window { "Windows" } else { "Displays" })
-                        .size(12),
-                );
-                previous_kind = Some(is_window);
+            let kind = source.kind().category();
+            if !self.prompt.window_capture && previous_kind != Some(kind) {
+                sources = sources.push(self.text(source.kind().label()).size(12));
+                previous_kind = Some(kind);
             }
             let selected = self.selected.contains(&index);
             let mut entry = row![
                 glyph(ferese_theme::icons::DISPLAY, 24),
                 column![
-                    self.text(
-                        if self.prompt.window_capture || source.window_id().is_some() {
-                            &source.label
-                        } else {
-                            &source.name
-                        }
-                    )
+                    self.text(if self.prompt.window_capture || !source.is_monitor() {
+                        &source.label
+                    } else {
+                        &source.name
+                    })
                     .size(14),
                     self.text(format!("{} × {}", source.width, source.height))
                         .size(12)
@@ -377,6 +372,8 @@ impl cosmic::Application for Picker {
                 "Choose a display, then record it in full or select a region."
             } else if self.prompt.window_capture {
                 "Only the selected window will be captured."
+            } else if self.prompt.sources.iter().any(|source| source.workspace_id().is_some()) {
+                "A workspace stays shared when you switch away. Desktop panels and notifications are excluded."
             } else {
                 "Displays share everything visible. Windows share only their own content."
             })

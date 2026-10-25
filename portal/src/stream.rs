@@ -88,6 +88,11 @@ impl Data {
                     eprintln!("DMA-BUF capture unavailable ({error}); using shared memory");
                     self.force_shm = true;
                     self.renegotiate = true;
+                    // Retry unchanged content after a failed GPU transfer.
+                    if let Err(error) = self.capture.borrow_mut().refresh() {
+                        eprintln!("Could not refresh fallback capture: {error}");
+                        self.stop.store(true, Ordering::Relaxed);
+                    }
                 } else {
                     eprintln!("{error}");
                     self.stop.store(true, Ordering::Relaxed);
@@ -325,6 +330,10 @@ pub fn run(
         .state_changed(move |stream, data, _, state| {
             let mut data = data.borrow_mut();
             let active = matches!(state, pw::stream::StreamState::Streaming);
+            if let Err(error) = data.capture.borrow_mut().set_active(active) {
+                eprintln!("Could not update capture activity: {error}");
+                data.stop.store(true, Ordering::Relaxed);
+            }
             if active
                 && !data.active
                 && let Err(error) = data.capture.borrow_mut().refresh()
@@ -559,7 +568,13 @@ pub fn run(
             data.borrow_mut().complete(&stream, completion);
         }
         let changed = capture.borrow_mut().take_changed();
-        if changed && !name.starts_with("window:") && capture.borrow().constraints().size != size {
+        if changed
+            && !matches!(
+                crate::capture::SourceKind::parse(&name),
+                crate::capture::SourceKind::Window(_)
+            )
+            && capture.borrow().constraints().size != size
+        {
             eprintln!("Shared monitor changed size; start sharing again");
             break;
         }

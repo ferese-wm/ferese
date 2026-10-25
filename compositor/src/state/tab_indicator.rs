@@ -185,9 +185,32 @@ impl Ferese {
         bar: &ferese_layout::TabBar,
         content: Rect,
     ) -> Option<IndicatorGeometry> {
+        self.tab_indicator_geometry_sampled(bar, content, None)
+    }
+
+    pub(crate) fn tab_indicator_geometry_for_frame(
+        &self,
+        bar: &ferese_layout::TabBar,
+        content: Rect,
+        frame: &super::FrameScene,
+    ) -> Option<IndicatorGeometry> {
+        self.tab_indicator_geometry_sampled(
+            bar,
+            content,
+            frame.capture_tabs.as_ref().map(|_| frame),
+        )
+    }
+
+    fn tab_indicator_geometry_sampled(
+        &self,
+        bar: &ferese_layout::TabBar,
+        content: Rect,
+        frame: Option<&super::FrameScene>,
+    ) -> Option<IndicatorGeometry> {
         let workspace = self.workspaces.workspace_for_window(bar.group.active)?;
         let output_id = self.output_workspaces.output_for_workspace(workspace)?;
-        if self.output_workspaces.active_workspace(output_id) != Some(workspace) {
+        if frame.is_none() && self.output_workspaces.active_workspace(output_id) != Some(workspace)
+        {
             return None;
         }
         let output = self.outputs_by_id.get(&output_id)?;
@@ -200,17 +223,30 @@ impl Ferese {
         );
         let mut boundary = bounds.x;
         // Measure the current visible gap, including animated column positions.
-        for window in self.space.elements() {
-            let Some(id) = self.windows.ids().get(window).copied() else {
-                continue;
-            };
+        let captured = frame
+            .into_iter()
+            .flat_map(|frame| frame.windows.keys().copied());
+        let displayed = self
+            .space
+            .elements()
+            .filter(|_| frame.is_none())
+            .filter_map(|window| self.windows.ids().get(window).copied());
+        for id in captured.chain(displayed) {
             if id == bar.group.active
                 || self.workspaces.workspace_for_window(id) != Some(workspace)
                 || !self.workspaces.workspace(workspace)?.layout.contains(id)
             {
                 continue;
             }
-            let Some(rect) = self.presented_window_rect(id) else {
+            let Some(rect) = frame.map_or_else(
+                || self.presented_window_rect(id),
+                |frame| {
+                    frame
+                        .windows
+                        .get(&id)
+                        .map(|sample| sample.presentation.bounds.current)
+                },
+            ) else {
                 continue;
             };
             if rect.x + rect.width <= content.x

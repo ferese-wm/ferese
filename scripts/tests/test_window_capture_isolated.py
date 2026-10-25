@@ -324,8 +324,10 @@ class WindowCapture(unittest.TestCase):
                     self.assertNotEqual(monitor[start:start + 3], bytes([0, 255, 0]),
                                         "private occluder leaked into the filtered capture")
                 for index in range(1, 15):
-                    self.assertNotEqual(monitor[(index - 1) * frame_bytes:index * frame_bytes], monitor[index * frame_bytes:(index + 1) * frame_bytes],
-                                        "monitor stream reused stale pixels after source damage")
+                    self.assertTrue(
+                        monitor[(index - 1) * frame_bytes:index * frame_bytes]
+                        != monitor[index * frame_bytes:(index + 1) * frame_bytes],
+                        f"monitor stream reused stale pixels after source damage at frame {index}")
                 worker.stdin.close()
                 self.assertEqual(worker.wait(timeout=7), 0)
             finally:

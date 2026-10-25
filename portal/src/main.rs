@@ -16,6 +16,7 @@ mod restore;
 mod settings;
 mod shortcuts;
 mod stream;
+mod workspace;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = std::env::args().skip(1).collect();
@@ -23,6 +24,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     match args.as_slice() {
         [flag, name, cursor] if flag == "--stream" => {
             stream::run(name.clone(), cursor == "embedded", None)
+        }
+        [flag, id, cursor] if flag == "--stream-workspace" => {
+            let id: u64 = id.parse()?;
+            stream::run(format!("workspace:{id}"), cursor == "embedded", None)
         }
         [flag, id, cursor] if flag == "--stream-window" => {
             let id: u64 = id.parse()?;
