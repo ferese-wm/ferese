@@ -73,15 +73,62 @@ mod tests {
     #[test]
     #[ignore = "requires an EGL device (software Mesa is supported)"]
     fn creates_a_usable_egl_context() {
+        use smithay::backend::allocator::Fourcc;
         use smithay::backend::egl::EGLDevice;
-        use smithay::backend::renderer::gles::GlesRenderer;
+        use smithay::backend::renderer::gles::{GlesRenderer, GlesTexture};
+        use smithay::backend::renderer::{Bind, Color32F, ExportMem, Frame, Offscreen, Renderer};
+        use smithay::utils::{Physical, Rectangle, Transform};
 
-        let device = EGLDevice::enumerate().unwrap().last().unwrap();
-        // SAFETY: the enumerated EGL device remains owned by the display.
-        let display = unsafe { EGLDisplay::new(device).unwrap() };
-        let context = try_new(&display).unwrap();
-        // SAFETY: this fresh context is not current on another thread.
-        let renderer = unsafe { GlesRenderer::new(context).unwrap() };
-        renderer.egl_context().unbind().unwrap();
+        let software_only = std::env::var("LIBGL_ALWAYS_SOFTWARE").as_deref() == Ok("1");
+        let mut tested = 0;
+        for device in EGLDevice::enumerate().unwrap() {
+            let software = device
+                .extensions()
+                .iter()
+                .any(|name| name == "EGL_MESA_device_software");
+            if software_only && !software {
+                continue;
+            }
+            eprintln!(
+                "EGL context test: software={software}, render_node={:?}",
+                device.render_device_path().ok()
+            );
+            // SAFETY: the enumerated EGL device remains owned by the display.
+            let display = unsafe { EGLDisplay::new(device).unwrap() };
+            let context = try_new(&display).unwrap();
+            // SAFETY: this fresh context is not current on another thread.
+            let mut renderer = unsafe { GlesRenderer::new(context).unwrap() };
+            let mut texture: GlesTexture = renderer
+                .create_buffer(Fourcc::Abgr8888, (8, 8).into())
+                .unwrap();
+            let rect = Rectangle::<i32, Physical>::from_size((8, 8).into());
+            {
+                let mut target = renderer.bind(&mut texture).unwrap();
+                {
+                    let mut frame = renderer
+                        .render(&mut target, (8, 8).into(), Transform::Normal)
+                        .unwrap();
+                    frame.clear(Color32F::new(1., 0., 0., 1.), &[rect]).unwrap();
+                    frame.finish().unwrap().wait().unwrap();
+                }
+                let mapping = renderer
+                    .copy_framebuffer(
+                        &target,
+                        Rectangle::from_size((8, 8).into()),
+                        Fourcc::Abgr8888,
+                    )
+                    .unwrap();
+                let pixels = renderer.map_texture(&mapping).unwrap();
+                assert_eq!(pixels.len(), 8 * 8 * 4);
+                assert!(
+                    pixels
+                        .chunks_exact(4)
+                        .all(|pixel| pixel == [255, 0, 0, 255])
+                );
+            }
+            renderer.egl_context().unbind().unwrap();
+            tested += 1;
+        }
+        assert!(tested > 0, "no matching EGL device was exercised");
     }
 }
