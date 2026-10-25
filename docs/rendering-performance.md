@@ -21,6 +21,34 @@ retirement of a submission can occur in the following interval. Output recreatio
 starts a new series. Mirror targets have their own series. Nested sessions do not
 provide DRM outcome counters.
 
+## GPU context priority
+
+The direct backend requests `ContextPriority::High` through Smithay for each GPU's
+EGL context, including device recreation. Smithay omits the priority attribute when
+`EGL_IMG_context_priority` is unavailable. If context creation with the hint fails,
+Ferese retries once without it and propagates any remaining initialization error.
+The extension defines priority as a hint: driver capabilities, privileges and
+system policy determine the granted priority. CPU scheduling boosts do not set it.
+
+Enable `RUST_LOG=smithay::backend::egl=info,ferese=info` to see Smithay's
+`EGL context created` log with the queried priority. `None` means the priority is
+unknown, including when the extension or query is unavailable; it does not mean
+High was granted. Smithay also reports a requested/granted mismatch. Ferese logs
+when it retries without the hint.
+
+The nested backend still uses Smithay's `winit` context setup, which exposes no
+priority option in the pinned dependency. There are no separate production shared
+renderer contexts. This request alone establishes no FPS, presentation-latency or
+capture CPU improvement; those need repeated measurements under GPU contention
+on physical hardware.
+
+The fallback policy has ordinary unit tests. The opt-in initialization test uses
+a real EGL device, including software Mesa, without exercising DRM or GPU contention:
+
+```sh
+LIBGL_ALWAYS_SOFTWARE=1 EGL_PLATFORM=surfaceless cargo test --locked -p ferese backends::direct::context::tests -- --include-ignored
+```
+
 ## Counter meanings
 
 | Fields | Meaning |
