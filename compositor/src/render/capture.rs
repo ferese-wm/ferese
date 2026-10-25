@@ -582,16 +582,15 @@ fn draw_stream_texture(
         .render(target, size, Transform::Normal)
         .map_err(|error| error.to_string())?;
     let rect = Rectangle::from_size(size);
-    frame
-        .clear(Color32F::new(0., 0., 0., 1.), &[rect])
-        .map_err(|error| error.to_string())?;
+    // Both stream shaders write alpha 1 over the full target. No clear is
+    // needed; marking the entire destination opaque also disables blending.
     frame
         .render_texture_from_to(
             texture,
             Rectangle::from_size(source_size).to_f64(),
             rect,
             &[rect],
-            &[],
+            &[rect],
             transform,
             1.0,
             Some(program),
@@ -713,48 +712,82 @@ mod stream_gpu_tests {
             (Flipped180, "defabc"),
             (Flipped270, "fcebda"),
         ];
-        let program = compile_stream_program(&mut renderer, false).unwrap();
+        // Include transparent and translucent source pixels: the transfer must
+        // replace every destination channel regardless of the source alpha.
         let pixels: Vec<_> = b"abcdef"
             .iter()
-            .flat_map(|value| [*value, 0, 0, 255])
+            .zip([0, 1, 64, 128, 254, 255])
+            .flat_map(|(value, alpha)| [*value, value / 2, value / 3, alpha])
             .collect();
-        for flipped in [false, true] {
-            let source = renderer
-                .import_memory(&pixels, Fourcc::Abgr8888, (3, 2).into(), flipped)
-                .unwrap();
-            for (transform, expected) in cases {
-                let size =
-                    transform.transform_size(Size::<i32, smithay::utils::Buffer>::from((3, 2)));
-                let mut target =
-                    Offscreen::<GlesTexture>::create_buffer(&mut renderer, Fourcc::Abgr8888, size)
-                        .unwrap();
-                {
-                    let mut target = renderer.bind(&mut target).unwrap();
-                    let _ = draw_stream_texture(
+        for straight in [false, true] {
+            let program = compile_stream_program(&mut renderer, straight).unwrap();
+            let mut reference = pixels.clone();
+            if straight {
+                convert_window_pixels(&mut reference);
+                for pixel in reference.chunks_exact_mut(4) {
+                    pixel.swap(0, 2); // CPU conversion returns BGRA; read back RGBA.
+                }
+            }
+            for pixel in reference.chunks_exact_mut(4) {
+                pixel[3] = 255;
+            }
+            for flipped in [false, true] {
+                let source = renderer
+                    .import_memory(&pixels, Fourcc::Abgr8888, (3, 2).into(), flipped)
+                    .unwrap();
+                for (transform, order) in cases {
+                    let size =
+                        transform.transform_size(Size::<i32, smithay::utils::Buffer>::from((3, 2)));
+                    let mut target = Offscreen::<GlesTexture>::create_buffer(
                         &mut renderer,
-                        &source,
-                        &mut target,
-                        transform,
-                        &program,
+                        Fourcc::Abgr8888,
+                        size,
                     )
                     .unwrap();
+                    // Exercise reused targets containing unrelated pixels with
+                    // both transparent and opaque destination alpha.
+                    for alpha in [0.0, 1.0] {
+                        {
+                            let mut target = renderer.bind(&mut target).unwrap();
+                            let mut frame = renderer
+                                .render(&mut target, (size.w, size.h).into(), Transform::Normal)
+                                .unwrap();
+                            frame
+                                .clear(
+                                    Color32F::new(1.0, 0.0, 1.0, alpha),
+                                    &[Rectangle::from_size((size.w, size.h).into())],
+                                )
+                                .unwrap();
+                            let _ = frame.finish().unwrap();
+                            let _ = draw_stream_texture(
+                                &mut renderer,
+                                &source,
+                                &mut target,
+                                transform,
+                                &program,
+                            )
+                            .unwrap();
+                        }
+                        let mapping = renderer
+                            .copy_texture(&target, Rectangle::from_size(size), Fourcc::Abgr8888)
+                            .unwrap();
+                        let actual = renderer.map_texture(&mapping).unwrap();
+                        // Reverse source rows before applying the output transform
+                        // when the texture reports inverted storage.
+                        let expected: Vec<_> = order
+                            .bytes()
+                            .flat_map(|value| {
+                                let index = usize::from(value - b'a');
+                                let index = if flipped { (index + 3) % 6 } else { index };
+                                reference[index * 4..index * 4 + 4].iter().copied()
+                            })
+                            .collect();
+                        assert_eq!(
+                            actual, expected,
+                            "{transform:?}, texture flipped={flipped}, straight={straight}, destination alpha={alpha}"
+                        );
+                    }
                 }
-                let mapping = renderer
-                    .copy_texture(&target, Rectangle::from_size(size), Fourcc::Abgr8888)
-                    .unwrap();
-                let actual = renderer.map_texture(&mapping).unwrap();
-                let actual: Vec<_> = actual.chunks_exact(4).map(|pixel| pixel[0]).collect();
-                // A flipped texture describes the same image with reversed source
-                // rows. Derive that reference before applying the output transform.
-                let expected = if flipped {
-                    expected
-                        .bytes()
-                        .map(|value| if value < b'd' { value + 3 } else { value - 3 })
-                        .collect::<Vec<_>>()
-                } else {
-                    expected.as_bytes().to_vec()
-                };
-                assert_eq!(actual, expected, "{transform:?}, texture flipped={flipped}");
             }
         }
     }
