@@ -1,9 +1,8 @@
 # Documentation
 
 These guides describe the development version on `main`.
-For the packaged **0.1.0-beta**, use the
-[release notes](https://github.com/ferese-wm/ferese/releases/tag/v0.1.0-beta)
-and [guides at that tag](https://github.com/ferese-wm/ferese/tree/v0.1.0-beta/docs).
+For **0.1.0**, use the [release notes](https://github.com/ferese-wm/ferese/releases/tag/v0.1.0) and
+[guides at the release tag](https://github.com/ferese-wm/ferese/tree/v0.1.0/docs).
 
 ## Usage
 

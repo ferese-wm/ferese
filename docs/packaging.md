@@ -89,12 +89,13 @@ release package. Submit that recipe to AUR separately if you want AUR distributi
 ## Publish a release
 
 1. Set `workspace.package.version` in `Cargo.toml` and update `Cargo.lock`.
-2. Commit the release changes and push them.
+2. Write `docs/releases/v<version>.md`. The workflow uses this file as the release
+   notes. Commit the release changes and push them.
 3. Tag that commit with the same version, prefixed by `v`, then push the tag:
 
    ```sh
-   git tag v0.1.0-beta
-   git push origin v0.1.0-beta
+   git tag v0.1.0
+   git push origin v0.1.0
    ```
 
 A tag/version mismatch fails before packaging. Tags with a prerelease suffix,

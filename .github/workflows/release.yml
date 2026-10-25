@@ -38,11 +38,16 @@ jobs:
         run: |
           python3 - <<'PY'
           import importlib.util, os
+          from pathlib import Path
           spec = importlib.util.spec_from_file_location('package', 'scripts/package.py')
           package = importlib.util.module_from_spec(spec)
           spec.loader.exec_module(package)
           version = package.version()
           package.check_tag(os.environ['RELEASE_TAG'], version)
+          if os.environ['RELEASE_TAG']:
+              notes = Path('docs/releases') / f"v{version}.md"
+              if not notes.read_text().strip():
+                  raise ValueError('Release notes are empty')
           with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
               print(f'version={version}', file=output)
           PY
@@ -129,6 +134,7 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v6
       - uses: actions/download-artifact@v8
         with:
           pattern: release-*
@@ -140,6 +146,12 @@ jobs:
           script: |
             const tag = context.ref.slice('refs/tags/'.length);
             const repo = context.repo;
+            const fs = require('node:fs');
+            if (!/^v\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?$/.test(tag)) {
+              throw new Error('Invalid release tag');
+            }
+            const body = fs.readFileSync(`docs/releases/${tag}.md`, 'utf8');
+            if (!body.trim()) throw new Error('Release notes are empty');
             const commit = await github.rest.repos.getCommit({...repo, ref: tag});
             if (commit.data.sha !== context.sha) {
               throw new Error('Release tag moved after validation');
@@ -156,7 +168,12 @@ jobs:
             if (!release) {
               await github.rest.repos.createRelease({
                 ...repo, tag_name: tag, name: tag, draft: true,
-                generate_release_notes: true, prerelease: tag.includes('-')
+                body, prerelease: tag.includes('-')
+              });
+            } else {
+              await github.rest.repos.updateRelease({
+                ...repo, release_id: release.id, body,
+                prerelease: tag.includes('-')
               });
             }
       - name: Upload packages and publish completed release

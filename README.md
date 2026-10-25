@@ -15,9 +15,9 @@ Ferese is a Linux desktop built in Rust with Smithay. It includes a window manag
 desktop shell, Settings and a lock screen, with shared configuration and theming.
 Choose a layout per workspace and configure the desktop through Settings or a KDL file.
 
-**Beta:** [0.1.0-beta](https://github.com/ferese-wm/ferese/releases/tag/v0.1.0-beta)
-has packages for Fedora 44 and Arch Linux on x86_64. This README and the wiki
-describe `main`.
+**Version 0.1.0** is the first stable release. See the [release notes](docs/releases/v0.1.0.md)
+for what's included. Packages target Fedora 44 and Arch Linux on x86_64.
+This README and the wiki describe `main`.
 
 ![Ferese desktop with the launcher, build progress, Appearance settings and terminal windows](docs/images/screenshots/ferese-desktop.png)
 
@@ -37,7 +37,7 @@ describe `main`.
   Configuration edits apply live. Invalid edits leave the last working configuration active.
 - Manage displays, Wi-Fi, Bluetooth and audio from Settings and Control Center.
   Multiple monitors, fractional scaling and monitor mirroring are supported.
-- Annotate screenshots, share a window or display, and record a monitor or selected
+- Annotate screenshots, share a window, workspace or display, and record a monitor or selected
   region with audio.
 
 The [feature roadmap](https://github.com/ferese-wm/ferese/issues/5) tracks implemented features and remaining work.
@@ -45,9 +45,9 @@ The [feature roadmap](https://github.com/ferese-wm/ferese/issues/5) tracks imple
 ## Install
 
 Download the package for your distribution from
-[Releases](https://github.com/ferese-wm/ferese/releases/tag/v0.1.0-beta), then follow
+[Releases](https://github.com/ferese-wm/ferese/releases/tag/v0.1.0), then follow
 the [package installation instructions](https://github.com/ferese-wm/ferese/wiki/Packages-and-Releases#install-a-release-package).
-The release notes list the beta's limitations.
+Read the [release notes](docs/releases/v0.1.0.md) before upgrading.
 
 To build the current development version, install the
 [build dependencies](https://github.com/ferese-wm/ferese/wiki/Installation#requirements)

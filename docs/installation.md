@@ -3,17 +3,16 @@
 Ferese runs on Linux as its own Wayland session alongside your existing desktop.
 Launch it from a login manager, a command-based greeter or a local TTY.
 
-The [0.1.0-beta release](https://github.com/ferese-wm/ferese/releases/tag/v0.1.0-beta)
+The [0.1.0 release](https://github.com/ferese-wm/ferese/releases/tag/v0.1.0)
 has packages for Fedora 44 and Arch Linux on x86_64. Follow
 [package installation](packaging.md#install-a-release-package) to use those builds.
 
-The steps below build the development version from `main`. It includes tabbed
-window groups, binding modes, Live Activities, new panel styles, and audio and
-region recording added since the beta. The wiki describes this development version.
+The steps below build from `main`, which may include changes made after the
+release. The wiki follows `main` too.
 
 ## Requirements
 
-For a full session, you’ll need a Wayland-capable graphics driver and a local user
+For a full session, you'll need a Wayland-capable graphics driver and a local user
 session with seat access through logind or seatd. A nested preview runs inside your
 existing Wayland desktop.
 
