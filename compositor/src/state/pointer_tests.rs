@@ -499,3 +499,41 @@ fn pointer_floating_resize_keeps_edge_snapping_and_shift_bypass() {
     crate::input::binding_mode_tests::key(&mut state, 50, false);
     state.cancel_window_interaction();
 }
+
+#[test]
+fn pointer_scrolling_left_resize_anchors_the_right_edge_and_cancels() {
+    if !crate::startup_tests::private_runtime(
+        "state::pointer_tests::pointer_scrolling_left_resize_anchors_the_right_edge_and_cancels",
+    ) {
+        return;
+    }
+    let (mut events, mut state, _) = fixture();
+    let (window, _wire) = window(&mut state, &mut events, 0xff112233);
+    let id = state.windows.ids()[&window];
+    let before = state.windows.geometry(&id).unwrap().logical;
+    let pointer = state.seat.get_pointer().unwrap();
+    let start = Point::from((before.x, before.y + before.height / 2.0));
+    assert!(state.begin_window_interaction(
+        &pointer,
+        window,
+        GrabStartData {
+            focus: None,
+            button: 0x111,
+            location: start,
+        },
+        SERIAL_COUNTER.next_serial(),
+        Some(xdg_toplevel::ResizeEdge::Left.into())
+    ));
+    button(&mut state, 0x111, true);
+    motion(&mut state, (start.x + 100.0, start.y));
+    let after = state.windows.geometry(&id).unwrap().logical;
+    assert_eq!(
+        after.x + after.width,
+        before.x + before.width,
+        "dragging the left edge moved the opposite edge: {before:?} -> {after:?}"
+    );
+    assert_eq!(after.x, before.x + 100.0);
+    state.cancel_window_interaction();
+    assert!(!pointer.is_grabbed());
+    assert_eq!(state.windows.geometry(&id).unwrap().logical, before);
+}

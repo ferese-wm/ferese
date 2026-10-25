@@ -91,7 +91,8 @@ Adjust recognition distance in **Settings → Keyboard & mouse**, or with
 `Super+MouseLeft` drags a window and `Super+MouseRight` resizes it. Both work with
 floating windows and tiled windows in scrolling or tree layouts. Drag a tiled
 window to another window's edge to place it beside that window, or to its center
-to join a tab group. Drag across monitors to move to the workspace shown there.
+to join a tab group. Top and bottom drops into a tabbed column show its windows as
+rows. Drag across monitors to move to the workspace shown there.
 While dragging, right-click to switch between floating and tiling. Scroll or hold
 the pointer at a horizontal screen edge to reach other scrolling columns.
 Escape cancels the operation; releasing the initiating button finishes it.

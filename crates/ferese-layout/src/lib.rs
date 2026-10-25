@@ -176,3 +176,186 @@ mod pointer_sequence_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod pointer_regression_tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    #[test]
+    fn edge_drop_on_tabbed_column_shows_rows_and_center_drop_keeps_tabs() {
+        for placement in [
+            DropPlacement::Above,
+            DropPlacement::Below,
+            DropPlacement::Tab,
+        ] {
+            let mut layout = ScrollingLayout::default();
+            for id in 1..=3 {
+                layout.insert(WindowId(id), None).unwrap();
+            }
+            layout
+                .place_window(WindowId(1), WindowId(2), DropPlacement::Tab)
+                .unwrap();
+            layout
+                .place_window(WindowId(3), WindowId(2), placement)
+                .unwrap();
+            let result = layout
+                .resolve_geometry_with_constraints(
+                    Rect::new(0.0, 0.0, 1200.0, 800.0),
+                    GapConfig::default(),
+                    &HashMap::new(),
+                    Some(WindowId(3)),
+                )
+                .unwrap();
+            layout.validate().unwrap();
+            assert_eq!(layout.window_ids().count(), 3);
+            if placement == DropPlacement::Tab {
+                assert_eq!(result.geometry.len(), 1);
+                assert!(result.geometry.contains_key(&WindowId(3)));
+                assert_eq!(layout.tab_group(WindowId(3)).unwrap().windows.len(), 3);
+            } else {
+                assert_eq!(result.geometry.len(), 3);
+                let dropped = result.geometry[&WindowId(3)];
+                let target = result.geometry[&WindowId(2)];
+                assert_eq!(dropped.y < target.y, placement == DropPlacement::Above);
+                assert!(layout.tab_group(WindowId(3)).is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn left_resize_should_move_left_edge_and_preserve_right_edge() {
+        let mut layout = ScrollingLayout::default();
+        layout.insert(WindowId(1), None).unwrap();
+        let bounds = Rect::new(0.0, 0.0, 1200.0, 800.0);
+        let before = layout
+            .resolve_geometry_with_constraints(
+                bounds,
+                GapConfig::default(),
+                &HashMap::new(),
+                Some(WindowId(1)),
+            )
+            .unwrap()
+            .geometry[&WindowId(1)];
+        layout
+            .resize_edge(WindowId(1), Direction::Left, 100.0, bounds)
+            .unwrap();
+        let after = layout
+            .resolve_geometry_with_constraints(
+                bounds,
+                GapConfig::default(),
+                &HashMap::new(),
+                Some(WindowId(1)),
+            )
+            .unwrap()
+            .geometry[&WindowId(1)];
+        assert_eq!(
+            after.x + after.width,
+            before.x + before.width,
+            "left-edge drag changed the right edge: {before:?} -> {after:?}"
+        );
+    }
+
+    #[test]
+    fn horizontal_resize_anchors_survive_limits_focus_policies_and_held_buffers() {
+        let bounds = Rect::new(-1200.0, -300.0, 1200.0, 800.0);
+        for strategy in [
+            ViewportFocusStrategy::Minimal,
+            ViewportFocusStrategy::Center,
+            ViewportFocusStrategy::Paged,
+        ] {
+            for tabbed in [false, true] {
+                for constraint in [
+                    SizeConstraints::default(),
+                    SizeConstraints {
+                        min_width: 700.0,
+                        ..Default::default()
+                    },
+                    SizeConstraints {
+                        max_width: Some(250.0),
+                        ..Default::default()
+                    },
+                ] {
+                    let mut base = ScrollingLayout::default();
+                    base.set_focus_strategy(strategy);
+                    for id in 1..=3 {
+                        base.insert(WindowId(id), None).unwrap();
+                    }
+                    if tabbed {
+                        base.place_window(WindowId(3), WindowId(2), DropPlacement::Tab)
+                            .unwrap();
+                    }
+                    let window = WindowId(2);
+                    let constraints =
+                        HashMap::from([(if tabbed { WindowId(3) } else { window }, constraint)]);
+                    let before = base
+                        .resolve_geometry_with_constraints(
+                            bounds,
+                            GapConfig::default(),
+                            &constraints,
+                            Some(window),
+                        )
+                        .unwrap()
+                        .geometry[&window];
+                    let initial_viewport = base.viewport_x();
+                    let initial_width = base.allocated_column_width(window).unwrap();
+                    for direction in [Direction::Left, Direction::Right] {
+                        for delta in [-1000.0, -100.0, 100.0, 1000.0] {
+                            let mut layout = base.clone();
+                            layout
+                                .resize_edge(window, direction, delta, bounds)
+                                .unwrap();
+                            let after = layout
+                                .resolve_geometry_with_constraints(
+                                    bounds,
+                                    GapConfig::default(),
+                                    &constraints,
+                                    Some(window),
+                                )
+                                .unwrap()
+                                .geometry[&window];
+                            let edge = |rect: Rect| {
+                                if direction == Direction::Left {
+                                    rect.x + rect.width
+                                } else {
+                                    rect.x
+                                }
+                            };
+                            assert!(
+                                (edge(after) - edge(before)).abs() < 0.001,
+                                "{direction:?} {delta} {strategy:?} {constraint:?}: {before:?} -> {after:?}"
+                            );
+                            let target = layout.viewport_target().unwrap();
+                            let held = target.with_held_widths(
+                                &[(
+                                    window,
+                                    initial_width,
+                                    layout.allocated_column_width(window).unwrap(),
+                                )],
+                                None,
+                            );
+                            assert!(
+                                (held - initial_viewport).abs() < 0.001,
+                                "pending buffers must retain the old viewport"
+                            );
+                            let settled = layout.clone();
+                            layout
+                                .resolve_geometry_with_constraints(
+                                    bounds,
+                                    GapConfig::default(),
+                                    &constraints,
+                                    Some(window),
+                                )
+                                .unwrap();
+                            assert_eq!(
+                                layout, settled,
+                                "an idle relayout must not reapply the resize"
+                            );
+                            layout.validate().unwrap();
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
