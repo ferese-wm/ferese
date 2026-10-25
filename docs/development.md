@@ -31,7 +31,6 @@ host. Hardware checks remain separate.
 ## Test guides
 
 - [Live Activities checks](#live-activities-checks): core, CLI, shell hooks, installer setup and native rendering.
-- [Rendering diagnostics](rendering-performance.md): per-output outcomes and repeatable hardware baselines.
 - [Output management tests](output-management-testing.md): profiles, hotplug, mirroring, lid handling and failed DRM commits.
 - [Client soak testing](native-soak-testing.md): repeated client lifecycle and resource growth.
 
