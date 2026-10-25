@@ -18,6 +18,7 @@ pub(crate) mod changes;
 
 pub(crate) struct CaptureTarget {
     texture: GlesTexture,
+    visible: Option<smithay::backend::renderer::element::RenderElementStates>,
     damage: OutputDamageTracker,
     output: Output,
     revision: u64,
@@ -32,9 +33,24 @@ pub(crate) struct CaptureTarget {
 }
 
 impl CaptureTarget {
+    pub(crate) fn surface_visible(
+        &self,
+        surface: &smithay::reexports::wayland_server::protocol::wl_surface::WlSurface,
+    ) -> bool {
+        self.visible
+            .as_ref()
+            .and_then(|states| states.element_render_state(surface))
+            .is_some_and(crate::display_presentation::is_visible)
+    }
+
+    pub(crate) fn image(&self) -> (GlesTexture, u64) {
+        (self.texture.clone(), self.revision)
+    }
+
     pub(crate) fn new(texture: GlesTexture, output: &Output) -> Self {
         Self {
             texture,
+            visible: None,
             damage: OutputDamageTracker::from_output(output),
             output: output.clone(),
             revision: 0,
@@ -300,7 +316,7 @@ pub(super) fn render_capture<'a, E: RenderElement<GlesRenderer>>(
     render_capture_with_revision(renderer, target, output, elements).map(|(target, _)| target)
 }
 
-pub(super) fn render_capture_with_revision<'a, E: RenderElement<GlesRenderer>>(
+pub(crate) fn render_capture_with_revision<'a, E: RenderElement<GlesRenderer>>(
     renderer: &mut GlesRenderer,
     target: &'a mut Option<CaptureTarget>,
     output: &Output,
@@ -348,6 +364,13 @@ pub(super) fn render_capture_with_revision<'a, E: RenderElement<GlesRenderer>>(
         target.commit.increment();
         target.compositions += 1;
         target.revision = NEXT_REVISION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+    if output
+        .user_data()
+        .get::<crate::handlers::workspace_capture::CaptureOutputId>()
+        .is_some()
+    {
+        target.visible = Some(result.states);
     }
     Ok((framebuffer, target.revision))
 }

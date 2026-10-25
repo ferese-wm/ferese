@@ -21,7 +21,12 @@ pub(super) fn overview_chrome_element(
     width: f64,
     radius: f64,
 ) -> Option<PhysicalShaderElement> {
-    let output_id = state.output_id(output)?;
+    let output_id = state.output_id(output).or_else(|| {
+        output
+            .user_data()
+            .get::<crate::handlers::workspace_capture::CaptureOutputId>()
+            .map(|id| id.0)
+    })?;
     let geometry = rounded_visual_rect(rect, output_geometry.loc);
     let corners = RoundedRect::new(rect, output_geometry.loc, scale, radius);
     let mode = output.current_mode()?;

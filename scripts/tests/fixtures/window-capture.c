@@ -20,6 +20,7 @@ static int private_capture_seen;
 static int covered;
 static unsigned updates;
 static unsigned animation_frames;
+static unsigned marker_size = 1;
 static void make_buffer(void);
 
 static void ping(void *data, struct xdg_wm_base *base, uint32_t serial) {
@@ -78,7 +79,14 @@ static void make_buffer(void) {
     for (size_t i = 0; i < (size_t)width * height; i++) {
         pixels[i] = covered ? 0xff00ff00 : (i % width < 80 ? 0x80800000 : (i / width < (size_t)height / 2 ? 0xffff0000 : 0xff0000ff));
     }
-    if (updates) pixels[(size_t)(height / 2) * width + width / 2] = 0xff000000 | updates;
+    if (updates) {
+        for (unsigned y = 0; y < marker_size; y++)
+            for (unsigned x = 0; x < marker_size; x++)
+                // Keep even a one-pixel update visible after interpolation.
+                // Blue encodes progress; red/green alternate with high contrast.
+                pixels[(size_t)(height / 2 + y) * width + width / 2 + x] =
+                    0xff000000 | ((updates & 1) ? 0x00ffff00 : 0) | (updates & 0xff);
+    }
     struct wl_shm_pool *pool = wl_shm_create_pool(shm, fd, bytes);
     buffer = wl_shm_pool_create_buffer(pool, 0, width, height, width * 4, WL_SHM_FORMAT_ARGB8888);
     wl_shm_pool_destroy(pool);
@@ -93,7 +101,7 @@ static void animate(void *data, struct wl_callback *callback, uint32_t time) {
     wl_buffer_destroy(buffer);
     make_buffer();
     wl_surface_attach(surface, buffer, 0, 0);
-    wl_surface_damage(surface, width / 2, height / 2, 1, 1);
+    wl_surface_damage(surface, width / 2, height / 2, marker_size, marker_size);
     if (--animation_frames) {
         struct wl_callback *next = wl_surface_frame(surface);
         static const struct wl_callback_listener listener = {.done = animate};
@@ -104,6 +112,12 @@ static void animate(void *data, struct wl_callback *callback, uint32_t time) {
 static const struct wl_callback_listener animation_listener = {.done = animate};
 
 int main(int argc, char **argv) {
+    const char *marker = getenv("FERESE_TEST_CAPTURE_MARKER_SIZE");
+    if (marker) {
+        unsigned value = strtoul(marker, NULL, 10);
+        if (value < 1 || value > 32) return 10;
+        marker_size = value;
+    }
     struct wl_display *display = wl_display_connect(NULL);
     if (!display) return 1;
     struct wl_registry *registry = wl_display_get_registry(display);
@@ -143,7 +157,7 @@ int main(int argc, char **argv) {
                     wl_buffer_destroy(buffer);
                     make_buffer();
                     wl_surface_attach(surface, buffer, 0, 0);
-                    wl_surface_damage(surface, width / 2, height / 2, 1, 1);
+                    wl_surface_damage(surface, width / 2, height / 2, marker_size, marker_size);
                     wl_surface_commit(surface);
                 }
                 if (command == 'r' || command == 'o') {

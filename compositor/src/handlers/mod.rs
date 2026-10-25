@@ -386,3 +386,5 @@ impl XdgForeignHandler for Ferese {
 }
 
 impl XdgToplevelIconHandler for Ferese {}
+
+pub(crate) mod workspace_capture;

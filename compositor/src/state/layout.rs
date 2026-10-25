@@ -17,6 +17,7 @@ struct Preview {
     layout: WorkspaceLayout,
     input: PreviewInput,
     rectangles: HashMap<WindowId, Rect>,
+    tabs: Vec<ferese_layout::TabBar>,
 }
 
 #[derive(PartialEq)]
@@ -126,6 +127,10 @@ impl Ferese {
             .reconcile_workspaces(&mut self.workspaces, visible)
         {
             self.viewports.remove(&workspace);
+            self.workspace_previews
+                .borrow_mut()
+                .entries
+                .remove(&workspace);
         }
     }
 
@@ -197,6 +202,7 @@ impl Ferese {
     }
 
     fn relayout_outputs(&mut self, mut redraw_outputs: Option<Vec<Output>>, finalize: bool) {
+        self.image_capture.invalidate_workspaces();
         if self
             .desktop_transition
             .as_ref()
@@ -705,6 +711,9 @@ impl Ferese {
     pub(crate) fn raise_window(&mut self, window: &Window, activate: bool) {
         if let Some(id) = self.windows.ids().get(window) {
             self.window_stack.raise(*id);
+            if let Some(workspace) = self.workspaces.workspace_for_window(*id) {
+                self.image_capture.workspace_geometry_changed(workspace);
+            }
         }
 
         self.space.raise_element(window, activate);
@@ -781,6 +790,14 @@ impl Ferese {
             return;
         }
 
+        if let Some(workspace) = self
+            .windows
+            .ids()
+            .get(&window)
+            .and_then(|id| self.workspaces.workspace_for_window(*id))
+        {
+            self.image_capture.workspace_geometry_changed(workspace);
+        }
         self.space.map_element(window, location, false);
         self.stacking_cache.remapped();
     }
@@ -805,21 +822,50 @@ impl Ferese {
     }
 
     pub(crate) fn workspace_preview_rects(&self) -> HashMap<WindowId, Rect> {
-        let constraints = self.window_constraints();
+        self.workspace_preview_rects_for(None)
+    }
+
+    /// Capture resolves only its subscribed workspace; it never activates or
+    /// configures hidden clients. The preview cache also serves overview.
+    pub(crate) fn workspace_preview_rects_for(
+        &self,
+        selected: Option<WorkspaceId>,
+    ) -> HashMap<WindowId, Rect> {
+        if let Some(id) = selected {
+            self.workspace_preview_views(
+                selected,
+                self.output_workspaces
+                    .output_for_workspace(id)
+                    .map(|output| (id, output))
+                    .into_iter(),
+            )
+        } else {
+            self.workspace_preview_views(
+                None,
+                self.output_workspaces
+                    .workspace_views_iter(&self.workspaces)
+                    .map(|view| (view.id, view.output)),
+            )
+        }
+    }
+
+    fn workspace_preview_views(
+        &self,
+        selected: Option<WorkspaceId>,
+        views: impl Iterator<Item = (WorkspaceId, ferese_core::OutputId)>,
+    ) -> HashMap<WindowId, Rect> {
+        let constraints = self.window_constraints_for(selected);
         let mut cache = self.workspace_previews.borrow_mut();
         let mut live = HashSet::new();
         let mut previews = HashMap::new();
-        for view in self
-            .output_workspaces
-            .workspace_views_iter(&self.workspaces)
-        {
-            let Some(workspace) = self.workspaces.workspace(view.id) else {
+        for (workspace_id, owner) in views {
+            let Some(workspace) = self.workspaces.workspace(workspace_id) else {
                 continue;
             };
             let Some(output) = self
                 .output_ids
                 .iter()
-                .find(|(_, id)| **id == view.output)
+                .find(|(_, id)| **id == owner)
                 .map(|(o, _)| o)
             else {
                 continue;
@@ -827,7 +873,7 @@ impl Ferese {
             let Some(bounds) = self.output_bounds_for(output) else {
                 continue;
             };
-            live.insert(view.id);
+            live.insert(workspace_id);
             let mut windows: Vec<_> = workspace
                 .layout
                 .window_ids()
@@ -859,21 +905,21 @@ impl Ferese {
             };
             if !cache
                 .entries
-                .get(&view.id)
+                .get(&workspace_id)
                 .is_some_and(|cached| cached.input == input && cached.layout == workspace.layout)
             {
                 // Only clone and solve the changed workspace. Titles, urgency and
                 // other shell metadata never invalidate geometry.
                 let mut layout = workspace.layout.clone();
-                let mut rectangles = layout
+                let resolved = layout
                     .resolve_geometry_with_constraints(
                         input.bounds,
                         input.gaps,
                         &constraints,
                         input.focused,
                     )
-                    .map(|resolved| resolved.geometry)
                     .unwrap_or_default();
+                let mut rectangles = resolved.geometry;
                 for window in &input.windows {
                     if let Some(rect) = window.floating {
                         rectangles.insert(
@@ -894,11 +940,12 @@ impl Ferese {
                     }
                 }
                 cache.entries.insert(
-                    view.id,
+                    workspace_id,
                     Preview {
                         layout: workspace.layout.clone(),
                         input,
                         rectangles,
+                        tabs: resolved.tab_bars,
                     },
                 );
                 #[cfg(test)]
@@ -907,44 +954,77 @@ impl Ferese {
                 }
             }
             previews.extend(
-                cache.entries[&view.id]
+                cache.entries[&workspace_id]
                     .rectangles
                     .iter()
                     .map(|(&id, &rect)| (id, rect)),
             );
         }
-        cache.entries.retain(|id, _| live.contains(id));
+        cache
+            .entries
+            .retain(|id, _| selected.is_some_and(|selected| selected != *id) || live.contains(id));
         previews
     }
 
-    pub(super) fn window_constraints(&self) -> HashMap<WindowId, SizeConstraints> {
-        self.windows
-            .ids()
-            .iter()
-            .filter_map(|(window, id)| {
-                let toplevel = window.toplevel()?;
-                let (minimum, maximum) = with_states(toplevel.wl_surface(), |states| {
-                    let mut cached = states.cached_state.get::<SurfaceCachedState>();
-                    let state = cached.current();
-                    (state.min_size, state.max_size)
-                });
-                let (minimum, maximum) = self.effective_size_constraints(
-                    window,
-                    (minimum.w, minimum.h),
-                    (maximum.w, maximum.h),
-                );
+    pub(super) fn workspace_preview_tabs(&self, id: WorkspaceId) -> Vec<ferese_layout::TabBar> {
+        self.workspace_previews
+            .borrow()
+            .entries
+            .get(&id)
+            .map_or_else(Vec::new, |preview| preview.tabs.clone())
+    }
 
-                Some((
-                    *id,
-                    SizeConstraints {
-                        min_width: minimum.0.max(1) as f64,
-                        min_height: minimum.1.max(1) as f64,
-                        max_width: (maximum.0 > 0).then_some(maximum.0 as f64),
-                        max_height: (maximum.1 > 0).then_some(maximum.1 as f64),
-                    },
-                ))
-            })
-            .collect()
+    pub(super) fn window_constraints(&self) -> HashMap<WindowId, SizeConstraints> {
+        self.window_constraints_for(None)
+    }
+
+    fn window_constraints_for(
+        &self,
+        workspace: Option<WorkspaceId>,
+    ) -> HashMap<WindowId, SizeConstraints> {
+        if let Some(workspace) = workspace {
+            self.constraints_for_windows(self.workspaces.workspace(workspace).into_iter().flat_map(
+                |workspace| {
+                    workspace
+                        .layout
+                        .window_ids()
+                        .chain(workspace.floating.iter().copied())
+                },
+            ))
+        } else {
+            self.constraints_for_windows(self.windows.ids().values().copied())
+        }
+    }
+
+    fn constraints_for_windows(
+        &self,
+        ids: impl Iterator<Item = WindowId>,
+    ) -> HashMap<WindowId, SizeConstraints> {
+        ids.filter_map(|id| {
+            let window = self.windows.window(id)?;
+            let toplevel = window.toplevel()?;
+            let (minimum, maximum) = with_states(toplevel.wl_surface(), |states| {
+                let mut cached = states.cached_state.get::<SurfaceCachedState>();
+                let state = cached.current();
+                (state.min_size, state.max_size)
+            });
+            let (minimum, maximum) = self.effective_size_constraints(
+                window,
+                (minimum.w, minimum.h),
+                (maximum.w, maximum.h),
+            );
+
+            Some((
+                id,
+                SizeConstraints {
+                    min_width: minimum.0.max(1) as f64,
+                    min_height: minimum.1.max(1) as f64,
+                    max_width: (maximum.0 > 0).then_some(maximum.0 as f64),
+                    max_height: (maximum.1 > 0).then_some(maximum.1 as f64),
+                },
+            ))
+        })
+        .collect()
     }
 
     pub(super) fn arrange_layers(&self) {

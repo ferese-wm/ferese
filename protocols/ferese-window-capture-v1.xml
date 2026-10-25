@@ -7,7 +7,7 @@
     requires session opt-in and fails while locked. Window IDs are compositor
     lifetime IDs and never resolve to replacement windows.
   </description>
-  <interface name="ferese_window_capture_manager_v1" version="2">
+  <interface name="ferese_window_capture_manager_v1" version="3">
     <request name="destroy" type="destructor"/>
     <request name="capture_window">
       <description summary="snapshot a managed window">
@@ -68,5 +68,28 @@
       <arg name="width" type="uint"/>
       <arg name="height" type="uint"/>
     </event>
+    <request name="create_workspace_source" since="3">
+      <description summary="capture a workspace independently of the active desktop">
+        The ID is a compositor-lifetime workspace ID, not its mutable index.
+        Captures the workspace viewport, including its windows and wallpaper,
+        excluding desktop layers, overview and protected content. The source is
+        pinned to its initial output configuration. Removing the workspace or
+        changing that configuration stops the session. No workspace is activated
+        and no client is resized by this request. Uses ext-image-copy-capture-v1.
+      </description>
+      <arg name="workspace_hi" type="uint"/>
+      <arg name="workspace_lo" type="uint"/>
+      <arg name="source" type="new_id" interface="ext_image_capture_source_v1"/>
+    </request>
+    <request name="set_source_active" since="3">
+      <description summary="suspend capture work while a consumer is paused">
+        Active is zero for paused and one for active. Outstanding frames retain
+        their buffer ownership. Pausing stops workspace composition and hidden
+        application callbacks; resuming is followed by refresh_source so an
+        initial image is delivered. This does not change desktop visibility.
+      </description>
+      <arg name="source" type="object" interface="ext_image_capture_source_v1"/>
+      <arg name="active" type="uint"/>
+    </request>
   </interface>
 </protocol>

@@ -9,6 +9,7 @@ pub(super) fn tab_elements(
     state: &mut Ferese,
     renderer: &mut GlesRenderer,
     output: &Output,
+    output_geometry: Rectangle<i32, super::Logical>,
     frame: &crate::state::FrameScene,
     active: ferese_layout::WindowId,
     capture: bool,
@@ -19,13 +20,27 @@ pub(super) fn tab_elements(
     let Some(workspace) = state.workspaces.workspace_for_window(active) else {
         return Vec::new();
     };
-    let Some(bar) = state
-        .visible_tab_bars(workspace)
-        .find(|bar| bar.group.active == active)
-        .cloned()
-    else {
-        return Vec::new();
+    let bar = if let Some(tabs) = &frame.capture_tabs {
+        tabs.iter()
+            .find(|bar| bar.group.active == active)
+            .filter(|_| {
+                state
+                    .workspaces
+                    .workspace(workspace)
+                    .is_some_and(|ws| ws.fullscreen.is_none())
+                    && state
+                        .windows
+                        .record(active)
+                        .is_some_and(|window| !window.maximized)
+            })
+            .cloned()
+    } else {
+        state
+            .visible_tab_bars(workspace)
+            .find(|bar| bar.group.active == active)
+            .cloned()
     };
+    let Some(bar) = bar else { return Vec::new() };
     let Some(sample) = frame.windows.get(&active) else {
         return Vec::new();
     };
@@ -37,6 +52,8 @@ pub(super) fn tab_elements(
             state,
             renderer,
             output,
+            output_geometry,
+            frame,
             &bar,
             sample.presentation.bounds.current,
             sample.presentation.alpha(),
@@ -48,9 +65,7 @@ pub(super) fn tab_elements(
     }
     let content = sample.presentation.bounds.current;
     let alpha = sample.presentation.alpha();
-    let Some(output_geometry) = state.space.output_geometry(output) else {
-        return Vec::new();
-    };
+
     let scale = output.current_scale().fractional_scale();
     let width = content.width / bar.group.windows.len() as f64;
     let shell = ferese_layout::Rect::new(

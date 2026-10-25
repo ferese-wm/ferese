@@ -24,10 +24,32 @@ use smithay::wayland::image_copy_capture::{BufferConstraints, DmabufConstraints,
 use crate::Ferese;
 
 const MAX_SESSIONS: usize = 16;
+// Reserve for the maximum eight portal pool buffers, a retained target and a
+// fallback transfer texture. Imports of the same allocation are not extra pixels.
+const MAX_STREAM_BYTES: u64 = 512 * 1024 * 1024;
+fn stream_bytes(size: Size<i32, Buffer>) -> u64 {
+    // The portal rejects DMA strides above this allowance. Driver bookkeeping
+    // and encoder memory are separate from this pixel-storage reservation.
+    let stride = (size.w.max(0) as u64 * 4 + 4095) & !4095;
+    stride
+        .saturating_mul(size.h.max(0) as u64)
+        .saturating_mul(10)
+}
 
 pub(super) enum Source {
     Output(WeakOutput),
     Window(WindowId),
+    Workspace(super::workspace_capture::WorkspaceSource),
+}
+
+#[derive(Default)]
+pub(super) struct SourcePaused(pub std::sync::atomic::AtomicBool);
+
+fn source_active(source: &ImageCaptureSource) -> bool {
+    source
+        .user_data()
+        .get::<SourcePaused>()
+        .is_none_or(|paused| !paused.0.load(std::sync::atomic::Ordering::Relaxed))
 }
 
 #[derive(PartialEq)]
@@ -50,7 +72,7 @@ struct WindowStamp {
 }
 
 #[derive(PartialEq)]
-struct CursorStamp {
+pub(super) struct CursorStamp {
     location: Point<f64, Logical>,
     geometry: Rectangle<i32, Logical>,
     image: CursorImageStamp,
@@ -141,10 +163,10 @@ fn pending_frame_callbacks(
     pending
 }
 
-struct Active {
-    session: Session,
-    pending: Option<Frame>,
-    revision: Option<u64>,
+pub(super) struct Active {
+    pub(super) session: Session,
+    pub(super) pending: Option<Frame>,
+    pub(super) revision: Option<u64>,
     window_stamp: Option<WindowStamp>,
     size: Size<i32, Buffer>,
     dma_node: Option<smithay::backend::drm::DrmNode>,
@@ -165,6 +187,10 @@ pub(crate) struct CaptureSessions {
     in_flight: HashMap<u64, InFlight>,
     next_fence: u64,
     callback_timer: Option<RegistrationToken>,
+    callback_deadline: Option<Instant>,
+    workspace_callbacks: HashMap<ferese_core::WorkspaceId, Instant>,
+    workspaces:
+        HashMap<(ferese_core::WorkspaceId, bool), super::workspace_capture::WorkspaceCapture>,
 }
 
 fn authorized(client: &Client) -> bool {
@@ -179,6 +205,43 @@ fn authorized(client: &Client) -> bool {
 }
 
 impl CaptureSessions {
+    pub(super) fn workspace_callback_deadline(
+        &self,
+        id: ferese_core::WorkspaceId,
+        now: Instant,
+    ) -> Instant {
+        self.workspace_callbacks.get(&id).copied().unwrap_or(now)
+    }
+    pub(super) fn set_workspace_callback_deadline(
+        &mut self,
+        id: ferese_core::WorkspaceId,
+        deadline: Instant,
+    ) {
+        self.workspace_callbacks.insert(id, deadline);
+    }
+    pub(crate) fn invalidate_workspaces(&mut self) {
+        for view in self.workspaces.values_mut() {
+            view.invalidate();
+        }
+    }
+    pub(crate) fn workspace_changed(&mut self, id: ferese_core::WorkspaceId) {
+        for ((workspace, _), view) in &mut self.workspaces {
+            if *workspace == id {
+                view.content_changed();
+            }
+        }
+    }
+    pub(crate) fn workspace_geometry_changed(&mut self, id: ferese_core::WorkspaceId) {
+        for ((workspace, _), view) in &mut self.workspaces {
+            if *workspace == id {
+                view.invalidate();
+            }
+        }
+    }
+    pub(crate) fn captured_workspaces(&self) -> Vec<ferese_core::WorkspaceId> {
+        self.workspaces.keys().map(|(id, _)| *id).collect()
+    }
+
     pub(crate) fn new(display: &DisplayHandle) -> Self {
         Self {
             copy: ImageCopyCaptureState::new_with_filter::<Ferese, _>(display, authorized),
@@ -187,6 +250,9 @@ impl CaptureSessions {
             in_flight: HashMap::new(),
             next_fence: 0,
             callback_timer: None,
+            callback_deadline: None,
+            workspace_callbacks: HashMap::new(),
+            workspaces: HashMap::new(),
         }
     }
 
@@ -280,6 +346,15 @@ impl ImageCopyCaptureHandler for Ferese {
         let Some(constraints) = session.current_constraints() else {
             return;
         };
+        let reserved: u64 = self
+            .image_capture
+            .active
+            .iter()
+            .map(|active| stream_bytes(active.size))
+            .sum();
+        if stream_bytes(constraints.size) > MAX_STREAM_BYTES.saturating_sub(reserved) {
+            return;
+        }
         self.image_capture.active.push(Active {
             session,
             pending: None,
@@ -347,6 +422,36 @@ impl ImageCopyCaptureHandler for Ferese {
 }
 
 impl Ferese {
+    pub(super) fn capture_cursor_stamp(
+        &self,
+        geometry: Rectangle<i32, Logical>,
+    ) -> Option<CursorStamp> {
+        use smithay::input::pointer::CursorImageStatus;
+        let pointer = self.seat.get_pointer()?;
+        let image = match &self.cursor_status {
+            CursorImageStatus::Named(_) => {
+                let (icon, epoch, frame) = self.cursor_animation.capture_revision();
+                CursorImageStamp::Named(icon, epoch, frame)
+            }
+            CursorImageStatus::Surface(surface) => {
+                let hotspot = smithay::wayland::compositor::with_states(surface, |states| {
+                    states
+                        .data_map
+                        .get::<smithay::input::pointer::CursorImageSurfaceData>()
+                        .map(|data| data.lock().expect("cursor metadata mutex poisoned").hotspot)
+                        .unwrap_or_default()
+                });
+                CursorImageStamp::Surface(surface_stamp(surface, None), hotspot)
+            }
+            CursorImageStatus::Hidden => CursorImageStamp::Hidden,
+        };
+        Some(CursorStamp {
+            location: pointer.current_location(),
+            geometry,
+            image,
+        })
+    }
+
     fn capture_source_geometry(
         &self,
         source: &ImageCaptureSource,
@@ -355,6 +460,12 @@ impl Ferese {
             return None;
         }
         let (size, output) = match source.user_data().get::<Source>()? {
+            Source::Workspace(view) => {
+                if !view.valid(self) {
+                    return None;
+                }
+                (view.size, view.output.clone())
+            }
             Source::Window(id) => {
                 let info = self.window_capture_info(*id)?;
                 let size = info.geometry.size.to_physical_precise_round(info.scale);
@@ -411,31 +522,48 @@ impl Ferese {
                 outputs.push(output);
             }
         }
-        crate::backends::direct::schedule_capture(self, &outputs);
+        if !outputs.is_empty() {
+            crate::backends::direct::schedule_capture(self, &outputs);
+        }
     }
 
     pub(crate) fn refresh_capture_sessions(&mut self) {
         self.image_capture.copy.cleanup();
         let mut callback_delay: Option<Duration> = None;
+        // Yield between distinct workspace compositions so input and display
+        // deadlines can run even when several consumers request changed views.
+        let mut workspace_compositions = 1usize;
         let mut sessions = std::mem::take(&mut self.image_capture.active);
+        let mut workspaces = std::mem::take(&mut self.image_capture.workspaces);
+        let mut reserved: u64 = sessions
+            .iter()
+            .map(|active| stream_bytes(active.size))
+            .sum();
         sessions.retain_mut(|active| {
             let Some((size, output)) = self.capture_source_geometry(&active.session.source())
             else {
-                let session = active.session.as_ref();
-                let fences: Vec<_> = self
-                    .image_capture
-                    .in_flight
-                    .iter()
-                    .filter_map(|(id, pending)| (pending.session == session).then_some(*id))
-                    .collect();
-                for id in fences {
-                    self.cancel_capture_fence(id);
-                }
+                self.cancel_session_fences(active.session.as_ref());
+                reserved = reserved.saturating_sub(stream_bytes(active.size));
                 return false;
             };
             let dma = self.capture_dma_constraints(&output);
             let dma_node = dma.as_ref().map(|dma| dma.node);
             if size != active.size || dma_node != active.dma_node {
+                let next_reserved = reserved
+                    .saturating_sub(stream_bytes(active.size))
+                    .saturating_add(stream_bytes(size));
+                if next_reserved > MAX_STREAM_BYTES {
+                    self.cancel_session_fences(active.session.as_ref());
+                    reserved = reserved.saturating_sub(stream_bytes(active.size));
+                    return false;
+                }
+                reserved = next_reserved;
+                if let Some(Source::Workspace(source)) =
+                    active.session.source().user_data().get::<Source>()
+                {
+                    // GPU resources belong to the renderer that created them.
+                    workspaces.remove(&(source.id, active.session.draw_cursor()));
+                }
                 active.size = size;
                 active.dma_node = dma_node;
                 active.revision = None;
@@ -447,6 +575,37 @@ impl Ferese {
                 });
                 if let Some(frame) = active.pending.take() {
                     frame.fail(FailureReason::BufferConstraints);
+                }
+            }
+            if let Some(Source::Workspace(source)) =
+                active.session.source().user_data().get::<Source>()
+                && source_active(&active.session.source())
+            {
+                let source = source.clone();
+                let key = (source.id, active.session.draw_cursor());
+                if let Some(frame) = active.pending.take() {
+                    let view = workspaces.entry(key).or_insert_with(|| {
+                        super::workspace_capture::WorkspaceCapture::new(
+                            source.clone(),
+                            self.capture_epoch,
+                        )
+                    });
+                    if !view.source.valid(self) {
+                        *view = super::workspace_capture::WorkspaceCapture::new(
+                            source.clone(),
+                            self.capture_epoch,
+                        );
+                    }
+                    if let Some(delay) = super::workspace_capture::process(
+                        view,
+                        self,
+                        active,
+                        frame,
+                        &mut workspace_compositions,
+                    ) {
+                        callback_delay =
+                            Some(callback_delay.map_or(delay, |existing| existing.min(delay)));
+                    }
                 }
             }
             if let Some(Source::Window(id)) = active.session.source().user_data().get::<Source>() {
@@ -574,24 +733,59 @@ impl Ferese {
             }
             true
         });
+        workspaces.retain(|(id, cursor), view| {
+            let matches = |active: &Active| {
+                active.session.draw_cursor() == *cursor
+                    && matches!(active.session.source().user_data().get::<Source>(), Some(Source::Workspace(source)) if source.id == *id)
+            };
+            if !sessions.iter().any(matches) { return false; }
+            let pending = sessions.iter().any(|active| matches(active)
+                && active.pending.is_some() && source_active(&active.session.source()));
+            if !pending && view.target.is_some() {
+                let idle = view.last_used.elapsed();
+                if idle >= Duration::from_secs(2) {
+                    view.release_idle_target();
+                } else {
+                    let delay = Duration::from_secs(2) - idle;
+                    callback_delay = Some(callback_delay.map_or(delay, |existing| existing.min(delay)));
+                }
+            }
+            true
+        });
+        self.image_capture
+            .workspace_callbacks
+            .retain(|id, _| workspaces.keys().any(|(workspace, _)| id == workspace));
+        self.image_capture.workspaces = workspaces;
         self.image_capture.active = sessions;
         if let Some(delay) = callback_delay {
-            if self.image_capture.callback_timer.is_none() {
+            let deadline = Instant::now() + delay;
+            if self
+                .image_capture
+                .callback_deadline
+                .is_none_or(|previous| deadline < previous)
+            {
+                if let Some(timer) = self.image_capture.callback_timer.take() {
+                    self.loop_handle.remove(timer);
+                }
+                self.image_capture.callback_deadline = Some(deadline);
                 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
                 match self
                     .loop_handle
                     .insert_source(Timer::from_duration(delay), |_, _, state| {
                         state.image_capture.callback_timer = None;
+                        state.image_capture.callback_deadline = None;
                         TimeoutAction::Drop
                     }) {
                     Ok(token) => self.image_capture.callback_timer = Some(token),
                     Err(error) => {
-                        tracing::warn!(%error, "could not schedule captured window callbacks")
+                        self.image_capture.callback_deadline = None;
+                        tracing::warn!(%error, "could not schedule capture callbacks")
                     }
                 }
             }
         } else if let Some(timer) = self.image_capture.callback_timer.take() {
             self.loop_handle.remove(timer);
+            self.image_capture.callback_deadline = None;
         }
     }
 
@@ -635,6 +829,18 @@ impl Ferese {
         self.image_capture.active = sessions;
     }
 
+    fn cancel_session_fences(&mut self, session: SessionRef) {
+        let fences: Vec<_> = self
+            .image_capture
+            .in_flight
+            .iter()
+            .filter_map(|(id, pending)| (pending.session == session).then_some(*id))
+            .collect();
+        for id in fences {
+            self.cancel_capture_fence(id);
+        }
+    }
+
     fn cancel_capture_fence(&mut self, id: u64) {
         if let Some(pending) = self.image_capture.in_flight.remove(&id) {
             self.loop_handle.remove(pending.fence);
@@ -642,7 +848,7 @@ impl Ferese {
         }
     }
 
-    fn finish_stream_frame(
+    pub(super) fn finish_stream_frame(
         &mut self,
         frame: Frame,
         session: SessionRef,
@@ -740,3 +946,7 @@ impl Ferese {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "workspace_capture_tests.rs"]
+mod workspace_tests;
