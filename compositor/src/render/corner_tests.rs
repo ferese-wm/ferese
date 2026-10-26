@@ -188,7 +188,7 @@ fn shell_masks_match_the_shared_squircle_profile() {
     }
 }
 
-fn renderer() -> GlesRenderer {
+pub(super) fn renderer() -> GlesRenderer {
     use smithay::backend::egl::{EGLContext, EGLDevice, EGLDisplay};
 
     let devices = EGLDevice::enumerate().unwrap().collect::<Vec<_>>();

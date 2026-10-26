@@ -6,6 +6,8 @@ mod window_blur;
 mod window_content;
 pub(crate) use closing::ClosedWindow;
 #[cfg(test)]
+mod blur_tests;
+#[cfg(test)]
 mod corner_tests;
 mod decorations;
 mod materials;
