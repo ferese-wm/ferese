@@ -95,10 +95,14 @@ impl Connection {
             let _ = self.stream.shutdown(Shutdown::Both);
             return Err("Unexpected IPC response".into());
         }
-        if let Some(error) = response.error {
-            return Err(error.message);
+        match (response.result, response.error) {
+            (Some(result), None) => Ok(result),
+            (None, Some(error)) => Err(error.message),
+            _ => {
+                let _ = self.stream.shutdown(Shutdown::Both);
+                Err("Invalid IPC response outcome".into())
+            }
         }
-        response.result.ok_or_else(|| "Missing IPC result".into())
     }
 
     fn exchange(&self, request: &Request, budget: Duration) -> Result<Response, FrameError> {
@@ -278,5 +282,65 @@ mod tests {
             assert_eq!(connection.stream.write_timeout().unwrap(), timeout);
         }
         worker.join().unwrap();
+    }
+
+    #[test]
+    fn null_results_and_valid_errors_allow_the_next_request() {
+        let (stream, mut server) = UnixStream::pair().unwrap();
+        stream.set_read_timeout(Some(FRAME_TIMEOUT)).unwrap();
+        server.set_read_timeout(Some(FRAME_TIMEOUT)).unwrap();
+        let worker = std::thread::spawn(move || {
+            let request: Request = read_frame(&mut server).unwrap();
+            write_frame(
+                &mut server,
+                &Response::error(request.id, "denied", "Denied"),
+            )
+            .unwrap();
+            let request: Request = read_frame(&mut server).unwrap();
+            assert_eq!(request.command, "get-focused-window");
+            write_frame(&mut server, &Response::success(request.id, Value::Null)).unwrap();
+            let request: Request = read_frame(&mut server).unwrap();
+            write_frame(&mut server, &Response::success(request.id, json!([]))).unwrap();
+        });
+        let mut connection = Connection { stream, id: 0 };
+        assert_eq!(connection.call("focus", json!({})).unwrap_err(), "Denied");
+        assert_eq!(
+            connection.call("get-focused-window", json!({})).unwrap(),
+            Value::Null
+        );
+        assert_eq!(
+            connection.call("get-outputs", json!({})).unwrap(),
+            json!([])
+        );
+        worker.join().unwrap();
+    }
+
+    #[test]
+    fn missing_or_conflicting_outcomes_close_the_connection() {
+        for conflicting in [false, true] {
+            let (stream, mut server) = UnixStream::pair().unwrap();
+            stream.set_read_timeout(Some(FRAME_TIMEOUT)).unwrap();
+            server.set_read_timeout(Some(FRAME_TIMEOUT)).unwrap();
+            let worker = std::thread::spawn(move || {
+                let request: Request = read_frame(&mut server).unwrap();
+                let mut response = Response::success(request.id, Value::Null);
+                if conflicting {
+                    response.error = Response::error(request.id, "failed", "Failed").error;
+                } else {
+                    response.result = None;
+                }
+                write_frame(&mut server, &response).unwrap();
+                assert_eq!(server.read(&mut [0]).unwrap(), 0);
+            });
+            let mut connection = Connection { stream, id: 0 };
+            assert_eq!(
+                connection
+                    .call("get-focused-window", json!({}))
+                    .unwrap_err(),
+                "Invalid IPC response outcome"
+            );
+            assert!(connection.call("get-outputs", json!({})).is_err());
+            worker.join().unwrap();
+        }
     }
 }

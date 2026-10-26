@@ -2,7 +2,7 @@ use std::error::Error;
 use std::io::{Read, Write};
 use std::{fmt, io};
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 
 pub const VERSION: u32 = 1;
@@ -23,7 +23,11 @@ pub struct Request {
 pub struct Response {
     pub version: u32,
     pub id: u64,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_result",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub result: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<ResponseError>,
@@ -33,6 +37,13 @@ pub struct Response {
 pub struct ResponseError {
     pub code: String,
     pub message: String,
+}
+
+fn deserialize_result<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<Value>, D::Error> {
+    // A present null is a successful empty value, distinct from no outcome.
+    Value::deserialize(deserializer).map(Some)
 }
 
 impl Response {
@@ -193,6 +204,22 @@ mod tests {
         assert_eq!(decoded.id, 42);
         assert_eq!(decoded.command, "focus");
         assert_eq!(decoded.args["direction"], "left");
+    }
+
+    #[test]
+    fn response_null_result_is_distinct_from_an_absent_outcome() {
+        let mut bytes = Vec::new();
+        write_frame(&mut bytes, &Response::success(1, Value::Null)).unwrap();
+        let response: Response = read_frame(&mut bytes.as_slice()).unwrap();
+        assert_eq!(response.result, Some(Value::Null));
+        assert!(response.error.is_none());
+
+        let response: Response = serde_json::from_value(serde_json::json!({
+            "version": VERSION, "id": 1
+        }))
+        .unwrap();
+        assert!(response.result.is_none());
+        assert!(response.error.is_none());
     }
 
     #[test]
