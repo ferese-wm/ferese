@@ -516,6 +516,7 @@ impl Ferese {
     }
 
     pub(crate) fn fail_screencopies(&mut self, output: &Output, overlay_cursor: bool) {
+        self.fail_output_streams(output, overlay_cursor);
         let mut remaining = Vec::new();
         for capture in std::mem::take(&mut self.pending_screencopies) {
             if capture.output == *output

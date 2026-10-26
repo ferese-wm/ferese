@@ -12,10 +12,11 @@ impl Ferese {
         &mut self,
         frame: Frame,
         session: SessionRef,
+        generation: u64,
         readback: super::super::readback::Readback,
         size: Size<i32, Buffer>,
     ) {
-        let (valid, complete) = self.stream_readback_callbacks(frame, session, size);
+        let (valid, complete) = self.stream_readback_callbacks(frame, session, generation, size);
         self.queue_readback(readback, valid, complete);
     }
 
@@ -23,6 +24,7 @@ impl Ferese {
         &self,
         frame: Frame,
         session: SessionRef,
+        generation: u64,
         size: Size<i32, Buffer>,
     ) -> (
         super::super::readback::Valid,
@@ -43,6 +45,7 @@ impl Ferese {
         (
             Box::new(move |state| {
                 guard.alive()
+                    && super::current_submission(&guard, generation)
                     && reference.alive()
                     && !reference.has_failed()
                     && live_buffer.is_alive()
@@ -113,15 +116,7 @@ impl Ferese {
                     Err(error) => {
                         tracing::debug!(%error, "stream readback failed");
                         frame.fail(FailureReason::Unknown);
-                        if let Some(active) = state
-                            .image_capture
-                            .active
-                            .iter_mut()
-                            .find(|active| active.session.as_ref() == session)
-                        {
-                            active.revision = None;
-                            active.window_stamp = None;
-                        }
+                        state.reset_stream_submission(&session, generation);
                     }
                 }
             }),

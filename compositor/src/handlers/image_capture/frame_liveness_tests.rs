@@ -96,13 +96,15 @@ fn messages(wire: &mut UnixStream) -> Vec<(u32, u16)> {
     result
 }
 
-#[test]
-fn destroyed_shm_frame_cannot_overwrite_reused_buffer_after_late_readiness() {
-    if !private_capture_runtime(
-        "handlers::image_capture::frame_liveness_tests::destroyed_shm_frame_cannot_overwrite_reused_buffer_after_late_readiness",
-    ) {
-        return;
-    }
+struct CaptureFixture {
+    events: EventLoop<'static, Ferese>,
+    state: Ferese,
+    output: Output,
+    wire: UnixStream,
+    file: std::fs::File,
+}
+
+fn capture_fixture() -> CaptureFixture {
     let mut events = EventLoop::try_new().unwrap();
     let mut state = crate::startup_tests::state(&mut events);
     let output = Output::new(
@@ -184,6 +186,29 @@ fn destroyed_shm_frame_cannot_overwrite_reused_buffer_after_late_readiness() {
     request(&mut wire, 5, 3, &[], None);
     dispatch_test_client(&mut events, &mut state);
     assert_eq!(state.image_capture.active.len(), 1);
+    CaptureFixture {
+        events,
+        state,
+        output,
+        wire,
+        file,
+    }
+}
+
+#[test]
+fn destroyed_shm_frame_cannot_overwrite_reused_buffer_after_late_readiness() {
+    if !private_capture_runtime(
+        "handlers::image_capture::frame_liveness_tests::destroyed_shm_frame_cannot_overwrite_reused_buffer_after_late_readiness",
+    ) {
+        return;
+    }
+    let CaptureFixture {
+        mut events,
+        mut state,
+        output: _,
+        mut wire,
+        file,
+    } = capture_fixture();
     let active = &mut state.image_capture.active[0];
     let old = active
         .pending
@@ -191,8 +216,9 @@ fn destroyed_shm_frame_cannot_overwrite_reused_buffer_after_late_readiness() {
         .expect("first captured frame was accepted");
     let old_reference = (*old).clone();
     let session = active.session.as_ref();
+    let generation = next_submission(&session);
     let (valid, complete) =
-        state.stream_readback_callbacks(old, session.clone(), (WIDTH, HEIGHT).into());
+        state.stream_readback_callbacks(old, session.clone(), generation, (WIDTH, HEIGHT).into());
     let (old_fence, old_ready, mut old_signal) = delayed_fence();
     let retained_old_fence = old_fence.clone();
     let old_pixels = [99, 11, 3, 255].repeat((WIDTH * HEIGHT) as usize);
@@ -217,7 +243,9 @@ fn destroyed_shm_frame_cannot_overwrite_reused_buffer_after_late_readiness() {
         .take()
         .expect("replacement frame was accepted");
     let new_pixels = [8, 32, 64, 255].repeat((WIDTH * HEIGHT) as usize);
-    let (valid, complete) = state.stream_readback_callbacks(new, session, (WIDTH, HEIGHT).into());
+    let generation = next_submission(&session);
+    let (valid, complete) =
+        state.stream_readback_callbacks(new, session, generation, (WIDTH, HEIGHT).into());
     let (new_fence, new_ready, mut new_signal) = delayed_fence();
     state.test_queue_readback_pixels(new_fence, valid, complete, new_pixels.clone());
     new_ready.store(true, Ordering::Release);
@@ -244,4 +272,191 @@ fn destroyed_shm_frame_cannot_overwrite_reused_buffer_after_late_readiness() {
     );
     assert!(!delivered.contains(&(1, 0)), "client must remain connected");
     drop(retained_old_fence);
+}
+
+#[test]
+fn output_render_failure_fails_pending_frame_and_allows_shm_retry() {
+    if !private_capture_runtime(
+        "handlers::image_capture::frame_liveness_tests::output_render_failure_fails_pending_frame_and_allows_shm_retry",
+    ) {
+        return;
+    }
+    let CaptureFixture {
+        mut events,
+        mut state,
+        output,
+        mut wire,
+        file,
+    } = capture_fixture();
+    messages(&mut wire);
+    state.image_capture.active[0].revision = Some(u64::MAX);
+    let failed: Option<()> =
+        crate::backends::direct::capture::capture_request(&mut state, &output, false, || {
+            Err("injected offscreen allocation failure")
+        });
+    assert!(failed.is_none());
+    assert!(state.image_capture.active[0].pending.is_none());
+    assert!(state.image_capture.active[0].revision.is_none());
+    state.display_handle.flush_clients().unwrap();
+    let delivered = messages(&mut wire);
+    assert!(
+        delivered.contains(&(5, 4)),
+        "render failure must fail the frame"
+    );
+    assert!(
+        !delivered.contains(&(5, 3)),
+        "failed frame must not become ready"
+    );
+    assert_eq!(pixels(&file), [0xb7; BYTES]);
+
+    request(&mut wire, 5, 0, &[], None);
+    request(&mut wire, 2, 0, &[6], None);
+    request(&mut wire, 6, 1, &[4], None);
+    request(&mut wire, 6, 3, &[], None);
+    dispatch_test_client(&mut events, &mut state);
+    let active = &mut state.image_capture.active[0];
+    let frame = active.pending.take().expect("retry frame was accepted");
+    let session = active.session.as_ref();
+    let expected = [12, 34, 56, 255].repeat((WIDTH * HEIGHT) as usize);
+    let generation = next_submission(&session);
+    let (valid, complete) =
+        state.stream_readback_callbacks(frame, session, generation, (WIDTH, HEIGHT).into());
+    let (fence, ready, _signal) = delayed_fence();
+    ready.store(true, Ordering::Release);
+    state.test_queue_readback_pixels(fence, valid, complete, expected.clone());
+    dispatch(&mut events, &mut state);
+    assert_eq!(pixels(&file), expected);
+    let delivered = messages(&mut wire);
+    assert!(delivered.contains(&(6, 3)), "retry frame must become ready");
+    assert!(!delivered.contains(&(1, 0)), "client must remain connected");
+}
+
+#[test]
+fn canceled_shm_failure_cannot_reset_a_replacement_submission() {
+    if !private_capture_runtime(
+        "handlers::image_capture::frame_liveness_tests::canceled_shm_failure_cannot_reset_a_replacement_submission",
+    ) {
+        return;
+    }
+    let CaptureFixture {
+        mut events,
+        mut state,
+        output: _,
+        mut wire,
+        file,
+    } = capture_fixture();
+    messages(&mut wire);
+    let active = &mut state.image_capture.active[0];
+    let old = active.pending.take().unwrap();
+    let session = active.session.as_ref();
+    let old_generation = next_submission(&session);
+    let (valid, complete) = state.stream_readback_callbacks(
+        old,
+        session.clone(),
+        old_generation,
+        (WIDTH, HEIGHT).into(),
+    );
+    let expected = [12, 34, 56, 255].repeat((WIDTH * HEIGHT) as usize);
+    let (fence, ready, mut signal) = delayed_fence();
+    let retained_fence = fence.clone();
+    state.test_queue_readback_pixels(fence, valid, complete, expected.clone());
+
+    // Accept a replacement on the real protocol before the canceled readback
+    // publishes its failure. Both submissions capture the same source pixels.
+    request(&mut wire, 5, 0, &[], None);
+    request(&mut wire, 2, 0, &[6], None);
+    request(&mut wire, 6, 1, &[4], None);
+    request(&mut wire, 6, 3, &[], None);
+    dispatch_test_client(&mut events, &mut state);
+    state.prune_readbacks();
+    let new = state.image_capture.active[0].pending.take().unwrap();
+    let new_generation = next_submission(&session);
+    let (valid, complete) = state.stream_readback_callbacks(
+        new,
+        session.clone(),
+        new_generation,
+        (WIDTH, HEIGHT).into(),
+    );
+    let stamp = WindowStamp {
+        surfaces: Vec::new(),
+        geometry: Rectangle::from_size((WIDTH, HEIGHT).into()),
+        scale: 1.,
+        epoch: state.capture_epoch,
+        cursor: None,
+    };
+    state.image_capture.active[0].revision = Some(42);
+    state.image_capture.active[0].window_stamp = Some(stamp);
+    assert!(valid(&state));
+    complete(&mut state, Ok(expected.clone()));
+    assert_eq!(pixels(&file), expected);
+
+    // The old idle error must not erase the newer successful delivery. A late
+    // signal must not deliver the abandoned frame or touch its reused buffer.
+    ready.store(true, Ordering::Release);
+    signal.write_all(&[1]).unwrap();
+    dispatch(&mut events, &mut state);
+    assert_eq!(state.image_capture.active[0].revision, Some(42));
+    assert!(state.image_capture.active[0].window_stamp.is_some());
+    assert_eq!(pixels(&file), expected);
+    let delivered = messages(&mut wire);
+    assert!(delivered.contains(&(6, 3)));
+    assert!(!delivered.contains(&(5, 3)));
+
+    request(&mut wire, 6, 0, &[], None);
+    request(&mut wire, 2, 0, &[7], None);
+    request(&mut wire, 7, 1, &[4], None);
+    request(&mut wire, 7, 3, &[], None);
+    dispatch_test_client(&mut events, &mut state);
+    dispatch(&mut events, &mut state);
+    let active = &state.image_capture.active[0];
+    assert_eq!(
+        active.revision,
+        Some(42),
+        "unchanged source stays delivered"
+    );
+    assert!(
+        active.pending.is_some(),
+        "fresh frame waits for source damage"
+    );
+    assert!(!messages(&mut wire).contains(&(7, 3)));
+    drop(retained_fence);
+}
+
+#[test]
+fn deferred_gpu_failure_cannot_reset_a_newer_common_submission() {
+    if !private_capture_runtime(
+        "handlers::image_capture::frame_liveness_tests::deferred_gpu_failure_cannot_reset_a_newer_common_submission",
+    ) {
+        return;
+    }
+    let CaptureFixture {
+        mut events,
+        mut state,
+        output: _,
+        mut wire,
+        file: _,
+    } = capture_fixture();
+    let active = &mut state.image_capture.active[0];
+    let old = active.pending.take().unwrap();
+    let session = active.session.as_ref();
+    let old_generation = next_submission(&session);
+    request(&mut wire, 5, 0, &[], None);
+    request(&mut wire, 2, 0, &[6], None);
+    request(&mut wire, 6, 1, &[4], None);
+    request(&mut wire, 6, 3, &[], None);
+    dispatch_test_client(&mut events, &mut state);
+    state.fail_stream_submission(old, session.clone(), old_generation, FailureReason::Unknown);
+    let new = state.image_capture.active[0].pending.take().unwrap();
+    state.image_capture.active[0].revision = Some(43);
+    state.finish_stream_frame(
+        new,
+        session.clone(),
+        Ok(crate::render::StreamCopy::Gpu(SyncPoint::signaled())),
+    );
+    assert!(!current_submission(&session, old_generation));
+    dispatch(&mut events, &mut state);
+    assert_eq!(state.image_capture.active[0].revision, Some(43));
+    let delivered = messages(&mut wire);
+    assert!(delivered.contains(&(6, 3)));
+    assert!(!delivered.contains(&(5, 3)));
 }

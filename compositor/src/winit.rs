@@ -19,6 +19,8 @@ use crate::Ferese;
 use crate::metrics::{FrameEffectMetrics, RenderMetrics};
 use crate::render::{frame_effect_metrics, layer_surfaces, sampled_output_elements};
 
+mod capture;
+
 pub(crate) type NestedBackend = Rc<RefCell<winit::WinitGraphicsBackend<GlesRenderer>>>;
 
 #[derive(Default)]
@@ -26,12 +28,15 @@ pub(crate) struct FrameWakeup {
     timer: Option<RegistrationToken>,
     requested: bool,
     last_frame: Option<Instant>,
+    capture_timer: Option<RegistrationToken>,
+    last_capture: Option<Instant>,
 }
 
 pub(crate) fn request_frame(state: &mut Ferese) {
     if state.nested_backend.is_none() {
         return;
     }
+    capture::request(state);
     let refresh = state
         .space
         .outputs()
@@ -165,8 +170,13 @@ pub fn init(event_loop: &mut EventLoop<Ferese>, state: &mut Ferese) -> Result<()
         // This reporting timer exists only when performance tracing is enabled.
         event_loop.handle().insert_source(
             Timer::from_duration(Duration::from_secs(5)),
-            move |_, _, _| {
+            move |_, _, state| {
                 metrics.borrow_mut().report_if_due(missed.get());
+                for (cursor, target) in state.nested_capture_texture.iter_mut().enumerate() {
+                    if let Some(target) = target {
+                        target.report_if_used(cursor != 0);
+                    }
+                }
                 TimeoutAction::ToDuration(Duration::from_secs(5))
             },
         )?;
@@ -220,7 +230,11 @@ pub fn init(event_loop: &mut EventLoop<Ferese>, state: &mut Ferese) -> Result<()
                     }
 
                     state.advance_animations(Instant::now());
-                    let age = backend.buffer_age().unwrap_or(0);
+                    // Offscreen capture/readback leaves the context surfaceless.
+                    // EGL buffer age is meaningful only for the bound host surface.
+                    let age = if backend.egl_surface().is_current() {
+                        backend.buffer_age().unwrap_or(0)
+                    } else { 0 };
                     let render_started = Instant::now();
                     let rendered = (|| -> DamageRenderResult {
                         {

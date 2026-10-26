@@ -516,3 +516,85 @@ fn staggered_hidden_clients_share_one_deadline_per_fallback_refresh() {
         super::HIDDEN_CADENCE * 2
     );
 }
+
+#[test]
+fn capture_releases_only_its_visible_fifo_client_while_host_redraw_is_withheld() {
+    if !crate::startup_tests::private_runtime(
+        "presentation_constraints::protocol_tests::capture_releases_only_its_visible_fifo_client_while_host_redraw_is_withheld",
+    ) {
+        return;
+    }
+    let (mut state, mut events, captured, mut captured_wire) = fixture();
+    let (other_window, mut other_wire) =
+        crate::state::test_window(&mut state, &mut events, 0xff445566);
+    let other = other_window.toplevel().unwrap().wl_surface().clone();
+    request(&mut other_wire, 1, 1, &[7], None);
+    dispatch(&mut events, &mut state);
+    let globals = messages(&mut other_wire);
+    bind(&mut other_wire, &globals, "wp_fifo_manager_v1", 8);
+    request(&mut other_wire, 8, 1, &[9, 2], None);
+    dispatch(&mut events, &mut state);
+    let output = state.space.outputs().next().unwrap().clone();
+    let mut scene = RenderElementStates::default();
+    for surface in [&captured, &other] {
+        scene.states.insert(
+            Id::from(surface),
+            RenderElementState {
+                needs_capture: false,
+                visible_area: 1,
+                presentation_state: RenderElementPresentationState::ZeroCopy,
+            },
+        );
+    }
+    state.display_presentation.queued(&output, &scene);
+    state.display_presentation.presented(&output);
+    request(&mut captured_wire, 11, 0, &[], None);
+    damage_commit(&mut captured_wire);
+    request(&mut other_wire, 9, 0, &[], None);
+    damage_commit(&mut other_wire);
+    dispatch(&mut events, &mut state);
+    let before_captured =
+        with_renderer_surface_state(&captured, |state| state.current_commit()).unwrap();
+    let before_other = with_renderer_surface_state(&other, |state| state.current_commit()).unwrap();
+    request(&mut captured_wire, 11, 1, &[], None);
+    damage_commit(&mut captured_wire);
+    request(&mut other_wire, 9, 1, &[], None);
+    damage_commit(&mut other_wire);
+    dispatch(&mut events, &mut state);
+    pump(&mut events, &mut state, Duration::from_millis(25));
+    assert_eq!(state.presentation_constraints.fifo.len(), 2);
+    assert_eq!(
+        with_renderer_surface_state(&captured, |state| state.current_commit()),
+        Some(before_captured)
+    );
+    assert_eq!(
+        with_renderer_surface_state(&other, |state| state.current_commit()),
+        Some(before_other)
+    );
+    state.presentation_constraint_captured(|surface| surface == &captured);
+    assert_eq!(
+        with_renderer_surface_state(&captured, |state| state.current_commit()),
+        Some(before_captured),
+        "promotion must remain deferred until transaction locks are released"
+    );
+    state.poll_presentation_constraints();
+    assert_ne!(
+        with_renderer_surface_state(&captured, |state| state.current_commit()),
+        Some(before_captured)
+    );
+    assert_eq!(
+        with_renderer_surface_state(&other, |state| state.current_commit()),
+        Some(before_other)
+    );
+    assert_eq!(state.presentation_constraints.fifo.len(), 1);
+    assert!(state.presentation_constraints.timer.is_none());
+    assert!(
+        state
+            .display_presentation
+            .outputs_for(&Id::from(&captured))
+            .any(|visible| visible == &output)
+    );
+    state.presentation_constraint_captured(|_| false);
+    state.poll_presentation_constraints();
+    assert_eq!(state.presentation_constraints.fifo.len(), 1);
+}

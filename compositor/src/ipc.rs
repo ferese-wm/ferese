@@ -1459,13 +1459,13 @@ impl Ferese {
             );
         }
 
-        // The nested backend redraws on its refresh timer; this drives the
-        // direct backend immediately and is a no-op otherwise.
+        // Consumer demand reuses an unchanged capture scene. Nested capture
+        // progresses independently of a host presentation callback.
         let outputs = planned
             .iter()
             .map(|part| targets[part.index].0.clone())
             .collect::<Vec<_>>();
-        crate::backends::direct::render_on(self, &outputs);
+        crate::backends::direct::schedule_capture(self, &outputs);
     }
 
     fn start_window_screenshot(

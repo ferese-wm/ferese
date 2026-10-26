@@ -33,6 +33,18 @@ pub(crate) struct CaptureTarget {
 }
 
 impl CaptureTarget {
+    pub(crate) fn report_if_used(&mut self, include_cursor: bool) {
+        if !self.trace || self.preparations + self.reuses + self.compositions == 0 {
+            return;
+        }
+        tracing::info!(target: "ferese::render", output = %self.output.name(), include_cursor,
+            preparations = self.preparations, scene_reuses = self.reuses,
+            compositions = self.compositions, "capture scene outcomes");
+        self.reported = Instant::now();
+        self.preparations = 0;
+        self.reuses = 0;
+        self.compositions = 0;
+    }
     pub(crate) fn surface_visible(
         &self,
         surface: &smithay::reexports::wayland_server::protocol::wl_surface::WlSurface,
@@ -263,6 +275,7 @@ fn prepare_capture(
             // A failed render can have changed the retained pixels already.
             if let Some(target) = target.as_mut() {
                 target.stamp = None;
+                target.visible = None;
             }
             return false;
         };
@@ -273,13 +286,7 @@ fn prepare_capture(
     }
     let target = target.as_mut().expect("capture target allocated");
     if target.trace && target.reported.elapsed() >= Duration::from_secs(5) {
-        tracing::info!(target: "ferese::render", output = %source.name(), include_cursor,
-            preparations = target.preparations, scene_reuses = target.reuses,
-            compositions = target.compositions, "capture scene outcomes");
-        target.reported = Instant::now();
-        target.preparations = 0;
-        target.reuses = 0;
-        target.compositions = 0;
+        target.report_if_used(include_cursor);
     }
     true
 }
@@ -365,13 +372,7 @@ pub(crate) fn render_capture_with_revision<'a, E: RenderElement<GlesRenderer>>(
         target.compositions += 1;
         target.revision = NEXT_REVISION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
-    if output
-        .user_data()
-        .get::<crate::handlers::workspace_capture::CaptureOutputId>()
-        .is_some()
-    {
-        target.visible = Some(result.states);
-    }
+    target.visible = Some(result.states);
     Ok((framebuffer, target.revision))
 }
 

@@ -136,7 +136,15 @@ impl Ferese {
             Some(fence),
             pixels.len(),
             valid,
-            Box::new(move |state, status| complete(state, status.map(|_| pixels))),
+            Box::new(move |state, status| match status {
+                Ok(()) => complete(state, Ok(pixels)),
+                Err(error) => {
+                    // Match the production PBO queue's deferred failure ordering.
+                    state
+                        .loop_handle
+                        .insert_idle(move |state| complete(state, Err(error)));
+                }
+            }),
             Instant::now() + READBACK_TIMEOUT,
         );
     }

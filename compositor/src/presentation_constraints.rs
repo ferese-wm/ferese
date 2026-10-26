@@ -305,6 +305,29 @@ impl Ferese {
         });
     }
 
+    pub(crate) fn presentation_constraint_captured(
+        &mut self,
+        mut surface_visible: impl FnMut(&WlSurface) -> bool,
+    ) {
+        self.presentation_constraints.fifo.retain(|entry| {
+            let captured = entry
+                .surface
+                .upgrade()
+                .is_ok_and(|surface| surface_visible(&surface));
+            if captured {
+                // Capture is sufficient for client forward progress when a nested
+                // host withholds redraws. It is not physical presentation evidence.
+                entry.barrier.signal();
+                self.presentation_constraints
+                    .notify
+                    .push(entry.client.clone());
+                false
+            } else {
+                true
+            }
+        });
+    }
+
     pub(crate) fn poll_presentation_constraints(&mut self) {
         let timestamp = now();
         let eligible = self.callback_outputs();
