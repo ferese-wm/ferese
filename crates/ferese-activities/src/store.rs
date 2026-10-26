@@ -581,7 +581,7 @@ impl Selection {
             .filter(|entry| !dnd || entry.state == State::Running)
             .collect();
         let mut groups = std::collections::BTreeSet::new();
-        let ids: Vec<_> = eligible
+        let mut ids: Vec<_> = eligible
             .iter()
             .filter(|entry| {
                 let Some(group) = &entry.group else {
@@ -596,17 +596,20 @@ impl Selection {
                 {
                     return false;
                 }
-                groups.insert((entry.id.owner, group.clone()))
+                groups.insert((entry.id.owner, group.as_str()))
             })
-            .map(|entry| entry.id.clone())
+            .map(|entry| &entry.id)
             .collect();
-        self.visible = match &mut self.pinned {
-            Some(pinned) => {
-                pinned.retain(|id| ids.contains(id));
-                pinned.iter().take(count).cloned().collect()
-            }
-            None => ids.iter().take(count).cloned().collect(),
-        };
+        if let Some(pinned) = &mut self.pinned {
+            pinned.retain(|id| ids.contains(&id));
+            ids.clear();
+            ids.extend(pinned.iter());
+        }
+        let selected = &ids[..count.min(ids.len())];
+        if !self.visible.iter().eq(selected.iter().copied()) {
+            self.visible.clear();
+            self.visible.extend(selected.iter().copied().cloned());
+        }
         self.hidden = if dnd || !limits.show_badge {
             0
         } else {

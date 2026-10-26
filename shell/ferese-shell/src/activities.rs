@@ -57,6 +57,19 @@ pub(crate) struct Presentation {
     tints: BTreeMap<Id, AnimatedValue>,
 }
 impl Presentation {
+    fn update_rows(&mut self, entries: &[&Activity]) {
+        if self.rows.iter().eq(entries.iter().map(|entry| &entry.id)) {
+            reconcile_focus(&mut self.focus, &self.rows, &self.rows);
+            return;
+        }
+        let rows = entries
+            .iter()
+            .map(|entry| entry.id.clone())
+            .collect::<Vec<_>>();
+        reconcile_focus(&mut self.focus, &self.rows, &rows);
+        self.rows = rows;
+    }
+
     pub fn advance(&mut self, elapsed: Duration, reduced: bool) {
         let spring = SpringConfig {
             stiffness: 700.,
@@ -80,6 +93,7 @@ impl Presentation {
             .any(AnimatedValue::is_animating)
     }
 }
+
 fn activity_widget_id(bar: window::Id, id: &Id) -> cosmic::iced::advanced::widget::Id {
     cosmic::iced::advanced::widget::Id::new(format!(
         "activity-{bar:?}-{}-{}-{}-{}",
@@ -328,12 +342,7 @@ impl FereseShell {
                 presentation
                     .selection
                     .select(&compact, self.activities.snapshot.limits, dnd, 0);
-                let rows = entries
-                    .iter()
-                    .map(|entry| entry.id.clone())
-                    .collect::<Vec<_>>();
-                reconcile_focus(&mut presentation.focus, &presentation.rows, &rows);
-                presentation.rows = rows;
+                presentation.update_rows(&entries);
                 continue;
             }
             let runtime = output
@@ -381,9 +390,7 @@ impl FereseShell {
                 dnd,
                 protected,
             );
-            let rows: Vec<_> = entries.iter().map(|entry| entry.id.clone()).collect();
-            reconcile_focus(&mut presentation.focus, &presentation.rows, &rows);
-            presentation.rows = rows;
+            presentation.update_rows(&entries);
             presentation
                 .tints
                 .retain(|id, _| presentation.selection.visible.contains(id));
@@ -1227,5 +1234,67 @@ impl FereseShell {
             body = body.push(column::with_children(rows).spacing(4).width(Length::Fill));
         }
         body.into()
+    }
+}
+
+#[cfg(test)]
+mod presentation_tests {
+    use super::*;
+    use ferese_activities::{Data, Owner, Source, Store};
+
+    #[test]
+    fn rows_keep_focus_through_updates_reordering_and_removal() {
+        let mut store = Store::new(1);
+        for local in ["a", "b", "c"] {
+            store
+                .start(
+                    Owner { pid: 1, birth: 1 },
+                    local.into(),
+                    Data {
+                        source: Source::Publisher,
+                        output: Some("one".into()),
+                        priority: 0,
+                        icon: "hammer".into(),
+                        title: "Build".into(),
+                        value: Value::Indeterminate,
+                        template: Template::Progress,
+                    },
+                    0,
+                    0,
+                    None,
+                    true,
+                    true,
+                    None,
+                )
+                .unwrap();
+        }
+        let mut entries = ranked(store.entries(), 500, store.limits, "one", false);
+        let [a, b, c] = entries.as_slice() else {
+            panic!("expected three activities");
+        };
+        let (a, b, c) = (a.id.clone(), b.id.clone(), c.id.clone());
+        let mut presentation = Presentation::default();
+        presentation.update_rows(&entries);
+        assert_eq!(presentation.focus, Some(a));
+        presentation.focus = Some(b.clone());
+        presentation.update_rows(&entries);
+        assert_eq!(presentation.focus, Some(b.clone()));
+        // Restoring focus must work even when the list itself has not changed.
+        presentation.focus = None;
+        presentation.update_rows(&entries);
+        assert_eq!(presentation.focus, Some(entries[0].id.clone()));
+        presentation.focus = Some(b.clone());
+        entries.swap(0, 1);
+        presentation.update_rows(&entries);
+        assert_eq!(presentation.focus, Some(b));
+        entries.remove(0);
+        presentation.update_rows(&entries);
+        assert_eq!(presentation.focus, Some(entries[0].id.clone()));
+        entries.remove(0);
+        presentation.update_rows(&entries);
+        assert_eq!(presentation.focus, Some(c));
+        presentation.update_rows(&[]);
+        assert!(presentation.rows.is_empty());
+        assert!(presentation.focus.is_none());
     }
 }
