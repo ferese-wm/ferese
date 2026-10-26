@@ -468,7 +468,7 @@ mod tests {
     }
 
     #[test]
-    fn live_reload_keeps_focus_effect_independent_of_theme_transitions() {
+    fn live_reload_keeps_window_effects_independent_of_theme_transitions() {
         if std::env::var_os("FERESE_DIM_RELOAD_TEST_CHILD").is_none() {
             use std::os::unix::fs::PermissionsExt;
 
@@ -477,7 +477,7 @@ mod tests {
             let output = std::process::Command::new(std::env::current_exe().unwrap())
                 .args([
                     "--exact",
-                    "reload::tests::live_reload_keeps_focus_effect_independent_of_theme_transitions",
+                    "reload::tests::live_reload_keeps_window_effects_independent_of_theme_transitions",
                     "--nocapture",
                 ])
                 .env("FERESE_DIM_RELOAD_TEST_CHILD", "1")
@@ -494,7 +494,7 @@ mod tests {
             );
             return;
         }
-        let source = "appearance { focus-effect { inactive-opacity 0.8; inactive-dim 0.25; }; }";
+        let source = "appearance { window-effects { opacity 0.8; inactive-dim 0.25; }; }";
         let directory = Directory::new();
         let (_, runtime, candidate) = crate::config::prepare(source, &directory.0).unwrap();
         let mut event_loop = smithay::reexports::calloop::EventLoop::try_new().unwrap();
@@ -504,41 +504,41 @@ mod tests {
         state.theme_engine.live.theme = candidate.theme.clone();
         state.theme_engine.live.presented = candidate.theme;
 
-        for inactive_opacity in [1.0, 0.75, 0.9] {
+        for opacity in [1.0, 0.75, 0.9] {
             let source = format!(
-                "appearance {{ focus-effect {{ inactive-opacity {inactive_opacity}; inactive-dim 0.25; }}; }}"
+                "appearance {{ window-effects {{ opacity {opacity}; inactive-dim 0.25; }}; }}"
             );
             state.reload_config_source(source).unwrap();
-            assert_eq!(state.focus_effect.inactive_opacity, inactive_opacity);
-            let (alpha, dim) = state.focus_effect.resolve(0.0, true, 0.0);
-            assert_eq!(alpha, inactive_opacity as f32);
+            assert_eq!(state.window_effects.opacity, opacity);
+            let (alpha, dim) = state.window_effects.resolve(0.0, true, 0.0);
+            assert_eq!(alpha, opacity as f32);
             assert_eq!(dim, 0.25);
         }
         for enabled in [false, true] {
-            state.reload_config_source(format!("appearance {{ focus-effect {{ enabled #{enabled}; active-opacity 0.95; inactive-opacity 0.8; inactive-dim 0.25; }}; }}")).unwrap();
-            assert_eq!(state.focus_effect.enabled, enabled);
-            assert_eq!(state.focus_effect.inactive_opacity, 0.8);
-            assert_eq!(state.focus_effect.inactive_dim, 0.25);
+            state.reload_config_source(format!("appearance {{ window-effects {{ enabled #{enabled}; opacity 0.8; inactive-dim 0.25; }}; }}")).unwrap();
+            assert_eq!(state.window_effects.enabled, enabled);
+            assert_eq!(state.window_effects.opacity, 0.8);
+            assert_eq!(state.window_effects.inactive_dim, 0.25);
             assert_eq!(
-                state.focus_effect.resolve(0.0, true, 0.0),
+                state.window_effects.resolve(0.0, true, 0.0),
                 if enabled { (0.8, 0.25) } else { (1.0, 0.0) }
             );
         }
-        let previous = state.focus_effect;
+        let previous = state.window_effects;
         assert!(
             state
-                .reload_config_source("appearance { focus-effect { active-opacity 1.1; }; }".into())
+                .reload_config_source("appearance { window-effects { opacity 1.1; }; }".into())
                 .is_err()
         );
-        assert_eq!(state.focus_effect, previous);
+        assert_eq!(state.window_effects, previous);
         state
             .reload_config_source(
-                "appearance { focus-effect { inactive-dim 0; }; }; theme { mode \"light\"; }"
+                "appearance { window-effects { inactive-dim 0; }; }; theme { mode \"light\"; }"
                     .into(),
             )
             .unwrap();
         state.poll_theme();
-        assert_eq!(state.focus_effect.inactive_dim, 0.0);
+        assert_eq!(state.window_effects.inactive_dim, 0.0);
     }
 
     /// The status endpoint must be able to tell "the live service is running

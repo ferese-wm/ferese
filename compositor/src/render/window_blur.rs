@@ -14,16 +14,17 @@ pub(super) fn window_blur_element(
     state: &mut Ferese,
     renderer: &mut GlesRenderer,
     output: &Output,
+    opaque: impl FnOnce() -> bool,
     presentation: crate::presentation::WindowPresentation,
     corners: RoundedRect,
 ) -> Option<AnimatedWindowRenderElement> {
     let radius = state.theme_settings.backdrop_blur;
-    if !state.focus_effect.enabled
-        || !state.focus_effect.blur
+    if !state.window_effects.enabled
+        || !state.window_effects.blur
         || state.theme_settings.reduce_transparency
         || radius <= 0.0
-        || presentation.focus_alpha <= 0.0
-        || presentation.focus_alpha >= 1.0
+        || presentation.window_alpha <= 0.0
+        || (presentation.window_alpha >= 1.0 && opaque())
         || presentation.alpha() <= 0.0
     {
         if let Some(window) = state.render.windows.get_mut(&presentation.id) {
@@ -125,4 +126,60 @@ pub(super) fn window_blur_element(
         cached.parameters = parameters;
     }
     Some(cached.element.clone().into())
+}
+
+pub(super) fn client_is_opaque(window: &smithay::desktop::Window) -> bool {
+    use smithay::backend::renderer::utils::with_renderer_surface_state;
+    use smithay::wayland::alpha_modifier::AlphaModifierSurfaceCachedState;
+    use smithay::wayland::compositor::with_states;
+    use smithay::wayland::seat::WaylandFocus;
+
+    let Some(surface) = window.wl_surface() else {
+        return false;
+    };
+    let alpha = with_states(&surface, |states| {
+        states
+            .cached_state
+            .get::<AlphaModifierSurfaceCachedState>()
+            .current()
+            .multiplier_f32()
+            .unwrap_or(1.0)
+    });
+    // An opaque root covers its subsurfaces too. If it doesn't cover the whole
+    // window geometry, conservatively keep blur for the uncovered client pixels.
+    // Read geometry before locking renderer state: both access surface state.
+    let geometry = window.geometry();
+    with_renderer_surface_state(&surface, |state| {
+        opaque_coverage(geometry, state.opaque_regions().unwrap_or_default(), alpha)
+    })
+    .unwrap_or(false)
+}
+
+fn opaque_coverage(
+    geometry: Rectangle<i32, super::Logical>,
+    regions: &[Rectangle<i32, super::Logical>],
+    alpha: f32,
+) -> bool {
+    alpha >= 1.0
+        && (regions.iter().any(|region| region.contains_rect(geometry))
+            || geometry.subtract_rects(regions.iter().copied()).is_empty())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn native_transparency_and_alpha_modifiers_require_a_backdrop() {
+        let geometry = Rectangle::new((10, 20).into(), (100, 80).into());
+        assert!(opaque_coverage(geometry, &[geometry], 1.0));
+        assert!(!opaque_coverage(geometry, &[], 1.0));
+        assert!(!opaque_coverage(geometry, &[geometry], 0.9));
+        let left = Rectangle::new((10, 20).into(), (50, 80).into());
+        let right = Rectangle::new((60, 20).into(), (50, 80).into());
+        assert!(opaque_coverage(geometry, &[left, right], 1.0));
+        assert!(!opaque_coverage(geometry, &[left], 1.0));
+        let inset = Rectangle::new((11, 21).into(), (98, 78).into());
+        assert!(!opaque_coverage(geometry, &[inset], 1.0));
+    }
 }

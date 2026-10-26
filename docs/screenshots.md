@@ -32,7 +32,7 @@ Six themes, each with paired light and dark colours.
 
 [![Ferese Appearance settings with six theme previews.](images/screenshots/ferese-appearance.webp)](images/screenshots/ferese-appearance.webp)
 
-## Panel & Shell
+## Panel
 
 The composition preview and panel controls in Settings. See the
 [panel configuration guide](panel-configuration.md) for the current styles and options.

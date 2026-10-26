@@ -792,7 +792,7 @@ impl Ferese {
                     self.dismissing_popups.push((
                         root.clone(),
                         popup,
-                        crate::focus_effect::BoundedFade::new(f64::from(opacity)),
+                        crate::window_effects::BoundedFade::new(f64::from(opacity)),
                     ));
                     pointer.unset_grab(self, serial, event.time());
                     self.focus_window_at(pointer.current_location(), serial, true);

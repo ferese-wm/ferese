@@ -26,12 +26,11 @@ one appearance.
 | `theme.schedule.light-at`, `theme.schedule.dark-at` | `HH:MM` | `"07:00"`, `"19:00"` | Auto boundaries; times must differ |
 | `theme.accessibility.increase-contrast` | boolean | `false` | Strengthen text and borders |
 | `theme.accessibility.reduce-transparency` | boolean | `false` | Solid surfaces; skip background blur |
-| `appearance.focus-effect.enabled` | boolean | `true` | Apply window opacity and dimming; disabling preserves the saved settings |
-| `appearance.focus-effect.active-opacity` | number 0–1 | `1` | Active application opacity, including fullscreen |
-| `appearance.focus-effect.inactive-opacity` | number 0–1 | `1` | Other application window opacity |
-| `appearance.focus-effect.blur` | boolean | `true` | Blur behind translucent application windows using the shared blur radius |
-| `appearance.focus-effect.inactive-dim` | number 0–1 | `0` | Darkening strength for inactive windows; 0 disables |
-| `appearance.focus-effect.duration-ms` | number ≥ 0 | `150` | Shared opacity and dimming transition; 0 snaps |
+| `appearance.window-effects.enabled` | boolean | `true` | Apply window opacity, blur and dimming; disabling preserves the saved settings |
+| `appearance.window-effects.opacity` | number 0–1 | `1` | Opacity of all application windows, including their text and controls |
+| `appearance.window-effects.blur` | boolean | `true` | Blur behind translucent application windows using the shared blur radius |
+| `appearance.window-effects.inactive-dim` | number 0–1 | `0` | Darkening strength for inactive windows; 0 disables |
+| `appearance.window-effects.duration-ms` | number ≥ 0 | `150` | Focus dimming transition; 0 snaps |
 | `theme.typography.font-family` | string | `"Inter"` | Shell, Settings and overview font |
 | `theme.background.path` | string | matching light/dark wallpaper | Shared wallpaper; an explicit path overrides both bundled defaults |
 | `theme.light.background.path`, `theme.dark.background.path` | string | shared path, or matching default | Wallpaper for one appearance; overrides the shared path |
@@ -42,15 +41,14 @@ one appearance.
 | `theme.material.tint-strength` | number 0–1 | Dark `0.5`, light `1` | Color strength over the blurred backdrop |
 | `theme.material.blur-radius` | number ≥ 0 | `12` | Translucent backdrop blur, capped at 32; 0 disables |
 
-Window opacity follows the active application. Giving keyboard focus to a shell
-menu does not change it. Overview selection changes the highlight, while window
-opacity still follows activation; dimming fades out as overview opens. Fullscreen
-windows use the same opacity settings. Opening and closing fades multiply window
-opacity. Reduced motion disables the focus transition.
+Window opacity applies equally to focused, unfocused and fullscreen applications.
+Opening and closing fades multiply this value. Optional inactive dimming follows
+keyboard focus and fades out as overview opens; reduced motion snaps that transition.
 
-**Window blur** in Settings controls blur behind both active and inactive windows.
-It uses `theme.material.blur-radius` independently of the shell material style.
-Fully opaque or invisible windows skip blur. Reduced transparency disables it.
+**Window blur** softens the backdrop behind transparent window content, including
+transparency provided by an app at 100% window opacity. It uses
+`theme.material.blur-radius` independently of the shell material style. Opaque
+windows skip blur, and reduced transparency disables it.
 
 Settings → Wallpaper shows the current image and both bundled defaults. Use
 **Apply to** to change both modes or just one. **Match appearance** restores the
@@ -111,14 +109,15 @@ border color and keep its transparency.
 Automatic accent endpoints are adjusted for contrast against the theme's surfaces.
 
 In Settings → Appearance, **Accent style** controls the gradient used by focus
-borders and selected shell controls. Settings → Windows contains **Inactive
+borders and selected shell controls. The Windows section on the same page contains **Inactive
 border style** and **Focus border**. Accent style and inactive border style
 offer **Gradient** or **Solid**. In KDL, `theme.focus-ring.style` and
 `theme.border.style` accept `"auto"` (default) or `"solid"`. Solid disables the
 gradient, including any explicit endpoints, without deleting them from the config.
 
-Shell surface style, opacity and corner radius are in Settings → Panel & Shell.
-**Background blur** in Appearance sets the blur radius for shell surfaces and windows.
+The **Shell & shared blur** section in Settings → Appearance contains shell surface
+style, opacity and corner radius. Its **Background blur** control sets the blur
+radius for both shell surfaces and windows.
 
 For custom endpoints, set `theme.focus-ring.gradient` or `theme.border.gradient`.
 Both require `from` and `to` colors; `angle` is optional and defaults to `0`.

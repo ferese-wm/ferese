@@ -70,7 +70,7 @@ The paths above use the default configuration directory. If you set
 
 ### Add Activities to your panel
 
-Open **Settings → Panel & Shell → Edit panel**, select a group in Arrange, and
+Open **Settings → Panel → Edit panel**, select a group in Arrange, and
 choose **Add item → Activities**. Keep its visibility enabled. This is also how
 to restore the item after removing it.
 

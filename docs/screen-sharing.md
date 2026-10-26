@@ -25,7 +25,7 @@ If recording fails, a notification reports the error and any unfinished
 
 ### Panel status
 
-Add **Capture status** in Settings → Panel & Shell → Edit panel → Add item.
+Add **Capture status** in Settings → Panel → Edit panel → Add item.
 You can move it between groups, hide it, or choose Full, Compact or Icon.
 New panel presets include it. Add it yourself if you use a saved layout.
 

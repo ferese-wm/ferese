@@ -1601,6 +1601,10 @@ mod tests {
     #[test]
     fn merged_navigation_finds_subpages_and_browsing_does_not_save() {
         for (parent, query, destination) in [
+            (Page::Appearance, "window opacity", Page::Appearance),
+            (Page::Appearance, "window blur", Page::Appearance),
+            (Page::Appearance, "shell opacity", Page::Appearance),
+            (Page::Appearance, "dimming transition", Page::Appearance),
             (Page::Windows, "motion", Page::Motion),
             (Page::Windows, "animation speed", Page::Motion),
             (Page::Keyboard, "shortcuts", Page::Shortcuts),

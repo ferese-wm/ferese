@@ -1,6 +1,6 @@
 # Panel configuration
 
-Use **Settings → Panel & Shell** to change the panel's style, position and
+Use **Settings → Panel** to change the panel's style, position and
 contents, or edit the `panel` block in `~/.config/ferese/config.kdl`. Settings
 writes to this file, so you can arrange controls visually and then adjust their
 values in KDL. Changes apply live, and an invalid edit leaves the last working
@@ -256,7 +256,7 @@ Notifications or Controls view. Escape or the close button collapses it.
 
 With an Activities item configured, running tasks can occupy the collapsed and
 peek states, and the hub gains an Activities tab. **Visible activities** and
-**Show activity count** in Panel & Shell control its compact slots and `+n` badge;
+**Show activity count** under Panel → Behaviour control its compact slots and `+n` badge;
 see [Activities configuration](configuration/activities.md).
 
 The Workspaces view shows miniature window layouts. Click a tile to switch

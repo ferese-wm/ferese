@@ -4,26 +4,19 @@ use super::{
 };
 
 impl Config {
-    pub(crate) fn focus_effect_settings(&self) -> Result<FocusEffectSettings, ConfigError> {
-        let effect = &self.appearance.focus_effect;
-        Ok(FocusEffectSettings {
+    pub(crate) fn window_effects_settings(&self) -> Result<WindowEffectsSettings, ConfigError> {
+        let effect = &self.appearance.window_effects;
+        Ok(WindowEffectsSettings {
             enabled: effect.enabled,
             blur: effect.blur,
-            active_opacity: unit_theme_value(
-                effect.active_opacity,
-                "appearance.focus_effect.active_opacity",
-            )?,
-            inactive_opacity: unit_theme_value(
-                effect.inactive_opacity,
-                "appearance.focus_effect.inactive_opacity",
-            )?,
+            opacity: unit_theme_value(effect.opacity, "appearance.window_effects.opacity")?,
             inactive_dim: unit_theme_value(
                 effect.inactive_dim,
-                "appearance.focus_effect.inactive_dim",
+                "appearance.window_effects.inactive_dim",
             )?,
             duration_ms: nonnegative_theme_value(
                 effect.duration_ms,
-                "appearance.focus_effect.duration_ms",
+                "appearance.window_effects.duration_ms",
             )?,
         })
     }
@@ -290,37 +283,34 @@ pub enum MaterialStyle {
 #[serde(deny_unknown_fields)]
 pub(super) struct AppearanceConfig {
     #[serde(default)]
-    pub(super) focus_effect: FocusEffectConfig,
+    pub(super) window_effects: WindowEffectsConfig,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct FocusEffectSettings {
+pub struct WindowEffectsSettings {
     pub enabled: bool,
     pub blur: bool,
-    pub active_opacity: f64,
-    pub inactive_opacity: f64,
+    pub opacity: f64,
     pub inactive_dim: f64,
     pub duration_ms: f64,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(default, deny_unknown_fields)]
-pub(super) struct FocusEffectConfig {
+pub(super) struct WindowEffectsConfig {
     pub(super) enabled: bool,
     pub(super) blur: bool,
-    pub(super) active_opacity: f64,
-    pub(super) inactive_opacity: f64,
+    pub(super) opacity: f64,
     pub(super) inactive_dim: f64,
     pub(super) duration_ms: f64,
 }
 
-impl Default for FocusEffectConfig {
+impl Default for WindowEffectsConfig {
     fn default() -> Self {
         Self {
             enabled: true,
             blur: true,
-            active_opacity: 1.0,
-            inactive_opacity: 1.0,
+            opacity: 1.0,
             inactive_dim: 0.0,
             duration_ms: 150.0,
         }

@@ -87,7 +87,7 @@ impl Page {
             Self::Appearance => "Appearance",
             Self::Accessibility => "Accessibility",
             Self::Wallpaper => "Wallpaper",
-            Self::Bar => "Panel & Shell",
+            Self::Bar => "Panel",
             Self::Notifications => "Notifications",
             Self::LockScreen => "Lock screen",
             Self::Windows => "Windows",
@@ -102,13 +102,13 @@ impl Page {
 
     pub fn subtitle(self) -> &'static str {
         match self {
-            Self::Appearance => "A desktop that feels like yours.",
+            Self::Appearance => "Themes, shell surfaces and window appearance.",
             Self::Accessibility => "Make the desktop easier to see and use.",
             Self::Wallpaper => "Set the scene for your workspace.",
-            Self::Bar => "Arrange your panel and change the shell's appearance.",
+            Self::Bar => "Arrange controls and choose how your panel looks and behaves.",
             Self::Notifications => "Stay informed on your terms.",
             Self::LockScreen => "Your desktop, safely put away.",
-            Self::Windows => "Window layouts, spacing and focus effects.",
+            Self::Windows => "Window layouts, spacing and focus behaviour.",
             Self::Motion => "Animations and transition speed.",
             Self::Keyboard => "Keyboard layouts, pointer behavior and touchpad gestures.",
             Self::Shortcuts => "Keyboard shortcuts and swipe actions.",
@@ -193,6 +193,31 @@ pub struct Field {
     pub label: String,
     pub description: String,
     pub kind: Kind,
+}
+
+/// Headings follow the scope users edit, independently of configuration nesting.
+pub fn section(page: Page, path: &str) -> &'static str {
+    match page {
+        Page::Appearance
+            if path.starts_with("theme.material.") || path == "theme.geometry.shell_radius" =>
+        {
+            "Shell & shared blur"
+        }
+        Page::Appearance
+            if path.starts_with("appearance.window_effects.")
+                || path == "theme.geometry.window_radius"
+                || path == "theme.border.style"
+                || path == "theme.geometry.focus_ring_width" =>
+        {
+            "Windows"
+        }
+        Page::Appearance => "Theme",
+        Page::Windows if path.starts_with("workspaces.") || path.starts_with("input.") => {
+            "Focus & workspaces"
+        }
+        Page::Windows => "Layout & spacing",
+        _ => "",
+    }
 }
 
 impl Field {
@@ -432,10 +457,49 @@ pub fn fields(page: Page) -> Vec<Field> {
                 "auto",
                 &[("auto", "Gradient"), ("solid", "Solid")],
             ),
+            text(
+                "theme.typography.font_family",
+                "Interface font",
+                "Use the name of an installed font family.",
+                "Inter",
+            ),
+            range(
+                "theme.geometry.shell_radius",
+                "Shell corner radius",
+                "Round menus, notifications and shell controls. Panel and window corners have their own settings.",
+                RangeSpec {
+                    default: 14.0,
+                    min: 0.0,
+                    max: 32.0,
+                    step: 1.0,
+                    suffix: " px",
+                    integer: false,
+                },
+            ),
+            choice(
+                "theme.material.style",
+                "Surface style",
+                "Choose the finish for the panel, launcher, menus and notifications.",
+                "solid",
+                &[("solid", "Solid"), ("translucent", "Translucent")],
+            ),
+            range(
+                "theme.material.opacity",
+                "Shell opacity",
+                "Background opacity for the bar, popovers, menus, notifications and sharing dialog. Text and icons stay opaque.",
+                RangeSpec {
+                    default: ferese_config::DEFAULT_MATERIAL_OPACITY,
+                    min: 0.0,
+                    max: 1.0,
+                    step: 0.01,
+                    suffix: "",
+                    integer: false,
+                },
+            ),
             range(
                 "theme.material.blur_radius",
                 "Background blur",
-                "Softness behind translucent shell surfaces and windows. Zero disables blur.",
+                "Shared blur strength for shell surfaces and application windows. Zero disables blur.",
                 RangeSpec {
                     default: 12.0,
                     min: 0.0,
@@ -445,11 +509,89 @@ pub fn fields(page: Page) -> Vec<Field> {
                     integer: false,
                 },
             ),
-            text(
-                "theme.typography.font_family",
-                "Interface font",
-                "Use the name of an installed font family.",
-                "Inter",
+            range(
+                "theme.geometry.window_radius",
+                "Corner radius",
+                "Rounded corners for application windows.",
+                RangeSpec {
+                    default: 14.0,
+                    min: 0.0,
+                    max: 28.0,
+                    step: 1.0,
+                    suffix: " px",
+                    integer: false,
+                },
+            ),
+            choice(
+                "theme.border.style",
+                "Inactive border style",
+                "Gradients retain the border color's transparency.",
+                "auto",
+                &[("auto", "Gradient"), ("solid", "Solid")],
+            ),
+            range(
+                "theme.geometry.focus_ring_width",
+                "Focus border",
+                "A subtle outline around the active window.",
+                RangeSpec {
+                    default: 2.0,
+                    min: 0.0,
+                    max: 4.0,
+                    step: 0.5,
+                    suffix: " px",
+                    integer: false,
+                },
+            ),
+            toggle(
+                "appearance.window_effects.enabled",
+                "Window effects",
+                "Enable window opacity, background blur, and dimming.",
+                true,
+            ),
+            range(
+                "appearance.window_effects.opacity",
+                "Window opacity",
+                "Apply the same opacity to all windows, including their text and controls.",
+                RangeSpec {
+                    default: 1.0,
+                    min: 0.0,
+                    max: 1.0,
+                    step: 0.01,
+                    suffix: "",
+                    integer: false,
+                },
+            ),
+            toggle(
+                "appearance.window_effects.blur",
+                "Window blur",
+                "Blur behind transparent window content using the shared Background blur setting above.",
+                true,
+            ),
+            range(
+                "appearance.window_effects.inactive_dim",
+                "Inactive window dimming",
+                "Darken inactive windows. Zero disables dimming.",
+                RangeSpec {
+                    default: 0.0,
+                    min: 0.0,
+                    max: 1.0,
+                    step: 0.01,
+                    suffix: "",
+                    integer: false,
+                },
+            ),
+            range(
+                "appearance.window_effects.duration_ms",
+                "Dimming transition",
+                "How quickly inactive dimming changes when focus moves between windows.",
+                RangeSpec {
+                    default: 150.0,
+                    min: 0.0,
+                    max: 600.0,
+                    step: 10.0,
+                    suffix: " ms",
+                    integer: false,
+                },
             ),
         ],
         Page::Wallpaper => vec![
@@ -495,39 +637,6 @@ pub fn fields(page: Page) -> Vec<Field> {
             ),
         ],
         Page::Bar => vec![
-            range(
-                "theme.geometry.shell_radius",
-                "Shell corner radius",
-                "Rounds the bar, menus, notifications and hover backgrounds. Window corners are separate.",
-                RangeSpec {
-                    default: 14.0,
-                    min: 0.0,
-                    max: 32.0,
-                    step: 1.0,
-                    suffix: " px",
-                    integer: false,
-                },
-            ),
-            choice(
-                "theme.material.style",
-                "Surface style",
-                "Choose the finish for the panel, launcher, menus and notifications.",
-                "solid",
-                &[("solid", "Solid"), ("translucent", "Translucent")],
-            ),
-            range(
-                "theme.material.opacity",
-                "Shell opacity",
-                "Background opacity for the bar, popovers, menus, notifications and sharing dialog. Text and icons stay opaque.",
-                RangeSpec {
-                    default: ferese_config::DEFAULT_MATERIAL_OPACITY,
-                    min: 0.0,
-                    max: 1.0,
-                    step: 0.01,
-                    suffix: "",
-                    integer: false,
-                },
-            ),
             range(
                 "panels.0.geometry.height",
                 "Height",
@@ -582,12 +691,6 @@ pub fn fields(page: Page) -> Vec<Field> {
             ),
         ],
         Page::Windows => vec![
-            toggle(
-                "workspaces.auto_back_and_forth",
-                "Toggle back with the same workspace shortcut",
-                "Press the current workspace's shortcut again to return to the previous workspace on this monitor.",
-                false,
-            ),
             choice(
                 "layout.mode",
                 "Layout for new workspaces",
@@ -645,39 +748,6 @@ pub fn fields(page: Page) -> Vec<Field> {
                     integer: false,
                 },
             ),
-            range(
-                "theme.geometry.window_radius",
-                "Corner radius",
-                "Rounded corners for application windows.",
-                RangeSpec {
-                    default: 14.0,
-                    min: 0.0,
-                    max: 28.0,
-                    step: 1.0,
-                    suffix: " px",
-                    integer: false,
-                },
-            ),
-            choice(
-                "theme.border.style",
-                "Inactive border style",
-                "Gradients retain the border color's transparency.",
-                "auto",
-                &[("auto", "Gradient"), ("solid", "Solid")],
-            ),
-            range(
-                "theme.geometry.focus_ring_width",
-                "Focus border",
-                "A subtle outline around the active window.",
-                RangeSpec {
-                    default: 2.0,
-                    min: 0.0,
-                    max: 4.0,
-                    step: 0.5,
-                    suffix: " px",
-                    integer: false,
-                },
-            ),
             toggle(
                 "input.focus_follows_mouse",
                 "Focus follows pointer",
@@ -685,55 +755,10 @@ pub fn fields(page: Page) -> Vec<Field> {
                 false,
             ),
             toggle(
-                "appearance.focus_effect.enabled",
-                "Window focus effects",
-                "Apply window opacity and inactive dimming. Turning this off keeps your settings.",
-                true,
-            ),
-            range(
-                "appearance.focus_effect.active_opacity",
-                "Active window opacity",
-                "Opacity of the active application, including fullscreen windows.",
-                RangeSpec {
-                    default: 1.0,
-                    min: 0.0,
-                    max: 1.0,
-                    step: 0.01,
-                    suffix: "",
-                    integer: false,
-                },
-            ),
-            range(
-                "appearance.focus_effect.inactive_opacity",
-                "Inactive window opacity",
-                "Opacity of other application windows.",
-                RangeSpec {
-                    default: 1.0,
-                    min: 0.0,
-                    max: 1.0,
-                    step: 0.01,
-                    suffix: "",
-                    integer: false,
-                },
-            ),
-            toggle(
-                "appearance.focus_effect.blur",
-                "Window blur",
-                "Soften the background behind translucent windows. Adjust the amount in Appearance.",
-                true,
-            ),
-            range(
-                "appearance.focus_effect.inactive_dim",
-                "Inactive window dimming",
-                "Darken inactive windows. Zero disables dimming.",
-                RangeSpec {
-                    default: 0.0,
-                    min: 0.0,
-                    max: 1.0,
-                    step: 0.01,
-                    suffix: "",
-                    integer: false,
-                },
+                "workspaces.auto_back_and_forth",
+                "Toggle back with the same workspace shortcut",
+                "Press the current workspace's shortcut again to return to the previous workspace on this monitor.",
+                false,
             ),
         ],
         Page::Motion => vec![
@@ -753,19 +778,6 @@ pub fn fields(page: Page) -> Vec<Field> {
                     max: 2.0,
                     step: 0.05,
                     suffix: "×",
-                    integer: false,
-                },
-            ),
-            range(
-                "appearance.focus_effect.duration_ms",
-                "Focus transition",
-                "Duration of opacity and dimming changes when the active window changes.",
-                RangeSpec {
-                    default: 150.0,
-                    min: 0.0,
-                    max: 600.0,
-                    step: 10.0,
-                    suffix: " ms",
                     integer: false,
                 },
             ),

@@ -220,3 +220,110 @@ fn profile_window_blur_redraws() {
         }
     }
 }
+
+#[test]
+#[ignore = "requires an EGL rendering device"]
+fn opaque_window_above_blur_does_not_contaminate_visible_edges() {
+    use smithay::backend::renderer::damage::OutputDamageTracker;
+    use smithay::backend::renderer::element::solid::SolidColorBuffer;
+
+    for (scale, offscreen) in [1.0, 1.25, 1.5]
+        .into_iter()
+        .flat_map(|scale| [false, true].map(|offscreen| (scale, offscreen)))
+    {
+        // Finish and release the EGL framebuffer before checking pixels so a
+        // failed assertion cannot poison its context lock during unwinding.
+        let pixel = {
+            let mut renderer = super::corner_tests::renderer();
+            let extent = (64.0 * scale) as i32;
+            let mut p = parameters(extent, extent, (24.0 * scale) as f32);
+            p.sample_geometry = Rectangle::from_size((64, 64).into());
+            p.geometry = p.sample_geometry;
+            let blur = element(&mut renderer, &p);
+            let full = Rectangle::from_size((extent, extent).into());
+            let mut output: GlesTexture = renderer
+                .create_buffer(Fourcc::Abgr8888, (extent, extent).into())
+                .unwrap();
+            let mut target = renderer.bind(&mut output).unwrap();
+            let mut frame = renderer
+                .render(&mut target, (extent, extent).into(), Transform::Normal)
+                .unwrap();
+            // Stale pixels under the covering window must never enter the blur.
+            frame.clear([1.0, 0.0, 0.0, 1.0].into(), &[full]).unwrap();
+            frame.finish().unwrap().wait().unwrap();
+            let white = SolidColorBuffer::new((32, 64), [1.0, 1.0, 1.0, 1.0]);
+            let hidden_white = SolidColorBuffer::new((32, 64), [1.0, 1.0, 1.0, 1.0]);
+            let cover = SolidColorBuffer::new((32, 64), [0.0, 0.0, 1.0, 1.0]);
+            let elements: Vec<AnimatedWindowRenderElement> = vec![
+                SolidColorRenderElement::from_buffer(
+                    &cover,
+                    ((32.0 * scale) as i32, 0),
+                    scale,
+                    1.0,
+                    RenderElementKind::Unspecified,
+                )
+                .into(),
+                blur.into(),
+                SolidColorRenderElement::from_buffer(
+                    &hidden_white,
+                    ((32.0 * scale) as i32, 0),
+                    scale,
+                    1.0,
+                    RenderElementKind::Unspecified,
+                )
+                .into(),
+                SolidColorRenderElement::from_buffer(
+                    &white,
+                    (0, 0),
+                    scale,
+                    1.0,
+                    RenderElementKind::Unspecified,
+                )
+                .into(),
+            ];
+            super::backdrop::update(&elements, scale);
+            if offscreen {
+                let mut frame = renderer
+                    .render(&mut target, (extent, extent).into(), Transform::Normal)
+                    .unwrap();
+                smithay::backend::renderer::utils::draw_render_elements(
+                    &mut frame,
+                    scale,
+                    &elements,
+                    &[full],
+                )
+                .unwrap();
+                frame.finish().unwrap().wait().unwrap();
+            } else {
+                let mut tracker =
+                    OutputDamageTracker::new((extent, extent), scale, Transform::Normal);
+                tracker
+                    .render_output(
+                        &mut renderer,
+                        &mut target,
+                        0,
+                        &elements,
+                        [0.0, 0.0, 0.0, 1.0],
+                    )
+                    .unwrap()
+                    .sync
+                    .wait()
+                    .unwrap();
+            }
+            let mapping = renderer
+                .copy_framebuffer(
+                    &target,
+                    Rectangle::from_size((extent, extent).into()),
+                    Fourcc::Abgr8888,
+                )
+                .unwrap();
+            let pixels = renderer.map_texture(&mapping).unwrap();
+            let index = ((32.0 * scale) as usize * extent as usize + (30.0 * scale) as usize) * 4;
+            pixels[index..index + 4].to_vec()
+        };
+        assert!(
+            pixel[..3].iter().all(|channel| *channel >= 253),
+            "occluded pixels entered blur at scale {scale}, offscreen={offscreen}: {pixel:?}"
+        );
+    }
+}

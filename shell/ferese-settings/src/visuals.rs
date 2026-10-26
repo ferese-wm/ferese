@@ -276,51 +276,7 @@ fn preview(
     snapshot: &Snapshot,
     theme: &ferese_config::theme::ResolvedTheme,
 ) -> Element<'static, Message> {
-    let p = Palette::from_resolved(theme);
-    let base = hex(p.sidebar);
-    let card = hex(p.card);
-    let accent = hex(p.accent);
-    let muted = hex(p.muted);
-    let gap = snapshot.number("layout.inner_gap", 8.).clamp(0., 32.);
-    let radius = snapshot
-        .number("theme.geometry.window_radius", 14.)
-        .clamp(0., 28.);
-    let bar_y = snapshot.number("panels.0.geometry.edge_margin", 0.) * 0.5 + 12.;
-    let bar_margin = snapshot.number("panels.0.geometry.side_margins", 0.) * 0.5 + 14.;
-    let bar_height = snapshot.number("panels.0.geometry.height", 28.) * 0.65;
-    let bar_radius = snapshot.number("theme.geometry.shell_radius", 14.) * 0.65;
-    let opacity = if snapshot.string("theme.material.style", "solid") == "translucent" {
-        snapshot
-            .number(
-                "theme.material.opacity",
-                ferese_config::DEFAULT_MATERIAL_OPACITY,
-            )
-            .clamp(0., 1.)
-    } else {
-        1.
-    };
-    let right = 340. + gap / 2.;
-    let left_width = 288. - gap / 2.;
-    let svg = format!(
-        r##"<svg xmlns="http://www.w3.org/2000/svg" width="680" height="210" viewBox="0 0 680 210">
-      <defs><linearGradient id="wall" x2="1" y2="1"><stop stop-color="{accent}" stop-opacity=".20"/><stop offset="1" stop-color="{base}"/></linearGradient></defs>
-      <rect width="680" height="210" rx="14" fill="{base}"/><rect width="680" height="210" rx="14" fill="url(#wall)"/>
-      <path d="M0 180Q160 30 350 145T680 100V210H0Z" fill="{accent}" opacity=".055"/>
-      <rect x="{bar_margin}" y="{bar_y}" width="{}" height="{bar_height}" rx="{bar_radius}" fill="{base}" opacity="{opacity}"/>
-      <rect x="30" y="{}" width="12" height="5" rx="2.5" fill="{accent}"/><circle cx="51" cy="{}" r="2.5" fill="{muted}"/>
-      <path d="M595 {}h10m10 0h10m10 0h10" stroke="{muted}" stroke-width="3" stroke-linecap="round"/>
-      <rect x="44" y="60" width="{left_width}" height="132" rx="{radius}" fill="{card}" stroke="{accent}" stroke-width="1.2"/>
-      <rect x="{right}" y="60" width="{left_width}" height="132" rx="{radius}" fill="{card}"/>
-      <path d="M64 80h65M64 100h170M64 115h120M64 130h152" stroke="{muted}" opacity=".45" stroke-width="4" stroke-linecap="round"/>
-      <rect x="{}" y="78" width="50" height="94" rx="5" fill="{base}"/>
-      <path d="M420 82h85M420 103h175M420 121h150M420 139h160" stroke="{muted}" opacity=".32" stroke-width="4" stroke-linecap="round"/>
-    </svg>"##,
-        680. - 2. * bar_margin,
-        bar_y + bar_height / 2. - 2.5,
-        bar_y + bar_height / 2.,
-        bar_y + bar_height / 2.,
-        right + 16.
-    );
+    let svg = window_preview_svg(snapshot, theme);
 
     svg_icon::from_svg_bytes(svg.into_bytes())
         .symbolic(false)
@@ -329,6 +285,95 @@ fn preview(
         .height(Length::Fixed(132.))
         .content_fit(cosmic::iced::ContentFit::Contain)
         .into()
+}
+
+// The sample uses the same opacity and dimming semantics as application windows.
+// Its backdrop is illustrative; the panel has its own measured composition preview.
+fn window_preview_svg(snapshot: &Snapshot, theme: &ferese_config::theme::ResolvedTheme) -> String {
+    let p = Palette::from_resolved(theme);
+    let base = hex(p.sidebar);
+    let card = hex(p.card);
+    let accent = hex(p.accent);
+    let muted = hex(p.muted);
+    let gap = snapshot.number("layout.inner_gap", 10.).clamp(0., 32.);
+    let radius = snapshot
+        .number("theme.geometry.window_radius", 14.)
+        .clamp(0., 28.);
+    let enabled = snapshot.boolean("appearance.window_effects.enabled", true);
+    let opacity = if enabled {
+        snapshot
+            .number("appearance.window_effects.opacity", 1.)
+            .clamp(0., 1.)
+    } else {
+        1.
+    };
+    let blur = if enabled
+        && snapshot.boolean("appearance.window_effects.blur", true)
+        && !theme.accessibility.reduce_transparency
+        && opacity > 0.
+        && opacity < 1.
+    {
+        theme.tokens.material.blur_radius.clamp(0., 32.) * 0.65
+    } else {
+        0.
+    };
+    let dim = if enabled {
+        snapshot
+            .number("appearance.window_effects.inactive_dim", 0.)
+            .clamp(0., 1.)
+    } else {
+        0.
+    };
+    let focus_width = snapshot
+        .number("theme.geometry.focus_ring_width", 2.)
+        .clamp(0., 4.)
+        * 0.65;
+    let right = 340. + gap / 2.;
+    let width = 288. - gap / 2.;
+    let mut svg = format!(
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="680" height="210" viewBox="0 0 680 210">
+        <defs>
+          <g id="backdrop">
+            <rect width="680" height="210" fill="{base}"/>
+            <path d="M0 130L180 0H310L70 210H0Z M270 210L520 0H640L390 210Z" fill="{accent}" opacity=".55"/>
+            <path d="M0 170Q170 35 340 140T680 65V210H0Z" fill="{muted}" opacity=".18"/>
+          </g>
+          <filter id="blur" x="-25%" y="-50%" width="150%" height="200%" color-interpolation-filters="sRGB">
+            <feGaussianBlur stdDeviation="{blur}"/>
+          </filter>
+          <clipPath id="screen"><rect width="680" height="210" rx="14"/></clipPath>
+          <clipPath id="active"><rect x="44" y="30" width="{width}" height="152" rx="{radius}"/></clipPath>
+          <clipPath id="inactive"><rect x="{right}" y="30" width="{width}" height="152" rx="{radius}"/></clipPath>
+        </defs>
+        <g clip-path="url(#screen)"><use href="#backdrop"/>"##,
+    );
+    for (x, clip, inactive) in [(44., "active", false), (right, "inactive", true)] {
+        if blur > 0. {
+            svg.push_str(&format!(
+                r##"<g clip-path="url(#{clip})"><use href="#backdrop" filter="url(#blur)"/></g>"##,
+            ));
+        }
+        let text_x = x + 20.;
+        let dim_alpha = if inactive { dim * opacity } else { 0. };
+        svg.push_str(&format!(
+            r##"<g clip-path="url(#{clip})" opacity="{opacity}">
+              <rect x="{x}" y="30" width="{width}" height="152" fill="{card}"/>
+              <path d="M{text_x} 52h65 M{text_x} 80h170 M{text_x} 99h120 M{text_x} 118h152 M{text_x} 145h98" stroke="{muted}" opacity=".65" stroke-width="4" stroke-linecap="round"/>
+            </g>"##,
+        ));
+        if !inactive {
+            svg.push_str(&format!(
+                r##"<rect x="{x}" y="30" width="{width}" height="152" rx="{radius}" fill="none" stroke="{accent}" stroke-width="{focus_width}" opacity="{opacity}"/>"##,
+            ));
+        }
+        if dim_alpha > 0. {
+            svg.push_str(&format!(
+                r##"<rect x="{x}" y="30" width="{width}" height="152" rx="{radius}" fill="black" opacity="{dim_alpha}"/>"##,
+            ));
+        }
+    }
+    svg.push_str("</g></svg>");
+    svg
 }
 
 #[cfg(test)]

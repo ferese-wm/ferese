@@ -6,7 +6,7 @@
 | `low-battery-threshold` | integer 0–100 | `20` | Warning-color threshold |
 | `settings-command` | argument array | `["ferese-settings"]` | Settings launcher; `[]` hides the action |
 
-Configure the panel in **Panel & Shell** or its KDL block, as described in the
+Configure the panel in **Panel** or its KDL block, as described in the
 [panel guide](../panel-configuration.md). The panel's appearance applies to every
 group, while popup and notification backgrounds follow the shared shell theme.
 Transparent gaps between islands pass clicks through to the windows beneath.

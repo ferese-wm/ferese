@@ -105,7 +105,6 @@ use crate::config::{
     Binding, BindingSet, DaemonConfig, InputSettings, OutputProfile, ThemeSettings,
 };
 use crate::cursor::NamedCursor;
-use crate::focus_effect::BoundedFade;
 use crate::gestures::{Swipe, SwipeDirection};
 use crate::handlers::screencopy::PendingScreencopy;
 use crate::handlers::screenshot::{Coordinator, PartSender};
@@ -120,6 +119,7 @@ use crate::session_lock::{IdleSettings, Lock};
 use crate::shell_control::ShellSnapshot;
 use crate::stacking::{StackingCache, WindowStack};
 use crate::wallpaper::{WallpaperConfig, WallpaperState};
+use crate::window_effects::BoundedFade;
 use crate::window_rules::{WindowRule, resolve as resolve_window_rules};
 use crate::winit::NestedBackend;
 
@@ -514,7 +514,7 @@ pub struct Ferese {
     pub(crate) panel_corner_radius: Option<ferese_panel::CornerRadii>,
     pub(crate) panel_background_opacity: Option<f32>,
     pub(crate) panel_style: ferese_panel::PanelStyle,
-    pub(crate) focus_effect: crate::config::FocusEffectSettings,
+    pub(crate) window_effects: crate::config::WindowEffectsSettings,
     animations_enabled: bool,
     animation_speed: f64,
     pub(crate) spring_config: SpringConfig,
@@ -624,7 +624,7 @@ pub struct RuntimeConfig {
     pub(crate) panel_corner_radius: Option<ferese_panel::CornerRadii>,
     pub(crate) panel_background_opacity: Option<f32>,
     pub(crate) panel_style: ferese_panel::PanelStyle,
-    pub focus_effect: crate::config::FocusEffectSettings,
+    pub window_effects: crate::config::WindowEffectsSettings,
     pub default_column_width: ColumnWidth,
     pub default_column_display: ferese_layout::ColumnDisplay,
     pub(crate) tab_indicator: crate::config::TabIndicatorSettings,
@@ -856,7 +856,7 @@ impl Ferese {
             panel_corner_radius: config.panel_corner_radius,
             panel_background_opacity: config.panel_background_opacity,
             panel_style: config.panel_style,
-            focus_effect: config.focus_effect,
+            window_effects: config.window_effects,
             animations_enabled: config.animations_enabled,
             animation_speed: config.animation_speed,
             spring_config: config.spring_config,
@@ -1102,7 +1102,7 @@ impl Ferese {
         self.clear_tab_indicator();
         self.panel_background_opacity = config.panel_background_opacity;
         self.panel_style = config.panel_style;
-        self.focus_effect = config.focus_effect;
+        self.window_effects = config.window_effects;
         self.column_width_presets = config.column_width_presets;
         self.animations_enabled = config.animations_enabled;
         if !self.animations_enabled {

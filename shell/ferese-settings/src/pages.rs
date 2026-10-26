@@ -199,12 +199,6 @@ impl App {
                 );
             }
         } else {
-            if self.page == Page::Windows {
-                body = body.push(visuals::preview_resolved(
-                    &self.draft,
-                    &self.resolved.presented,
-                ));
-            }
             if self.page == Page::Appearance {
                 let split = visuals::split(&self.draft);
                 if split {
@@ -243,54 +237,77 @@ impl App {
                 schema::fields(self.page)
             };
 
-            if !fields.is_empty() {
-                let mut group = column([]).spacing(1);
-                if self.page == Page::Appearance && self.auto_details {
-                    group = group.push(self.auto_controls());
+            if self.page == Page::Appearance && self.auto_details {
+                body = body.push(self.auto_controls());
+            }
+            let mut group = column([]).spacing(1);
+            let mut current_section = None;
+            for field in fields {
+                if self.page == Page::Appearance
+                    && (field.path == "theme.mode"
+                        || field.path.starts_with("theme.schedule.")
+                        || field.path.ends_with(".file"))
+                {
+                    continue;
                 }
-                for field in fields {
-                    if self.page == Page::Appearance
-                        && (field.path == "theme.mode"
-                            || field.path.starts_with("theme.schedule.")
-                            || field.path.ends_with(".file"))
-                    {
-                        continue;
+                let section = schema::section(self.page, &field.path);
+                if current_section != Some(section) {
+                    if current_section.is_some() {
+                        if self.page == Page::Appearance && current_section == Some("Theme") {
+                            group = group.push(
+                                button::custom(
+                                    row([])
+                                        .spacing(8)
+                                        .align_y(Alignment::Center)
+                                        .push(self.label("Advanced customization", 13.))
+                                        .push(visuals::action_icon(
+                                            if self.advanced_theme {
+                                                "M6 15l6-6 6 6"
+                                            } else {
+                                                "M6 9l6 6 6-6"
+                                            },
+                                            palette.muted,
+                                        )),
+                                )
+                                .name(if self.advanced_theme {
+                                    "Collapse advanced customization"
+                                } else {
+                                    "Expand advanced customization"
+                                })
+                                .padding([7, 10])
+                                .width(Length::Fill)
+                                .class(visuals::button_style(palette, false))
+                                .on_press(Message::AdvancedTheme(!self.advanced_theme)),
+                            );
+                            if self.advanced_theme {
+                                group = group.push(self.theme_file_picker());
+                            }
+                        }
+                        body = body.push(
+                            container(group)
+                                .padding(8)
+                                .class(visuals::surface(palette.card, 14.)),
+                        );
                     }
-                    group = group.push(self.field(field));
-                }
-                if self.page == Page::Appearance {
-                    group = group.push(
-                        button::custom(
-                            row([])
-                                .spacing(8)
-                                .align_y(Alignment::Center)
-                                .push(self.label("Advanced customization", 13.))
-                                .push(visuals::action_icon(
-                                    if self.advanced_theme {
-                                        "M6 15l6-6 6 6"
-                                    } else {
-                                        "M6 9l6 6 6-6"
-                                    },
-                                    palette.muted,
-                                )),
-                        )
-                        .name(if self.advanced_theme {
-                            "Collapse advanced customization"
-                        } else {
-                            "Expand advanced customization"
-                        })
-                        .padding([7, 10])
-                        .width(Length::Fill)
-                        .class(visuals::button_style(palette, false))
-                        .on_press(Message::AdvancedTheme(!self.advanced_theme)),
-                    );
-                    if self.advanced_theme {
-                        group = group.push(self.theme_file_picker());
+                    group = column([]).spacing(1);
+                    if !section.is_empty() {
+                        group = group
+                            .push(container(self.panel_heading(section, 15.)).padding([8, 10]));
                     }
+                    if self.page == Page::Appearance && section == "Windows" {
+                        group = group.push(visuals::preview_resolved(
+                            &self.draft,
+                            &self.resolved.presented,
+                        ));
+                    }
+                    current_section = Some(section);
                 }
+                group = group.push(self.field(field));
+            }
+            if current_section.is_some() {
                 body = body.push(
                     container(group)
-                        .padding(4)
+                        .padding(8)
                         .class(visuals::surface(palette.card, 14.)),
                 );
             }

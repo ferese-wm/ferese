@@ -469,7 +469,7 @@ mod tests {
         }
         let revision = state.ipc_events.config_revision;
         state
-            .reload_config_source("appearance { focus-effect { inactive-opacity 0.8; }; }".into())
+            .reload_config_source("appearance { window-effects { opacity 0.8; }; }".into())
             .unwrap();
         assert_eq!(state.ipc_events.config_revision, revision + 1);
         state.publish_ipc_events();

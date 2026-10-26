@@ -1,4 +1,5 @@
 mod appearance;
+
 mod bindings;
 mod input_motion;
 mod layout;
@@ -15,7 +16,7 @@ use std::path::PathBuf;
 pub(crate) use self::loading::{prepare, prepare_document, read_source, startup};
 pub(crate) use self::xwayland::{XwaylandConfig, XwaylandStartup};
 use appearance::{AppearanceConfig, ThemeConfig, parse_color};
-pub use appearance::{BorderGradient, FocusEffectSettings, MaterialStyle, ThemeSettings};
+pub use appearance::{BorderGradient, MaterialStyle, ThemeSettings, WindowEffectsSettings};
 pub use bindings::{Binding, BindingAction};
 use bindings::{BindingConfig, BindingMatch, BindingModeConfig, BindingModifiers};
 pub(crate) use bindings::{BindingModes, BindingSet, physical_keymap};
@@ -182,7 +183,7 @@ impl Config {
                 .as_ref()
                 .and_then(|panels| panels.first())
                 .and_then(|panel| panel.background_opacity),
-            focus_effect: self.focus_effect_settings()?,
+            window_effects: self.window_effects_settings()?,
             default_column_width: self.default_column_width()?,
             default_column_display: self.default_column_display(),
             tab_indicator: self.tab_indicator_settings()?,
@@ -1082,25 +1083,26 @@ mod tests {
     }
 
     #[test]
-    fn focus_effect_defaults_and_validation() {
-        let defaults = parse("").focus_effect_settings().unwrap();
+    fn window_effects_defaults_and_validation() {
+        let defaults = parse("").window_effects_settings().unwrap();
         assert!(defaults.enabled);
-        assert_eq!(defaults.active_opacity, 1.0);
-        assert_eq!(defaults.inactive_opacity, 1.0);
+        assert_eq!(defaults.opacity, 1.0);
         assert_eq!(defaults.inactive_dim, 0.0);
         assert_eq!(defaults.duration_ms, 150.0);
-        let settings = parse("appearance { focus-effect { active-opacity 0.9; inactive-opacity 0.8; inactive-dim 0.25; duration-ms 100; }; }")
-            .focus_effect_settings().unwrap();
+        let settings = parse(
+            "appearance { window-effects { opacity 0.8; inactive-dim 0.25; duration-ms 100; }; }",
+        )
+        .window_effects_settings()
+        .unwrap();
         assert!(settings.enabled);
-        assert_eq!(settings.active_opacity, 0.9);
-        assert_eq!(settings.inactive_opacity, 0.8);
+        assert_eq!(settings.opacity, 0.8);
         assert_eq!(settings.inactive_dim, 0.25);
         assert_eq!(settings.duration_ms, 100.0);
-        for key in ["active-opacity", "inactive-opacity", "inactive-dim"] {
+        for key in ["opacity", "inactive-dim"] {
             for value in ["-0.1", "1.1", "#nan", "#inf"] {
                 assert!(
                     Config::parse_source(&format!(
-                        "appearance {{ focus-effect {{ {key} {value}; }} }}"
+                        "appearance {{ window-effects {{ {key} {value}; }} }}"
                     ))
                     .and_then(|config| config.runtime_config())
                     .is_err()
@@ -1110,17 +1112,28 @@ mod tests {
         for value in ["-1", "#nan", "#inf"] {
             assert!(
                 Config::parse_source(&format!(
-                    "appearance {{ focus-effect {{ duration-ms {value}; }} }}"
+                    "appearance {{ window-effects {{ duration-ms {value}; }} }}"
                 ))
                 .and_then(|config| config.runtime_config())
                 .is_err()
             );
         }
-        let disabled = parse("appearance { focus-effect { enabled #false; active-opacity 0.9; inactive-opacity 0.8; inactive-dim 0.25; }; }")
-            .focus_effect_settings().unwrap();
+        for removed in ["active-opacity", "inactive-opacity"] {
+            assert!(
+                Config::parse_source(&format!(
+                    "appearance {{ window-effects {{ {removed} 0.8; }} }}"
+                ))
+                .is_err()
+            );
+        }
+        assert!(Config::parse_source("appearance { focus-effect { enabled #true; }; }").is_err());
+        let disabled = parse(
+            "appearance { window-effects { enabled #false; opacity 0.8; inactive-dim 0.25; }; }",
+        )
+        .window_effects_settings()
+        .unwrap();
         assert!(!disabled.enabled);
-        assert_eq!(disabled.active_opacity, 0.9);
-        assert_eq!(disabled.inactive_opacity, 0.8);
+        assert_eq!(disabled.opacity, 0.8);
         assert_eq!(disabled.inactive_dim, 0.25);
         assert!(Config::parse_source("appearance { inactive-dim { enabled #true; }; }").is_err());
     }

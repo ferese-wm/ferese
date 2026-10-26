@@ -72,6 +72,7 @@ fn render_window_texture(
     }
     Ok(Some(ResizeSnapshot {
         texture,
+        opaque: super::window_blur::client_is_opaque(window),
         context: renderer.context_id().erased(),
         id: Id::new(),
         commit: CommitCounter::default(),

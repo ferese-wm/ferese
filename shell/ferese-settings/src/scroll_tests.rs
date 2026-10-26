@@ -629,7 +629,7 @@ fn gpu_panel_text_survives_preview_clipping_and_scrolling() {
 
 /// Reproducible sketches rendered from the actual widgets, with no live services.
 #[test]
-#[ignore = "writes Panel & Shell review images to /tmp/ferese-panel-review-{backend}"]
+#[ignore = "writes Settings review images to /tmp/ferese-panel-review-{backend}"]
 fn render_panel_review_states() {
     let backend = std::env::var("FERESE_REVIEW_BACKEND").unwrap_or_else(|_| "tiny-skia".into());
     let runtime = tokio::runtime::Builder::new_current_thread()
@@ -694,6 +694,19 @@ fn render_panel_review_states() {
             ("navigation", panel_controls::PanelPage::Arrange, None, None),
             ("shortcuts", panel_controls::PanelPage::Panels, None, None),
             ("motion", panel_controls::PanelPage::Panels, None, None),
+            (
+                "appearance-shell",
+                panel_controls::PanelPage::Panels,
+                None,
+                None,
+            ),
+            (
+                "appearance-windows",
+                panel_controls::PanelPage::Panels,
+                None,
+                None,
+            ),
+            ("windows", panel_controls::PanelPage::Panels, None, None),
             ("items", panel_controls::PanelPage::Arrange, None, None),
             (
                 "workspace-styles",
@@ -717,6 +730,8 @@ fn render_panel_review_states() {
             app.page = match name {
                 "shortcuts" => Page::Shortcuts,
                 "motion" => Page::Motion,
+                "windows" => Page::Windows,
+                "appearance-shell" | "appearance-windows" => Page::Appearance,
                 _ => Page::Bar,
             };
             app.draft = Snapshot::parse(String::new()).unwrap();
@@ -766,6 +781,64 @@ fn render_panel_review_states() {
                     &renderer,
                     &layout::Limits::new(Size::ZERO, bounds.size()),
                 );
+                if matches!(name, "appearance-shell" | "appearance-windows") {
+                    struct SectionTarget {
+                        label: &'static str,
+                        y: f32,
+                        viewport: f32,
+                    }
+                    impl Operation for SectionTarget {
+                        fn traverse(&mut self, children: &mut dyn FnMut(&mut dyn Operation)) {
+                            children(self);
+                        }
+                        fn text(&mut self, _: Option<&widget::Id>, bounds: Rectangle, text: &str) {
+                            if text == self.label {
+                                self.y = bounds.y;
+                            }
+                        }
+                        fn scrollable(
+                            &mut self,
+                            id: Option<&widget::Id>,
+                            bounds: Rectangle,
+                            _: Rectangle,
+                            _: Vector,
+                            _: &mut dyn cosmic::iced::advanced::widget::operation::Scrollable,
+                        ) {
+                            if id == Some(&widget::Id::new("settings-content")) {
+                                self.viewport = bounds.y;
+                            }
+                        }
+                    }
+                    let mut target = SectionTarget {
+                        label: if name == "appearance-shell" {
+                            "Shell & shared blur"
+                        } else {
+                            "Windows"
+                        },
+                        y: 0.,
+                        viewport: 0.,
+                    };
+                    view.as_widget_mut().operate(
+                        &mut tree,
+                        Layout::new(&node),
+                        &renderer,
+                        &mut target,
+                    );
+                    let mut scroll =
+                        cosmic::iced::advanced::widget::operation::scrollable::scroll_to::<()>(
+                            widget::Id::new("settings-content"),
+                            cosmic::iced::widget::scrollable::AbsoluteOffset {
+                                x: None,
+                                y: Some((target.y - target.viewport - 8.).max(0.)),
+                            },
+                        );
+                    view.as_widget_mut().operate(
+                        &mut tree,
+                        Layout::new(&node),
+                        &renderer,
+                        &mut scroll,
+                    );
+                }
                 #[derive(Default)]
                 struct HoverTarget(Option<Rectangle>);
                 impl Operation for HoverTarget {
@@ -1083,4 +1156,147 @@ fn sidebar_collapses_at_the_breakpoint_and_compact_navigation_dismisses() {
         "reselecting the current page closes navigation too"
     );
     assert!(app.pending.is_empty() && !app.saving);
+}
+
+#[test]
+fn window_preview_renders_opacity_blur_and_accessibility() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let app = App::init(
+        Core::default(),
+        (
+            "/unused/preview.kdl".into(),
+            Snapshot::parse(String::new()),
+            None,
+        ),
+    )
+    .0;
+    let mut resolved = app.resolved.presented.clone();
+    resolved.accessibility.reduce_transparency = false;
+    resolved.tokens.material.blur_radius = 24.;
+    for backend in ["tiny-skia", "wgpu"] {
+        let mut renderer = runtime
+            .block_on(<cosmic::Renderer as Headless>::new(
+                Font::default(),
+                Pixels(14.),
+                Some(backend),
+            ))
+            .expect("preview renderer");
+        let mut render = |snapshot: &Snapshot, theme: &ferese_config::theme::ResolvedTheme| {
+            let bounds = Rectangle::with_size(Size::new(680., 132.));
+            let native_theme = visuals::Palette::from_resolved(theme).native_theme();
+            let mut view = visuals::preview_resolved(snapshot, theme);
+            let mut tree = Tree::new(view.as_widget());
+            let node = view.as_widget_mut().layout(
+                &mut tree,
+                &renderer,
+                &layout::Limits::new(Size::ZERO, bounds.size()),
+            );
+            renderer.reset(bounds);
+            view.as_widget().draw(
+                &tree,
+                &mut renderer,
+                &native_theme,
+                &renderer::Style {
+                    text_color: Color::WHITE,
+                    icon_color: Color::WHITE,
+                    scale_factor: 1.,
+                },
+                Layout::new(&node),
+                mouse::Cursor::Unavailable,
+                &bounds,
+            );
+            Headless::screenshot(&mut renderer, Size::new(680, 132), 1., Color::BLACK)
+        };
+        let mut snapshot = Snapshot::parse(String::new()).unwrap();
+        let opaque = render(&snapshot, &resolved);
+        snapshot
+            .edit(&store::set("appearance.window_effects.opacity", 0.5))
+            .unwrap();
+        snapshot
+            .edit(&store::set("appearance.window_effects.blur", false))
+            .unwrap();
+        let transparent = render(&snapshot, &resolved);
+        snapshot
+            .edit(&store::set("appearance.window_effects.blur", true))
+            .unwrap();
+        let blurred = render(&snapshot, &resolved);
+        let changed = |a: &[u8], b: &[u8]| {
+            a.chunks_exact(4)
+                .zip(b.chunks_exact(4))
+                .filter(|(a, b)| a[..3].iter().zip(&b[..3]).any(|(a, b)| a.abs_diff(*b) > 3))
+                .count()
+        };
+        assert!(
+            changed(&opaque, &transparent) > 1000,
+            "{backend}: opacity must change rendered window pixels"
+        );
+        assert!(
+            changed(&transparent, &blurred) > 200,
+            "{backend}: blur must soften the visible backdrop"
+        );
+        let mut accessible = resolved.clone();
+        accessible.accessibility.reduce_transparency = true;
+        assert_eq!(
+            render(&snapshot, &accessible),
+            transparent,
+            "{backend}: reduced transparency must suppress blur"
+        );
+        snapshot
+            .edit(&store::set("appearance.window_effects.enabled", false))
+            .unwrap();
+        assert_eq!(
+            render(&snapshot, &resolved),
+            opaque,
+            "{backend}: disabling effects must restore opaque windows"
+        );
+        snapshot
+            .edit(&store::set("appearance.window_effects.enabled", true))
+            .unwrap();
+        snapshot
+            .edit(&store::set("appearance.window_effects.inactive_dim", 0.5))
+            .unwrap();
+        let dimmed = render(&snapshot, &resolved);
+        // The compositor dims the already-composited window with a black
+        // overlay at dim * window opacity. This interior pixel avoids text
+        // and antialiased edges in the SVG sample.
+        let pixel = (56 * 680 + 406) * 4;
+        for channel in 0..3 {
+            let expected = (f32::from(blurred[pixel + channel]) * 0.75).round() as u8;
+            assert!(
+                dimmed[pixel + channel].abs_diff(expected) <= 2,
+                "{backend}: dimming must darken the composited backdrop: actual={}, expected={expected}",
+                dimmed[pixel + channel]
+            );
+        }
+        let half_changed = |left: bool| {
+            blurred
+                .chunks_exact(4)
+                .zip(dimmed.chunks_exact(4))
+                .enumerate()
+                .filter(|(i, (a, b))| (*i % 680 < 340) == left && a != b)
+                .count()
+        };
+        assert_eq!(
+            half_changed(true),
+            0,
+            "{backend}: dimming must leave the focused sample alone"
+        );
+        assert!(
+            half_changed(false) > 1000,
+            "{backend}: the inactive sample must darken"
+        );
+        snapshot
+            .edit(&store::set("appearance.window_effects.opacity", 0.))
+            .unwrap();
+        let invisible = render(&snapshot, &resolved);
+        let mut no_border = resolved.clone();
+        no_border.tokens.geometry.focus_ring_width = 0.;
+        assert!(
+            render(&snapshot, &no_border) == invisible,
+            "{backend}: zero opacity must hide the focus border too"
+        );
+    }
 }

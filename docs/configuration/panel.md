@@ -2,7 +2,7 @@
 
 Ferese uses one panel configuration across all outputs, with each output laying
 out its own workspace controls and focused-window title. Open **Settings →
-Panel & Shell** to choose a style and position, then **Edit panel** to arrange
+Panel** to choose a style and position, then **Edit panel** to arrange
 items in Start, Center and End groups. The composition preview stays visible
 while you edit, and changes save automatically.
 

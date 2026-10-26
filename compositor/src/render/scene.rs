@@ -463,6 +463,7 @@ fn scene_elements(
                     state,
                     renderer,
                     output,
+                    || super::window_blur::client_is_opaque(&window),
                     sample.presentation,
                     corners,
                 )

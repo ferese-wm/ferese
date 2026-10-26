@@ -113,10 +113,10 @@ animations {
 }
 
 appearance {
-    focus-effect {
+    window-effects {
         enabled #true
-        active-opacity 1.0
-        inactive-opacity 1.0
+        opacity 1.0
+        blur #true
         inactive-dim 0.0
         duration-ms 150
     }

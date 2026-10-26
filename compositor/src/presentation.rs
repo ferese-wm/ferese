@@ -28,7 +28,7 @@ pub(crate) struct WindowPresentation {
     pub id: ferese_layout::WindowId,
     pub bounds: AnimatedRect,
     pub opacity: ferese_animation::AnimatedValue,
-    pub focus_alpha: f32,
+    pub window_alpha: f32,
     pub dim: f64,
     pub emphasis: ferese_animation::AnimatedValue,
     pub shadow: ferese_animation::AnimatedValue,
@@ -38,7 +38,7 @@ pub(crate) struct WindowPresentation {
 
 impl WindowPresentation {
     pub fn alpha(self) -> f32 {
-        self.focus_alpha * self.opacity.current.clamp(0.0, 1.0) as f32
+        self.window_alpha * self.opacity.current.clamp(0.0, 1.0) as f32
     }
 
     pub fn focus(self) -> f64 {
@@ -407,17 +407,17 @@ impl RenderElement<GlesRenderer> for NativeTextureElement {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn activation_alpha_composes_with_lifecycle_without_retargeting_it() {
+    fn window_opacity_composes_with_lifecycle_without_retargeting_it() {
         let mut presentation = moving_presentation();
-        presentation.focus_alpha = 0.8;
+        presentation.window_alpha = 0.8;
         presentation.opacity.current = 0.5;
         let lifecycle = presentation.opacity;
         assert!((presentation.alpha() - 0.4).abs() < 1e-6);
-        presentation.focus_alpha = 0.9;
+        presentation.window_alpha = 0.9;
         assert_eq!(presentation.opacity, lifecycle);
         assert!((presentation.alpha() - 0.45).abs() < 1e-6);
         presentation.close();
-        assert_eq!(presentation.focus_alpha, 0.9);
+        assert_eq!(presentation.window_alpha, 0.9);
         assert_eq!(presentation.opacity.current, 0.5);
         assert_eq!(presentation.opacity.target, 0.0);
         assert_eq!(
@@ -431,7 +431,7 @@ mod tests {
     fn moving_presentation() -> WindowPresentation {
         use ferese_animation::{AnimatedRect, AnimatedValue, RectVelocity};
         WindowPresentation {
-            focus_alpha: 1.0,
+            window_alpha: 1.0,
             dim: 0.0,
             id: ferese_layout::WindowId(7),
             bounds: AnimatedRect {

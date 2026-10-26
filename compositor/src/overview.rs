@@ -1334,7 +1334,7 @@ mod tests {
         let scale = 0.97 + 0.03 * opacity.current;
         let id = WindowId(1);
         let presentation = WindowPresentation {
-            focus_alpha: 1.0,
+            window_alpha: 1.0,
             dim: 0.0,
             id,
             bounds: AnimatedRect {

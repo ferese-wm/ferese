@@ -297,6 +297,7 @@ mod tests {
                 id,
                 ResizeSnapshot {
                     texture,
+                    opaque: true,
                     context: renderer.context_id().erased(),
                     id: Id::new(),
                     commit: CommitCounter::default(),

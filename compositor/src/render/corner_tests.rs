@@ -737,6 +737,7 @@ fn window_role_change_invalidates_decorations_and_preserves_the_resize_snapshot(
         id,
         ResizeSnapshot {
             texture,
+            opaque: true,
             context: context.clone(),
             id: Id::new(),
             commit: CommitCounter::default(),

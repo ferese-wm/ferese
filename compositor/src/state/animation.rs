@@ -166,7 +166,7 @@ impl Ferese {
         self.windows.records().any(|(&id, record)| {
             let focus = if selected == Some(id) { 1.0 } else { 0.0 };
             let activation =
-                crate::focus_effect::target(self.focus_effect, self.focused_window, id);
+                crate::window_effects::target(self.window_effects, self.focused_window, id);
 
             record_needs_tick(record, focus, activation, || {
                 self.windows
@@ -264,7 +264,7 @@ impl Ferese {
             active
         });
 
-        let effect = self.focus_effect;
+        let effect = self.window_effects;
         let duration = if self.animations_enabled && effect.enabled {
             effect.duration_ms
         } else {
@@ -315,10 +315,10 @@ impl Ferese {
             }
             appearance_changed |= previous != shadow.current;
 
-            let target = crate::focus_effect::target(effect, self.focused_window, id);
+            let target = crate::window_effects::target(effect, self.focused_window, id);
             let transition = record
                 .focus_transition
-                .get_or_insert_with(|| crate::focus_effect::BoundedFade::new(target));
+                .get_or_insert_with(|| crate::window_effects::BoundedFade::new(target));
             let previous = transition.current;
             active_animation |= transition.advance_visual(target, delta, duration);
             appearance_changed |= previous != transition.current;

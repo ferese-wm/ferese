@@ -12,11 +12,11 @@ environment for screenshots to work.
 Text input is available by default; Ctrl+Alt+Escape releases an active shortcut
 inhibitor. Use `feresectl --help` for runtime control commands.
 
-Shell rounding is controlled in Settings → Panel & Shell → Shell corner radius.
+Shell rounding is controlled in Settings → Appearance → Shell corner radius.
 The shell and compositor use the same squircle profile for fills, borders, shadows
 and blur masks. Small controls cap the radius to fit their size; circles and pills
 keep circular outlines. The measured profile has small tangent and curvature
 discontinuities at its internal segment joins. Window rounding remains under
-Settings → Windows. Shell rounding comes from `theme.geometry.shell-radius`,
+Settings → Appearance → Windows. Shell rounding comes from `theme.geometry.shell-radius`,
 which defaults to 14 px. Panel corners follow their selected style and height,
 with optional overrides in the [panel configuration](../panel-configuration.md#background-outline-and-corners).

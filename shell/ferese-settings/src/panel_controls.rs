@@ -181,42 +181,40 @@ impl App {
                     } else {
                         self.panel_radius_controls()
                     });
+                let mut behaviour = widget::column([])
+                    .spacing(16)
+                    .push(self.panel_heading("Behaviour", 15.));
                 if preset == Some(ferese_panel::PanelStyle::Morph) {
                     let enabled = self.draft.boolean("panels.0.morph.peek_on_hover", true);
                     let attached = self.draft.boolean("panels.0.morph.attached", false);
-                    appearance = appearance
-                        .push(self.panel_divider())
-                        .push(
-                            self.panel_appearance_row(
-                                "Attach to screen edge",
-                                "Join the island to the screen edge with curved shoulders.",
-                                widget::container(
-                                    ferese_theme::controls::switch(attached, palette)
-                                        .name("Attach to screen edge")
-                                        .on_press(Message::PanelEdit(Action::SetMorphAttached(
-                                            !attached,
-                                        ))),
-                                )
-                                .align_right(cosmic::iced::Length::Fill)
-                                .into(),
-                            ),
-                        )
-                        .push(self.panel_divider())
-                        .push(
-                            self.panel_appearance_row(
-                                "Preview on hover",
-                                "Expand the island when you hover over it.",
-                                widget::container(
-                                    ferese_theme::controls::switch(enabled, palette)
-                                        .name("Preview on hover")
-                                        .on_press(Message::PanelEdit(Action::SetPeekOnHover(
-                                            !enabled,
-                                        ))),
-                                )
-                                .align_right(cosmic::iced::Length::Fill)
-                                .into(),
-                            ),
-                        );
+                    appearance = appearance.push(self.panel_divider()).push(
+                        self.panel_appearance_row(
+                            "Attach to screen edge",
+                            "Join the island to the screen edge with curved shoulders.",
+                            widget::container(
+                                ferese_theme::controls::switch(attached, palette)
+                                    .name("Attach to screen edge")
+                                    .on_press(Message::PanelEdit(Action::SetMorphAttached(
+                                        !attached,
+                                    ))),
+                            )
+                            .align_right(cosmic::iced::Length::Fill)
+                            .into(),
+                        ),
+                    );
+                    behaviour = behaviour.push(
+                        self.panel_appearance_row(
+                            "Preview on hover",
+                            "Expand the island when you hover over it.",
+                            widget::container(
+                                ferese_theme::controls::switch(enabled, palette)
+                                    .name("Preview on hover")
+                                    .on_press(Message::PanelEdit(Action::SetPeekOnHover(!enabled))),
+                            )
+                            .align_right(cosmic::iced::Length::Fill)
+                            .into(),
+                        ),
+                    );
                     let maximum = self.draft.number("activities.max_visible", 2.) as u64;
                     let choices = widget::row([1_u64, 2].into_iter().map(|count| {
                         widget::button::custom(self.label(count.to_string(), 12.))
@@ -230,7 +228,7 @@ impl App {
                             .into()
                     }))
                     .spacing(2);
-                    appearance = appearance.push(self.panel_divider()).push(
+                    behaviour = behaviour.push(self.panel_divider()).push(
                         self.panel_appearance_row(
                             "Visible activities",
                             "Maximum activities in the collapsed and peek island.",
@@ -242,7 +240,7 @@ impl App {
                     );
                 }
                 let show_badge = self.draft.boolean("activities.show_badge", true);
-                appearance = appearance.push(self.panel_divider()).push(
+                behaviour = behaviour.push(self.panel_divider()).push(
                     self.panel_appearance_row(
                         "Show activity count",
                         "Show +n for additional activities.",
@@ -353,20 +351,17 @@ impl App {
                         .padding(12)
                         .class(crate::visuals::surface(palette.card, 14.)),
                 );
-                let mut shell = widget::column([])
-                    .spacing(4)
-                    .push(self.panel_heading("Shell appearance", 15.));
-                for field in crate::schema::fields(Page::Bar)
-                    .into_iter()
-                    .filter(|field| field.path.starts_with("theme."))
-                {
-                    shell = shell.push(self.field(field));
-                }
                 rows = rows.push(
-                    widget::container(shell)
-                        .padding(12)
+                    widget::container(behaviour)
+                        .padding(16)
                         .class(crate::visuals::surface(palette.card, 14.)),
                 );
+                rows = rows.push(self.settings_button(
+                    "Shell appearance…",
+                    "M9 18l6-6-6-6",
+                    Some(Message::Page(Page::Appearance)),
+                    false,
+                ));
             }
             PanelPage::Arrange => return self.panel_workspace(),
         }

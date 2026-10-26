@@ -212,6 +212,13 @@ pub(super) fn grouped_elements(
                 state,
                 renderer,
                 output,
+                || {
+                    window.snapshot.opaque
+                        && window
+                            .handoff
+                            .as_ref()
+                            .is_none_or(|(snapshot, _)| snapshot.opaque)
+                },
                 window.presentation,
                 corners,
             )

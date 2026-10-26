@@ -1,7 +1,7 @@
 # Configure Activities
 
-Select Morph in **Settings → Panel & Shell** to find **Visible activities** and
-**Show activity count** in its appearance controls. These set the compact slots
+Select Morph in **Settings → Panel** to find **Visible activities** and
+**Show activity count** in its Behaviour section. These set the compact slots
 and `+n` badge; hiding the badge still lets you open the full list.
 
 Set sources, timing and command rules in the top-level `activities` block in

@@ -34,28 +34,28 @@ impl Ferese {
         ))
     }
 
-    fn window_focus_effect(
+    fn window_appearance(
         &self,
         id: WindowId,
         delta: Duration,
         overview_opacity: f32,
     ) -> (f32, f64) {
-        let target = crate::focus_effect::target(self.focus_effect, self.focused_window, id);
+        let target = crate::window_effects::target(self.window_effects, self.focused_window, id);
         let mut focus = self
             .windows
             .record(id)
             .and_then(|record| record.focus_transition.clone())
-            .unwrap_or_else(|| crate::focus_effect::BoundedFade::new(target));
+            .unwrap_or_else(|| crate::window_effects::BoundedFade::new(target));
         focus.advance_visual(
             target,
             delta,
-            if self.animations_enabled && self.focus_effect.enabled {
-                self.focus_effect.duration_ms
+            if self.animations_enabled && self.window_effects.enabled {
+                self.window_effects.duration_ms
             } else {
                 0.0
             },
         );
-        self.focus_effect.resolve(
+        self.window_effects.resolve(
             focus.current,
             self.focused_window.is_some(),
             overview_opacity,
@@ -165,10 +165,10 @@ impl Ferese {
             bounds.velocity = Default::default();
         }
         bounds.target = bounds.current;
-        let (focus_alpha, dim) = self.window_focus_effect(id, delta, overview.opacity());
+        let (window_alpha, dim) = self.window_appearance(id, delta, overview.opacity());
         crate::presentation::WindowPresentation {
             id,
-            focus_alpha,
+            window_alpha,
             dim,
             bounds,
             opacity,
@@ -235,8 +235,8 @@ impl Ferese {
                     }) || record.shadow.as_ref().is_some_and(|shadow| {
                         shadow.needs_update(if selected == Some(id) { 1.0 } else { 0.0 })
                     }) || record.focus_transition.as_ref().is_some_and(|transition| {
-                        transition.needs_update(crate::focus_effect::target(
-                            self.focus_effect,
+                        transition.needs_update(crate::window_effects::target(
+                            self.window_effects,
                             self.focused_window,
                             id,
                         ))
@@ -440,7 +440,7 @@ impl Ferese {
                 id,
                 bounds: geometry.visual,
                 opacity: AnimatedValue::new(1.0),
-                focus_alpha: 1.0,
+                window_alpha: 1.0,
                 dim: 0.0,
                 emphasis,
                 shadow: emphasis,
@@ -733,7 +733,7 @@ mod tests {
 
     #[test]
     #[ignore = "requires a private XDG_RUNTIME_DIR and permission to bind test sockets"]
-    fn focus_effect_sampling_preserves_activation_and_output_local_progress() {
+    fn window_effects_sampling_preserves_activation_and_output_local_progress() {
         let runtime = std::path::PathBuf::from(std::env::var_os("XDG_RUNTIME_DIR").unwrap());
         assert!(runtime.starts_with(std::env::temp_dir()));
         let mut event_loop = EventLoop::try_new().unwrap();
@@ -743,11 +743,10 @@ mod tests {
             crate::config::Config::default().runtime_config().unwrap(),
         )
         .unwrap();
-        state.focus_effect = crate::config::FocusEffectSettings {
+        state.window_effects = crate::config::WindowEffectsSettings {
             enabled: true,
             blur: true,
-            active_opacity: 0.9,
-            inactive_opacity: 0.6,
+            opacity: 0.8,
             inactive_dim: 0.2,
             duration_ms: 150.0,
         };
@@ -788,11 +787,9 @@ mod tests {
                 id,
                 super::super::window_registry::WindowRecord {
                     geometry: Some(WindowGeometry::new(rect, Some(ClientSize::from_rect(rect)))),
-                    focus_transition: Some(crate::focus_effect::BoundedFade::new(if index == 0 {
-                        1.0
-                    } else {
-                        0.0
-                    })),
+                    focus_transition: Some(crate::window_effects::BoundedFade::new(
+                        if index == 0 { 1.0 } else { 0.0 },
+                    )),
                     ..Default::default()
                 },
             );
@@ -803,11 +800,11 @@ mod tests {
         state.focused_window = Some(first);
         assert_eq!(
             state.current_window_presentation(first).unwrap().alpha(),
-            0.9
+            0.8
         );
         assert_eq!(
             state.current_window_presentation(second).unwrap().alpha(),
-            0.6
+            0.8
         );
         // Only emphasis follows overview selection; activation and its fade remain unchanged.
         state.set_overview_active(true);
@@ -815,11 +812,11 @@ mod tests {
         assert_eq!(state.focused_window, Some(first));
         assert_eq!(
             state.current_window_presentation(first).unwrap().alpha(),
-            0.9
+            0.8
         );
         assert_eq!(
             state.current_window_presentation(second).unwrap().alpha(),
-            0.6
+            0.8
         );
         state.set_overview_active(false);
         state.focused_window = Some(second);
@@ -834,7 +831,8 @@ mod tests {
         let previous = transition.current;
         assert!(state.output_has_pending_visual_changes(&outputs[0]));
         let frame = state.sample_frame(&outputs[0], Duration::from_millis(75));
-        assert!((frame.windows[&first].presentation.alpha() - 0.75).abs() < 1e-6);
+        assert!((frame.windows[&first].presentation.alpha() - 0.8).abs() < 1e-6);
+        assert!((frame.windows[&first].presentation.dim - 0.1).abs() < 1e-6);
         assert!(!frame.windows.contains_key(&second));
         assert_eq!(
             state
@@ -861,11 +859,11 @@ mod tests {
         state.animations_enabled = false;
         assert_eq!(
             state.current_window_presentation(first).unwrap().alpha(),
-            0.6
+            0.8
         );
         assert_eq!(
             state.current_window_presentation(second).unwrap().alpha(),
-            0.9
+            0.8
         );
     }
 

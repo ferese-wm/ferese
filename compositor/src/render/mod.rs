@@ -114,6 +114,7 @@ render_elements! {
 #[derive(Clone, Debug)]
 pub(crate) struct ResizeSnapshot {
     pub texture: GlesTexture,
+    pub opaque: bool,
     pub context: ErasedContextId,
     pub id: Id,
     pub commit: CommitCounter,
@@ -242,9 +243,30 @@ impl BlurRenderElement {
             .commit
             .increment();
     }
+
+    fn capture(&self, frame: &mut GlesFrame<'_, '_>) -> Result<(), GlesError> {
+        if self.capture_dirty.load(Ordering::Relaxed) {
+            blur_cache::refresh(
+                frame,
+                &self.texture,
+                &self.scratch,
+                &self.program.1,
+                self.capture_rect,
+                self.blur,
+            )?;
+            self.capture_dirty.store(false, Ordering::Relaxed);
+        }
+        Ok(())
+    }
 }
 
 impl Element for BlurRenderElement {
+    fn is_framebuffer_effect(&self) -> bool {
+        // The entire sample must be drawn behind this element, even where a
+        // higher opaque window would normally occlude it.
+        true
+    }
+
     fn id(&self) -> &Id {
         &self.id
     }
@@ -288,6 +310,16 @@ impl Element for BlurRenderElement {
 }
 
 impl RenderElement<GlesRenderer> for BlurRenderElement {
+    fn capture_framebuffer(
+        &self,
+        frame: &mut GlesFrame<'_, '_>,
+        _src: Rectangle<f64, Buffer>,
+        _dst: Rectangle<i32, Physical>,
+        _cache: &smithay::utils::user_data::UserDataMap,
+    ) -> Result<(), GlesError> {
+        self.capture(frame)
+    }
+
     fn draw(
         &self,
         frame: &mut GlesFrame<'_, '_>,
@@ -297,17 +329,8 @@ impl RenderElement<GlesRenderer> for BlurRenderElement {
         opaque_regions: &[Rectangle<i32, Physical>],
         _cache: Option<&smithay::utils::user_data::UserDataMap>,
     ) -> Result<(), GlesError> {
-        if self.capture_dirty.load(Ordering::Relaxed) {
-            blur_cache::refresh(
-                frame,
-                &self.texture,
-                &self.scratch,
-                &self.program.1,
-                self.capture_rect,
-                self.blur,
-            )?;
-            self.capture_dirty.store(false, Ordering::Relaxed);
-        }
+        // Direct offscreen rendering can bypass OutputDamageTracker.
+        self.capture(frame)?;
 
         frame.render_texture_from_to(
             &self.texture,
