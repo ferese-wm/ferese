@@ -141,8 +141,7 @@ impl Write for PayloadBuffer {
         if required > self.bytes.capacity() {
             let capacity = required
                 .max(self.bytes.capacity().saturating_mul(2))
-                .max(128)
-                .min(MAX_PAYLOAD_SIZE);
+                .clamp(128, MAX_PAYLOAD_SIZE);
             self.bytes.reserve_exact(capacity - self.bytes.len());
         }
         self.bytes.extend_from_slice(bytes);

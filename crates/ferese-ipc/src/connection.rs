@@ -1,10 +1,44 @@
-use crate::{Request, Response, VERSION, read_frame, write_frame};
+use crate::{FrameError, Request, Response, VERSION, read_frame, write_frame};
 use serde_json::Value;
-use std::io;
+use std::io::{self, Read, Write};
 use std::net::Shutdown;
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, Instant};
+
+const FRAME_TIMEOUT: Duration = Duration::from_secs(2);
+
+struct DeadlineIo<'a> {
+    stream: &'a UnixStream,
+    deadline: Instant,
+}
+
+impl DeadlineIo<'_> {
+    fn remaining(&self) -> io::Result<Duration> {
+        self.deadline
+            .checked_duration_since(Instant::now())
+            .filter(|duration| !duration.is_zero())
+            .ok_or_else(|| io::Error::new(io::ErrorKind::TimedOut, "IPC frame deadline expired"))
+    }
+}
+
+impl Read for DeadlineIo<'_> {
+    fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+        self.stream.set_read_timeout(Some(self.remaining()?))?;
+        self.stream.read(bytes)
+    }
+}
+
+impl Write for DeadlineIo<'_> {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        self.stream.set_write_timeout(Some(self.remaining()?))?;
+        self.stream.write(bytes)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.stream.flush()
+    }
+}
 
 pub fn socket_path() -> io::Result<PathBuf> {
     crate::socket::resolve(None)
@@ -22,8 +56,8 @@ impl Connection {
 
     pub fn connect_to(path: impl AsRef<std::path::Path>) -> io::Result<Self> {
         let stream = UnixStream::connect(path)?;
-        stream.set_write_timeout(Some(Duration::from_secs(2)))?;
-        stream.set_read_timeout(Some(Duration::from_secs(2)))?;
+        stream.set_write_timeout(Some(FRAME_TIMEOUT))?;
+        stream.set_read_timeout(Some(FRAME_TIMEOUT))?;
         Ok(Self { stream, id: 0 })
     }
 
@@ -32,6 +66,15 @@ impl Connection {
     }
 
     pub fn call(&mut self, command: &str, args: Value) -> Result<Value, String> {
+        self.call_with_budget(command, args, FRAME_TIMEOUT)
+    }
+
+    fn call_with_budget(
+        &mut self,
+        command: &str,
+        args: Value,
+        budget: Duration,
+    ) -> Result<Value, String> {
         self.id = self.id.wrapping_add(1);
         let request = Request {
             version: VERSION,
@@ -40,8 +83,7 @@ impl Connection {
             command: command.into(),
             args,
         };
-        let response = write_frame(&mut self.stream, &request)
-            .and_then(|()| read_frame::<Response>(&mut self.stream));
+        let response = self.exchange(&request, budget);
         let response = match response {
             Ok(response) => response,
             Err(error) => {
@@ -59,6 +101,48 @@ impl Connection {
         response.result.ok_or_else(|| "Missing IPC result".into())
     }
 
+    fn exchange(&self, request: &Request, budget: Duration) -> Result<Response, FrameError> {
+        let read_timeout = self.stream.read_timeout()?;
+        let write_timeout = self.stream.write_timeout()?;
+        let result = (|| {
+            write_frame(
+                &mut DeadlineIo {
+                    stream: &self.stream,
+                    deadline: Instant::now() + write_timeout.unwrap_or(budget).min(budget),
+                },
+                request,
+            )?;
+            let deadline = read_timeout.map(|timeout| Instant::now() + timeout.min(budget));
+            let mut first = [0];
+            if let Some(deadline) = deadline {
+                DeadlineIo {
+                    stream: &self.stream,
+                    deadline,
+                }
+                .read_exact(&mut first)?;
+            } else {
+                // A watch may wait indefinitely for a change, but once its
+                // response starts, one absolute deadline bounds the frame.
+                (&self.stream).read_exact(&mut first)?;
+            }
+            read_frame(&mut first.as_slice().chain(DeadlineIo {
+                stream: &self.stream,
+                deadline: deadline.unwrap_or_else(|| Instant::now() + budget),
+            }))
+        })();
+        let restored = self
+            .stream
+            .set_read_timeout(read_timeout)
+            .and_then(|()| self.stream.set_write_timeout(write_timeout));
+        match result {
+            Err(error) => Err(error),
+            Ok(response) => {
+                restored?;
+                Ok(response)
+            }
+        }
+    }
+
     /// Wait for a server-side change; dropping the cancellation handle interrupts it.
     pub fn wait(&mut self, command: &str, args: Value) -> Result<Value, String> {
         self.stream
@@ -66,7 +150,7 @@ impl Connection {
             .map_err(|e| e.to_string())?;
         let result = self.call(command, args);
         self.stream
-            .set_read_timeout(Some(Duration::from_secs(2)))
+            .set_read_timeout(Some(FRAME_TIMEOUT))
             .map_err(|e| e.to_string())?;
         result
     }
@@ -139,5 +223,60 @@ mod tests {
             assert_eq!(error, "Unexpected IPC response");
             worker.join().unwrap();
         }
+    }
+
+    #[test]
+    fn trickled_response_cannot_extend_a_call_or_started_watch() {
+        for watch in [false, true] {
+            let (stream, mut server) = UnixStream::pair().unwrap();
+            server.set_read_timeout(Some(FRAME_TIMEOUT)).unwrap();
+            let budget = Duration::from_millis(90);
+            stream.set_read_timeout((!watch).then_some(budget)).unwrap();
+            let worker = std::thread::spawn(move || {
+                let request: Request = read_frame(&mut server).unwrap();
+                if watch {
+                    // An idle watch must outlive its partial-frame budget.
+                    std::thread::sleep(budget * 3);
+                }
+                let mut frame = Vec::new();
+                write_frame(&mut frame, &Response::success(request.id, json!({}))).unwrap();
+                for byte in frame {
+                    if server.write_all(&[byte]).is_err() {
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_millis(25));
+                }
+            });
+            let mut connection = Connection { stream, id: 0 };
+            assert!(
+                connection
+                    .call_with_budget("activity-watch", json!({"since": 7}), budget)
+                    .is_err(),
+                "a trickled partial response must expire (watch={watch})"
+            );
+            worker.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn completed_calls_restore_socket_timeouts_for_the_next_frame() {
+        let (stream, mut server) = UnixStream::pair().unwrap();
+        let timeout = Some(Duration::from_secs(1));
+        stream.set_read_timeout(timeout).unwrap();
+        stream.set_write_timeout(timeout).unwrap();
+        server.set_read_timeout(Some(FRAME_TIMEOUT)).unwrap();
+        let worker = std::thread::spawn(move || {
+            for _ in 0..2 {
+                let request: Request = read_frame(&mut server).unwrap();
+                write_frame(&mut server, &Response::success(request.id, json!({}))).unwrap();
+            }
+        });
+        let mut connection = Connection { stream, id: 0 };
+        for _ in 0..2 {
+            connection.call("get-outputs", json!({})).unwrap();
+            assert_eq!(connection.stream.read_timeout().unwrap(), timeout);
+            assert_eq!(connection.stream.write_timeout().unwrap(), timeout);
+        }
+        worker.join().unwrap();
     }
 }
