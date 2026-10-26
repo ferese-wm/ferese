@@ -2,12 +2,72 @@ use smithay::reexports::wayland_protocols::ext::image_copy_capture::v1::server::
 use smithay::reexports::wayland_server::Resource;
 use smithay::reexports::wayland_server::protocol::wl_shm;
 use smithay::utils::{Buffer, IsAlive, Size, Transform};
-use smithay::wayland::image_copy_capture::{Frame, SessionRef};
+use smithay::wayland::image_copy_capture::{Frame, ImageCopyCaptureHandler, SessionRef};
 use smithay::wayland::shm::with_buffer_contents_mut;
 
 use crate::Ferese;
 
 impl Ferese {
+    pub(super) fn stream_failure_reason(
+        &mut self,
+        session: &SessionRef,
+        submitted_size: Size<i32, Buffer>,
+    ) -> FailureReason {
+        let source = session.source();
+        let Some((size, _)) = self
+            .capture_source_geometry(&source)
+            .filter(|_| session.alive())
+        else {
+            return FailureReason::Stopped;
+        };
+        let constraints_size = session
+            .current_constraints()
+            .map(|constraints| constraints.size);
+        if size == submitted_size && constraints_size == Some(submitted_size) {
+            // Same-size source invalidation and real transfer errors are not
+            // buffer mismatches. The protocol permits a bounded Unknown retry.
+            return FailureReason::Unknown;
+        }
+        if constraints_size != Some(size) {
+            // A completion can observe a resize before the normal post-dispatch
+            // constraint refresh. Publish the new constraints before failed so
+            // the client cannot retry with the old dimensions indefinitely.
+            let Some(constraints) = self.capture_constraints(&source) else {
+                return FailureReason::Stopped;
+            };
+            let reserved: u64 = self
+                .image_capture
+                .active
+                .iter()
+                .filter(|active| active.session.as_ref() != *session)
+                .map(|active| super::stream_bytes(active.size))
+                .sum();
+            if super::stream_bytes(constraints.size)
+                > super::MAX_STREAM_BYTES.saturating_sub(reserved)
+            {
+                self.cancel_session_fences(session.clone());
+                self.image_capture
+                    .active
+                    .retain(|active| active.session.as_ref() != *session);
+                return FailureReason::Stopped;
+            }
+            let Some(active) = self
+                .image_capture
+                .active
+                .iter_mut()
+                .find(|active| active.session.as_ref() == *session)
+            else {
+                return FailureReason::Stopped;
+            };
+            active.size = constraints.size;
+            active.dma_node = constraints.dma.as_ref().map(|dma| dma.node);
+            active.revision = None;
+            active.window_stamp = None;
+            session.update_constraints(constraints);
+        }
+        FailureReason::BufferConstraints
+    }
+
     pub(super) fn defer_stream_readback(
         &mut self,
         frame: Frame,
@@ -108,15 +168,19 @@ impl Ferese {
                     .ok_or_else(|| "Invalid stream SHM buffer".into())
                 });
                 match copied {
-                    Ok(()) => frame.success(
-                        Transform::Normal,
-                        None,
-                        smithay::utils::Clock::<smithay::utils::Monotonic>::new().now(),
-                    ),
+                    Ok(()) => {
+                        super::complete_submission(&session, generation);
+                        frame.success(
+                            Transform::Normal,
+                            None,
+                            smithay::utils::Clock::<smithay::utils::Monotonic>::new().now(),
+                        );
+                    }
                     Err(error) => {
                         tracing::debug!(%error, "stream readback failed");
-                        frame.fail(FailureReason::Unknown);
                         state.reset_stream_submission(&session, generation);
+                        let reason = state.stream_failure_reason(&session, size);
+                        frame.fail(reason);
                     }
                 }
             }),

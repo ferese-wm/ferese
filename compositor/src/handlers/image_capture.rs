@@ -2,8 +2,8 @@
 //! outstanding per session; client buffers remain owned until GPU completion.
 use smithay::reexports::calloop::RegistrationToken;
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use ferese_layout::WindowId;
@@ -173,27 +173,72 @@ pub(super) struct Active {
     dma_node: Option<smithay::backend::drm::DrmNode>,
 }
 
-#[derive(Default)]
-struct SubmissionGeneration(AtomicU64);
+impl Active {
+    fn take_changed_frame(&mut self, revision: u64) -> Option<Frame> {
+        (self.revision != Some(revision))
+            .then(|| self.pending.take())
+            .flatten()
+    }
+}
 
-fn next_submission(session: &SessionRef) -> u64 {
+#[derive(Default)]
+struct SubmissionGeneration {
+    generation: AtomicU64,
+    pending: Mutex<Option<FrameRef>>,
+}
+
+fn next_submission(session: &SessionRef, frame: &FrameRef) -> u64 {
     session
         .user_data()
         .insert_if_missing(SubmissionGeneration::default);
-    session
+    let owner = session
         .user_data()
         .get::<SubmissionGeneration>()
-        .expect("submission generation initialized")
-        .0
+        .expect("submission generation initialized");
+    let generation = owner
+        .generation
         .fetch_add(1, Ordering::Relaxed)
-        .wrapping_add(1)
+        .wrapping_add(1);
+    *owner
+        .pending
+        .lock()
+        .expect("submission owner mutex poisoned") = Some(frame.clone());
+    generation
 }
 
 fn current_submission(session: &SessionRef, generation: u64) -> bool {
     session
         .user_data()
         .get::<SubmissionGeneration>()
-        .is_some_and(|current| current.0.load(Ordering::Relaxed) == generation)
+        .is_some_and(|current| current.generation.load(Ordering::Relaxed) == generation)
+}
+
+fn complete_submission(session: &SessionRef, generation: u64) -> bool {
+    if !current_submission(session, generation) {
+        return false;
+    }
+    clear_submission(session);
+    true
+}
+
+fn clear_submission(session: &SessionRef) {
+    if let Some(owner) = session.user_data().get::<SubmissionGeneration>() {
+        owner
+            .pending
+            .lock()
+            .expect("submission owner mutex poisoned")
+            .take();
+    }
+}
+
+fn submitted_frame(session: &SessionRef) -> Option<FrameRef> {
+    session
+        .user_data()
+        .get::<SubmissionGeneration>()?
+        .pending
+        .lock()
+        .expect("submission owner mutex poisoned")
+        .clone()
 }
 
 struct InFlight {
@@ -423,6 +468,7 @@ impl ImageCopyCaptureHandler for Ferese {
     }
 
     fn session_destroyed(&mut self, session: SessionRef) {
+        clear_submission(&session);
         self.image_capture
             .active
             .retain(|active| active.session.as_ref() != session);
@@ -447,6 +493,12 @@ impl ImageCopyCaptureHandler for Ferese {
             self.cancel_capture_fence(id);
         }
         for active in &mut self.image_capture.active {
+            let session = active.session.as_ref();
+            if submitted_frame(&session).as_ref() == Some(&frame) {
+                clear_submission(&session);
+                active.revision = None;
+                active.window_stamp = None;
+            }
             if active
                 .pending
                 .as_ref()
@@ -547,6 +599,18 @@ impl Ferese {
         let mut outputs = Vec::new();
         for active in &mut self.image_capture.active {
             if active.session.source() != *source {
+                continue;
+            }
+            // The copy already submitted for this consumer supplies its resumed
+            // initial image. Invalidating it before ready would authorize the
+            // same unchanged pixels again on the following buffer. A frame
+            // merely waiting for damage is not submitted and must be woken.
+            if active.session.alive()
+                && source_active(source)
+                && submitted_frame(&active.session.as_ref()).is_some_and(|frame| {
+                    frame.alive() && !frame.has_failed() && frame.buffer().is_alive()
+                })
+            {
                 continue;
             }
             active.revision = None;
@@ -857,8 +921,7 @@ impl Ferese {
             }
             if matches
                 && active.session.draw_cursor() == cursor
-                && active.revision != Some(revision)
-                && let Some(frame) = active.pending.take()
+                && let Some(frame) = active.take_changed_frame(revision)
             {
                 let result = crate::render::capture_stream_texture(
                     renderer,
@@ -879,10 +942,9 @@ impl Ferese {
         for active in &mut self.image_capture.active {
             if active.session.draw_cursor() == cursor
                 && matches!(active.session.source().user_data().get::<Source>(), Some(Source::Output(weak)) if weak.upgrade().as_ref() == Some(output))
+                && let Some(frame) = active.pending.take()
             {
-                if let Some(frame) = active.pending.take() {
-                    frame.fail(FailureReason::Unknown);
-                }
+                frame.fail(FailureReason::Unknown);
                 active.revision = None;
             }
         }
@@ -923,7 +985,7 @@ impl Ferese {
     }
 
     fn reset_stream_submission(&mut self, session: &SessionRef, generation: u64) {
-        if current_submission(session, generation)
+        if complete_submission(session, generation)
             && let Some(active) = self
                 .image_capture
                 .active
@@ -957,7 +1019,7 @@ impl Ferese {
         // Sessions can be outside `image_capture.active` while their copies are
         // submitted. Keep the generation on the session so every completion
         // can reject an older failure after a replacement has been submitted.
-        let generation = next_submission(&session);
+        let generation = next_submission(&session, &frame);
         if !session.alive() || !frame.alive() || frame.has_failed() || !frame.buffer().is_alive() {
             self.fail_stream_submission(frame, session, generation, FailureReason::Stopped);
             return;
@@ -975,11 +1037,14 @@ impl Ferese {
             Err(error) => Err(error),
         };
         match result {
-            Ok(sync) if sync.is_reached() => frame.success(
-                Transform::Normal,
-                None,
-                smithay::utils::Clock::<smithay::utils::Monotonic>::new().now(),
-            ),
+            Ok(sync) if sync.is_reached() => {
+                complete_submission(&session, generation);
+                frame.success(
+                    Transform::Normal,
+                    None,
+                    smithay::utils::Clock::<smithay::utils::Monotonic>::new().now(),
+                );
+            }
             Ok(sync) => {
                 let Some(fd) = sync.export() else {
                     self.fail_stream_submission(frame, session, generation, FailureReason::Unknown);
@@ -1007,17 +1072,20 @@ impl Ferese {
                                 == Some(&pending.stamp)
                             && !pending.frame.has_failed()
                         {
+                            complete_submission(&pending.session, pending.generation);
                             pending.frame.success(
                                 Transform::Normal,
                                 None,
                                 smithay::utils::Clock::<smithay::utils::Monotonic>::new().now(),
                             );
                         } else {
+                            let reason =
+                                state.stream_failure_reason(&pending.session, pending.stamp.size);
                             state.fail_stream_submission(
                                 pending.frame,
                                 pending.session,
                                 pending.generation,
-                                FailureReason::Unknown,
+                                reason,
                             );
                         }
                     }
@@ -1041,7 +1109,7 @@ impl Ferese {
                         if let Some(pending) = state.image_capture.in_flight.remove(&id) {
                             state.loop_handle.remove(pending.fence);
                             pending.frame.fail(FailureReason::Stopped);
-                            if current_submission(&pending.session, pending.generation) {
+                            if complete_submission(&pending.session, pending.generation) {
                                 state
                                     .image_capture
                                     .active
