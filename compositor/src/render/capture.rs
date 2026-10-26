@@ -81,24 +81,20 @@ fn render_window_texture(
     }))
 }
 
-pub(crate) fn capture_window_buffer(
-    renderer: &mut GlesRenderer,
-    window: &smithay::desktop::Window,
-    geometry: Rectangle<i32, Logical>,
-    scale: f64,
-) -> Result<crate::handlers::screenshot::CaptureBuffer, String> {
-    let mut buffer = capture_window_frame(renderer, window, geometry, scale, None)?;
-    convert_window_pixels(&mut buffer.pixels);
-    Ok(buffer)
-}
-
-pub(crate) fn capture_window_frame(
+fn window_mapping(
     renderer: &mut GlesRenderer,
     window: &smithay::desktop::Window,
     geometry: Rectangle<i32, Logical>,
     scale: f64,
     cursor: Option<(&Ferese, Rectangle<i32, Logical>)>,
-) -> Result<crate::handlers::screenshot::CaptureBuffer, String> {
+) -> Result<
+    (
+        smithay::backend::renderer::gles::GlesMapping,
+        Size<i32, smithay::utils::Buffer>,
+        usize,
+    ),
+    String,
+> {
     // One reusable render target per EGL context. Resize handoff snapshots keep
     // their own textures because they outlive the capture call.
     let cache = renderer
@@ -153,27 +149,47 @@ pub(crate) fn capture_window_frame(
         .checked_mul(size.h as usize)
         .and_then(|pixels| pixels.checked_mul(4))
         .ok_or("Window is too large")?;
-    // Smithay maps its PBO here and can wait for the GPU. Nonblocking readback
-    // needs a retained mapping plus an EGL-context-owned fence, polled before
-    // mapping; moving this call to the conversion worker is not context-safe.
-    let source = renderer
-        .map_texture(&mapping)
-        .map_err(|error| error.to_string())?;
-    if source.len() < bytes {
-        return Err("Incomplete window readback".into());
-    }
-    let pixels = source[..bytes].to_vec();
     *cache
         .0
         .lock()
         .expect("the reusable capture texture cache must remain consistent across callbacks") =
         Some(snapshot.texture);
 
-    Ok(crate::handlers::screenshot::CaptureBuffer {
+    Ok((mapping, size, bytes))
+}
+
+pub(crate) struct WindowReadback {
+    pub readback: crate::handlers::readback::Readback,
+    pub width: i32,
+    pub height: i32,
+    pub stride: usize,
+}
+
+pub(crate) fn prepare_window_readback(
+    renderer: &mut GlesRenderer,
+    window: &smithay::desktop::Window,
+    geometry: Rectangle<i32, Logical>,
+    scale: f64,
+    cursor: Option<(&Ferese, Rectangle<i32, Logical>)>,
+    admission: &crate::handlers::readback::Readbacks,
+) -> Result<WindowReadback, String> {
+    let size: Size<i32, Physical> = geometry.size.to_physical_precise_round(scale);
+    let bytes = usize::try_from(size.w)
+        .ok()
+        .and_then(|width| width.checked_mul(4))
+        .and_then(|row| {
+            usize::try_from(size.h)
+                .ok()
+                .and_then(|height| row.checked_mul(height))
+        })
+        .ok_or("Invalid window readback dimensions")?;
+    admission.prepare(renderer, bytes)?;
+    let (mapping, size, bytes) = window_mapping(renderer, window, geometry, scale, cursor)?;
+    Ok(WindowReadback {
+        readback: crate::handlers::readback::Readback::new(renderer, mapping, bytes)?,
         width: size.w,
         height: size.h,
         stride: size.w as usize * 4,
-        pixels,
     })
 }
 
@@ -395,13 +411,24 @@ void main() {
 }
 "#;
 
+pub(crate) enum StreamCopy {
+    Gpu(smithay::backend::renderer::sync::SyncPoint),
+    Shm {
+        readback: crate::handlers::readback::Readback,
+        size: Size<i32, smithay::utils::Buffer>,
+    },
+}
+
 pub(crate) fn capture_stream_window(
     renderer: &mut GlesRenderer,
     state: &Ferese,
     info: &crate::handlers::window_capture::WindowInfo,
     cursor: Option<Rectangle<i32, Logical>>,
     buffer: &smithay::reexports::wayland_server::protocol::wl_buffer::WlBuffer,
-) -> Result<smithay::backend::renderer::sync::SyncPoint, String> {
+) -> Result<StreamCopy, String> {
+    if smithay::wayland::dmabuf::get_dmabuf(buffer).is_err() {
+        state.readbacks.prepare(renderer, info.bytes)?;
+    }
     let cache = renderer
         .egl_context()
         .user_data()
@@ -443,8 +470,14 @@ pub(crate) fn capture_stream_window(
         .map_err(|error| error.to_string())?;
         let _ = frame.finish().map_err(|error| error.to_string())?;
     }
-    let result =
-        capture_stream_texture(renderer, &snapshot.texture, buffer, Transform::Normal, true);
+    let result = capture_stream_texture(
+        renderer,
+        &snapshot.texture,
+        buffer,
+        Transform::Normal,
+        true,
+        &state.readbacks,
+    );
     cache
         .0
         .lock()
@@ -459,8 +492,8 @@ pub(crate) fn capture_stream_texture(
     buffer: &smithay::reexports::wayland_server::protocol::wl_buffer::WlBuffer,
     transform: Transform,
     straight: bool,
-) -> Result<smithay::backend::renderer::sync::SyncPoint, String> {
-    use smithay::backend::renderer::sync::SyncPoint;
+    admission: &crate::handlers::readback::Readbacks,
+) -> Result<StreamCopy, String> {
     use smithay::wayland::dmabuf::get_dmabuf;
     use smithay::wayland::shm::with_buffer_contents_mut;
     let cache = renderer
@@ -490,7 +523,7 @@ pub(crate) fn capture_stream_texture(
         let mut target = renderer
             .bind(&mut dmabuf)
             .map_err(|error| error.to_string())?;
-        return draw(renderer, &mut target);
+        return draw(renderer, &mut target).map(StreamCopy::Gpu);
     }
     let valid = with_buffer_contents_mut(buffer, |_, length, data| {
         data.width == size.w
@@ -507,6 +540,15 @@ pub(crate) fn capture_stream_texture(
     if !valid {
         return Err("Invalid stream SHM buffer".into());
     }
+    let row = usize::try_from(size.w)
+        .ok()
+        .and_then(|width| width.checked_mul(4))
+        .ok_or("Invalid stream dimensions")?;
+    let bytes = usize::try_from(size.h)
+        .ok()
+        .and_then(|height| row.checked_mul(height))
+        .ok_or("Invalid stream dimensions")?;
+    admission.prepare(renderer, bytes)?;
     let mut texture = match cache.take_texture((size.w, size.h).into()) {
         Some(texture) => texture,
         None => Offscreen::<GlesTexture>::create_buffer(
@@ -529,30 +571,12 @@ pub(crate) fn capture_stream_texture(
             Fourcc::Argb8888,
         )
         .map_err(|error| error.to_string())?;
-    let source = renderer
-        .map_texture(&mapping)
-        .map_err(|error| error.to_string())?;
-    let row = size.w as usize * 4;
-    let bytes = row * size.h as usize;
-    if source.len() < bytes {
-        return Err("Incomplete stream readback".into());
-    }
-    with_buffer_contents_mut(buffer, |destination, _, data| {
-        for (y, pixels) in source[..bytes].chunks_exact(row).enumerate() {
-            // SAFETY: the buffer bounds and stride were checked above. Source
-            // memory belongs to the renderer and cannot overlap the client SHM.
-            unsafe {
-                std::ptr::copy_nonoverlapping(
-                    pixels.as_ptr(),
-                    destination.add(data.offset as usize + y * data.stride as usize),
-                    row,
-                );
-            }
-        }
-    })
-    .map_err(|error| format!("{error:?}"))?;
+    let readback = crate::handlers::readback::Readback::new(renderer, mapping, bytes)?;
     cache.put_texture(texture);
-    Ok(SyncPoint::signaled())
+    Ok(StreamCopy::Shm {
+        readback,
+        size: (size.w, size.h).into(),
+    })
 }
 
 fn compile_stream_program(

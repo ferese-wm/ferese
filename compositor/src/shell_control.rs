@@ -128,14 +128,7 @@ impl Dispatch<FereseShellV1, ShellData> for Ferese {
                 window_hi,
                 window_lo,
             } => {
-                if let Some((width, height, file)) =
-                    state.shell_thumbnail(join_id(window_hi, window_lo))
-                {
-                    use std::os::fd::AsFd;
-                    shell.thumbnail(token, window_hi, window_lo, width, height, file.as_fd());
-                } else {
-                    shell.thumbnail_unavailable(token, window_hi, window_lo);
-                }
+                state.queue_shell_thumbnail(shell.clone(), token, window_hi, window_lo);
             }
             ferese_shell_v1::Request::ActivateWindow {
                 window_hi,
@@ -837,8 +830,7 @@ impl Ferese {
         }
     }
 
-    fn shell_thumbnail(&mut self, id: WindowId) -> Option<(u32, u32, std::fs::File)> {
-        use std::io::{Seek, Write};
+    fn prepare_shell_thumbnail(&mut self, id: WindowId) -> Option<crate::render::WindowReadback> {
         if self.session_lock.active() {
             return None;
         }
@@ -867,34 +859,111 @@ impl Ferese {
         let scale = (320. / f64::from(geometry.size.w))
             .min(168. / f64::from(geometry.size.h))
             .min(1.);
+        let size: smithay::utils::Size<i32, smithay::utils::Physical> =
+            geometry.size.to_physical_precise_round(scale);
+        let bytes = usize::try_from(size.w)
+            .ok()?
+            .checked_mul(usize::try_from(size.h).ok()?)?
+            .checked_mul(4)?;
+        if !self.readbacks.can_admit(bytes) {
+            return None;
+        }
         let result = if let Some(backend) = self.nested_backend.clone() {
             let mut backend = backend.try_borrow_mut().ok()?;
-            crate::render::capture_window_frame(backend.renderer(), &window, geometry, scale, None)
+            crate::render::prepare_window_readback(
+                backend.renderer(),
+                &window,
+                geometry,
+                scale,
+                None,
+                &self.readbacks,
+            )
         } else {
             let mut backend = self.direct_backend.take()?;
-            let result = backend.capture_window_frame(self, &window, &output, None, scale);
+            let result = backend
+                .capture_renderer(&output)
+                .ok_or_else(|| "Thumbnail renderer unavailable".to_string())
+                .and_then(|renderer| {
+                    crate::render::prepare_window_readback(
+                        renderer,
+                        &window,
+                        geometry,
+                        scale,
+                        None,
+                        &self.readbacks,
+                    )
+                });
             self.direct_backend = Some(backend);
             result
         };
-        let mut buffer = result.ok()?;
-        if buffer.width <= 0 || buffer.width > 320 || buffer.height <= 0 || buffer.height > 168 {
+        let prepared = result.ok()?;
+        if prepared.width <= 0
+            || prepared.width > 320
+            || prepared.height <= 0
+            || prepared.height > 168
+        {
             return None;
         }
-        // GL ABGR readback is RGBA bytes on the supported little-endian targets.
-        // Iced expects straight rather than premultiplied channels.
-        for pixel in buffer.pixels.chunks_exact_mut(4) {
-            let alpha = u16::from(pixel[3]);
-            for channel in &mut pixel[..3] {
-                *channel = (u16::from(*channel) * 255 + alpha / 2)
-                    .checked_div(alpha)
-                    .unwrap_or(0)
-                    .min(255) as u8;
-            }
-        }
-        let mut file = tempfile::tempfile().ok()?;
-        file.write_all(&buffer.pixels).ok()?;
-        file.rewind().ok()?;
-        Some((buffer.width as u32, buffer.height as u32, file))
+        Some(prepared)
+    }
+
+    fn queue_shell_thumbnail(&mut self, shell: FereseShellV1, token: u32, hi: u32, lo: u32) {
+        let id = join_id(hi, lo);
+        let Some(prepared) = self.prepare_shell_thumbnail(id) else {
+            shell.thumbnail_unavailable(token, hi, lo);
+            return;
+        };
+        let guard = shell.clone();
+        self.queue_readback(
+            prepared.readback,
+            Box::new(move |state| {
+                guard.is_alive()
+                    && !state.session_lock.active()
+                    && state
+                        .windows
+                        .window(id)
+                        .is_some_and(|window| !state.capture_protected(window))
+            }),
+            Box::new(move |_, source| {
+                use std::io::{Seek, Write};
+                use std::os::fd::AsFd;
+                if !shell.is_alive() {
+                    return;
+                }
+                let result = source.and_then(|mut pixels| {
+                    // GL ABGR readback is RGBA bytes on supported little-endian targets.
+                    // The shell consumes straight rather than premultiplied channels.
+                    for pixel in pixels.chunks_exact_mut(4) {
+                        let alpha = u16::from(pixel[3]);
+                        for channel in &mut pixel[..3] {
+                            *channel = (u16::from(*channel) * 255 + alpha / 2)
+                                .checked_div(alpha)
+                                .unwrap_or(0)
+                                .min(255) as u8;
+                        }
+                    }
+                    let mut file = tempfile::tempfile().map_err(|error| error.to_string())?;
+                    file.write_all(&pixels)
+                        .and_then(|_| file.rewind())
+                        .map_err(|error| error.to_string())?;
+                    Ok(file)
+                });
+                match result {
+                    Ok(file) => shell.thumbnail(
+                        token,
+                        hi,
+                        lo,
+                        prepared.width as u32,
+                        prepared.height as u32,
+                        file.as_fd(),
+                    ),
+                    Err(error) => {
+                        tracing::debug!(%error, "shell thumbnail readback failed");
+                        shell.thumbnail_unavailable(token, hi, lo);
+                    }
+                }
+            }),
+        );
     }
 }
 

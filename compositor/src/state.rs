@@ -549,6 +549,7 @@ pub struct Ferese {
     pub(crate) dmabuf_feedback: crate::dmabuf_feedback::FeedbackManager,
     pub(crate) activation_inputs: crate::handlers::activation::InputHistory,
     pub(crate) pending_screencopies: Vec<PendingScreencopy>,
+    pub(crate) readbacks: crate::handlers::readback::Readbacks,
     // Screenshot requests outlive the readback that filled them: the
     // coordinator owns them until encoding finishes and the caller is
     // answered, or the request is terminated.
@@ -888,6 +889,7 @@ impl Ferese {
             dmabuf_feedback: Default::default(),
             activation_inputs: Default::default(),
             pending_screencopies: Vec::new(),
+            readbacks: Default::default(),
             screenshot: Coordinator::new(),
             screenshot_parts: None,
             screenshot_worker: None,

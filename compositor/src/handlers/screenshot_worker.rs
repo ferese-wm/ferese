@@ -98,8 +98,18 @@ pub(crate) fn sweep_stale_files() {
     }
 }
 
-fn encode(job: Job) -> Result<PathBuf, String> {
-    let canvas = compose(&job.frames)?;
+fn prepare_canvas(job: &mut Job) -> Result<Canvas, String> {
+    for frame in &mut job.frames {
+        if frame.premultiplied_rgba {
+            crate::render::convert_window_pixels(&mut frame.pixels);
+            frame.premultiplied_rgba = false;
+        }
+    }
+    compose(&job.frames)
+}
+
+fn encode(mut job: Job) -> Result<PathBuf, String> {
+    let canvas = prepare_canvas(&mut job)?;
     drop(job);
 
     let png = encode_png(&canvas)?;
@@ -218,6 +228,26 @@ mod tests {
 
     use super::*;
 
+    #[test]
+    fn window_channel_and_alpha_conversion_runs_with_worker_composition() {
+        let mut captured = frame(3, 1);
+        captured.preserve_alpha = true;
+        captured.premultiplied_rgba = true;
+        captured.pixels = vec![10, 20, 30, 255, 32, 64, 128, 128, 9, 8, 7, 0];
+        let mut job = Job {
+            request: 1,
+            frames: vec![captured],
+            _permit: None,
+        };
+        let canvas = prepare_canvas(&mut job).unwrap();
+        assert_eq!(
+            canvas.pixels,
+            [10, 20, 30, 255, 64, 128, 255, 128, 0, 0, 0, 0]
+        );
+        assert!(!job.frames[0].premultiplied_rgba);
+        assert_eq!(prepare_canvas(&mut job).unwrap().pixels, canvas.pixels);
+    }
+
     fn frame(width: i32, height: i32) -> OutputFrame {
         let stride = width as usize * 4;
         let mut pixels = vec![0u8; stride * height as usize];
@@ -227,6 +257,7 @@ mod tests {
         }
         OutputFrame {
             preserve_alpha: false,
+            premultiplied_rgba: false,
             width,
             height,
             stride,

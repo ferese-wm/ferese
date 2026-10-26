@@ -23,8 +23,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 pub(crate) use capture::{
-    capture_resize_snapshot, capture_stream_texture, capture_stream_window, capture_window_buffer,
-    capture_window_frame, clear_stream_capture_targets, convert_window_pixels,
+    StreamCopy, WindowReadback, capture_resize_snapshot, capture_stream_texture,
+    capture_stream_window, clear_stream_capture_targets, convert_window_pixels,
+    prepare_window_readback,
 };
 use decorations::{
     border_uniforms, color_with_alpha, corner_program, framebuffer_clip_rect,

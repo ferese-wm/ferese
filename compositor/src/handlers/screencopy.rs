@@ -3,6 +3,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use smithay::backend::allocator::Fourcc;
+use smithay::backend::renderer::gles::{GlesRenderer, GlesTarget};
 use smithay::backend::renderer::{ExportMem, TextureMapping};
 use smithay::output::Output;
 use smithay::reexports::wayland_protocols_wlr::screencopy::v1::server::zwlr_screencopy_frame_v1::ZwlrScreencopyFrameV1;
@@ -342,6 +343,7 @@ impl Ferese {
     }
 
     pub(crate) fn prune_screencopies(&mut self) {
+        self.prune_readbacks();
         self.pending_screencopies.retain(|capture| {
             if let CaptureSink::Shm { frame, buffer } = &capture.sink {
                 if !frame.is_alive() {
@@ -356,23 +358,20 @@ impl Ferese {
         });
     }
 
-    pub(crate) fn process_screencopies<R>(
+    pub(crate) fn process_screencopies(
         &mut self,
-        renderer: &mut R,
-        framebuffer: &R::Framebuffer<'_>,
+        renderer: &mut GlesRenderer,
+        framebuffer: &GlesTarget<'_>,
         output: &Output,
         overlay_cursor: bool,
-    ) -> bool
-    where
-        R: ExportMem,
-    {
+    ) -> bool {
         self.process_screencopies_with_revision(renderer, framebuffer, output, overlay_cursor, None)
     }
 
-    pub(crate) fn process_screencopies_with_revision<R: ExportMem>(
+    pub(crate) fn process_screencopies_with_revision(
         &mut self,
-        renderer: &mut R,
-        framebuffer: &R::Framebuffer<'_>,
+        renderer: &mut GlesRenderer,
+        framebuffer: &GlesTarget<'_>,
         output: &Output,
         overlay_cursor: bool,
         revision: Option<u64>,
@@ -413,19 +412,99 @@ impl Ferese {
                 }
             }
             framebuffer_binding_changed = true;
-            if complete_capture(renderer, framebuffer, &capture, self.start_time.elapsed()).is_err()
-            {
-                capture.fail();
-            } else if let (Some(history), Some(revision)) = (&capture.history, revision) {
-                history
-                    .lock()
-                    .expect("capture damage history mutex poisoned")
-                    .insert(key, revision);
-            }
+            self.defer_screencopy(renderer, framebuffer, capture, key, revision);
         }
 
         self.pending_screencopies = remaining;
         framebuffer_binding_changed
+    }
+
+    fn defer_screencopy(
+        &mut self,
+        renderer: &mut GlesRenderer,
+        framebuffer: &GlesTarget<'_>,
+        capture: PendingScreencopy,
+        key: (Output, bool),
+        revision: Option<u64>,
+    ) {
+        let bytes = usize::try_from(capture.region.size.w)
+            .ok()
+            .and_then(|width| width.checked_mul(BYTES_PER_PIXEL))
+            .and_then(|stride| {
+                usize::try_from(capture.region.size.h)
+                    .ok()
+                    .and_then(|height| stride.checked_mul(height))
+            });
+        let Some(bytes) = bytes.filter(|bytes| self.readbacks.can_admit(*bytes)) else {
+            capture.fail();
+            return;
+        };
+        if self.readbacks.prepare(renderer, bytes).is_err() {
+            capture.fail();
+            return;
+        }
+        let readback = renderer
+            .copy_framebuffer(framebuffer, capture.region, Fourcc::Argb8888)
+            .map_err(|error| error.to_string())
+            .and_then(|mapping| {
+                if mapping.format() != Fourcc::Argb8888 {
+                    return Err("Unsupported readback format".into());
+                }
+                super::readback::Readback::new(renderer, mapping, bytes)
+            });
+        let readback = match readback {
+            Ok(readback) => readback,
+            Err(error) => {
+                tracing::warn!(%error, "could not start screencopy readback");
+                capture.fail();
+                return;
+            }
+        };
+        let capture = Arc::new(capture);
+        let guard = capture.clone();
+        let mode = capture.output.current_mode();
+        let transform = capture.output.current_transform();
+        let scale = capture.output.current_scale().fractional_scale();
+        let timestamp = self.start_time.elapsed();
+        self.queue_readback(
+            readback,
+            Box::new(move |state| {
+                let output_live = state.output_ids.contains_key(&guard.output)
+                    || state.direct_backend.as_ref().is_some_and(|backend| {
+                        backend
+                            .physical_outputs()
+                            .any(|output| output == &guard.output)
+                    });
+                output_live
+                    && guard.output.current_mode() == mode
+                    && guard.output.current_transform() == transform
+                    && guard.output.current_scale().fractional_scale() == scale
+                    && guard
+                        .request_id()
+                        .is_none_or(|request| state.screenshot.is_live(request))
+                    && match &guard.sink {
+                        CaptureSink::Shm { frame, buffer } => frame.is_alive() && buffer.is_alive(),
+                        CaptureSink::Owned { .. } => true,
+                    }
+            }),
+            Box::new(move |_, pixels| {
+                if pixels.as_ref().is_err()
+                    || complete_capture_pixels(
+                        &capture,
+                        pixels.expect("checked pixel outcome"),
+                        timestamp,
+                    )
+                    .is_err()
+                {
+                    capture.fail();
+                } else if let (Some(history), Some(revision)) = (&capture.history, revision) {
+                    history
+                        .lock()
+                        .expect("capture damage history mutex poisoned")
+                        .insert(key, revision);
+                }
+            }),
+        );
     }
 
     pub(crate) fn has_pending_screencopy(&self, output: &Output, overlay_cursor: bool) -> bool {
@@ -588,26 +667,11 @@ pub(super) fn valid_shm_buffer(buffer: &WlBuffer, expected: Size<i32, Buffer>) -
     .unwrap_or(false)
 }
 
-fn complete_capture<R>(
-    renderer: &mut R,
-    framebuffer: &R::Framebuffer<'_>,
+fn complete_capture_pixels(
     capture: &PendingScreencopy,
+    mut source: Vec<u8>,
     timestamp: std::time::Duration,
-) -> Result<(), ()>
-where
-    R: ExportMem,
-{
-    let mapping = renderer
-        .copy_framebuffer(framebuffer, capture.region, Fourcc::Argb8888)
-        .map_err(|error| {
-            tracing::warn!(?error, "failed to copy output framebuffer");
-        })?;
-    if mapping.format() != Fourcc::Argb8888 {
-        return Err(());
-    }
-    let source = renderer.map_texture(&mapping).map_err(|error| {
-        tracing::warn!(?error, "failed to map output framebuffer copy");
-    })?;
+) -> Result<(), ()> {
     let expected = capture.region.size;
     let stride = (expected.w as usize)
         .checked_mul(BYTES_PER_PIXEL)
@@ -641,18 +705,13 @@ where
             .unwrap_or(false)
         }
         CaptureSink::Owned { .. } => {
-            let mut pixels = Vec::new();
-            if pixels.try_reserve_exact(bytes).is_err() {
-                false
-            } else {
-                pixels.extend_from_slice(&source[..bytes]);
-                capture.sink.publish(CaptureBuffer {
-                    width: expected.w,
-                    height: expected.h,
-                    stride,
-                    pixels,
-                })
-            }
+            source.truncate(bytes);
+            capture.sink.publish(CaptureBuffer {
+                width: expected.w,
+                height: expected.h,
+                stride,
+                pixels: source,
+            })
         }
     };
 

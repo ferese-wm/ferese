@@ -226,54 +226,11 @@ impl DirectBackendState {
             .find(|renderer| renderer.context_id().erased() == *context)
     }
 
-    pub(crate) fn capture_window_buffer(
-        &mut self,
-        window: &smithay::desktop::Window,
-        geometry: smithay::utils::Rectangle<i32, smithay::utils::Logical>,
-        output: &Output,
-    ) -> Result<crate::handlers::screenshot::CaptureBuffer, String> {
-        let device = self
-            .devices
-            .values_mut()
-            .find(|device| {
-                device
-                    .outputs
-                    .values()
-                    .any(|candidate| &candidate.output == output)
-            })
-            .ok_or("Window output is unavailable")?;
-        crate::render::capture_window_buffer(
-            &mut device.renderer,
-            window,
-            geometry,
-            output.current_scale().fractional_scale(),
-        )
-    }
-    pub(crate) fn capture_window_frame(
-        &mut self,
-        state: &Ferese,
-        window: &smithay::desktop::Window,
-        output: &Output,
-        cursor: Option<smithay::utils::Rectangle<i32, smithay::utils::Logical>>,
-        scale: f64,
-    ) -> Result<crate::handlers::screenshot::CaptureBuffer, String> {
-        let device = self
-            .devices
-            .values_mut()
-            .find(|device| {
-                device
-                    .outputs
-                    .values()
-                    .any(|candidate| &candidate.output == output)
-            })
-            .ok_or("Window output is unavailable")?;
-        crate::render::capture_window_frame(
-            &mut device.renderer,
-            window,
-            window.geometry(),
-            scale,
-            cursor.map(|rect| (state, rect)),
-        )
+    pub(crate) fn readback_contexts(&self) -> Vec<smithay::backend::renderer::ErasedContextId> {
+        self.devices
+            .values()
+            .map(|device| device.renderer.context_id().erased())
+            .collect()
     }
 }
 

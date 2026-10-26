@@ -16,7 +16,7 @@ use smithay::reexports::wayland_protocols::ext::image_copy_capture::v1::server::
 use smithay::reexports::wayland_server::backend::ObjectId;
 use smithay::reexports::wayland_server::{Client, DisplayHandle, Resource};
 use smithay::reexports::wayland_server::protocol::wl_shm;
-use smithay::utils::{Buffer, Logical, Point, Rectangle, Size, Transform};
+use smithay::utils::{Buffer, IsAlive, Logical, Point, Rectangle, Size, Transform};
 use smithay::wayland::compositor::{TraversalAction, with_surface_tree_downward};
 use smithay::wayland::image_capture_source::{ImageCaptureSource, ImageCaptureSourceHandler, OutputCaptureSourceHandler, OutputCaptureSourceState};
 use smithay::wayland::image_copy_capture::{BufferConstraints, DmabufConstraints, Frame, FrameRef, ImageCopyCaptureHandler, ImageCopyCaptureState, Session, SessionRef};
@@ -178,6 +178,18 @@ struct InFlight {
     epoch: u64,
     fence: RegistrationToken,
     timeout: RegistrationToken,
+    completion: smithay::backend::renderer::sync::SyncPoint,
+    deadline: Instant,
+    stamp: CompletionStamp,
+}
+
+#[derive(PartialEq)]
+struct CompletionStamp {
+    size: Size<i32, Buffer>,
+    output: Output,
+    mode: Option<smithay::output::Mode>,
+    transform: Transform,
+    scale: f64,
 }
 
 pub(crate) struct CaptureSessions {
@@ -734,7 +746,7 @@ impl Ferese {
                         } else {
                             Err("Capture renderer is unavailable".into())
                         };
-                        active.window_stamp = Some(stamp);
+                        active.window_stamp = result.as_ref().ok().map(|_| stamp);
                         self.finish_stream_frame(frame, active.session.as_ref(), result);
                     }
                 }
@@ -829,8 +841,9 @@ impl Ferese {
                     &frame.buffer(),
                     output.current_transform(),
                     false,
+                    &self.readbacks,
                 );
-                active.revision = Some(revision);
+                active.revision = result.as_ref().ok().map(|_| revision);
                 self.finish_stream_frame(frame, active.session.as_ref(), result);
             }
         }
@@ -853,15 +866,69 @@ impl Ferese {
         if let Some(pending) = self.image_capture.in_flight.remove(&id) {
             self.loop_handle.remove(pending.fence);
             self.loop_handle.remove(pending.timeout);
+            if let Some(active) = self
+                .image_capture
+                .active
+                .iter_mut()
+                .find(|active| active.session.as_ref() == pending.session)
+            {
+                active.revision = None;
+                active.window_stamp = None;
+            }
         }
+    }
+
+    fn capture_completion_stamp(&self, source: &ImageCaptureSource) -> Option<CompletionStamp> {
+        if !source_active(source) {
+            return None;
+        }
+        let (size, output) = self.capture_source_geometry(source)?;
+        Some(CompletionStamp {
+            size,
+            mode: output.current_mode(),
+            transform: output.current_transform(),
+            scale: output.current_scale().fractional_scale(),
+            output,
+        })
+    }
+
+    fn fail_stream_submission(&mut self, frame: Frame, session: SessionRef) {
+        self.loop_handle.insert_idle(move |state| {
+            if let Some(active) = state
+                .image_capture
+                .active
+                .iter_mut()
+                .find(|active| active.session.as_ref() == session)
+            {
+                active.revision = None;
+                active.window_stamp = None;
+            }
+            frame.fail(FailureReason::Unknown);
+        });
     }
 
     pub(super) fn finish_stream_frame(
         &mut self,
         frame: Frame,
         session: SessionRef,
-        result: Result<smithay::backend::renderer::sync::SyncPoint, String>,
+        result: Result<crate::render::StreamCopy, String>,
     ) {
+        if !session.alive() || !frame.alive() || frame.has_failed() || !frame.buffer().is_alive() {
+            frame.fail(FailureReason::Stopped);
+            return;
+        }
+        let Some(stamp) = self.capture_completion_stamp(&session.source()) else {
+            frame.fail(FailureReason::Stopped);
+            return;
+        };
+        let result = match result {
+            Ok(crate::render::StreamCopy::Shm { readback, size }) => {
+                self.defer_stream_readback(frame, session, readback, size);
+                return;
+            }
+            Ok(crate::render::StreamCopy::Gpu(sync)) => Ok(sync),
+            Err(error) => Err(error),
+        };
         match result {
             Ok(sync) if sync.is_reached() => frame.success(
                 Transform::Normal,
@@ -870,21 +937,28 @@ impl Ferese {
             ),
             Ok(sync) => {
                 let Some(fd) = sync.export() else {
-                    frame.fail(FailureReason::Unknown);
+                    self.fail_stream_submission(frame, session);
                     return;
                 };
                 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
                 use smithay::reexports::calloop::{Interest, Mode, PostAction, generic::Generic};
                 self.image_capture.next_fence = self.image_capture.next_fence.wrapping_add(1);
                 let id = self.image_capture.next_fence;
+                let deadline = Instant::now() + Duration::from_secs(5);
                 let source = Generic::new(fd, Interest::READ, Mode::OneShot);
                 let fence = match self.loop_handle.insert_source(source, move |_, _, state| {
                     if let Some(pending) = state.image_capture.in_flight.remove(&id) {
                         state.loop_handle.remove(pending.timeout);
                         if pending.epoch == state.capture_epoch
+                            && Instant::now() < pending.deadline
+                            && pending.completion.is_reached()
+                            && pending.session.alive()
+                            && pending.frame.alive()
+                            && pending.frame.buffer().is_alive()
                             && state
-                                .capture_source_geometry(&pending.session.source())
-                                .is_some()
+                                .capture_completion_stamp(&pending.session.source())
+                                .as_ref()
+                                == Some(&pending.stamp)
                             && !pending.frame.has_failed()
                         {
                             pending.frame.success(
@@ -893,16 +967,7 @@ impl Ferese {
                                 smithay::utils::Clock::<smithay::utils::Monotonic>::new().now(),
                             );
                         } else {
-                            pending.frame.fail(
-                                if state
-                                    .capture_source_geometry(&pending.session.source())
-                                    .is_some()
-                                {
-                                    FailureReason::BufferConstraints
-                                } else {
-                                    FailureReason::Stopped
-                                },
-                            );
+                            state.fail_stream_submission(pending.frame, pending.session);
                         }
                     }
                     Ok(PostAction::Remove)
@@ -910,12 +975,12 @@ impl Ferese {
                     Ok(token) => token,
                     Err(error) => {
                         tracing::warn!(%error, "could not register capture fence");
-                        frame.fail(FailureReason::Unknown);
+                        self.fail_stream_submission(frame, session);
                         return;
                     }
                 };
                 let timeout = match self.loop_handle.insert_source(
-                    Timer::from_duration(Duration::from_secs(5)),
+                    Timer::from_deadline(deadline),
                     move |_, _, state| {
                         if let Some(pending) = state.image_capture.in_flight.remove(&id) {
                             state.loop_handle.remove(pending.fence);
@@ -932,7 +997,7 @@ impl Ferese {
                     Err(error) => {
                         self.loop_handle.remove(fence);
                         tracing::warn!(%error, "could not register capture deadline");
-                        frame.fail(FailureReason::Unknown);
+                        self.fail_stream_submission(frame, session);
                         return;
                     }
                 };
@@ -944,6 +1009,9 @@ impl Ferese {
                         epoch: self.capture_epoch,
                         fence,
                         timeout,
+                        completion: sync,
+                        deadline,
+                        stamp,
                     },
                 );
             }
@@ -955,6 +1023,13 @@ impl Ferese {
     }
 }
 
+#[path = "image_capture/readback.rs"]
+mod readback;
+
 #[cfg(test)]
 #[path = "workspace_capture_tests.rs"]
 mod workspace_tests;
+
+#[cfg(test)]
+#[path = "image_capture/frame_liveness_tests.rs"]
+mod frame_liveness_tests;

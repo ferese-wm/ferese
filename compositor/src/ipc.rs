@@ -1526,6 +1526,7 @@ impl Ferese {
         let size = geometry.size.to_physical_precise_round(scale);
         let spec = crate::handlers::screenshot::PartSpec {
             preserve_alpha: true,
+            premultiplied_rgba: true,
             transform: Transform::Normal,
             scale,
             location: (0, 0),
@@ -1546,27 +1547,86 @@ impl Ferese {
                 return;
             }
         };
-        let result = if let Some(backend) = &self.nested_backend {
+        let readback_bytes = usize::try_from(size.w)
+            .ok()
+            .and_then(|width| width.checked_mul(4))
+            .and_then(|row| {
+                usize::try_from(size.h)
+                    .ok()
+                    .and_then(|height| row.checked_mul(height))
+            });
+        let result = if readback_bytes.is_none_or(|bytes| !self.readbacks.can_admit(bytes)) {
+            Err("GPU readback queue is full".into())
+        } else if let Some(backend) = &self.nested_backend {
             match backend.try_borrow_mut() {
-                Ok(mut backend) => crate::render::capture_window_buffer(
+                Ok(mut backend) => crate::render::prepare_window_readback(
                     backend.renderer(),
                     &window,
                     geometry,
                     scale,
+                    None,
+                    &self.readbacks,
                 ),
                 Err(_) => Err("Window renderer is busy".into()),
             }
         } else if let Some(backend) = &mut self.direct_backend {
-            backend.capture_window_buffer(&window, geometry, &output)
+            backend
+                .capture_renderer(&output)
+                .ok_or_else(|| "Window renderer is unavailable".to_string())
+                .and_then(|renderer| {
+                    crate::render::prepare_window_readback(
+                        renderer,
+                        &window,
+                        geometry,
+                        scale,
+                        None,
+                        &self.readbacks,
+                    )
+                })
         } else {
             Err("Window renderer is unavailable".into())
         };
-        self.on_screenshot_part(PartOutcome {
-            request: capture,
-            part: 0,
-            result,
-            permit: self.screenshot.permit(capture),
-        });
+        let permit = self.screenshot.permit(capture);
+        match result {
+            Err(error) => self.on_screenshot_part(PartOutcome {
+                request: capture,
+                part: 0,
+                result: Err(error),
+                permit,
+            }),
+            Ok(prepared) => {
+                let mode = output.current_mode();
+                let transform = output.current_transform();
+                self.queue_readback(
+                    prepared.readback,
+                    Box::new(move |state| {
+                        state.screenshot.is_live(capture)
+                            && state.output_ids.contains_key(&output)
+                            && output.current_mode() == mode
+                            && output.current_transform() == transform
+                            && output.current_scale().fractional_scale() == scale
+                            && state.windows.window(id).is_some_and(|current| {
+                                current == &window && !state.capture_protected(current)
+                            })
+                    }),
+                    Box::new(move |state, source| {
+                        let result =
+                            source.map(|pixels| crate::handlers::screenshot::CaptureBuffer {
+                                width: prepared.width,
+                                height: prepared.height,
+                                stride: prepared.stride,
+                                pixels,
+                            });
+                        state.on_screenshot_part(PartOutcome {
+                            request: capture,
+                            part: 0,
+                            result,
+                            permit,
+                        });
+                    }),
+                );
+            }
+        }
     }
 
     pub(crate) fn on_screenshot_part(&mut self, outcome: PartOutcome) {

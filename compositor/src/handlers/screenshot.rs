@@ -13,6 +13,8 @@ const BYTES_PER_PIXEL: usize = 4;
 
 pub(crate) struct OutputFrame {
     pub(crate) preserve_alpha: bool,
+    // Window PBOs arrive as premultiplied RGBA; normalize only on the worker.
+    pub(crate) premultiplied_rgba: bool,
     pub(crate) width: i32,
     pub(crate) height: i32,
     pub(crate) stride: usize,
@@ -367,6 +369,7 @@ pub(crate) type PartSender = smithay::reexports::calloop::channel::Sender<PartOu
 // never re-queries an output whose transform or scale has since changed.
 pub(crate) struct PartSpec {
     pub(crate) preserve_alpha: bool,
+    pub(crate) premultiplied_rgba: bool,
     pub(crate) transform: Transform,
     pub(crate) scale: f64,
     pub(crate) location: (i32, i32),
@@ -584,6 +587,7 @@ impl Coordinator {
         let frame = match result {
             Ok(buffer) => OutputFrame {
                 preserve_alpha: spec.preserve_alpha,
+                premultiplied_rgba: spec.premultiplied_rgba,
                 width: buffer.width,
                 height: buffer.height,
                 stride: buffer.stride,
@@ -768,6 +772,7 @@ impl PlannedPart {
     pub(crate) fn spec(&self, output: &OutputLayout) -> PartSpec {
         PartSpec {
             preserve_alpha: false,
+            premultiplied_rgba: false,
             transform: output.transform,
             scale: output.scale,
             location: (self.logical.loc.x, self.logical.loc.y),
@@ -1139,6 +1144,7 @@ mod completion {
     fn spec(width: i32, height: i32) -> PartSpec {
         PartSpec {
             preserve_alpha: false,
+            premultiplied_rgba: false,
             transform: Transform::Normal,
             scale: 1.0,
             location: (0, 0),
@@ -1568,6 +1574,7 @@ mod completion {
 
         let huge = PartSpec {
             preserve_alpha: false,
+            premultiplied_rgba: false,
             buffer_width: 1 << 20,
             buffer_height: 1 << 20,
             ..spec(2, 2)
@@ -1850,6 +1857,7 @@ mod tests {
         }
         OutputFrame {
             preserve_alpha: false,
+            premultiplied_rgba: false,
             width,
             height,
             stride: width as usize * BYTES_PER_PIXEL,
@@ -1877,6 +1885,7 @@ mod tests {
         }
         OutputFrame {
             preserve_alpha: false,
+            premultiplied_rgba: false,
             width,
             height,
             stride: width as usize * BYTES_PER_PIXEL,

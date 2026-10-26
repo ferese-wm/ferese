@@ -5,6 +5,7 @@ pub(crate) mod gamma_control;
 pub(crate) mod image_capture;
 mod input_method;
 mod layer_shell;
+pub(crate) mod readback;
 pub(crate) mod screencopy;
 pub(crate) mod screenshot;
 pub(crate) mod screenshot_worker;

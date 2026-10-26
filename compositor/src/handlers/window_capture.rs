@@ -121,6 +121,14 @@ struct Conversion {
     manager: FereseWindowCaptureManagerV1,
 }
 
+struct PendingSnapshot {
+    id: WindowId,
+    epoch: u64,
+    logical_size: (u32, u32),
+    prepared: crate::render::WindowReadback,
+    permit: Permit,
+}
+
 pub(crate) fn is_portal(stream: &std::os::unix::net::UnixStream) -> bool {
     use std::os::fd::AsRawFd;
     let mut credentials = libc::ucred {
@@ -382,11 +390,18 @@ impl Dispatch<FereseWindowCaptureManagerV1, Global> for Ferese {
             let id = WindowId((u64::from(window_hi) << 32) | u64::from(window_lo));
             let mut busy = false;
             let snapshot = (overlay_cursor <= 1)
-                .then(|| state.window_snapshot(id, overlay_cursor == 1, &global.budget, &mut busy))
+                .then(|| {
+                    state.prepare_window_snapshot(
+                        id,
+                        overlay_cursor == 1,
+                        &global.budget,
+                        &mut busy,
+                    )
+                })
                 .flatten();
             let size = snapshot
                 .as_ref()
-                .map(|snapshot| (snapshot.pixels.width, snapshot.pixels.height))
+                .map(|snapshot| (snapshot.prepared.width, snapshot.prepared.height))
                 .unwrap_or((1, 1));
             let failed = snapshot.is_none();
             let resource = data_init.init(
@@ -405,25 +420,13 @@ impl Dispatch<FereseWindowCaptureManagerV1, Global> for Ferese {
                     manager.busy(&resource);
                 }
                 resource.failed();
-            } else if global
-                .worker
-                .try_send(Conversion {
-                    snapshot: snapshot
-                        .expect("conversion is queued only after obtaining a capture snapshot"),
-                    frame: resource.clone(),
-                    manager: manager.clone(),
-                })
-                .is_err()
-            {
-                *resource
-                    .data::<Arc<FrameData>>()
-                    .expect("capture frame resources are initialized with their FrameData")
-                    .used
-                    .lock()
-                    .expect("surface rendering state must remain consistent across callbacks") =
-                    true;
-                manager.busy(&resource);
-                resource.failed();
+            } else {
+                state.queue_window_snapshot(
+                    snapshot.expect("capture snapshot prepared"),
+                    resource,
+                    manager.clone(),
+                    global.worker.clone(),
+                );
             }
         }
     }
@@ -536,13 +539,13 @@ impl Ferese {
         }
     }
 
-    fn window_snapshot(
+    fn prepare_window_snapshot(
         &mut self,
         id: WindowId,
         overlay_cursor: bool,
         budget: &Arc<Mutex<Budget>>,
         busy: &mut bool,
-    ) -> Option<Snapshot> {
+    ) -> Option<PendingSnapshot> {
         let WindowInfo {
             window,
             output,
@@ -554,25 +557,42 @@ impl Ferese {
             *busy = true;
             return None;
         };
+        if !self.readbacks.can_admit(bytes) {
+            *busy = true;
+            return None;
+        }
         let cursor = overlay_cursor
             .then(|| self.window_capture_cursor(id, &window, geometry))
             .flatten();
         let result = if let Some(backend) = self.nested_backend.clone() {
             let mut backend = backend.try_borrow_mut().ok()?;
-            crate::render::capture_window_frame(
+            crate::render::prepare_window_readback(
                 backend.renderer(),
                 &window,
                 geometry,
                 scale,
                 cursor.map(|rect| (&*self, rect)),
+                &self.readbacks,
             )
         } else {
             let mut backend = self.direct_backend.take()?;
-            let result = backend.capture_window_frame(self, &window, &output, cursor, scale);
+            let result = backend
+                .capture_renderer(&output)
+                .ok_or_else(|| "Capture renderer unavailable".to_string())
+                .and_then(|renderer| {
+                    crate::render::prepare_window_readback(
+                        renderer,
+                        &window,
+                        geometry,
+                        scale,
+                        cursor.map(|rect| (&*self, rect)),
+                        &self.readbacks,
+                    )
+                });
             self.direct_backend = Some(backend);
             result
         };
-        let pixels = result.ok()?;
+        let prepared = result.ok()?;
         if let Some(toplevel) = window.toplevel() {
             smithay::desktop::utils::send_frames_surface_tree(
                 toplevel.wl_surface(),
@@ -582,16 +602,83 @@ impl Ferese {
                 |_, _| Some(output.clone()),
             );
         }
-        if pixels.pixels.len() != bytes {
-            return None;
-        }
-        Some(Snapshot {
+        Some(PendingSnapshot {
             id,
             epoch: self.capture_epoch,
             logical_size: (geometry.size.w as u32, geometry.size.h as u32),
-            pixels,
-            _permit: permit,
+            prepared,
+            permit,
         })
+    }
+
+    fn queue_window_snapshot(
+        &mut self,
+        pending: PendingSnapshot,
+        frame: ZwlrScreencopyFrameV1,
+        manager: FereseWindowCaptureManagerV1,
+        worker: std::sync::mpsc::SyncSender<Conversion>,
+    ) {
+        let guard = frame.clone();
+        let id = pending.id;
+        let epoch = pending.epoch;
+        self.queue_readback(
+            pending.prepared.readback,
+            Box::new(move |state| {
+                guard.is_alive()
+                    && state.capture_window_allowed(id, epoch)
+                    && guard.data::<Arc<FrameData>>().is_some_and(|data| {
+                        !*data
+                            .used
+                            .lock()
+                            .expect("capture frame state must remain consistent")
+                    })
+            }),
+            Box::new(move |_, source| {
+                if frame.data::<Arc<FrameData>>().is_none_or(|data| {
+                    *data
+                        .used
+                        .lock()
+                        .expect("capture frame state must remain consistent")
+                }) {
+                    return;
+                }
+                let outcome = source.map(|pixels| Snapshot {
+                    id,
+                    epoch,
+                    logical_size: pending.logical_size,
+                    pixels: CaptureBuffer {
+                        width: pending.prepared.width,
+                        height: pending.prepared.height,
+                        stride: pending.prepared.stride,
+                        pixels,
+                    },
+                    _permit: pending.permit,
+                });
+                match outcome {
+                    Ok(snapshot) => {
+                        if worker
+                            .try_send(Conversion {
+                                snapshot,
+                                frame: frame.clone(),
+                                manager: manager.clone(),
+                            })
+                            .is_ok()
+                        {
+                            return;
+                        }
+                        manager.busy(&frame);
+                    }
+                    Err(error) => tracing::debug!(%error, "window snapshot readback failed"),
+                }
+                if let Some(data) = frame.data::<Arc<FrameData>>() {
+                    *data
+                        .used
+                        .lock()
+                        .expect("capture frame state must remain consistent") = true;
+                }
+                frame.failed();
+            }),
+        );
     }
 }
 

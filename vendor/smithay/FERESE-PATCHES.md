@@ -31,6 +31,8 @@ Local changes are limited to the following library boundaries:
 - Imported syncobj handles are destroyed with their final timeline/point
   reference. Live imports remain tracked after the protocol object is destroyed,
   with limits of 4096 globally and 512 per client before kernel import.
+- GLES can insert a nonblocking fence after a pixel-buffer readback, separately
+  from the earlier frame submission fence. This API never falls back to `glFinish`.
 - Image capture frame references expose resource liveness so a deferred copy
   cannot write to a client buffer after its old frame object was destroyed.
 

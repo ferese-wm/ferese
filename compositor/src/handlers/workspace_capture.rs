@@ -393,6 +393,13 @@ pub(super) fn process(
         *compositions_left -= 1;
         let output = view.source.output.clone();
         let result = with_renderer(state, &output, |state, renderer| {
+            if smithay::wayland::dmabuf::get_dmabuf(&frame.buffer()).is_err() {
+                let bytes = (view.source.size.w as usize)
+                    .checked_mul(view.source.size.h as usize)
+                    .and_then(|pixels| pixels.checked_mul(4))
+                    .ok_or("Invalid capture dimensions")?;
+                state.readbacks.prepare(renderer, bytes)?;
+            }
             view.render(state, renderer, cursor)
         });
         match result {
@@ -415,13 +422,14 @@ pub(super) fn process(
         image.filter(|(_, revision)| active.revision != Some(*revision))
     {
         crate::backends::direct::capture::touch_cache(state);
-        let result = with_renderer(state, &view.source.output, |_, renderer| {
+        let result = with_renderer(state, &view.source.output, |state, renderer| {
             crate::render::capture_stream_texture(
                 renderer,
                 &texture,
                 &frame.buffer(),
                 Transform::Normal,
                 false,
+                &state.readbacks,
             )
         });
         active.revision = result.as_ref().ok().map(|_| revision);

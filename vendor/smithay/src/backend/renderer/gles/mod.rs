@@ -904,6 +904,15 @@ impl GlesRenderer {
         self.completion.clone()
     }
 
+    /// Insert completion after the currently submitted commands without waiting.
+    /// Returns `None` when fencing is unavailable; unlike frame completion this
+    /// method never falls back to `glFinish`.
+    pub fn insert_fence(&mut self) -> Result<Option<SyncPoint>, GlesError> {
+        // SAFETY: this renderer owns its EGL context and is exclusively borrowed.
+        unsafe { self.egl.make_current()?; }
+        Ok(self.export_sync_point())
+    }
+
     /// Returns whether the underlying EGLContext is known to be a software renderer.
     pub fn is_software(&self) -> bool {
         self.is_software

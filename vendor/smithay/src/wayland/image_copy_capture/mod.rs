@@ -648,6 +648,12 @@ impl PartialEq for FrameRef {
     }
 }
 
+impl IsAlive for FrameRef {
+    fn alive(&self) -> bool {
+        self.obj.is_alive()
+    }
+}
+
 impl FrameRef {
     /// Get the buffer attached to this frame.
     ///
