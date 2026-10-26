@@ -11,6 +11,7 @@ use smithay::backend::winit::{self, WinitEvent};
 use smithay::desktop::layer_map_for_output;
 use smithay::output::{Mode, Output, PhysicalProperties, Scale, Subpixel};
 use smithay::reexports::calloop::EventLoop;
+use smithay::reexports::calloop::RegistrationToken;
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 use smithay::utils::{Physical, Rectangle, Size, Transform};
 
@@ -19,6 +20,79 @@ use crate::metrics::{FrameEffectMetrics, RenderMetrics};
 use crate::render::{frame_effect_metrics, layer_surfaces, sampled_output_elements};
 
 pub(crate) type NestedBackend = Rc<RefCell<winit::WinitGraphicsBackend<GlesRenderer>>>;
+
+#[derive(Default)]
+pub(crate) struct FrameWakeup {
+    timer: Option<RegistrationToken>,
+    requested: bool,
+    last_frame: Option<Instant>,
+}
+
+pub(crate) fn request_frame(state: &mut Ferese) {
+    if state.nested_backend.is_none() {
+        return;
+    }
+    let refresh = state
+        .space
+        .outputs()
+        .next()
+        .and_then(Output::current_mode)
+        .map_or(60_000, |mode| mode.refresh.max(1));
+    queue_frame(
+        state,
+        Duration::from_nanos(1_000_000_000_000 / refresh as u64),
+        |state| {
+            if let Some(backend) = &state.nested_backend {
+                backend.borrow().window().request_redraw();
+            }
+        },
+    );
+}
+
+fn queue_frame(
+    state: &mut Ferese,
+    interval: Duration,
+    mut request: impl FnMut(&mut Ferese) + 'static,
+) {
+    if state.nested_frames.requested {
+        return;
+    }
+    let now = Instant::now();
+    let deadline = state
+        .nested_frames
+        .last_frame
+        .map_or(now, |last| (last + interval).max(now));
+    match state
+        .loop_handle
+        .insert_source(Timer::from_deadline(deadline), move |_, _, state| {
+            state.nested_frames.timer = None;
+            request(state);
+            TimeoutAction::Drop
+        }) {
+        Ok(token) => {
+            state.nested_frames.timer = Some(token);
+            state.nested_frames.requested = true;
+        }
+        Err(error) => tracing::warn!(%error, "could not schedule nested frame"),
+    }
+}
+
+fn frame_started(state: &mut Ferese) {
+    if let Some(timer) = state.nested_frames.timer.take() {
+        state.loop_handle.remove(timer);
+    }
+    state.nested_frames.requested = false;
+    state.nested_frames.last_frame = Some(Instant::now());
+}
+
+fn continue_frames(state: &mut Ferese, output: &Output) {
+    if state.output_has_animations(output)
+        || state.output_has_pending_visual_changes(output)
+        || state.output_resize_deadline(output).is_some()
+    {
+        request_frame(state);
+    }
+}
 type DamageRenderResult = Result<
     (
         Option<Vec<Rectangle<i32, Physical>>>,
@@ -76,30 +150,30 @@ pub fn init(event_loop: &mut EventLoop<Ferese>, state: &mut Ferese) -> Result<()
     state.register_output(&output, "nested-primary".to_owned());
 
     let mut damage_tracker = OutputDamageTracker::from_output(&output);
-    let mut missed_deadlines = 0_u64;
-    let mut render_metrics = RenderMetrics::from_environment(output.name());
+    let missed_deadlines = Rc::new(Cell::new(0_u64));
+    let render_metrics = Rc::new(RefCell::new(RenderMetrics::from_environment(output.name())));
+    if render_metrics.borrow().enabled() {
+        let metrics = render_metrics.clone();
+        let missed = missed_deadlines.clone();
+        // Idle diagnostics must not require rendering an unchanged scene.
+        // This reporting timer exists only when performance tracing is enabled.
+        event_loop.handle().insert_source(
+            Timer::from_duration(Duration::from_secs(5)),
+            move |_, _, _| {
+                metrics.borrow_mut().report_if_due(missed.get());
+                TimeoutAction::ToDuration(Duration::from_secs(5))
+            },
+        )?;
+    }
 
-    // Do not request a redraw recursively: a no-damage redraw has no EGL
-    // submission to pace it and otherwise spins at full CPU. Independently
-    // scheduled frames also let clients receive callbacks without damage.
+    // Requests are coalesced behind one refresh-paced timer. An idle preview
+    // has no timer and does not rebuild an unchanged scene at every refresh.
     let refresh = Rc::new(Cell::new(Duration::from_nanos(
         1_000_000_000_000 / mode.refresh.max(1) as u64,
     )));
     let backend = Rc::new(RefCell::new(backend));
     state.nested_backend = Some(backend.clone());
-    let redraw_backend = backend.clone();
-    let redraw_refresh = refresh.clone();
-    let redraw_drawable = drawable.clone();
-    event_loop
-        .handle()
-        .insert_source(Timer::from_duration(refresh.get()), move |_, _, _| {
-            if redraw_drawable.get() {
-                redraw_backend.borrow().window().request_redraw();
-                TimeoutAction::ToDuration(redraw_refresh.get())
-            } else {
-                TimeoutAction::ToDuration(Duration::from_millis(250))
-            }
-        })?;
+    request_frame(state);
 
     event_loop
         .handle()
@@ -133,6 +207,7 @@ pub fn init(event_loop: &mut EventLoop<Ferese>, state: &mut Ferese) -> Result<()
                         "host input in nested output");
                 }
                 WinitEvent::Redraw => {
+                    frame_started(state);
                     if !drawable.get() || !usable_size(backend.window_size()) {
                         drawable.set(false);
                         return;
@@ -199,7 +274,7 @@ pub fn init(event_loop: &mut EventLoop<Ferese>, state: &mut Ferese) -> Result<()
                     let (damage, effects, rendered_states) = match rendered {
                         Ok((Some(damage), effects, states)) => (damage, effects, states),
                         Ok((None, _, _)) => {
-                            render_metrics.record_no_damage(render_started.elapsed(), missed_deadlines);
+                            render_metrics.borrow_mut().record_no_damage(render_started.elapsed(), missed_deadlines.get());
                             // A callback means permission to draw the next client
                             // frame, not proof of a new compositor presentation.
                             // No-damage frames must still unblock layer clients.
@@ -210,6 +285,7 @@ pub fn init(event_loop: &mut EventLoop<Ferese>, state: &mut Ferese) -> Result<()
                             if let Err(error) = state.display_handle.flush_clients() {
                                 tracing::debug!(%error, "failed to flush clients");
                             }
+                            continue_frames(state, &output);
                             return;
                         }
                         Err(error) => {
@@ -232,9 +308,9 @@ pub fn init(event_loop: &mut EventLoop<Ferese>, state: &mut Ferese) -> Result<()
                     }
                     let elapsed = render_started.elapsed();
                     if elapsed > refresh.get() {
-                        missed_deadlines += (elapsed.as_nanos() / refresh.get().as_nanos()) as u64;
+                        missed_deadlines.set(missed_deadlines.get() + (elapsed.as_nanos() / refresh.get().as_nanos()) as u64);
                     }
-                    render_metrics.record_frame(elapsed, &damage, missed_deadlines, effects);
+                    render_metrics.borrow_mut().record_frame(elapsed, &damage, missed_deadlines.get(), effects);
 
                     send_nested_frame_callbacks(state, &output);
                     state.space.refresh();
@@ -243,6 +319,7 @@ pub fn init(event_loop: &mut EventLoop<Ferese>, state: &mut Ferese) -> Result<()
                     if let Err(error) = state.display_handle.flush_clients() {
                         tracing::debug!(%error, "failed to flush clients");
                     }
+                    continue_frames(state, &output);
                 }
                 WinitEvent::CloseRequested => state.loop_signal.stop(),
                 _ => {}
@@ -360,6 +437,78 @@ fn normalized_scale(scale: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn nested_requests_coalesce_through_dispatch_and_stop_after_the_frame() {
+        if !crate::startup_tests::private_runtime(
+            "winit::tests::nested_requests_coalesce_through_dispatch_and_stop_after_the_frame",
+        ) {
+            return;
+        }
+        let mut events = EventLoop::try_new().unwrap();
+        let mut state = crate::startup_tests::state(&mut events);
+        let requests = Rc::new(Cell::new(0));
+        for _ in 0..100 {
+            let requests = requests.clone();
+            queue_frame(&mut state, Duration::from_millis(16), move |_| {
+                requests.set(requests.get() + 1)
+            });
+        }
+        events
+            .dispatch(Duration::from_millis(2), &mut state)
+            .unwrap();
+        assert_eq!(requests.get(), 1);
+        assert!(state.nested_frames.requested);
+        assert!(state.nested_frames.timer.is_none());
+        // Host dispatch may lag behind the wakeup. Requests arriving in this
+        // interval still share the single outstanding host redraw.
+        queue_frame(&mut state, Duration::ZERO, |_| {
+            panic!("duplicate host redraw")
+        });
+        frame_started(&mut state);
+        events
+            .dispatch(Duration::from_millis(20), &mut state)
+            .unwrap();
+        assert_eq!(requests.get(), 1);
+        assert!(!state.nested_frames.requested);
+        assert!(state.nested_frames.timer.is_none());
+
+        state.nested_frames.last_frame = Some(Instant::now() - Duration::from_secs(2));
+        let requests_next = requests.clone();
+        queue_frame(&mut state, Duration::from_millis(16), move |_| {
+            requests_next.set(requests_next.get() + 1)
+        });
+        events
+            .dispatch(Duration::from_millis(2), &mut state)
+            .unwrap();
+        assert_eq!(
+            requests.get(),
+            2,
+            "the first request after idle must not wait an extra refresh"
+        );
+    }
+
+    #[test]
+    fn host_redraw_cancels_a_pending_timer_without_leaving_an_idle_wakeup() {
+        if !crate::startup_tests::private_runtime(
+            "winit::tests::host_redraw_cancels_a_pending_timer_without_leaving_an_idle_wakeup",
+        ) {
+            return;
+        }
+        let mut events = EventLoop::try_new().unwrap();
+        let mut state = crate::startup_tests::state(&mut events);
+        frame_started(&mut state);
+        queue_frame(&mut state, Duration::from_millis(10), |_| {
+            panic!("obsolete timer fired after host redraw")
+        });
+        assert!(state.nested_frames.timer.is_some());
+        frame_started(&mut state);
+        events
+            .dispatch(Duration::from_millis(20), &mut state)
+            .unwrap();
+        assert!(!state.nested_frames.requested);
+        assert!(state.nested_frames.timer.is_none());
+    }
 
     #[test]
     fn zero_host_resize_preserves_geometry_and_recovers() {

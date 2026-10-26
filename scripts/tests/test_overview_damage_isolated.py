@@ -90,7 +90,7 @@ class OverviewDamageTest(unittest.TestCase):
                 with self.subTest(stage=label):
                     self.assertEqual(report["frames"], 0, str(report) + "\n" + log_path.read_text()[-5000:])
                     self.assertEqual(report["damaged_pixels"], 0, str(report))
-                    self.assertGreater(report["no_damage_frames"], 0, str(report))
+                    self.assertLessEqual(report["no_damage_frames"], 2, str(report))
 
             writer = None
             with log_path.open("w") as log:

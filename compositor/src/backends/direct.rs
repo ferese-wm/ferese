@@ -1407,6 +1407,10 @@ fn redraw(
         );
         return;
     }
+    if state.direct_backend.is_none() {
+        crate::winit::request_frame(state);
+        return;
+    }
     if state
         .direct_backend
         .as_ref()

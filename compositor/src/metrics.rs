@@ -94,7 +94,14 @@ impl RenderMetrics {
         self.report_if_due(missed_deadlines);
     }
 
-    fn report_if_due(&mut self, missed_deadlines: u64) {
+    pub(crate) fn enabled(&self) -> bool {
+        self.enabled
+    }
+
+    pub(crate) fn report_if_due(&mut self, missed_deadlines: u64) {
+        if !self.enabled {
+            return;
+        }
         let now = Instant::now();
         let elapsed = now.saturating_duration_since(self.interval_started);
         if elapsed < REPORT_INTERVAL {
