@@ -1555,7 +1555,10 @@ mod tests {
         assert!(enabled.adaptive_sync);
         assert!(!disabled.adaptive_sync);
         assert!(!enabled.same_configuration(disabled));
-        assert!(Config::parse_source("output-profile desk { output DP-1 adaptive-sync=\"yes\"; }").is_err());
+        assert!(
+            Config::parse_source("output-profile desk { output DP-1 adaptive-sync=\"yes\"; }")
+                .is_err()
+        );
     }
 
     #[test]
@@ -1567,7 +1570,10 @@ mod tests {
         assert!(enabled.allow_tearing);
         assert!(!disabled.allow_tearing);
         assert!(!enabled.same_configuration(disabled));
-        assert!(Config::parse_source("output-profile desk { output DP-1 allow-tearing=\"yes\"; }").is_err());
+        assert!(
+            Config::parse_source("output-profile desk { output DP-1 allow-tearing=\"yes\"; }")
+                .is_err()
+        );
     }
 
     #[test]
