@@ -11,12 +11,13 @@ mod crtc_assignment;
 mod diagnostics;
 pub(crate) mod feedback;
 pub(crate) mod gamma;
+pub(crate) mod leasing;
 mod lid;
 mod mirror;
 mod output_power;
 mod planes;
-mod protocol;
 mod presentation_mode;
+mod protocol;
 mod recovery;
 mod redraw;
 mod scheduling;
@@ -74,6 +75,7 @@ pub struct DirectBackendState {
     topology: Topology,
     identities: IdentityRegistry,
     pub(crate) manual_outputs: ManualOverride,
+    leasing: leasing::State,
     desired_outputs: DesiredOutputConfiguration,
     monitors: Vec<Monitor>,
     output_error: Option<String>,
@@ -99,8 +101,11 @@ impl DirectBackendState {
         protocol::output_name(&info.connector, &info.identity, &self.monitors)
     }
     pub(crate) fn physical_output(&self, identity: &str) -> Option<&Output> {
-        self.devices.values().flat_map(|device| device.outputs.values())
-            .find(|output| output.identity == identity).map(|output| &output.output)
+        self.devices
+            .values()
+            .flat_map(|device| device.outputs.values())
+            .find(|output| output.identity == identity)
+            .map(|output| &output.output)
     }
 
     pub(crate) fn physical_outputs(&self) -> impl Iterator<Item = &Output> {
@@ -305,6 +310,7 @@ type OutputCompositor = DrmCompositor<
 >;
 
 struct DirectDevice {
+    active_leases: Vec<smithay::wayland::drm_lease::DrmLease>,
     notifier: RegistrationToken,
     dmabuf_global: smithay::wayland::dmabuf::DmabufGlobal,
     connected_outputs: Vec<ConnectedOutputInfo>,
@@ -398,6 +404,7 @@ pub fn init(event_loop: &mut EventLoop<Ferese>, state: &mut Ferese) -> Result<()
         topology: Topology::default(),
         identities: IdentityRegistry::default(),
         manual_outputs: ManualOverride::default(),
+        leasing: leasing::State::default(),
         desired_outputs: DesiredOutputConfiguration::default(),
         monitors: Vec::new(),
         output_error: None,
@@ -450,7 +457,11 @@ pub fn init(event_loop: &mut EventLoop<Ferese>, state: &mut Ferese) -> Result<()
             }
 
             event => {
-                if state.direct_backend.as_ref().is_some_and(|backend| backend.active) {
+                if state
+                    .direct_backend
+                    .as_ref()
+                    .is_some_and(|backend| backend.active)
+                {
                     state.process_input_event(event);
                 }
             }
@@ -463,6 +474,7 @@ pub fn init(event_loop: &mut EventLoop<Ferese>, state: &mut Ferese) -> Result<()
                 let handle = state.loop_handle.clone();
                 if let Some(backend) = state.direct_backend.as_mut() {
                     backend.active = false;
+                    leasing::suspend(backend);
                     backend.lid.pause();
                     backend.lid_reader.set_active(false);
                     if let Some(token) = backend.lid_reader.deadline.take() {
@@ -1210,6 +1222,7 @@ fn open_device(state: &mut Ferese, path: &Path) -> Result<DrmNode, Box<dyn Error
         .insert(
             node,
             DirectDevice {
+                active_leases: Vec::new(),
                 _session_device: session_device,
                 drm,
                 gbm,
@@ -2050,7 +2063,7 @@ fn validate_selected_outputs<'a>(
 }
 
 fn remove_device(state: &mut Ferese, node: DrmNode) {
-    let Some(device) = state
+    let Some(mut device) = state
         .direct_backend
         .as_mut()
         .and_then(|backend| backend.devices.remove(&node))
@@ -2058,6 +2071,10 @@ fn remove_device(state: &mut Ferese, node: DrmNode) {
         return;
     };
 
+    device.active_leases.clear();
+    if let Some(backend) = state.direct_backend.as_mut() {
+        leasing::retire(backend, node);
+    }
     state.loop_handle.remove(device.notifier);
     state.cancel_gpu_buffer_waits(device.render_node);
     state.dmabuf_imports.remove(device.dmabuf_global);
@@ -2097,11 +2114,17 @@ fn refresh_duration(state: &Ferese, node: DrmNode, crtc: crtc::Handle) -> Durati
 
 fn presentation_refresh(state: &Ferese, node: DrmNode, crtc: crtc::Handle) -> Refresh {
     let interval = refresh_duration(state, node, crtc);
-    let variable = state.direct_backend.as_ref()
+    let variable = state
+        .direct_backend
+        .as_ref()
         .and_then(|backend| backend.devices.get(&node))
         .and_then(|device| device.outputs.get(&crtc))
         .is_some_and(|output| output.surface.vrr_enabled());
-    if variable { Refresh::variable(interval) } else { Refresh::fixed(interval) }
+    if variable {
+        Refresh::variable(interval)
+    } else {
+        Refresh::fixed(interval)
+    }
 }
 
 fn refresh_duration_from_mode(mode: DrmMode) -> Duration {
@@ -2458,6 +2481,9 @@ fn select_outputs(
     let mut requests = Vec::new();
 
     for connector in connected {
+        if leasing::non_desktop(drm, &connector)? {
+            continue;
+        }
         let key = format!("{device_key}/{}", connector);
         let monitor = monitors
             .iter()
@@ -2564,7 +2590,7 @@ fn select_outputs(
         for handle in connector.encoders() {
             if let Ok(encoder) = drm.get_encoder(*handle) {
                 for crtc in resources.filter_crtcs(encoder.possible_crtcs()) {
-                    if !compatible.contains(&crtc) {
+                    if !compatible.contains(&crtc) && !leasing::crtc_is_leased(device, crtc) {
                         compatible.push(crtc);
                     }
                 }
@@ -2590,12 +2616,17 @@ fn select_outputs(
     {
         if let Some(crtc) = crtc {
             let supported = presentation_mode::capable(drm, connector.handle(), crtc)?;
-            let mirrored = mirror_source.is_some() || desired.outputs.iter().any(|output| {
-                output.settings.enabled && output.mirror_source.as_deref() == Some(identity.as_str())
-            });
+            let mirrored = mirror_source.is_some()
+                || desired.outputs.iter().any(|output| {
+                    output.settings.enabled
+                        && output.mirror_source.as_deref() == Some(identity.as_str())
+                });
             presentation_mode::validate(settings.adaptive_sync, supported, mirrored)
                 .map_err(io::Error::other)?;
-            if let Some(info) = connected_outputs.iter_mut().find(|info| info.identity == identity) {
+            if let Some(info) = connected_outputs
+                .iter_mut()
+                .find(|info| info.identity == identity)
+            {
                 info.adaptive_sync_supported = supported;
             }
             selections.push(OutputSelection {
@@ -2757,7 +2788,8 @@ fn create_direct_output(
     );
 
     tracing::info!(?crtc, connector = %connector, "initialized DRM output");
-    let mut scheduler = crate::frame_scheduler::FrameScheduler::new(refresh_duration_from_mode(mode));
+    let mut scheduler =
+        crate::frame_scheduler::FrameScheduler::new(refresh_duration_from_mode(mode));
     scheduler.set_variable_refresh(settings.adaptive_sync);
     Ok(DirectOutput {
         gamma: Default::default(),
@@ -2953,6 +2985,9 @@ fn refresh_monitor_policy(state: &mut Ferese) -> Result<(), String> {
                 .get_connector(*handle, true)
                 .map_err(|error| error.to_string())?;
             if connector.state() != connector::State::Connected {
+                continue;
+            }
+            if leasing::non_desktop(drm, &connector).map_err(|error| error.to_string())? {
                 continue;
             }
             let edid = connector_edid(drm, &connector);

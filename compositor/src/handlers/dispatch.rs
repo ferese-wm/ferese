@@ -53,6 +53,10 @@ macro_rules! delegate_protocols {
 }
 
 delegate_protocols!(
+    protocols::wp::drm_lease::v1::server::wp_drm_lease_device_v1::WpDrmLeaseDeviceV1,
+    protocols::wp::drm_lease::v1::server::wp_drm_lease_connector_v1::WpDrmLeaseConnectorV1,
+    protocols::wp::drm_lease::v1::server::wp_drm_lease_request_v1::WpDrmLeaseRequestV1,
+    protocols::wp::drm_lease::v1::server::wp_drm_lease_v1::WpDrmLeaseV1,
     protocols::ext::foreign_toplevel_list::v1::server::ext_foreign_toplevel_list_v1::ExtForeignToplevelListV1,
     protocols::ext::foreign_toplevel_list::v1::server::ext_foreign_toplevel_handle_v1::ExtForeignToplevelHandleV1,
     protocols::ext::image_capture_source::v1::server::ext_image_capture_source_v1::ExtImageCaptureSourceV1,

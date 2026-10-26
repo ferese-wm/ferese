@@ -217,6 +217,7 @@ fn after_dispatch_with_redraw(
 ) {
     state.poll_buffer_sync();
     state.poll_presentation_constraints();
+    crate::backends::direct::leasing::poll_lock(state);
     crate::backends::direct::gamma::sync_night_light(state);
     state.poll_window_interaction();
     state.process_pending_dmabuf_imports();

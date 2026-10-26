@@ -387,6 +387,7 @@ pub(super) fn reconcile_outputs(state: &mut Ferese, reactivate: bool) {
         .expect("DRM callbacks require an installed direct backend")
         .applied_outputs
         .clone();
+    super::leasing::prune(state);
     if let Err(error) = refresh_monitor_policy(state).and_then(|()| {
         transaction::retire_disconnected(state);
         validate_desired_outputs(state)
@@ -511,6 +512,7 @@ pub(super) fn reconcile_outputs(state: &mut Ferese, reactivate: bool) {
 
     sync_battery_timer(state);
     state.finish_desktop_transition(desktop_changes);
+    super::leasing::refresh(state);
     state.notify_monitor_state();
     lid::apply_suspend_policy(state);
 }
