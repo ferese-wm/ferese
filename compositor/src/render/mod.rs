@@ -573,6 +573,9 @@ impl RenderElement<GlesRenderer> for RoundedSurfaceRenderElement {
         opaque_regions: &[Rectangle<i32, Physical>],
         _cache: Option<&smithay::utils::user_data::UserDataMap>,
     ) -> Result<(), GlesError> {
+        if !damage.is_empty() && matches!(self.inner.texture(), WaylandSurfaceTexture::Texture(_)) {
+            self.inner.mark_sampled(frame.context_id().erased());
+        }
         match self.inner.texture() {
             WaylandSurfaceTexture::Texture(texture) => frame.render_texture_from_to(
                 texture,

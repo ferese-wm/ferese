@@ -1,4 +1,7 @@
 //! Surface commits wait for GPU acquire readiness without blocking the compositor.
+mod budget;
+mod explicit;
+mod gpu;
 use std::collections::HashMap;
 use std::io;
 use std::sync::Arc;
@@ -13,11 +16,14 @@ use smithay::backend::drm::DrmNode;
 use smithay::reexports::wayland_server::backend::{ClientId, DisconnectReason};
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::reexports::wayland_server::{Client, Resource, Weak};
+use smithay::utils::{Clock, Monotonic, Time};
+use smithay::wayland::commit_timing::CommitTimerStateUserData;
 use smithay::wayland::compositor::{
     Blocker, BlockerState, BufferAssignment, SurfaceAttributes, add_blocker, add_pre_commit_hook,
     with_states,
 };
 use smithay::wayland::dmabuf::get_dmabuf;
+use smithay::wayland::drm_syncobj::DrmSyncobjCachedState;
 
 use crate::Ferese;
 use crate::state::ClientState;
@@ -26,6 +32,7 @@ const MAX_PENDING: usize = 128;
 const MAX_PER_CLIENT: usize = 32;
 const MAX_PER_SURFACE: usize = 8;
 const MAX_WAIT: Duration = Duration::from_secs(5);
+const MAX_TIMER_SLEEP: Duration = Duration::from_secs(86_400);
 const PENDING: u8 = 0;
 const RELEASED: u8 = 1;
 const CANCELLED: u8 = 2;
@@ -56,10 +63,14 @@ struct Pending {
     gate: AcquireGate,
     readiness: RegistrationToken,
     timeout: RegistrationToken,
+    expires: Duration,
+    release: Option<explicit::ReleaseLease>,
 }
 
 #[derive(Default)]
 pub(crate) struct BufferSync {
+    explicit: explicit::ExplicitSync,
+    budget: budget::CommitBudget,
     next: u64,
     pending: HashMap<u64, Pending>,
     notify: Vec<Client>,
@@ -83,17 +94,56 @@ pub(crate) fn install(surface: &WlSurface) {
             }
         });
         let Some(buffer) = buffer else {
+            state.budget_buffer_tail(surface);
             return;
         };
         let Ok(dmabuf) = get_dmabuf(&buffer) else {
+            state.budget_buffer_tail(surface);
             return;
         };
+        let not_before = with_states(surface, |states| {
+            states
+                .data_map
+                .get::<CommitTimerStateUserData>()
+                .and_then(|timer| timer.borrow().timestamp)
+                .map(|timestamp| Duration::from(Time::<Monotonic>::from(timestamp)))
+        });
+        let timeout = wait_timeout(not_before, monotonic_now());
+        let points = with_states(surface, |states| {
+            let mut cached = states.cached_state.get::<DrmSyncobjCachedState>();
+            let pending = cached.pending();
+            pending
+                .acquire_point
+                .clone()
+                .zip(pending.release_point.clone())
+        });
+        if let Some((acquire, release)) = points {
+            // Smithay reports malformed pairs in its own pre-commit hook.
+            if acquire.timeline() == release.timeline() && release.point() <= acquire.point() {
+                return;
+            }
+            state.prepare_explicit_buffer(surface, dmabuf.node(), acquire, release, timeout);
+            return;
+        }
         // Import success only validates format/storage. Implicit write fences
         // can still be pending each time the same buffer is committed.
         if let Ok((_, source)) = dmabuf.generate_blocker(Interest::READ) {
-            state.wait_for_buffer(surface, source, dmabuf.node(), MAX_WAIT);
+            state.wait_for_buffer(surface, source, dmabuf.node(), None, timeout);
+        } else {
+            state.budget_buffer_tail(surface);
         }
     });
+}
+
+fn monotonic_now() -> Duration {
+    Clock::<Monotonic>::new().now().into()
+}
+
+fn wait_timeout(not_before: Option<Duration>, now: Duration) -> Duration {
+    not_before
+        .unwrap_or(now)
+        .saturating_sub(now)
+        .saturating_add(MAX_WAIT)
 }
 
 /// Convert errors from an individual acquire watcher into cancellation of that
@@ -160,11 +210,15 @@ impl Ferese {
         surface: &WlSurface,
         source: S,
         gpu: Option<DrmNode>,
+        release: Option<explicit::ReleaseLease>,
         timeout: Duration,
     ) where
         S: EventSource<Event = (), Ret = Result<(), io::Error>> + 'static,
         S::Error: std::fmt::Display,
     {
+        if !self.budget_buffer_transaction(surface) {
+            return;
+        }
         let Some(client) = surface.client() else {
             return;
         };
@@ -221,10 +275,11 @@ impl Ferese {
                     return;
                 }
             };
+        let expires = monotonic_now().saturating_add(timeout);
         let deadline = match self.loop_handle.insert_source(
-            Timer::from_duration(timeout),
+            Timer::from_duration(timeout.min(MAX_TIMER_SLEEP)),
             move |_, _, state| {
-                state.finish_buffer_wait(id, Completion::Timeout);
+                state.buffer_timeout(id);
                 TimeoutAction::Drop
             },
         ) {
@@ -246,8 +301,38 @@ impl Ferese {
                 gate,
                 readiness,
                 timeout: deadline,
+                release,
+                expires,
             },
         );
+    }
+
+    fn buffer_timeout(&mut self, id: u64) {
+        let Some(entry) = self.buffer_sync.pending.get(&id) else {
+            return;
+        };
+        let remaining = entry.expires.saturating_sub(monotonic_now());
+        if remaining.is_zero() {
+            self.finish_buffer_wait(id, Completion::Timeout);
+            return;
+        }
+        match self.loop_handle.insert_source(
+            Timer::from_duration(remaining.min(MAX_TIMER_SLEEP)),
+            move |_, _, state| {
+                state.buffer_timeout(id);
+                TimeoutAction::Drop
+            },
+        ) {
+            Ok(token) => {
+                if let Some(entry) = self.buffer_sync.pending.get_mut(&id) {
+                    entry.timeout = token;
+                }
+            }
+            Err(error) => {
+                tracing::warn!(%error, "could not rearm GPU acquire deadline");
+                self.finish_buffer_wait(id, Completion::Failed);
+            }
+        }
     }
 
     fn reject_buffer_client(&mut self, client: &Client, reason: &str) {
@@ -282,12 +367,16 @@ impl Ferese {
                 self.loop_handle.remove(entry.timeout);
             }
         }
-        let ready = matches!(completion, Completion::Ready) && entry.surface.upgrade().is_ok();
+        // Readiness and timeout may both be queued after a long dispatch. The
+        // source order must not extend the absolute watchdog deadline.
+        let expired = matches!(completion, Completion::Ready) && monotonic_now() >= entry.expires;
+        let ready =
+            matches!(completion, Completion::Ready) && !expired && entry.surface.upgrade().is_ok();
         entry
             .gate
             .0
             .store(if ready { RELEASED } else { CANCELLED }, Ordering::Release);
-        if matches!(completion, Completion::Timeout | Completion::Failed) {
+        if matches!(completion, Completion::Timeout | Completion::Failed) || expired {
             self.reject_buffer_client(&entry.client, "GPU acquire fence did not become usable");
             self.cancel_buffer_owner(entry.client.id());
         }
@@ -307,6 +396,8 @@ impl Ferese {
     }
 
     pub(crate) fn cancel_surface_buffer_waits(&mut self, surface: &WlSurface) {
+        self.retire_buffer_budget(surface);
+        self.destroy_explicit_surface(surface);
         let weak = surface.downgrade();
         let ids: Vec<_> = self
             .buffer_sync
@@ -324,16 +415,22 @@ impl Ferese {
             .buffer_sync
             .pending
             .values()
-            .filter(|entry| entry.gpu == Some(gpu))
+            .filter(|entry| {
+                entry.gpu == Some(gpu)
+                    || (entry.release.is_some()
+                        && self.buffer_sync.explicit.import_gpu == Some(gpu))
+            })
             .map(|entry| entry.client.clone())
             .collect();
         for client in clients {
             self.reject_buffer_client(&client, "GPU removed during acquire wait");
             self.cancel_buffer_owner(client.id());
         }
+        self.remove_sync_device(gpu);
     }
 
     pub(crate) fn poll_buffer_sync(&mut self) {
+        self.poll_explicit_buffers();
         // Never reenter surface/transaction locks from a pre-commit/destruction
         // callback. Promotion runs after the current event-loop dispatch.
         let clients = std::mem::take(&mut self.buffer_sync.notify);
@@ -348,3 +445,9 @@ impl Ferese {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod explicit_tests;
+
+#[cfg(test)]
+mod syncobj_lifetime_tests;

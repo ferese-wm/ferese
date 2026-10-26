@@ -253,6 +253,13 @@ impl<R: Renderer> fmt::Debug for WaylandSurfaceRenderElement<R> {
 }
 
 impl<R: Renderer + ImportAll> WaylandSurfaceRenderElement<R> {
+    /// Record a buffer read performed by a compositor's custom texture shader.
+    /// Standard `RenderElement::draw` records this automatically.
+    #[cfg(feature = "backend_drm")]
+    pub fn mark_sampled(&self, context: crate::backend::renderer::ErasedContextId) {
+        self.buffer.mark_sampled(context);
+    }
+
     /// Create a render element from a surface
     #[profiling::function]
     pub fn from_surface(
@@ -270,7 +277,10 @@ impl<R: Renderer + ImportAll> WaylandSurfaceRenderElement<R> {
         crate::backend::renderer::utils::import_surface(renderer, states)?;
 
         let mut alpha_modifier_state = states.cached_state.get::<AlphaModifierSurfaceCachedState>();
-        let alpha_multiplier = alpha_modifier_state.current().multiplier_f32().unwrap_or(1.0);
+        let alpha_multiplier = alpha_modifier_state
+            .current()
+            .multiplier_f32()
+            .unwrap_or(1.0);
 
         let Some(data_ref) = states.data_map.get::<RendererSurfaceStateUserData>() else {
             return Ok(None);
@@ -298,7 +308,9 @@ impl<R: Renderer + ImportAll> WaylandSurfaceRenderElement<R> {
     {
         let buffer = data.buffer()?.clone();
 
-        let texture = if let Ok(spb) = crate::wayland::single_pixel_buffer::get_single_pixel_buffer(&buffer) {
+        let texture = if let Ok(spb) =
+            crate::wayland::single_pixel_buffer::get_single_pixel_buffer(&buffer)
+        {
             WaylandSurfaceTexture::SolidColor(Color32F::from(spb.rgba32f()))
         } else {
             WaylandSurfaceTexture::Texture(data.texture(renderer.context_id())?.clone())
@@ -376,11 +388,17 @@ impl<R: Renderer + ImportAll> Element for WaylandSurfaceRenderElement<R> {
         self.buffer_transform
     }
 
-    fn damage_since(&self, scale: Scale<f64>, commit: Option<CommitCounter>) -> DamageSet<i32, Physical> {
+    fn damage_since(
+        &self,
+        scale: Scale<f64>,
+        commit: Option<CommitCounter>,
+    ) -> DamageSet<i32, Physical> {
         let dst_size = self.size(scale);
         self.damage
             .damage_since(commit)
-            .unwrap_or_else(|| DamageSet::from_slice(&[Rectangle::from_size(self.buffer_dimensions)]))
+            .unwrap_or_else(|| {
+                DamageSet::from_slice(&[Rectangle::from_size(self.buffer_dimensions)])
+            })
             .iter()
             .filter_map(|rect| {
                 rect.to_f64()
@@ -404,7 +422,8 @@ impl<R: Renderer + ImportAll> Element for WaylandSurfaceRenderElement<R> {
                         // and use it to scale the damage to the rounded
                         // surface size by multiplying the output scale
                         // with the result.
-                        let surface_scale = dst_size.to_f64() / self.view.dst.to_f64().to_physical(scale);
+                        let surface_scale =
+                            dst_size.to_f64() / self.view.dst.to_f64().to_physical(scale);
                         rect.to_physical_precise_up(surface_scale * scale)
                     })
             })
@@ -420,7 +439,8 @@ impl<R: Renderer + ImportAll> Element for WaylandSurfaceRenderElement<R> {
             .iter()
             .map(|r| {
                 let loc = r.loc.to_physical_precise_round(scale);
-                let size = ((r.size.to_f64().to_physical(scale).to_point() + self.location).to_i32_round()
+                let size = ((r.size.to_f64().to_physical(scale).to_point() + self.location)
+                    .to_i32_round()
                     - self.location.to_i32_round())
                 .to_size();
                 Rectangle::new(loc, size)
@@ -459,16 +479,24 @@ where
         _cache: Option<&UserDataMap>,
     ) -> Result<(), R::Error> {
         match self.texture {
-            WaylandSurfaceTexture::Texture(ref texture) => frame.render_texture_from_to(
-                texture,
-                src,
-                dst,
-                damage,
-                opaque_regions,
-                self.buffer_transform,
-                self.alpha,
-            ),
-            WaylandSurfaceTexture::SolidColor(color) => frame.draw_solid(dst, damage, color * self.alpha),
+            WaylandSurfaceTexture::Texture(ref texture) => {
+                #[cfg(feature = "backend_drm")]
+                if !damage.is_empty() {
+                    self.buffer.mark_sampled(frame.context_id().erased());
+                }
+                frame.render_texture_from_to(
+                    texture,
+                    src,
+                    dst,
+                    damage,
+                    opaque_regions,
+                    self.buffer_transform,
+                    self.alpha,
+                )
+            }
+            WaylandSurfaceTexture::SolidColor(color) => {
+                frame.draw_solid(dst, damage, color * self.alpha)
+            }
         }
     }
 }

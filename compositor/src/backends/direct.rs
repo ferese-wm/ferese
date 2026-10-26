@@ -1266,6 +1266,7 @@ fn open_device(state: &mut Ferese, path: &Path) -> Result<DrmNode, Box<dyn Error
         .create_global_with_default_feedback::<Ferese>(&display_handle, &feedback);
     state.dmabuf_imports.register(dmabuf_global);
     state.dmabuf_feedback.register(dmabuf_global, feedback);
+    state.register_sync_renderer(&renderer, Some(render_node));
     state
         .direct_backend
         .as_mut()

@@ -105,6 +105,12 @@ type DamageRenderResult = Result<
 pub fn init(event_loop: &mut EventLoop<Ferese>, state: &mut Ferese) -> Result<(), Box<dyn Error>> {
     let (mut backend, event_source) = winit::init::<GlesRenderer>()?;
     configure_nested_protocols(state);
+    let render_node = smithay::backend::egl::EGLDevice::device_for_display(
+        backend.renderer().egl_context().display(),
+    )
+    .ok()
+    .and_then(|device| device.try_get_render_node().ok().flatten());
+    state.register_sync_renderer(backend.renderer(), render_node);
     let initial_size = backend.window_size();
     let drawable = Rc::new(Cell::new(usable_size(initial_size)));
     let dmabuf_formats = backend.renderer().dmabuf_formats();

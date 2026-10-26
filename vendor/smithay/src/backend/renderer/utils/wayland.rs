@@ -21,6 +21,8 @@ use std::{
     collections::{HashMap, hash_map::Entry},
     sync::{Arc, Mutex},
 };
+#[cfg(feature = "backend_drm")]
+use std::collections::HashSet;
 
 use super::{CommitCounter, DamageBag, DamageSet, DamageSnapshot, SurfaceView};
 use tracing::{error, instrument, warn};
@@ -60,6 +62,8 @@ unsafe impl Sync for RendererSurfaceState {}
 struct InnerBuffer {
     buffer: WlBuffer,
     #[cfg(feature = "backend_drm")]
+    sampled_contexts: Mutex<HashSet<ErasedContextId>>,
+    #[cfg(feature = "backend_drm")]
     acquire_point: Option<DrmSyncPoint>,
     #[cfg(feature = "backend_drm")]
     release_point: Option<DrmSyncPoint>,
@@ -85,6 +89,26 @@ pub struct Buffer {
 }
 
 impl Buffer {
+    /// Whether two references own the same attachment, including its sync points.
+    pub fn same_attachment(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.inner, &other.inner)
+    }
+
+    /// Record a context that may have submitted reads of this explicit attachment.
+    #[cfg(feature = "backend_drm")]
+    pub fn mark_sampled(&self, context: ErasedContextId) {
+        if self.has_explicit_sync() {
+            self.inner.sampled_contexts.lock().expect("buffer context mutex poisoned").insert(context);
+        }
+    }
+
+    /// Whether this explicit attachment was sampled by a renderer context.
+    #[cfg(feature = "backend_drm")]
+    pub fn was_sampled_by(&self, context: &ErasedContextId) -> bool {
+        self.has_explicit_sync()
+            && self.inner.sampled_contexts.lock().expect("buffer context mutex poisoned").contains(context)
+    }
+
     /// Whether this attachment owns an explicit synchronization point.
     #[cfg(feature = "backend_drm")]
     pub fn has_explicit_sync(&self) -> bool {
@@ -95,6 +119,8 @@ impl Buffer {
         Self {
             inner: Arc::new(InnerBuffer {
                 buffer,
+                #[cfg(feature = "backend_drm")]
+                sampled_contexts: Mutex::default(),
                 #[cfg(feature = "backend_drm")]
                 acquire_point: None,
                 #[cfg(feature = "backend_drm")]
@@ -109,6 +135,7 @@ impl Buffer {
         Self {
             inner: Arc::new(InnerBuffer {
                 buffer,
+                sampled_contexts: Mutex::default(),
                 acquire_point: Some(acquire_point),
                 release_point: Some(release_point),
             }),
@@ -183,6 +210,8 @@ impl RendererSurfaceState {
                     self.buffer = Some(Buffer {
                         inner: Arc::new(InnerBuffer {
                             buffer,
+                            #[cfg(feature = "backend_drm")]
+                            sampled_contexts: Mutex::default(),
                             #[cfg(feature = "backend_drm")]
                             acquire_point: syncobj_state.acquire_point.take(),
                             #[cfg(feature = "backend_drm")]

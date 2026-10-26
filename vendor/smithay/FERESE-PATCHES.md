@@ -25,6 +25,14 @@ Local changes are limited to the following library boundaries:
 - GLES exposes the most recent completed submission handle so the compositor
   can retain sampled explicit-sync buffers across display, capture, offscreen,
   error-cleanup and dropped-frame submission paths.
+- Explicit attachments record which renderer contexts sampled them, keeping
+  unrelated GPU work out of their release lifetime and allowing attachment
+  identity to survive references without conflating reused `wl_buffer` objects.
+- Imported syncobj handles are destroyed with their final timeline/point
+  reference. Live imports remain tracked after the protocol object is destroyed,
+  with limits of 4096 globally and 512 per client before kernel import.
+- Image capture frame references expose resource liveness so a deferred copy
+  cannot write to a client buffer after its old frame object was destroyed.
 
 The compositor controls capability checks and user/client policy. Vendoring this
 API extension does not enable tearing or variable refresh by default and does not

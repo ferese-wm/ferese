@@ -38,11 +38,7 @@
 //! smithay::delegate_dispatch2!(State);
 //! ```
 
-use std::{
-    cell::RefCell,
-    os::unix::io::AsFd,
-    sync::{Arc, Weak},
-};
+use std::{cell::RefCell, os::unix::io::AsFd};
 use tracing::warn;
 use wayland_protocols::wp::linux_drm_syncobj::v1::server::{
     wp_linux_drm_syncobj_manager_v1::{self, WpLinuxDrmSyncobjManagerV1},
@@ -51,7 +47,7 @@ use wayland_protocols::wp::linux_drm_syncobj::v1::server::{
 };
 use wayland_server::{
     Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource, Weak as WlWeak,
-    backend::GlobalId, protocol::wl_surface::WlSurface,
+    backend::{ClientId, GlobalId}, protocol::wl_surface::WlSurface,
 };
 
 use super::{
@@ -64,7 +60,12 @@ use crate::{
 };
 
 mod sync_point;
+mod timeline_registry;
 pub use sync_point::*;
+use timeline_registry::TimelineRegistry;
+
+const MAX_IMPORTED_TIMELINES: usize = 4096;
+const MAX_CLIENT_TIMELINES: usize = 512;
 
 /// Test if DRM device supports `syncobj_eventfd`.
 // Similar to test used in Mutter
@@ -124,7 +125,7 @@ impl Cacheable for DrmSyncobjCachedState {
 pub struct DrmSyncobjState {
     global: GlobalId,
     import_device: Option<DrmDeviceFd>,
-    known_timelines: Vec<Weak<DrmTimelineInner>>,
+    known_timelines: TimelineRegistry<ClientId, DrmTimelineInner>,
 }
 
 impl DrmSyncobjState {
@@ -162,7 +163,7 @@ impl DrmSyncobjState {
         Self {
             global,
             import_device: Some(import_device),
-            known_timelines: Vec::new(),
+            known_timelines: TimelineRegistry::new(MAX_IMPORTED_TIMELINES, MAX_CLIENT_TIMELINES),
         }
     }
 
@@ -174,7 +175,7 @@ impl DrmSyncobjState {
 
     /// Sets a new `import_device` to import the syncobj fds and wait on them.
     pub fn update_device(&mut self, import_device: DrmDeviceFd) {
-        for timeline in self.known_timelines.iter().filter_map(Weak::upgrade) {
+        for timeline in self.known_timelines.live() {
             if let Err(err) = timeline.update_device(&import_device) {
                 warn!(?err, "Failed to update existing timeline");
             }
@@ -186,8 +187,8 @@ impl DrmSyncobjState {
     ///
     /// Note: This will cause any future timeline import to raise a protocol error for
     /// clients that have bound this protocol until [`DrmSyncobjHandler::drm_syncobj_state`] returns `Some` again.
-    pub fn into_global(self) -> GlobalId {
-        for timeline in self.known_timelines.iter().filter_map(Weak::upgrade) {
+    pub fn into_global(mut self) -> GlobalId {
+        for timeline in self.known_timelines.live() {
             timeline.invalidate();
         }
         self.global
@@ -317,7 +318,7 @@ where
     fn request(
         &self,
         state: &mut D,
-        _client: &Client,
+        client: &Client,
         resource: &WpLinuxDrmSyncobjManagerV1,
         request: wp_linux_drm_syncobj_manager_v1::Request,
         _dh: &DisplayHandle,
@@ -358,13 +359,20 @@ where
             }
             wp_linux_drm_syncobj_manager_v1::Request::ImportTimeline { id, fd } => {
                 if let Some(state) = state.drm_syncobj_state() {
+                    if !state.known_timelines.admit(&client.id()) {
+                        resource.post_error(
+                            wp_linux_drm_syncobj_manager_v1::Error::InvalidTimeline,
+                            "live DRM timeline import budget exhausted".to_string(),
+                        );
+                        return;
+                    }
                     match state
                         .import_device
                         .as_ref()
                         .map(|dev| DrmTimeline::new(dev, fd))
                     {
                         Some(Ok(timeline)) => {
-                            state.known_timelines.push(Arc::downgrade(&timeline.0));
+                            state.known_timelines.track(client.id(), &timeline.0);
                             data_init.init::<_, _>(id, DrmSyncobjTimelineData { timeline });
                         }
                         Some(Err(err)) => {
@@ -525,10 +533,9 @@ impl<D: DrmSyncobjHandler> Dispatch2<WpLinuxDrmSyncobjTimelineV1, D> for DrmSync
         _resource: &WpLinuxDrmSyncobjTimelineV1,
     ) {
         if let Some(state) = state.drm_syncobj_state() {
-            state.known_timelines.retain(|t| {
-                t.upgrade()
-                    .is_some_and(|t| !Arc::ptr_eq(&t, &self.timeline.0))
-            })
+            // Committed points can outlive this protocol object. Keep their
+            // weak registration so device retirement still invalidates them.
+            state.known_timelines.prune();
         }
     }
 }

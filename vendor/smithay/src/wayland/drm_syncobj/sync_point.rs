@@ -49,6 +49,14 @@ struct DrmTimelineDeviceSpecific {
     event_fds: Vec<(u64, Weak<OwnedFd>)>,
 }
 
+impl Drop for DrmTimelineDeviceSpecific {
+    fn drop(&mut self) {
+        if let Some(device) = self.device.upgrade() {
+            let _ = device.destroy_syncobj(self.syncobj);
+        }
+    }
+}
+
 impl DrmTimelineDeviceSpecific {
     fn import(fd: BorrowedFd<'_>, device: &DrmDeviceFd) -> io::Result<Self> {
         let syncobj = device.fd_to_syncobj(fd, false)?;

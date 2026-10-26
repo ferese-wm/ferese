@@ -1,5 +1,4 @@
 use smithay::backend::allocator::dmabuf::Dmabuf;
-use smithay::backend::renderer::utils::on_commit_buffer_handler;
 use smithay::reexports::wayland_server::Client;
 use smithay::reexports::wayland_server::protocol::wl_buffer;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
@@ -49,7 +48,7 @@ impl CompositorHandler for Ferese {
         self.update_surface_preferences(surface);
         self.capture_resize_before_commit(surface);
         self.capture_close_before_commit(surface);
-        on_commit_buffer_handler::<Self>(surface);
+        self.commit_synced_buffers(surface);
         self.presentation_constraint_committed(surface);
         crate::effects::commit_presentation(surface);
         if !is_sync_subsurface(surface) {
