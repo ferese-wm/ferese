@@ -418,6 +418,7 @@ pub fn init(event_loop: &mut EventLoop<Ferese>, state: &mut Ferese) -> Result<()
         .handle()
         .insert_source(libinput_backend, |event, _, state| match event {
             InputEvent::DeviceAdded { mut device } => {
+                state.add_input_device(device.clone());
                 configure_libinput_device(state, &mut device);
                 if let Some(backend) = state.direct_backend.as_mut() {
                     backend.input_devices.push(device);
@@ -425,7 +426,7 @@ pub fn init(event_loop: &mut EventLoop<Ferese>, state: &mut Ferese) -> Result<()
             }
 
             InputEvent::DeviceRemoved { device } => {
-                state.cancel_window_interaction();
+                state.remove_input_device(&device);
                 if let Some(backend) = state.direct_backend.as_mut() {
                     backend
                         .input_devices
@@ -433,7 +434,15 @@ pub fn init(event_loop: &mut EventLoop<Ferese>, state: &mut Ferese) -> Result<()
                 }
             }
 
-            event => state.process_input_event(event),
+            event => {
+                if state
+                    .direct_backend
+                    .as_ref()
+                    .is_some_and(|backend| backend.active)
+                {
+                    state.process_input_event(event);
+                }
+            }
         })?;
     event_loop
         .handle()

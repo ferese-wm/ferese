@@ -89,6 +89,12 @@ pub(crate) struct ScrollBindings {
     devices: HashMap<String, DeviceScroll>,
 }
 
+impl ScrollBindings {
+    pub(super) fn remove_device(&mut self, device: &str) {
+        self.devices.remove(device);
+    }
+}
+
 impl Ferese {
     fn pointer_bindings_allowed(&self, pointer: &PointerHandle<Self>) -> bool {
         !self.session_lock.active()

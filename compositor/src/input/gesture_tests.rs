@@ -92,13 +92,13 @@ impl PinchUpdate<GestureInput> for Sample {
 }
 
 #[derive(Debug)]
-struct Message {
-    object: u32,
-    opcode: u16,
-    args: Vec<u32>,
+pub(in crate::input) struct Message {
+    pub object: u32,
+    pub opcode: u16,
+    pub args: Vec<u32>,
 }
 
-fn messages(wire: &mut UnixStream) -> Vec<Message> {
+pub(in crate::input) fn messages(wire: &mut UnixStream) -> Vec<Message> {
     wire.set_nonblocking(true).unwrap();
     let mut bytes = Vec::new();
     let _ = wire.read_to_end(&mut bytes);
@@ -150,7 +150,7 @@ fn bind(wire: &mut UnixStream, globals: &[Message], interface: &str, version: u3
     request(wire, 7, 0, &args, None);
 }
 
-fn fixture() -> (Ferese, calloop::EventLoop<'static, Ferese>, UnixStream) {
+pub(in crate::input) fn fixture() -> (Ferese, calloop::EventLoop<'static, Ferese>, UnixStream) {
     let (mut state, mut events, _) = super::layer_focus_tests::fixture();
     let (window, mut wire) = crate::state::test_window(&mut state, &mut events, 0xff112233);
     request(&mut wire, 1, 1, &[7], None);

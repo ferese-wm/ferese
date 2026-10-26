@@ -1,7 +1,7 @@
 use super::*;
 use crate::input::binding_mode_tests::{button, key};
 use smithay::input::keyboard::{
-    GrabStartData, KeyboardGrab, KeyboardInnerHandle, Keycode, ModifiersState,
+    FilterResult, GrabStartData, KeyboardGrab, KeyboardInnerHandle, Keycode, ModifiersState,
 };
 use smithay::reexports::calloop::EventLoop;
 use smithay::reexports::wayland_server::Display;
@@ -62,7 +62,7 @@ impl KeyboardGrab<Ferese> for ForwardedKeys {
     fn unset(&mut self, _: &mut Ferese) {}
 }
 
-fn record(state: &mut Ferese) -> KeyEvents {
+pub(in crate::input) fn record(state: &mut Ferese) -> KeyEvents {
     let events = Rc::new(RefCell::new(Vec::new()));
     state.seat.get_keyboard().unwrap().set_grab(
         state,

@@ -1,7 +1,10 @@
 mod window;
 pub(crate) use window::WindowInteraction;
+mod devices;
 mod pointer;
 mod session;
+pub(crate) use devices::PhysicalInput;
+use devices::{DeviceId, Gesture, KeyTransition};
 use ferese_layout::Direction;
 pub(crate) use pointer::ScrollBindings;
 use smithay::backend::input::{
@@ -137,12 +140,28 @@ impl Ferese {
         self.cursor_redraw_pending = true;
     }
 
-    pub fn process_input_event<I: InputBackend>(&mut self, event: InputEvent<I>) {
-        self.process_input_event_inner(event);
+    pub fn process_input_event<I: InputBackend>(&mut self, event: InputEvent<I>)
+    where
+        I::Device: 'static,
+    {
+        match event {
+            InputEvent::DeviceAdded { device } => self.add_input_device(device),
+            InputEvent::DeviceRemoved { device } => self.remove_input_device(&device),
+            event => {
+                let Some(device) = self.input_device(&event) else {
+                    return;
+                };
+                self.process_input_event_inner(event, device);
+            }
+        }
         self.poll_window_interaction();
     }
 
-    fn process_input_event_inner<I: InputBackend>(&mut self, event: InputEvent<I>) {
+    fn process_input_event_inner<I: InputBackend>(
+        &mut self,
+        event: InputEvent<I>,
+        device: DeviceId,
+    ) {
         if self.input_capture.active() {
             self.set_binding_mode("default");
         }
@@ -186,6 +205,7 @@ impl Ferese {
 
         match event {
             InputEvent::GestureSwipeBegin { event } => {
+                self.begin_input_gesture(device, Gesture::Swipe, event.time());
                 let pointer = seat.get_pointer().expect("seat has a pointer");
                 self.finish_workspace_swipe(None);
                 self.finish_focus_swipe(None);
@@ -216,6 +236,9 @@ impl Ferese {
                 }
             }
             InputEvent::GestureSwipeUpdate { event } => {
+                if self.physical_input.gesture_owner(Gesture::Swipe) != Some(device) {
+                    return;
+                }
                 if self.swipe.active() {
                     self.swipe.update_at(
                         event.delta_x(),
@@ -262,6 +285,9 @@ impl Ferese {
                 }
             }
             InputEvent::GestureSwipeEnd { event } => {
+                if !self.end_input_gesture(device, Gesture::Swipe) {
+                    return;
+                }
                 if self.swipe.active() {
                     let fingers = self.swipe.fingers();
                     let cancelled = event.cancelled() || self.swipe_navigation_blocked();
@@ -307,6 +333,7 @@ impl Ferese {
                 }
             }
             InputEvent::GesturePinchBegin { event } => {
+                self.begin_input_gesture(device, Gesture::Pinch, event.time());
                 seat.get_pointer()
                     .expect("seat has a pointer")
                     .gesture_pinch_begin(
@@ -319,6 +346,9 @@ impl Ferese {
                     );
             }
             InputEvent::GesturePinchUpdate { event } => {
+                if self.physical_input.gesture_owner(Gesture::Pinch) != Some(device) {
+                    return;
+                }
                 seat.get_pointer()
                     .expect("seat has a pointer")
                     .gesture_pinch_update(
@@ -332,6 +362,9 @@ impl Ferese {
                     );
             }
             InputEvent::GesturePinchEnd { event } => {
+                if !self.end_input_gesture(device, Gesture::Pinch) {
+                    return;
+                }
                 seat.get_pointer()
                     .expect("seat has a pointer")
                     .gesture_pinch_end(
@@ -344,6 +377,7 @@ impl Ferese {
                     );
             }
             InputEvent::GestureHoldBegin { event } => {
+                self.begin_input_gesture(device, Gesture::Hold, event.time());
                 seat.get_pointer()
                     .expect("seat has a pointer")
                     .gesture_hold_begin(
@@ -356,6 +390,9 @@ impl Ferese {
                     );
             }
             InputEvent::GestureHoldEnd { event } => {
+                if !self.end_input_gesture(device, Gesture::Hold) {
+                    return;
+                }
                 seat.get_pointer()
                     .expect("seat has a pointer")
                     .gesture_hold_end(
@@ -374,6 +411,14 @@ impl Ferese {
                 let keyboard = self.seat.get_keyboard().expect("seat has a keyboard");
                 let keycode = event.key_code();
                 let state = event.state();
+                match self.physical_input.key(device, keycode, state) {
+                    KeyTransition::Ignore => return,
+                    KeyTransition::Repeat => {
+                        self.repeat_intercepted_key(keycode);
+                        return;
+                    }
+                    KeyTransition::New => (),
+                }
 
                 let was_captured = self.input_capture.active();
                 if self.input_capture.captures(1) {
@@ -386,16 +431,13 @@ impl Ferese {
                 // Smithay filters duplicate pressed transitions before calling
                 // the binding filter. Repeat only the compositor-owned action;
                 // clients receive their initial press and repeat it themselves.
-                if state == KeyState::Pressed && self.binding_mode_pressed.contains(&keycode) {
-                    self.repeat_intercepted_key(keycode);
-                    return;
-                }
                 let serial = SERIAL_COUNTER.next_serial();
                 let interaction_focus = keyboard.current_focus();
                 let client_grab = keyboard
                     .with_grab(|_, grab| grab.is::<smithay::desktop::PopupKeyboardGrab<Self>>())
                     .unwrap_or(true);
-                let intercepted = keyboard.input::<(), _>(
+                let intercepted = keyboard.input_from_source::<(), _>(
+                    device.0,
                     self,
                     keycode,
                     state,
@@ -411,18 +453,9 @@ impl Ferese {
                         }
 
                         if state == KeyState::Released {
-                            data.binding_mode_pressed.remove(&keycode);
-                            data.binding_mode_repeats.remove(&keycode);
-                            data.portal_shortcuts.release(keycode, Event::time(&event).micros() / 1000);
-                            if data.intercepted_keys.remove(&keycode) {
-                                return FilterResult::Intercept(());
-                            }
-                            if data.input_capture.captures(1) {
-                                data.input_capture.push(serde_json::json!({"type":"key", "key":keycode.raw().saturating_sub(8), "pressed":false}));
-                            }
                             // Ownership comes from the press, never from the
                             // current mode or modifiers at release time.
-                            return FilterResult::Forward;
+                            return data.filter_key_release(keycode, event.time());
                         }
                         let raw_symbols = keysym.raw_syms().into_iter().map(|symbol| symbol.raw()).collect::<Vec<_>>();
                         data.binding_mode_pressed.insert(keycode);
@@ -666,6 +699,17 @@ impl Ferese {
             }
             InputEvent::PointerButton { event, .. } => {
                 self.last_pointer_time = event.time();
+                if !self
+                    .physical_input
+                    .button(device, event.button_code(), event.state())
+                {
+                    if event.state() == ButtonState::Released
+                        && !self.physical_input.button_held(event.button_code())
+                    {
+                        self.consumed_pointer_buttons.remove(&event.button_code());
+                    }
+                    return;
+                }
                 if event.state() == ButtonState::Pressed {
                     // A disconnected device may never deliver its consumed release.
                     self.consumed_pointer_buttons.remove(&event.button_code());
@@ -940,9 +984,15 @@ impl Ferese {
                 let Some(location) = self.absolute_event_position(&event) else {
                     return;
                 };
+                let Some(slot) = self
+                    .physical_input
+                    .begin_contact(device, event.slot(), location)
+                else {
+                    return;
+                };
                 if !self.consumed_touch_slots.is_empty() || self.dismiss_launcher_outside(location)
                 {
-                    self.consumed_touch_slots.insert(event.slot());
+                    self.consumed_touch_slots.insert(slot);
                     return;
                 }
                 self.focus_window_at(location, SERIAL_COUNTER.next_serial(), true);
@@ -960,7 +1010,7 @@ impl Ferese {
                     self,
                     self.surface_under(location),
                     &DownEvent {
-                        slot: event.slot(),
+                        slot,
                         location,
                         serial,
                         time: event.time(),
@@ -968,43 +1018,50 @@ impl Ferese {
                 );
             }
             InputEvent::TouchMotion { event, .. } => {
-                if self.consumed_touch_slots.contains(&event.slot()) {
-                    return;
-                }
                 let Some(location) = self.absolute_event_position(&event) else {
                     return;
                 };
+                let Some(slot) = self
+                    .physical_input
+                    .contact(device, event.slot(), Some(location))
+                else {
+                    return;
+                };
+                if self.consumed_touch_slots.contains(&slot) {
+                    return;
+                }
                 let touch = self.seat.get_touch().expect("seat has touch capability");
 
                 touch.motion(
                     self,
                     self.surface_under(location),
                     &TouchMotionEvent {
-                        slot: event.slot(),
+                        slot,
                         location,
                         time: event.time(),
                     },
                 );
             }
             InputEvent::TouchUp { event, .. } => {
-                if self.consumed_touch_slots.remove(&event.slot()) {
+                let Some(contact) = self.physical_input.end_contact(device, event.slot()) else {
+                    return;
+                };
+                if self.consumed_touch_slots.remove(&contact.slot) {
                     return;
                 }
                 let touch = self.seat.get_touch().expect("seat has touch capability");
                 touch.up(
                     self,
                     &UpEvent {
-                        slot: event.slot(),
+                        slot: contact.slot,
                         serial: SERIAL_COUNTER.next_serial(),
                         time: event.time(),
                     },
                 );
             }
-            InputEvent::TouchCancel { .. } => {
-                self.pending_layer_focus = None;
-                self.consumed_touch_slots.clear();
-                let touch = self.seat.get_touch().expect("seat has touch capability");
-                touch.cancel(self);
+            InputEvent::TouchCancel { event } => {
+                let contacts = self.physical_input.take_contacts(device);
+                self.retire_touch_contacts(contacts, event.time());
             }
             InputEvent::TouchFrame { .. } => {
                 let touch = self.seat.get_touch().expect("seat has touch capability");
