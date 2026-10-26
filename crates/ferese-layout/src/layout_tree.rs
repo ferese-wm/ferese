@@ -93,6 +93,12 @@ pub struct SizeConstraints {
     pub max_height: Option<f64>,
 }
 
+#[derive(Clone, Copy)]
+struct SubtreeConstraints {
+    minimum: (f64, f64),
+    contains_focus: bool,
+}
+
 impl Default for SizeConstraints {
     fn default() -> Self {
         Self {
@@ -1048,118 +1054,143 @@ impl LayoutTree {
         focused: Option<WindowId>,
         geometry: &mut HashMap<WindowId, Rect>,
     ) -> Result<(), LayoutError> {
-        match self.nodes.get(&node) {
-            Some(Node::Window(window)) => {
-                geometry.insert(*window, bounds);
-            }
-            Some(Node::Split {
-                axis,
-                ratio,
-                first,
-                second,
-            }) => {
-                let first_minimum = self.minimum_size(*first, constraints)?;
-                let second_minimum = self.minimum_size(*second, constraints)?;
-                let available = match axis {
-                    Axis::Horizontal => bounds.width,
-                    Axis::Vertical => bounds.height,
+        let summaries = self.constraint_summaries(node, constraints, focused)?;
+        let mut pending = vec![(node, bounds)];
+        while let Some((node, bounds)) = pending.pop() {
+            match self.nodes.get(&node) {
+                Some(Node::Window(window)) => {
+                    geometry.insert(*window, bounds);
                 }
-                .max(0.0);
-                let first_required = match axis {
-                    Axis::Horizontal => first_minimum.0,
-                    Axis::Vertical => first_minimum.1,
-                };
-                let second_required = match axis {
-                    Axis::Horizontal => second_minimum.0,
-                    Axis::Vertical => second_minimum.1,
-                };
-                let desired = available * ratio;
-                let first_extent = if first_required + second_required <= available {
-                    desired.clamp(first_required, available - second_required)
-                } else if focused.is_some_and(|window| self.contains_window(*first, window)) {
-                    first_required.min(available)
-                } else {
-                    (available - second_required).max(0.0)
-                };
-                let adjusted_ratio = if available > 0.0 {
-                    first_extent / available
-                } else {
-                    0.5
-                };
-                let (first_bounds, second_bounds) = split_rect(bounds, *axis, adjusted_ratio);
+                Some(Node::Split {
+                    axis,
+                    ratio,
+                    first,
+                    second,
+                }) => {
+                    let first_summary = summaries[first];
+                    let first_minimum = first_summary.minimum;
+                    let second_minimum = summaries[second].minimum;
+                    let available = match axis {
+                        Axis::Horizontal => bounds.width,
+                        Axis::Vertical => bounds.height,
+                    }
+                    .max(0.0);
+                    let first_required = match axis {
+                        Axis::Horizontal => first_minimum.0,
+                        Axis::Vertical => first_minimum.1,
+                    };
+                    let second_required = match axis {
+                        Axis::Horizontal => second_minimum.0,
+                        Axis::Vertical => second_minimum.1,
+                    };
+                    let desired = available * ratio;
+                    let first_extent = if first_required + second_required <= available {
+                        desired.clamp(first_required, available - second_required)
+                    } else if first_summary.contains_focus {
+                        first_required.min(available)
+                    } else {
+                        (available - second_required).max(0.0)
+                    };
+                    let adjusted_ratio = if available > 0.0 {
+                        first_extent / available
+                    } else {
+                        0.5
+                    };
+                    let (first_bounds, second_bounds) = split_rect(bounds, *axis, adjusted_ratio);
 
-                self.layout_node_constrained(*first, first_bounds, constraints, focused, geometry)?;
-                self.layout_node_constrained(
-                    *second,
-                    second_bounds,
-                    constraints,
-                    focused,
-                    geometry,
-                )?;
+                    pending.push((*second, second_bounds));
+                    pending.push((*first, first_bounds));
+                }
+                Some(Node::Stack { children, active }) => {
+                    let child = children
+                        .get(*active)
+                        .ok_or(LayoutError::InvalidTree("stack active index is invalid"))?;
+                    pending.push((*child, bounds));
+                }
+                None => return Err(LayoutError::InvalidTree("node is missing")),
             }
-            Some(Node::Stack { children, active }) => {
-                let child = children
-                    .get(*active)
-                    .ok_or(LayoutError::InvalidTree("stack active index is invalid"))?;
-                self.layout_node_constrained(*child, bounds, constraints, focused, geometry)?;
-            }
-            None => return Err(LayoutError::InvalidTree("node is missing")),
         }
 
         Ok(())
     }
 
-    fn minimum_size(
+    /// Summarize each node once, including inactive tabs whose minima still
+    /// constrain their group. Iterative passes also tolerate deeply skewed trees.
+    fn constraint_summaries(
         &self,
-        node: NodeId,
+        root: NodeId,
         constraints: &HashMap<WindowId, SizeConstraints>,
-    ) -> Result<(f64, f64), LayoutError> {
-        match self.nodes.get(&node) {
-            Some(Node::Window(window)) => {
-                let constraint = constraints.get(window).copied().unwrap_or_default();
-                let constraint = normalized_constraints(constraint);
-                Ok((constraint.min_width, constraint.min_height))
-            }
-            Some(Node::Split {
-                axis,
-                first,
-                second,
-                ..
-            }) => {
-                let first = self.minimum_size(*first, constraints)?;
-                let second = self.minimum_size(*second, constraints)?;
-
-                Ok(match axis {
-                    Axis::Horizontal => (first.0 + second.0, first.1.max(second.1)),
-                    Axis::Vertical => (first.0.max(second.0), first.1 + second.1),
-                })
-            }
-            Some(Node::Stack { children, .. }) => {
-                let mut minimum = (1.0_f64, 1.0_f64);
-
-                for child in children {
-                    let child = self.minimum_size(*child, constraints)?;
-                    minimum.0 = minimum.0.max(child.0);
-                    minimum.1 = minimum.1.max(child.1);
+        focused: Option<WindowId>,
+    ) -> Result<HashMap<NodeId, SubtreeConstraints>, LayoutError> {
+        let mut pending = vec![root];
+        let mut order = Vec::new();
+        while let Some(node) = pending.pop() {
+            order.push(node);
+            match self.nodes.get(&node) {
+                Some(Node::Window(_)) => {}
+                Some(Node::Split { first, second, .. }) => {
+                    pending.push(*first);
+                    pending.push(*second);
                 }
-
-                Ok(minimum)
+                Some(Node::Stack { children, .. }) => pending.extend(children),
+                None => return Err(LayoutError::InvalidTree("node is missing")),
             }
-            None => Err(LayoutError::InvalidTree("node is missing")),
         }
-    }
 
-    fn contains_window(&self, node: NodeId, window: WindowId) -> bool {
-        match self.nodes.get(&node) {
-            Some(Node::Window(candidate)) => *candidate == window,
-            Some(Node::Split { first, second, .. }) => {
-                self.contains_window(*first, window) || self.contains_window(*second, window)
-            }
-            Some(Node::Stack { children, .. }) => children
-                .iter()
-                .any(|child| self.contains_window(*child, window)),
-            None => false,
+        let mut summaries: HashMap<NodeId, SubtreeConstraints> =
+            HashMap::with_capacity(order.len());
+        for node in order.into_iter().rev() {
+            let summary = match self.nodes.get(&node) {
+                Some(Node::Window(window)) => {
+                    let constraint = constraints.get(window).copied().unwrap_or_default();
+                    let constraint = normalized_constraints(constraint);
+                    SubtreeConstraints {
+                        minimum: (constraint.min_width, constraint.min_height),
+                        contains_focus: focused == Some(*window),
+                    }
+                }
+                Some(Node::Split {
+                    axis,
+                    first,
+                    second,
+                    ..
+                }) => {
+                    let first = summaries[first];
+                    let second = summaries[second];
+                    SubtreeConstraints {
+                        minimum: match axis {
+                            Axis::Horizontal => (
+                                first.minimum.0 + second.minimum.0,
+                                first.minimum.1.max(second.minimum.1),
+                            ),
+                            Axis::Vertical => (
+                                first.minimum.0.max(second.minimum.0),
+                                first.minimum.1 + second.minimum.1,
+                            ),
+                        },
+                        contains_focus: first.contains_focus || second.contains_focus,
+                    }
+                }
+                Some(Node::Stack { children, .. }) => {
+                    let mut summary = SubtreeConstraints {
+                        minimum: (1.0_f64, 1.0_f64),
+                        contains_focus: false,
+                    };
+
+                    for child in children {
+                        let child = summaries[child];
+                        summary.minimum.0 = summary.minimum.0.max(child.minimum.0);
+                        summary.minimum.1 = summary.minimum.1.max(child.minimum.1);
+                        summary.contains_focus |= child.contains_focus;
+                    }
+
+                    summary
+                }
+                None => return Err(LayoutError::InvalidTree("node is missing")),
+            };
+            summaries.insert(node, summary);
         }
+        Ok(summaries)
     }
 
     fn validate_node(
@@ -1944,6 +1975,140 @@ mod tests {
         assert_eq!(result.warnings.len(), 1);
         assert_eq!(result.warnings[0].window, WindowId(2));
         assert_eq!(result.warnings[0].kind, ConstraintKind::MinimumWidth);
+    }
+
+    #[test]
+    fn inactive_tab_minima_follow_rule_changes_and_keep_focused_priority() {
+        let mut tree = LayoutTree::default();
+        tree.insert(WindowId(1), None, Axis::Horizontal, 0.2)
+            .unwrap();
+        tree.insert(WindowId(3), Some(WindowId(1)), Axis::Horizontal, 0.2)
+            .unwrap();
+        tree.insert(WindowId(2), Some(WindowId(1)), Axis::Vertical, 0.5)
+            .unwrap();
+        tree.stack_window(WindowId(2), WindowId(1)).unwrap();
+        tree.activate_window(WindowId(1)).unwrap();
+        let mut constraints = HashMap::from([
+            (
+                WindowId(2),
+                SizeConstraints {
+                    min_width: 80.0,
+                    ..SizeConstraints::default()
+                },
+            ),
+            (
+                WindowId(3),
+                SizeConstraints {
+                    min_width: 40.0,
+                    ..SizeConstraints::default()
+                },
+            ),
+        ]);
+        let gaps = GapConfig {
+            inner: 0.0,
+            outer: 0.0,
+            smart: false,
+        };
+        let result = tree
+            .geometry_with_constraints(
+                Rect::new(0.0, 0.0, 200.0, 80.0),
+                gaps,
+                &constraints,
+                Some(WindowId(1)),
+            )
+            .unwrap();
+        assert_eq!(result.geometry[&WindowId(1)].width, 80.0);
+        assert!(!result.geometry.contains_key(&WindowId(2)));
+        tree.activate_window(WindowId(2)).unwrap();
+        constraints.get_mut(&WindowId(2)).unwrap().min_width = 120.0;
+        let result = tree
+            .geometry_with_constraints(
+                Rect::new(0.0, 0.0, 200.0, 80.0),
+                gaps,
+                &constraints,
+                Some(WindowId(2)),
+            )
+            .unwrap();
+        assert_eq!(result.geometry[&WindowId(2)].width, 120.0);
+        assert_eq!(result.geometry[&WindowId(3)].width, 80.0);
+        for (focus, tab_width, neighbor_width) in
+            [(WindowId(2), 100.0, 1.0), (WindowId(3), 60.0, 40.0)]
+        {
+            let result = tree
+                .geometry_with_constraints(
+                    Rect::new(0.0, 0.0, 100.0, 80.0),
+                    gaps,
+                    &constraints,
+                    Some(focus),
+                )
+                .unwrap();
+            assert_eq!(result.geometry[&WindowId(2)].width, tab_width);
+            assert_eq!(result.geometry[&WindowId(3)].width, neighbor_width);
+        }
+    }
+
+    #[test]
+    fn constrained_geometry_handles_a_deep_tree_on_a_small_stack() {
+        std::thread::Builder::new()
+            .stack_size(128 * 1024)
+            .spawn(|| {
+                let mut tree = LayoutTree::default();
+                let first = tree.insert_node(Node::Window(WindowId(1)));
+                tree.windows.insert(WindowId(1), first);
+                tree.root = Some(first);
+                // Build the topology directly so this regression isolates the solver
+                // from debug insertion validation and other recursive tree operations.
+                for id in 2..=4096 {
+                    let previous = tree.root.unwrap();
+                    let leaf = tree.insert_node(Node::Window(WindowId(id)));
+                    tree.windows.insert(WindowId(id), leaf);
+                    let parent = tree.insert_node(Node::Split {
+                        axis: Axis::Horizontal,
+                        ratio: 0.5,
+                        first: previous,
+                        second: leaf,
+                    });
+                    tree.parents.insert(previous, parent);
+                    tree.parents.insert(leaf, parent);
+                    tree.root = Some(parent);
+                }
+                for width in [8192.0, 100.0] {
+                    let mut raw = HashMap::new();
+                    tree.layout_node_constrained(
+                        tree.root.unwrap(),
+                        Rect::new(0.0, 0.0, width, 80.0),
+                        &HashMap::new(),
+                        Some(WindowId(1)),
+                        &mut raw,
+                    )
+                    .unwrap();
+                    let total: f64 = raw.values().map(|rect| rect.width).sum();
+                    assert!((total - width).abs() < 0.001);
+                    let result = tree
+                        .geometry_with_constraints(
+                            Rect::new(0.0, 0.0, width, 80.0),
+                            GapConfig {
+                                inner: 0.0,
+                                outer: 0.0,
+                                smart: false,
+                            },
+                            &HashMap::new(),
+                            Some(WindowId(1)),
+                        )
+                        .unwrap();
+                    assert_eq!(result.geometry.len(), 4096);
+                    assert!(result.geometry[&WindowId(1)].width >= 1.0);
+                    assert!(
+                        result
+                            .geometry
+                            .values()
+                            .all(|rect| rect.x.is_finite() && rect.width >= 0.0)
+                    );
+                }
+            })
+            .unwrap()
+            .join()
+            .unwrap();
     }
 
     #[test]

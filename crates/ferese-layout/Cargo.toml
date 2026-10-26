@@ -9,3 +9,7 @@ rust-version.workspace = true
 workspace = true
 
 [dependencies]
+
+[[bench]]
+name = "constrained_tree"
+harness = false
