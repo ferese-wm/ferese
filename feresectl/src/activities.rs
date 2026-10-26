@@ -232,9 +232,9 @@ pub fn command(action: &Action, socket: &Path, json_output: bool) -> Result<(), 
             cwd: cwd.clone(),
         },
         Action::List => {
-            let mut stream = std::os::unix::net::UnixStream::connect(socket)?;
+            let stream = std::os::unix::net::UnixStream::connect(socket)?;
             return super::output::print(
-                &super::request(&mut stream, "activity-get", json!({}))?,
+                &super::request_socket(&stream, "activity-get", json!({}))?,
                 json_output,
             );
         }

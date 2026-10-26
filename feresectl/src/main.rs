@@ -3,6 +3,8 @@ mod autostart;
 mod cli;
 mod output;
 mod pomodoro;
+mod transport;
+use transport::{request, request_socket};
 
 use std::error::Error;
 use std::io::Write;
@@ -12,7 +14,7 @@ use std::{env, fs, io};
 
 use clap::{Parser, ValueEnum};
 use cli::{Cli, Command, ThemeAction};
-use ferese_ipc::{Request, Response, VERSION, read_frame, write_frame};
+use ferese_ipc::Response;
 use serde_json::{Value, json};
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -60,8 +62,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         Command::EventStream => event_stream(&socket),
         command => {
             let (command, args) = command.ipc().expect("IPC command");
-            let mut stream = UnixStream::connect(socket)?;
-            let result = request(&mut stream, command, args)?;
+            let stream = UnixStream::connect(socket)?;
+            let result = request_socket(&stream, command, args)?;
             if matches!(command, "screenshot" | "screenshot-window") {
                 write_png(&Response::success(1, result))
             } else {
@@ -69,31 +71,6 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
         }
     }
-}
-
-fn request(
-    stream: &mut (impl io::Read + io::Write),
-    command: &str,
-    args: Value,
-) -> Result<Value, Box<dyn Error>> {
-    write_frame(
-        stream,
-        &Request {
-            version: VERSION,
-            id: 1,
-            kind: "command".into(),
-            command: command.into(),
-            args,
-        },
-    )?;
-    let response: Response = read_frame(stream)?;
-    if response.version != VERSION || response.id != 1 {
-        return Err("Unexpected IPC response".into());
-    }
-    if let Some(error) = response.error {
-        return Err(format!("{}: {}", error.code, error.message).into());
-    }
-    Ok(response.result.unwrap_or(Value::Null))
 }
 
 fn theme_command(
@@ -132,16 +109,16 @@ fn theme_command(
 }
 
 fn event_stream(socket: &Path) -> Result<(), Box<dyn Error>> {
-    let mut stream = UnixStream::connect(socket)?;
-    request(
-        &mut stream,
+    let stream = UnixStream::connect(socket)?;
+    request_socket(
+        &stream,
         "event-stream",
         json!({"version": ferese_ipc::events::VERSION}),
     )?;
+    stream.set_read_timeout(None)?;
     let mut stdout = io::stdout().lock();
     loop {
-        let event: ferese_ipc::events::Event = read_frame(&mut stream)?;
-        event.validate()?;
+        let event = transport::next_event(&stream)?;
         if !output::write_json_line(&mut stdout, &event)? {
             return Ok(());
         }
@@ -183,6 +160,7 @@ fn write_png(response: &Response) -> Result<(), Box<dyn Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ferese_ipc::{Request, VERSION, read_frame, write_frame};
 
     #[test]
     fn xwayland_commands_map_to_the_shared_ipc_command_names() {

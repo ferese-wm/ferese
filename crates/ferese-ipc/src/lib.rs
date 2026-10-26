@@ -13,4 +13,4 @@ pub mod xwayland;
 
 pub use connection::{Cancellation, Connection, socket_path};
 pub use frame::*;
-pub use transport::exchange_frames;
+pub use transport::{exchange_frames, read_socket_frame};

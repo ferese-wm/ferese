@@ -3,7 +3,6 @@ use ferese_ipc::activities::{PomodoroAction, PomodoroRequest, VERSION};
 use std::error::Error;
 use std::os::unix::net::UnixStream;
 use std::path::Path;
-use std::time::Duration;
 
 #[derive(Debug, Subcommand)]
 pub enum Action {
@@ -29,11 +28,9 @@ pub fn command(action: &Action, socket: &Path, json: bool) -> Result<(), Box<dyn
         Action::Reset => PomodoroAction::Reset,
         Action::Status => PomodoroAction::Status,
     };
-    let mut stream = UnixStream::connect(socket)?;
-    stream.set_read_timeout(Some(Duration::from_secs(2)))?;
-    stream.set_write_timeout(Some(Duration::from_secs(2)))?;
-    let result = super::request(
-        &mut stream,
+    let stream = UnixStream::connect(socket)?;
+    let result = super::request_socket(
+        &stream,
         "pomodoro",
         serde_json::to_value(PomodoroRequest {
             version: VERSION,

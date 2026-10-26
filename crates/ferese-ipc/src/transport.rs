@@ -57,7 +57,7 @@ impl Write for DeadlineIo<'_> {
 /// Callers must serialize access to shared socket clones, validate response
 /// identity/outcome, and discard a connection after a framing or I/O error.
 pub fn exchange_frames<T: Serialize, R: DeserializeOwned>(
-    mut stream: &UnixStream,
+    stream: &UnixStream,
     request: &T,
     budget: Duration,
 ) -> Result<R, FrameError> {
@@ -68,16 +68,7 @@ pub fn exchange_frames<T: Serialize, R: DeserializeOwned>(
             &mut DeadlineIo::try_new(stream, write_timeout.unwrap_or(budget).min(budget))?,
             request,
         )?;
-        let mut first = [0];
-        let reader = if let Some(timeout) = read_timeout {
-            let mut reader = DeadlineIo::try_new(stream, timeout.min(budget))?;
-            reader.read_exact(&mut first)?;
-            reader
-        } else {
-            stream.read_exact(&mut first)?;
-            DeadlineIo::try_new(stream, budget)?
-        };
-        read_frame(&mut first.as_slice().chain(reader))
+        read_with_budget(stream, read_timeout, budget)
     })();
     let restored = stream
         .set_read_timeout(read_timeout)
@@ -89,4 +80,43 @@ pub fn exchange_frames<T: Serialize, R: DeserializeOwned>(
             Ok(response)
         }
     }
+}
+
+/// Read one socket frame with an absolute deadline and restore its read timeout.
+///
+/// A configured read timeout tightens `budget`, including the first byte. With
+/// no read timeout, an event subscription may idle indefinitely; once its first
+/// byte arrives, the remaining frame must complete within `budget`. Discard the
+/// connection on error, since a partial frame cannot be resumed safely.
+pub fn read_socket_frame<R: DeserializeOwned>(
+    stream: &UnixStream,
+    budget: Duration,
+) -> Result<R, FrameError> {
+    let timeout = stream.read_timeout()?;
+    let result = read_with_budget(stream, timeout, budget);
+    let restored = stream.set_read_timeout(timeout);
+    match result {
+        Err(error) => Err(error),
+        Ok(value) => {
+            restored?;
+            Ok(value)
+        }
+    }
+}
+
+fn read_with_budget<R: DeserializeOwned>(
+    mut stream: &UnixStream,
+    timeout: Option<Duration>,
+    budget: Duration,
+) -> Result<R, FrameError> {
+    let mut first = [0];
+    let reader = if let Some(timeout) = timeout {
+        let mut reader = DeadlineIo::try_new(stream, timeout.min(budget))?;
+        reader.read_exact(&mut first)?;
+        reader
+    } else {
+        stream.read_exact(&mut first)?;
+        DeadlineIo::try_new(stream, budget)?
+    };
+    read_frame(&mut first.as_slice().chain(reader))
 }
