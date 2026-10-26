@@ -413,7 +413,7 @@ impl Ferese {
                         if state == KeyState::Released {
                             data.binding_mode_pressed.remove(&keycode);
                             data.binding_mode_repeats.remove(&keycode);
-                            data.portal_shortcuts.release(keycode, Event::time(&event).micros());
+                            data.portal_shortcuts.release(keycode, Event::time(&event).micros() / 1000);
                             if data.intercepted_keys.remove(&keycode) {
                                 return FilterResult::Intercept(());
                             }
@@ -557,7 +557,7 @@ impl Ferese {
                                     keycode,
                                     &raw_symbols,
                                     modifiers,
-                                    Event::time(&event).micros(),
+                                    Event::time(&event).micros() / 1000,
                                 )
                             {
                                 data.intercepted_keys.insert(keycode);

@@ -20,6 +20,8 @@ struct Registration {
     shortcuts: Vec<(Shortcut, Binding)>,
     held: HashMap<Keycode, String>,
     events: VecDeque<Value>,
+    // Portal timestamps use milliseconds. Keep the input clock's u64 base;
+    // Wayland's u32 millisecond timestamps wrap after about 49 days.
     latest: (u64, Instant),
     closed: bool,
 }
@@ -210,6 +212,7 @@ impl PortalShortcuts {
 
 #[cfg(test)]
 mod tests {
+    use smithay::backend::input::InputTime;
     use smithay::input::keyboard::keysyms;
 
     use super::*;
@@ -355,5 +358,46 @@ mod tests {
         assert!(!shortcuts.press(key, &[keysyms::KEY_z], &modifiers, 1));
         modifiers.num_lock = true;
         assert!(shortcuts.press(key, &[keysyms::KEY_z], &modifiers, 2));
+    }
+
+    #[test]
+    fn input_and_session_release_timestamps_use_64_bit_milliseconds() {
+        use crate::input::binding_mode_tests::key_at;
+
+        if !crate::startup_tests::private_runtime(
+            "portal_shortcuts::tests::input_and_session_release_timestamps_use_64_bit_milliseconds",
+        ) {
+            return;
+        }
+        let mut events = smithay::reexports::calloop::EventLoop::try_new().unwrap();
+        let mut state = crate::startup_tests::state(&mut events);
+        state
+            .portal_shortcuts
+            .register(1, vec![shortcut("one", "F10")], &[], &state.input_settings)
+            .unwrap();
+        // Longer than a 32-bit Wayland millisecond timestamp. The portal uses
+        // u64 time and must preserve this clock's base and millisecond deltas.
+        let press = (u64::from(u32::MAX) + 1) * 1000 + 123_000;
+        let release = press + 456_789;
+        key_at(&mut state, 76, true, InputTime::from_micros(press));
+        key_at(&mut state, 76, false, InputTime::from_micros(release));
+        let result = state.portal_shortcuts.poll(1, false);
+        assert_eq!(result["events"][0]["timestamp"], press / 1000);
+        assert_eq!(result["events"][1]["timestamp"], release / 1000);
+        assert_eq!(
+            result["events"][1]["timestamp"].as_u64().unwrap()
+                - result["events"][0]["timestamp"].as_u64().unwrap(),
+            456
+        );
+
+        key_at(&mut state, 76, true, InputTime::now());
+        state.portal_shortcuts.poll(1, false);
+        let before = InputTime::now().micros() / 1000;
+        state.reset_session_input();
+        let after = InputTime::now().micros() / 1000;
+        let result = state.portal_shortcuts.poll(1, false);
+        let timestamp = result["events"][0]["timestamp"].as_u64().unwrap();
+        assert_eq!(result["events"][0]["active"], false);
+        assert!((before..=after).contains(&timestamp));
     }
 }

@@ -39,7 +39,7 @@ impl Ferese {
             let mut held = keyboard.pressed_keys();
             held.extend(self.binding_mode_pressed.iter().copied());
             for key in held {
-                self.portal_shortcuts.release(key, time.micros());
+                self.portal_shortcuts.release(key, time.micros() / 1000);
                 // release_source forwards intercepted keys too. Use its source
                 // accounting with our existing press ownership filter instead.
                 keyboard.input_from_source::<(), _>(

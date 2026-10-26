@@ -37,10 +37,10 @@ impl InputBackend for TestInput {
 }
 
 #[derive(Debug)]
-struct TestKey(Keycode, KeyState);
+struct TestKey(Keycode, KeyState, smithay::backend::input::InputTime);
 impl Event<TestInput> for TestKey {
     fn time(&self) -> smithay::backend::input::InputTime {
-        smithay::backend::input::InputTime::from_micros(1_000)
+        self.2
     }
     fn device(&self) -> WinitVirtualDevice {
         WinitVirtualDevice
@@ -58,6 +58,20 @@ impl KeyboardKeyEvent<TestInput> for TestKey {
     }
 }
 pub(crate) fn key(state: &mut Ferese, code: u32, pressed: bool) {
+    key_at(
+        state,
+        code,
+        pressed,
+        smithay::backend::input::InputTime::from_micros(1_000),
+    );
+}
+
+pub(crate) fn key_at(
+    state: &mut Ferese,
+    code: u32,
+    pressed: bool,
+    time: smithay::backend::input::InputTime,
+) {
     state.process_input_event::<TestInput>(InputEvent::Keyboard {
         event: TestKey(
             Keycode::new(code),
@@ -66,6 +80,7 @@ pub(crate) fn key(state: &mut Ferese, code: u32, pressed: bool) {
             } else {
                 KeyState::Released
             },
+            time,
         ),
     });
 }
