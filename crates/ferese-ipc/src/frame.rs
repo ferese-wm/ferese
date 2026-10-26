@@ -109,15 +109,49 @@ pub fn read_frame<T: for<'de> Deserialize<'de>>(reader: &mut impl Read) -> Resul
 }
 
 pub fn write_frame<T: Serialize>(writer: &mut impl Write, value: &T) -> Result<(), FrameError> {
-    let payload = serde_json::to_vec(value).map_err(FrameError::InvalidJson)?;
-    if payload.len() > MAX_PAYLOAD_SIZE {
-        return Err(FrameError::Oversized(payload.len()));
+    let mut payload = PayloadBuffer::default();
+    if let Err(error) = serde_json::to_writer(&mut payload, value) {
+        return Err(match payload.oversized {
+            Some(size) => FrameError::Oversized(size),
+            None => FrameError::InvalidJson(error),
+        });
     }
 
-    writer.write_all(&(payload.len() as u32).to_be_bytes())?;
-    writer.write_all(&payload)?;
+    writer.write_all(&(payload.bytes.len() as u32).to_be_bytes())?;
+    writer.write_all(&payload.bytes)?;
     writer.flush()?;
     Ok(())
+}
+
+/// Reject oversized serialization before allocating its complete JSON representation.
+/// No header or payload reaches the peer until serialization has succeeded.
+#[derive(Default)]
+struct PayloadBuffer {
+    bytes: Vec<u8>,
+    oversized: Option<usize>,
+}
+
+impl Write for PayloadBuffer {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        let required = self.bytes.len().saturating_add(bytes.len());
+        if required > MAX_PAYLOAD_SIZE {
+            self.oversized = Some(required);
+            return Err(io::Error::other("IPC payload limit reached"));
+        }
+        if required > self.bytes.capacity() {
+            let capacity = required
+                .max(self.bytes.capacity().saturating_mul(2))
+                .max(128)
+                .min(MAX_PAYLOAD_SIZE);
+            self.bytes.reserve_exact(capacity - self.bytes.len());
+        }
+        self.bytes.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -203,5 +237,51 @@ mod tests {
         let error = read_frame::<Request>(&mut size.as_slice()).unwrap_err();
 
         assert!(matches!(error, FrameError::Oversized(_)));
+    }
+
+    #[test]
+    fn writes_exact_limit_and_rejects_larger_payloads_without_writing_a_header() {
+        let value = "x".repeat(MAX_PAYLOAD_SIZE - 2);
+        let mut frame = Vec::new();
+        write_frame(&mut frame, &value).unwrap();
+        assert_eq!(frame.len(), MAX_PAYLOAD_SIZE + 4);
+        assert_eq!(read_frame::<String>(&mut frame.as_slice()).unwrap(), value);
+
+        for value in [format!("{value}x"), "\0".repeat(MAX_PAYLOAD_SIZE / 6 + 1)] {
+            let mut frame = Vec::new();
+            assert!(matches!(
+                write_frame(&mut frame, &value),
+                Err(FrameError::Oversized(size)) if size > MAX_PAYLOAD_SIZE
+            ));
+            assert!(frame.is_empty());
+        }
+    }
+
+    #[test]
+    fn oversized_streamed_serialization_stops_at_the_payload_budget() {
+        use serde::ser::SerializeSeq;
+        use std::cell::Cell;
+
+        struct ManyStrings<'a>(&'a Cell<usize>);
+
+        impl Serialize for ManyStrings<'_> {
+            fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+                let mut sequence = serializer.serialize_seq(Some(4096))?;
+                for _ in 0..4096 {
+                    self.0.set(self.0.get() + 1);
+                    sequence.serialize_element(&"x".repeat(1024))?;
+                }
+                sequence.end()
+            }
+        }
+
+        let serialized = Cell::new(0);
+        let mut frame = Vec::new();
+        assert!(matches!(
+            write_frame(&mut frame, &ManyStrings(&serialized)),
+            Err(FrameError::Oversized(_))
+        ));
+        assert!(serialized.get() <= MAX_PAYLOAD_SIZE / 1024 + 1);
+        assert!(frame.is_empty());
     }
 }
