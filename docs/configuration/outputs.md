@@ -63,6 +63,7 @@ usable connected monitors. Find selectors with `feresectl outputs`.
 | `enabled` | boolean | `true` |
 | `mode` | `"WIDTHxHEIGHT"` or `"WIDTHxHEIGHT@HZ"` | Preferred mode |
 | `auto-refresh` | boolean | `false` |
+| `adaptive-sync` | boolean; requires connector and atomic KMS support | `false` |
 | `scale` | number > 0 | `1` |
 | `transform` | enum below | `"normal"` |
 | `position` | `[integer, integer]` | Automatic horizontal placement |
@@ -73,6 +74,12 @@ unlisted monitors stay enabled with defaults. Internal-only and external-only
 filter by connector type. A layout that would disable the final usable display
 falls back to a working display. Profiles that explicitly disable all their
 listed outputs are invalid.
+
+`adaptive-sync=#true` explicitly enables variable refresh on a supported output.
+The request is validated and restored with the rest of the output transaction.
+Mirror sources and targets reject adaptive sync because their presentation clocks
+are coupled. IPC exposes support, requested state, and applied state separately;
+an unsupported request fails without silently enabling a different policy.
 
 `required` controls whether a profile matches when a monitor is absent. Every
 connected monitor enabled by the resolved policy, including optional monitors

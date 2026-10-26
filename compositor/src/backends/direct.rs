@@ -15,6 +15,8 @@ mod lid;
 mod mirror;
 mod output_power;
 mod planes;
+mod protocol;
+mod presentation_mode;
 mod recovery;
 mod redraw;
 mod scheduling;
@@ -55,6 +57,7 @@ use smithay::utils::{Monotonic, Time, Transform};
 use smithay::wayland::dmabuf::DmabufFeedbackBuilder;
 use smithay::wayland::presentation::Refresh;
 use topology::{Topology, reconcile_outputs};
+pub(crate) use protocol::configure_outputs;
 
 use crate::Ferese;
 use crate::config::{OutputModeRequest, OutputProfile, OutputSettings, OutputTransform};
@@ -92,6 +95,14 @@ pub struct DirectBackendState {
 }
 
 impl DirectBackendState {
+    pub(crate) fn protocol_output_name(&self, info: &ConnectedOutputInfo) -> String {
+        protocol::output_name(&info.connector, &info.identity, &self.monitors)
+    }
+    pub(crate) fn physical_output(&self, identity: &str) -> Option<&Output> {
+        self.devices.values().flat_map(|device| device.outputs.values())
+            .find(|output| output.identity == identity).map(|output| &output.output)
+    }
+
     pub(crate) fn physical_outputs(&self) -> impl Iterator<Item = &Output> {
         self.devices
             .values()
@@ -259,6 +270,9 @@ pub(crate) struct ConnectedOutputInfo {
     pub profile: Option<String>,
     pub requested_profile: Option<String>,
     pub auto_refresh: bool,
+    pub adaptive_sync_supported: bool,
+    pub adaptive_sync_requested: bool,
+    pub adaptive_sync_enabled: bool,
     pub physical_size: Option<(u32, u32)>,
     pub current_mode: Option<ConnectedModeInfo>,
     pub available_modes: Vec<ConnectedModeInfo>,
@@ -338,6 +352,7 @@ struct DirectOutput {
 
 #[derive(Clone)]
 struct OutputSelection {
+    name: String,
     connector: connector::Info,
     crtc: crtc::Handle,
     mode: DrmMode,
@@ -435,11 +450,7 @@ pub fn init(event_loop: &mut EventLoop<Ferese>, state: &mut Ferese) -> Result<()
             }
 
             event => {
-                if state
-                    .direct_backend
-                    .as_ref()
-                    .is_some_and(|backend| backend.active)
-                {
+                if state.direct_backend.as_ref().is_some_and(|backend| backend.active) {
                     state.process_input_event(event);
                 }
             }
@@ -711,6 +722,7 @@ pub(crate) fn set_output_profile(state: &mut Ferese, name: &str) -> Result<(), S
     let previous = backend.manual_outputs.clone();
     let known_good = backend.applied_outputs.clone();
     backend.manual_outputs.profile = (name != "auto").then(|| name.to_owned());
+    backend.manual_outputs.configuration = None;
     backend.manual_outputs.internal = None;
     backend.manual_outputs.layout = None;
     let desired = crate::output_policy::select_profile(
@@ -797,6 +809,7 @@ pub(crate) fn set_output_layout(
     let previous = backend.manual_outputs.clone();
     let known_good = backend.applied_outputs.clone();
     backend.manual_outputs.profile = None;
+    backend.manual_outputs.configuration = None;
     backend.manual_outputs.internal = None;
     backend.manual_outputs.layout = Some(layout);
     if let Err(error) = validate_live_outputs(state, &state.output_profiles) {
@@ -846,6 +859,7 @@ pub(crate) fn set_internal_output(state: &mut Ferese, enabled: bool) -> Result<(
     let previous = backend.manual_outputs.clone();
     let known_good = backend.applied_outputs.clone();
     backend.manual_outputs.internal = Some(enabled);
+    backend.manual_outputs.configuration = None;
     backend.manual_outputs.layout = None;
     reconcile_outputs(state, false);
     if let Some(error) = state
@@ -1077,7 +1091,7 @@ fn open_device(state: &mut Ferese, path: &Path) -> Result<DrmNode, Box<dyn Error
                     if let (Some(mut feedback), DrmEventTime::Monotonic(time)) = (feedback, metadata.time) {
                         feedback.presented(
                             Time::<Monotonic>::from(time),
-                            Refresh::fixed(refresh_duration(state, node, crtc)),
+                            presentation_refresh(state, node, crtc),
                             u64::from(metadata.sequence),
                             Kind::Vsync | Kind::HwClock | Kind::HwCompletion,
                         );
@@ -2081,6 +2095,15 @@ fn refresh_duration(state: &Ferese, node: DrmNode, crtc: crtc::Handle) -> Durati
         .unwrap_or_else(|| Duration::from_millis(16))
 }
 
+fn presentation_refresh(state: &Ferese, node: DrmNode, crtc: crtc::Handle) -> Refresh {
+    let interval = refresh_duration(state, node, crtc);
+    let variable = state.direct_backend.as_ref()
+        .and_then(|backend| backend.devices.get(&node))
+        .and_then(|device| device.outputs.get(&crtc))
+        .is_some_and(|output| output.surface.vrr_enabled());
+    if variable { Refresh::variable(interval) } else { Refresh::fixed(interval) }
+}
+
 fn refresh_duration_from_mode(mode: DrmMode) -> Duration {
     Duration::from_nanos(1_000_000_000_000 / OutputMode::from(mode).refresh.max(1) as u64)
 }
@@ -2505,6 +2528,9 @@ fn select_outputs(
             profile: desired.profile.clone(),
             requested_profile: desired.profile.clone(),
             auto_refresh: settings.auto_refresh,
+            adaptive_sync_supported: presentation_mode::connector_capable(drm, &connector)?,
+            adaptive_sync_requested: settings.adaptive_sync,
+            adaptive_sync_enabled: false,
             physical_size: connector.size(),
             current_mode: selected_mode.map(connected_mode_info),
             available_modes: connector
@@ -2563,7 +2589,17 @@ fn select_outputs(
         .zip(crtc_assignment::assign(&requests))
     {
         if let Some(crtc) = crtc {
+            let supported = presentation_mode::capable(drm, connector.handle(), crtc)?;
+            let mirrored = mirror_source.is_some() || desired.outputs.iter().any(|output| {
+                output.settings.enabled && output.mirror_source.as_deref() == Some(identity.as_str())
+            });
+            presentation_mode::validate(settings.adaptive_sync, supported, mirrored)
+                .map_err(io::Error::other)?;
+            if let Some(info) = connected_outputs.iter_mut().find(|info| info.identity == identity) {
+                info.adaptive_sync_supported = supported;
+            }
             selections.push(OutputSelection {
+                name: protocol::output_name(&connector.to_string(), &identity, monitors),
                 connector,
                 crtc,
                 mode,
@@ -2659,6 +2695,7 @@ fn create_direct_output(
     publish: bool,
 ) -> Result<DirectOutput, Box<dyn Error>> {
     let OutputSelection {
+        name,
         connector,
         crtc,
         mode,
@@ -2691,10 +2728,18 @@ fn create_direct_output(
         drm.cursor_size(),
         Some(gbm.clone()),
     )?;
+    if settings.adaptive_sync
+        && surface.vrr_supported(connector.handle())?
+            == smithay::backend::drm::VrrSupport::NotSupported
+    {
+        return Err("adaptive sync became unavailable before output activation".into());
+    }
+    surface.use_vrr(settings.adaptive_sync)?;
     // Publish only after DRM/GBM creation succeeds; failed activation must not
     // leave a phantom output/workspace that could receive evacuated windows.
     let (output, global) = create_output(
         state,
+        name,
         &connector,
         mode,
         identity.clone(),
@@ -2712,6 +2757,8 @@ fn create_direct_output(
     );
 
     tracing::info!(?crtc, connector = %connector, "initialized DRM output");
+    let mut scheduler = crate::frame_scheduler::FrameScheduler::new(refresh_duration_from_mode(mode));
+    scheduler.set_variable_refresh(settings.adaptive_sync);
     Ok(DirectOutput {
         gamma: Default::default(),
         internal: internal_connector(connector.interface()),
@@ -2739,7 +2786,7 @@ fn create_direct_output(
         animation_fallback: AnimationFallback::default(),
         cursor_visible: false,
         power: OutputPower::default(),
-        scheduler: crate::frame_scheduler::FrameScheduler::new(refresh_duration_from_mode(mode)),
+        scheduler,
         render_timer: None,
         callback_timer: None,
         lock_frame_pending: false,
@@ -2748,13 +2795,13 @@ fn create_direct_output(
 
 fn create_output(
     state: &mut Ferese,
+    name: String,
     connector: &connector::Info,
     mode: DrmMode,
     identity: String,
     settings: &OutputSettings,
     publish: bool,
 ) -> (Output, Option<GlobalId>) {
-    let name = connector.to_string();
     let physical_size = connector.size().unwrap_or((0, 0));
     let edid_identity = identity
         .strip_prefix("edid:")

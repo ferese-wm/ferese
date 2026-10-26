@@ -1,4 +1,4 @@
-//! Fixed-refresh scheduling policy, independent of DRM and the event loop.
+//! Presentation scheduling policy, independent of DRM and the event loop.
 use std::time::Duration;
 
 const MIN_RENDER: Duration = Duration::from_millis(2);
@@ -16,6 +16,7 @@ pub(crate) struct FramePlan {
 #[derive(Debug)]
 pub(crate) struct FrameScheduler {
     interval: Duration,
+    variable_refresh: bool,
     last_presented: Option<Duration>,
     last_target: Option<Duration>,
     requested_at: Option<Duration>,
@@ -35,6 +36,7 @@ impl FrameScheduler {
     pub fn new(interval: Duration) -> Self {
         Self {
             interval: interval.max(Duration::from_micros(1)),
+            variable_refresh: false,
             last_presented: None,
             last_target: None,
             requested_at: None,
@@ -53,8 +55,26 @@ impl FrameScheduler {
 
     pub fn reset(&mut self, interval: Duration) {
         let missed = self.missed_deadlines;
+        let variable_refresh = self.variable_refresh;
         *self = Self::new(interval);
+        self.variable_refresh = variable_refresh;
         self.missed_deadlines = missed;
+    }
+
+    /// The interval is the maximum refresh rate's minimum spacing in variable mode.
+    /// Keep in-flight ownership while discarding predictions from the old clock policy.
+    pub fn set_variable_refresh(&mut self, enabled: bool) {
+        if self.variable_refresh == enabled {
+            return;
+        }
+        self.variable_refresh = enabled;
+        self.last_presented = None;
+        self.last_target = None;
+        self.last_callback = None;
+        self.scheduled = None;
+        self.extra_margin = Duration::ZERO;
+        self.wakeup_delay = Duration::ZERO;
+        self.last_wakeup = None;
     }
 
     pub fn request(&mut self, now: Duration) {
@@ -126,6 +146,21 @@ impl FrameScheduler {
         }
 
         let budget = self.budget(now);
+        if self.variable_refresh {
+            // There is no fixed vblank phase to round to. A late frame can start
+            // a refresh as soon as it is ready, subject to the panel's maximum rate.
+            let present_at = (now + budget)
+                .max(self.last_presented.map_or(now, |last| last + self.interval))
+                .max(self.last_target.map_or(now, |last| last + self.interval));
+            let plan = FramePlan {
+                render_at: present_at.saturating_sub(budget).max(now),
+                present_at,
+                requested_at,
+                phase_known: false,
+            };
+            self.scheduled = Some(plan);
+            return Some(plan);
+        }
         let idle = self
             .last_presented
             .is_none_or(|last| now.saturating_sub(last) >= self.interval * 100);
@@ -202,6 +237,11 @@ impl FrameScheduler {
         // The first submission has only an estimated phase. Retiring it on
         // the actual refresh must not carry that estimate into the next frame.
         self.last_target = Some(timestamp);
+        if self.variable_refresh {
+            // Variable refresh timestamps cannot measure missed fixed refresh slots.
+            self.extra_margin = Duration::ZERO;
+            return Some(plan);
+        }
         let late = timestamp.saturating_sub(plan.present_at);
         if plan.phase_known && late > self.interval / 2 {
             let missed =
@@ -227,7 +267,7 @@ impl FrameScheduler {
         // Before the first real page flip there is no reliable refresh phase.
         // A late timer still samples the next physical presentation, while
         // deadline metrics retain the original scheduled target.
-        plan.phase_known.then(|| {
+        (!self.variable_refresh && plan.phase_known).then(|| {
             plan.present_at
                 .max(self.phase_at_or_after(now + Duration::from_nanos(1)))
         })
@@ -254,6 +294,9 @@ impl FrameScheduler {
             .map_or(now, |last| last + self.interval)
             .max(target)
             .max(now);
+        if self.variable_refresh {
+            return Some(earliest);
+        }
         // DRM may report a completed flip slightly before its presentation
         // timestamp. Wait for that refresh, rather than advancing a full slot.
         if let Some(presented) = self.last_presented
@@ -265,6 +308,10 @@ impl FrameScheduler {
     }
 
     pub fn callback_sent(&mut self, now: Duration) {
+        if self.variable_refresh {
+            self.last_callback = Some(now);
+            return;
+        }
         // Record the refresh slot, not delayed event-loop dispatch time.
         // Otherwise a callback delivered a few microseconds late can make
         // the next refresh look too early and halve a client's frame rate.
@@ -559,5 +606,66 @@ mod tests {
             unknown.missed_deadlines, 0,
             "unknown phase is not a measurable missed deadline"
         );
+    }
+
+    #[test]
+    fn variable_refresh_uses_minimum_spacing_without_rounding_late_work_to_a_phase() {
+        let mut scheduler = FrameScheduler::new(ms(10));
+        scheduler.set_variable_refresh(true);
+        scheduler.presented(ms(100));
+        scheduler.request(ms(101));
+        let first = scheduler.plan(ms(101)).unwrap();
+        assert_eq!(first.present_at, ms(110));
+        assert_eq!(first.render_at, ms(107));
+        assert_eq!(scheduler.forecast_time(ms(108), first), None);
+        scheduler.begin(first.render_at);
+        scheduler.rendered(first, ms(109), ms(2), true);
+        scheduler.presented(ms(114));
+        scheduler.request(ms(135));
+        let late = scheduler.plan(ms(135)).unwrap();
+        assert_eq!(late.render_at, ms(135));
+        assert!(
+            late.present_at < ms(144),
+            "do not wait for an obsolete phase"
+        );
+        scheduler.begin(late.render_at);
+        scheduler.rendered(late, ms(137), ms(2), true);
+        scheduler.presented(ms(190));
+        assert_eq!(scheduler.missed_deadlines, 0);
+    }
+
+    #[test]
+    fn refresh_policy_transition_preserves_in_flight_ownership_and_resets_phase() {
+        let mut scheduler = FrameScheduler::new(ms(10));
+        scheduler.presented(ms(100));
+        scheduler.request(ms(101));
+        let plan = scheduler.plan(ms(101)).unwrap();
+        scheduler.begin(plan.render_at);
+        scheduler.rendered(plan, ms(109), ms(2), true);
+        scheduler.set_variable_refresh(true);
+        scheduler.request(ms(112));
+        assert_eq!(scheduler.plan(ms(112)), None);
+        assert_eq!(scheduler.presented(ms(115)), Some(plan));
+        assert!(scheduler.plan(ms(116)).is_some());
+        scheduler.reset(ms(8));
+        scheduler.request(ms(130));
+        let plan = scheduler.plan(ms(130)).unwrap();
+        assert_eq!(plan.render_at, ms(130));
+        assert!(!plan.phase_known);
+        scheduler.set_variable_refresh(false);
+        let plan = scheduler.plan(ms(131)).unwrap();
+        assert!(!plan.phase_known);
+    }
+
+    #[test]
+    fn variable_callback_only_work_is_rate_limited_without_fixed_slot_quantization() {
+        let mut scheduler = FrameScheduler::new(ms(10));
+        scheduler.set_variable_refresh(true);
+        scheduler.presented(ms(100));
+        scheduler.callback_sent(ms(102));
+        assert_eq!(scheduler.callback_deadline(ms(103), ms(103)), Some(ms(112)));
+        assert_eq!(scheduler.callback_deadline(ms(135), ms(135)), Some(ms(135)));
+        scheduler.callback_sent(ms(135));
+        assert_eq!(scheduler.callback_deadline(ms(135), ms(135)), Some(ms(145)));
     }
 }

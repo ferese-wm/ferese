@@ -40,6 +40,7 @@ pub(crate) struct DesiredOutputConfiguration {
 /// Overrides expire on a *material* topology/lid change, independent of event ordering.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct ManualOverride {
+    pub configuration: Option<DesiredOutputConfiguration>,
     pub profile: Option<String>,
     pub internal: Option<bool>,
     pub layout: Option<OutputLayout>,
@@ -56,6 +57,7 @@ impl ManualOverride {
             lid_closed,
         );
         if self.topology.as_ref().is_some_and(|old| old != &topology) {
+            self.configuration = None;
             self.profile = None;
             self.internal = None;
             self.layout = None;
@@ -101,6 +103,7 @@ fn profile_matches(profile: &OutputProfile, monitors: &[Monitor], lid_closed: bo
 pub(crate) fn defaults(matcher: String) -> OutputSettings {
     OutputSettings {
         auto_refresh: false,
+        adaptive_sync: false,
         matcher,
         required: true,
         enabled: true,
@@ -119,6 +122,9 @@ pub(crate) fn select_profile(
     profiles: &[OutputProfile],
     manual: &ManualOverride,
 ) -> DesiredOutputConfiguration {
+    if let Some(configuration) = &manual.configuration {
+        return configuration.clone();
+    }
     let selected = manual
         .profile
         .as_ref()

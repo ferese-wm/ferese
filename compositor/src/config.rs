@@ -1476,6 +1476,7 @@ mod tests {
                 outputs: vec![
                     OutputSettings {
                         auto_refresh: false,
+                        adaptive_sync: false,
                         required: true,
                         matcher: "HDMI-A-1".to_owned(),
                         enabled: true,
@@ -1490,6 +1491,7 @@ mod tests {
                     },
                     OutputSettings {
                         auto_refresh: false,
+                        adaptive_sync: false,
                         required: true,
                         matcher: "eDP-1".to_owned(),
                         enabled: false,
@@ -1540,6 +1542,18 @@ mod tests {
             Config::parse_source("output-profile laptop { output eDP-1 auto-refresh=\"yes\"; }")
                 .is_err()
         );
+    }
+
+    #[test]
+    fn adaptive_sync_is_explicit_and_part_of_the_applied_configuration() {
+        let enabled = parse("output-profile desk { output DP-1 adaptive-sync=#true; }");
+        let disabled = parse("output-profile desk { output DP-1; }");
+        let enabled = &enabled.output_profiles().unwrap()[0].outputs[0];
+        let disabled = &disabled.output_profiles().unwrap()[0].outputs[0];
+        assert!(enabled.adaptive_sync);
+        assert!(!disabled.adaptive_sync);
+        assert!(!enabled.same_configuration(disabled));
+        assert!(Config::parse_source("output-profile desk { output DP-1 adaptive-sync=\"yes\"; }").is_err());
     }
 
     #[test]

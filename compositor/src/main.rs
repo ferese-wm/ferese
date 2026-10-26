@@ -23,6 +23,7 @@ mod ipc;
 mod ipc_events;
 mod metrics;
 mod monitor_identity;
+mod output_management;
 mod output_policy;
 mod output_transaction;
 mod overview;
@@ -263,6 +264,7 @@ fn after_dispatch_with_redraw(
     }
 
     crate::backends::direct::feedback::refresh(state);
+    crate::output_management::sync(state);
     state.publish_ipc_events();
 
     // Clients need registry/sync/configure replies even when no frame is drawn.

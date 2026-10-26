@@ -80,6 +80,7 @@ pub(super) fn validate_device(
     if scan.selections.iter().all(|selection| {
         device.outputs.get(&selection.crtc).is_some_and(|output| {
             output.connector == selection.connector.handle() && output.mode == selection.mode
+                && output.settings.adaptive_sync == selection.settings.adaptive_sync
         })
     }) && scan.selections.len() == device.outputs.len()
     {
@@ -149,6 +150,11 @@ pub(super) fn validate_device(
         blobs.ids.push(blob);
         add(drm, &mut request, selection.crtc, "MODE_ID", blob)?;
         add(drm, &mut request, selection.crtc, "ACTIVE", 1)?;
+        if let Ok(vrr) = property(drm, selection.crtc, "VRR_ENABLED") {
+            request.add_raw_property(selection.crtc.into(), vrr, u64::from(selection.settings.adaptive_sync));
+        } else if selection.settings.adaptive_sync {
+            return Err("adaptive sync is unavailable on the selected CRTC".into());
+        }
         add(
             drm,
             &mut request,
@@ -226,6 +232,7 @@ fn prepare(
     settings: &OutputSettings,
 ) -> Result<(), Box<dyn Error>> {
     surface.use_mode(mode)?;
+    surface.use_vrr(settings.adaptive_sync)?;
     surface.set_output_mode_source(OutputModeSource::Static {
         size: OutputMode::from(mode).size,
         scale: settings.scale.into(),
@@ -368,6 +375,7 @@ impl crate::output_transaction::HardwareTransaction for DeviceTransaction<'_> {
                 return Err("previous connector is no longer available".into());
             }
             let selection = OutputSelection {
+                name: output.output.name(),
                 connector,
                 crtc,
                 mode: output.mode,
@@ -468,6 +476,7 @@ pub(super) fn apply_device(
         .filter_map(|(crtc, selection)| {
             let same = device.outputs.get(crtc).is_some_and(|output| {
                 output.connector == selection.connector.handle()
+                    && output.output.name() == selection.name
                     && output.identity == selection.identity
                     && output.mode == selection.mode
                     && output.settings.same_configuration(&selection.settings)
@@ -489,6 +498,7 @@ pub(super) fn apply_device(
             !device.outputs.get(crtc).is_some_and(|output| {
                 let selection = &selections[crtc];
                 output.connector == selection.connector.handle() && output.mode == selection.mode
+                    && output.settings.adaptive_sync == selection.settings.adaptive_sync
             })
         })
         .copied()
@@ -517,10 +527,12 @@ pub(super) fn apply_device(
             .or_else(|| device.outputs.remove(crtc))
             .expect("the selected CRTC has a live or staged output in this transaction");
         if output.connector != selection.connector.handle() || output.identity != selection.identity
+            || output.output.name() != selection.name
         {
             retire(state, &mut output, node, *crtc);
             let (handle, _) = create_output(
                 state,
+                selection.name.clone(),
                 &selection.connector,
                 selection.mode,
                 selection.identity.clone(),
@@ -555,6 +567,7 @@ pub(super) fn apply_device(
             .surface
             .set_output_mode_source((&output.output).into());
         cancel_output_timers(&state.loop_handle, &mut output);
+        output.scheduler.set_variable_refresh(selection.settings.adaptive_sync);
         output.frame_pending = false;
         output.primary_commit = None;
         output.capture_texture = Default::default();
@@ -587,6 +600,7 @@ pub(super) fn update_applied_info(device: &mut DirectDevice) {
     for info in &mut device.connected_outputs {
         info.enabled = false;
         info.current_mode = None;
+        info.adaptive_sync_enabled = false;
         if let Some(output) = device
             .outputs
             .values()
@@ -594,6 +608,7 @@ pub(super) fn update_applied_info(device: &mut DirectDevice) {
         {
             info.enabled = true;
             info.current_mode = Some(connected_mode_info(output.mode));
+            info.adaptive_sync_enabled = output.surface.vrr_enabled();
             info.scale = output.settings.scale;
             info.transform = output.settings.transform;
             info.configured_position = output.settings.position;
