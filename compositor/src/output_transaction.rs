@@ -3,6 +3,10 @@
 pub(crate) trait HardwareTransaction {
     type Key: Copy + Eq;
     fn stage(&mut self, key: Self::Key) -> Result<(), String>;
+    /// Apply device-wide state only after every output has staged successfully.
+    fn prepare_commit(&mut self) -> Result<(), String> {
+        Ok(())
+    }
     fn commit(&mut self, key: Self::Key) -> Result<(), String>;
     fn disable(&mut self, key: Self::Key) -> Result<(), String>;
     fn abort_staged(&mut self);
@@ -28,6 +32,7 @@ pub(crate) fn apply<T: HardwareTransaction>(
             touched.push(*key);
             driver.stage(*key)?;
         }
+        driver.prepare_commit()?;
         for key in changes {
             driver.commit(*key)?;
         }
@@ -59,12 +64,19 @@ mod tests {
         events: Vec<(&'static str, u8)>,
         fail: Option<(&'static str, u8)>,
         restore_fails: bool,
+        device_state: bool,
     }
 
     impl HardwareTransaction for Fake {
         type Key = u8;
         fn stage(&mut self, key: u8) -> Result<(), String> {
             self.event("stage", key)
+        }
+        fn prepare_commit(&mut self) -> Result<(), String> {
+            if self.device_state {
+                self.event("device", 0)?;
+            }
+            Ok(())
         }
         fn commit(&mut self, key: u8) -> Result<(), String> {
             self.event("commit", key)?;
@@ -102,6 +114,7 @@ mod tests {
                 events: vec![],
                 fail: None,
                 restore_fails: false,
+                device_state: false,
             }
         }
         fn event(&mut self, operation: &'static str, key: u8) -> Result<(), String> {
@@ -203,5 +216,52 @@ mod tests {
             }
             assert_eq!(plan.outputs.output_for_workspace(WorkspaceId(3)), None);
         }
+    }
+
+    #[test]
+    fn device_state_waits_for_staging_and_precedes_all_output_commits() {
+        let mut fake = Fake::new();
+        fake.device_state = true;
+        apply(&mut fake, &[2, 3], &[1]).unwrap();
+        assert_eq!(
+            fake.events,
+            [
+                ("stage", 2),
+                ("stage", 3),
+                ("device", 0),
+                ("commit", 2),
+                ("commit", 3),
+                ("disable", 1)
+            ]
+        );
+        let mut fake = Fake::new();
+        fake.device_state = true;
+        fake.fail = Some(("stage", 3));
+        assert!(apply(&mut fake, &[2, 3], &[1]).is_err());
+        assert!(!fake.events.iter().any(|(event, _)| *event == "device"));
+    }
+
+    #[test]
+    fn device_state_failures_restore_staged_outputs_and_metadata_only_plans_run_the_hook() {
+        let mut fake = Fake::new();
+        fake.device_state = true;
+        fake.fail = Some(("device", 0));
+        assert!(
+            apply(&mut fake, &[2, 3], &[1])
+                .unwrap_err()
+                .unavailable
+                .is_empty()
+        );
+        assert_eq!(fake.active, fake.previous);
+        assert!(
+            !fake
+                .events
+                .iter()
+                .any(|(event, _)| *event == "commit" || *event == "disable")
+        );
+        let mut fake = Fake::new();
+        fake.device_state = true;
+        apply(&mut fake, &[], &[]).unwrap();
+        assert_eq!(fake.events, [("device", 0)]);
     }
 }

@@ -77,12 +77,20 @@ pub(super) fn validate_device(
     device: &DirectDevice,
     scan: &OutputScan,
 ) -> Result<(), Box<dyn Error>> {
+    let color = super::sdr_color::Plan::capture(
+        &device.drm,
+        scan.selections
+            .iter()
+            .map(|selection| selection.connector.handle()),
+    )?;
     if scan.selections.iter().all(|selection| {
         device.outputs.get(&selection.crtc).is_some_and(|output| {
-            output.connector == selection.connector.handle() && output.mode == selection.mode
+            output.connector == selection.connector.handle()
+                && output.mode == selection.mode
                 && output.settings.adaptive_sync == selection.settings.adaptive_sync
         })
     }) && scan.selections.len() == device.outputs.len()
+        && color.is_empty()
     {
         return Ok(());
     }
@@ -93,6 +101,7 @@ pub(super) fn validate_device(
     }
     let drm = &device.drm;
     let mut request = AtomicModeReq::new();
+    color.extend_test(&mut request);
     let mut blobs = Blobs {
         fd: drm.device_fd().clone(),
         ids: Vec::new(),
@@ -151,7 +160,11 @@ pub(super) fn validate_device(
         add(drm, &mut request, selection.crtc, "MODE_ID", blob)?;
         add(drm, &mut request, selection.crtc, "ACTIVE", 1)?;
         if let Ok(vrr) = property(drm, selection.crtc, "VRR_ENABLED") {
-            request.add_raw_property(selection.crtc.into(), vrr, u64::from(selection.settings.adaptive_sync));
+            request.add_raw_property(
+                selection.crtc.into(),
+                vrr,
+                u64::from(selection.settings.adaptive_sync),
+            );
         } else if selection.settings.adaptive_sync {
             return Err("adaptive sync is unavailable on the selected CRTC".into());
         }
@@ -275,10 +288,22 @@ struct DeviceTransaction<'a> {
     selections: &'a HashMap<crtc::Handle, OutputSelection>,
     staged: HashMap<crtc::Handle, DirectOutput>,
     replaced: HashSet<crtc::Handle>,
+    color_plan: Option<super::sdr_color::Plan>,
+    color_applied: Option<super::sdr_color::Applied>,
 }
 
 impl crate::output_transaction::HardwareTransaction for DeviceTransaction<'_> {
     type Key = crtc::Handle;
+
+    fn prepare_commit(&mut self) -> Result<(), String> {
+        if let Some(plan) = self.color_plan.take() {
+            self.color_applied = Some(
+                plan.apply(&self.device.drm)
+                    .map_err(|error| format!("could not apply SDR output state: {error}"))?,
+            );
+        }
+        Ok(())
+    }
 
     fn stage(&mut self, crtc: crtc::Handle) -> Result<(), String> {
         let selection = &self.selections[&crtc];
@@ -471,6 +496,13 @@ pub(super) fn apply_device(
         .into_iter()
         .map(|selection| (selection.crtc, selection))
         .collect::<HashMap<_, _>>();
+    let color = super::sdr_color::Plan::capture(
+        &device.drm,
+        selections
+            .values()
+            .map(|selection| selection.connector.handle()),
+    )
+    .map_err(|error| format!("could not prepare SDR output state: {error}"))?;
     let mut changed = selections
         .iter()
         .filter_map(|(crtc, selection)| {
@@ -497,7 +529,8 @@ pub(super) fn apply_device(
         .filter(|crtc| {
             !device.outputs.get(crtc).is_some_and(|output| {
                 let selection = &selections[crtc];
-                output.connector == selection.connector.handle() && output.mode == selection.mode
+                output.connector == selection.connector.handle()
+                    && output.mode == selection.mode
                     && output.settings.adaptive_sync == selection.settings.adaptive_sync
             })
         })
@@ -509,10 +542,20 @@ pub(super) fn apply_device(
         selections: &selections,
         staged: HashMap::new(),
         replaced: HashSet::new(),
+        color_plan: Some(color),
+        color_applied: None,
     };
     let result = crate::output_transaction::apply(&mut driver, &hardware_changes, &removals);
     let mut staged = std::mem::take(&mut driver.staged);
-    if let Err(failure) = result {
+    let color = driver.color_applied.take();
+    if let Err(mut failure) = result {
+        if let Some(color) = &color
+            && let Err(error) = color.restore(&device.drm)
+        {
+            failure
+                .error
+                .push_str(&format!("; color rollback failed: {error}"));
+        }
         for crtc in failure.unavailable {
             if let Some(mut output) = device.outputs.remove(&crtc) {
                 retire(state, &mut output, node, crtc);
@@ -526,7 +569,8 @@ pub(super) fn apply_device(
             .remove(crtc)
             .or_else(|| device.outputs.remove(crtc))
             .expect("the selected CRTC has a live or staged output in this transaction");
-        if output.connector != selection.connector.handle() || output.identity != selection.identity
+        if output.connector != selection.connector.handle()
+            || output.identity != selection.identity
             || output.output.name() != selection.name
         {
             retire(state, &mut output, node, *crtc);
@@ -567,7 +611,9 @@ pub(super) fn apply_device(
             .surface
             .set_output_mode_source((&output.output).into());
         cancel_output_timers(&state.loop_handle, &mut output);
-        output.scheduler.set_variable_refresh(selection.settings.adaptive_sync);
+        output
+            .scheduler
+            .set_variable_refresh(selection.settings.adaptive_sync);
         output.frame_pending = false;
         output.primary_commit = None;
         output.capture_texture = Default::default();

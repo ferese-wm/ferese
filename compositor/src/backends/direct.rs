@@ -21,6 +21,7 @@ mod protocol;
 mod recovery;
 mod redraw;
 mod scheduling;
+mod sdr_color;
 mod session_device;
 mod topology;
 mod transaction;

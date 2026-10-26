@@ -57,6 +57,20 @@ impl AsRawFd for DrmDeviceFd {
 }
 
 impl DrmDeviceFd {
+    /// Create a property blob from dynamically sized bytes.
+    ///
+    /// The returned ID owns one kernel reference, which the caller must release
+    /// with `destroy_property_blob`. Reject lengths the DRM ABI cannot represent.
+    pub fn create_property_blob_bytes(&self, bytes: &mut [u8]) -> std::io::Result<u64> {
+        u32::try_from(bytes.len()).map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "DRM property blob exceeds the ABI size limit",
+            )
+        })?;
+        drm_ffi::mode::create_property_blob(self.as_fd(), bytes).map(|blob| u64::from(blob.blob_id))
+    }
+
     /// Create a new `DrmDeviceFd`.
     ///
     /// This function will try to acquire the master lock for the underlying drm device
@@ -73,7 +87,8 @@ impl DrmDeviceFd {
         };
 
         // Render nodes have no master; the kernel refuses SET_MASTER on them.
-        let is_render_node = DrmNode::from_file(&dev.fd).is_ok_and(|node| node.ty() == NodeType::Render);
+        let is_render_node =
+            DrmNode::from_file(&dev.fd).is_ok_and(|node| node.ty() == NodeType::Render);
 
         // We want to modeset, so we better be the master, if we run via a tty session.
         // This is only needed on older kernels. Newer kernels grant this permission,
