@@ -145,6 +145,13 @@ fn now() -> Duration {
     Clock::<Monotonic>::new().now().into()
 }
 
+fn hidden_deadline(timestamp: Duration) -> Duration {
+    // Share a cadence across hidden clients instead of waking once per surface's
+    // staggered commit time. Hidden FIFO conditions may be cleared early.
+    let remainder = Duration::from_nanos((timestamp.as_nanos() % HIDDEN_CADENCE.as_nanos()) as u64);
+    timestamp.saturating_sub(remainder) + HIDDEN_CADENCE
+}
+
 pub(crate) fn install(surface: &WlSurface) {
     add_pre_commit_hook::<Ferese, _>(surface, |state, display, surface| {
         let (timestamp, fifo_wait, count) = with_states(surface, |states| {
@@ -242,13 +249,12 @@ impl Ferese {
             });
             if self.presentation_constraints.fifo.len() == MAX_PENDING {
                 barrier.signal();
-                queue_client(&mut self.presentation_constraints.notify, client);
                 continue;
             }
             self.presentation_constraints.fifo.push(FifoCommit {
                 surface: surface.downgrade(),
                 client,
-                fallback: now() + HIDDEN_CADENCE,
+                fallback: hidden_deadline(now()),
                 barrier,
             });
         }

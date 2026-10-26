@@ -9,9 +9,12 @@ use smithay::backend::renderer::element::{
 use smithay::backend::renderer::utils::with_renderer_surface_state;
 use smithay::output::{Mode, Output, PhysicalProperties, Subpixel};
 use smithay::reexports::wayland_server::Resource;
+use smithay::reexports::wayland_server::protocol::wl_compositor::WlCompositor;
+use smithay::reexports::wayland_server::protocol::wl_subcompositor::WlSubcompositor;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
+use smithay::wayland::GlobalData;
 
-use super::now;
+use super::{hidden_deadline, now};
 use crate::Ferese;
 use crate::state::{dispatch_test_client as dispatch, test_client_request as request};
 
@@ -180,7 +183,10 @@ fn fifo_hidden_surface_progress_releases_one_condition_without_a_polling_loop() 
         Some(before)
     );
     state.poll_presentation_constraints();
-    assert!(state.presentation_constraints.timer.is_some());
+    assert!(
+        state.presentation_constraints.fifo.is_empty()
+            || state.presentation_constraints.timer.is_some()
+    );
     pump(&mut events, &mut state, Duration::from_millis(30));
     assert_ne!(
         with_renderer_surface_state(&surface, |state| state.current_commit()),
@@ -351,4 +357,162 @@ fn visible_fifo_waits_for_its_callback_owner_and_output_loss_allows_progress() {
     state.poll_presentation_constraints();
     assert!(state.presentation_constraints.fifo.is_empty());
     assert!(state.presentation_constraints.timer.is_none());
+}
+
+#[test]
+fn overflowing_fifo_conditions_release_early_without_queuing_unneeded_notifications() {
+    if !crate::startup_tests::private_runtime(
+        "presentation_constraints::protocol_tests::overflowing_fifo_conditions_release_early_without_queuing_unneeded_notifications",
+    ) {
+        return;
+    }
+    let (mut state, mut events, surface, mut wire) = fixture();
+    let compositor = surface
+        .client()
+        .unwrap()
+        .create_resource::<WlCompositor, GlobalData, Ferese>(&state.display_handle, 6, GlobalData)
+        .unwrap();
+    request(&mut wire, 11, 0, &[], None);
+    damage_commit(&mut wire);
+    for index in 0..super::MAX_PENDING {
+        let surface = 12 + index as u32 * 2;
+        let fifo = surface + 1;
+        request(
+            &mut wire,
+            compositor.id().protocol_id(),
+            0,
+            &[surface],
+            None,
+        );
+        request(&mut wire, 10, 1, &[fifo, surface], None);
+        request(&mut wire, fifo, 0, &[], None);
+        request(&mut wire, surface, 6, &[], None);
+        if index % 16 == 15 {
+            dispatch(&mut events, &mut state);
+        }
+    }
+    dispatch(&mut events, &mut state);
+    assert_eq!(
+        state.presentation_constraints.fifo.len(),
+        super::MAX_PENDING
+    );
+    assert!(state.presentation_constraints.notify.is_empty());
+    pump(&mut events, &mut state, Duration::from_millis(25));
+    assert!(state.presentation_constraints.fifo.is_empty());
+    assert!(state.presentation_constraints.timer.is_none());
+}
+
+#[test]
+fn synchronized_subsurfaces_ignore_fifo_waits_until_parent_commit() {
+    if !crate::startup_tests::private_runtime(
+        "presentation_constraints::protocol_tests::synchronized_subsurfaces_ignore_fifo_waits_until_parent_commit",
+    ) {
+        return;
+    }
+    let (mut state, mut events, surface, mut wire) = fixture();
+    let client = surface.client().unwrap();
+    let compositor = client
+        .create_resource::<WlCompositor, GlobalData, Ferese>(&state.display_handle, 6, GlobalData)
+        .unwrap();
+    let subcompositor = client
+        .create_resource::<WlSubcompositor, GlobalData, Ferese>(
+            &state.display_handle,
+            1,
+            GlobalData,
+        )
+        .unwrap();
+    request(&mut wire, compositor.id().protocol_id(), 0, &[12], None);
+    request(
+        &mut wire,
+        subcompositor.id().protocol_id(),
+        1,
+        &[13, 12, 2],
+        None,
+    );
+    request(&mut wire, 10, 1, &[14, 12], None);
+    request(&mut wire, 14, 0, &[], None);
+    request(&mut wire, 12, 1, &[6, 0, 0], None);
+    request(&mut wire, 12, 2, &[0, 0, 1, 1], None);
+    request(&mut wire, 12, 6, &[], None);
+    request(&mut wire, 2, 6, &[], None);
+    dispatch(&mut events, &mut state);
+    let child = client
+        .object_from_protocol_id::<WlSurface>(&state.display_handle, 12)
+        .unwrap();
+    let before = with_renderer_surface_state(&child, |state| state.current_commit()).unwrap();
+    request(&mut wire, 14, 1, &[], None);
+    request(&mut wire, 12, 1, &[6, 0, 0], None);
+    request(&mut wire, 12, 2, &[0, 0, 1, 1], None);
+    request(&mut wire, 12, 6, &[], None);
+    dispatch(&mut events, &mut state);
+    assert_eq!(
+        with_renderer_surface_state(&child, |state| state.current_commit()),
+        Some(before)
+    );
+    request(&mut wire, 2, 6, &[], None);
+    dispatch(&mut events, &mut state);
+    assert_ne!(
+        with_renderer_surface_state(&child, |state| state.current_commit()),
+        Some(before)
+    );
+    assert_eq!(
+        state
+            .presentation_constraints
+            .budget
+            .total
+            .load(std::sync::atomic::Ordering::Relaxed),
+        0
+    );
+}
+
+#[test]
+fn largest_valid_timestamp_uses_a_bounded_timer_and_client_loss_reclaims_it() {
+    if !crate::startup_tests::private_runtime(
+        "presentation_constraints::protocol_tests::largest_valid_timestamp_uses_a_bounded_timer_and_client_loss_reclaims_it",
+    ) {
+        return;
+    }
+    let (mut state, mut events, _surface, mut wire) = fixture();
+    request(
+        &mut wire,
+        9,
+        0,
+        &[i32::MAX as u32, u32::MAX, 999_999_999],
+        None,
+    );
+    damage_commit(&mut wire);
+    dispatch(&mut events, &mut state);
+    state.poll_presentation_constraints();
+    assert_eq!(state.presentation_constraints.timed.len(), 1);
+    assert!(state.presentation_constraints.timer.is_some());
+    drop(wire);
+    dispatch(&mut events, &mut state);
+    state.poll_presentation_constraints();
+    assert!(state.presentation_constraints.timed.is_empty());
+    assert!(state.presentation_constraints.timer.is_none());
+    assert_eq!(
+        state
+            .presentation_constraints
+            .budget
+            .total
+            .load(std::sync::atomic::Ordering::Relaxed),
+        0
+    );
+}
+
+#[test]
+fn staggered_hidden_clients_share_one_deadline_per_fallback_refresh() {
+    let deadlines = (0..1_000)
+        .map(|microseconds| {
+            let timestamp = Duration::from_micros(microseconds);
+            let deadline = hidden_deadline(timestamp);
+            assert!(deadline > timestamp && deadline - timestamp <= super::HIDDEN_CADENCE);
+            deadline
+        })
+        .collect::<std::collections::HashSet<_>>();
+    assert_eq!(deadlines.len(), 1);
+    assert_eq!(
+        hidden_deadline(super::HIDDEN_CADENCE),
+        super::HIDDEN_CADENCE * 2
+    );
 }
