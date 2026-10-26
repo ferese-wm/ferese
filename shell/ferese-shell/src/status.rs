@@ -13,7 +13,7 @@ use std::sync::{Arc, Condvar, Mutex, mpsc};
 use std::time::{Duration, Instant};
 use std::{env, fs, thread};
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Snapshot {
     pub network: Option<Network>,
     pub bluetooth: Option<Bluetooth>,
@@ -28,45 +28,45 @@ pub struct Snapshot {
     pub suspend: bool,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Network {
     pub enabled: bool,
     pub connection: Option<String>,
     pub signal: u8,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Bluetooth {
     pub enabled: bool,
     pub devices: Vec<String>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Audio {
     pub volume: u8,
     pub muted: bool,
     pub output: String,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Battery {
     pub percent: u8,
     pub status: String,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PowerProfiles {
     pub active: String,
     pub available: [bool; 3],
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Notifications {
     pub count: u32,
     pub dnd: bool,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Action {
     Wifi(bool),
     Bluetooth(bool),
@@ -90,13 +90,13 @@ impl Action {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ActionError {
     pub action: Action,
     pub message: String,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Update {
     pub snapshot: Snapshot,
     pub generation: u64,
@@ -133,6 +133,16 @@ impl Updates {
             }
         })
     }
+}
+
+fn publish_update(sender: &tokio::sync::watch::Sender<Option<Update>>, update: Update) {
+    sender.send_if_modified(|previous| {
+        if previous.as_ref() == Some(&update) {
+            return false;
+        }
+        *previous = Some(update);
+        true
+    });
 }
 
 type PollState = (Mutex<(u64, bool, Option<ActionError>, bool, u64)>, Condvar);
@@ -242,11 +252,14 @@ impl Service {
                 }
 
                 if state.0 == before && !state.1 {
-                    updates.send_replace(Some(Update {
-                        snapshot,
-                        generation: state.0,
-                        error: state.2.clone(),
-                    }));
+                    publish_update(
+                        &updates,
+                        Update {
+                            snapshot,
+                            generation: state.0,
+                            error: state.2.clone(),
+                        },
+                    );
                     let retry = [
                         night_light_monitor
                             .is_none()
@@ -987,6 +1000,57 @@ mod tests {
             stream.as_mut().poll_next(&mut context),
             Poll::Ready(None)
         ));
+    }
+
+    #[test]
+    fn identical_status_is_quiet_but_changes_completions_and_errors_are_delivered() {
+        let (sender, mut receiver) = tokio::sync::watch::channel(None);
+        let mut update = Update {
+            snapshot: Snapshot {
+                audio: Some(Audio {
+                    volume: 42,
+                    muted: false,
+                    output: "Speakers".into(),
+                }),
+                ..Snapshot::default()
+            },
+            generation: 0,
+            error: None,
+        };
+        publish_update(&sender, update.clone());
+        assert!(receiver.has_changed().unwrap());
+        assert_eq!(receiver.borrow_and_update().as_ref(), Some(&update));
+        for _ in 0..100 {
+            publish_update(&sender, update.clone());
+            assert!(!receiver.has_changed().unwrap());
+        }
+        // A completed command must clear the UI's pending generation even if
+        // the service reports the same value (for example, volume at its limit).
+        update.generation += 1;
+        publish_update(&sender, update.clone());
+        assert!(receiver.has_changed().unwrap());
+        receiver.borrow_and_update();
+        update.error = Some(ActionError {
+            action: Action::Mute(true),
+            message: "unavailable".into(),
+        });
+        publish_update(&sender, update.clone());
+        assert!(receiver.has_changed().unwrap());
+        receiver.borrow_and_update();
+        update.error = None;
+        publish_update(&sender, update.clone());
+        assert!(receiver.has_changed().unwrap());
+        receiver.borrow_and_update();
+        update.snapshot.audio.as_mut().unwrap().muted = true;
+        publish_update(&sender, update.clone());
+        assert!(receiver.has_changed().unwrap());
+        receiver.borrow_and_update();
+        update.snapshot.audio = None;
+        publish_update(&sender, update.clone());
+        assert!(receiver.has_changed().unwrap());
+        assert_eq!(receiver.borrow_and_update().as_ref(), Some(&update));
+        publish_update(&sender, update);
+        assert!(!receiver.has_changed().unwrap());
     }
 
     #[test]
