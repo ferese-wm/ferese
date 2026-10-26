@@ -204,8 +204,8 @@ pub(crate) fn compose(frames: &[OutputFrame]) -> Result<Canvas, String> {
         // derived from the near edge plus the physical extent, so a frame at the
         // maximum scale keeps its exact pixel dimensions and adjacent frames
         // share their boundary.
-        let x0 = ((frame.location.0 - left) as f64 * scale).round() as i32;
-        let y0 = ((frame.location.1 - top) as f64 * scale).round() as i32;
+        let x0 = ((i64::from(frame.location.0) - i64::from(left)) as f64 * scale).round() as i32;
+        let y0 = ((i64::from(frame.location.1) - i64::from(top)) as f64 * scale).round() as i32;
         let target_width = canvas_extent(frame.logical_width, scale);
         let target_height = canvas_extent(frame.logical_height, scale);
         let x1 = x0.saturating_add(target_width);
@@ -789,24 +789,43 @@ pub(crate) fn plan(
     if outputs.is_empty() {
         return Err("No outputs are enabled".into());
     }
-    // Validate before building any Rectangle: Size construction panics on a
-    // negative extent, and this input arrives over IPC.
-    if let Geometry::Region { width, height, .. } = geometry
-        && (*width <= 0 || *height <= 0)
+    // Validate both extents and far edges before any rectangle arithmetic.
+    if let Geometry::Region {
+        x,
+        y,
+        width,
+        height,
+    } = *geometry
     {
-        return Err("Screenshot region must have a positive size".into());
+        Geometry::new_region(x, y, width, height)?;
     }
-    let logical_sizes: Vec<Size<i32, Logical>> =
-        outputs.iter().map(OutputLayout::logical_size).collect();
+    let output_rects = outputs
+        .iter()
+        .map(|output| {
+            if !(output.scale.is_finite() && output.scale > 0.0) {
+                return Err("Output scale is not usable".to_owned());
+            }
+            let size = output.logical_size();
+            if size.w <= 0 || size.h <= 0 {
+                return Err("Output has no capturable logical area".to_owned());
+            }
+            output
+                .location
+                .x
+                .checked_add(size.w)
+                .and_then(|_| output.location.y.checked_add(size.h))
+                .ok_or("Output capture geometry overflows")?;
+            Ok(Rectangle {
+                loc: output.location,
+                size,
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
 
     let requested = match geometry {
         Geometry::All => {
             let mut union: Option<Rectangle<i32, Logical>> = None;
-            for (index, output) in outputs.iter().enumerate() {
-                let rect = Rectangle {
-                    loc: output.location,
-                    size: logical_sizes[index],
-                };
+            for &rect in &output_rects {
                 union = Some(match union {
                     Some(current) => {
                         let top_left = Point::<i32, Logical>::new(
@@ -817,7 +836,15 @@ pub(crate) fn plan(
                             (current.loc.x + current.size.w).max(rect.loc.x + rect.size.w),
                             (current.loc.y + current.size.h).max(rect.loc.y + rect.size.h),
                         );
-                        Rectangle::from_extremities(top_left, bottom_right)
+                        let width = bottom_right
+                            .x
+                            .checked_sub(top_left.x)
+                            .ok_or("Combined output capture geometry overflows")?;
+                        let height = bottom_right
+                            .y
+                            .checked_sub(top_left.y)
+                            .ok_or("Combined output capture geometry overflows")?;
+                        Rectangle::new(top_left, (width, height).into())
                     }
                     None => rect,
                 });
@@ -839,14 +866,7 @@ pub(crate) fn plan(
     }
 
     let mut parts = Vec::new();
-    for (index, output) in outputs.iter().enumerate() {
-        if !(output.scale.is_finite() && output.scale > 0.0) {
-            return Err("Output scale is not usable".into());
-        }
-        let output_rect = Rectangle {
-            loc: output.location,
-            size: logical_sizes[index],
-        };
+    for (index, (output, &output_rect)) in outputs.iter().zip(&output_rects).enumerate() {
         let Some(clipped) = requested.intersection(output_rect) else {
             continue;
         };
@@ -995,6 +1015,34 @@ mod planning {
         assert_eq!(parts[0].logical.loc.x, 0);
         assert_eq!(parts[1].logical.loc.x, -1280);
         assert_eq!(parts[1].logical.loc.y, -400);
+    }
+
+    #[test]
+    fn rejects_all_geometry_whose_span_exceeds_the_coordinate_range() {
+        for (x, y) in [(2_000_000_000, 0), (0, 2_000_000_000)] {
+            let outputs = [output(-x, -y, 2, 2, 1.0), output(x, y, 2, 2, 1.0)];
+            assert!(plan(&Geometry::All, &outputs).is_err());
+            // Each output remains capturable on its own at a distant origin.
+            assert_eq!(plan(&region(x, y, 2, 2), &outputs).unwrap().len(), 1);
+        }
+    }
+
+    #[test]
+    fn rejects_output_and_request_far_edges_that_overflow() {
+        for (x, y) in [(i32::MAX, 0), (0, i32::MAX)] {
+            assert!(plan(&Geometry::All, &[output(x, y, 2, 2, 1.0)]).is_err());
+            assert!(plan(&region(x, y, 2, 2), &[output(0, 0, 2, 2, 1.0)]).is_err());
+        }
+    }
+
+    #[test]
+    fn rejects_unusable_output_geometry_before_logical_rounding() {
+        for scale in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+            let mut invalid = output(0, 0, 2, 2, 1.0);
+            invalid.scale = scale;
+            assert!(plan(&Geometry::All, &[invalid]).is_err());
+        }
+        assert!(plan(&Geometry::All, &[output(0, 0, 0, 2, 1.0)]).is_err());
     }
 
     #[test]
@@ -2064,6 +2112,17 @@ mod tests {
         assert!(Canvas::new(20_000, 20_000).is_none());
         assert!(Canvas::new(0, 100).is_none());
         assert!(Canvas::new(100, 0).is_none());
+    }
+
+    #[test]
+    fn distant_output_origins_fail_composition_without_overflow() {
+        for (x, y) in [(2_000_000_000, 0), (0, 2_000_000_000)] {
+            let mut near = frame(Transform::Normal, 2, 2);
+            near.location = (-x, -y);
+            let mut far = frame(Transform::Normal, 2, 2);
+            far.location = (x, y);
+            assert!(compose(&[near, far]).is_err());
+        }
     }
 
     #[test]
