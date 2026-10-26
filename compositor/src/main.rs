@@ -1,6 +1,7 @@
 mod activities;
 mod activities_process;
 mod backends;
+mod buffer_sync;
 mod config;
 mod cursor;
 mod daemon;
@@ -211,6 +212,7 @@ fn after_dispatch_with_redraw(
     state: &mut Ferese,
     mut redraw: impl FnMut(&mut Ferese, RedrawRequest<'_>),
 ) {
+    state.poll_buffer_sync();
     crate::backends::direct::gamma::sync_night_light(state);
     state.poll_window_interaction();
     state.process_pending_dmabuf_imports();

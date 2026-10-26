@@ -28,6 +28,7 @@ impl CompositorHandler for Ferese {
     }
 
     fn new_surface(&mut self, surface: &WlSurface) {
+        crate::buffer_sync::install(surface);
         self.update_surface_preferences(surface);
     }
 
@@ -85,6 +86,7 @@ impl CompositorHandler for Ferese {
     }
 
     fn destroyed(&mut self, surface: &WlSurface) {
+        self.cancel_surface_buffer_waits(surface);
         self.dmabuf_feedback.destroyed(surface);
         if self.session_lock.active() {
             self.session_lock

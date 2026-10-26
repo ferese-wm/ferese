@@ -2036,6 +2036,7 @@ fn remove_device(state: &mut Ferese, node: DrmNode) {
     };
 
     state.loop_handle.remove(device.notifier);
+    state.cancel_gpu_buffer_waits(device.render_node);
     state.dmabuf_imports.remove(device.dmabuf_global);
     state.dmabuf_feedback.remove(device.dmabuf_global);
     state
