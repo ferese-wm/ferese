@@ -5,6 +5,7 @@ mod buffer_sync;
 mod config;
 mod cursor;
 mod daemon;
+mod desktop_protocols;
 mod display_presentation;
 mod dmabuf_feedback;
 mod dmabuf_imports;
@@ -265,6 +266,7 @@ fn after_dispatch_with_redraw(
 
     crate::backends::direct::feedback::refresh(state);
     crate::output_management::sync(state);
+    crate::desktop_protocols::sync(state);
     state.publish_ipc_events();
 
     // Clients need registry/sync/configure replies even when no frame is drawn.

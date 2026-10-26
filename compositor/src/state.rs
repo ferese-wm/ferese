@@ -580,6 +580,7 @@ pub struct Ferese {
     pub keyboard_shortcuts_inhibit_state: KeyboardShortcutsInhibitState,
     pub output_manager_state: OutputManagerState,
     pub(crate) output_management: crate::output_management::OutputManagement,
+    pub(crate) desktop_protocols: crate::desktop_protocols::DesktopProtocols,
     pub pointer_constraints_state: PointerConstraintsState,
     pub _pointer_gestures_state: PointerGesturesState,
     pub presentation_state: PresentationState,
@@ -694,6 +695,7 @@ impl Ferese {
         let text_input_manager_state = TextInputManagerState::new::<Self>(&display_handle);
         let output_manager_state = OutputManagerState::new_with_xdg_output::<Self>(&display_handle);
         let output_management = crate::output_management::OutputManagement::new(&display_handle);
+        let desktop_protocols = crate::desktop_protocols::DesktopProtocols::new(&display_handle);
         let presentation_constraints =
             crate::presentation_constraints::PresentationConstraints::new(&display_handle);
         let pointer_constraints_state = PointerConstraintsState::new::<Self>(&display_handle);
@@ -913,6 +915,7 @@ impl Ferese {
             keyboard_shortcuts_inhibit_state,
             output_manager_state,
             output_management,
+            desktop_protocols,
             pointer_constraints_state,
             _pointer_gestures_state: pointer_gestures_state,
             presentation_state,
