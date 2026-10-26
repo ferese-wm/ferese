@@ -104,6 +104,7 @@ pub(crate) fn defaults(matcher: String) -> OutputSettings {
     OutputSettings {
         auto_refresh: false,
         adaptive_sync: false,
+        allow_tearing: false,
         matcher,
         required: true,
         enabled: true,

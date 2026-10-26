@@ -1477,6 +1477,7 @@ mod tests {
                     OutputSettings {
                         auto_refresh: false,
                         adaptive_sync: false,
+                        allow_tearing: false,
                         required: true,
                         matcher: "HDMI-A-1".to_owned(),
                         enabled: true,
@@ -1492,6 +1493,7 @@ mod tests {
                     OutputSettings {
                         auto_refresh: false,
                         adaptive_sync: false,
+                        allow_tearing: false,
                         required: true,
                         matcher: "eDP-1".to_owned(),
                         enabled: false,
@@ -1554,6 +1556,18 @@ mod tests {
         assert!(!disabled.adaptive_sync);
         assert!(!enabled.same_configuration(disabled));
         assert!(Config::parse_source("output-profile desk { output DP-1 adaptive-sync=\"yes\"; }").is_err());
+    }
+
+    #[test]
+    fn tearing_permission_is_explicit_and_rejects_wrong_types() {
+        let enabled = parse("output-profile desk { output DP-1 allow-tearing=#true; }");
+        let disabled = parse("output-profile desk { output DP-1; }");
+        let enabled = &enabled.output_profiles().unwrap()[0].outputs[0];
+        let disabled = &disabled.output_profiles().unwrap()[0].outputs[0];
+        assert!(enabled.allow_tearing);
+        assert!(!disabled.allow_tearing);
+        assert!(!enabled.same_configuration(disabled));
+        assert!(Config::parse_source("output-profile desk { output DP-1 allow-tearing=\"yes\"; }").is_err());
     }
 
     #[test]

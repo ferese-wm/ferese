@@ -64,6 +64,7 @@ usable connected monitors. Find selectors with `feresectl outputs`.
 | `mode` | `"WIDTHxHEIGHT"` or `"WIDTHxHEIGHT@HZ"` | Preferred mode |
 | `auto-refresh` | boolean | `false` |
 | `adaptive-sync` | boolean; requires connector and atomic KMS support | `false` |
+| `allow-tearing` | boolean; permits supported clients to request asynchronous flips | `false` |
 | `scale` | number > 0 | `1` |
 | `transform` | enum below | `"normal"` |
 | `position` | `[integer, integer]` | Automatic horizontal placement |
@@ -80,6 +81,14 @@ The request is validated and restored with the rest of the output transaction.
 Mirror sources and targets reject adaptive sync because their presentation clocks
 are coupled. IPC exposes support, requested state, and applied state separately;
 an unsupported request fails without silently enabling a different policy.
+
+`allow-tearing=#true` permits asynchronous flips when the atomic DRM driver advertises
+support and a fullscreen client commits an asynchronous presentation hint.
+Ferese requires a settled, unlocked fullscreen surface using primary direct
+scanout. Mirroring, pending capture, variable refresh, and FIFO-constrained
+updates keep synchronized presentation. Unsupported asynchronous driver requests
+retry ordinary presentation. IPC reports `tearing_supported` and `allow_tearing`;
+permission alone does not imply every frame tears.
 
 `required` controls whether a profile matches when a monitor is absent. Every
 connected monitor enabled by the resolved policy, including optional monitors

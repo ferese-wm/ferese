@@ -1873,6 +1873,8 @@ impl Ferese {
                         "adaptive_sync_supported": info.adaptive_sync_supported,
                         "adaptive_sync_requested": info.adaptive_sync_requested,
                         "adaptive_sync_enabled": info.adaptive_sync_enabled,
+                        "tearing_supported": info.tearing_supported,
+                        "allow_tearing": info.allow_tearing,
                         "low_power": backend.low_power,
                         "focused": id.is_some() && id == focused,
                         "workspace": workspace.map(|workspace| workspace.0),

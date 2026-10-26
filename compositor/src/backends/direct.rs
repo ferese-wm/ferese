@@ -26,8 +26,11 @@ mod topology;
 mod transaction;
 use diagnostics::{Diagnostics, PrimaryOutcome};
 use output_power::{OutputPower, Power};
+pub(crate) use protocol::configure_outputs;
 use redraw::{AnimationFallback, SchedulingMetrics};
-use scheduling::{cancel_output_timers, monotonic_now, request_frame, arm_frame, record_frame_schedule};
+use scheduling::{
+    arm_frame, cancel_output_timers, monotonic_now, record_frame_schedule, request_frame,
+};
 use smithay::backend::allocator::gbm::{GbmAllocator, GbmBufferFlags, GbmDevice};
 use smithay::backend::allocator::{Buffer, Fourcc};
 use smithay::backend::drm::compositor::{DrmCompositor, FrameFlags, PrimaryPlaneElement};
@@ -45,20 +48,20 @@ use smithay::backend::session::{Event as SessionEvent, Session};
 use smithay::backend::udev::{UdevBackend, UdevEvent, all_gpus, primary_gpu};
 use smithay::desktop::layer_map_for_output;
 use smithay::desktop::utils::OutputPresentationFeedback;
-use smithay::output::{Mode as OutputMode, Output, OutputModeSource, PhysicalProperties, Scale, Subpixel};
+use smithay::output::{
+    Mode as OutputMode, Output, OutputModeSource, PhysicalProperties, Scale, Subpixel,
+};
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 use smithay::reexports::calloop::{EventLoop, RegistrationToken};
 use smithay::reexports::drm::control::{
     Device as ControlDevice, Mode as DrmMode, ModeTypeFlags, connector, crtc, property,
 };
 use smithay::reexports::input::{Device as LibinputDevice, Libinput};
-use smithay::reexports::wayland_protocols::wp::presentation_time::server::wp_presentation_feedback::Kind;
 use smithay::reexports::wayland_server::backend::GlobalId;
 use smithay::utils::{Monotonic, Time, Transform};
 use smithay::wayland::dmabuf::DmabufFeedbackBuilder;
 use smithay::wayland::presentation::Refresh;
 use topology::{Topology, reconcile_outputs};
-pub(crate) use protocol::configure_outputs;
 
 use crate::Ferese;
 use crate::config::{OutputModeRequest, OutputProfile, OutputSettings, OutputTransform};
@@ -212,6 +215,16 @@ impl DirectBackendState {
             .map(|device| &mut device.renderer)
     }
 
+    pub(crate) fn readback_renderer(
+        &mut self,
+        context: &smithay::backend::renderer::ErasedContextId,
+    ) -> Option<&mut GlesRenderer> {
+        self.devices
+            .values_mut()
+            .map(|device| &mut device.renderer)
+            .find(|renderer| renderer.context_id().erased() == *context)
+    }
+
     pub(crate) fn capture_window_buffer(
         &mut self,
         window: &smithay::desktop::Window,
@@ -278,6 +291,8 @@ pub(crate) struct ConnectedOutputInfo {
     pub adaptive_sync_supported: bool,
     pub adaptive_sync_requested: bool,
     pub adaptive_sync_enabled: bool,
+    pub tearing_supported: bool,
+    pub allow_tearing: bool,
     pub physical_size: Option<(u32, u32)>,
     pub current_mode: Option<ConnectedModeInfo>,
     pub available_modes: Vec<ConnectedModeInfo>,
@@ -302,10 +317,16 @@ struct PresentationClock {
     missed_deadlines: u64,
 }
 
+struct FrameFeedback {
+    feedback: OutputPresentationFeedback,
+    tearing: bool,
+    refresh: Refresh,
+}
+
 type OutputCompositor = DrmCompositor<
     GbmAllocator<DrmDeviceFd>,
     GbmFramebufferExporter<DrmDeviceFd>,
-    OutputPresentationFeedback,
+    FrameFeedback,
     DrmDeviceFd,
 >;
 
@@ -354,6 +375,17 @@ struct DirectOutput {
     power: OutputPower,
     callback_timer: Option<RegistrationToken>,
     lock_frame_pending: bool,
+    tearing_supported: bool,
+}
+
+pub(crate) fn supports_tearing(state: &Ferese) -> bool {
+    state.direct_backend.as_ref().is_some_and(|backend| {
+        backend
+            .devices
+            .values()
+            .flat_map(|device| device.outputs.values())
+            .any(|output| output.tearing_supported && output.settings.allow_tearing)
+    })
 }
 
 #[derive(Clone)]
@@ -1100,12 +1132,25 @@ fn open_device(state: &mut Ferese, path: &Path) -> Result<DrmNode, Box<dyn Error
                             feedback
                         });
 
-                    if let (Some(mut feedback), DrmEventTime::Monotonic(time)) = (feedback, metadata.time) {
+                    let previous = state.direct_backend.as_ref()
+                        .and_then(|backend| backend.presentation.get(&(node, crtc)))
+                        .and_then(|clock| clock.last_presentation);
+                    let valid_clock = state.direct_backend.as_ref()
+                        .and_then(|backend| backend.devices.get(&node))
+                        .and_then(|device| device.outputs.get(&crtc))
+                        .is_some_and(|output| {
+                            if let DrmEventTime::Monotonic(timestamp) = metadata.time {
+                                presentation_mode::valid_timestamp(timestamp, monotonic_now(), refresh_duration_from_mode(output.mode), previous)
+                            } else { false }
+                        });
+                    let feedback = feedback.filter(|_| valid_clock);
+                    let fixed_phase = feedback.as_ref().is_some_and(|feedback| matches!(feedback.refresh, Refresh::Fixed(_)));
+                    if let (Some(FrameFeedback { mut feedback, tearing, refresh }), DrmEventTime::Monotonic(time)) = (feedback, metadata.time) {
                         feedback.presented(
                             Time::<Monotonic>::from(time),
-                            presentation_refresh(state, node, crtc),
+                            refresh,
                             u64::from(metadata.sequence),
-                            Kind::Vsync | Kind::HwClock | Kind::HwCompletion,
+                            presentation_mode::feedback_flags(tearing),
                         );
                     }
 
@@ -1141,9 +1186,8 @@ fn open_device(state: &mut Ferese, path: &Path) -> Result<DrmNode, Box<dyn Error
                         }
                         output.power.presented();
                         if let DrmEventTime::Monotonic(timestamp) = metadata.time {
-                            let now = monotonic_now();
-                            if timestamp <= now + refresh_duration_from_mode(output.mode) {
-                                if let Some(plan) = output.scheduler.presented(timestamp)
+                            if valid_clock {
+                                if let Some(plan) = output.scheduler.presented_with_phase(timestamp, fixed_phase)
                                     && std::env::var_os("FERESE_TRACE_PERFORMANCE").is_some()
                                 {
                                     tracing::debug!(target: "ferese::render", output = %output.output.name(),
@@ -1179,7 +1223,14 @@ fn open_device(state: &mut Ferese, path: &Path) -> Result<DrmNode, Box<dyn Error
 
                     apply_output_power(state);
 
-                    state.record_drm_presentation(node, crtc, metadata.time, metadata.sequence);
+                    if retired && valid_clock {
+                        state.record_drm_presentation(node, crtc, metadata.time, metadata.sequence);
+                    } else if !valid_clock
+                        && let Some(clock) = state.direct_backend.as_mut()
+                            .and_then(|backend| backend.presentation.get_mut(&(node, crtc)))
+                    {
+                        clock.reset_timing();
+                    }
                     tracing::trace!(?node, ?crtc, sequence = metadata.sequence, "page flip");
                     let active = state
                         .direct_backend
@@ -1628,6 +1679,8 @@ fn render_output(
                 .output_has_fullscreen_for_frame(&output.output, frame.overview.is_presenting());
             let locked = state.session_lock.active();
             let flags = planes::frame_flags(fullscreen, frame.animating, locked);
+            let tearing_candidate =
+                presentation_mode::tearing_candidate(state, &output) && !frame.animating;
             output
                 .diagnostics
                 .attempt(fullscreen, frame.animating, locked);
@@ -1743,6 +1796,12 @@ fn render_output(
 
                 PrimaryPlaneElement::Element(_) => (Vec::new(), None),
             };
+            let tearing = tearing_candidate
+                && matches!(result.primary_element, PrimaryPlaneElement::Element(_))
+                && crate::tearing_control::fullscreen_surface(state, &output.output).is_some_and(|surface| {
+                    result.states.element_render_state(smithay::backend::renderer::element::Id::from(&surface))
+                        .is_some_and(|state| state.presentation_state == smithay::backend::renderer::element::RenderElementPresentationState::ZeroCopy)
+                });
             let presentation = if output.mirror_source.is_some() {
                 OutputPresentationFeedback::new(&output.output)
             } else {
@@ -1750,7 +1809,7 @@ fn render_output(
                     state,
                     &output.output,
                     &result.states,
-                    Kind::Vsync | Kind::HwClock | Kind::HwCompletion,
+                    presentation_mode::feedback_flags(tearing),
                 )
             };
             let primary_outcome = PrimaryOutcome::classify(
@@ -1761,7 +1820,19 @@ fn render_output(
             let visibility = result.states.clone();
             drop(result);
 
-            let queued = output.surface.queue_frame(presentation);
+            let refresh = presentation_mode::feedback_refresh(
+                output.surface.vrr_enabled(),
+                tearing,
+                refresh_duration_from_mode(output.mode),
+            );
+            let queued = output.surface.queue_frame_with_tearing(
+                FrameFeedback {
+                    feedback: presentation,
+                    tearing,
+                    refresh,
+                },
+                tearing,
+            );
             output.diagnostics.queue_result(
                 &queued,
                 primary_outcome,
@@ -2098,33 +2169,6 @@ fn remove_device(state: &mut Ferese, node: DrmNode) {
     }
 
     tracing::info!(?node, "removed DRM device");
-}
-
-fn refresh_duration(state: &Ferese, node: DrmNode, crtc: crtc::Handle) -> Duration {
-    state
-        .direct_backend
-        .as_ref()
-        .and_then(|backend| backend.devices.get(&node))
-        .and_then(|device| device.outputs.get(&crtc))
-        .and_then(|output| output.output.current_mode())
-        .filter(|mode| mode.refresh > 0)
-        .map(|mode| Duration::from_nanos(1_000_000_000_000_u64 / mode.refresh as u64))
-        .unwrap_or_else(|| Duration::from_millis(16))
-}
-
-fn presentation_refresh(state: &Ferese, node: DrmNode, crtc: crtc::Handle) -> Refresh {
-    let interval = refresh_duration(state, node, crtc);
-    let variable = state
-        .direct_backend
-        .as_ref()
-        .and_then(|backend| backend.devices.get(&node))
-        .and_then(|device| device.outputs.get(&crtc))
-        .is_some_and(|output| output.surface.vrr_enabled());
-    if variable {
-        Refresh::variable(interval)
-    } else {
-        Refresh::fixed(interval)
-    }
 }
 
 fn refresh_duration_from_mode(mode: DrmMode) -> Duration {
@@ -2557,6 +2601,8 @@ fn select_outputs(
             adaptive_sync_supported: presentation_mode::connector_capable(drm, &connector)?,
             adaptive_sync_requested: settings.adaptive_sync,
             adaptive_sync_enabled: false,
+            tearing_supported: presentation_mode::tearing_capable(drm),
+            allow_tearing: settings.allow_tearing,
             physical_size: connector.size(),
             current_mode: selected_mode.map(connected_mode_info),
             available_modes: connector
@@ -2735,6 +2781,7 @@ fn create_direct_output(
         mirror_source,
     } = selection;
     let drm_surface = drm.create_surface(crtc, mode, &[connector.handle()])?;
+    let tearing_supported = presentation_mode::tearing_capable(drm);
     let allocator = GbmAllocator::new(
         gbm.clone(),
         GbmBufferFlags::RENDERING | GbmBufferFlags::SCANOUT,
@@ -2822,6 +2869,7 @@ fn create_direct_output(
         render_timer: None,
         callback_timer: None,
         lock_frame_pending: false,
+        tearing_supported,
     })
 }
 

@@ -198,6 +198,8 @@ fn refresh(state: &mut Ferese) {
                         requested_profile: None,
                         auto_refresh: false,
                         adaptive_sync_supported: false,
+                        tearing_supported: false,
+                        allow_tearing: false,
                         adaptive_sync_requested: false,
                         adaptive_sync_enabled: false,
                         physical_size: None,
@@ -476,6 +478,7 @@ impl Dispatch<ZwlrOutputModeV1, ModeData> for Ferese {
 fn settings(head: &Head, pending: Option<&PendingHead>) -> Result<OutputSettings, &'static str> {
     let mut settings = crate::output_policy::defaults(head.info.identity.clone());
     settings.auto_refresh = false;
+    settings.allow_tearing = head.info.allow_tearing;
     settings.enabled = pending.is_some();
     let Some(pending) = pending else {
         return Ok(settings);
@@ -1097,6 +1100,8 @@ mod tests {
                 requested_profile: None,
                 auto_refresh: false,
                 adaptive_sync_supported: false,
+                tearing_supported: false,
+                allow_tearing: false,
                 adaptive_sync_requested: false,
                 adaptive_sync_enabled: false,
                 physical_size: None,

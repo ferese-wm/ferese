@@ -127,6 +127,8 @@ mod tests {
             adaptive_sync_supported: true,
             adaptive_sync_requested: false,
             adaptive_sync_enabled: false,
+            tearing_supported: true,
+            allow_tearing: false,
             physical_size: Some((600, 340)),
             current_mode: Some(mode),
             available_modes: vec![mode],

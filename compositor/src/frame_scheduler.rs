@@ -17,6 +17,7 @@ pub(crate) struct FramePlan {
 pub(crate) struct FrameScheduler {
     interval: Duration,
     variable_refresh: bool,
+    tearing: bool,
     last_presented: Option<Duration>,
     last_target: Option<Duration>,
     requested_at: Option<Duration>,
@@ -37,6 +38,7 @@ impl FrameScheduler {
         Self {
             interval: interval.max(Duration::from_micros(1)),
             variable_refresh: false,
+            tearing: false,
             last_presented: None,
             last_target: None,
             requested_at: None,
@@ -56,8 +58,10 @@ impl FrameScheduler {
     pub fn reset(&mut self, interval: Duration) {
         let missed = self.missed_deadlines;
         let variable_refresh = self.variable_refresh;
+        let tearing = self.tearing;
         *self = Self::new(interval);
         self.variable_refresh = variable_refresh;
+        self.tearing = tearing;
         self.missed_deadlines = missed;
     }
 
@@ -68,6 +72,9 @@ impl FrameScheduler {
             return;
         }
         self.variable_refresh = enabled;
+        if enabled {
+            self.tearing = false;
+        }
         self.last_presented = None;
         self.last_target = None;
         self.last_callback = None;
@@ -75,6 +82,23 @@ impl FrameScheduler {
         self.extra_margin = Duration::ZERO;
         self.wakeup_delay = Duration::ZERO;
         self.last_wakeup = None;
+    }
+
+    /// Return whether an obsolete render timer must be removed by the caller.
+    pub fn set_tearing(&mut self, enabled: bool) -> bool {
+        let enabled = enabled && !self.variable_refresh;
+        if self.tearing == enabled {
+            return false;
+        }
+        self.tearing = enabled;
+        self.last_presented = None;
+        self.last_target = None;
+        self.last_callback = None;
+        self.scheduled = None;
+        self.extra_margin = Duration::ZERO;
+        self.wakeup_delay = Duration::ZERO;
+        self.last_wakeup = None;
+        true
     }
 
     pub fn request(&mut self, now: Duration) {
@@ -146,6 +170,16 @@ impl FrameScheduler {
         }
 
         let budget = self.budget(now);
+        if self.tearing {
+            let plan = FramePlan {
+                render_at: now,
+                present_at: now + self.render_estimate,
+                requested_at,
+                phase_known: false,
+            };
+            self.scheduled = Some(plan);
+            return Some(plan);
+        }
         if self.variable_refresh {
             // There is no fixed vblank phase to round to. A late frame can start
             // a refresh as soon as it is ready, subject to the panel's maximum rate.
@@ -237,7 +271,7 @@ impl FrameScheduler {
         // The first submission has only an estimated phase. Retiring it on
         // the actual refresh must not carry that estimate into the next frame.
         self.last_target = Some(timestamp);
-        if self.variable_refresh {
+        if self.variable_refresh || self.tearing {
             // Variable refresh timestamps cannot measure missed fixed refresh slots.
             self.extra_margin = Duration::ZERO;
             return Some(plan);
@@ -263,11 +297,26 @@ impl FrameScheduler {
         self.last_target = None;
     }
 
+    pub fn presented_with_phase(
+        &mut self,
+        timestamp: Duration,
+        fixed_phase: bool,
+    ) -> Option<FramePlan> {
+        let plan = self.presented(timestamp);
+        if !fixed_phase && !self.variable_refresh && !self.tearing {
+            // An older variable/async frame may retire after policy changed back
+            // to fixed refresh. Its timestamp cannot establish a vblank phase.
+            self.last_presented = None;
+            self.last_target = None;
+        }
+        plan
+    }
+
     pub fn forecast_time(&self, now: Duration, plan: FramePlan) -> Option<Duration> {
         // Before the first real page flip there is no reliable refresh phase.
         // A late timer still samples the next physical presentation, while
         // deadline metrics retain the original scheduled target.
-        (!self.variable_refresh && plan.phase_known).then(|| {
+        (!self.variable_refresh && !self.tearing && plan.phase_known).then(|| {
             plan.present_at
                 .max(self.phase_at_or_after(now + Duration::from_nanos(1)))
         })
@@ -278,6 +327,20 @@ impl FrameScheduler {
         // Its page flip will release callbacks using the observed refresh phase.
         if self.submitted.is_some() {
             return None;
+        }
+
+        if self.tearing {
+            let observed_progress = self
+                .last_presented
+                .is_some_and(|presented| self.last_callback.is_none_or(|last| presented > last));
+            let earliest = if observed_progress {
+                self.last_presented.map_or(now, |last| last.max(now))
+            } else {
+                self.last_callback
+                    .map_or(now, |last| last + self.interval)
+                    .max(now)
+            };
+            return Some(earliest.max(target));
         }
 
         let tolerance = Duration::from_micros(500).min(self.interval / 8);
@@ -308,8 +371,8 @@ impl FrameScheduler {
     }
 
     pub fn callback_sent(&mut self, now: Duration) {
-        if self.variable_refresh {
-            self.last_callback = Some(now);
+        if self.variable_refresh || self.tearing {
+            self.last_callback = Some(self.last_presented.map_or(now, |last| last.max(now)));
             return;
         }
         // Record the refresh slot, not delayed event-loop dispatch time.
@@ -667,5 +730,86 @@ mod tests {
         assert_eq!(scheduler.callback_deadline(ms(135), ms(135)), Some(ms(135)));
         scheduler.callback_sent(ms(135));
         assert_eq!(scheduler.callback_deadline(ms(135), ms(135)), Some(ms(145)));
+    }
+
+    #[test]
+    fn tearing_starts_immediately_and_retires_before_scheduling_another_frame() {
+        let mut scheduler = FrameScheduler::new(ms(10));
+        scheduler.presented(ms(100));
+        scheduler.request(ms(101));
+        let fixed = scheduler.plan(ms(101)).unwrap();
+        assert!(fixed.render_at > ms(101));
+        assert!(scheduler.set_tearing(true));
+        assert!(!scheduler.set_tearing(true));
+        let plan = scheduler.plan(ms(102)).unwrap();
+        assert_eq!(plan.render_at, ms(102));
+        assert_eq!(scheduler.forecast_time(ms(102), plan), None);
+        scheduler.begin(plan.render_at);
+        scheduler.rendered(plan, ms(104), ms(2), true);
+        scheduler.request(ms(105));
+        assert_eq!(scheduler.plan(ms(105)), None);
+        scheduler.presented(ms(106));
+        assert_eq!(scheduler.plan(ms(106)).unwrap().render_at, ms(106));
+        assert_eq!(scheduler.missed_deadlines, 0);
+    }
+
+    #[test]
+    fn asynchronous_retirements_release_callbacks_but_no_damage_updates_cannot_spin() {
+        let mut scheduler = FrameScheduler::new(ms(10));
+        scheduler.set_tearing(true);
+        scheduler.presented(ms(100));
+        scheduler.callback_sent(ms(100));
+        assert_eq!(scheduler.callback_deadline(ms(101), ms(101)), Some(ms(110)));
+        scheduler.presented(ms(103));
+        assert_eq!(scheduler.callback_deadline(ms(103), ms(103)), Some(ms(103)));
+        scheduler.callback_sent(ms(103));
+        assert_eq!(scheduler.callback_deadline(ms(104), ms(104)), Some(ms(113)));
+        scheduler.presented(ms(106));
+        assert_eq!(scheduler.callback_deadline(ms(105), ms(105)), Some(ms(106)));
+        scheduler.callback_sent(ms(106));
+        assert_eq!(scheduler.callback_deadline(ms(106), ms(106)), Some(ms(116)));
+    }
+
+    #[test]
+    fn variable_refresh_and_tearing_are_mutually_exclusive_across_resets() {
+        let mut scheduler = FrameScheduler::new(ms(10));
+        scheduler.set_tearing(true);
+        scheduler.set_variable_refresh(true);
+        assert!(!scheduler.set_tearing(true));
+        scheduler.reset(ms(8));
+        scheduler.request(ms(100));
+        let plan = scheduler.plan(ms(100)).unwrap();
+        assert_eq!(plan.present_at, ms(108));
+        assert!(!scheduler.tearing);
+        scheduler.set_variable_refresh(false);
+        assert!(scheduler.set_tearing(true));
+        assert_eq!(scheduler.plan(ms(101)).unwrap().render_at, ms(101));
+    }
+
+    #[test]
+    fn older_async_or_variable_retirements_cannot_seed_a_new_fixed_refresh_phase() {
+        for variable in [false, true] {
+            let mut scheduler = FrameScheduler::new(ms(10));
+            if variable {
+                scheduler.set_variable_refresh(true);
+            } else {
+                scheduler.set_tearing(true);
+            }
+            scheduler.request(ms(100));
+            let plan = scheduler.plan(ms(100)).unwrap();
+            scheduler.begin(plan.render_at);
+            scheduler.rendered(plan, ms(102), ms(2), true);
+            scheduler.set_variable_refresh(false);
+            scheduler.set_tearing(false);
+            scheduler.request(ms(103));
+            assert_eq!(scheduler.presented_with_phase(ms(105), false), Some(plan));
+            let fixed = scheduler.plan(ms(106)).unwrap();
+            assert!(!fixed.phase_known);
+            scheduler.begin(fixed.render_at);
+            scheduler.rendered(fixed, ms(108), ms(2), true);
+            scheduler.presented_with_phase(ms(110), true);
+            scheduler.request(ms(111));
+            assert!(scheduler.plan(ms(111)).unwrap().phase_known);
+        }
     }
 }

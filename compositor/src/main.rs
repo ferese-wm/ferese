@@ -49,6 +49,7 @@ mod stacking;
 #[cfg(test)]
 mod startup_tests;
 mod state;
+mod tearing_control;
 mod theme;
 mod wallpaper;
 mod window_rules;
@@ -217,6 +218,7 @@ fn after_dispatch_with_redraw(
 ) {
     state.poll_buffer_sync();
     state.poll_presentation_constraints();
+    crate::tearing_control::sync(state);
     crate::backends::direct::leasing::poll_lock(state);
     crate::backends::direct::gamma::sync_night_light(state);
     state.poll_window_interaction();

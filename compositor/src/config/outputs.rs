@@ -50,6 +50,7 @@ impl Config {
                         Ok(OutputSettings {
                             auto_refresh: output.auto_refresh,
                             adaptive_sync: output.adaptive_sync,
+                            allow_tearing: output.allow_tearing,
                             required: output.required,
                             matcher: matcher.to_owned(),
                             enabled: output.enabled,
@@ -165,6 +166,7 @@ pub struct OutputProfile {
 pub struct OutputSettings {
     pub auto_refresh: bool,
     pub adaptive_sync: bool,
+    pub allow_tearing: bool,
     pub required: bool,
     pub matcher: String,
     pub enabled: bool,
@@ -181,6 +183,7 @@ impl OutputSettings {
             && self.mode == other.mode
             && self.auto_refresh == other.auto_refresh
             && self.adaptive_sync == other.adaptive_sync
+            && self.allow_tearing == other.allow_tearing
             && self.scale == other.scale
             && self.transform == other.transform
             && self.position == other.position
@@ -257,6 +260,8 @@ pub(super) struct OutputConfig {
     pub(super) auto_refresh: bool,
     #[serde(default)]
     pub(super) adaptive_sync: bool,
+    #[serde(default)]
+    pub(super) allow_tearing: bool,
     #[serde(default = "default_true")]
     pub(super) required: bool,
     #[serde(rename = "match")]

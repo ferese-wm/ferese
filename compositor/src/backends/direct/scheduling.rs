@@ -36,6 +36,12 @@ pub(super) fn request_frame(state: &mut Ferese, node: DrmNode, crtc: crtc::Handl
     }
 
     let now = monotonic_now();
+    let tearing = state
+        .direct_backend
+        .as_ref()
+        .and_then(|backend| backend.devices.get(&node))
+        .and_then(|device| device.outputs.get(&crtc))
+        .is_some_and(|output| super::presentation_mode::tearing_candidate(state, output));
     let Some(output) = state
         .direct_backend
         .as_mut()
@@ -49,6 +55,12 @@ pub(super) fn request_frame(state: &mut Ferese, node: DrmNode, crtc: crtc::Handl
 
     if !output.power.can_render() {
         return;
+    }
+
+    if output.scheduler.set_tearing(tearing)
+        && let Some(timer) = output.render_timer.take()
+    {
+        state.loop_handle.remove(timer);
     }
 
     output
