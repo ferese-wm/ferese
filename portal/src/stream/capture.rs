@@ -20,6 +20,8 @@ use wayland_protocols::wp::linux_dmabuf::zv1::client::{
     zwp_linux_buffer_params_v1 as params, zwp_linux_dmabuf_v1 as dmabuf,
 };
 
+use super::activity::FailureKind;
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(super) struct Constraints {
     pub size: (u32, u32),
@@ -49,7 +51,24 @@ impl Constraints {
 pub(super) enum Completion {
     Ready,
     Retry,
-    Failed(String),
+    Failed { kind: FailureKind, error: String },
+}
+
+impl Completion {
+    fn failed(reason: WEnum<frame::FailureReason>) -> Self {
+        if reason == WEnum::Value(frame::FailureReason::BufferConstraints) {
+            return Self::Retry;
+        }
+        let kind = match &reason {
+            WEnum::Value(frame::FailureReason::Unknown) => FailureKind::Unknown,
+            WEnum::Value(frame::FailureReason::Stopped) => FailureKind::Stopped,
+            _ => FailureKind::Other,
+        };
+        Self::Failed {
+            kind,
+            error: format!("Capture failed: {reason:?}"),
+        }
+    }
 }
 
 pub(super) struct Buffer {
@@ -576,11 +595,8 @@ impl Dispatch<frame::ExtImageCopyCaptureFrameV1, ()> for State {
     ) {
         match event {
             frame::Event::Ready => state.completion = Some(Completion::Ready),
-            frame::Event::Failed {
-                reason: WEnum::Value(frame::FailureReason::BufferConstraints),
-            } => state.completion = Some(Completion::Retry),
             frame::Event::Failed { reason } => {
-                state.completion = Some(Completion::Failed(format!("Capture failed: {reason:?}")))
+                state.completion = Some(Completion::failed(reason));
             }
             frame::Event::Transform { transform }
                 if transform != WEnum::Value(wl_output::Transform::Normal) =>
@@ -650,6 +666,31 @@ wayland_client::delegate_noop!(State: ignore params::ZwpLinuxBufferParamsV1);
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn protocol_failure_reasons_preserve_retry_and_stop_semantics() {
+        assert!(matches!(
+            Completion::failed(WEnum::Value(frame::FailureReason::BufferConstraints)),
+            Completion::Retry
+        ));
+        for (reason, expected) in [
+            (
+                WEnum::Value(frame::FailureReason::Unknown),
+                FailureKind::Unknown,
+            ),
+            (
+                WEnum::Value(frame::FailureReason::Stopped),
+                FailureKind::Stopped,
+            ),
+            (WEnum::Unknown(u32::MAX), FailureKind::Other),
+        ] {
+            let Completion::Failed { kind, error } = Completion::failed(reason) else {
+                panic!("an error must retain its failure kind");
+            };
+            assert_eq!(kind, expected);
+            assert!(!error.is_empty());
+        }
+    }
 
     #[test]
     fn buffer_constraints_are_bounded_without_integer_overflow() {

@@ -14,8 +14,10 @@ use pipewire::spa;
 use serde::{Deserialize, Serialize};
 use spa::pod::Pod;
 
+mod activity;
 mod capture;
 mod rate;
+use activity::{Activity, FailureAction};
 use capture::{Capture, Completion};
 use rate::FrameRate;
 
@@ -37,6 +39,7 @@ struct PoolBuffer {
 struct HeldBuffer {
     raw: NonNull<pw::sys::pw_buffer>,
     generation: u64,
+    activity: activity::Token,
 }
 
 struct Data {
@@ -47,7 +50,7 @@ struct Data {
     held: Option<HeldBuffer>,
     generation: u64,
     sequence: u64,
-    active: bool,
+    activity: Activity,
     announced: bool,
     negotiated: (u32, u32),
     dma: bool,
@@ -76,30 +79,43 @@ impl Data {
             }
             return;
         };
-        let mut deliver = matches!(completion, Completion::Ready)
-            && self.active
-            && !self.capture.borrow().stopped();
+        let source_stopped = self.capture.borrow().stopped();
+        let mut deliver =
+            matches!(completion, Completion::Ready) && self.activity.active() && !source_stopped;
         match completion {
             Completion::Retry => {
                 self.renegotiate = self.negotiated != self.capture.borrow().constraints().size
             }
-            Completion::Failed(error) => {
-                if self.dma && !self.capture.borrow().stopped() {
-                    eprintln!("DMA-BUF capture unavailable ({error}); using shared memory");
-                    self.force_shm = true;
-                    self.renegotiate = true;
-                    // Retry unchanged content after a failed GPU transfer.
-                    if let Err(error) = self.capture.borrow_mut().refresh() {
-                        eprintln!("Could not refresh fallback capture: {error}");
+            Completion::Failed { kind, error } => {
+                match self
+                    .activity
+                    .failure_action(held.activity, source_stopped, self.dma, kind)
+                {
+                    FailureAction::Discard => (),
+                    FailureAction::Retry => {
+                        if let Err(error) = self.capture.borrow_mut().refresh() {
+                            eprintln!("Could not retry capture: {error}");
+                            self.stop.store(true, Ordering::Relaxed);
+                        }
+                    }
+                    FailureAction::FallbackToShm => {
+                        eprintln!("DMA-BUF capture unavailable ({error}); using shared memory");
+                        self.force_shm = true;
+                        self.renegotiate = true;
+                        // Retry unchanged content after a failed GPU transfer.
+                        if let Err(error) = self.capture.borrow_mut().refresh() {
+                            eprintln!("Could not refresh fallback capture: {error}");
+                            self.stop.store(true, Ordering::Relaxed);
+                        }
+                    }
+                    FailureAction::Stop => {
+                        eprintln!("{error}");
                         self.stop.store(true, Ordering::Relaxed);
                     }
-                } else {
-                    eprintln!("{error}");
-                    self.stop.store(true, Ordering::Relaxed);
                 }
                 deliver = false;
             }
-            Completion::Ready => (),
+            Completion::Ready => self.activity.ready(),
         }
         let raw = held.raw;
         // SAFETY: this pointer is still registered with the same allocation
@@ -321,7 +337,7 @@ pub fn run(
         held: None,
         generation: 0,
         sequence: 0,
-        active: false,
+        activity: Activity::default(),
         announced: false,
         negotiated: size,
         dma,
@@ -335,21 +351,18 @@ pub fn run(
         .state_changed(move |stream, data, _, state| {
             let mut data = data.borrow_mut();
             let active = matches!(state, pw::stream::StreamState::Streaming);
+            let resumed = data.activity.set_active(active);
             if let Err(error) = data.capture.borrow_mut().set_active(active) {
                 eprintln!("Could not update capture activity: {error}");
                 data.stop.store(true, Ordering::Relaxed);
             }
-            if active
-                && !data.active
-                && let Err(error) = data.capture.borrow_mut().refresh()
-            {
+            if resumed && let Err(error) = data.capture.borrow_mut().refresh() {
                 eprintln!("Could not resume capture: {error}");
                 data.stop.store(true, Ordering::Relaxed);
             }
-            if active && !data.active {
+            if resumed {
                 data.next_capture = Instant::now();
             }
-            data.active = active;
             match state {
                 pw::stream::StreamState::Paused | pw::stream::StreamState::Streaming
                     if !data.announced =>
@@ -499,7 +512,7 @@ pub fn run(
         })
         .process(|stream, shared| {
             let mut data = shared.borrow_mut();
-            if !data.active
+            if !data.activity.active()
                 || data.held.is_some()
                 || data.negotiating
                 || Instant::now() < data.next_capture
@@ -524,7 +537,11 @@ pub fn run(
                     )
                 });
             if let Some((generation, Ok(()))) = result {
-                data.held = Some(HeldBuffer { raw, generation });
+                data.held = Some(HeldBuffer {
+                    raw,
+                    generation,
+                    activity: data.activity.token(),
+                });
                 data.next_capture = Instant::now() + data.rate.interval();
             } else {
                 // SAFETY: this buffer was just dequeued and hasn't been handed to
@@ -604,7 +621,7 @@ pub fn run(
         }
         let can_capture = {
             let data = data.borrow();
-            data.active && data.held.is_none() && !data.renegotiate && !data.negotiating
+            data.activity.active() && data.held.is_none() && !data.renegotiate && !data.negotiating
         };
         let deadline = next_frame.max(data.borrow().next_capture);
         if can_capture && Instant::now() >= deadline {
