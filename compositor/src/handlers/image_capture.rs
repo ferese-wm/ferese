@@ -1,7 +1,7 @@
 //! Persistent, damage-driven capture for the native portal. One frame may be
 //! outstanding per session; client buffers remain owned until GPU completion.
 use smithay::reexports::calloop::RegistrationToken;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -56,6 +56,7 @@ fn source_active(source: &ImageCaptureSource) -> bool {
 #[derive(PartialEq)]
 struct SurfaceStamp {
     id: ObjectId,
+    location: Point<f64, Logical>,
     commit: CommitCounter,
     view: SurfaceView,
     scale: i32,
@@ -114,6 +115,7 @@ fn surface_stamp(
             }) {
                 stamp.push(SurfaceStamp {
                     id: surface.id(),
+                    location,
                     commit: data.current_commit(),
                     view,
                     scale: data.buffer_scale(),
@@ -162,6 +164,34 @@ fn pending_frame_callbacks(
         |_, _, _| true,
     );
     pending
+}
+
+fn release_captured_window_fifo(state: &mut Ferese, stamp: &WindowStamp) {
+    // Window snapshots expose the mapped surface crop, not pixel-level visibility.
+    // Fully occluded/zero-alpha members in that selected scope may advance early
+    // under FIFO's occluded-surface allowance. Cropped-out members stay blocked.
+    let mut captured = stamp
+        .surfaces
+        .iter()
+        .map(|surface| surface.id.clone())
+        .collect::<HashSet<_>>();
+    if !state.input_capture.active()
+        && let Some(cursor) = &stamp.cursor
+        && let CursorImageStamp::Surface(surfaces, hotspot) = &cursor.image
+    {
+        let origin = cursor.location - cursor.geometry.loc.to_f64() - hotspot.to_f64();
+        let crop = Rectangle::from_size(cursor.geometry.size.to_f64());
+        captured.extend(
+            surfaces
+                .iter()
+                .filter(|surface| {
+                    Rectangle::new(origin + surface.location, surface.view.dst.to_f64())
+                        .overlaps(crop)
+                })
+                .map(|surface| surface.id.clone()),
+        );
+    }
+    state.presentation_constraint_captured(|surface| captured.contains(&surface.id()));
 }
 
 pub(super) struct Active {
@@ -791,6 +821,8 @@ impl Ferese {
                         });
                     }
                     if active.window_stamp.as_ref() == Some(&stamp) {
+                        // The retained image already represents this selected surface crop.
+                        release_captured_window_fifo(self, &stamp);
                         active.pending = Some(frame);
                         if info
                             .window
@@ -835,6 +867,9 @@ impl Ferese {
                         } else {
                             Err("Capture renderer is unavailable".into())
                         };
+                        if result.is_ok() {
+                            release_captured_window_fifo(self, &stamp);
+                        }
                         active.window_stamp = result.as_ref().ok().map(|_| stamp);
                         self.finish_stream_frame(frame, active.session.as_ref(), result);
                     }
@@ -1165,3 +1200,7 @@ mod workspace_tests;
 #[cfg(test)]
 #[path = "image_capture/frame_liveness_tests.rs"]
 mod frame_liveness_tests;
+
+#[cfg(test)]
+#[path = "image_capture/fifo_tests.rs"]
+mod fifo_tests;

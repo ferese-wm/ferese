@@ -1,5 +1,6 @@
 //! Workspace capture owns a view, not a second desktop. Targets exist only for
 //! subscribed sources; surface commits invalidate only their owning workspace.
+use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
 use ferese_core::WorkspaceId;
@@ -189,42 +190,83 @@ impl WorkspaceCapture {
         self.content = self.content.wrapping_add(1);
     }
 
-    fn callbacks(&self, state: &Ferese, send: bool) -> bool {
+    fn callbacks(&self, state: &mut Ferese, send: bool) -> bool {
         let (Some(scene), Some(target)) = (&self.scene, &self.target) else {
             return false;
         };
-        let mut pending = false;
-        for id in scene.windows.keys() {
-            let Some(window) = state
-                .windows
-                .window(*id)
-                .filter(|window| !state.capture_protected(window))
-            else {
-                continue;
-            };
-            let mut visible = false;
-            window.with_surfaces(|surface, _| visible |= target.surface_visible(surface));
-            if !visible {
-                continue;
+        let mut pending = callbacks_for_windows(
+            state,
+            &self.source.output,
+            scene.windows.keys().copied(),
+            |surface| target.surface_visible(surface),
+            send,
+        );
+        let mut captured = HashSet::new();
+        if self.source.shell_visible(state) {
+            let layers = smithay::desktop::layer_map_for_output(&self.source.output)
+                .layers()
+                .cloned()
+                .collect::<Vec<_>>();
+            for layer in layers {
+                let mut visible = false;
+                layer.with_surfaces(|surface, _| {
+                    if target.surface_visible(surface) {
+                        visible = true;
+                        captured.insert(surface.clone());
+                    }
+                });
+                if !visible {
+                    continue;
+                }
+                if send {
+                    layer.send_frame(
+                        &self.source.output,
+                        state.start_time.elapsed(),
+                        Some(interval()),
+                        |_, _| None,
+                    );
+                }
+                layer.with_surfaces(|_, states| {
+                    pending |= !states
+                        .cached_state
+                        .get::<smithay::wayland::compositor::SurfaceAttributes>()
+                        .current()
+                        .frame_callbacks
+                        .is_empty();
+                });
             }
-            // Normal display callbacks may already have drained these. Capture
-            // never generates presentation feedback or changes scanout ownership.
+        }
+        if self.cursor.is_some()
+            && self.source.cursor_visible(state)
+            && let smithay::input::pointer::CursorImageStatus::Surface(surface) =
+                &state.cursor_status
+        {
             if send {
-                window.send_frame(
+                smithay::desktop::utils::send_frames_surface_tree(
+                    surface,
                     &self.source.output,
                     state.start_time.elapsed(),
                     Some(interval()),
                     |_, _| None,
                 );
             }
-            window.with_surfaces(|_, states| {
-                pending |= !states
-                    .cached_state
-                    .get::<smithay::wayland::compositor::SurfaceAttributes>()
-                    .current()
-                    .frame_callbacks
-                    .is_empty();
+            smithay::desktop::utils::with_surfaces_surface_tree(surface, |surface, states| {
+                if target.surface_visible(surface) {
+                    captured.insert(surface.clone());
+                    pending |= !states
+                        .cached_state
+                        .get::<smithay::wayland::compositor::SurfaceAttributes>()
+                        .current()
+                        .frame_callbacks
+                        .is_empty();
+                }
             });
+        }
+        if send {
+            state.presentation_constraint_captured(|surface| captured.contains(surface));
+        } else {
+            pending |=
+                state.presentation_constraint_capture_pending(|surface| captured.contains(surface));
         }
         pending
     }
@@ -293,6 +335,63 @@ impl WorkspaceCapture {
         self.last_revision = Some(image.1);
         Ok(image)
     }
+}
+
+pub(super) fn callbacks_for_windows(
+    state: &mut Ferese,
+    output: &Output,
+    windows: impl IntoIterator<Item = ferese_layout::WindowId>,
+    surface_visible: impl Fn(
+        &smithay::reexports::wayland_server::protocol::wl_surface::WlSurface,
+    ) -> bool,
+    send: bool,
+) -> bool {
+    let mut pending = false;
+    let mut captured = HashSet::new();
+    for id in windows {
+        let Some(window) = state
+            .windows
+            .window(id)
+            .filter(|window| !state.capture_protected(window))
+        else {
+            continue;
+        };
+        let mut visible = false;
+        window.with_surfaces(|surface, _| {
+            if surface_visible(surface) {
+                visible = true;
+                captured.insert(surface.clone());
+            }
+        });
+        if !visible {
+            continue;
+        }
+        // Normal display callbacks may already have drained these. Capture
+        // never generates presentation feedback or changes scanout ownership.
+        if send {
+            window.send_frame(
+                output,
+                state.start_time.elapsed(),
+                Some(interval()),
+                |_, _| None,
+            );
+        }
+        window.with_surfaces(|_, states| {
+            pending |= !states
+                .cached_state
+                .get::<smithay::wayland::compositor::SurfaceAttributes>()
+                .current()
+                .frame_callbacks
+                .is_empty();
+        });
+    }
+    if send {
+        state.presentation_constraint_captured(|surface| captured.contains(surface));
+    } else {
+        pending |=
+            state.presentation_constraint_capture_pending(|surface| captured.contains(surface));
+    }
+    pending
 }
 
 impl Drop for WorkspaceCapture {

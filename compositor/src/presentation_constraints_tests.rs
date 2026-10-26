@@ -18,7 +18,7 @@ use super::{hidden_deadline, now};
 use crate::Ferese;
 use crate::state::{dispatch_test_client as dispatch, test_client_request as request};
 
-fn messages(wire: &mut UnixStream) -> Vec<(u32, u16, Vec<u32>)> {
+pub(crate) fn messages(wire: &mut UnixStream) -> Vec<(u32, u16, Vec<u32>)> {
     wire.set_nonblocking(true).unwrap();
     let mut bytes = Vec::new();
     let _ = wire.read_to_end(&mut bytes);
@@ -39,7 +39,12 @@ fn messages(wire: &mut UnixStream) -> Vec<(u32, u16, Vec<u32>)> {
     result
 }
 
-fn bind(wire: &mut UnixStream, globals: &[(u32, u16, Vec<u32>)], interface: &str, id: u32) {
+pub(crate) fn bind(
+    wire: &mut UnixStream,
+    globals: &[(u32, u16, Vec<u32>)],
+    interface: &str,
+    id: u32,
+) {
     let global = globals
         .iter()
         .find(|(object, opcode, args)| {
@@ -65,7 +70,7 @@ fn bind(wire: &mut UnixStream, globals: &[(u32, u16, Vec<u32>)], interface: &str
     request(wire, 7, 0, &args, None);
 }
 
-fn fixture() -> (Ferese, EventLoop<'static, Ferese>, WlSurface, UnixStream) {
+pub(crate) fn fixture() -> (Ferese, EventLoop<'static, Ferese>, WlSurface, UnixStream) {
     let mut events = EventLoop::try_new().unwrap();
     let mut state = crate::startup_tests::state(&mut events);
     let output = Output::new(
@@ -102,7 +107,7 @@ fn fixture() -> (Ferese, EventLoop<'static, Ferese>, WlSurface, UnixStream) {
     (state, events, surface, wire)
 }
 
-fn damage_commit(wire: &mut UnixStream) {
+pub(crate) fn damage_commit(wire: &mut UnixStream) {
     request(wire, 2, 1, &[6, 0, 0], None);
     request(wire, 2, 2, &[0, 0, 1, 1], None);
     request(wire, 2, 6, &[], None);
@@ -122,7 +127,7 @@ fn timestamp(wire: &mut UnixStream, deadline: Duration) {
     );
 }
 
-fn pump(events: &mut EventLoop<'static, Ferese>, state: &mut Ferese, timeout: Duration) {
+pub(crate) fn pump(events: &mut EventLoop<'static, Ferese>, state: &mut Ferese, timeout: Duration) {
     let until = Instant::now() + timeout;
     while Instant::now() < until {
         state.poll_presentation_constraints();

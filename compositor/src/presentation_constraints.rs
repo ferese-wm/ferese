@@ -234,6 +234,17 @@ impl Ferese {
             let Some(client) = surface.client() else {
                 continue;
             };
+            // The pending FIFO cache retains a barrier until wait_barrier consumes
+            // it, so an ordinary commit can apply the same handle again. Preserve
+            // its original pacing condition instead of treating it as a replacement.
+            if self
+                .presentation_constraints
+                .fifo
+                .iter()
+                .any(|entry| entry.surface == surface.downgrade() && entry.barrier == barrier)
+            {
+                continue;
+            }
             // Superseding FIFO state may release an earlier condition, as permitted by the protocol.
             self.presentation_constraints.fifo.retain(|entry| {
                 if entry.surface == surface.downgrade() {
@@ -326,6 +337,18 @@ impl Ferese {
                 true
             }
         });
+    }
+
+    pub(crate) fn presentation_constraint_capture_pending(
+        &self,
+        mut surface_visible: impl FnMut(&WlSurface) -> bool,
+    ) -> bool {
+        self.presentation_constraints.fifo.iter().any(|entry| {
+            entry
+                .surface
+                .upgrade()
+                .is_ok_and(|surface| surface_visible(&surface))
+        })
     }
 
     pub(crate) fn poll_presentation_constraints(&mut self) {
@@ -473,4 +496,4 @@ impl Dispatch<WpCommitTimerV1, CommitTimerData> for Ferese {
 
 #[cfg(test)]
 #[path = "presentation_constraints_tests.rs"]
-mod protocol_tests;
+pub(crate) mod protocol_tests;
