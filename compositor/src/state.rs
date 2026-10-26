@@ -544,6 +544,7 @@ pub struct Ferese {
     _ipc_socket: Option<IpcSocketGuard>,
     pub(crate) dmabuf_imports: crate::dmabuf_imports::ImportManager,
     pub(crate) buffer_sync: crate::buffer_sync::BufferSync,
+    pub(crate) presentation_constraints: crate::presentation_constraints::PresentationConstraints,
     pub(crate) dmabuf_feedback: crate::dmabuf_feedback::FeedbackManager,
     pub(crate) activation_inputs: crate::handlers::activation::InputHistory,
     pub(crate) pending_screencopies: Vec<PendingScreencopy>,
@@ -691,6 +692,8 @@ impl Ferese {
         let single_pixel_buffer_state = SinglePixelBufferState::new::<Self>(&display_handle);
         let text_input_manager_state = TextInputManagerState::new::<Self>(&display_handle);
         let output_manager_state = OutputManagerState::new_with_xdg_output::<Self>(&display_handle);
+        let presentation_constraints =
+            crate::presentation_constraints::PresentationConstraints::new(&display_handle);
         let pointer_constraints_state = PointerConstraintsState::new::<Self>(&display_handle);
         let pointer_gestures_state = PointerGesturesState::new::<Self>(&display_handle);
         let presentation_state =
@@ -875,6 +878,7 @@ impl Ferese {
             _ipc_socket: None,
             dmabuf_imports: crate::dmabuf_imports::ImportManager::default(),
             buffer_sync: Default::default(),
+            presentation_constraints,
             dmabuf_feedback: Default::default(),
             activation_inputs: Default::default(),
             pending_screencopies: Vec::new(),

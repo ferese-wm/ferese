@@ -29,6 +29,7 @@ impl CompositorHandler for Ferese {
 
     fn new_surface(&mut self, surface: &WlSurface) {
         crate::buffer_sync::install(surface);
+        crate::presentation_constraints::install(surface);
         self.update_surface_preferences(surface);
     }
 
@@ -49,6 +50,7 @@ impl CompositorHandler for Ferese {
         self.capture_resize_before_commit(surface);
         self.capture_close_before_commit(surface);
         on_commit_buffer_handler::<Self>(surface);
+        self.presentation_constraint_committed(surface);
         crate::effects::commit_presentation(surface);
         if !is_sync_subsurface(surface) {
             let mut root = surface.clone();
@@ -87,6 +89,7 @@ impl CompositorHandler for Ferese {
 
     fn destroyed(&mut self, surface: &WlSurface) {
         self.cancel_surface_buffer_waits(surface);
+        self.presentation_constraint_destroyed(surface);
         self.dmabuf_feedback.destroyed(surface);
         if self.session_lock.active() {
             self.session_lock

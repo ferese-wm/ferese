@@ -29,6 +29,7 @@ mod overview;
 mod portal_session;
 mod portal_shortcuts;
 mod presentation;
+mod presentation_constraints;
 mod presentation_policy;
 mod priority;
 mod private_client;
@@ -213,6 +214,7 @@ fn after_dispatch_with_redraw(
     mut redraw: impl FnMut(&mut Ferese, RedrawRequest<'_>),
 ) {
     state.poll_buffer_sync();
+    state.poll_presentation_constraints();
     crate::backends::direct::gamma::sync_night_light(state);
     state.poll_window_interaction();
     state.process_pending_dmabuf_imports();

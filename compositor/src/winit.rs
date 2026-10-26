@@ -329,6 +329,9 @@ pub fn init(event_loop: &mut EventLoop<Ferese>, state: &mut Ferese) -> Result<()
 }
 
 fn configure_nested_protocols(state: &mut Ferese) {
+    state
+        .presentation_constraints
+        .disable_timing(&state.display_handle);
     // Winit's swap has no host presentation timestamp or retrace counter.
     // Do not advertise timing we cannot report accurately.
     state
@@ -401,6 +404,7 @@ fn capture_with_display_restore<R, F, E>(
 }
 
 fn send_nested_frame_callbacks(state: &mut Ferese, output: &Output) {
+    state.presentation_constraint_frame(output);
     let eligible = state.callback_outputs();
     if state.session_lock.active() {
         state.lock_frame_callbacks(output);

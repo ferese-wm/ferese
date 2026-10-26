@@ -2376,6 +2376,7 @@ fn deliver_frame_callbacks(
 }
 
 fn send_frame_callbacks(state: &mut Ferese, output: &Output) {
+    state.presentation_constraint_frame(output);
     let eligible = state.callback_outputs();
     if state.session_lock.active() {
         state.lock_frame_callbacks(output);
