@@ -499,6 +499,7 @@ impl OutputDamageTracker {
         let mut element_damage = std::mem::take(&mut self.element_damage);
 
         let mut element_visible_area_workhouse = std::mem::take(&mut self.element_visible_area_workhouse);
+        let mut effect_regions = Vec::new();
         let mut render_element_z_index = 0;
         for element in elements.iter() {
             let element_id = element.id();
@@ -518,9 +519,20 @@ impl OutputDamageTracker {
                 element_visible_area_workhouse,
                 self.opaque_regions.iter().copied(),
             );
-            let element_visible_area = element_visible_area_workhouse
+            let mut element_visible_area = element_visible_area_workhouse
                 .iter()
                 .fold(0usize, |acc, item| acc + (item.size.w * item.size.h) as usize);
+
+            // An element hidden on screen may still supply pixels to a visible
+            // framebuffer effect above it. Keep it until capture damage and
+            // occlusion are resolved below; otherwise it cannot be drawn when
+            // the effect's sample region is uncovered for capture.
+            if element_visible_area == 0 {
+                element_visible_area = effect_regions
+                    .iter()
+                    .find_map(|region| element_output_geometry.intersection(*region))
+                    .map_or(0, |sample| (sample.size.w * sample.size.h) as usize);
+            }
 
             // No need to draw a completely hidden element
             if element_visible_area == 0 {
@@ -540,6 +552,9 @@ impl OutputDamageTracker {
             let element_alpha = element.alpha();
             let element_last_state = self.last_state.elements.get(element.id());
             let element_is_framebuffer_effect = element.is_framebuffer_effect();
+            if element_is_framebuffer_effect {
+                effect_regions.push(element_output_geometry);
+            }
 
             self.element_damage_index.push(self.damage.len());
             if element_last_state

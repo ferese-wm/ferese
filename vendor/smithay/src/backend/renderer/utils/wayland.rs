@@ -671,6 +671,16 @@ where
             continue;
         }
 
+        // Framebuffer effects sample the scene below them, including pixels
+        // covered on screen by higher opaque elements. Offscreen draws do not
+        // have a damage tracker to restore those dependencies later.
+        if element.is_framebuffer_effect() {
+            opaque_regions = Rectangle::subtract_rects_many_in_place(
+                opaque_regions,
+                [element_geometry],
+            );
+        }
+
         render_damage.extend(Rectangle::subtract_rects_many(
             damage.iter().copied(),
             opaque_regions.iter().copied(),

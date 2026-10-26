@@ -35,6 +35,8 @@ Local changes are limited to the following library boundaries:
   from the earlier frame submission fence. This API never falls back to `glFinish`.
 - Image capture frame references expose resource liveness so a deferred copy
   cannot write to a client buffer after its old frame object was destroyed.
+- Damage tracking retains occluded elements needed by a visible framebuffer
+  effect. Offscreen rendering also preserves those backdrop dependencies.
 
 The compositor controls capability checks and user/client policy. Vendoring this
 API extension does not enable tearing or variable refresh by default and does not
