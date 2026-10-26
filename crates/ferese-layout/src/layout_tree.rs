@@ -193,19 +193,22 @@ impl LayoutTree {
 
     #[must_use]
     pub fn visible_window_count(&self) -> usize {
-        fn count(tree: &LayoutTree, node: NodeId) -> usize {
-            match tree.nodes.get(&node) {
-                Some(Node::Window(_)) => 1,
+        let mut pending = self.root.into_iter().collect::<Vec<_>>();
+        let mut count = 0;
+        while let Some(node) = pending.pop() {
+            match self.nodes.get(&node) {
+                Some(Node::Window(_)) => count += 1,
                 Some(Node::Split { first, second, .. }) => {
-                    count(tree, *first) + count(tree, *second)
+                    pending.push(*second);
+                    pending.push(*first);
                 }
                 Some(Node::Stack { children, active }) => {
-                    children.get(*active).map_or(0, |child| count(tree, *child))
+                    pending.extend(children.get(*active));
                 }
-                None => 0,
+                None => {}
             }
         }
-        self.root.map_or(0, |root| count(self, root))
+        count
     }
 
     #[must_use]
@@ -722,10 +725,7 @@ impl LayoutTree {
                 _ => return Err(LayoutError::InvalidTree("leaf is not a window")),
             },
         };
-        let rect = self
-            .geometry(bounds)?
-            .remove(&target)
-            .ok_or(LayoutError::UnknownWindow(target))?;
+        let rect = self.window_bounds(target, bounds)?;
 
         Ok(if rect.width > rect.height {
             Axis::Horizontal
@@ -893,6 +893,9 @@ impl LayoutTree {
         if self.parents.contains_key(&root) {
             return Err(LayoutError::InvalidTree("root has a parent"));
         }
+        if self.parents.len() != self.nodes.len().saturating_sub(1) {
+            return Err(LayoutError::InvalidTree("parent index is inconsistent"));
+        }
 
         let mut visited = HashSet::new();
         self.validate_node(root, None, &mut visited)?;
@@ -926,41 +929,69 @@ impl LayoutTree {
         bounds: Rect,
         windows: &mut Vec<(WindowId, Rect)>,
     ) -> Result<(), LayoutError> {
-        match self.nodes.get(&node) {
-            Some(Node::Window(window)) => windows.push((*window, bounds)),
-            Some(Node::Split {
-                axis,
-                ratio,
-                first,
-                second,
-            }) => {
-                let (first_bounds, second_bounds) = split_rect(bounds, *axis, *ratio);
-                self.collect_window_positions(*first, first_bounds, windows)?;
-                self.collect_window_positions(*second, second_bounds, windows)?;
-            }
-            Some(Node::Stack { children, .. }) => {
-                for child in children {
-                    self.collect_window_positions(*child, bounds, windows)?;
-                }
-            }
-            None => return Err(LayoutError::InvalidTree("node is missing")),
-        }
-        Ok(())
+        self.visit_window_bounds(node, bounds, true, |window, bounds| {
+            windows.push((window, bounds))
+        })
     }
 
-    fn first_window(&self, node: NodeId) -> Result<NodeId, LayoutError> {
-        match self.nodes.get(&node) {
-            Some(Node::Window(_)) => Ok(node),
-            Some(Node::Split { first, .. }) => self.first_window(*first),
-            Some(Node::Stack {
-                children, active, ..
-            }) => children
-                .get(*active)
-                .copied()
-                .ok_or(LayoutError::InvalidTree("stack active index is invalid"))
-                .and_then(|child| self.first_window(child)),
-            None => Err(LayoutError::InvalidTree("node is missing")),
+    fn first_window(&self, mut node: NodeId) -> Result<NodeId, LayoutError> {
+        for _ in 0..self.nodes.len() {
+            node = match self.nodes.get(&node) {
+                Some(Node::Window(_)) => return Ok(node),
+                Some(Node::Split { first, .. }) => *first,
+                Some(Node::Stack { children, active }) => *children
+                    .get(*active)
+                    .ok_or(LayoutError::InvalidTree("stack active index is invalid"))?,
+                None => return Err(LayoutError::InvalidTree("node is missing")),
+            };
         }
+        Err(LayoutError::InvalidTree("tree contains a cycle"))
+    }
+
+    /// Resolve one indexed leaf in ancestor order without laying out its siblings.
+    fn window_bounds(&self, window: WindowId, bounds: Rect) -> Result<Rect, LayoutError> {
+        let mut child = *self
+            .windows
+            .get(&window)
+            .ok_or(LayoutError::UnknownWindow(window))?;
+        let mut path = Vec::new();
+        while let Some(parent) = self.parents.get(&child).copied() {
+            if path.len() >= self.nodes.len() {
+                return Err(LayoutError::InvalidTree("tree contains a cycle"));
+            }
+            path.push((parent, child));
+            child = parent;
+        }
+        let mut area = bounds;
+        for (parent, child) in path.into_iter().rev() {
+            match self.nodes.get(&parent) {
+                Some(Node::Split {
+                    axis,
+                    ratio,
+                    first,
+                    second,
+                }) => {
+                    let (left, right) = split_rect(area, *axis, *ratio);
+                    area = if *first == child {
+                        left
+                    } else if *second == child {
+                        right
+                    } else {
+                        return Err(LayoutError::InvalidTree("parent does not contain child"));
+                    };
+                }
+                Some(Node::Stack { children, active }) => {
+                    let selected = children
+                        .get(*active)
+                        .ok_or(LayoutError::InvalidTree("stack active index is invalid"))?;
+                    if *selected != child {
+                        return Err(LayoutError::UnknownWindow(window));
+                    }
+                }
+                _ => return Err(LayoutError::InvalidTree("parent node is invalid")),
+            }
+        }
+        Ok(area)
     }
 
     fn replace_child(
@@ -1020,29 +1051,50 @@ impl LayoutTree {
         bounds: Rect,
         geometry: &mut HashMap<WindowId, Rect>,
     ) -> Result<(), LayoutError> {
-        match self.nodes.get(&node) {
-            Some(Node::Window(window)) => {
-                geometry.insert(*window, bounds);
-            }
-            Some(Node::Split {
-                axis,
-                ratio,
-                first,
-                second,
-            }) => {
-                let (first_bounds, second_bounds) = split_rect(bounds, *axis, *ratio);
-                self.layout_node(*first, first_bounds, geometry)?;
-                self.layout_node(*second, second_bounds, geometry)?;
-            }
-            Some(Node::Stack { children, active }) => {
-                let child = children
-                    .get(*active)
-                    .ok_or(LayoutError::InvalidTree("stack active index is invalid"))?;
-                self.layout_node(*child, bounds, geometry)?;
-            }
-            None => return Err(LayoutError::InvalidTree("node is missing")),
-        }
+        self.visit_window_bounds(node, bounds, false, |window, bounds| {
+            geometry.insert(window, bounds);
+        })
+    }
 
+    fn visit_window_bounds(
+        &self,
+        node: NodeId,
+        bounds: Rect,
+        include_hidden: bool,
+        mut visit: impl FnMut(WindowId, Rect),
+    ) -> Result<(), LayoutError> {
+        let mut pending = vec![(node, bounds)];
+        let mut visited = 0;
+        while let Some((node, bounds)) = pending.pop() {
+            if visited >= self.nodes.len() {
+                return Err(LayoutError::InvalidTree("tree contains a cycle"));
+            }
+            visited += 1;
+            match self.nodes.get(&node) {
+                Some(Node::Window(window)) => visit(*window, bounds),
+                Some(Node::Split {
+                    axis,
+                    ratio,
+                    first,
+                    second,
+                }) => {
+                    let (first_bounds, second_bounds) = split_rect(bounds, *axis, *ratio);
+                    pending.push((*second, second_bounds));
+                    pending.push((*first, first_bounds));
+                }
+                Some(Node::Stack { children, active }) => {
+                    if include_hidden {
+                        pending.extend(children.iter().rev().map(|child| (*child, bounds)));
+                    } else {
+                        let child = children
+                            .get(*active)
+                            .ok_or(LayoutError::InvalidTree("stack active index is invalid"))?;
+                        pending.push((*child, bounds));
+                    }
+                }
+                None => return Err(LayoutError::InvalidTree("node is missing")),
+            }
+        }
         Ok(())
     }
 
@@ -1199,50 +1251,51 @@ impl LayoutTree {
         expected_parent: Option<NodeId>,
         visited: &mut HashSet<NodeId>,
     ) -> Result<(), LayoutError> {
-        if !visited.insert(node) {
-            return Err(LayoutError::InvalidTree("tree contains a cycle"));
-        }
-        if self.parents.get(&node).copied() != expected_parent {
-            return Err(LayoutError::InvalidTree("parent index is inconsistent"));
-        }
-
-        match self.nodes.get(&node) {
-            Some(Node::Window(window)) => {
-                if self.windows.get(window) != Some(&node) {
-                    return Err(LayoutError::InvalidTree("window index is inconsistent"));
-                }
+        let mut pending = vec![(node, expected_parent)];
+        while let Some((node, expected_parent)) = pending.pop() {
+            if !visited.insert(node) {
+                return Err(LayoutError::InvalidTree("tree contains a cycle"));
             }
-            Some(Node::Split {
-                ratio,
-                first,
-                second,
-                ..
-            }) => {
-                if first == second
-                    || !ratio.is_finite()
-                    || !(MIN_SPLIT_RATIO..=MAX_SPLIT_RATIO).contains(ratio)
-                {
-                    return Err(LayoutError::InvalidTree("split is invalid"));
-                }
-
-                self.validate_node(*first, Some(node), visited)?;
-                self.validate_node(*second, Some(node), visited)?;
+            if self.parents.get(&node).copied() != expected_parent {
+                return Err(LayoutError::InvalidTree("parent index is inconsistent"));
             }
-            Some(Node::Stack { children, active }) => {
-                if children.len() < 2 || *active >= children.len() {
-                    return Err(LayoutError::InvalidTree("stack is invalid"));
+            match self.nodes.get(&node) {
+                Some(Node::Window(window)) => {
+                    if self.windows.get(window) != Some(&node) {
+                        return Err(LayoutError::InvalidTree("window index is inconsistent"));
+                    }
                 }
-
-                for child in children {
-                    self.validate_node(*child, Some(node), visited)?;
+                Some(Node::Split {
+                    ratio,
+                    first,
+                    second,
+                    ..
+                }) => {
+                    if first == second
+                        || !ratio.is_finite()
+                        || !(MIN_SPLIT_RATIO..=MAX_SPLIT_RATIO).contains(ratio)
+                    {
+                        return Err(LayoutError::InvalidTree("split is invalid"));
+                    }
+                    pending.push((*second, Some(node)));
+                    pending.push((*first, Some(node)));
                 }
+                Some(Node::Stack { children, active }) => {
+                    if children.len() < 2 || *active >= children.len() {
+                        return Err(LayoutError::InvalidTree("stack is invalid"));
+                    }
+                    pending.extend(children.iter().rev().map(|child| (*child, Some(node))));
+                }
+                None => return Err(LayoutError::InvalidTree("node is missing")),
             }
-            None => return Err(LayoutError::InvalidTree("node is missing")),
         }
 
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod traversal_tests;
 
 fn normalized_ratio(ratio: f64) -> f64 {
     if ratio.is_finite() {

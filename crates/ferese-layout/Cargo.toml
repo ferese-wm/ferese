@@ -13,3 +13,7 @@ workspace = true
 [[bench]]
 name = "constrained_tree"
 harness = false
+
+[[bench]]
+name = "tree_operations"
+harness = false
