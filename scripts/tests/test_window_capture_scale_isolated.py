@@ -99,6 +99,7 @@ class WindowCaptureScale(unittest.TestCase):
                                           ("subsurface", 2), ("subsurface-outside", 1),
                                           ("fractional-rounded", 1.75),
                                           ("fractional-ceiled", 1.75)]:
+                        mode_children = len(children)
                         with self.subTest(mode=mode, output_scale=scale):
                             client = launch([str(root / "client"), mode], stdin=subprocess.PIPE)
                             window = wait_for(lambda: next((w for w in call("windows")
@@ -111,10 +112,16 @@ class WindowCaptureScale(unittest.TestCase):
                             ready = json.loads(worker.stdout.readline())
                             expected = (round(640 * max(scale, density)),
                                         round(480 * max(scale, density)))
-                            if mode == "fractional-rounded":
-                                expected = (3819, 2091)
-                            elif mode == "fractional-ceiled":
-                                expected = (3819, 2092)
+                            if mode in ("fractional-rounded", "fractional-ceiled"):
+                                native = (3819, 2091 if mode == "fractional-rounded" else 2092)
+                                # The policy preserves native pixels while their
+                                # common rounded density covers the output scale.
+                                # A valid 1.8x host must instead upscale this
+                                # approximately 1.75x client, just like other modes.
+                                upper = min((native[0] + .5) / 2182,
+                                            (native[1] + .5) / 1195)
+                                expected = (native if scale < upper else
+                                            (int(2182 * scale + .5), int(1195 * scale + .5)))
                             self.assertEqual((ready["width"], ready["height"]), expected,
                                              "window sharing discarded native backing pixels")
                             raw = root / f"{mode}.bgrx"
@@ -162,6 +169,16 @@ class WindowCaptureScale(unittest.TestCase):
                             client.wait(timeout=5)
                             client.stdin.close()
                             wait_for(lambda: not any(w["id"] == window["id"] for w in call("windows")))
+                        # subTest records failures and continues: retire the old
+                        # stream even when an assertion skipped normal teardown,
+                        # so one failure cannot exhaust the next mode's pool.
+                        for child in reversed(children[mode_children:]):
+                            if child.poll() is None:
+                                os.killpg(child.pid, signal.SIGTERM)
+                                child.wait(timeout=5)
+                            for pipe in (child.stdin, child.stdout, child.stderr):
+                                if pipe:
+                                    pipe.close()
                 finally:
                     for child in reversed(children):
                         if child.poll() is None:
