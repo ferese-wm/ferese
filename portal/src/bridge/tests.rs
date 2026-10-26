@@ -99,6 +99,37 @@ async fn partial_reply_timeout_cannot_corrupt_the_next_frame() {
     peer.join().unwrap();
 }
 
+#[test]
+fn trickled_replies_expire_for_calls_and_started_watches() {
+    for wait in [false, true] {
+        let timeout = Duration::from_millis(90);
+        let (bridge, mut server) = pair_with_timeout(timeout);
+        let peer = std::thread::spawn(move || {
+            let request: Request = read_frame(&mut server).unwrap();
+            if wait {
+                // The idle watch may wait longer than the frame budget.
+                std::thread::sleep(timeout * 3);
+            }
+            let mut frame = Vec::new();
+            write_frame(&mut frame, &Response::success(request.id, json!({}))).unwrap();
+            for byte in frame {
+                if server.write_all(&[byte]).is_err() {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(25));
+            }
+        });
+        assert!(
+            bridge
+                .request_sync("session-watch", json!({"since": 0}), wait)
+                .is_err()
+        );
+        assert!(bridge.is_closed());
+        assert!(bridge.request_sync("enable", json!({}), false).is_err());
+        peer.join().unwrap();
+    }
+}
+
 #[tokio::test]
 async fn malformed_or_mismatched_replies_poison_the_bridge() {
     for case in 0..6 {

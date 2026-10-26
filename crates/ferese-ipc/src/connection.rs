@@ -1,44 +1,12 @@
-use crate::{FrameError, Request, Response, VERSION, read_frame, write_frame};
+use crate::{Request, Response, VERSION, exchange_frames};
 use serde_json::Value;
-use std::io::{self, Read, Write};
+use std::io;
 use std::net::Shutdown;
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 const FRAME_TIMEOUT: Duration = Duration::from_secs(2);
-
-struct DeadlineIo<'a> {
-    stream: &'a UnixStream,
-    deadline: Instant,
-}
-
-impl DeadlineIo<'_> {
-    fn remaining(&self) -> io::Result<Duration> {
-        self.deadline
-            .checked_duration_since(Instant::now())
-            .filter(|duration| !duration.is_zero())
-            .ok_or_else(|| io::Error::new(io::ErrorKind::TimedOut, "IPC frame deadline expired"))
-    }
-}
-
-impl Read for DeadlineIo<'_> {
-    fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
-        self.stream.set_read_timeout(Some(self.remaining()?))?;
-        self.stream.read(bytes)
-    }
-}
-
-impl Write for DeadlineIo<'_> {
-    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-        self.stream.set_write_timeout(Some(self.remaining()?))?;
-        self.stream.write(bytes)
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        self.stream.flush()
-    }
-}
 
 pub fn socket_path() -> io::Result<PathBuf> {
     crate::socket::resolve(None)
@@ -83,7 +51,7 @@ impl Connection {
             command: command.into(),
             args,
         };
-        let response = self.exchange(&request, budget);
+        let response = exchange_frames::<_, Response>(&self.stream, &request, budget);
         let response = match response {
             Ok(response) => response,
             Err(error) => {
@@ -101,48 +69,6 @@ impl Connection {
             _ => {
                 let _ = self.stream.shutdown(Shutdown::Both);
                 Err("Invalid IPC response outcome".into())
-            }
-        }
-    }
-
-    fn exchange(&self, request: &Request, budget: Duration) -> Result<Response, FrameError> {
-        let read_timeout = self.stream.read_timeout()?;
-        let write_timeout = self.stream.write_timeout()?;
-        let result = (|| {
-            write_frame(
-                &mut DeadlineIo {
-                    stream: &self.stream,
-                    deadline: Instant::now() + write_timeout.unwrap_or(budget).min(budget),
-                },
-                request,
-            )?;
-            let deadline = read_timeout.map(|timeout| Instant::now() + timeout.min(budget));
-            let mut first = [0];
-            if let Some(deadline) = deadline {
-                DeadlineIo {
-                    stream: &self.stream,
-                    deadline,
-                }
-                .read_exact(&mut first)?;
-            } else {
-                // A watch may wait indefinitely for a change, but once its
-                // response starts, one absolute deadline bounds the frame.
-                (&self.stream).read_exact(&mut first)?;
-            }
-            read_frame(&mut first.as_slice().chain(DeadlineIo {
-                stream: &self.stream,
-                deadline: deadline.unwrap_or_else(|| Instant::now() + budget),
-            }))
-        })();
-        let restored = self
-            .stream
-            .set_read_timeout(read_timeout)
-            .and_then(|()| self.stream.set_write_timeout(write_timeout));
-        match result {
-            Err(error) => Err(error),
-            Ok(response) => {
-                restored?;
-                Ok(response)
             }
         }
     }
@@ -171,7 +97,9 @@ impl Drop for Cancellation {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{read_frame, write_frame};
     use serde_json::json;
+    use std::io::{Read, Write};
     use std::sync::mpsc;
 
     #[test]

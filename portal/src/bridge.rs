@@ -104,10 +104,9 @@ impl Bridge {
                 .stream
                 .set_read_timeout(if wait { None } else { Some(self.0.timeout) })
                 .map_err(|error| error.to_string())?;
-            ferese_ipc::write_frame(&mut connection.stream, &request)
-                .map_err(|error| error.to_string())?;
-            let value: Json = ferese_ipc::read_frame(&mut connection.stream)
-                .map_err(|error| error.to_string())?;
+            let value: Json =
+                ferese_ipc::exchange_frames(&connection.stream, &request, self.0.timeout)
+                    .map_err(|error| error.to_string())?;
             let has_result = value.get("result").is_some();
             let response: ferese_ipc::Response =
                 serde_json::from_value(value).map_err(|error| error.to_string())?;

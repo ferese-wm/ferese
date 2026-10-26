@@ -291,10 +291,9 @@ fn exchange(
     stream: &mut UnixStream,
     request: &ferese_ipc::Request,
 ) -> Result<serde_json::Value, String> {
-    ferese_ipc::write_frame(stream, request).map_err(|error| error.to_string())?;
-
     let response: ferese_ipc::Response =
-        ferese_ipc::read_frame(stream).map_err(|error| error.to_string())?;
+        ferese_ipc::exchange_frames(stream, request, Duration::from_secs(15))
+            .map_err(|error| error.to_string())?;
     if response.id != request.id || response.version != ferese_ipc::VERSION {
         return Err("Unexpected compositor response ID or protocol version".into());
     }
@@ -970,6 +969,49 @@ mod tests {
         ] {
             assert!(local_path(uri).is_err());
         }
+    }
+
+    #[test]
+    fn trickled_compositor_reply_expires_within_one_frame_budget() {
+        use std::io::Write;
+
+        let (mut client, mut server) = UnixStream::pair().unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_millis(90)))
+            .unwrap();
+        server
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        let peer = std::thread::spawn(move || {
+            let request: ferese_ipc::Request = ferese_ipc::read_frame(&mut server).unwrap();
+            let mut frame = Vec::new();
+            ferese_ipc::write_frame(
+                &mut frame,
+                &ferese_ipc::Response::success(request.id, serde_json::json!({})),
+            )
+            .unwrap();
+            for byte in frame {
+                if server.write_all(&[byte]).is_err() {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(25));
+            }
+        });
+        assert!(
+            exchange(
+                &mut client,
+                &ferese_ipc::Request {
+                    version: ferese_ipc::VERSION,
+                    id: 7,
+                    kind: "command".into(),
+                    command: "screenshot".into(),
+                    args: serde_json::json!({}),
+                },
+            )
+            .is_err()
+        );
+        drop(client);
+        peer.join().unwrap();
     }
 
     #[test]

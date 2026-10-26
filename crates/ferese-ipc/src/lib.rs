@@ -8,7 +8,9 @@ pub mod media;
 pub mod night_light;
 pub mod socket;
 pub mod theme;
+mod transport;
 pub mod xwayland;
 
 pub use connection::{Cancellation, Connection, socket_path};
 pub use frame::*;
+pub use transport::exchange_frames;
