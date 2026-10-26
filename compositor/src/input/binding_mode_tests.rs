@@ -10,7 +10,7 @@ struct TestInput;
 
 impl InputBackend for TestInput {
     type Device = WinitVirtualDevice;
-    type PointerButtonEvent = UnusedEvent;
+    type PointerButtonEvent = TestButton;
     type KeyboardKeyEvent = TestKey;
     type PointerAxisEvent = UnusedEvent;
     type PointerMotionEvent = UnusedEvent;
@@ -65,6 +65,40 @@ pub(crate) fn key(state: &mut Ferese, code: u32, pressed: bool) {
                 KeyState::Pressed
             } else {
                 KeyState::Released
+            },
+        ),
+    });
+}
+
+#[derive(Debug)]
+struct TestButton(u32, ButtonState);
+
+impl Event<TestInput> for TestButton {
+    fn time(&self) -> smithay::backend::input::InputTime {
+        smithay::backend::input::InputTime::from_micros(1_000)
+    }
+    fn device(&self) -> WinitVirtualDevice {
+        WinitVirtualDevice
+    }
+}
+
+impl PointerButtonEvent<TestInput> for TestButton {
+    fn button_code(&self) -> u32 {
+        self.0
+    }
+    fn state(&self) -> ButtonState {
+        self.1
+    }
+}
+
+pub(crate) fn button(state: &mut Ferese, code: u32, pressed: bool) {
+    state.process_input_event::<TestInput>(InputEvent::PointerButton {
+        event: TestButton(
+            code,
+            if pressed {
+                ButtonState::Pressed
+            } else {
+                ButtonState::Released
             },
         ),
     });

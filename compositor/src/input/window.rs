@@ -325,8 +325,8 @@ impl Ferese {
                     .unwrap_or(false)
                 {
                     for button in &operation.pressed {
-                        pointer.button(
-                            self,
+                        self.send_pointer_button(
+                            &pointer,
                             &ButtonEvent {
                                 button: *button,
                                 state: ButtonState::Released,

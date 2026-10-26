@@ -439,8 +439,7 @@ pub fn init(event_loop: &mut EventLoop<Ferese>, state: &mut Ferese) -> Result<()
         .handle()
         .insert_source(notifier, move |event, _, state| match event {
             SessionEvent::PauseSession => {
-                state.cancel_window_interaction();
-                state.set_binding_mode("default");
+                state.reset_session_input();
                 let handle = state.loop_handle.clone();
                 if let Some(backend) = state.direct_backend.as_mut() {
                     backend.active = false;

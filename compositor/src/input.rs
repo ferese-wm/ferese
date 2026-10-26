@@ -1,6 +1,7 @@
 mod window;
 pub(crate) use window::WindowInteraction;
 mod pointer;
+mod session;
 use ferese_layout::Direction;
 pub(crate) use pointer::ScrollBindings;
 use smithay::backend::input::{
@@ -697,8 +698,8 @@ impl Ferese {
                             );
                         }
                     }
-                    pointer.button(
-                        self,
+                    self.send_pointer_button(
+                        &pointer,
                         &ButtonEvent {
                             button: event.button_code(),
                             state: event.state(),
@@ -761,8 +762,8 @@ impl Ferese {
                             self.record_activation_input(serial, pointer.current_focus());
                         }
 
-                        pointer.button(
-                            self,
+                        self.send_pointer_button(
+                            &pointer,
                             &ButtonEvent {
                                 button: event.button_code(),
                                 state: event.state(),
@@ -797,8 +798,8 @@ impl Ferese {
                     if self.consumed_pointer_buttons.contains(&event.button_code()) {
                         return;
                     }
-                    pointer.button(
-                        self,
+                    self.send_pointer_button(
+                        &pointer,
                         &ButtonEvent {
                             button: event.button_code(),
                             state: event.state(),
@@ -824,8 +825,8 @@ impl Ferese {
                     self.record_activation_input(serial, pointer.current_focus());
                 }
 
-                pointer.button(
-                    self,
+                self.send_pointer_button(
+                    &pointer,
                     &ButtonEvent {
                         button: event.button_code(),
                         state: event.state(),
