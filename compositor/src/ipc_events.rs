@@ -1,3 +1,5 @@
+pub(crate) mod desktop;
+
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -20,6 +22,8 @@ pub(crate) struct Subscribers {
     generation: u64,
     pub(crate) config_revision: u64,
     pub(crate) outputs: RefCell<crate::ipc::outputs::Cache>,
+    pub(crate) windows: RefCell<desktop::Windows>,
+    pub(crate) workspaces: RefCell<desktop::Workspaces>,
 }
 
 impl Subscribers {
@@ -46,6 +50,8 @@ impl Subscribers {
         if self.subscribers.is_empty() {
             self.previous = None;
             self.outputs.get_mut().clear();
+            *self.windows.get_mut() = desktop::Windows::default();
+            *self.workspaces.get_mut() = desktop::Workspaces::default();
         }
     }
 
@@ -126,6 +132,8 @@ impl Subscribers {
         self.previous = self.active().then_some(snapshot);
         if !self.active() {
             self.outputs.get_mut().clear();
+            *self.windows.get_mut() = desktop::Windows::default();
+            *self.workspaces.get_mut() = desktop::Workspaces::default();
         }
     }
 }
@@ -253,8 +261,8 @@ mod tests {
     fn snapshot() -> Snapshot {
         Snapshot {
             outputs: json!([]).into(),
-            workspaces: json!([]),
-            windows: Vec::new(),
+            workspaces: json!([]).into(),
+            windows: Vec::new().into(),
             focus: json!(null),
             config: ConfigState::default(),
             theme: json!({}).into(),
@@ -279,7 +287,7 @@ mod tests {
         hub.publish(state.clone());
         assert!(matches!(receive.try_recv(), Err(TryRecvError::Empty)));
         state.outputs = json!([{"id": 2}]).into();
-        state.workspaces = json!([{"output": 2}]);
+        state.workspaces = json!([{"output": 2}]).into();
         state.focus = json!({"output": 2});
         hub.publish(state);
         let events = receive.try_iter().collect::<Vec<_>>();
@@ -355,6 +363,34 @@ mod tests {
     }
 
     #[test]
+    fn disconnect_releases_cached_desktop_payloads() {
+        let mut hub = Subscribers::default();
+        let (sender, receive) = sync_channel(QUEUE_CAPACITY);
+        hub.subscribe(1, sender).unwrap();
+        let window = desktop::WindowView {
+            id: 1,
+            app_id: "editor",
+            title: "document",
+            focused: true,
+            workspace: 1,
+            floating: false,
+            fullscreen: false,
+        };
+        let payload = hub
+            .windows
+            .borrow_mut()
+            .get_or_update(|| std::iter::once(window));
+        let weak = Arc::downgrade(&payload);
+        let mut state = snapshot();
+        state.windows = payload;
+        hub.publish(state);
+        receive.try_recv().unwrap();
+        assert!(weak.upgrade().is_some());
+        hub.remove(1);
+        assert!(weak.upgrade().is_none());
+    }
+
+    #[test]
     fn all_changed_domains_share_one_generation() {
         let mut hub = Subscribers::default();
         let (sender, receive) = sync_channel(QUEUE_CAPACITY);
@@ -363,7 +399,7 @@ mod tests {
         hub.publish(state.clone());
         receive.try_recv().unwrap();
         state.outputs = json!([{"id": 1}]).into();
-        state.workspaces = json!([{"output": 1}]);
+        state.workspaces = json!([{"output": 1}]).into();
         state.windows = vec![ferese_ipc::events::Window {
             id: 7,
             app_id: "org.example.Terminal".into(),
@@ -372,7 +408,8 @@ mod tests {
             workspace: 1,
             floating: false,
             fullscreen: false,
-        }];
+        }]
+        .into();
         state.focus = json!({"window": 7});
         state.config.revision = 1;
         state.theme = json!({"mode": "light"}).into();

@@ -1724,18 +1724,17 @@ impl Ferese {
             }
             Arc::new(value)
         };
-        let windows = if locked {
-            Vec::new()
-        } else {
+        let windows = self.ipc_events.windows.borrow_mut().get_or_update(|| {
             self.windows
                 .ordered_ids()
+                .take(if locked { 0 } else { usize::MAX })
                 .filter_map(|id| {
                     let record = self.windows.record(id)?;
                     let workspace = self.workspaces.workspace_for_window(id)?;
-                    Some(ferese_ipc::events::Window {
+                    Some(crate::ipc_events::desktop::WindowView {
                         id: id.0,
-                        app_id: record.app_id.clone(),
-                        title: record.title.clone(),
+                        app_id: &record.app_id,
+                        title: &record.title,
                         focused: self.focused_window == Some(id),
                         workspace: workspace.0,
                         floating: matches!(
@@ -1748,15 +1747,13 @@ impl Ferese {
                             .is_some_and(|workspace| workspace.fullscreen == Some(id)),
                     })
                 })
-                .collect()
-        };
+        });
         ferese_ipc::events::Snapshot {
             outputs,
-            workspaces: if locked {
-                json!([])
-            } else {
-                self.workspaces_json()
-            },
+            workspaces: self.ipc_events.workspaces.borrow_mut().get_or_update(|| {
+                self.ipc_workspace_views()
+                    .take(if locked { 0 } else { usize::MAX })
+            }),
             windows,
             focus: if locked {
                 Value::Null
@@ -1840,36 +1837,34 @@ impl Ferese {
         Value::Array(windows)
     }
 
-    fn workspaces_json(&self) -> Value {
-        let workspaces = self
-            .output_workspaces
-            .workspace_views(&self.workspaces)
-            .into_iter()
+    fn ipc_workspace_views(
+        &self,
+    ) -> impl Iterator<Item = crate::ipc_events::desktop::Workspace> + '_ {
+        self.output_workspaces
+            .workspace_views_iter(&self.workspaces)
             .map(|view| {
                 let workspace = self
                     .workspaces
                     .workspace(view.id)
                     .expect("workspace view exists");
-                let mode = match workspace.layout.mode() {
-                    LayoutMode::Scrolling => "scrolling",
-                    LayoutMode::Tree => "tree",
-                };
-                json!({
-                    "id": workspace.id.0,
-                    "name": view.index.to_string(),
-                    "index": view.index,
-                    "output": view.output.0,
-                    "window_count": view.window_count,
-                    "visible": view.visible,
-                    "focused": view.focused,
-                    "active": view.focused,
-                    "layout": mode,
-                    "focused_window": workspace.last_focused.map(|window| window.0),
-                    "fullscreen_window": workspace.fullscreen.map(|window| window.0),
-                })
+                crate::ipc_events::desktop::Workspace {
+                    view,
+                    layout: match workspace.layout.mode() {
+                        LayoutMode::Scrolling => "scrolling",
+                        LayoutMode::Tree => "tree",
+                    },
+                    focused_window: workspace.last_focused.map(|window| window.0),
+                    fullscreen_window: workspace.fullscreen.map(|window| window.0),
+                }
             })
-            .collect::<Vec<_>>();
-        Value::Array(workspaces)
+    }
+
+    fn workspaces_json(&self) -> Value {
+        Value::Array(
+            self.ipc_workspace_views()
+                .map(|workspace| workspace.json())
+                .collect(),
+        )
     }
 
     fn outputs_json(&self) -> Value {

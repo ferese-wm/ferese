@@ -250,7 +250,7 @@ impl BackgroundEvents {
         event.validate()?;
         match event.change {
             Change::Snapshot { desktop } => {
-                self.windows = desktop.windows;
+                self.windows = std::sync::Arc::unwrap_or_clone(desktop.windows);
                 self.changed = true;
             }
             Change::WindowsChanged { windows } => {
@@ -528,8 +528,8 @@ mod tests {
                 change: Change::Snapshot {
                     desktop: Box::new(ferese_ipc::events::Snapshot {
                         outputs: serde_json::json!([]).into(),
-                        workspaces: serde_json::json!([]),
-                        windows: vec![window(1, "one.desktop", true, 1)],
+                        workspaces: serde_json::json!([]).into(),
+                        windows: vec![window(1, "one.desktop", true, 1)].into(),
                         focus: serde_json::json!({"window":1}),
                         config: Default::default(),
                         theme: serde_json::Value::Null.into(),

@@ -34,8 +34,8 @@ pub struct Window {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub struct Snapshot {
     pub outputs: Arc<Value>,
-    pub workspaces: Value,
-    pub windows: Vec<Window>,
+    pub workspaces: Arc<Value>,
+    pub windows: Arc<Vec<Window>>,
     pub focus: Value,
     pub config: ConfigState,
     pub theme: Arc<Value>,
@@ -85,14 +85,16 @@ impl Snapshot {
                 outputs: self.outputs.as_ref().clone(),
             });
         }
-        if self.workspaces != previous.workspaces {
+        if !Arc::ptr_eq(&self.workspaces, &previous.workspaces)
+            && self.workspaces != previous.workspaces
+        {
             changes.push(Change::WorkspacesChanged {
-                workspaces: self.workspaces.clone(),
+                workspaces: self.workspaces.as_ref().clone(),
             });
         }
-        if self.windows != previous.windows {
+        if !Arc::ptr_eq(&self.windows, &previous.windows) && self.windows != previous.windows {
             changes.push(Change::WindowsChanged {
-                windows: self.windows.clone(),
+                windows: self.windows.as_ref().clone(),
             });
         }
         if self.focus != previous.focus {
@@ -177,7 +179,7 @@ mod tests {
             let decoded: Change = serde_json::from_value(change.clone()).unwrap();
             assert_eq!(serde_json::to_value(&decoded).unwrap(), change);
             let decoded_windows = match decoded {
-                Change::Snapshot { desktop } => desktop.windows,
+                Change::Snapshot { desktop } => Arc::unwrap_or_clone(desktop.windows),
                 Change::WindowsChanged { windows } => windows,
                 _ => unreachable!(),
             };
@@ -219,6 +221,37 @@ mod tests {
                 theme: serde_json::json!({"mode": "light"})
             }]
         );
+    }
+
+    #[test]
+    fn shared_desktop_payloads_preserve_value_changes_and_wire_format() {
+        let wire = serde_json::json!({
+            "outputs": [], "workspaces": [{"id": 1}],
+            "windows": [{"id": 1, "app_id": "editor", "title": "before", "focused": true,
+                "workspace": 1, "floating": false, "fullscreen": false}],
+            "focus": null, "config": {"revision": 0, "error": null},
+            "theme": null, "lock": {"phase": "unlocked", "sleeping": false}
+        });
+        let previous: Snapshot = serde_json::from_value(wire.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&previous).unwrap(), wire);
+        let mut next = previous.clone();
+        assert!(Arc::ptr_eq(&next.windows, &previous.windows));
+        assert!(Arc::ptr_eq(&next.workspaces, &previous.workspaces));
+        assert!(next.changes_since(&previous).is_empty());
+        next.windows = Arc::new(previous.windows.as_ref().clone());
+        next.workspaces = Arc::new(previous.workspaces.as_ref().clone());
+        assert!(next.changes_since(&previous).is_empty());
+        Arc::make_mut(&mut next.windows)[0].title = "after".into();
+        Arc::make_mut(&mut next.workspaces)[0]["id"] = 2.into();
+        assert!(matches!(
+            next.changes_since(&previous).as_slice(),
+            [
+                Change::WorkspacesChanged { .. },
+                Change::WindowsChanged { .. }
+            ]
+        ));
+        assert_eq!(previous.windows[0].title, "before");
+        assert_eq!(previous.workspaces[0]["id"], 1);
     }
 
     #[test]
