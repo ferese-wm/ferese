@@ -811,7 +811,12 @@ fn serve_connection_with_activities(
         };
         let (response, receiver) = sync_channel(1);
         let event_stream_requested = request.command == "event-stream";
-        let (events, event_receiver) = sync_channel(crate::ipc_events::QUEUE_CAPACITY);
+        let (events, event_receiver) = if event_stream_requested {
+            let (sender, receiver) = sync_channel(crate::ipc_events::QUEUE_CAPACITY);
+            (Some(sender), Some(receiver))
+        } else {
+            (None, None)
+        };
         let exit_requested = request.command == "exit";
         let registers_lease = matches!(
             request.command.as_str(),
@@ -829,7 +834,7 @@ fn serve_connection_with_activities(
             owner,
             request,
             response,
-            events: event_stream_requested.then_some(events),
+            events,
         }));
         let terminal_activity = matches!(&call, IpcEvent::Call(call) if matches!(call.activity.as_ref().map(|(_, publish, _)| publish), Some(ferese_ipc::activities::Publish::End { .. } | ferese_ipc::activities::Publish::Cancel { .. })));
         let sent = if terminal_activity {
@@ -883,7 +888,10 @@ fn serve_connection_with_activities(
         }
         if event_stream_accepted {
             let _ = stream.set_write_timeout(Some(Duration::from_secs(2)));
-            relay_events(&mut stream, event_receiver);
+            relay_events(
+                &mut stream,
+                event_receiver.expect("accepted event stream has its queue"),
+            );
             return;
         }
         if exit_accepted {
