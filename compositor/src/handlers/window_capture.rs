@@ -199,7 +199,7 @@ pub(super) fn init_global(
     }
 
     display.create_global::<Ferese, FereseWindowCaptureManagerV1, Global>(
-        4,
+        5,
         Global {
             budget: Arc::default(),
             worker,
@@ -281,7 +281,24 @@ impl Dispatch<FereseWindowCaptureManagerV1, Global> for Ferese {
         _: &DisplayHandle,
         data_init: &mut DataInit<'_, Self>,
     ) {
-        let (request, include_shell) = match request {
+        let (request, include_shell, quality) = match request {
+            manager::Request::CreateWorkspaceSourceWithOptions {
+                workspace_hi,
+                workspace_lo,
+                include_shell,
+                quality,
+                source,
+            } => (
+                manager::Request::CreateWorkspaceSource {
+                    workspace_hi,
+                    workspace_lo,
+                    source,
+                },
+                include_shell == 1,
+                (include_shell <= 1)
+                    .then(|| manager::Quality::try_from(quality).ok())
+                    .flatten(),
+            ),
             manager::Request::CreateWorkspaceSourceWithShell {
                 workspace_hi,
                 workspace_lo,
@@ -293,8 +310,9 @@ impl Dispatch<FereseWindowCaptureManagerV1, Global> for Ferese {
                     source,
                 },
                 true,
+                Some(manager::Quality::Balanced),
             ),
-            request => (request, false),
+            request => (request, false, Some(manager::Quality::Balanced)),
         };
         if let manager::Request::CreateWorkspaceSource {
             workspace_hi,
@@ -308,7 +326,18 @@ impl Dispatch<FereseWindowCaptureManagerV1, Global> for Ferese {
             let id =
                 ferese_core::WorkspaceId((u64::from(workspace_hi) << 32) | u64::from(workspace_lo));
             let capture = ImageCaptureSource::new();
-            let view = super::workspace_capture::WorkspaceSource::new(state, id, include_shell);
+            let view = quality.and_then(|quality| {
+                if quality == manager::Quality::Balanced {
+                    super::workspace_capture::WorkspaceSource::new(state, id, include_shell)
+                } else {
+                    super::workspace_capture::WorkspaceSource::with_quality(
+                        state,
+                        id,
+                        include_shell,
+                        quality,
+                    )
+                }
+            });
             if let Some(view) = &view {
                 capture
                     .user_data()

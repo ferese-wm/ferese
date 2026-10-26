@@ -27,10 +27,35 @@ pub(super) struct Constraints {
     pub size: (u32, u32),
     pub shm: bool,
     pub device: Option<u64>,
-    pub linear: bool,
+    pub modifiers: Vec<u64>,
+}
+
+const MAX_DMA_MODIFIERS: usize = 64;
+const MAX_DMA_PLANES: u32 = 4;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct DmaFormat {
+    pub modifier: u64,
+    pub planes: u32,
 }
 
 impl Constraints {
+    fn record_modifiers(&mut self, bytes: &[u8]) {
+        for bytes in bytes.chunks_exact(8) {
+            let modifier = u64::from_ne_bytes(bytes.try_into().expect("modifier width"));
+            if modifier == u64::from(gbm::Modifier::Invalid) || self.modifiers.contains(&modifier) {
+                continue;
+            }
+            if self.modifiers.len() < MAX_DMA_MODIFIERS {
+                self.modifiers.push(modifier);
+            } else if modifier == 0 {
+                // Keep the broadly importable linear layout even if the
+                // compositor listed many native modifiers before it.
+                self.modifiers[MAX_DMA_MODIFIERS - 1] = modifier;
+            }
+        }
+    }
+
     pub(super) fn validate(&self) -> Result<(), String> {
         let (width, height) = self.size;
         if width == 0
@@ -73,11 +98,17 @@ impl Completion {
 
 pub(super) struct Buffer {
     pub proxy: wl_buffer::WlBuffer,
-    pub fd: OwnedFd,
-    pub stride: u32,
-    pub bytes: u32,
+    pub planes: Vec<Plane>,
+    pub dma: Option<DmaFormat>,
     pub size: (u32, u32),
     _bo: Option<gbm::BufferObject<()>>,
+}
+
+pub(super) struct Plane {
+    pub fd: File,
+    pub stride: u32,
+    pub offset: u32,
+    pub bytes: u32,
 }
 
 impl Drop for Buffer {
@@ -122,6 +153,7 @@ impl Capture {
         cursor: bool,
         generation: Option<u32>,
         include_shell: bool,
+        workspace_quality: crate::workspace::Quality,
         stop: &AtomicBool,
     ) -> Result<Self, String> {
         let connection = Connection::connect_to_env().map_err(|error| error.to_string())?;
@@ -154,7 +186,19 @@ impl Capture {
                     .as_ref()
                     .filter(|manager| manager.version() >= 3)
                     .ok_or("Workspace capture is unavailable")?;
-                if include_shell {
+                if workspace_quality != crate::workspace::Quality::Balanced {
+                    if manager.version() < 5 {
+                        return Err("Workspace capture quality selection is unavailable".into());
+                    }
+                    manager.create_workspace_source_with_options(
+                        (id >> 32) as u32,
+                        id as u32,
+                        u32::from(include_shell),
+                        workspace_quality.wire(),
+                        &qh,
+                        (),
+                    )
+                } else if include_shell {
                     if manager.version() < 4 {
                         return Err("Workspace shell capture is unavailable".into());
                     }
@@ -253,8 +297,23 @@ impl Capture {
     pub(super) fn take_changed(&mut self) -> bool {
         std::mem::take(&mut self.state.changed)
     }
-    pub(super) fn dma_supported(&self) -> bool {
-        self.constraints().linear && self.device.is_some() && self.state.dma.is_some()
+    pub(super) fn dma_formats(&self) -> Vec<DmaFormat> {
+        if self.state.dma.is_none() {
+            return Vec::new();
+        }
+        // Probe one allocation at a time, without creating/importing Wayland
+        // buffers. Only layouts that fit the compositor's reservation are offered.
+        self.constraints()
+            .modifiers
+            .iter()
+            .filter_map(|&modifier| {
+                let (bo, planes) = self.allocate_dma(modifier).ok()?;
+                Some(DmaFormat {
+                    modifier: bo.modifier().into(),
+                    planes: planes.len() as u32,
+                })
+            })
+            .collect()
     }
     pub(super) fn dispatch(&mut self) {
         if let Err(error) = dispatch(&self.connection, &mut self.queue, &mut self.state, 0) {
@@ -309,46 +368,86 @@ impl Capture {
         self.frame = Some(frame);
         self.connection.flush().map_err(|error| error.to_string())
     }
-    pub(super) fn allocate(&mut self, dma: bool) -> Result<Buffer, String> {
+    fn allocate_dma(&self, modifier: u64) -> Result<(gbm::BufferObject<()>, Vec<Plane>), String> {
+        if !self.constraints().modifiers.contains(&modifier) {
+            return Err("DMA-BUF modifier is not supported by the capture source".into());
+        }
         let (width, height) = self.constraints().size;
-        let qh = self.queue.handle();
-        if dma {
-            let device = self.device.as_ref().ok_or("No DMA-BUF allocation device")?;
-            let bo = device
-                .create_buffer_object::<()>(
+        let device = self.device.as_ref().ok_or("No DMA-BUF allocation device")?;
+        let modifier = gbm::Modifier::from(modifier);
+        let bo = device
+            .create_buffer_object_with_modifiers2::<()>(
+                width,
+                height,
+                gbm::Format::Xrgb8888,
+                std::iter::once(modifier),
+                gbm::BufferObjectFlags::RENDERING,
+            )
+            .or_else(|error| {
+                if modifier != gbm::Modifier::Linear {
+                    return Err(error);
+                }
+                // Drivers predating explicit modifier allocation may still
+                // support the linear fallback through the original GBM API.
+                device.create_buffer_object::<()>(
                     width,
                     height,
                     gbm::Format::Xrgb8888,
                     gbm::BufferObjectFlags::RENDERING | gbm::BufferObjectFlags::LINEAR,
                 )
-                .map_err(|error| error.to_string())?;
-            if bo.plane_count() != 1 || bo.modifier() != gbm::Modifier::Linear {
-                return Err("Allocator did not supply a linear single-plane buffer".into());
+            })
+            .map_err(|error| error.to_string())?;
+        if bo.modifier() != modifier || !(1..=MAX_DMA_PLANES).contains(&bo.plane_count()) {
+            return Err("Allocator returned an unexpected DMA-BUF layout".into());
+        }
+        let mut planes = Vec::new();
+        let mut allocations = HashMap::new();
+        for index in 0..bo.plane_count() as i32 {
+            let fd = File::from(bo.fd_for_plane(index).map_err(|error| error.to_string())?);
+            let metadata = fd.metadata().map_err(|error| error.to_string())?;
+            let bytes =
+                u32::try_from(metadata.len()).map_err(|_| "DMA-BUF allocation is too large")?;
+            let stride = bo.stride_for_plane(index);
+            let offset = bo.offset(index);
+            if bytes == 0 || stride == 0 || stride > i32::MAX as u32 || offset >= bytes {
+                return Err("Invalid DMA-BUF plane layout".into());
             }
-            let fd = bo.fd().map_err(|error| error.to_string())?;
-            let stride = bo.stride_for_plane(0);
-            let max_stride = width
-                .checked_mul(4)
-                .and_then(|row| row.checked_add(4095))
-                .map(|row| row & !4095)
-                .ok_or("DMA-BUF row is too large")?;
-            if stride > max_stride {
-                return Err("DMA-BUF stride exceeds the capture memory reservation".into());
+            allocations.insert((metadata.dev(), metadata.ino()), u64::from(bytes));
+            planes.push(Plane {
+                fd,
+                stride,
+                offset,
+                bytes,
+            });
+        }
+        validate_dma_reservation(self.constraints().size, allocations.values().copied())?;
+        Ok((bo, planes))
+    }
+
+    pub(super) fn allocate(&mut self, dma: Option<DmaFormat>) -> Result<Buffer, String> {
+        let (width, height) = self.constraints().size;
+        let qh = self.queue.handle();
+        if let Some(format) = dma {
+            let (bo, planes) = self.allocate_dma(format.modifier)?;
+            if planes.len() != format.planes as usize {
+                return Err("DMA-BUF plane count changed after negotiation".into());
             }
-            let offset = bo.offset(0);
-            if offset != 0 {
-                return Err("Unsupported DMA-BUF plane offset".into());
-            }
-            let bytes = stride
-                .checked_mul(height)
-                .ok_or("DMA-BUF allocation is too large")?;
             let params = self
                 .state
                 .dma
                 .as_ref()
                 .ok_or("Missing DMA-BUF global")?
                 .create_params(&qh, ());
-            params.add(fd.as_fd(), 0, offset, stride, 0, 0);
+            for (index, plane) in planes.iter().enumerate() {
+                params.add(
+                    plane.fd.as_fd(),
+                    index as u32,
+                    plane.offset,
+                    plane.stride,
+                    (format.modifier >> 32) as u32,
+                    format.modifier as u32,
+                );
+            }
             let proxy = params.create_immed(
                 width as i32,
                 height as i32,
@@ -360,9 +459,8 @@ impl Capture {
             params.destroy();
             return Ok(Buffer {
                 proxy,
-                fd,
-                stride,
-                bytes,
+                planes,
+                dma: Some(format),
                 size: (width, height),
                 _bo: Some(bo),
             });
@@ -416,13 +514,39 @@ impl Capture {
         pool.destroy();
         Ok(Buffer {
             proxy,
-            fd: file.into(),
-            stride,
-            bytes,
+            planes: vec![Plane {
+                fd: file,
+                stride,
+                offset: 0,
+                bytes,
+            }],
+            dma: None,
             size: (width, height),
             _bo: None,
         })
     }
+}
+
+fn validate_dma_reservation(
+    (width, height): (u32, u32),
+    allocations: impl IntoIterator<Item = u64>,
+) -> Result<(), String> {
+    // Count each fd allocation once, including auxiliary compression planes.
+    // This matches the compositor's per-image, 4-KiB row-aligned reservation.
+    let reserved = (u64::from(width) * 4 + 4095) & !4095;
+    let reserved = reserved
+        .checked_mul(u64::from(height))
+        .ok_or("DMA-BUF image is too large")?;
+    let mut used = 0u64;
+    for bytes in allocations {
+        used = used
+            .checked_add(bytes)
+            .ok_or("DMA-BUF allocation is too large")?;
+        if used > reserved || used > 128 * 1024 * 1024 {
+            return Err("DMA-BUF allocation exceeds the capture memory reservation".into());
+        }
+    }
+    Ok(())
 }
 
 impl Drop for Capture {
@@ -517,7 +641,7 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
                     state.output_manager = Some(registry.bind(name, 1, qh, ()))
                 }
                 "ferese_window_capture_manager_v1" if version >= 2 => {
-                    state.windows = Some(registry.bind(name, version.min(4), qh, ()))
+                    state.windows = Some(registry.bind(name, version.min(5), qh, ()))
                 }
                 "wl_shm" => state.shm = Some(registry.bind(name, 1, qh, ())),
                 "zwp_linux_dmabuf_v1" if version >= 3 => {
@@ -562,8 +686,7 @@ impl Dispatch<session::ExtImageCopyCaptureSessionV1, ()> for State {
             session::Event::DmabufFormat { format, modifiers }
                 if format == gbm::Format::Xrgb8888 as u32 =>
             {
-                state.pending_constraints.linear |=
-                    modifiers.chunks_exact(8).any(|bytes| bytes == [0; 8]);
+                state.pending_constraints.record_modifiers(&modifiers);
             }
             session::Event::Done => {
                 let constraints = std::mem::take(&mut state.pending_constraints);
@@ -666,6 +789,40 @@ wayland_client::delegate_noop!(State: ignore params::ZwpLinuxBufferParamsV1);
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn modifier_events_preserve_explicit_layouts_and_bound_negotiation_work() {
+        let mut constraints = Constraints::default();
+        let modifiers = [42, 0, u64::from(gbm::Modifier::Invalid), 42];
+        let mut bytes = modifiers
+            .into_iter()
+            .flat_map(u64::to_ne_bytes)
+            .collect::<Vec<_>>();
+        bytes.extend([1, 2, 3]);
+        constraints.record_modifiers(&bytes);
+        assert_eq!(constraints.modifiers, vec![42, 0]);
+        constraints.record_modifiers(&(1..1000u64).flat_map(u64::to_ne_bytes).collect::<Vec<_>>());
+        assert_eq!(constraints.modifiers.len(), MAX_DMA_MODIFIERS);
+        let mut linear_last = Constraints::default();
+        linear_last.record_modifiers(
+            &(1..1000u64)
+                .chain([0])
+                .flat_map(u64::to_ne_bytes)
+                .collect::<Vec<_>>(),
+        );
+        assert_eq!(linear_last.modifiers.len(), MAX_DMA_MODIFIERS);
+        assert!(linear_last.modifiers.contains(&0));
+    }
+
+    #[test]
+    fn auxiliary_plane_allocations_cannot_exceed_the_image_memory_reservation() {
+        // 1024-wide XR24 rows already fill their 4-KiB alignment allowance.
+        assert!(validate_dma_reservation((1024, 512), [2 * 1024 * 1024]).is_ok());
+        assert!(validate_dma_reservation((1024, 512), [1024 * 1024, 1024 * 1024]).is_ok());
+        assert!(validate_dma_reservation((1024, 512), [2 * 1024 * 1024, 1]).is_err());
+        assert!(validate_dma_reservation((1024, 512), [u64::MAX, 1]).is_err());
+        assert!(validate_dma_reservation((u32::MAX, u32::MAX), []).is_err());
+    }
 
     #[test]
     fn protocol_failure_reasons_preserve_retry_and_stop_semantics() {

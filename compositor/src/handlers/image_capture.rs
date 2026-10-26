@@ -29,8 +29,8 @@ const MAX_SESSIONS: usize = 16;
 // fallback transfer texture. Imports of the same allocation are not extra pixels.
 const MAX_STREAM_BYTES: u64 = 512 * 1024 * 1024;
 fn stream_bytes(size: Size<i32, Buffer>) -> u64 {
-    // The portal rejects DMA strides above this allowance. Driver bookkeeping
-    // and encoder memory are separate from this pixel-storage reservation.
+    // The portal bounds total unique DMA allocation bytes, including auxiliary
+    // planes, by this allowance. Driver bookkeeping and encoder memory are separate.
     let stride = (size.w.max(0) as u64 * 4 + 4095) & !4095;
     stride
         .saturating_mul(size.h.max(0) as u64)
@@ -301,8 +301,10 @@ pub(crate) struct CaptureSessions {
     callback_timer: Option<RegistrationToken>,
     callback_deadline: Option<Instant>,
     workspace_callbacks: HashMap<ferese_core::WorkspaceId, Instant>,
-    workspaces:
-        HashMap<(ferese_core::WorkspaceId, bool, bool), super::workspace_capture::WorkspaceCapture>,
+    workspaces: HashMap<
+        super::workspace_capture::WorkspaceCaptureKey,
+        super::workspace_capture::WorkspaceCapture,
+    >,
 }
 
 fn authorized(client: &Client) -> bool {
@@ -337,21 +339,27 @@ impl CaptureSessions {
         }
     }
     pub(crate) fn workspace_changed(&mut self, id: ferese_core::WorkspaceId) {
-        for ((workspace, _, _), view) in &mut self.workspaces {
+        for ((workspace, _, _, _), view) in &mut self.workspaces {
             if *workspace == id {
                 view.content_changed();
             }
         }
     }
     pub(crate) fn workspace_geometry_changed(&mut self, id: ferese_core::WorkspaceId) {
-        for ((workspace, _, _), view) in &mut self.workspaces {
+        for ((workspace, _, _, _), view) in &mut self.workspaces {
             if *workspace == id {
                 view.invalidate();
             }
         }
     }
     pub(crate) fn captured_workspaces(&self) -> Vec<ferese_core::WorkspaceId> {
-        self.workspaces.keys().map(|(id, _, _)| *id).collect()
+        // Several qualities/cursor/shell views still share one layout sample.
+        self.workspaces
+            .keys()
+            .map(|(id, _, _, _)| *id)
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect()
     }
 
     pub(crate) fn new(display: &DisplayHandle) -> Self {
@@ -414,17 +422,81 @@ fn query_dma_constraints(renderer: &GlesRenderer) -> Option<DmabufConstraints> {
         .ok()?
         .try_get_render_node()
         .ok()??;
-    let format = smithay::backend::allocator::Format {
-        code: Fourcc::Xrgb8888,
-        modifier: Modifier::Linear,
-    };
-    display
-        .dmabuf_render_formats()
-        .contains(&format)
-        .then_some(DmabufConstraints {
-            node,
-            formats: vec![(Fourcc::Xrgb8888, vec![Modifier::Linear])],
-        })
+    let modifiers = render_capture_modifiers(display.dmabuf_render_formats().iter().copied());
+    (!modifiers.is_empty()).then_some(DmabufConstraints {
+        node,
+        formats: vec![(Fourcc::Xrgb8888, modifiers)],
+    })
+}
+
+fn render_capture_modifiers(
+    formats: impl IntoIterator<Item = smithay::backend::allocator::Format>,
+) -> Vec<Modifier> {
+    // Capture renders into these buffers; texture-import support alone is not
+    // sufficient. Implicit layouts cannot be advertised as an explicit modifier.
+    let mut modifiers: Vec<_> = formats
+        .into_iter()
+        .filter(|format| format.code == Fourcc::Xrgb8888 && format.modifier != Modifier::Invalid)
+        .map(|format| format.modifier)
+        .collect();
+    modifiers
+        .sort_unstable_by_key(|modifier| (*modifier == Modifier::Linear, u64::from(*modifier)));
+    modifiers.dedup();
+    let linear = modifiers.last() == Some(&Modifier::Linear);
+    modifiers.truncate(if linear { 63 } else { 64 });
+    if linear && !modifiers.contains(&Modifier::Linear) {
+        modifiers.push(Modifier::Linear);
+    }
+    modifiers
+}
+
+#[cfg(test)]
+mod dma_constraint_tests {
+    use super::*;
+    use smithay::backend::allocator::Format;
+
+    #[test]
+    fn capture_offers_only_explicit_renderable_rgb_modifiers() {
+        let tiled = Modifier::from(42);
+        let formats = [
+            Format {
+                code: Fourcc::Xrgb8888,
+                modifier: Modifier::Invalid,
+            },
+            Format {
+                code: Fourcc::Argb8888,
+                modifier: tiled,
+            },
+            Format {
+                code: Fourcc::Xrgb8888,
+                modifier: Modifier::Linear,
+            },
+            Format {
+                code: Fourcc::Xrgb8888,
+                modifier: tiled,
+            },
+            Format {
+                code: Fourcc::Xrgb8888,
+                modifier: tiled,
+            },
+        ];
+        assert_eq!(
+            render_capture_modifiers(formats),
+            vec![tiled, Modifier::Linear]
+        );
+        assert!(render_capture_modifiers([]).is_empty());
+    }
+
+    #[test]
+    fn bounded_modifier_offers_retain_the_linear_compatibility_layout() {
+        let formats = (0..100).map(|modifier| Format {
+            code: Fourcc::Xrgb8888,
+            modifier: Modifier::from(modifier),
+        });
+        let modifiers = render_capture_modifiers(formats);
+        assert_eq!(modifiers.len(), 64);
+        assert_eq!(modifiers.last(), Some(&Modifier::Linear));
+    }
 }
 
 impl ImageCaptureSourceHandler for Ferese {}
@@ -693,11 +765,7 @@ impl Ferese {
                     active.session.source().user_data().get::<Source>()
                 {
                     // GPU resources belong to the renderer that created them.
-                    workspaces.remove(&(
-                        source.id,
-                        active.session.draw_cursor(),
-                        source.include_shell,
-                    ));
+                    workspaces.remove(&source.key(active.session.draw_cursor()));
                 }
                 active.size = size;
                 active.dma_node = dma_node;
@@ -717,11 +785,7 @@ impl Ferese {
                 && source_active(&active.session.source())
             {
                 let source = source.clone();
-                let key = (
-                    source.id,
-                    active.session.draw_cursor(),
-                    source.include_shell,
-                );
+                let key = source.key(active.session.draw_cursor());
                 if let Some(frame) = active.pending.take() {
                     let view = workspaces.entry(key).or_insert_with(|| {
                         super::workspace_capture::WorkspaceCapture::new(
@@ -877,10 +941,9 @@ impl Ferese {
             }
             true
         });
-        workspaces.retain(|(id, cursor, include_shell), view| {
+        workspaces.retain(|key, view| {
             let matches = |active: &Active| {
-                active.session.draw_cursor() == *cursor
-                    && matches!(active.session.source().user_data().get::<Source>(), Some(Source::Workspace(source)) if source.id == *id && source.include_shell == *include_shell)
+                matches!(active.session.source().user_data().get::<Source>(), Some(Source::Workspace(source)) if source.key(active.session.draw_cursor()) == *key)
             };
             if !sessions.iter().any(matches) { return false; }
             let pending = sessions.iter().any(|active| matches(active)
@@ -896,9 +959,11 @@ impl Ferese {
             }
             true
         });
-        self.image_capture
-            .workspace_callbacks
-            .retain(|id, _| workspaces.keys().any(|(workspace, _, _)| id == workspace));
+        self.image_capture.workspace_callbacks.retain(|id, _| {
+            workspaces
+                .keys()
+                .any(|(workspace, _, _, _)| id == workspace)
+        });
         self.image_capture.workspaces = workspaces;
         self.image_capture.active = sessions;
         if let Some(delay) = callback_delay {

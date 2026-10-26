@@ -11,10 +11,14 @@ use smithay::utils::{Buffer, Logical, Rectangle, Size, Transform};
 use crate::Ferese;
 use crate::backends::direct::capture::CaptureTarget;
 
+pub(crate) use ferese_protocols::window_capture::v1::server::ferese_window_capture_manager_v1::Quality;
+pub(crate) type WorkspaceCaptureKey = (WorkspaceId, bool, bool, Quality);
+
 #[derive(Clone)]
 pub(crate) struct WorkspaceSource {
     pub id: WorkspaceId,
     pub include_shell: bool,
+    pub quality: Quality,
     pub output: Output,
     pub render_output: Output,
     native_size: Size<i32, smithay::utils::Physical>,
@@ -26,6 +30,15 @@ pub(crate) struct WorkspaceSource {
 
 impl WorkspaceSource {
     pub fn new(state: &Ferese, id: WorkspaceId, include_shell: bool) -> Option<Self> {
+        Self::with_quality(state, id, include_shell, Quality::Balanced)
+    }
+
+    pub fn with_quality(
+        state: &Ferese,
+        id: WorkspaceId,
+        include_shell: bool,
+        quality: Quality,
+    ) -> Option<Self> {
         state.workspaces.workspace(id)?;
         let owner = state.output_workspaces.output_for_workspace(id)?;
         let output = state
@@ -41,7 +54,8 @@ impl WorkspaceSource {
             return None;
         }
         let scale = output.current_scale().fractional_scale();
-        let (size, capture_scale) = capture_size(geometry.size, scale);
+        let upright = output.current_transform().transform_size(native_size);
+        let (size, capture_scale) = capture_size((upright.w, upright.h).into(), scale, quality);
         // A render descriptor only: never registered, mapped, advertised, or
         // attached to input/layout. It gives shaders a bounded upright canvas.
         let render_output = Output::new(
@@ -69,6 +83,7 @@ impl WorkspaceSource {
         Some(Self {
             id,
             include_shell,
+            quality,
             output: output.clone(),
             render_output,
             geometry,
@@ -77,6 +92,10 @@ impl WorkspaceSource {
             scale,
             transform: output.current_transform(),
         })
+    }
+
+    pub fn key(&self, cursor: bool) -> WorkspaceCaptureKey {
+        (self.id, cursor, self.include_shell, self.quality)
     }
 
     pub fn valid(&self, state: &Ferese) -> bool {
@@ -419,22 +438,32 @@ pub(super) fn interval() -> Duration {
 /// Shader cache identity; this does not grant the descriptor a desktop output.
 pub(crate) struct CaptureOutputId(pub ferese_core::OutputId);
 
-fn capture_size(logical: Size<i32, Logical>, native_scale: f64) -> (Size<i32, Buffer>, f64) {
-    let (width, height) = if logical.w >= logical.h {
-        (1920.0, 1080.0)
-    } else {
-        (1080.0, 1920.0)
+fn capture_size(
+    native: Size<i32, Buffer>,
+    native_scale: f64,
+    quality: Quality,
+) -> (Size<i32, Buffer>, f64) {
+    let (long, short) = match quality {
+        Quality::Balanced => (1920.0, 1080.0),
+        Quality::High => (2560.0, 1440.0),
+        Quality::Native => return (native, native_scale),
+        _ => return (native, native_scale),
     };
-    let scale = native_scale
-        .min(width / f64::from(logical.w.max(1)))
-        .min(height / f64::from(logical.h.max(1)));
+    let (width, height) = if native.w >= native.h {
+        (long, short)
+    } else {
+        (short, long)
+    };
+    let factor = 1.0_f64
+        .min(width / f64::from(native.w.max(1)))
+        .min(height / f64::from(native.h.max(1)));
     (
         (
-            (f64::from(logical.w) * scale).round().max(1.0) as i32,
-            (f64::from(logical.h) * scale).round().max(1.0) as i32,
+            (f64::from(native.w) * factor).round().max(1.0) as i32,
+            (f64::from(native.h) * factor).round().max(1.0) as i32,
         )
             .into(),
-        scale,
+        native_scale * factor,
     )
 }
 
@@ -629,17 +658,28 @@ mod tests {
     }
 
     #[test]
-    fn workspace_canvas_is_bounded_and_preserves_fractional_and_portrait_geometry() {
-        for (logical, native, expected) in [
-            ((1920, 1080), 2.0, (1920, 1080)),
-            ((1080, 1920), 2.0, (1080, 1920)),
-            ((800, 600), 1.25, (1000, 750)),
-            ((3440, 1440), 1.0, (1920, 804)),
+    fn workspace_quality_preserves_native_pixels_and_bounds_scaled_canvases() {
+        for (native, scale, quality, expected) in [
+            ((3840, 2160), 2.0, Quality::Balanced, (1920, 1080)),
+            ((2160, 3840), 2.0, Quality::Balanced, (1080, 1920)),
+            ((1000, 750), 1.25, Quality::Balanced, (1000, 750)),
+            ((3440, 1440), 1.0, Quality::Balanced, (1920, 804)),
+            ((2880, 1800), 1.75, Quality::Balanced, (1728, 1080)),
+            ((2880, 1800), 1.75, Quality::High, (2304, 1440)),
+            ((1800, 2880), 1.75, Quality::High, (1440, 2304)),
+            ((2880, 1800), 1.75, Quality::Native, (2880, 1800)),
+            ((1800, 2880), 1.75, Quality::Native, (1800, 2880)),
+            ((3840, 2160), 1.6, Quality::Native, (3840, 2160)),
+            ((3840, 2160), 1.6, Quality::High, (2560, 1440)),
+            ((800, 600), 2.0, Quality::Native, (800, 600)),
         ] {
-            let (size, scale) = capture_size(logical.into(), native);
+            let (size, capture_scale) = capture_size(native.into(), scale, quality);
             assert_eq!(size, expected.into());
-            assert!(scale <= native);
-            assert!(size.w as u64 * size.h as u64 <= 1920 * 1080);
+            assert!(capture_scale <= scale);
+            assert!(size.w <= native.0 && size.h <= native.1);
+            if quality == Quality::Native {
+                assert_eq!(capture_scale, scale);
+            }
         }
     }
 }

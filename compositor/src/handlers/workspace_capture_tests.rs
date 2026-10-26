@@ -86,6 +86,65 @@ fn workspace_capture_samples_hidden_layout_without_switching_or_configuring_clie
 }
 
 #[test]
+fn workspace_quality_keeps_fractional_native_pixels_and_separates_consumers() {
+    if !crate::startup_tests::private_runtime(
+        "handlers::image_capture::workspace_tests::workspace_quality_keeps_fractional_native_pixels_and_separates_consumers",
+    ) {
+        return;
+    }
+    use super::super::workspace_capture::Quality;
+    let (mut events, mut state, output) = fixture();
+    let (_window, _client) = crate::state::test_window(&mut state, &mut events, 0xffff0000);
+    let workspace = state.workspaces.active_id();
+    for transform in [Transform::Normal, Transform::_90] {
+        output.change_current_state(
+            Some(Mode {
+                size: (2880, 1800).into(),
+                refresh: 60_000,
+            }),
+            Some(transform),
+            Some(Scale::Fractional(1.75)),
+            None,
+        );
+        state.relayout();
+        let mut keys = std::collections::HashSet::new();
+        for (quality, landscape) in [
+            (Quality::Balanced, (1728, 1080)),
+            (Quality::High, (2304, 1440)),
+            (Quality::Native, (2880, 1800)),
+        ] {
+            let source = WorkspaceSource::with_quality(&state, workspace, false, quality).unwrap();
+            let expected = if transform == Transform::Normal {
+                landscape
+            } else {
+                (landscape.1, landscape.0)
+            };
+            assert_eq!(source.size, expected.into());
+            assert!(source.valid(&state));
+            assert!(state.output_id(&source.render_output).is_none());
+            assert!(state.space.output_geometry(&source.render_output).is_none());
+            if quality == Quality::Native {
+                assert_eq!(
+                    source.render_output.current_scale().fractional_scale(),
+                    1.75
+                );
+            }
+            for cursor in [false, true] {
+                assert!(keys.insert(source.key(cursor)));
+                state.image_capture.workspaces.insert(
+                    source.key(cursor),
+                    WorkspaceCapture::new(source.clone(), state.capture_epoch),
+                );
+            }
+        }
+        assert_eq!(keys.len(), 6);
+        assert_eq!(state.image_capture.workspaces.len(), 6);
+        assert_eq!(state.image_capture.captured_workspaces(), vec![workspace]);
+        state.image_capture.workspaces.clear();
+    }
+}
+
+#[test]
 fn workspace_commits_invalidate_only_subscribed_source_and_allocate_no_targets() {
     if !crate::startup_tests::private_runtime(
         "handlers::image_capture::workspace_tests::workspace_commits_invalidate_only_subscribed_source_and_allocate_no_targets",
@@ -101,7 +160,7 @@ fn workspace_commits_invalidate_only_subscribed_source_and_allocate_no_targets()
     let (second, _second_client) = crate::state::test_window(&mut state, &mut events, 0xff00ff00);
     for cursor in [false, true] {
         state.image_capture.workspaces.insert(
-            (workspace, cursor, false),
+            source.key(cursor),
             WorkspaceCapture::new(source.clone(), state.capture_epoch),
         );
     }
@@ -174,7 +233,7 @@ fn workspace_tab_metadata_invalidates_only_owning_capture() {
                     state
                         .image_capture
                         .workspaces
-                        .insert((id, cursor, false), view);
+                        .insert(view.source.key(cursor), view);
                 }
             }
             let epoch = state.capture_epoch;
@@ -200,7 +259,12 @@ fn workspace_tab_metadata_invalidates_only_owning_capture() {
             }
             assert_eq!(state.capture_epoch, epoch);
             for cursor in [false, true] {
-                let view = &state.image_capture.workspaces[&(workspace, cursor, false)];
+                let view = &state.image_capture.workspaces[&(
+                    workspace,
+                    cursor,
+                    false,
+                    super::super::workspace_capture::Quality::Balanced,
+                )];
                 assert_ne!(
                     view.prepared,
                     Some(view.content),
@@ -210,7 +274,12 @@ fn workspace_tab_metadata_invalidates_only_owning_capture() {
                     !view.scene_dirty,
                     "metadata must not force a layout resample"
                 );
-                let other = &state.image_capture.workspaces[&(other_workspace, cursor, false)];
+                let other = &state.image_capture.workspaces[&(
+                    other_workspace,
+                    cursor,
+                    false,
+                    super::super::workspace_capture::Quality::Balanced,
+                )];
                 assert_eq!(other.prepared, Some(other.content));
             }
         }
@@ -384,5 +453,151 @@ fn workspace_shell_pixels_follow_consent_and_visibility() {
             dispatch(&mut events, &mut state);
             assert!(!has_shell(&mut shell, &mut state, &mut renderer));
         }
+    }
+}
+
+#[test]
+#[ignore = "requires private Wayland sockets and an offscreen EGL device"]
+fn fractional_surface_damage_matches_a_fresh_gpu_render() {
+    if !crate::startup_tests::private_runtime(
+        "handlers::image_capture::workspace_tests::fractional_surface_damage_matches_a_fresh_gpu_render",
+    ) {
+        return;
+    }
+    use crate::state::{dispatch_test_client as dispatch, test_client_request as request};
+    use smithay::backend::allocator::Fourcc;
+    use smithay::backend::egl::{EGLContext, EGLDevice, EGLDisplay};
+    use smithay::backend::renderer::ExportMem;
+    use smithay::backend::renderer::element::Kind;
+    use smithay::backend::renderer::element::surface::WaylandSurfaceRenderElement;
+    use smithay::backend::renderer::gles::GlesRenderer;
+    use smithay::reexports::wayland_server::protocol::wl_shm::WlShm;
+    use smithay::wayland::compositor::with_states;
+    use std::io::{Seek, SeekFrom, Write};
+    use std::os::fd::AsRawFd;
+
+    let device = EGLDevice::enumerate().unwrap().last().expect("EGL device");
+    // SAFETY: The enumerated device outlives the EGL display and context.
+    let display = unsafe { EGLDisplay::new(device).unwrap() };
+    let context = EGLContext::new(&display).unwrap();
+    // SAFETY: The test exclusively owns this context and renderer.
+    let mut renderer = unsafe { GlesRenderer::new(context).unwrap() };
+
+    fn render_pixels(
+        renderer: &mut GlesRenderer,
+        cache: &mut Option<crate::backends::direct::capture::CaptureTarget>,
+        output: &Output,
+        element: &WaylandSurfaceRenderElement<GlesRenderer>,
+    ) -> (Vec<u8>, u64) {
+        let (target, revision) = crate::backends::direct::capture::render_capture_with_revision(
+            renderer,
+            cache,
+            output,
+            std::slice::from_ref(element),
+        )
+        .unwrap();
+        let size = output.current_mode().unwrap().size;
+        let mapping = renderer
+            .copy_framebuffer(
+                &target,
+                Rectangle::from_size((size.w, size.h).into()),
+                Fourcc::Abgr8888,
+            )
+            .unwrap();
+        drop(target);
+        (renderer.map_texture(&mapping).unwrap().to_vec(), revision)
+    }
+
+    // The first scale reproduced a real cached-vs-fresh workspace mismatch.
+    // Large upscales also ensure the footprint is expanded in source pixels,
+    // while rotation exercises damage conversion before output projection.
+    for (scale, buffer_transform) in [
+        (1.0493697478991597, 0),
+        (1.85, 0),
+        (3.5, 0),
+        (0.7, 0),
+        (1.25, 1),
+        (1.25, 4),
+    ] {
+        let (mut events, mut state, output) = fixture();
+        output.change_current_state(
+            Some(Mode {
+                size: (256, 256).into(),
+                refresh: 60_000,
+            }),
+            None,
+            Some(Scale::Fractional(scale)),
+            None,
+        );
+        let (window, mut wire) = crate::state::test_window(&mut state, &mut events, 0xff0000ff);
+        let surface = window.toplevel().unwrap().wl_surface();
+        let shm = surface
+            .client()
+            .unwrap()
+            .create_resource::<WlShm, _, Ferese>(
+                &state.display_handle,
+                1,
+                smithay::wayland::GlobalData,
+            )
+            .unwrap();
+        let mut pixels = tempfile::tempfile().unwrap();
+        pixels
+            .write_all(&0xff0000ffu32.to_ne_bytes().repeat(64 * 48))
+            .unwrap();
+        request(
+            &mut wire,
+            shm.id().protocol_id(),
+            0,
+            &[7, 64 * 48 * 4],
+            Some(pixels.as_raw_fd()),
+        );
+        request(&mut wire, 7, 0, &[8, 0, 64, 48, 64 * 4, 0], None);
+        request(&mut wire, 2, 7, &[buffer_transform], None);
+        request(&mut wire, 2, 1, &[8, 0, 0], None);
+        request(&mut wire, 2, 9, &[0, 0, 64, 48], None);
+        request(&mut wire, 2, 6, &[], None);
+        dispatch(&mut events, &mut state);
+        let element = |renderer: &mut GlesRenderer| {
+            with_states(surface, |states| {
+                WaylandSurfaceRenderElement::from_surface(
+                    renderer,
+                    surface,
+                    states,
+                    (20.25, 20.5).into(),
+                    1.0,
+                    Kind::Unspecified,
+                )
+                .unwrap()
+                .unwrap()
+            })
+        };
+        let mut incremental = None;
+        let initial = element(&mut renderer);
+        let (before, _) = render_pixels(&mut renderer, &mut incremental, &output, &initial);
+        pixels.seek(SeekFrom::Start((24 * 64 + 32) * 4)).unwrap();
+        pixels.write_all(&0xffffff00u32.to_ne_bytes()).unwrap();
+        request(&mut wire, 7, 0, &[9, 0, 64, 48, 64 * 4, 0], None);
+        request(&mut wire, 2, 1, &[9, 0, 0], None);
+        request(&mut wire, 2, 9, &[32, 24, 1, 1], None);
+        request(&mut wire, 2, 6, &[], None);
+        dispatch(&mut events, &mut state);
+        let changed = element(&mut renderer);
+        let (updated, revision) = render_pixels(&mut renderer, &mut incremental, &output, &changed);
+        assert!(
+            updated != before,
+            "changed texel was not visible at scale {scale}, transform {buffer_transform}"
+        );
+        let (fresh, _) = render_pixels(&mut renderer, &mut None, &output, &changed);
+        assert!(
+            updated == fresh,
+            "incremental filtering differs at scale {scale}, transform {buffer_transform}"
+        );
+        let (unchanged, unchanged_revision) =
+            render_pixels(&mut renderer, &mut incremental, &output, &changed);
+        assert_eq!(unchanged, updated);
+        assert_eq!(
+            unchanged_revision, revision,
+            "static content acquired spurious damage"
+        );
     }
 }

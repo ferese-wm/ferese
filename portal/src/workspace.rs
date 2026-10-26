@@ -7,6 +7,68 @@ use crate::stream::Ready;
 use serde_json::Value as Json;
 use zbus::zvariant::Value;
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum Quality {
+    Balanced,
+    High,
+    #[default]
+    Native,
+}
+
+impl Quality {
+    pub(crate) fn legacy_default() -> Self {
+        Self::Balanced
+    }
+
+    pub(crate) fn wire(self) -> u32 {
+        match self {
+            Self::Balanced => 0,
+            Self::High => 1,
+            Self::Native => 2,
+        }
+    }
+
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Balanced => "balanced",
+            Self::High => "high",
+            Self::Native => "native",
+        }
+    }
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Balanced => "1080p",
+            Self::High => "1440p",
+            Self::Native => "Native",
+        }
+    }
+
+    pub(crate) fn description(self) -> &'static str {
+        match self {
+            Self::Balanced => "Up to 1080p, using less bandwidth and memory.",
+            Self::High => "Up to 1440p for more detail.",
+            Self::Native => {
+                "Original display pixels for clear text. Uses more memory and bandwidth."
+            }
+        }
+    }
+}
+
+impl std::str::FromStr for Quality {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "balanced" => Ok(Self::Balanced),
+            "high" => Ok(Self::High),
+            "native" => Ok(Self::Native),
+            _ => Err("Workspace quality must be balanced, high, or native".into()),
+        }
+    }
+}
+
 pub(crate) fn sources(workspaces: &Json, outputs: &Json) -> Result<Vec<Source>, String> {
     let workspaces = workspaces.as_array().ok_or("Invalid workspace list")?;
     let outputs = outputs.as_array().ok_or("Invalid output list")?;

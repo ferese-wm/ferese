@@ -78,12 +78,22 @@ int main(int argc, char **argv) {
     int rounded = !strcmp(argv[1], "fractional-rounded");
     int ceiled = !strcmp(argv[1], "fractional-ceiled");
     int cropped = !strcmp(argv[1], "cropped");
+    int workspace = !strcmp(argv[1], "workspace-native");
     if (rounded || ceiled) {
         logical_width = 2182;
         logical_height = 1195;
     }
     int width = rounded || ceiled ? 3819 : fractional ? 1120 : 1280;
     int height = rounded ? 2091 : ceiled ? 2092 : fractional ? 840 : 960;
+    if (workspace) {
+        const char *value = getenv("FERESE_TEST_OUTPUT_SCALE");
+        char *end;
+        if (!value) return 9;
+        double scale = strtod(value, &end);
+        if (*end || !(scale >= 0.25 && scale <= 8.0)) return 9;
+        width = (int)(logical_width * scale + 0.5);
+        height = (int)(logical_height * scale + 0.5);
+    }
     int fd = memfd_create("window-capture-scale", MFD_CLOEXEC);
     size_t bytes = (size_t)width * height * 4;
     if (fd < 0 || ftruncate(fd, bytes)) return 4;

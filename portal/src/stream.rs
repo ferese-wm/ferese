@@ -18,7 +18,7 @@ mod activity;
 mod capture;
 mod rate;
 use activity::{Activity, FailureAction};
-use capture::{Capture, Completion};
+use capture::{Capture, Completion, DmaFormat};
 use rate::FrameRate;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -53,7 +53,8 @@ struct Data {
     activity: Activity,
     announced: bool,
     negotiated: (u32, u32),
-    dma: bool,
+    dma: Option<DmaFormat>,
+    offered_dma: Vec<DmaFormat>,
     force_shm: bool,
     renegotiate: bool,
     negotiating: bool,
@@ -80,17 +81,29 @@ impl Data {
             return;
         };
         let source_stopped = self.capture.borrow().stopped();
-        let mut deliver =
-            matches!(completion, Completion::Ready) && self.activity.active() && !source_stopped;
+        let current_layout = pool.buffer.size == self.negotiated && pool.buffer.dma == self.dma;
+        let mut deliver = matches!(completion, Completion::Ready)
+            && self.activity.active()
+            && !source_stopped
+            && current_layout;
+        if !current_layout
+            && matches!(completion, Completion::Ready)
+            && let Err(error) = self.capture.borrow_mut().refresh()
+        {
+            eprintln!("Could not refresh renegotiated capture buffers: {error}");
+            self.stop.store(true, Ordering::Relaxed);
+        }
         match completion {
             Completion::Retry => {
                 self.renegotiate = self.negotiated != self.capture.borrow().constraints().size
             }
             Completion::Failed { kind, error } => {
-                match self
-                    .activity
-                    .failure_action(held.activity, source_stopped, self.dma, kind)
-                {
+                match self.activity.failure_action(
+                    held.activity,
+                    source_stopped,
+                    self.dma.is_some(),
+                    kind,
+                ) {
                     FailureAction::Discard => (),
                     FailureAction::Retry => {
                         if let Err(error) = self.capture.borrow_mut().refresh() {
@@ -123,11 +136,9 @@ impl Data {
         // owning PipeWire loop; remove_buffer invalidates the registry entry.
         unsafe {
             let buffer = raw.as_ref().buffer.as_mut().expect("registered SPA buffer");
-            let data = &mut *buffer.datas;
-            if let Some(chunk) = data.chunk.as_mut() {
-                chunk.offset = 0;
-                chunk.size = if deliver { pool.buffer.bytes } else { 0 };
-                chunk.stride = pool.buffer.stride as i32;
+            if !finish_planes(buffer, &pool.buffer.planes, deliver) {
+                self.stop.store(true, Ordering::Relaxed);
+                return;
             }
             if deliver {
                 timestamp(raw, self.sequence);
@@ -137,6 +148,78 @@ impl Data {
         }
     }
 }
+/// The caller owns the SPA buffer and guarantees that its data/chunk pointers
+/// describe live allocations for the advertised counts on the PipeWire loop.
+unsafe fn plane_datas(
+    buffer: &mut spa::sys::spa_buffer,
+    count: usize,
+) -> Option<&mut [spa::sys::spa_data]> {
+    if buffer.n_datas as usize != count || buffer.datas.is_null() {
+        return None;
+    }
+    // SAFETY: the caller guarantees the SPA array; exact counts are checked
+    // before constructing a slice, so modifier plane counts cannot overrun it.
+    let datas = unsafe { std::slice::from_raw_parts_mut(buffer.datas, count) };
+    datas
+        .iter()
+        .all(|data| !data.chunk.is_null())
+        .then_some(datas)
+}
+
+/// See `plane_datas` for the caller's pointer ownership requirements.
+unsafe fn assign_planes(
+    buffer: &mut spa::sys::spa_buffer,
+    planes: &[capture::Plane],
+    dma: bool,
+) -> bool {
+    // SAFETY: our caller supplies the same live SPA allocation.
+    let Some(datas) = (unsafe { plane_datas(buffer, planes.len()) }) else {
+        return false;
+    };
+    for (target, plane) in datas.iter_mut().zip(planes) {
+        target.type_ = if dma {
+            spa::sys::SPA_DATA_DmaBuf
+        } else {
+            spa::sys::SPA_DATA_MemFd
+        };
+        target.flags = spa::sys::SPA_DATA_FLAG_READWRITE;
+        target.fd = i64::from(plane.fd.as_raw_fd());
+        target.mapoffset = 0;
+        target.maxsize = plane.bytes;
+        target.data = std::ptr::null_mut();
+        // SAFETY: plane_datas checked the caller-owned chunk pointer.
+        let chunk = unsafe { &mut *target.chunk };
+        chunk.offset = plane.offset;
+        chunk.size = 0;
+        chunk.stride = plane.stride as i32;
+    }
+    true
+}
+
+/// See `plane_datas` for the caller's pointer ownership requirements.
+unsafe fn finish_planes(
+    buffer: &mut spa::sys::spa_buffer,
+    planes: &[capture::Plane],
+    deliver: bool,
+) -> bool {
+    // SAFETY: our caller supplies the same live SPA allocation.
+    let Some(datas) = (unsafe { plane_datas(buffer, planes.len()) }) else {
+        return false;
+    };
+    for (target, plane) in datas.iter_mut().zip(planes) {
+        // SAFETY: plane_datas checked the caller-owned chunk pointer.
+        let chunk = unsafe { &mut *target.chunk };
+        chunk.offset = plane.offset;
+        chunk.size = if deliver {
+            plane.bytes - plane.offset
+        } else {
+            0
+        };
+        chunk.stride = plane.stride as i32;
+    }
+    true
+}
+
 fn int_property(key: u32, value: i32) -> spa::pod::Property {
     spa::pod::Property {
         key,
@@ -225,17 +308,27 @@ fn timestamp(raw: std::ptr::NonNull<pw::sys::pw_buffer>, sequence: u64) {
     }
 }
 
-fn buffer_params((width, height): (u32, u32), dma: bool) -> Vec<u8> {
+fn buffer_params((width, height): (u32, u32), dma: Option<DmaFormat>) -> Vec<u8> {
     pod(spa::pod::object!(
         spa::utils::SpaTypes::ObjectParamBuffers,
         spa::param::ParamType::Buffers,
         int_property(spa::sys::SPA_PARAM_BUFFERS_buffers, 4),
-        int_property(spa::sys::SPA_PARAM_BUFFERS_blocks, 1),
+        int_property(
+            spa::sys::SPA_PARAM_BUFFERS_blocks,
+            dma.map_or(1, |format| format.planes as i32)
+        ),
         int_property(
             spa::sys::SPA_PARAM_BUFFERS_size,
-            (width * height * 4) as i32
+            if dma.is_some() {
+                0
+            } else {
+                (width * height * 4) as i32
+            }
         ),
-        int_property(spa::sys::SPA_PARAM_BUFFERS_stride, (width * 4) as i32),
+        int_property(
+            spa::sys::SPA_PARAM_BUFFERS_stride,
+            if dma.is_some() { 0 } else { (width * 4) as i32 }
+        ),
         int_property(spa::sys::SPA_PARAM_BUFFERS_align, 16),
         // This is a set of supported memory types, not an exact integer.
         // Consumers such as OBS offer a scalar mask with several bits;
@@ -247,7 +340,7 @@ fn buffer_params((width, height): (u32, u32), dma: bool) -> Vec<u8> {
                 spa::utils::ChoiceFlags::empty(),
                 spa::utils::ChoiceEnum::Flags {
                     default: 1
-                        << if dma {
+                        << if dma.is_some() {
                             spa::sys::SPA_DATA_DmaBuf
                         } else {
                             spa::sys::SPA_DATA_MemFd
@@ -259,26 +352,33 @@ fn buffer_params((width, height): (u32, u32), dma: bool) -> Vec<u8> {
     ))
 }
 
-fn formats(size: (u32, u32), rate: &FrameRate, dma: bool) -> Vec<Vec<u8>> {
+fn formats(size: (u32, u32), rate: &FrameRate, dma: &[DmaFormat]) -> Vec<Vec<u8>> {
     let shm = video_format(size.0, size.1, rate);
-    if !dma {
-        return vec![shm];
-    }
-    let (_, mut format) = spa::pod::deserialize::PodDeserializer::deserialize_any_from(&shm)
-        .expect("serialized video format");
-    if let spa::pod::Value::Object(ref mut object) = format {
-        object.properties.push(spa::pod::Property {
-            key: spa::sys::SPA_FORMAT_VIDEO_modifier,
-            flags: spa::pod::PropertyFlags::MANDATORY,
-            value: spa::pod::Value::Long(0),
-        });
-    }
-    let dma =
-        spa::pod::serialize::PodSerializer::serialize(std::io::Cursor::new(Vec::new()), &format)
+    let mut offers = Vec::with_capacity(dma.len() + 1);
+    for dma in dma {
+        let (_, mut format) = spa::pod::deserialize::PodDeserializer::deserialize_any_from(&shm)
+            .expect("serialized video format");
+        if let spa::pod::Value::Object(ref mut object) = format {
+            object.properties.push(spa::pod::Property {
+                key: spa::sys::SPA_FORMAT_VIDEO_modifier,
+                flags: spa::pod::PropertyFlags::MANDATORY,
+                value: spa::pod::Value::Long(dma.modifier as i64),
+            });
+        }
+        offers.push(
+            spa::pod::serialize::PodSerializer::serialize(
+                std::io::Cursor::new(Vec::new()),
+                &format,
+            )
             .expect("serializable video format")
             .0
-            .into_inner();
-    vec![dma, shm]
+            .into_inner(),
+        );
+    }
+    // Explicit, pre-probed modifier offers let the consumer intersect its own
+    // modifier set without a DONT_FIXATE allocation/retry loop.
+    offers.push(shm);
+    offers
 }
 
 pub fn run(
@@ -286,6 +386,7 @@ pub fn run(
     cursor: bool,
     generation: Option<u32>,
     include_shell: bool,
+    workspace_quality: crate::workspace::Quality,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let configured_rate = std::env::var("FERESE_CAPTURE_MAX_FPS").ok();
     let rate = Arc::new(FrameRate::new(configured_rate.as_deref())?);
@@ -304,16 +405,19 @@ pub fn run(
         cursor,
         generation,
         include_shell,
+        workspace_quality,
         &stop,
     )?));
     let size = capture.borrow().constraints().size;
     let logical_size = capture.borrow().logical_size();
     let force_shm = std::env::var_os("FERESE_CAPTURE_FORCE_SHM").is_some_and(|value| value == "1");
-    let attempted_dma = !force_shm && capture.borrow().dma_supported();
-    // Verify GBM allocation before advertising DMA-BUF to the consumer. Failure
-    // here leaves the same capture session usable through its SHM constraints.
-    let dma = attempted_dma && capture.borrow_mut().allocate(true).is_ok();
-    let force_shm = force_shm || (attempted_dma && !dma);
+    // Probe the actual plane count and bounded allocation for every offered
+    // layout. A failed probe leaves SHM available in the same capture session.
+    let offered_dma = if force_shm {
+        Vec::new()
+    } else {
+        capture.borrow().dma_formats()
+    };
     pw::init();
     let mainloop = pw::main_loop::MainLoopRc::new(None)?;
     let context = pw::context::ContextRc::new(&mainloop, None)?;
@@ -340,7 +444,8 @@ pub fn run(
         activity: Activity::default(),
         announced: false,
         negotiated: size,
-        dma,
+        dma: None,
+        offered_dma: offered_dma.clone(),
         force_shm,
         renegotiate: false,
         negotiating: false,
@@ -412,13 +517,24 @@ pub fn run(
                 return;
             }
             data.negotiated = (format.size().width, format.size().height);
-            data.dma = format
+            let dma = format
                 .flags()
                 .contains(spa::param::video::VideoFlags::MODIFIER);
-            if data.dma && (data.force_shm || format.modifier() != 0) {
-                data.stop.store(true, Ordering::Relaxed);
-                return;
-            }
+            data.dma = if dma {
+                let selected = data
+                    .offered_dma
+                    .iter()
+                    .find(|offer| offer.modifier == format.modifier())
+                    .copied();
+                if data.force_shm || selected.is_none() {
+                    data.force_shm = true;
+                    data.renegotiate = true;
+                    return;
+                }
+                selected
+            } else {
+                None
+            };
             data.negotiating = false;
             let selected = data.rate.fraction();
             let properties =
@@ -470,25 +586,14 @@ pub fn run(
                             data.stop.store(true, Ordering::Relaxed);
                             return;
                         };
-                        if spa.n_datas != 1 || spa.datas.is_null() {
-                            data.stop.store(true, Ordering::Relaxed);
+                        if !assign_planes(spa, &buffer.planes, data.dma.is_some()) {
+                            if data.dma.is_some() {
+                                data.force_shm = true;
+                                data.renegotiate = true;
+                            } else {
+                                data.stop.store(true, Ordering::Relaxed);
+                            }
                             return;
-                        }
-                        let target = &mut *spa.datas;
-                        target.type_ = if data.dma {
-                            spa::sys::SPA_DATA_DmaBuf
-                        } else {
-                            spa::sys::SPA_DATA_MemFd
-                        };
-                        target.flags = spa::sys::SPA_DATA_FLAG_READWRITE;
-                        target.fd = i64::from(buffer.fd.as_raw_fd());
-                        target.mapoffset = 0;
-                        target.maxsize = buffer.bytes;
-                        target.data = std::ptr::null_mut();
-                        if let Some(chunk) = target.chunk.as_mut() {
-                            chunk.offset = 0;
-                            chunk.size = 0;
-                            chunk.stride = buffer.stride as i32;
                         }
                     }
                     data.generation = data.generation.wrapping_add(1);
@@ -496,7 +601,7 @@ pub fn run(
                     data.buffers
                         .insert(raw as usize, PoolBuffer { generation, buffer });
                 }
-                Err(error) if data.dma => {
+                Err(error) if data.dma.is_some() => {
                     eprintln!("DMA-BUF allocation failed ({error}); using shared memory");
                     data.force_shm = true;
                     data.renegotiate = true;
@@ -529,7 +634,10 @@ pub fn run(
             let result = data
                 .buffers
                 .get(&key)
-                .filter(|pool| pool.buffer.size == data.capture.borrow().constraints().size)
+                .filter(|pool| {
+                    pool.buffer.size == data.capture.borrow().constraints().size
+                        && pool.buffer.dma == data.dma
+                })
                 .map(|pool| {
                     (
                         pool.generation,
@@ -547,12 +655,15 @@ pub fn run(
                 // SAFETY: this buffer was just dequeued and hasn't been handed to
                 // Wayland. Return it empty; old dimensions cannot reach consumers.
                 unsafe {
-                    if let Some(chunk) = (*(*raw.as_ptr()).buffer)
-                        .datas
-                        .as_mut()
-                        .and_then(|data| data.chunk.as_mut())
-                    {
-                        chunk.size = 0;
+                    let buffer = &mut *(*raw.as_ptr()).buffer;
+                    if !buffer.datas.is_null() {
+                        for target in
+                            std::slice::from_raw_parts_mut(buffer.datas, buffer.n_datas as usize)
+                        {
+                            if let Some(chunk) = target.chunk.as_mut() {
+                                chunk.size = 0;
+                            }
+                        }
                     }
                     stream.queue_raw_buffer(raw.as_ptr());
                 }
@@ -571,7 +682,7 @@ pub fn run(
             .loop_()
             .add_io(cancel_read, spa::support::system::IoFlags::IN, |_| {});
     let frame_timer = mainloop.loop_().add_timer(|_| {});
-    let advertised = formats(size, &rate, dma);
+    let advertised = formats(size, &rate, &offered_dma);
     let mut parameters: Vec<_> = advertised
         .iter()
         .map(|format| Pod::from_bytes(format).expect("serialized video format"))
@@ -591,6 +702,12 @@ pub fn run(
         if let Some(completion) = completion {
             data.borrow_mut().complete(&stream, completion);
         }
+        // A stopped source may be the only Wayland event while the consumer
+        // is paused. Exit now instead of sleeping indefinitely for another fd
+        // wakeup after revocation, disconnection or a terminal copy failure.
+        if stop.load(Ordering::Relaxed) || capture.borrow().stopped() {
+            break;
+        }
         let changed = capture.borrow_mut().take_changed();
         if changed
             && !matches!(
@@ -608,11 +725,13 @@ pub fn run(
         };
         if renegotiate {
             data.borrow_mut().negotiating = true;
-            let advertised = formats(
-                capture.borrow().constraints().size,
-                &rate,
-                !data.borrow().force_shm && capture.borrow().dma_supported(),
-            );
+            let offered_dma = if data.borrow().force_shm {
+                Vec::new()
+            } else {
+                capture.borrow().dma_formats()
+            };
+            let advertised = formats(capture.borrow().constraints().size, &rate, &offered_dma);
+            data.borrow_mut().offered_dma = offered_dma;
             let mut params: Vec<_> = advertised
                 .iter()
                 .map(|format| Pod::from_bytes(format).expect("serialized video format"))
@@ -632,6 +751,9 @@ pub fn run(
             &frame_timer,
             can_capture.then(|| next_frame.max(data.borrow().next_capture)),
         )?;
+        if stop.load(Ordering::Relaxed) {
+            break;
+        }
         mainloop.loop_().iterate(pw::loop_::Timeout::Infinite);
     }
     let _ = stream.disconnect();
@@ -668,6 +790,165 @@ fn update_frame_timer(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn spa_plane_descriptors_retain_each_fd_offset_and_stride() {
+        let planes = vec![
+            capture::Plane {
+                fd: std::fs::File::open("/dev/null").unwrap(),
+                stride: 64,
+                offset: 32,
+                bytes: 1280,
+            },
+            capture::Plane {
+                fd: std::fs::File::open("/dev/null").unwrap(),
+                stride: 16,
+                offset: 192,
+                bytes: 256,
+            },
+        ];
+        let mut chunks = [
+            spa::sys::spa_chunk {
+                offset: 0,
+                size: 0,
+                stride: 0,
+                flags: 0,
+            },
+            spa::sys::spa_chunk {
+                offset: 0,
+                size: 0,
+                stride: 0,
+                flags: 0,
+            },
+        ];
+        let mut datas = chunks
+            .iter_mut()
+            .map(|chunk| spa::sys::spa_data {
+                type_: 0,
+                flags: 0,
+                fd: -1,
+                mapoffset: 0,
+                maxsize: 0,
+                data: std::ptr::null_mut(),
+                chunk,
+            })
+            .collect::<Vec<_>>();
+        let mut buffer = spa::sys::spa_buffer {
+            n_metas: 0,
+            n_datas: 2,
+            metas: std::ptr::null_mut(),
+            datas: datas.as_mut_ptr(),
+        };
+        // SAFETY: this test owns every data/chunk allocation for the full call.
+        unsafe {
+            assert!(assign_planes(&mut buffer, &planes, true));
+            for (index, plane) in planes.iter().enumerate() {
+                assert_eq!(datas[index].fd, i64::from(plane.fd.as_raw_fd()));
+                assert_eq!(datas[index].type_, spa::sys::SPA_DATA_DmaBuf);
+                assert_eq!(datas[index].maxsize, plane.bytes);
+                assert_eq!(chunks[index].offset, plane.offset);
+                assert_eq!(chunks[index].stride, plane.stride as i32);
+            }
+            assert!(finish_planes(&mut buffer, &planes, true));
+            assert_eq!([chunks[0].size, chunks[1].size], [1248, 64]);
+            assert!(finish_planes(&mut buffer, &planes, false));
+            assert_eq!([chunks[0].size, chunks[1].size], [0, 0]);
+            for wrong_count in [0, 1, 3] {
+                buffer.n_datas = wrong_count;
+                assert!(!assign_planes(&mut buffer, &planes, true));
+                assert!(!finish_planes(&mut buffer, &planes, true));
+            }
+            buffer.n_datas = 2;
+            datas[1].chunk = std::ptr::null_mut();
+            assert!(!assign_planes(&mut buffer, &planes, true));
+        }
+    }
+
+    #[test]
+    fn non_linear_modifier_intersection_keeps_the_probed_plane_count() {
+        let rate = FrameRate::new(None).unwrap();
+        let tiled = DmaFormat {
+            modifier: 0x0100000000000004,
+            planes: 2,
+        };
+        let offers = formats(
+            (640, 480),
+            &rate,
+            &[
+                tiled,
+                DmaFormat {
+                    modifier: 0,
+                    planes: 1,
+                },
+            ],
+        );
+        let (_, mut consumer) = spa::pod::deserialize::PodDeserializer::deserialize_any_from(
+            &video_format(640, 480, &rate),
+        )
+        .unwrap();
+        let spa::pod::Value::Object(ref mut object) = consumer else {
+            panic!("video format object")
+        };
+        object.properties.push(spa::pod::Property {
+            key: spa::sys::SPA_FORMAT_VIDEO_modifier,
+            flags: spa::pod::PropertyFlags::MANDATORY,
+            value: spa::pod::Value::Choice(spa::pod::ChoiceValue::Long(spa::utils::Choice(
+                spa::utils::ChoiceFlags::empty(),
+                spa::utils::ChoiceEnum::Enum {
+                    default: 97,
+                    alternatives: vec![97, tiled.modifier as i64],
+                },
+            ))),
+        });
+        let consumer = pod(object.clone());
+        for reverse in [false, true] {
+            let (offer, filter) = if reverse {
+                (&consumer, &offers[0])
+            } else {
+                (&offers[0], &consumer)
+            };
+            let mut bytes = vec![0; 1024];
+            let builder = spa::pod::builder::Builder::new(&mut bytes);
+            let mut result = std::ptr::null_mut();
+            // SAFETY: both pods, builder storage and resulting pod stay live.
+            unsafe {
+                assert!(
+                    spa::sys::spa_pod_filter(
+                        builder.as_raw_ptr(),
+                        &mut result,
+                        Pod::from_bytes(offer).unwrap().as_raw_ptr(),
+                        Pod::from_bytes(filter).unwrap().as_raw_ptr()
+                    ) >= 0
+                );
+                let filtered = Pod::from_raw(result);
+                let mut selected = spa::param::video::VideoInfoRaw::default();
+                selected.parse(filtered).unwrap();
+                assert_eq!(selected.modifier(), tiled.modifier);
+            }
+        }
+        let bytes = buffer_params((640, 480), Some(tiled));
+        let (_, value) =
+            spa::pod::deserialize::PodDeserializer::deserialize_any_from(&bytes).unwrap();
+        let spa::pod::Value::Object(object) = value else {
+            panic!("buffer parameters object")
+        };
+        for (key, expected) in [
+            (spa::sys::SPA_PARAM_BUFFERS_blocks, 2),
+            (spa::sys::SPA_PARAM_BUFFERS_size, 0),
+            (spa::sys::SPA_PARAM_BUFFERS_stride, 0),
+        ] {
+            assert_eq!(
+                object
+                    .properties
+                    .iter()
+                    .find(|property| property.key == key)
+                    .unwrap()
+                    .value,
+                spa::pod::Value::Int(expected)
+            );
+        }
+        assert_eq!(formats((640, 480), &rate, &[]), vec![offers[2].clone()]);
+    }
 
     #[test]
     fn frame_clock_preserves_cadence_but_does_not_catch_up_after_stalls() {
@@ -732,7 +1013,13 @@ mod tests {
             int_property(spa::sys::SPA_PARAM_BUFFERS_dataType, obs_mask)
         ));
         for dma in [false, true] {
-            let producer = buffer_params((735, 840), dma);
+            let producer = buffer_params(
+                (735, 840),
+                dma.then_some(DmaFormat {
+                    modifier: 0,
+                    planes: 1,
+                }),
+            );
             for reverse in [false, true] {
                 let (offer, filter) = if reverse {
                     (&consumer, &producer)
@@ -797,7 +1084,14 @@ mod tests {
     #[test]
     fn dma_is_an_explicit_format_with_a_shared_memory_alternative() {
         let rate = FrameRate::new(None).unwrap();
-        let offers = formats((640, 480), &rate, true);
+        let offers = formats(
+            (640, 480),
+            &rate,
+            &[DmaFormat {
+                modifier: 0,
+                planes: 1,
+            }],
+        );
         assert_eq!(offers.len(), 2);
         for (index, offer) in offers.iter().enumerate() {
             let (_, value) =
@@ -823,6 +1117,6 @@ mod tests {
                 == spa::sys::SPA_FORMAT_VIDEO_framerate
                 && matches!(property.value, spa::pod::Value::Choice(_))));
         }
-        assert_eq!(formats((640, 480), &rate, false), vec![offers[1].clone()]);
+        assert_eq!(formats((640, 480), &rate, &[]), vec![offers[1].clone()]);
     }
 }

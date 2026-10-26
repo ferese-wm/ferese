@@ -781,6 +781,7 @@ async fn start_streams(
             crate::recording::Audio::Off,
             None,
             false,
+            crate::workspace::Quality::default(),
         )
     } else {
         let prompt = Prompt {
@@ -792,6 +793,7 @@ async fn start_streams(
             window_capture: false,
             recording: bar_controlled,
             workspace_shell: workspaces.is_some() && discovery.supports_workspace_shell(),
+            workspace_quality: workspaces.is_some() && discovery.supports_workspace_quality(),
             persist_mode: if rememberable.is_empty() {
                 0
             } else {
@@ -814,6 +816,11 @@ async fn start_streams(
             && !prompt.allows_shell(selection.names.iter().map(String::as_str))
         {
             return Err("Shell capture requires approval for a supported workspace source".into());
+        }
+        if selection.workspace_quality != crate::workspace::Quality::Balanced
+            && !prompt.allows_quality(selection.names.iter().map(String::as_str))
+        {
+            return Err("Workspace quality requires a supported workspace source".into());
         }
         if !bar_controlled && (selection.audio != crate::recording::Audio::Off || selection.region)
         {
@@ -867,10 +874,12 @@ async fn start_streams(
             selection.audio,
             region,
             selection.include_shell,
+            selection.workspace_quality,
         )
     };
 
-    let (selected, persist_mode, audio, region, include_shell) = approved_selection;
+    let (selected, persist_mode, audio, region, include_shell, workspace_quality) =
+        approved_selection;
     let mut reply = Options::new();
     let fresh_outputs = capture_ipc(&cancel, &work, "get-outputs", serde_json::json!({})).await?;
 
@@ -915,6 +924,7 @@ async fn start_streams(
             if include_shell {
                 command.arg("--include-shell");
             }
+            command.args(["--quality", workspace_quality.as_str()]);
         } else if let Some(id) = source.window_id() {
             command.args([
                 "--stream-window",

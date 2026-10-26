@@ -7,7 +7,7 @@
     requires session opt-in and fails while locked. Window IDs are compositor
     lifetime IDs and never resolve to replacement windows.
   </description>
-  <interface name="ferese_window_capture_manager_v1" version="4">
+  <interface name="ferese_window_capture_manager_v1" version="5">
     <request name="destroy" type="destructor"/>
     <request name="capture_window">
       <description summary="snapshot a managed window">
@@ -102,6 +102,29 @@
       </description>
       <arg name="workspace_hi" type="uint"/>
       <arg name="workspace_lo" type="uint"/>
+      <arg name="source" type="new_id" interface="ext_image_capture_source_v1"/>
+    </request>
+    <enum name="quality" since="5">
+      <entry name="balanced" value="0" summary="fit within 1920 by 1080 pixels"/>
+      <entry name="high" value="1" summary="fit within 2560 by 1440 pixels"/>
+      <entry name="native" value="2" summary="preserve the output's physical pixel dimensions"/>
+    </enum>
+    <request name="create_workspace_source_with_options" since="5">
+      <description summary="capture a workspace at a selected pixel density">
+        Like create_workspace_source, with a quality value from the quality enum
+        and include_shell set to zero or one. Portrait outputs swap the bounding
+        dimensions. No quality level upscales the source. Native uses the upright
+        physical output size, including at fractional scales. Existing per-image
+        and aggregate capture resource limits still apply; an unavailable size
+        produces a stopped session, never a silently downscaled native stream.
+        The quality and shell choices are fixed for this source. Older workspace
+        requests retain balanced quality. Invalid options produce a stopped source.
+        Shell visibility and approval follow create_workspace_source_with_shell.
+      </description>
+      <arg name="workspace_hi" type="uint"/>
+      <arg name="workspace_lo" type="uint"/>
+      <arg name="include_shell" type="uint"/>
+      <arg name="quality" type="uint"/>
       <arg name="source" type="new_id" interface="ext_image_capture_source_v1"/>
     </request>
   </interface>

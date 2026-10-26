@@ -570,6 +570,7 @@ async fn select_window(app: &str, parent: &str) -> Result<Option<u64>, String> {
         window_capture: true,
         recording: false,
         workspace_shell: false,
+        workspace_quality: false,
         persist_mode: 0,
         rememberable: Vec::new(),
     };

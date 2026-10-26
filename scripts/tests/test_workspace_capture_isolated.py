@@ -122,7 +122,8 @@ class WorkspaceCapture(unittest.TestCase):
                     baseline = idle_cpu([compositor], seconds=1.0)[0]
 
                     def worker(include_shell=False):
-                        command = [str(PORTAL), "--stream-workspace", str(workspace), "hidden"]
+                        command = [str(PORTAL), "--stream-workspace", str(workspace), "hidden",
+                                   "--quality", "balanced"]
                         if include_shell:
                             command.append("--include-shell")
                         child = launch(command,
@@ -191,7 +192,22 @@ class WorkspaceCapture(unittest.TestCase):
                     second_raw = root / "second.bgrx"
                     other_consumer = consumer(second_raw, other_ready["node"])
                     until(lambda: count(second_raw) == 1, "second consumer did not receive cached frame")
-                    self.assertEqual(image().tobytes(), image(second_raw).tobytes())
+                    first_image, second_image = image(), image(second_raw)
+                    if first_image.tobytes() != second_image.tobytes():
+                        from PIL import ImageChops
+                        difference = ImageChops.difference(first_image, second_image)
+                        failure = {"output": output, "target": target, "marker": marker,
+                                   "frames": [count(), count(second_raw)], "difference_bbox": difference.getbbox()}
+                        if directory := os.environ.get("FERESE_TEST_CAPTURE_FAILURE_DIR"):
+                            destination = Path(directory)
+                            destination.mkdir(parents=True, exist_ok=True)
+                            first_image.save(destination / "incremental-workspace.png")
+                            second_image.save(destination / "fresh-workspace.png")
+                            difference.save(destination / "workspace-difference.png")
+                            (destination / "workspace-failure.json").write_text(json.dumps(failure, indent=2))
+                            (destination / "session.log").write_text(log_path.read_text())
+                        print(json.dumps(failure), flush=True)
+                    self.assertEqual(first_image.tobytes(), second_image.tobytes())
                     for index in range(6):
                         change(target_client, b"d")
                         until(lambda: count() >= animation_count + 1 + index and count(second_raw) >= 2 + index,

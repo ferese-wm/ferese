@@ -27,11 +27,25 @@ pub struct Prompt {
     pub recording: bool,
     #[serde(default)]
     pub workspace_shell: bool,
+    #[serde(default)]
+    pub workspace_quality: bool,
 }
 
 impl Prompt {
     pub(crate) fn allows_shell<'a>(&self, names: impl IntoIterator<Item = &'a str>) -> bool {
-        self.workspace_shell
+        self.allows_workspace_options(self.workspace_shell, names)
+    }
+
+    pub(crate) fn allows_quality<'a>(&self, names: impl IntoIterator<Item = &'a str>) -> bool {
+        self.allows_workspace_options(self.workspace_quality, names)
+    }
+
+    fn allows_workspace_options<'a>(
+        &self,
+        supported: bool,
+        names: impl IntoIterator<Item = &'a str>,
+    ) -> bool {
+        supported
             && !self.window_capture
             && !self.recording
             && names.into_iter().any(|name| {
@@ -70,6 +84,8 @@ pub(crate) struct Selection {
     pub region: bool,
     #[serde(default)]
     pub include_shell: bool,
+    #[serde(default = "crate::workspace::Quality::legacy_default")]
+    pub workspace_quality: crate::workspace::Quality,
 }
 
 #[derive(Clone, Debug)]
@@ -82,6 +98,7 @@ enum Message {
     Audio(Audio),
     Region,
     IncludeShell,
+    WorkspaceQuality(crate::workspace::Quality),
     Share,
     Cancel,
 }
@@ -96,6 +113,7 @@ struct Picker {
     audio: Audio,
     region: bool,
     include_shell: bool,
+    workspace_quality: crate::workspace::Quality,
     background: cosmic::iced::Color,
     palette: ferese_theme::Palette,
     font: cosmic::font::Font,
@@ -120,7 +138,8 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         + prompt.source_list_height()
         + if prompt.persist_mode > 0 { 48. } else { 0. }
         + if prompt.recording { 190. } else { 0. }
-        + if prompt.workspace_shell { 80. } else { 0. };
+        + if prompt.workspace_shell { 80. } else { 0. }
+        + if prompt.workspace_quality { 110. } else { 0. };
     cosmic::app::run::<Picker>(
         Settings::default()
             .size(cosmic::iced::Size::new(400., height))
@@ -174,6 +193,7 @@ impl cosmic::Application for Picker {
             audio: Audio::Off,
             region: false,
             include_shell: false,
+            workspace_quality: crate::workspace::Quality::default(),
             background,
             palette,
             font,
@@ -266,6 +286,9 @@ impl cosmic::Application for Picker {
             Message::IncludeShell if self.can_include_shell() => {
                 self.include_shell = !self.include_shell
             }
+            Message::WorkspaceQuality(quality) if self.can_choose_quality() => {
+                self.workspace_quality = quality;
+            }
             Message::Share if !self.selected.is_empty() => {
                 let names: Vec<_> = self
                     .selected
@@ -289,6 +312,11 @@ impl cosmic::Application for Picker {
                         audio: self.audio,
                         region: self.region,
                         include_shell: self.include_shell && self.can_include_shell(),
+                        workspace_quality: if self.can_choose_quality() {
+                            self.workspace_quality
+                        } else {
+                            crate::workspace::Quality::Balanced
+                        },
                     };
                     println!(
                         "{}",
@@ -418,6 +446,34 @@ impl cosmic::Application for Picker {
                 .align_y(Alignment::Center),
             );
         }
+        if self.can_choose_quality() {
+            let mut choices = row([]).spacing(4);
+            for quality in [
+                crate::workspace::Quality::Balanced,
+                crate::workspace::Quality::High,
+                crate::workspace::Quality::Native,
+            ] {
+                choices = choices.push(
+                    button::custom(self.text(quality.label()))
+                        .class(ferese_theme::controls::material_button_style(
+                            self.palette,
+                            quality == self.workspace_quality,
+                            self.background.a,
+                        ))
+                        .padding(7)
+                        .width(Length::Fill)
+                        .on_press(Message::WorkspaceQuality(quality)),
+                );
+            }
+            content = content.push(
+                column![
+                    self.text("Workspace quality"),
+                    choices,
+                    self.text(self.workspace_quality.description()).size(12)
+                ]
+                .spacing(5),
+            );
+        }
         if self.prompt.recording {
             content = content.push(
                 row![
@@ -521,6 +577,14 @@ impl cosmic::Application for Picker {
 }
 
 impl Picker {
+    fn can_choose_quality(&self) -> bool {
+        self.prompt.allows_quality(
+            self.selected
+                .iter()
+                .map(|index| self.prompt.sources[*index].name.as_str()),
+        )
+    }
+
     fn can_include_shell(&self) -> bool {
         self.prompt.allows_shell(
             self.selected
@@ -573,7 +637,7 @@ mod tests {
 
     fn prompt() -> Prompt {
         serde_json::from_value(serde_json::json!({
-            "app": "test", "multiple": true, "workspace_shell": true,
+            "app": "test", "multiple": true, "workspace_shell": true, "workspace_quality": true,
             "sources": [
                 {"name":"workspace:1", "label":"Workspace 1", "width":800, "height":600, "x":0, "y":0, "scale":1},
                 {"name":"DP-1", "label":"Display", "width":800, "height":600, "x":0, "y":0, "scale":1},
@@ -605,9 +669,39 @@ mod tests {
         let selection: Selection =
             serde_json::from_str(r#"{"names":["workspace:1"],"persist_mode":0}"#).unwrap();
         assert!(!selection.include_shell);
+        assert_eq!(
+            selection.workspace_quality,
+            crate::workspace::Quality::Balanced
+        );
         let mut value = serde_json::to_value(prompt()).unwrap();
         value.as_object_mut().unwrap().remove("workspace_shell");
         let prompt: Prompt = serde_json::from_value(value).unwrap();
         assert!(!prompt.allows_shell(["workspace:1"]));
+    }
+
+    #[test]
+    fn quality_requires_workspace_selection_and_protocol_support() {
+        let mut prompt = prompt();
+        assert!(!prompt.allows_quality([]));
+        assert!(!prompt.allows_quality(["DP-1", "window:2", "workspace:99"]));
+        assert!(prompt.allows_quality(["workspace:1", "DP-1"]));
+        prompt.workspace_quality = false;
+        assert!(!prompt.allows_quality(["workspace:1"]));
+        prompt.workspace_quality = true;
+        prompt.recording = true;
+        assert!(!prompt.allows_quality(["workspace:1"]));
+        prompt.recording = false;
+        prompt.window_capture = true;
+        assert!(!prompt.allows_quality(["workspace:1"]));
+        let mut value = serde_json::to_value(prompt).unwrap();
+        value.as_object_mut().unwrap().remove("workspace_quality");
+        let older: Prompt = serde_json::from_value(value).unwrap();
+        assert!(!older.workspace_quality);
+        assert!(
+            serde_json::from_str::<Selection>(
+                r#"{"names":["workspace:1"],"persist_mode":0,"workspace_quality":"unknown"}"#
+            )
+            .is_err()
+        );
     }
 }

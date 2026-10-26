@@ -90,9 +90,16 @@ windows are protected by default.
 Scrolling shares the workspace viewport, not the entire offscreen canvas. Capture
 does not activate the workspace, move focus, or resize hidden applications.
 
-Workspace video fits a 1920 × 1080 bounding box (1080 × 1920 for portrait displays),
-preserving aspect ratio and avoiding upscaling. This bounds capture buffers even
-on a desktop using 2× scaling. The canvas is fixed for the session. Changing the
+Choose **Workspace quality** when sharing a workspace: **Native** (the default)
+keeps the display's physical pixel dimensions, **1080p** fits within 1920 × 1080,
+and **1440p** fits within 2560 × 1440. Portrait displays swap those bounds.
+All choices preserve aspect ratio and avoid upscaling. For a 2880 × 1800 display,
+the three choices produce 1728 × 1080, 2304 × 1440, and 2880 × 1800 respectively.
+Use Native for detailed text and match OBS's source/output resolution to avoid
+another downscale. Higher quality uses more memory and bandwidth and remains
+subject to the capture resource limits below; an unsupported size fails rather
+than silently reducing native quality. Older compositors offer 1080p only.
+The canvas and quality are fixed for the session. Changing the
 source output's scale, transform, geometry, or workspace ownership ends sharing;
 select the workspace again. Removing the workspace or locking also ends sharing.
 Window blur and desktop transition effects are omitted from the workspace view.
@@ -143,6 +150,11 @@ desktop generate frames.
 
 On supported GPUs, Ferese renders directly into DMA-BUF buffers shared with
 PipeWire and waits for GPU completion before handing them to the recording app.
+Capture negotiates renderer-supported RGB8 buffer modifiers with the recording
+app, probing their allocation and plane layout before offering them. Each
+plane keeps its own file descriptor, offset and stride. Linear buffers remain
+available when supported by the renderer and allocator. Modifiers affect memory
+layout and interoperability; choosing a tiled buffer does not add image detail.
 If GPU buffers are unavailable, capture uses shared memory without the portal's
 intermediate frame copies. Both paths wait for source damage, while a resumed
 consumer receives an initial image even if the desktop has stayed unchanged.
@@ -152,7 +164,7 @@ or rapidly changing captures on this path still incur GPU readback costs.
 ## Workspace capture resources
 
 Workspace sources reuse the existing image-copy-capture and PipeWire transport.
-Each combination of workspace, cursor and shell options has its own retained GPU
+Each combination of workspace, quality, cursor and shell options has its own retained GPU
 image with independent damage history and render resources. At most one changed
 workspace is composed per event-loop dispatch, yielding to input and display
 deadlines between views. Matching consumers reuse its composition and keep

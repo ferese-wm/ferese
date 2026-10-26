@@ -152,6 +152,13 @@ impl Capture {
             .is_some_and(|manager| manager.version() >= 4)
     }
 
+    pub fn supports_workspace_quality(&self) -> bool {
+        self.state
+            .window_manager
+            .as_ref()
+            .is_some_and(|manager| manager.version() >= 5)
+    }
+
     pub fn supports_windows(&self) -> bool {
         self.state.window_manager.is_some()
     }
@@ -262,7 +269,7 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
                     },
                 }),
                 "ferese_window_capture_manager_v1" => {
-                    state.window_manager = Some(registry.bind(name, version.min(4), qh, ()))
+                    state.window_manager = Some(registry.bind(name, version.min(5), qh, ()))
                 }
                 "wl_shm" => state.shm = Some(registry.bind(name, 1, qh, ())),
                 "zwlr_screencopy_manager_v1" => {

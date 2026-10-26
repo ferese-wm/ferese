@@ -112,6 +112,10 @@ class WindowStream(unittest.TestCase):
                 self.assertEqual(original, (ready["width"], ready["height"]))
                 admin.call("workspace", {"index": 2})
                 time.sleep(0.4)
+                # An unchanged source waits for damage. Prove that a real
+                # update still arrives after the window becomes hidden.
+                target.stdin.write(b"d")
+                target.stdin.flush()
                 frame(original)
                 self.assertIsNone(helper.poll(), "Inactive workspace stopped the stream")
                 target.stdin.write(b"r")
