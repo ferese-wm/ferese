@@ -29,6 +29,14 @@ struct Key {
 }
 
 impl Key {
+    fn matches(&self, player: &ferese_ipc::media::Player) -> bool {
+        player.art_url.as_deref() == Some(self.uri.as_str())
+            && self.owner == player.owner
+            && self.track_id == player.track_id
+            && self.title == player.title
+            && self.artist == player.artist
+    }
+
     fn from_player(player: &ferese_ipc::media::Player) -> Option<Self> {
         Some(Self {
             uri: player.art_url.clone()?,
@@ -74,10 +82,15 @@ impl Service {
     }
 
     pub fn request(&mut self, player: Option<&ferese_ipc::media::Player>) {
-        let key = player.and_then(Key::from_player);
-        if self.requested == key {
+        let player = player.filter(|player| player.art_url.is_some());
+        if match (&self.requested, player) {
+            (Some(key), Some(player)) => key.matches(player),
+            (None, None) => true,
+            _ => false,
+        } {
             return;
         }
+        let key = player.and_then(Key::from_player);
         self.requested = key.clone();
         self.queue
             .0
@@ -259,6 +272,58 @@ mod tests {
             ..Default::default()
         })
         .unwrap()
+    }
+
+    #[test]
+    fn artwork_requests_ignore_playback_updates_but_track_every_identity_field() {
+        let mut player = ferese_ipc::media::Player {
+            art_url: Some("file:///cover.png".into()),
+            owner: ":1.2".into(),
+            track_id: Some("/track/one".into()),
+            title: "First".into(),
+            artist: "Artist".into(),
+            ..Default::default()
+        };
+        let (_, receive) = tokio::sync::watch::channel(None);
+        let mut service = Service {
+            queue: Arc::new((Mutex::new(Queue::default()), Condvar::new())),
+            receive: Updates(Arc::new(receive)),
+            requested: None,
+        };
+        service.request(Some(&player));
+        assert!(service.queue.0.lock().unwrap().pending.take().is_some());
+        player.status = ferese_ipc::media::Playback::Playing;
+        player.position_us = Some(100);
+        player.volume = Some(0.5);
+        service.request(Some(&player));
+        assert!(service.queue.0.lock().unwrap().pending.is_none());
+
+        let initial = player.clone();
+        for field in 0..5 {
+            player = initial.clone();
+            match field {
+                0 => player.art_url = Some("file:///new-cover.png".into()),
+                1 => player.owner = ":1.3".into(),
+                2 => player.track_id = None,
+                3 => player.title = "Second".into(),
+                4 => player.artist = "Another artist".into(),
+                _ => unreachable!(),
+            }
+            service.requested = Key::from_player(&initial);
+            service.request(Some(&player));
+            assert_eq!(
+                service.queue.0.lock().unwrap().pending.take(),
+                Key::from_player(&player)
+            );
+        }
+        player.art_url = None;
+        service.request(Some(&player));
+        assert!(service.requested.is_none());
+        assert!(service.queue.0.lock().unwrap().pending.is_none());
+        service.request(Some(&initial));
+        service.request(None);
+        assert!(service.requested.is_none());
+        assert!(service.queue.0.lock().unwrap().pending.is_none());
     }
 
     #[test]
