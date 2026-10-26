@@ -85,6 +85,12 @@ keyboard modifiers or physical key matching. The trigger is automatically
 recognized from its name. Gesture navigation uses native touchpad events in a
 hardware session.
 
+Applications can receive native touchpad gestures through the pointer-gestures
+protocol: unbound swipes, pinch translation/scale/rotation, and holds. Gestures
+follow pointer focus and are cancelled when that focus leaves the application.
+Configured three-to-five-finger navigation stays owned by the desktop. Active
+input capture takes precedence over local touchpad gesture delivery.
+
 Adjust recognition distance in **Settings → Keyboard & mouse**, or with
 `swipe-threshold 80` under `input.touchpad` (integer 16–1000 logical pixels).
 

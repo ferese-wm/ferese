@@ -80,6 +80,7 @@ use smithay::wayland::keyboard_shortcuts_inhibit::{
 };
 use smithay::wayland::output::OutputManagerState;
 use smithay::wayland::pointer_constraints::PointerConstraintsState;
+use smithay::wayland::pointer_gestures::PointerGesturesState;
 use smithay::wayland::presentation::PresentationState;
 use smithay::wayland::relative_pointer::RelativePointerManagerState;
 use smithay::wayland::selection::data_device::DataDeviceState;
@@ -574,6 +575,7 @@ pub struct Ferese {
     pub keyboard_shortcuts_inhibit_state: KeyboardShortcutsInhibitState,
     pub output_manager_state: OutputManagerState,
     pub pointer_constraints_state: PointerConstraintsState,
+    pub _pointer_gestures_state: PointerGesturesState,
     pub presentation_state: PresentationState,
     pub primary_selection_state: PrimarySelectionState,
     pub wlr_data_control_state: wlr_data_control::DataControlState,
@@ -686,6 +688,7 @@ impl Ferese {
         let text_input_manager_state = TextInputManagerState::new::<Self>(&display_handle);
         let output_manager_state = OutputManagerState::new_with_xdg_output::<Self>(&display_handle);
         let pointer_constraints_state = PointerConstraintsState::new::<Self>(&display_handle);
+        let pointer_gestures_state = PointerGesturesState::new::<Self>(&display_handle);
         let presentation_state =
             PresentationState::new::<Self>(&display_handle, libc::CLOCK_MONOTONIC as u32);
         let data_device_state = DataDeviceState::new::<Self>(&display_handle);
@@ -896,6 +899,7 @@ impl Ferese {
             keyboard_shortcuts_inhibit_state,
             output_manager_state,
             pointer_constraints_state,
+            _pointer_gestures_state: pointer_gestures_state,
             presentation_state,
             primary_selection_state,
             wlr_data_control_state,

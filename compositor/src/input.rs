@@ -5,14 +5,16 @@ use ferese_layout::Direction;
 pub(crate) use pointer::ScrollBindings;
 use smithay::backend::input::{
     AbsolutePositionEvent, Axis, AxisSource, ButtonState, Device, Event, GestureBeginEvent,
-    GestureEndEvent, GestureSwipeUpdateEvent as _, InputBackend, InputEvent, KeyState,
-    KeyboardKeyEvent, PointerAxisEvent, PointerButtonEvent, PointerMotionEvent, Switch,
-    SwitchState, SwitchToggleEvent, TouchEvent,
+    GestureEndEvent, GesturePinchUpdateEvent as _, GestureSwipeUpdateEvent as _, InputBackend,
+    InputEvent, KeyState, KeyboardKeyEvent, PointerAxisEvent, PointerButtonEvent,
+    PointerMotionEvent, Switch, SwitchState, SwitchToggleEvent, TouchEvent,
 };
 use smithay::input::keyboard::{FilterResult, keysyms};
 use smithay::input::pointer::{
-    AxisFrame, ButtonEvent, Focus, GestureSwipeBeginEvent, GestureSwipeEndEvent,
-    GestureSwipeUpdateEvent, GrabStartData, MotionEvent, PointerHandle, RelativeMotionEvent,
+    AxisFrame, ButtonEvent, Focus, GestureHoldBeginEvent, GestureHoldEndEvent,
+    GesturePinchBeginEvent, GesturePinchEndEvent, GesturePinchUpdateEvent, GestureSwipeBeginEvent,
+    GestureSwipeEndEvent, GestureSwipeUpdateEvent, GrabStartData, MotionEvent, PointerHandle,
+    RelativeMotionEvent,
 };
 use smithay::input::touch::{DownEvent, MotionEvent as TouchMotionEvent, UpEvent};
 use smithay::reexports::wayland_server::Resource;
@@ -31,6 +33,8 @@ const BTN_LEFT: u32 = 0x110;
 
 #[cfg(test)]
 pub(crate) mod binding_mode_tests;
+#[cfg(test)]
+mod gesture_tests;
 #[cfg(test)]
 mod launcher_touch_tests;
 #[cfg(test)]
@@ -300,6 +304,67 @@ impl Ferese {
                             },
                         );
                 }
+            }
+            InputEvent::GesturePinchBegin { event } => {
+                seat.get_pointer()
+                    .expect("seat has a pointer")
+                    .gesture_pinch_begin(
+                        self,
+                        &GesturePinchBeginEvent {
+                            serial: SERIAL_COUNTER.next_serial(),
+                            time: event.time(),
+                            fingers: event.fingers(),
+                        },
+                    );
+            }
+            InputEvent::GesturePinchUpdate { event } => {
+                seat.get_pointer()
+                    .expect("seat has a pointer")
+                    .gesture_pinch_update(
+                        self,
+                        &GesturePinchUpdateEvent {
+                            time: event.time(),
+                            delta: event.delta(),
+                            scale: event.scale(),
+                            rotation: event.rotation(),
+                        },
+                    );
+            }
+            InputEvent::GesturePinchEnd { event } => {
+                seat.get_pointer()
+                    .expect("seat has a pointer")
+                    .gesture_pinch_end(
+                        self,
+                        &GesturePinchEndEvent {
+                            serial: SERIAL_COUNTER.next_serial(),
+                            time: event.time(),
+                            cancelled: event.cancelled(),
+                        },
+                    );
+            }
+            InputEvent::GestureHoldBegin { event } => {
+                seat.get_pointer()
+                    .expect("seat has a pointer")
+                    .gesture_hold_begin(
+                        self,
+                        &GestureHoldBeginEvent {
+                            serial: SERIAL_COUNTER.next_serial(),
+                            time: event.time(),
+                            fingers: event.fingers(),
+                        },
+                    );
+            }
+            InputEvent::GestureHoldEnd { event } => {
+                seat.get_pointer()
+                    .expect("seat has a pointer")
+                    .gesture_hold_end(
+                        self,
+                        &GestureHoldEndEvent {
+                            serial: SERIAL_COUNTER.next_serial(),
+                            time: event.time(),
+                            cancelled: event.cancelled(),
+                        },
+                    );
             }
             InputEvent::SwitchToggle { event } if event.switch() == Some(Switch::Lid) => {
                 crate::backends::direct::set_lid_closed(self, event.state() == SwitchState::On);
