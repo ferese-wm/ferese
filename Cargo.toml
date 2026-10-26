@@ -21,6 +21,9 @@ members = [
 ]
 resolver = "3"
 
+[patch."https://github.com/Smithay/smithay"]
+smithay = { path = "vendor/smithay" }
+
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
