@@ -87,6 +87,32 @@ use crate::{
 
 use super::{CommitCounter, Element, Id, Kind, RenderElement, UnderlyingStorage};
 
+// Linear texture filtering samples neighboring texels. Include its source-pixel
+// footprint before viewport cropping and scaling: a changed texel just outside
+// the viewport can still affect its edge, and upscaling can spread that change
+// across more than one destination pixel. Conservatively pad by one source
+// pixel for all renderers, including wrappers which rescale this element later.
+fn sampling_damage(
+    rect: Rectangle<i32, BufferCoords>,
+    size: Size<i32, BufferCoords>,
+) -> Option<Rectangle<f64, BufferCoords>> {
+    if rect.size.is_empty() || size.is_empty() {
+        return None;
+    }
+    // Damage comes from clients. Widen before adding edges or the padding so
+    // extreme signed coordinates cannot overflow before clipping to the buffer.
+    let left = (i64::from(rect.loc.x) - 1).clamp(0, i64::from(size.w));
+    let top = (i64::from(rect.loc.y) - 1).clamp(0, i64::from(size.h));
+    let right = (i64::from(rect.loc.x) + i64::from(rect.size.w) + 1).clamp(0, i64::from(size.w));
+    let bottom = (i64::from(rect.loc.y) + i64::from(rect.size.h) + 1).clamp(0, i64::from(size.h));
+    (right > left && bottom > top).then(|| {
+        Rectangle::new(
+            (left as f64, top as f64).into(),
+            ((right - left) as f64, (bottom - top) as f64).into(),
+        )
+    })
+}
+
 /// Ways to evaluation the [`Kind`] of a surface.
 pub enum KindEvaluation {
     /// Static evaluation, which will always return the same [`Kind`]
@@ -401,7 +427,7 @@ impl<R: Renderer + ImportAll> Element for WaylandSurfaceRenderElement<R> {
             })
             .iter()
             .filter_map(|rect| {
-                rect.to_f64()
+                sampling_damage(*rect, self.buffer_dimensions)?
                     // first bring the damage into logical space
                     // Note: We use f64 for this as the damage could
                     // be not dividable by the buffer scale without
@@ -498,5 +524,57 @@ where
                 frame.draw_solid(dst, damage, color * self.alpha)
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod sampling_damage_tests {
+    use super::*;
+
+    #[test]
+    fn changed_texels_touching_a_viewport_edge_keep_their_filter_footprint() {
+        let viewport = Rectangle::new((16.0, 16.0).into(), (16.0, 16.0).into());
+        let outside = Rectangle::new((15, 20).into(), (1, 1).into());
+        assert!(outside.to_f64().intersection(viewport).is_none());
+        let visible = sampling_damage(outside, (64, 48).into())
+            .unwrap()
+            .intersection(viewport)
+            .unwrap();
+        assert_eq!(
+            visible,
+            Rectangle::new((16.0, 19.0).into(), (1.0, 3.0).into())
+        );
+    }
+
+    #[test]
+    fn sampling_damage_bounds_empty_and_extreme_client_rectangles() {
+        let size = (64, 48).into();
+        assert!(sampling_damage(Rectangle::new((20, 20).into(), (0, 1).into()), size).is_none());
+        assert!(
+            sampling_damage(
+                Rectangle::new((i32::MIN, i32::MIN).into(), (i32::MAX, i32::MAX).into()),
+                size
+            )
+            .is_none()
+        );
+        assert!(
+            sampling_damage(
+                Rectangle::new((i32::MAX, i32::MAX).into(), (i32::MAX, i32::MAX).into()),
+                size
+            )
+            .is_none()
+        );
+        assert_eq!(
+            sampling_damage(
+                Rectangle::new((-1, -1).into(), (i32::MAX, i32::MAX).into()),
+                size
+            )
+            .unwrap(),
+            Rectangle::from_size(size.to_f64())
+        );
+        assert_eq!(
+            sampling_damage(Rectangle::new((63, 47).into(), (1, 1).into()), size).unwrap(),
+            Rectangle::new((62.0, 46.0).into(), (2.0, 2.0).into())
+        );
     }
 }

@@ -37,6 +37,12 @@ Local changes are limited to the following library boundaries:
   cannot write to a client buffer after its old frame object was destroyed.
 - Damage tracking retains occluded elements needed by a visible framebuffer
   effect. Offscreen rendering also preserves those backdrop dependencies.
+- Surface damage includes the neighboring texels sampled by linear filtering,
+  before viewport cropping and output scaling. Incremental fractional renders
+  therefore match fresh renders, including raw rectangular surfaces, rotated
+  buffers and rescaled views. Padding is bounded to the source buffer and uses
+  widened arithmetic for client-supplied coordinates; unchanged surfaces still
+  produce no damage.
 
 The compositor controls capability checks and user/client policy. Vendoring this
 API extension does not enable tearing or variable refresh by default and does not
