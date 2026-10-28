@@ -65,13 +65,17 @@ impl Activity {
             // A pause can cancel a workspace copy. Its late failure must not
             // stop a resumed consumer or disable an otherwise working GPU path.
             FailureAction::Discard
-        } else if dma {
-            FailureAction::FallbackToShm
         } else if kind == FailureKind::Unknown && self.retries < MAX_RETRIES {
             // Unknown permits retry. Bound transient capture invalidations so
             // a broken active source cannot keep a worker retrying forever.
             self.retries += 1;
             FailureAction::Retry
+        } else if dma {
+            // Source epochs can invalidate an otherwise healthy GPU copy.
+            // Retry Unknown before disabling DMA-BUF, then give the fallback
+            // transport its own bounded recovery budget.
+            self.retries = 0;
+            FailureAction::FallbackToShm
         } else {
             FailureAction::Stop
         }

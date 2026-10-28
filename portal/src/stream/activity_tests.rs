@@ -37,11 +37,7 @@ fn late_failure_from_before_pause_cannot_kill_a_resumed_consumer() {
         );
         assert_eq!(
             activity.failure_action(resumed, false, dma, FailureKind::Unknown),
-            if dma {
-                FailureAction::FallbackToShm
-            } else {
-                FailureAction::Retry
-            },
+            FailureAction::Retry,
             "a genuine failure of the resumed capture must retain handling"
         );
     }
@@ -59,7 +55,7 @@ fn duplicate_state_notifications_keep_current_failure_ownership() {
     assert_eq!(activity.token(), submitted);
     assert_eq!(
         activity.failure_action(submitted, false, true, FailureKind::Unknown),
-        FailureAction::FallbackToShm
+        FailureAction::Retry
     );
     assert_eq!(
         activity.failure_action(submitted, false, false, FailureKind::Unknown),
@@ -173,4 +169,41 @@ fn explicit_stopped_and_unrecognized_failures_keep_terminal_handling() {
             "an inactive consumer must still observe real source shutdown"
         );
     }
+}
+
+#[test]
+fn transient_gpu_invalidation_preserves_dma_and_success_resets_retry_budget() {
+    let mut activity = Activity::default();
+    activity.set_active(true);
+    let submitted = activity.token();
+    for _ in 0..20 {
+        assert_eq!(
+            activity.failure_action(submitted, false, true, FailureKind::Unknown),
+            FailureAction::Retry,
+            "a single invalidated frame must not disable the GPU transport"
+        );
+        activity.ready();
+    }
+    for _ in 0..MAX_RETRIES {
+        assert_eq!(
+            activity.failure_action(submitted, false, true, FailureKind::Unknown),
+            FailureAction::Retry
+        );
+    }
+    assert_eq!(
+        activity.failure_action(submitted, false, true, FailureKind::Unknown),
+        FailureAction::FallbackToShm,
+        "a repeatedly failing GPU transfer must eventually fall back"
+    );
+    for _ in 0..MAX_RETRIES {
+        assert_eq!(
+            activity.failure_action(submitted, false, false, FailureKind::Unknown),
+            FailureAction::Retry,
+            "SHM recovery must not inherit an exhausted GPU retry budget"
+        );
+    }
+    assert_eq!(
+        activity.failure_action(submitted, false, false, FailureKind::Unknown),
+        FailureAction::Stop
+    );
 }
