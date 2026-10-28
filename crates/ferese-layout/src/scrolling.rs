@@ -1285,7 +1285,10 @@ impl ScrollingLayout {
             // Approaching from the left reveals the left edge; approaching
             // from the right reveals the right edge. Keep an existing view
             // inside an oversized column stable on repeated focus.
-            self.viewport_x.clamp(start, end - viewport_width)
+            // Subtract before adding the position so a full-width column
+            // cannot round the upper bound below `start`.
+            let rightmost_view = start + (width - viewport_width);
+            self.viewport_x.clamp(start, rightmost_view)
         } else if start < self.viewport_x {
             start
         } else if end > self.viewport_x + viewport_width {
@@ -2445,6 +2448,64 @@ mod tests {
                 )
                 .unwrap();
             assert_eq!(layout.viewport_x(), expected);
+        }
+    }
+
+    #[test]
+    fn full_width_reveal_preserves_fractional_column_start() {
+        // This start reproduced a compositor panic while capturing a workspace:
+        // adding and subtracting the viewport width rounded the upper bound below it.
+        let start = 1242.0000000000002;
+        let viewport = 1000.0;
+        for initial in [0.0, start + viewport] {
+            let mut layout = ScrollingLayout {
+                viewport_x: initial,
+                ..ScrollingLayout::default()
+            };
+            layout.reveal_column(&[(start, viewport)], viewport, 0);
+            assert_eq!(layout.viewport_x(), start);
+            layout.reveal_column(&[(start, viewport)], viewport, 0);
+            assert_eq!(
+                layout.viewport_x(),
+                start,
+                "repeated sampling must stay still"
+            );
+        }
+    }
+
+    #[test]
+    fn maximizing_a_fractional_column_is_safe_for_cloned_workspace_layouts() {
+        let bounds = Rect::new(0.0, 0.0, 1000.0, 800.0);
+        let gaps = GapConfig {
+            inner: 10.0,
+            outer: 0.0,
+            smart: false,
+        };
+        let start = 1242.0000000000002;
+        for width in [ColumnWidth::Full, ColumnWidth::Proportion(1.0)] {
+            let mut layout = ScrollingLayout::default();
+            layout.insert(window(1), None).unwrap();
+            layout.insert(window(2), Some(window(1))).unwrap();
+            layout
+                .set_column_width(window(1), ColumnWidth::Fixed(start - gaps.inner))
+                .unwrap();
+            layout.focus_and_reveal(window(1)).unwrap();
+            layout
+                .resolve_geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(1)))
+                .unwrap();
+            layout.set_column_width(window(2), width).unwrap();
+            layout.focus_and_reveal(window(2)).unwrap();
+            // Capture resolves a clone, independently of the displayed layout.
+            let mut capture = layout.clone();
+            let sampled = capture
+                .resolve_geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(2)))
+                .unwrap();
+            let displayed = layout
+                .resolve_geometry_with_constraints(bounds, gaps, &HashMap::new(), Some(window(2)))
+                .unwrap();
+            assert_eq!(sampled.geometry, displayed.geometry);
+            assert_eq!(capture.viewport_x(), start);
+            assert_eq!(sampled.geometry[&window(2)], bounds);
         }
     }
 

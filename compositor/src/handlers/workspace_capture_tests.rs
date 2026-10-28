@@ -86,6 +86,92 @@ fn workspace_capture_samples_hidden_layout_without_switching_or_configuring_clie
 }
 
 #[test]
+fn workspace_capture_survives_maximize_and_fullscreen_with_fractional_columns() {
+    if !crate::startup_tests::private_runtime(
+        "handlers::image_capture::workspace_tests::workspace_capture_survives_maximize_and_fullscreen_with_fractional_columns",
+    ) {
+        return;
+    }
+    let (mut events, mut state, output) = fixture();
+    output.change_current_state(None, None, Some(Scale::Fractional(1.25)), None);
+    state.relayout();
+    let (first, _first_client) = crate::state::test_window(&mut state, &mut events, 0xffff0000);
+    let (second, _second_client) = crate::state::test_window(&mut state, &mut events, 0xff00ff00);
+    let first_id = state.windows.ids()[&first];
+    let second_id = state.windows.ids()[&second];
+    let workspace = state.workspaces.workspace_for_window(second_id).unwrap();
+    let source = WorkspaceSource::new(&state, workspace, false).unwrap();
+    state.image_capture.workspaces.insert(
+        source.key(false),
+        WorkspaceCapture::new(source.clone(), state.capture_epoch),
+    );
+    let ferese_core::WorkspaceLayout::Scrolling(layout) =
+        &mut state.workspaces.workspace_mut(workspace).unwrap().layout
+    else {
+        panic!("fixture must use a scrolling layout");
+    };
+    layout
+        .set_column_width(
+            first_id,
+            ferese_layout::ColumnWidth::Fixed(
+                1242.0000000000002 - crate::config::Config::default().gap_config().unwrap().inner,
+            ),
+        )
+        .unwrap();
+    state.focused_window = Some(second_id);
+    state.workspaces.focus_window(second_id).unwrap();
+    state.relayout();
+    let original_width = state.workspace_preview_rects_for(Some(workspace))[&second_id].width;
+
+    for _ in 0..3 {
+        state.toggle_focused_maximized();
+        let maximized = state.workspace_preview_rects_for(Some(workspace))[&second_id];
+        assert!(maximized.width > original_width);
+        assert!(
+            state
+                .sample_workspace_frame(workspace, &output)
+                .windows
+                .contains_key(&second_id)
+        );
+
+        state.toggle_focused_fullscreen();
+        assert_eq!(
+            state.workspaces.workspace(workspace).unwrap().fullscreen,
+            Some(second_id)
+        );
+        assert_eq!(
+            state.workspace_preview_rects_for(Some(workspace))[&second_id],
+            ferese_layout::Rect::new(0.0, 0.0, 1280.0, 960.0),
+        );
+        assert!(
+            state
+                .sample_workspace_frame(workspace, &output)
+                .windows
+                .contains_key(&second_id)
+        );
+
+        state.toggle_focused_fullscreen();
+        assert_eq!(
+            state.workspace_preview_rects_for(Some(workspace))[&second_id],
+            maximized
+        );
+        state.toggle_focused_maximized();
+        assert_eq!(
+            state.workspace_preview_rects_for(Some(workspace))[&second_id].width,
+            original_width,
+        );
+        assert!(
+            state
+                .sample_workspace_frame(workspace, &output)
+                .windows
+                .contains_key(&second_id)
+        );
+        assert!(source.valid(&state));
+        assert_eq!(state.focused_window, Some(second_id));
+    }
+}
+
+#[test]
 fn workspace_quality_keeps_fractional_native_pixels_and_separates_consumers() {
     if !crate::startup_tests::private_runtime(
         "handlers::image_capture::workspace_tests::workspace_quality_keeps_fractional_native_pixels_and_separates_consumers",
