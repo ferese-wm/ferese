@@ -41,12 +41,18 @@ impl Default for ColumnWidth {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-struct ColumnSizing {
+struct ViewportSizing {
     viewport_width: f64,
+    viewport_height: f64,
     inner_gap: f64,
 }
 
-impl ColumnSizing {
+impl ViewportSizing {
+    #[must_use]
+    fn row_space(self, rows: usize) -> f64 {
+        (self.viewport_height - self.inner_gap * rows.saturating_sub(1) as f64).max(0.0)
+    }
+
     fn resolve(self, width: ColumnWidth) -> f64 {
         match normalized_width(width) {
             ColumnWidth::Proportion(value) => {
@@ -241,7 +247,7 @@ pub struct ScrollingLayout {
     default_display: ColumnDisplay,
     focus_strategy: ViewportFocusStrategy,
     pending_viewport: Option<PendingViewportRequest>,
-    last_column_sizing: Option<ColumnSizing>,
+    last_sizing: Option<ViewportSizing>,
     allocated_widths: HashMap<WindowId, f64>,
     viewport_basis: Option<ViewportTarget>,
 }
@@ -256,7 +262,7 @@ impl Default for ScrollingLayout {
             default_display: ColumnDisplay::default(),
             focus_strategy: ViewportFocusStrategy::Minimal,
             pending_viewport: None,
-            last_column_sizing: None,
+            last_sizing: None,
             allocated_widths: HashMap::new(),
             viewport_basis: None,
         }
@@ -406,7 +412,7 @@ impl ScrollingLayout {
 
     /// Pan without changing focus, keeping the viewport inside the column strip.
     pub fn scroll_viewport(&mut self, delta: f64) -> bool {
-        let Some(sizing) = self.last_column_sizing else {
+        let Some(sizing) = self.last_sizing else {
             return false;
         };
         if !delta.is_finite() || delta == 0.0 {
@@ -580,8 +586,9 @@ impl ScrollingLayout {
             return Ok(false);
         }
         if matches!(edge, Direction::Left | Direction::Right) {
-            let size = self.last_column_sizing.unwrap_or(ColumnSizing {
+            let size = self.last_sizing.unwrap_or(ViewportSizing {
                 viewport_width: bounds.width,
+                viewport_height: bounds.height,
                 inner_gap: 0.0,
             });
             let width = self
@@ -619,8 +626,14 @@ impl ScrollingLayout {
             });
             return Ok(true);
         }
+        let sizing = self.last_sizing.unwrap_or(ViewportSizing {
+            viewport_width: bounds.width,
+            viewport_height: bounds.height,
+            inner_gap: 0.0,
+        });
         let entry = &mut self.columns[column];
-        if entry.display == ColumnDisplay::Tabbed {
+        let row_space = sizing.row_space(entry.windows.len());
+        if entry.display == ColumnDisplay::Tabbed || row_space <= 0.0 {
             return Ok(false);
         }
         let neighbor = match edge {
@@ -632,7 +645,7 @@ impl ScrollingLayout {
             return Ok(false);
         };
         let pair = entry.heights[row] + entry.heights[neighbor];
-        let change = (if edge == Direction::Up { -delta } else { delta }) / bounds.height.max(1.0);
+        let change = (if edge == Direction::Up { -delta } else { delta }) / row_space;
         let minimum = MIN_ROW_HEIGHT.min(pair / 2.0);
         let height = (entry.heights[row] + change).clamp(minimum, pair - minimum);
         let changed = height != entry.heights[row];
@@ -873,7 +886,7 @@ impl ScrollingLayout {
             })
             .collect::<Vec<_>>();
         let viewport_width = self
-            .last_column_sizing
+            .last_sizing
             .expect("geometry resolution records the column sizing before centering")
             .viewport_width;
         self.record_viewport_basis(
@@ -993,7 +1006,7 @@ impl ScrollingLayout {
                     ColumnWidth::Proportion(value) => value,
                     ColumnWidth::Full => 1.0,
                     ColumnWidth::Fixed(width) => {
-                        let Some(sizing) = self.last_column_sizing else {
+                        let Some(sizing) = self.last_sizing else {
                             return Ok(false);
                         };
                         sizing.proportion(self.allocated_column_width(window).unwrap_or(width))
@@ -1050,8 +1063,9 @@ impl ScrollingLayout {
         };
         let viewport_width = (bounds.width - outer * 2.0).max(1.0);
         let viewport_height = (bounds.height - outer * 2.0).max(1.0);
-        let sizing = ColumnSizing {
+        let sizing = ViewportSizing {
             viewport_width,
+            viewport_height,
             inner_gap: inner,
         };
         // Strip coordinates start at the viewport's inset left edge. Inner
@@ -1085,8 +1099,8 @@ impl ScrollingLayout {
             .flat_map(|(column, (_, width))| column.windows.iter().map(move |id| (*id, *width)))
             .collect();
         let viewport_resized =
-            self.last_column_sizing.map(|sizing| sizing.viewport_width) != Some(viewport_width);
-        self.last_column_sizing = Some(sizing);
+            self.last_sizing.map(|sizing| sizing.viewport_width) != Some(viewport_width);
+        self.last_sizing = Some(sizing);
         match self.pending_viewport.take() {
             Some(PendingViewportRequest::Resize {
                 window,
@@ -1213,9 +1227,7 @@ impl ScrollingLayout {
                 continue;
             }
 
-            let available_height = (viewport_height
-                - inner * (column.windows.len().saturating_sub(1) as f64))
-                .max(0.0);
+            let available_height = sizing.row_space(column.windows.len());
             let row_constraints = column
                 .windows
                 .iter()
@@ -1627,6 +1639,104 @@ mod tests {
                 None,
             )
             .unwrap()
+    }
+
+    #[test]
+    fn stacked_pointer_resize_tracks_pixels_after_gaps() {
+        for count in [2, 3, 5] {
+            for (inner, outer) in [(0., 0.), (10., 4.), (32., 32.)] {
+                for smart in [false, true] {
+                    // Offset and reduced height model a panel-adjusted work area.
+                    let bounds = Rect::new(-1200., 44., 1200., 600.);
+                    let gaps = GapConfig {
+                        inner,
+                        outer,
+                        smart,
+                    };
+                    let mut base = stacked_layout(&vec![1. / count as f64; count]);
+                    let before = base
+                        .resolve_geometry_with_constraints(bounds, gaps, &HashMap::new(), None)
+                        .expect("stacked geometry and resize inputs are valid");
+                    for (id, edge) in [(window(1), Direction::Down), (window(2), Direction::Up)] {
+                        for delta in [-30., 25., 60.] {
+                            // Pointer motion always starts from the grab snapshot.
+                            let mut dragged = base.clone();
+                            assert!(
+                                dragged
+                                    .resize_edge(id, edge, delta, bounds)
+                                    .expect("stacked geometry and resize inputs are valid")
+                            );
+                            let after = dragged
+                                .resolve_geometry_with_constraints(
+                                    bounds,
+                                    gaps,
+                                    &HashMap::new(),
+                                    None,
+                                )
+                                .expect("stacked geometry and resize inputs are valid");
+                            let moved = after.geometry[&window(1)].height
+                                - before.geometry[&window(1)].height;
+                            assert!(
+                                (moved - delta).abs() < 1e-6,
+                                "rows={count} gaps={gaps:?} edge={edge:?} delta={delta} moved={moved}"
+                            );
+                            assert!(
+                                (after.geometry[&window(2)].y
+                                    - before.geometry[&window(2)].y
+                                    - delta)
+                                    .abs()
+                                    < 1e-6,
+                                "neighbor boundary must track drag: rows={count} gaps={gaps:?} delta={delta}"
+                            );
+                            assert!(
+                                (after.geometry[&window(2)].height
+                                    - before.geometry[&window(2)].height
+                                    + delta)
+                                    .abs()
+                                    < 1e-6,
+                                "neighbor height must absorb drag: rows={count} gaps={gaps:?} delta={delta}"
+                            );
+                            for row in 3..=count {
+                                let before = before.geometry[&window(row as u64)];
+                                let after = after.geometry[&window(row as u64)];
+                                assert_eq!(
+                                    (after.x, after.width, after.height),
+                                    (before.x, before.width, before.height)
+                                );
+                                assert!(
+                                    (after.y - before.y).abs() < 1e-6,
+                                    "unrelated row {row} moved: rows={count} gaps={gaps:?} delta={delta}"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn stacked_resize_with_no_row_space_keeps_weights() {
+        let mut layout = stacked_layout(&[0.5, 0.5]);
+        let bounds = Rect::new(0., 0., 800., 24.);
+        layout
+            .resolve_geometry_with_constraints(
+                bounds,
+                GapConfig {
+                    inner: 32.,
+                    outer: 32.,
+                    smart: false,
+                },
+                &HashMap::new(),
+                None,
+            )
+            .expect("stacked geometry and resize inputs are valid");
+        assert!(
+            !layout
+                .resize_edge(window(1), Direction::Down, 30., bounds)
+                .expect("stacked geometry and resize inputs are valid")
+        );
+        assert_eq!(layout.columns[0].heights, vec![0.5, 0.5]);
     }
 
     #[test]
