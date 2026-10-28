@@ -38,7 +38,7 @@ const BTN_LEFT: u32 = 0x110;
 #[cfg(test)]
 pub(crate) mod binding_mode_tests;
 #[cfg(test)]
-mod gesture_tests;
+pub(crate) mod gesture_tests;
 #[cfg(test)]
 mod launcher_touch_tests;
 #[cfg(test)]
@@ -62,13 +62,16 @@ impl Ferese {
                 continue;
             };
             let id = self.windows.ids().get(window)?;
-            let presented = self.presented_window_rect(*id)?;
-            let (scale_x, scale_y) = self.visual_scale_for_window(window)?;
+            let output = self
+                .space
+                .output_under(self.seat.get_pointer()?.current_location())
+                .next()?;
+            let input = self.window_input_on_output(*id, output)?;
             let point = local.to_f64() + hint - geometry.loc.to_f64();
 
             return Some(Point::from((
-                presented.x + point.x * scale_x,
-                presented.y + point.y * scale_y,
+                input.bounds.x + point.x * input.scale.0,
+                input.bounds.y + point.y * input.scale.1,
             )));
         }
 
@@ -208,7 +211,7 @@ impl Ferese {
                 self.begin_input_gesture(device, Gesture::Swipe, event.time());
                 let pointer = seat.get_pointer().expect("seat has a pointer");
                 self.finish_workspace_swipe(None);
-                self.finish_focus_swipe(None);
+                self.finish_scroll_gesture(true);
                 self.swipe.begin(
                     event.fingers(),
                     self.swipe_navigation_blocked()
@@ -248,7 +251,7 @@ impl Ferese {
 
                     if self.swipe_navigation_blocked() {
                         self.finish_workspace_swipe(None);
-                        self.finish_focus_swipe(None);
+                        self.finish_scroll_gesture(true);
                     } else if let Some((direction, progress)) = self.swipe.preview()
                         && let Some(action) = self
                             .bindings
@@ -267,7 +270,7 @@ impl Ferese {
                                     .swipe
                                     .unbounded_preview()
                                     .map_or(progress, |(_, value)| value);
-                                self.preview_focus_swipe(focus, direction, raw);
+                                self.preview_scroll_gesture(focus, raw);
                             }
                             _ => {}
                         }
@@ -296,7 +299,7 @@ impl Ferese {
                         std::time::Duration::from_micros(event.time().micros()),
                     );
                     let workspace_handled = self.finish_workspace_swipe(direction);
-                    let focus_handled = self.finish_focus_swipe(direction);
+                    let focus_handled = self.finish_scroll_gesture(cancelled);
                     let handled =
                         workspace_handled || focus_handled || self.swipe.preview_started();
                     if !handled

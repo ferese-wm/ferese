@@ -85,6 +85,7 @@ struct FrameState {
     completed: bool,
     pending: bool,
     limits: Option<layout::Limits>,
+    prepared_layout: Option<(layout::Limits, layout::Node)>,
 }
 
 impl FrameState {
@@ -141,6 +142,7 @@ impl<'a, M: 'a> Widget<M, Theme, cosmic::Renderer> for FrameDriven<'a, M> {
             .collect()
     }
     fn diff(&mut self, tree: &mut widget::Tree) {
+        tree.state.downcast_mut::<FrameState>().prepared_layout = None;
         tree.children
             .truncate(1 + usize::from(self.measurement.is_some()));
         tree.children[0].diff(&mut self.content);
@@ -161,7 +163,13 @@ impl<'a, M: 'a> Widget<M, Theme, cosmic::Renderer> for FrameDriven<'a, M> {
         renderer: &cosmic::Renderer,
         limits: &layout::Limits,
     ) -> layout::Node {
-        tree.state.downcast_mut::<FrameState>().limits = Some(*limits);
+        let state = tree.state.downcast_mut::<FrameState>();
+        state.limits = Some(*limits);
+        if let Some((prepared_limits, node)) = state.prepared_layout.take()
+            && prepared_limits == *limits
+        {
+            return node;
+        }
         if !self.measured {
             if let Some(measurement) = &mut self.measurement {
                 // Measure at the final width once, so spring overshoot never changes wrapping or its target.
@@ -231,12 +239,12 @@ impl<'a, M: 'a> Widget<M, Theme, cosmic::Renderer> for FrameDriven<'a, M> {
                         .downcast_ref::<FrameState>()
                         .limits
                         .expect("laid-out animation");
-                    fresh_layout = Some(
-                        self.content
-                            .as_widget_mut()
-                            .layout(&mut tree.children[0], renderer, &limits)
-                            .move_to(layout.position()),
+                    let node = self.content.as_widget_mut().layout(
+                        &mut tree.children[0],
+                        renderer,
+                        &limits,
                     );
+                    fresh_layout = Some(node.move_to(layout.position()));
                     updated_geometry = true;
                 }
             }
@@ -255,6 +263,19 @@ impl<'a, M: 'a> Widget<M, Theme, cosmic::Renderer> for FrameDriven<'a, M> {
             viewport,
         );
         if updated_geometry {
+            // Child updates can invalidate the layout we just measured. Otherwise
+            // let runtime revalidation reuse it with the same parent constraints.
+            let state = tree.state.downcast_mut::<FrameState>();
+            state.prepared_layout = if shell.is_layout_invalid() {
+                None
+            } else {
+                fresh_layout.map(|node| {
+                    (
+                        state.limits.expect("laid-out animation"),
+                        node.move_to(cosmic::iced::Point::ORIGIN),
+                    )
+                })
+            };
             shell.invalidate_layout();
         }
         if let Event::Window(cosmic::iced::window::Event::RedrawRequested(at)) = event {
@@ -348,9 +369,107 @@ mod tests {
     use crate::motion::PopupMotion;
     use cosmic::iced::advanced::Renderer;
     use cosmic::iced::advanced::renderer::Headless;
+    use cosmic::iced::runtime::UserInterface;
     use cosmic::iced::window::{Event as WindowEvent, RedrawRequest};
-    use std::cell::RefCell;
+    use std::cell::{Cell, RefCell};
+    use std::rc::Rc;
     use std::time::Duration;
+
+    struct CountLayout {
+        calls: Rc<Cell<usize>>,
+        invalidate: bool,
+    }
+
+    impl Widget<(), Theme, cosmic::Renderer> for CountLayout {
+        fn size(&self) -> Size<Length> {
+            Size::new(Length::Shrink, Length::Shrink)
+        }
+
+        fn layout(
+            &mut self,
+            _: &mut widget::Tree,
+            _: &cosmic::Renderer,
+            limits: &layout::Limits,
+        ) -> layout::Node {
+            self.calls.set(self.calls.get() + 1);
+            layout::Node::new(limits.resolve(Length::Shrink, Length::Shrink, Size::new(40., 40.)))
+        }
+
+        fn update(
+            &mut self,
+            _: &mut widget::Tree,
+            _: &Event,
+            _: Layout<'_>,
+            _: mouse::Cursor,
+            _: &cosmic::Renderer,
+            _: &mut dyn Clipboard,
+            shell: &mut Shell<'_, ()>,
+            _: &Rectangle,
+        ) {
+            if self.invalidate {
+                shell.invalidate_layout();
+            }
+        }
+
+        fn draw(
+            &self,
+            _: &widget::Tree,
+            _: &mut cosmic::Renderer,
+            _: &Theme,
+            _: &renderer::Style,
+            _: Layout<'_>,
+            _: mouse::Cursor,
+            _: &Rectangle,
+        ) {
+        }
+    }
+
+    #[test]
+    fn geometry_redraw_reuses_its_layout_unless_the_child_invalidates_it() {
+        let mut renderer = cosmic::iced::futures::executor::block_on(cosmic::Renderer::new(
+            cosmic::iced::Font::default(),
+            cosmic::iced::Pixels(14.0),
+            Some("tiny-skia"),
+        ))
+        .unwrap();
+        for invalidate in [false, true] {
+            let calls = Rc::new(Cell::new(0));
+            let probe = calls.clone();
+            let element = geometry_driven(
+                None,
+                move |_| {
+                    Element::new(CountLayout {
+                        calls: probe.clone(),
+                        invalidate,
+                    })
+                },
+                |_| true,
+                |_| {},
+                |_| None,
+                None,
+            );
+            let mut ui = UserInterface::build(
+                element,
+                Size::new(200., 200.),
+                Default::default(),
+                &mut renderer,
+            );
+            for _ in 0..3 {
+                calls.set(0);
+                ui.update(
+                    &[Event::Window(WindowEvent::RedrawRequested(Instant::now()))],
+                    mouse::Cursor::Unavailable,
+                    &mut renderer,
+                    &mut cosmic::iced::advanced::clipboard::Null,
+                    &mut Vec::new(),
+                );
+                assert_eq!(calls.get(), if invalidate { 2 } else { 1 });
+            }
+            calls.set(0);
+            let _ui = ui.relayout(Size::new(20., 20.), &mut renderer);
+            assert_eq!(calls.get(), 1, "new surface bounds need a fresh layout");
+        }
+    }
 
     #[test]
     fn callbacks_sample_every_refresh_without_timers_and_stop_when_settled() {

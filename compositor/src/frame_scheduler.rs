@@ -258,6 +258,14 @@ impl FrameScheduler {
         }
     }
 
+    /// Readiness is observed asynchronously, so this includes dispatch latency
+    /// as well as GPU work. It is a conservative bound, not a GPU timer query.
+    pub fn render_ready(&mut self, plan: FramePlan, cost: Duration) {
+        if self.submitted == Some(plan) {
+            self.render_estimate = self.render_estimate.max(cost);
+        }
+    }
+
     pub fn presented(&mut self, timestamp: Duration) -> Option<FramePlan> {
         // Regressive or implausibly early events must not shift the phase backward.
         if self.last_presented.is_some_and(|last| timestamp < last) {
@@ -410,6 +418,37 @@ mod tests {
         assert_eq!(scheduler.plan(ms(109)), None);
         scheduler.presented(ms(110));
         assert_eq!(scheduler.plan(ms(110)).unwrap().present_at, ms(120));
+    }
+
+    #[test]
+    fn gpu_readiness_expands_the_next_budget_without_retiming_pending_work() {
+        let mut scheduler = FrameScheduler::new(ms(10));
+        scheduler.presented(ms(100));
+        scheduler.request(ms(101));
+        let plan = scheduler.plan(ms(101)).unwrap();
+        scheduler.begin(plan.render_at);
+        scheduler.rendered(plan, ms(109), ms(2), true);
+        scheduler.render_ready(plan, ms(6));
+        assert_eq!(scheduler.budget(ms(109)), ms(7));
+        scheduler.presented(ms(110));
+        scheduler.request(ms(110));
+        let next = scheduler.plan(ms(110)).unwrap();
+        assert_eq!((next.render_at, next.present_at), (ms(113), ms(120)));
+        scheduler.render_ready(plan, ms(50));
+        assert_eq!(scheduler.plan(ms(111)), Some(next));
+        assert_eq!(scheduler.budget(ms(111)), ms(7));
+        scheduler.begin(next.render_at);
+        scheduler.rendered(next, ms(115), ms(2), true);
+        let budget = scheduler.budget(ms(115));
+        scheduler.render_ready(plan, ms(50));
+        assert_eq!(
+            scheduler.budget(ms(115)),
+            budget,
+            "a stale fence cannot train a later frame"
+        );
+        scheduler.reset(ms(5));
+        scheduler.render_ready(next, ms(50));
+        assert_eq!(scheduler.render_estimate, MIN_RENDER);
     }
 
     #[test]

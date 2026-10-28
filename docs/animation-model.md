@@ -88,7 +88,9 @@ That estimate helps select a destination before the spring takes over. For a pos
 projected = p − v / (1000 × ln(r))
 ```
 
-The compositor’s [momentum swipe release](../compositor/src/gestures.rs) uses `r = 0.997` and commits when projected normalized progress reaches 0.5. This lets release velocity influence the decision instead of deciding from distance alone. Cancellation does not commit, and a bounded preview suppresses velocity directed beyond its endpoint. Once projection has selected the target, the spring performs the release motion.
+For workspace navigation, the compositor’s [momentum swipe release](../compositor/src/gestures.rs) uses `r = 0.997` and commits when projected normalized progress reaches 0.5. This lets release velocity influence the decision instead of deciding from distance alone. Cancellation does not commit, and a bounded preview suppresses velocity directed beyond its endpoint. Once projection has selected the target, the spring performs the release motion.
+
+Horizontal scrolling follows the fingers across the whole column strip rather than stopping at the next window. Its release projects the displayed position and velocity with the same deceleration factor, then snaps according to the workspace's focus policy. Focus changes only on release, and cancelling returns to the earlier target. The gesture retains resolved column identities and widths so a layout change cannot redirect it to another window. Direct panning remains independent of client resize waits; a release whose snap point depends on an uncommitted width still waits for that client.
 
 At a blocked workspace edge, the visible displacement is resisted, so the velocity passed to the spring must account for that resistance as well. For an extent `L`, displacement `d`, and resistance constant `a = 0.55`, Ferese uses:
 
@@ -98,7 +100,7 @@ displayed = sign(d) × L × (1 − 1/q)
 derivative = a / q²
 ```
 
-The [workspace gesture state](../compositor/src/state.rs) uses normalized extent 1. As the fingers push farther beyond the boundary, this function allows progressively less visible movement. Its derivative converts finger velocity to the velocity of that resisted presentation before the spring returns it to the boundary. Without that conversion, the release would start at a speed that did not match the movement visible just before it.
+The [workspace gesture state](../compositor/src/state.rs) uses normalized extent 1. As the fingers push farther beyond the boundary, this function allows progressively less visible movement. Its derivative converts finger velocity to the velocity of that resisted presentation before the spring returns it to the boundary. Horizontal panning uses the same function with a 64-pixel extent and resistance 1, which keeps the derivative continuous where the strip reaches its edge. Both paths therefore transfer the velocity visible just before release into the spring.
 
 ## Moving into overview and between its workspaces
 

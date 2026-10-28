@@ -1,9 +1,9 @@
-use super::{AnimatedValue, Duration, Ferese, FocusSwipe, SpringConfig};
+use super::{AnimatedValue, Duration, Ferese, ScrollGesture, SpringConfig};
 
 #[derive(Clone, PartialEq)]
 enum ViewportOwner {
     Spring,
-    Gesture(Box<FocusSwipe>),
+    Gesture(Box<ScrollGesture>),
 }
 
 #[derive(Clone, PartialEq)]
@@ -51,7 +51,7 @@ impl ViewportPresentation {
         changed
     }
 
-    pub(super) fn gesture(&self) -> Option<&FocusSwipe> {
+    pub(super) fn gesture(&self) -> Option<&ScrollGesture> {
         match &self.mode {
             ViewportMode::Running(ViewportOwner::Gesture(swipe))
             | ViewportMode::Held(ViewportOwner::Gesture(swipe))
@@ -61,6 +61,9 @@ impl ViewportPresentation {
     }
 
     pub(super) fn update_gesture(&mut self, progress: f64) {
+        if !progress.is_finite() {
+            return;
+        }
         match &mut self.mode {
             ViewportMode::Running(ViewportOwner::Gesture(swipe))
             | ViewportMode::Held(ViewportOwner::Gesture(swipe))
@@ -69,7 +72,7 @@ impl ViewportPresentation {
         }
     }
 
-    pub(super) fn begin_gesture(&mut self, swipe: FocusSwipe) {
+    pub(super) fn begin_gesture(&mut self, swipe: ScrollGesture) {
         debug_assert!(self.gesture().is_none());
         let owner = ViewportOwner::Gesture(Box::new(swipe));
         self.mode = if self.is_held() {
@@ -79,7 +82,7 @@ impl ViewportPresentation {
         };
     }
 
-    pub(super) fn end_gesture(&mut self, release_velocity: Option<f64>) -> Option<FocusSwipe> {
+    pub(super) fn end_gesture(&mut self, release_velocity: Option<f64>) -> Option<ScrollGesture> {
         self.gesture()?;
         let mode = std::mem::replace(&mut self.mode, ViewportMode::Running(ViewportOwner::Spring));
         let (swipe, held) = match mode {
@@ -214,7 +217,7 @@ impl ViewportPresentation {
 }
 
 impl Ferese {
-    pub(super) fn focus_swipe(&self) -> Option<&FocusSwipe> {
+    pub(super) fn scroll_gesture(&self) -> Option<&ScrollGesture> {
         self.viewports
             .values()
             .find_map(ViewportPresentation::gesture)
@@ -223,7 +226,6 @@ impl Ferese {
 
 #[cfg(test)]
 mod tests {
-    use crate::state::SwipeDirection;
     #[cfg(test)]
     use ferese_animation::WindowGeometry;
     #[cfg(test)]
@@ -247,17 +249,15 @@ mod tests {
         viewport
     }
 
-    fn swipe(viewport: &ViewportPresentation) -> FocusSwipe {
-        FocusSwipe {
+    fn swipe(viewport: &ViewportPresentation) -> ScrollGesture {
+        ScrollGesture {
             workspace: WorkspaceId(1),
+            output: crate::state::OutputId(1),
             from: WindowId(1),
-            to: WindowId(2),
             direction: Direction::Right,
-            gesture_direction: SwipeDirection::Left,
             start: viewport.motion.current,
-            destination: 700.0,
             progress: 0.0,
-            layout: None,
+            geometry: super::super::tests::scroll_geometry(5),
             dependencies: None,
         }
     }
@@ -288,7 +288,7 @@ mod tests {
         viewport.update_gesture(0.5);
         // No frame is necessary between the last input and release.
         let position = viewport.gesture().unwrap().position();
-        let velocity = viewport.gesture().unwrap().release_velocity(0.4, 99.0);
+        let velocity = viewport.gesture().unwrap().release_velocity(0.4);
         viewport.end_gesture(Some(velocity)).unwrap();
         viewport.retarget(700.0, true);
         assert_eq!(viewport.motion.current, position);
@@ -307,12 +307,11 @@ mod tests {
     fn edge_gesture_keeps_rubber_band_and_release_derivative() {
         let mut viewport = moving();
         let mut gesture = swipe(&viewport);
-        gesture.to = gesture.from;
-        gesture.destination = gesture.start;
+        gesture.geometry = super::super::tests::scroll_geometry(1);
         gesture.progress = 2.0;
-        let (position, derivative) = ferese_animation::gesture::rubber_band(2.0, 1.0, 0.55);
-        let expected = gesture.start + 64.0 * position;
-        assert_eq!(gesture.release_velocity(99.0, 0.4), 64.0 * 0.4 * derivative);
+        let (position, derivative) = ferese_animation::gesture::rubber_band(1000.0, 64.0, 1.0);
+        let expected = gesture.start + position;
+        assert_eq!(gesture.release_velocity(0.4), 500.0 * 0.4 * derivative);
         viewport.begin_gesture(gesture);
         viewport.advance(TICK, SpringConfig::default(), true, false);
         assert_eq!(viewport.motion.current, expected);

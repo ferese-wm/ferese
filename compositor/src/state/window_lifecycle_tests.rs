@@ -36,6 +36,81 @@ pub(super) fn fixture() -> (
     (events, state, output)
 }
 
+#[test]
+fn pointer_picking_tracks_retired_predictions_without_using_queued_geometry() {
+    if !crate::startup_tests::private_runtime(
+        "state::window_lifecycle_tests::pointer_picking_tracks_retired_predictions_without_using_queued_geometry",
+    ) {
+        return;
+    }
+    let (mut events, mut state, output) = fixture();
+    let (window, _wire) = window(&mut state, &mut events, 0xff112233);
+    let id = state.windows.ids()[&window];
+    let mut geometry = WindowGeometry::new(
+        Rect::new(100., 100., 64., 48.),
+        Some(ClientSize {
+            width: 64,
+            height: 48,
+        }),
+    );
+    geometry.visual.set_target(Rect::new(650., 100., 64., 48.));
+    geometry.advance(Duration::from_millis(16), state.spring_config, true);
+    state.presentation_dependencies = Default::default();
+    let record = state.windows.record_mut(id).unwrap();
+    record.geometry = Some(geometry);
+    record.resize = None;
+    record.world_x = None;
+    record.coupled_width = None;
+    record.opening = None;
+    state.space.map_element(
+        window.clone(),
+        (geometry.visual.current.x.round() as i32, 100),
+        true,
+    );
+    state.animations_enabled = true;
+    let frame = state.sample_frame(&output, Duration::from_millis(8));
+    let drawn = frame.windows[&id].presentation.bounds.current;
+    assert!(drawn.x > geometry.visual.current.x + 30.);
+    let point = (drawn.x + drawn.width - 2., drawn.y + 10.).into();
+    assert!(state.window_surface_under(point).is_none());
+    state
+        .display_presentation
+        .queued(&output, &Default::default(), frame.input_windows(&output));
+    assert!(
+        state.window_surface_under(point).is_none(),
+        "submission is not presentation"
+    );
+    state.display_presentation.presented(&output);
+    let surface = window.toplevel().unwrap().wl_surface().clone();
+    assert_eq!(
+        state
+            .window_surface_under(point)
+            .map(|(surface, _)| surface),
+        Some(surface.clone())
+    );
+    assert_eq!(state.window_under_visual(point), Some(window.clone()));
+    let mapped = state
+        .inverse_presented_window_point(id, point.x, point.y)
+        .unwrap();
+    assert!((mapped.0 - 62.).abs() < 1.);
+    let hint = state
+        .pointer_hint_position(&surface, mapped.into())
+        .unwrap();
+    assert!((hint.x - point.x).abs() < 1e-10);
+    assert!((hint.y - point.y).abs() < 1e-10);
+    assert_eq!(mapped.1, 10.);
+
+    let next = state.sample_frame(&output, Duration::from_millis(32));
+    state
+        .display_presentation
+        .queued(&output, &Default::default(), next.input_windows(&output));
+    assert!(state.window_surface_under(point).is_some());
+    state.display_presentation.presented(&output);
+    assert!(state.window_surface_under(point).is_none());
+    state.display_presentation.remove_output(&output);
+    assert!(!state.display_presentation.has_presented(&output));
+}
+
 fn set_title(
     events: &mut smithay::reexports::calloop::EventLoop<'static, Ferese>,
     state: &mut Ferese,

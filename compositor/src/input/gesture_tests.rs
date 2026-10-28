@@ -13,7 +13,7 @@ use std::io::Read;
 use std::os::unix::net::UnixStream;
 
 #[derive(Debug)]
-struct GestureInput;
+pub(crate) struct GestureInput;
 impl InputBackend for GestureInput {
     type Device = WinitVirtualDevice;
     type KeyboardKeyEvent = UnusedEvent;
@@ -43,10 +43,38 @@ impl InputBackend for GestureInput {
 }
 
 #[derive(Clone, Debug)]
-struct Sample;
+pub(crate) struct Sample {
+    time: u32,
+    dx: f64,
+    dy: f64,
+    fingers: u32,
+    cancelled: bool,
+}
+
+impl Sample {
+    fn client() -> Self {
+        Self {
+            time: 10,
+            dx: 2.,
+            dy: -3.,
+            fingers: 2,
+            cancelled: false,
+        }
+    }
+
+    pub(crate) fn scroll(time: u32, dx: f64, cancelled: bool) -> Self {
+        Self {
+            time,
+            dx,
+            dy: 0.,
+            fingers: 3,
+            cancelled,
+        }
+    }
+}
 impl Event<GestureInput> for Sample {
     fn time(&self) -> InputTime {
-        InputTime::from_millis(10)
+        InputTime::from_millis(self.time)
     }
     fn device(&self) -> WinitVirtualDevice {
         WinitVirtualDevice
@@ -54,12 +82,12 @@ impl Event<GestureInput> for Sample {
 }
 impl GestureBeginEvent<GestureInput> for Sample {
     fn fingers(&self) -> u32 {
-        2
+        self.fingers
     }
 }
 impl GestureEndEvent<GestureInput> for Sample {
     fn cancelled(&self) -> bool {
-        false
+        self.cancelled
     }
 }
 impl SwipeBegin<GestureInput> for Sample {}
@@ -70,18 +98,18 @@ impl HoldBegin<GestureInput> for Sample {}
 impl HoldEnd<GestureInput> for Sample {}
 impl SwipeUpdate<GestureInput> for Sample {
     fn delta_x(&self) -> f64 {
-        2.0
+        self.dx
     }
     fn delta_y(&self) -> f64 {
-        -3.0
+        self.dy
     }
 }
 impl PinchUpdate<GestureInput> for Sample {
     fn delta_x(&self) -> f64 {
-        2.0
+        self.dx
     }
     fn delta_y(&self) -> f64 {
-        -3.0
+        self.dy
     }
     fn scale(&self) -> f64 {
         1.5
@@ -150,7 +178,7 @@ fn bind(wire: &mut UnixStream, globals: &[Message], interface: &str, version: u3
     request(wire, 7, 0, &args, None);
 }
 
-pub(in crate::input) fn fixture() -> (Ferese, calloop::EventLoop<'static, Ferese>, UnixStream) {
+pub(crate) fn fixture() -> (Ferese, calloop::EventLoop<'static, Ferese>, UnixStream) {
     let (mut state, mut events, _) = super::layer_focus_tests::fixture();
     let (window, mut wire) = crate::state::test_window(&mut state, &mut events, 0xff112233);
     request(&mut wire, 1, 1, &[7], None);
@@ -190,14 +218,30 @@ fn clients_receive_unbound_swipes_pinches_and_holds() {
     }
     let (mut state, _events, mut wire) = fixture();
     for event in [
-        InputEvent::GestureSwipeBegin { event: Sample },
-        InputEvent::GestureSwipeUpdate { event: Sample },
-        InputEvent::GestureSwipeEnd { event: Sample },
-        InputEvent::GesturePinchBegin { event: Sample },
-        InputEvent::GesturePinchUpdate { event: Sample },
-        InputEvent::GesturePinchEnd { event: Sample },
-        InputEvent::GestureHoldBegin { event: Sample },
-        InputEvent::GestureHoldEnd { event: Sample },
+        InputEvent::GestureSwipeBegin {
+            event: Sample::client(),
+        },
+        InputEvent::GestureSwipeUpdate {
+            event: Sample::client(),
+        },
+        InputEvent::GestureSwipeEnd {
+            event: Sample::client(),
+        },
+        InputEvent::GesturePinchBegin {
+            event: Sample::client(),
+        },
+        InputEvent::GesturePinchUpdate {
+            event: Sample::client(),
+        },
+        InputEvent::GesturePinchEnd {
+            event: Sample::client(),
+        },
+        InputEvent::GestureHoldBegin {
+            event: Sample::client(),
+        },
+        InputEvent::GestureHoldEnd {
+            event: Sample::client(),
+        },
     ] {
         state.process_input_event::<GestureInput>(event);
     }
@@ -237,7 +281,9 @@ fn pointer_leave_cancels_a_gesture_and_suppresses_its_late_events() {
         return;
     }
     let (mut state, _events, mut wire) = fixture();
-    state.process_input_event::<GestureInput>(InputEvent::GesturePinchBegin { event: Sample });
+    state.process_input_event::<GestureInput>(InputEvent::GesturePinchBegin {
+        event: Sample::client(),
+    });
     let pointer = state.seat.get_pointer().unwrap();
     pointer.motion(
         &mut state,
@@ -248,8 +294,12 @@ fn pointer_leave_cancels_a_gesture_and_suppresses_its_late_events() {
             time: InputTime::from_millis(11),
         },
     );
-    state.process_input_event::<GestureInput>(InputEvent::GesturePinchUpdate { event: Sample });
-    state.process_input_event::<GestureInput>(InputEvent::GesturePinchEnd { event: Sample });
+    state.process_input_event::<GestureInput>(InputEvent::GesturePinchUpdate {
+        event: Sample::client(),
+    });
+    state.process_input_event::<GestureInput>(InputEvent::GesturePinchEnd {
+        event: Sample::client(),
+    });
     state.display_handle.flush_clients().unwrap();
     let gestures: Vec<_> = messages(&mut wire)
         .into_iter()

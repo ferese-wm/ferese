@@ -33,7 +33,7 @@ impl Ferese {
         self.cancel_focus_cycle();
         self.swipe = Default::default();
         self.finish_workspace_swipe(None);
-        self.finish_focus_swipe(None);
+        self.finish_scroll_gesture(true);
         self.input_capture.disable_all();
         for kind in [
             super::Gesture::Swipe,

@@ -324,21 +324,23 @@ fn viewport_dependencies(
     owners.extend(inputs.iter().map(|input| input.commit));
     owners.sort_by_key(|owner| owner.window.0);
     owners.dedup();
-    let evaluate = |only: Option<ClientCommit>,
-                    exclude: Option<ClientCommit>,
-                    retained: Option<&HashSet<WindowId>>| {
+    let mut widths = Vec::new();
+    let mut evaluate = |only: Option<ClientCommit>,
+                        exclude: Option<ClientCommit>,
+                        retained: Option<&HashSet<WindowId>>| {
         let mut start = None;
         for step in &previous.steps {
-            let widths = step
-                .inputs
-                .iter()
-                .filter(|input| {
-                    only.is_none_or(|only| input.commit == only)
-                        && exclude != Some(input.commit)
-                        && retained.is_none_or(|owners| owners.contains(&input.commit.window))
-                })
-                .map(|input| (input.commit.window, input.width.0, input.width.1))
-                .collect::<Vec<_>>();
+            widths.clear();
+            widths.extend(
+                step.inputs
+                    .iter()
+                    .filter(|input| {
+                        only.is_none_or(|only| input.commit == only)
+                            && exclude != Some(input.commit)
+                            && retained.is_none_or(|owners| owners.contains(&input.commit.window))
+                    })
+                    .map(|input| (input.commit.window, input.width.0, input.width.1)),
+            );
             start = Some(step.target.with_held_widths(&widths, start));
         }
         start.unwrap_or(layout.viewport_x())
@@ -539,15 +541,18 @@ impl Ferese {
             .iter()
             .filter(|workspace| selected.is_none_or(|selected| selected == workspace.id))
         {
-            let layout = self
-                .focus_swipe()
-                .filter(|swipe| swipe.workspace == workspace.id)
-                .and_then(|swipe| swipe.layout.as_ref())
-                .or(match &workspace.layout {
-                    WorkspaceLayout::Scrolling(layout) => Some(layout),
-                    _ => None,
-                });
-            let Some(layout) = layout else { continue };
+            // Finger movement is an absolute viewport translation. Reflow waits
+            // still protect the windows, while width-dependent snapping waits
+            // are rebuilt after release from the selected destination.
+            if self
+                .scroll_gesture()
+                .is_some_and(|gesture| gesture.workspace == workspace.id)
+            {
+                continue;
+            }
+            let WorkspaceLayout::Scrolling(layout) = &workspace.layout else {
+                continue;
+            };
             let waits = viewport_dependencies(
                 layout,
                 &resizing

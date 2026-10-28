@@ -4,7 +4,8 @@ mod scrolling;
 
 pub use layout_tree::*;
 pub use scrolling::{
-    Column, ColumnDisplay, ColumnWidth, ScrollingLayout, ViewportFocusStrategy, ViewportTarget,
+    Column, ColumnDisplay, ColumnWidth, ScrollGeometry, ScrollingLayout, ViewportFocusStrategy,
+    ViewportTarget,
 };
 
 /// The destination of an interactive tiled-window drop.

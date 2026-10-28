@@ -324,7 +324,7 @@ fn visible_fifo_waits_for_its_callback_owner_and_output_loss_allows_progress() {
             presentation_state: RenderElementPresentationState::ZeroCopy,
         },
     );
-    state.display_presentation.queued(&output, &scene);
+    state.display_presentation.queued(&output, &scene, []);
     state.display_presentation.presented(&output);
     request(&mut wire, 11, 0, &[], None);
     damage_commit(&mut wire);
@@ -551,7 +551,7 @@ fn capture_releases_only_its_visible_fifo_client_while_host_redraw_is_withheld()
             },
         );
     }
-    state.display_presentation.queued(&output, &scene);
+    state.display_presentation.queued(&output, &scene, []);
     state.display_presentation.presented(&output);
     request(&mut captured_wire, 11, 0, &[], None);
     damage_commit(&mut captured_wire);

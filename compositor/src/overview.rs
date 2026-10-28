@@ -828,6 +828,9 @@ impl Ferese {
         x: f64,
         y: f64,
     ) -> Option<(f64, f64)> {
+        if let Some(output) = self.space.output_under((x, y)).next() {
+            return Some(self.window_input_on_output(id, output)?.inverse(x, y));
+        }
         let geometry = self.windows.geometry(&id)?;
         if !self.overview.is_presenting() && self.windows.record(id)?.opening.is_none() {
             let presented = self.presented_window_rect(id)?;

@@ -82,7 +82,7 @@ impl Ferese {
                         self.output_workspaces.active_workspace(output) == Some(workspace)
                     })
                 && self
-                    .focus_swipe()
+                    .scroll_gesture()
                     .is_none_or(|swipe| swipe.workspace != workspace);
             let others = self
                 .workspaces
@@ -134,7 +134,7 @@ impl Ferese {
     }
 
     fn animations_need_tick(&self) -> bool {
-        if self.focus_swipe().is_some()
+        if self.scroll_gesture().is_some()
             || self.presentation_dependencies.needs_tick()
             || !self.workspace_slides.is_empty()
             || !self.render.closing.is_empty()
@@ -218,8 +218,8 @@ impl Ferese {
         }
         let delta = delta.mul_f64(self.animation_speed);
         if let Some(workspace) = self
-            .focus_swipe()
-            .filter(|swipe| !self.focus_swipe_is_current(swipe))
+            .scroll_gesture()
+            .filter(|swipe| !self.scroll_gesture_is_current(swipe))
             .map(|swipe| swipe.workspace)
         {
             let swipe = self
@@ -492,65 +492,56 @@ impl Ferese {
             geometry.presentation_changed = false;
             let zooming = geometry.is_zooming();
 
-            let coupled_target = record.coupled_width.as_ref().map(|(_, width)| width.target);
-            if coupled_target.is_some() {
-                geometry.visual.target.width = geometry.visual.current.width;
-                geometry.visual.velocity.width = 0.0;
-            }
-            if !held {
-                active_animation |=
-                    geometry.advance(delta, self.spring_config, self.animations_enabled);
-            }
-
-            if zooming != geometry.is_zooming() {
-                self.stacking_cache.invalidate();
-            }
-
-            if let Some(target) = coupled_target {
-                geometry.visual.target.width = target;
-            }
-
-            if let Some((workspace, world_x)) = record.world_x.as_mut()
-                && let Some(viewport) = self.viewports.get(workspace)
-            {
-                if zooming {
-                    sync_scrolling_coordinates(geometry, world_x, viewport.motion(), true);
-                } else if !held && self.animations_enabled {
-                    active_animation |= world_x.advance(delta, self.spring_config);
-                } else if !held {
-                    world_x.snap();
-                }
-
-                if !zooming {
-                    let mut presented_world = *world_x;
-                    if held {
-                        presented_world.velocity = 0.0;
+            let viewport = record.world_x.as_ref().and_then(|(workspace, _)| {
+                self.viewports.get(workspace).map(|viewport| {
+                    if zooming {
+                        *viewport.motion()
+                    } else {
+                        viewport.presented_motion()
                     }
-                    let presented_viewport = viewport.presented_motion();
-                    sync_scrolling_coordinates(
-                        geometry,
-                        &mut presented_world,
-                        &presented_viewport,
-                        false,
-                    );
-                }
-            }
-
-            if let Some((_, width)) = record.coupled_width.as_mut()
-                && !held
-            {
-                let width_active = if self.animations_enabled {
-                    width.advance(delta, self.viewport_spring_config)
-                } else {
-                    width.snap();
-                    false
-                };
-                active_animation |= width_active;
-                geometry.visual.current.width = width.current;
-                geometry.visual.velocity.width = width.velocity;
-                if !width_active {
+                })
+            });
+            if !held {
+                active_animation |= advance_window_motion(
+                    geometry,
+                    record
+                        .world_x
+                        .as_mut()
+                        .zip(viewport.as_ref())
+                        .map(|((_, world), viewport)| (world, viewport)),
+                    record.coupled_width.as_mut().map(|(_, width)| width),
+                    delta,
+                    self.spring_config,
+                    self.viewport_spring_config,
+                    self.animations_enabled,
+                );
+                if record
+                    .coupled_width
+                    .as_ref()
+                    .is_some_and(|(_, width)| !width.is_animating())
+                {
                     record.coupled_width = None;
                 }
+            } else {
+                if let Some((_, width)) = record.coupled_width.as_ref() {
+                    geometry.visual.velocity.width = 0.0;
+                    geometry.visual.target.width = width.target;
+                }
+                if let Some((_, world)) = &mut record.world_x
+                    && let Some(viewport) = viewport
+                {
+                    let mut presented = *world;
+                    if !zooming {
+                        presented.velocity = 0.0;
+                    }
+                    sync_scrolling_coordinates(geometry, &mut presented, &viewport, zooming);
+                    if zooming {
+                        *world = presented;
+                    }
+                }
+            }
+            if zooming != geometry.is_zooming() {
+                self.stacking_cache.invalidate();
             }
 
             if let Some(size) = geometry.client.expire_wait(now) {
@@ -703,6 +694,51 @@ impl Ferese {
         self.workspace_slide_offsets.clear();
         active
     }
+}
+
+// Mutates only the supplied motion values. Prediction uses copies of these
+// same values; client configures, resize barriers and mapping stay with the caller.
+pub(super) fn advance_window_motion(
+    geometry: &mut WindowGeometry,
+    world: Option<(&mut AnimatedValue, &AnimatedValue)>,
+    width: Option<&mut AnimatedValue>,
+    delta: Duration,
+    spring: SpringConfig,
+    viewport_spring: SpringConfig,
+    animations: bool,
+) -> bool {
+    let zooming = geometry.is_zooming();
+    let width_target = width
+        .as_ref()
+        .map_or(geometry.visual.target.width, |width| width.target);
+    if width.is_some() {
+        geometry.visual.target.width = geometry.visual.current.width;
+        geometry.visual.velocity.width = 0.0;
+    }
+    let mut active = geometry.advance(delta, spring, animations);
+    geometry.visual.target.width = width_target;
+    if let Some((world, viewport)) = world {
+        if zooming {
+            sync_scrolling_coordinates(geometry, world, viewport, true);
+        } else {
+            if animations {
+                active |= world.advance(delta, spring);
+            } else {
+                world.snap();
+            }
+            sync_scrolling_coordinates(geometry, world, viewport, false);
+        }
+    }
+    if let Some(width) = width {
+        if animations {
+            active |= width.advance(delta, viewport_spring);
+        } else {
+            width.snap();
+        }
+        geometry.visual.current.width = width.current;
+        geometry.visual.velocity.width = width.velocity;
+    }
+    active
 }
 
 // Inspect current targets, not the previous frame's activity. Target changes

@@ -94,6 +94,14 @@ input capture takes precedence over local touchpad gesture delivery.
 Adjust recognition distance in **Settings → Keyboard & mouse**, or with
 `swipe-threshold 80` under `input.touchpad` (integer 16–1000 logical pixels).
 
+Horizontal focus swipes pan continuously across the scrolling strip, so one
+gesture can pass several columns and reverse before the fingers lift. Focus
+stays on the original window during the drag, then follows the destination
+selected by momentum and the workspace's Minimal, Center or Paged policy.
+The threshold also controls pan sensitivity: four times that distance moves
+one viewport width. Reduced motion keeps direct finger tracking and snaps to
+the release destination without a spring animation.
+
 ## Mouse bindings
 
 `Super+MouseLeft` drags a window and `Super+MouseRight` resizes it. Both work with

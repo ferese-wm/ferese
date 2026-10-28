@@ -19,6 +19,24 @@ pub(crate) struct WindowFrame {
     pub presentation: crate::presentation::WindowPresentation,
 }
 
+impl FrameScene {
+    pub(crate) fn input_windows<'a>(
+        &'a self,
+        output: &'a Output,
+    ) -> impl Iterator<Item = (WindowId, crate::display_presentation::WindowInput)> + 'a {
+        self.windows.iter().map(move |(&id, window)| {
+            (
+                id,
+                crate::display_presentation::WindowInput::new(
+                    window.presentation,
+                    window.geometry.client.committed_size,
+                    output,
+                ),
+            )
+        })
+    }
+}
+
 impl Ferese {
     pub(crate) fn current_window_presentation(
         &self,
@@ -556,36 +574,27 @@ fn predict_geometry(
     reflow_held: bool,
 ) -> WindowGeometry {
     let mut predicted = original;
-    let zooming = predicted.is_zooming();
-    if width.is_some() {
-        predicted.visual.target.width = predicted.visual.current.width;
-        predicted.visual.velocity.width = 0.0;
-    }
-
-    if !reflow_held {
-        predicted.advance(delta, spring, true);
-    } else {
+    let mut world = world;
+    let mut width = width;
+    if reflow_held {
         predicted.visual.velocity = Default::default();
-    }
-    predicted.visual.target.width = original.visual.target.width;
-    if let Some((mut world, viewport)) = world
-        && !zooming
-    {
-        if !reflow_held {
-            world.advance(delta, spring);
-        } else {
+        if !predicted.is_zooming()
+            && let Some((world, viewport)) = &mut world
+        {
             world.velocity = 0.0;
+            super::animation::sync_scrolling_coordinates(&mut predicted, world, viewport, false);
         }
-
-        super::animation::sync_scrolling_coordinates(&mut predicted, &mut world, &viewport, false);
-    }
-
-    if let Some(mut width) = width
-        && !reflow_held
-    {
-        width.advance(delta, viewport_spring);
-        predicted.visual.current.width = width.current;
-        predicted.visual.velocity.width = width.velocity;
+    } else {
+        super::animation::advance_window_motion(
+            &mut predicted,
+            world.as_mut().map(|(world, viewport)| (world, &*viewport)),
+            width.as_mut(),
+            delta,
+            spring,
+            viewport_spring,
+            true,
+        );
+        predicted.visual.target.width = original.visual.target.width;
     }
 
     predicted

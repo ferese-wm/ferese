@@ -1,5 +1,5 @@
 use super::{
-    Axis, Direction, Ferese, FocusSwipe, Instant, LayoutMode, OutputId, SpringConfig,
+    Axis, Direction, Ferese, Instant, LayoutMode, OutputId, ScrollGesture, SpringConfig,
     SwipeDirection, ViewportPresentation, WindowId, WindowPlacement, WorkspaceId, WorkspaceLayout,
     WorkspaceSlide, activate_window_workspace, workspace_swipe_is_current,
 };
@@ -9,161 +9,143 @@ impl Ferese {
         self.focus_direction_with_slide(direction, false);
     }
 
-    pub(super) fn focus_swipe_is_current(&self, swipe: &FocusSwipe) -> bool {
-        self.animations_enabled
-            && !self.session_lock.active()
+    pub(super) fn scroll_gesture_is_current(&self, gesture: &ScrollGesture) -> bool {
+        !self.session_lock.active()
             && !self.overview.is_presenting()
-            && self.workspaces.active_id() == swipe.workspace
-            && self.focused_window == Some(swipe.from)
+            && self.workspaces.active_id() == gesture.workspace
+            && self.focused_window == Some(gesture.from)
+            && self.output_workspaces.active_workspace(gesture.output) == Some(gesture.workspace)
             && self
                 .workspaces
-                .workspace(swipe.workspace)
+                .workspace(gesture.workspace)
                 .is_some_and(|workspace| {
                     workspace.fullscreen.is_none()
-                        && workspace.layout.contains(swipe.from)
-                        && workspace.layout.contains(swipe.to)
+                        && matches!(&workspace.layout, WorkspaceLayout::Scrolling(layout)
+                        if gesture.geometry.matches(layout))
                 })
     }
 
-    pub(crate) fn preview_focus_swipe(
-        &mut self,
-        direction: Direction,
-        gesture_direction: SwipeDirection,
-        progress: f64,
-    ) {
-        if self.focus_swipe().is_none() {
-            if self.swipe.preview_started()
-                || !self.animations_enabled
-                || self.overview.is_presenting()
-            {
+    pub(crate) fn preview_scroll_gesture(&mut self, direction: Direction, progress: f64) {
+        if !progress.is_finite() {
+            return;
+        }
+        if self.scroll_gesture().is_none() {
+            if self.swipe.preview_started() || self.overview.is_presenting() {
                 return;
             }
+            self.advance_animations(Instant::now());
             let Some(from) = self.focused_window else {
                 return;
             };
-            let Some(bounds) = self.output_bounds() else {
+            let workspace = self.workspaces.active();
+            let WorkspaceLayout::Scrolling(layout) = &workspace.layout else {
                 return;
             };
-            let workspace = self.workspaces.active();
-            if workspace.fullscreen.is_some()
-                || !matches!(workspace.layout, WorkspaceLayout::Scrolling(_))
-            {
+            if workspace.fullscreen.is_some() || !layout.contains(from) {
                 return;
             }
-            let Ok(neighbor) = workspace
-                .layout
-                .directional_neighbor(from, direction, bounds)
-            else {
+            let Some(output) = self.output_workspaces.output_for_workspace(workspace.id) else {
                 return;
             };
-            let to = neighbor.unwrap_or(from);
+            let Some(geometry) = layout.scroll_geometry() else {
+                return;
+            };
             let workspace_id = workspace.id;
             let start = self
                 .viewports
                 .get(&workspace_id)
-                .map(|viewport| viewport.motion().current)
-                .or_else(|| workspace.layout.viewport_x())
-                .unwrap_or(0.0);
-            let mut candidate = workspace.layout.clone();
-            if to != from
-                && let WorkspaceLayout::Scrolling(layout) = &mut candidate
-                && layout.slide_focus_from(from, to).is_err()
-            {
-                return;
-            }
-            let layout_bounds = self.workspace_layout_bounds(bounds, &candidate);
-            if candidate
-                .resolve_geometry_with_constraints(
-                    layout_bounds,
-                    self.gap_config,
-                    &self.window_constraints(),
-                    Some(to),
-                )
-                .is_err()
-            {
-                return;
-            }
-            let swipe = FocusSwipe {
+                .map_or(layout.viewport_x(), |viewport| viewport.motion().current);
+            let gesture = ScrollGesture {
                 workspace: workspace_id,
+                output,
                 from,
-                to,
                 direction,
-                gesture_direction,
                 start,
-                destination: if to == from {
-                    start
-                } else {
-                    candidate.viewport_x().unwrap_or(start)
-                },
                 progress,
+                geometry,
                 dependencies: self.presentation_dependencies.save_viewport(workspace_id),
-                layout: match candidate {
-                    WorkspaceLayout::Scrolling(layout) => Some(layout),
-                    _ => None,
-                },
             };
             self.viewports
                 .entry(workspace_id)
                 .or_insert_with(|| ViewportPresentation::new(start))
-                .begin_gesture(swipe);
+                .begin_gesture(gesture);
             self.rebuild_presentation_dependencies();
             self.swipe.mark_preview_started();
         }
-        if let Some(workspace) = self.focus_swipe().map(|swipe| swipe.workspace) {
+        if let Some(workspace) = self.scroll_gesture().map(|gesture| gesture.workspace) {
             self.viewports
                 .get_mut(&workspace)
-                .expect("an active workspace gesture retains its viewport state")
+                .expect("an active scroll retains its viewport")
                 .update_gesture(progress);
         }
-
         if let Some(output) = self
-            .focus_swipe()
-            .and_then(|swipe| self.output_workspaces.output_for_workspace(swipe.workspace))
-            .and_then(|id| self.outputs_by_id.get(&id))
+            .scroll_gesture()
+            .and_then(|gesture| self.outputs_by_id.get(&gesture.output))
             .cloned()
         {
             self.defer_output_redraw(output);
         }
     }
 
-    pub(crate) fn finish_focus_swipe(&mut self, direction: Option<SwipeDirection>) -> bool {
-        let Some(swipe) = self.focus_swipe() else {
+    pub(crate) fn finish_scroll_gesture(&mut self, cancelled: bool) -> bool {
+        let Some(gesture) = self.scroll_gesture() else {
             return false;
         };
-        let current = self.focus_swipe_is_current(swipe);
+        let current = self.scroll_gesture_is_current(gesture);
         let blocked = self
             .presentation_dependencies
-            .viewport_blocked(swipe.workspace, &self.windows);
-        // Release from the last input position even if no frame rendered that update.
-        let velocity = (current && !blocked).then(|| {
-            swipe.release_velocity(
-                self.swipe.release_velocity,
-                self.swipe.unbounded_release_velocity,
-            ) / self.animation_speed
-        });
-        let workspace = swipe.workspace;
-        let swipe = self
+            .viewport_blocked(gesture.workspace, &self.windows);
+        let velocity = if cancelled {
+            0.0
+        } else {
+            gesture.release_velocity(self.swipe.unbounded_release_velocity)
+        };
+        let projected = ferese_animation::gesture::project(gesture.position(), velocity, 0.997);
+        let target = (!cancelled && current)
+            .then(|| {
+                let id = gesture
+                    .geometry
+                    .snap_window(projected, Some(gesture.from))?;
+                let window = self.windows.window(id)?;
+                let surface = window.toplevel()?.wl_surface().clone();
+                self.window_content_ready(window)
+                    .then_some((id, window.clone(), surface))
+            })
+            .flatten();
+        let workspace = gesture.workspace;
+        let gesture = self
             .viewports
             .get_mut(&workspace)
-            .expect("an active workspace gesture retains its viewport state")
-            .end_gesture(velocity)
-            .expect("an active workspace gesture retains its viewport state");
+            .expect("an active scroll retains its viewport")
+            .end_gesture((current && !blocked).then_some(velocity / self.animation_speed))
+            .expect("the active scroll owns this viewport");
         self.presentation_dependencies
-            .restore_viewport(workspace, swipe.dependencies.clone());
-        let neighbor = self.output_bounds().and_then(|bounds| {
-            self.workspaces
-                .active()
-                .layout
-                .directional_neighbor(swipe.from, swipe.direction, bounds)
-                .ok()
-                .flatten()
-        });
-        self.last_animation_tick = Instant::now();
-        if current && direction == Some(swipe.gesture_direction) && neighbor == Some(swipe.to) {
-            self.focus_direction_from_swipe(swipe.direction);
-        } else {
-            self.relayout();
+            .restore_viewport(workspace, gesture.dependencies);
+        self.reset_animation_clock();
+        if let Some((id, window, surface)) = target {
+            let WorkspaceLayout::Scrolling(layout) = &mut self.workspaces.active_mut().layout
+            else {
+                unreachable!()
+            };
+            if layout.finish_scroll(projected) == Some(id) {
+                if let Err(error) = self.workspaces.focus_window_without_reveal(id) {
+                    tracing::error!(%error, "failed to focus the scroll destination");
+                } else {
+                    self.focused_window = Some(id);
+                    self.raise_window(&window, true);
+                    self.seat
+                        .get_keyboard()
+                        .expect("seat has a keyboard")
+                        .set_focus(
+                            self,
+                            Some(surface),
+                            smithay::utils::SERIAL_COUNTER.next_serial(),
+                        );
+                    self.flash_tab_switch(gesture.from, id);
+                }
+            }
         }
+        self.relayout();
         true
     }
 

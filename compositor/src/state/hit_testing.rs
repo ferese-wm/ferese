@@ -5,6 +5,34 @@ use super::{
 };
 
 impl Ferese {
+    pub(crate) fn window_input_on_output(
+        &self,
+        id: WindowId,
+        output: &Output,
+    ) -> Option<crate::display_presentation::WindowInput> {
+        if self.display_presentation.has_presented(output) {
+            return self.display_presentation.window(output, id);
+        }
+        // Before the first submission there is no display history. This also
+        // serves headless clients that have no rendering backend.
+        let presentation = self.current_window_presentation(id)?;
+        let source = if presentation.scale_content {
+            self.windows.geometry(&id)?.client.committed_size
+        } else {
+            presentation.native_size
+        };
+        let bounds = presentation.bounds.current;
+        Some(crate::display_presentation::WindowInput {
+            bounds,
+            scale: source.map_or((1.0, 1.0), |size| {
+                (
+                    bounds.width / f64::from(size.width),
+                    bounds.height / f64::from(size.height),
+                )
+            }),
+        })
+    }
+
     pub fn surface_under(
         &self,
         position: Point<f64, Logical>,
@@ -65,12 +93,14 @@ impl Ferese {
         }
 
         let workspace = self.workspace_under_pointer(position)?;
+        let output = self.space.output_under(position).next()?;
         self.space.elements().rev().find_map(|window| {
             let id = self.windows.ids().get(window)?;
             if self.workspaces.workspace_for_window(*id) != Some(workspace) {
                 return None;
             }
-            let visual = self.presented_window_rect(*id)?;
+            let input = self.window_input_on_output(*id, output)?;
+            let visual = input.bounds;
             let inside_visual = position.x >= visual.x
                 && position.y >= visual.y
                 && position.x < visual.x + visual.width
@@ -79,8 +109,7 @@ impl Ferese {
                 return None;
             }
 
-            let (source_x, source_y) =
-                self.inverse_presented_window_point(*id, position.x, position.y)?;
+            let (source_x, source_y) = input.inverse(position.x, position.y);
             let source_point = Point::from((source_x, source_y)) + window.geometry().loc.to_f64();
 
             let surface = window.surface_under(source_point, WindowSurfaceType::ALL);
@@ -159,6 +188,7 @@ impl Ferese {
     pub fn window_under_visual(&self, position: Point<f64, Logical>) -> Option<Window> {
         let overview_active = self.overview.is_active();
         let workspace = self.workspace_under_pointer(position)?;
+        let output = self.space.output_under(position).next()?;
 
         let hit = |window: &Window| -> Option<Window> {
             if !self.window_content_ready(window) {
@@ -170,7 +200,8 @@ impl Ferese {
                 return None;
             }
 
-            let visual = self.presented_window_rect(*id)?;
+            let input = self.window_input_on_output(*id, output)?;
+            let visual = input.bounds;
             let caption_height = if overview_active { 34.0 } else { 0.0 };
             let inside_visual = position.x >= visual.x
                 && position.y >= visual.y
@@ -181,8 +212,7 @@ impl Ferese {
             }
 
             if !overview_active {
-                let (source_x, source_y) =
-                    self.inverse_presented_window_point(*id, position.x, position.y)?;
+                let (source_x, source_y) = input.inverse(position.x, position.y);
                 let source_point =
                     Point::from((source_x, source_y)) + window.geometry().loc.to_f64();
                 if window
@@ -244,6 +274,13 @@ impl Ferese {
 
     pub fn visual_scale_for_window(&self, window: &Window) -> Option<(f64, f64)> {
         let id = self.windows.ids().get(window)?;
+        if let Some(output) = self
+            .seat
+            .get_pointer()
+            .and_then(|pointer| self.space.output_under(pointer.current_location()).next())
+        {
+            return Some(self.window_input_on_output(*id, output)?.scale);
+        }
         if !self.overview.is_presenting() && self.windows.record(*id)?.opening.is_none() {
             return Some((1.0, 1.0));
         }

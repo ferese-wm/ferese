@@ -1,6 +1,9 @@
 use crate::layout_tree;
 use std::collections::{HashMap, HashSet};
 
+mod gesture;
+pub use gesture::ScrollGeometry;
+
 use crate::{
     ConstraintKind, ConstraintWarning, Direction, GapConfig, LayoutError, LayoutResult, Rect,
     SizeConstraints, WindowId,
@@ -127,6 +130,10 @@ enum ViewportRequest {
     WidthCycle(usize),
     Slide(usize, usize),
     Center(usize, Option<f64>),
+    Scroll {
+        column: usize,
+        right: bool,
+    },
     Resize {
         column: usize,
         anchor: f64,
@@ -136,20 +143,28 @@ enum ViewportRequest {
 }
 
 impl ViewportTarget {
-    fn target(&self, replacements: &HashMap<usize, f64>, start: Option<f64>) -> f64 {
+    /// Re-evaluate the same target with pending allocated widths held back.
+    /// A start-relative request can also use the previous held target.
+    #[must_use]
+    pub fn with_held_widths(&self, widths: &[(WindowId, f64, f64)], start: Option<f64>) -> f64 {
         let start = start.unwrap_or(self.start);
-        let mut x = 0.0;
-        let positions = self
+        let mut positions = self
             .columns
             .iter()
-            .enumerate()
-            .map(|(index, (_, width))| {
-                let width = replacements.get(&index).copied().unwrap_or(*width);
-                let position = (x, width);
-                x += width + self.inner;
-                position
-            })
+            .map(|(_, width)| (0.0, *width))
             .collect::<Vec<_>>();
+        for (window, source, target) in widths {
+            if let Some(index) = self.columns.iter().position(|(windows, width)| {
+                windows.contains(window) && (*width - target).abs() < 0.001
+            }) {
+                positions[index].1 = *source;
+            }
+        }
+        let mut x = 0.0;
+        for (position, width) in &mut positions {
+            *position = x;
+            x += *width + self.inner;
+        }
         let mut layout = ScrollingLayout {
             viewport_x: start,
             focus_strategy: self.strategy,
@@ -174,6 +189,20 @@ impl ViewportTarget {
                 });
                 layout.viewport_x = positions[active].0 + width / 2.0 - self.viewport_width / 2.0
             }
+            ViewportRequest::Scroll { column, right } => {
+                layout.viewport_x = positions[column].0
+                    + if right {
+                        positions[column].1 - self.viewport_width
+                    } else {
+                        0.0
+                    };
+                if self.strategy == ViewportFocusStrategy::Minimal {
+                    let (last, width) = positions.last().copied().unwrap_or_default();
+                    layout.viewport_x = layout
+                        .viewport_x
+                        .clamp(0.0, (last + width - self.viewport_width).max(0.0));
+                }
+            }
             ViewportRequest::Resize {
                 column,
                 anchor,
@@ -188,24 +217,6 @@ impl ViewportTarget {
             }
         }
         layout.viewport_x
-    }
-
-    /// Re-evaluate the same target with pending allocated widths held back.
-    /// A start-relative request can also use the previous held target.
-    #[must_use]
-    pub fn with_held_widths(&self, widths: &[(WindowId, f64, f64)], start: Option<f64>) -> f64 {
-        let replacements = widths
-            .iter()
-            .filter_map(|(window, source, target)| {
-                self.columns
-                    .iter()
-                    .position(|(windows, width)| {
-                        windows.contains(window) && (*width - target).abs() < 0.001
-                    })
-                    .map(|index| (index, *source))
-            })
-            .collect::<HashMap<_, _>>();
-        self.target(&replacements, start)
     }
 
     #[must_use]
@@ -2169,6 +2180,36 @@ mod tests {
             .center_window(id, bounds, gaps, &constraints)
             .unwrap();
         assert!(!layout.viewport_depends_on_width(id, 100.0, 150.0));
+    }
+
+    #[test]
+    fn held_widths_ignore_stale_targets_and_keep_the_last_matching_column_value() {
+        let target = ViewportTarget {
+            columns: vec![
+                (vec![WindowId(1), WindowId(2)], 240.),
+                (vec![WindowId(3)], 240.),
+            ],
+            inner: 8.,
+            viewport_width: 1600.,
+            strategy: ViewportFocusStrategy::Center,
+            start: 0.,
+            request: ViewportRequest::Center(1, None),
+        };
+        assert_eq!(target.with_held_widths(&[], None), -432.);
+        let widths = [(WindowId(1), 160., 240.), (WindowId(2), 180., 240.)];
+        assert_eq!(target.with_held_widths(&widths, None), -492.);
+        assert_eq!(
+            target.with_held_widths(&[widths[1], widths[0]], None),
+            -512.
+        );
+        assert_eq!(
+            target.with_held_widths(&[(WindowId(1), 160., 200.)], None),
+            -432.
+        );
+        assert_eq!(
+            target.with_held_widths(&[(WindowId(99), 160., 240.)], None),
+            -432.
+        );
     }
 
     #[test]

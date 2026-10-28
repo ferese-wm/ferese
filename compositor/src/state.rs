@@ -14,6 +14,8 @@ mod outputs;
 #[cfg(test)]
 mod pointer_tests;
 mod reconciliation;
+#[cfg(test)]
+mod scroll_tests;
 pub(crate) mod tab_indicator;
 mod tabs;
 #[cfg(test)]
@@ -171,56 +173,51 @@ impl SlideOffset {
 }
 
 #[derive(Clone, PartialEq)]
-struct FocusSwipe {
+struct ScrollGesture {
     workspace: WorkspaceId,
+    output: OutputId,
     from: WindowId,
-    to: WindowId,
     direction: Direction,
-    gesture_direction: SwipeDirection,
     start: f64,
-    destination: f64,
     progress: f64,
-    layout: Option<ferese_layout::ScrollingLayout>,
+    geometry: ferese_layout::ScrollGeometry,
     dependencies: Option<presentation_dependencies::ViewportDependencies>,
 }
 
-impl FocusSwipe {
+impl ScrollGesture {
     fn distance(&self) -> f64 {
-        let distance = self.destination - self.start;
-        // When both columns already fit, give bounded drag feedback and settle
-        // back to the unchanged viewport after selecting the next window.
-
-        if distance.abs() < 0.001 {
-            if self.direction == Direction::Right {
-                64.0
-            } else {
-                -64.0
-            }
+        // Keep the default half-width column's existing drag sensitivity,
+        // while allowing the gesture to continue through the whole strip.
+        if self.direction == Direction::Right {
+            self.geometry.viewport_width() / 2.0
         } else {
-            distance
+            -self.geometry.viewport_width() / 2.0
         }
     }
 
-    fn position(&self) -> f64 {
-        let progress = if self.to == self.from {
-            ferese_animation::gesture::rubber_band(self.progress.max(0.0), 1.0, 0.55).0
+    fn sample(&self) -> (f64, f64) {
+        let raw = self.start + self.distance() * self.progress;
+        let (minimum, maximum) = self.geometry.limits();
+        // A gesture can interrupt an overshooting spring without moving its
+        // first sample. Resistance applies only beyond that starting extent.
+        let edge = if raw < minimum.min(self.start) {
+            minimum.min(self.start)
+        } else if raw > maximum.max(self.start) {
+            maximum.max(self.start)
         } else {
-            self.progress.clamp(0.0, 1.0)
+            return (raw, 1.0);
         };
-        self.start + self.distance() * progress
+        let (offset, derivative) = ferese_animation::gesture::rubber_band(raw - edge, 64.0, 1.0);
+        (edge + offset, derivative)
     }
 
-    fn release_velocity(&self, bounded: f64, unbounded: f64) -> f64 {
-        let velocity = if self.to == self.from {
-            if self.progress <= 0.0 {
-                0.0
-            } else {
-                unbounded * ferese_animation::gesture::rubber_band(self.progress, 1.0, 0.55).1
-            }
-        } else {
-            bounded
-        };
-        self.distance() * velocity
+    fn position(&self) -> f64 {
+        self.sample().0
+    }
+
+    fn release_velocity(&self, velocity: f64) -> f64 {
+        let velocity = self.distance() * velocity * self.sample().1;
+        if velocity.is_finite() { velocity } else { 0.0 }
     }
 }
 
@@ -1376,6 +1373,27 @@ impl ClientData for ClientState {
 
 #[cfg(test)]
 mod tests {
+    pub(super) fn scroll_geometry(count: u64) -> ferese_layout::ScrollGeometry {
+        let mut layout = ferese_layout::ScrollingLayout::with_default_width(
+            ferese_layout::ColumnWidth::Fixed(400.0),
+        );
+        for id in 1..=count {
+            layout.insert(WindowId(id), None).unwrap();
+        }
+        layout
+            .resolve_geometry_with_constraints(
+                Rect::new(0.0, 0.0, 1000.0, 600.0),
+                ferese_layout::GapConfig {
+                    inner: 0.0,
+                    outer: 0.0,
+                    smart: false,
+                },
+                &HashMap::new(),
+                Some(WindowId(1)),
+            )
+            .unwrap();
+        layout.scroll_geometry().unwrap()
+    }
     #[test]
     fn overview_slide_prediction_uses_the_same_clock_as_live_motion() {
         let mut slide =
@@ -1450,24 +1468,25 @@ mod tests {
     }
     #[test]
     fn viewport_limit_uses_resisted_position_and_release_velocity() {
-        let swipe = FocusSwipe {
+        let swipe = ScrollGesture {
             workspace: WorkspaceId(1),
+            output: OutputId(1),
             from: WindowId(1),
-            to: WindowId(1),
             direction: Direction::Right,
-            gesture_direction: SwipeDirection::Left,
             start: 20.0,
-            destination: 20.0,
             progress: 2.0,
-            layout: None,
+            geometry: scroll_geometry(1),
             dependencies: None,
         };
         assert!(swipe.position() > 20.0 && swipe.position() < 84.0);
-        assert!(swipe.release_velocity(0.0, 3.0) > 0.0);
+        assert!(swipe.release_velocity(3.0) > 0.0);
+        for velocity in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, f64::MAX] {
+            assert_eq!(swipe.release_velocity(velocity), 0.0);
+        }
         let mut released = AnimatedValue {
             current: swipe.position(),
             target: swipe.start,
-            velocity: swipe.release_velocity(0.0, 3.0),
+            velocity: swipe.release_velocity(3.0),
         };
         let initial = released;
         released.advance(Duration::from_micros(1), SpringConfig::default());
@@ -1628,21 +1647,16 @@ mod tests {
 
     #[test]
     fn focus_drag_reverses_and_settles_from_the_release_position() {
-        for (direction, gesture_direction, destination) in [
-            (Direction::Right, SwipeDirection::Left, 900.0),
-            (Direction::Left, SwipeDirection::Right, 100.0),
-        ] {
+        for (direction, destination) in [(Direction::Right, 900.0), (Direction::Left, 100.0)] {
             for committed in [false, true] {
-                let mut swipe = FocusSwipe {
+                let mut swipe = ScrollGesture {
                     workspace: WorkspaceId(1),
+                    output: OutputId(1),
                     from: WindowId(1),
-                    to: WindowId(2),
                     direction,
-                    gesture_direction,
                     start: 500.0,
-                    destination,
                     progress: 0.75,
-                    layout: None,
+                    geometry: scroll_geometry(5),
                     dependencies: None,
                 };
                 let far = swipe.position();
@@ -1663,20 +1677,21 @@ mod tests {
     #[test]
     fn fully_visible_columns_still_give_bounded_horizontal_drag_feedback() {
         for (direction, sign) in [(Direction::Right, 1.0), (Direction::Left, -1.0)] {
-            let swipe = FocusSwipe {
+            let swipe = ScrollGesture {
                 workspace: WorkspaceId(1),
+                output: OutputId(1),
                 from: WindowId(1),
-                to: WindowId(2),
                 direction,
-                gesture_direction: SwipeDirection::Left,
                 start: 0.0,
-                destination: 0.0,
                 progress: 0.5,
-                layout: None,
+                geometry: scroll_geometry(2),
                 dependencies: None,
             };
-            assert_eq!(swipe.position(), sign * 32.0);
-            assert_eq!(swipe.destination, 0.0);
+            assert_eq!(
+                swipe.position(),
+                sign * ferese_animation::gesture::rubber_band(250.0, 64.0, 1.0).0
+            );
+            assert_eq!(swipe.geometry.limits(), (0.0, 0.0));
         }
     }
 

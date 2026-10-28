@@ -17,3 +17,7 @@ harness = false
 [[bench]]
 name = "tree_operations"
 harness = false
+
+[[bench]]
+name = "viewport_dependencies"
+harness = false

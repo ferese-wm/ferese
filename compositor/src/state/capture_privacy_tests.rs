@@ -555,7 +555,9 @@ fn lock_scene_draws_the_pointer_and_delivers_client_cursor_frames() {
             [0.0, 0.0, 0.0, 1.0],
         )
         .unwrap();
-    state.display_presentation.queued(&output, &rendered.states);
+    state
+        .display_presentation
+        .queued(&output, &rendered.states, scene.input_windows(&output));
     state.display_presentation.presented(&output);
     assert_eq!(
         state.callback_outputs().get(&(&cursor).into()),
@@ -1132,7 +1134,6 @@ fn resize_dependencies_protocol_and_pixels() {
         );
         return;
     }
-    use crate::gestures::SwipeDirection;
     use ferese_core::WorkspaceLayout;
     use ferese_layout::{ColumnWidth, Direction, Rect, ViewportFocusStrategy};
     let mut events = EventLoop::try_new().unwrap();
@@ -1471,8 +1472,8 @@ fn resize_dependencies_protocol_and_pixels() {
         state.render.snapshot(&b_id).is_none(),
         "resize snapshot outlived settled handoff"
     );
-    // Aborting a preview must restore the original recipe, not append a
-    // reversal to the candidate recipe (oversized columns expose the difference).
+    // Direct panning does not depend on pending widths. Cancelling restores
+    // the previous target without appending a width-dependent reversal.
     state.animations_enabled = false;
     set_width(&mut state, a_id, 400.0);
     set_width(&mut state, b_id, 100.0);
@@ -1492,14 +1493,21 @@ fn resize_dependencies_protocol_and_pixels() {
             .presentation_dependencies
             .viewport_blocked(workspace, &state.windows)
     );
-    state.preview_focus_swipe(Direction::Right, SwipeDirection::Left, 0.5);
-    assert!(state.focus_swipe().is_some());
+    let before_pan = state.presented_window_rect(a_id).unwrap().x;
+    state.preview_scroll_gesture(Direction::Right, 0.5);
+    assert!(state.scroll_gesture().is_some());
     assert!(
-        state
+        !state
             .presentation_dependencies
             .viewport_blocked(workspace, &state.windows)
     );
-    assert!(state.finish_focus_swipe(None));
+    state.advance_animations_at(Duration::ZERO, state.presentation_now());
+    assert!(state.windows.transaction(&b_id).is_some());
+    assert!(
+        state.presented_window_rect(a_id).unwrap().x < before_pan,
+        "direct panning waited for the resized buffer"
+    );
+    assert!(state.finish_scroll_gesture(true));
     assert!(
         !state
             .presentation_dependencies

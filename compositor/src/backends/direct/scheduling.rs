@@ -3,6 +3,8 @@ use super::{
     Timer, arm_animation_timer, crtc, render_output, sleep_locked_outputs,
 };
 use crate::frame_scheduler::FramePlan;
+use smithay::backend::renderer::sync::SyncPoint;
+use smithay::reexports::calloop::{Interest, Mode, PostAction, generic::Generic};
 
 pub(super) fn monotonic_now() -> Duration {
     smithay::utils::Clock::<Monotonic>::new().now().into()
@@ -17,6 +19,7 @@ pub(super) fn cancel_output_timers(
         output.render_timer.take(),
         output.callback_timer.take(),
         output.completion_timer.take(),
+        output.render_fence.take(),
     ]
     .into_iter()
     .flatten()
@@ -138,13 +141,14 @@ fn dispatch_frame(state: &mut Ferese, node: DrmNode, crtc: crtc::Handle, identit
         return;
     }
 
-    let Some(plan) = output.scheduler.begin(monotonic_now()) else {
+    let started = monotonic_now();
+    let Some(plan) = output.scheduler.begin(started) else {
         return;
     };
 
     state.advance_animations(Instant::now());
 
-    let output_animating = render_output(state, node, crtc, plan);
+    let output_animating = render_output(state, node, crtc, plan, started);
 
     if output_animating {
         request_frame(state, node, crtc);
@@ -156,18 +160,69 @@ fn dispatch_frame(state: &mut Ferese, node: DrmNode, crtc: crtc::Handle, identit
 pub(super) fn record_frame_schedule(
     output: &mut DirectOutput,
     plan: FramePlan,
-    cost: Duration,
+    started: Duration,
+    finished: Duration,
     submitted: bool,
 ) {
     output
         .scheduler
-        .rendered(plan, monotonic_now(), cost, submitted);
+        .rendered(plan, finished, finished.saturating_sub(started), submitted);
     if std::env::var_os("FERESE_TRACE_PERFORMANCE").is_some() {
-        let started = monotonic_now().saturating_sub(cost);
         tracing::debug!(target: "ferese::render", output = %output.output.name(),
             render_target_us = plan.render_at.as_micros(), presentation_target_us = plan.present_at.as_micros(),
             target_phase_known = plan.phase_known,
             render_started_us = started.as_micros(), timer_lateness_us = started.saturating_sub(plan.render_at).as_micros(),
-            render_us = cost.as_micros(), submitted, "DRM frame schedule");
+            render_us = finished.saturating_sub(started).as_micros(), submitted, "DRM frame schedule");
+    }
+}
+
+pub(super) fn watch_render_ready(
+    state: &Ferese,
+    node: DrmNode,
+    crtc: crtc::Handle,
+    output: &mut DirectOutput,
+    plan: FramePlan,
+    started: Duration,
+    sync: SyncPoint,
+) {
+    if let Some(token) = output.render_fence.take() {
+        state.loop_handle.remove(token);
+    }
+    if sync.is_reached() {
+        output
+            .scheduler
+            .render_ready(plan, monotonic_now().saturating_sub(started));
+        return;
+    }
+    let Some(fd) = sync.export() else {
+        return;
+    };
+    let identity = output.output.clone();
+    match state.loop_handle.insert_source(
+        Generic::new(fd, Interest::READ, Mode::OneShot),
+        move |_, _, state| {
+            if let Some(output) = state
+                .direct_backend
+                .as_mut()
+                .and_then(|backend| backend.devices.get_mut(&node))
+                .and_then(|device| device.outputs.get_mut(&crtc))
+                .filter(|output| output.output == identity)
+            {
+                output.render_fence = None;
+                if sync.is_reached() {
+                    let cost = monotonic_now().saturating_sub(started);
+                    output.scheduler.render_ready(plan, cost);
+                    if std::env::var_os("FERESE_TRACE_PERFORMANCE").is_some() {
+                        tracing::debug!(target: "ferese::render", output = %identity.name(),
+                            presentation_target_us = plan.present_at.as_micros(),
+                            dispatch_to_ready_us = cost.as_micros(), "DRM render fence ready");
+                    }
+                }
+            }
+            Ok(PostAction::Remove)
+        },
+    ) {
+        Ok(token) => output.render_fence = Some(token),
+        Err(error) => tracing::debug!(%error, "could not observe DRM render readiness"),
     }
 }

@@ -32,6 +32,7 @@ pub(crate) use protocol::configure_outputs;
 use redraw::{AnimationFallback, SchedulingMetrics};
 use scheduling::{
     arm_frame, cancel_output_timers, monotonic_now, record_frame_schedule, request_frame,
+    watch_render_ready,
 };
 use smithay::backend::allocator::gbm::{GbmAllocator, GbmBufferFlags, GbmDevice};
 use smithay::backend::allocator::{Buffer, Fourcc};
@@ -330,6 +331,7 @@ struct DirectOutput {
     cursor_visible: bool,
     scheduler: crate::frame_scheduler::FrameScheduler,
     render_timer: Option<RegistrationToken>,
+    render_fence: Option<RegistrationToken>,
     power: OutputPower,
     callback_timer: Option<RegistrationToken>,
     lock_frame_pending: bool,
@@ -1137,6 +1139,9 @@ fn open_device(state: &mut Ferese, path: &Path) -> Result<DrmNode, Box<dyn Error
                         && retired
                     {
                         output.completion.retired();
+                        if let Some(token) = output.render_fence.take() {
+                            state.loop_handle.remove(token);
+                        }
                         output.frame_pending = false;
                         if output.power.needs_wake() {
                             output.gamma.retry_probe();
@@ -1568,6 +1573,7 @@ fn render_output(
     node: DrmNode,
     crtc: crtc::Handle,
     plan: crate::frame_scheduler::FramePlan,
+    started: Duration,
 ) -> bool {
     if state.session_lock.active() && state.session_lock.sleeping {
         sleep_locked_outputs(state);
@@ -1777,6 +1783,10 @@ fn render_output(
             );
             let cursor_plane = result.cursor_element.is_some();
             let visibility = result.states.clone();
+            let render_sync = match &result.primary_element {
+                PrimaryPlaneElement::Swapchain(primary) => Some(primary.sync.clone()),
+                PrimaryPlaneElement::Element(_) => None,
+            };
             drop(result);
 
             let refresh = presentation_mode::feedback_refresh(
@@ -1799,15 +1809,21 @@ fn render_output(
                 flags.contains(FrameFlags::ALLOW_PRIMARY_PLANE_SCANOUT),
             );
             capture::after_queue(queued, || {
+                record_frame_schedule(&mut output, plan, started, monotonic_now(), true);
+                if let Some(sync) = render_sync {
+                    watch_render_ready(state, node, crtc, &mut output, plan, started, sync);
+                }
                 output.dmabuf_feedback.observed_frame(
                     primary_format,
                     &visibility,
                     feedback_candidates,
                 );
                 if output.mirror_source.is_none() {
-                    state
-                        .display_presentation
-                        .queued(&output.output, &visibility);
+                    state.display_presentation.queued(
+                        &output.output,
+                        &visibility,
+                        frame.input_windows(&output.output),
+                    );
                 }
                 output.primary_commit = primary_commit;
                 output.render_metrics.record_frame(
@@ -1861,7 +1877,9 @@ fn render_output(
     }
 
     let submitted = rendered.as_ref().is_ok_and(|submitted| *submitted);
-    record_frame_schedule(&mut output, plan, render_started.elapsed(), submitted);
+    if !submitted {
+        record_frame_schedule(&mut output, plan, started, monotonic_now(), false);
+    }
 
     if submitted && let Some(token) = output.callback_timer.take() {
         state.loop_handle.remove(token);
@@ -2825,6 +2843,7 @@ fn create_direct_output(
         power: OutputPower::default(),
         scheduler,
         render_timer: None,
+        render_fence: None,
         callback_timer: None,
         lock_frame_pending: false,
         tearing_supported,

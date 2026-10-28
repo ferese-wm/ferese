@@ -163,7 +163,7 @@ impl Ferese {
         if matches!(kind, Gesture::Swipe) {
             self.swipe = Default::default();
             self.finish_workspace_swipe(None);
-            self.finish_focus_swipe(None);
+            self.finish_scroll_gesture(true);
         }
         if let Some(pointer) = self.seat.get_pointer() {
             match kind {

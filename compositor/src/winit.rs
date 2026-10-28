@@ -103,6 +103,7 @@ type DamageRenderResult = Result<
         Option<Vec<Rectangle<i32, Physical>>>,
         FrameEffectMetrics,
         RenderElementStates,
+        crate::state::FrameScene,
     ),
     Box<dyn Error>,
 >;
@@ -288,12 +289,12 @@ pub fn init(event_loop: &mut EventLoop<Ferese>, state: &mut Ferese) -> Result<()
                                 },
                             )?;
 
-                            Ok((result.damage.cloned(), effects, result.states))
+                            Ok((result.damage.cloned(), effects, result.states, scene))
                         }
                     })();
-                    let (damage, effects, rendered_states) = match rendered {
-                        Ok((Some(damage), effects, states)) => (damage, effects, states),
-                        Ok((None, _, _)) => {
+                    let (damage, effects, rendered_states, scene) = match rendered {
+                        Ok((Some(damage), effects, states, scene)) => (damage, effects, states, scene),
+                        Ok((None, _, _, _)) => {
                             render_metrics.borrow_mut().record_no_damage(render_started.elapsed(), missed_deadlines.get());
                             // A callback means permission to draw the next client
                             // frame, not proof of a new compositor presentation.
@@ -319,7 +320,7 @@ pub fn init(event_loop: &mut EventLoop<Ferese>, state: &mut Ferese) -> Result<()
                         state.loop_signal.stop();
                         return;
                     }
-                    state.display_presentation.queued(&output, &rendered_states);
+                    state.display_presentation.queued(&output, &rendered_states, scene.input_windows(&output));
                     state.display_presentation.presented(&output);
                     state.refresh_idle_inhibition();
 

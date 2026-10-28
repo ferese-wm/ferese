@@ -98,7 +98,7 @@ fn waiting() -> Waiting {
             },
         );
     }
-    state.display_presentation.queued(&output, &displayed);
+    state.display_presentation.queued(&output, &displayed, []);
     state.display_presentation.presented(&output);
     let before = [&root, &child, &cursor, &other].map(commit);
     for (fifo, surface) in [(11, 2), (14, 12), (16, 15)] {
