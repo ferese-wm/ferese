@@ -13,6 +13,7 @@ pub(crate) mod feedback;
 pub(crate) mod gamma;
 pub(crate) mod leasing;
 mod lid;
+mod lid_policy;
 mod mirror;
 mod output_power;
 mod planes;

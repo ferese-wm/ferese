@@ -1,5 +1,7 @@
 //! Resume reads are asynchronous; newer switch events win over old replies.
-use std::sync::{Arc, Mutex, mpsc};
+use std::sync::mpsc;
+
+use super::lid_policy::LidPolicy;
 
 use super::{
     Duration, Error, Ferese, RegistrationToken, TimeoutAction, Timer, cancel_output_timers,
@@ -68,55 +70,13 @@ impl LidState {
     }
 }
 
-struct InhibitorLease<T> {
-    active: bool,
-    generation: u64,
-    descriptor: Option<T>,
-    suspend: bool,
-}
-
-impl<T> Default for InhibitorLease<T> {
-    fn default() -> Self {
-        Self {
-            active: false,
-            generation: 0,
-            descriptor: None,
-            suspend: false,
-        }
-    }
-}
-
-impl<T> InhibitorLease<T> {
-    fn activate(&mut self, active: bool) -> u64 {
-        self.generation = self.generation.wrapping_add(1);
-        self.active = active;
-        self.suspend = false;
-        // Closing here releases logind immediately, independently of worker progress.
-        self.descriptor = None;
-        self.generation
-    }
-
-    fn accept(&mut self, generation: u64, descriptor: T) {
-        if self.active && self.generation == generation {
-            self.descriptor = Some(descriptor);
-        }
-    }
-}
-
-enum PolicyRequest {
-    Activate(u64),
-    Suspend,
-}
-
 pub(super) struct Reader {
     requests: mpsc::Sender<Probe>,
-    suspend: mpsc::Sender<PolicyRequest>,
-    lease: Arc<Mutex<InhibitorLease<zbus::zvariant::OwnedFd>>>,
-    suspend_requested: bool,
+    policy: LidPolicy,
     pub deadline: Option<RegistrationToken>,
 }
 
-fn read_logind(connection: &zbus::blocking::Connection) -> zbus::Result<bool> {
+pub(super) fn read_logind(connection: &zbus::blocking::Connection) -> zbus::Result<bool> {
     // A direct Get avoids retaining a property cache across suspend.
     let value: zbus::zvariant::OwnedValue = connection
         .call_method(
@@ -148,111 +108,11 @@ fn read_acpi() -> Option<bool> {
 
 impl Reader {
     pub fn set_active(&mut self, active: bool) {
-        let generation = self
-            .lease
-            .lock()
-            .expect("lid policy lease must remain consistent across workers")
-            .activate(active);
-        self.suspend_requested = false;
-        if active {
-            let _ = self.suspend.send(PolicyRequest::Activate(generation));
-        }
+        self.policy.set_active(active);
     }
 
     pub fn start(state: &Ferese) -> Result<Self, Box<dyn Error>> {
-        let (suspend, suspend_requests) = mpsc::channel::<PolicyRequest>();
-        let lease = Arc::new(Mutex::new(InhibitorLease::default()));
-        let worker_lease = lease.clone();
-        std::thread::Builder::new()
-            .name("ferese-lid-policy".into())
-            .spawn(move || {
-                let connection = zbus::blocking::connection::Builder::system()
-                    .and_then(|builder| builder.method_timeout(Duration::from_secs(5)).build());
-                let Ok(connection) = connection else { return };
-                while let Ok(request) = suspend_requests.recv() {
-                    if let PolicyRequest::Activate(generation) = request {
-                        let current = worker_lease
-                            .lock()
-                            .expect("lid policy lease must remain consistent across workers");
-                        if !current.active || current.generation != generation {
-                            continue;
-                        }
-                        drop(current);
-                        let inhibitor = connection
-                            .call_method(
-                                Some("org.freedesktop.login1"),
-                                "/org/freedesktop/login1",
-                                Some("org.freedesktop.login1.Manager"),
-                                "Inhibit",
-                                &(
-                                    "handle-lid-switch",
-                                    "Ferese",
-                                    "Reconcile monitors before lid action",
-                                    "block",
-                                ),
-                            )
-                            .and_then(|reply| {
-                                reply.body().deserialize::<zbus::zvariant::OwnedFd>()
-                            });
-                        match inhibitor {
-                            Ok(descriptor) => worker_lease
-                                .lock()
-                                .expect("lid policy lease must remain consistent across workers")
-                                .accept(generation, descriptor),
-                            Err(error) => tracing::warn!(%error, "could not own logind lid policy"),
-                        }
-                        continue;
-                    }
-                    let current = worker_lease
-                        .lock()
-                        .expect("lid policy lease must remain consistent across workers");
-                    if !current.active || !current.suspend {
-                        continue;
-                    }
-                    drop(current);
-                    if read_logind(&connection).ok() != Some(true) {
-                        continue;
-                    }
-                    let allowed = connection
-                        .call_method(
-                            Some("org.freedesktop.login1"),
-                            "/org/freedesktop/login1",
-                            Some("org.freedesktop.DBus.Properties"),
-                            "Get",
-                            &("org.freedesktop.login1.Manager", "BlockInhibited"),
-                        )
-                        .and_then(|reply| reply.body().deserialize::<zbus::zvariant::OwnedValue>())
-                        .and_then(|value| String::try_from(value).map_err(Into::into));
-                    if allowed
-                        .as_ref()
-                        .is_ok_and(|inhibitors| inhibitors.split(':').any(|kind| kind == "sleep"))
-                    {
-                        tracing::debug!("lid suspend prevented by sleep inhibitor");
-                        continue;
-                    }
-                    let current = worker_lease
-                        .lock()
-                        .expect("lid policy lease must remain consistent across workers");
-                    let requested = current.active && current.suspend;
-                    drop(current);
-                    if !requested {
-                        continue;
-                    }
-                    if let Err(error) = connection.call_method(
-                        Some("org.freedesktop.login1"),
-                        "/org/freedesktop/login1",
-                        Some("org.freedesktop.login1.Manager"),
-                        "Suspend",
-                        &(false,),
-                    ) {
-                        tracing::warn!(%error, "logind rejected lid suspend");
-                    }
-                }
-                worker_lease
-                    .lock()
-                    .expect("lid policy lease must remain consistent across workers")
-                    .activate(false);
-            })?;
+        let policy = LidPolicy::try_new()?;
         let (requests, receiver) = mpsc::channel::<Probe>();
         let (replies, events) = smithay::reexports::calloop::channel::channel();
         state.loop_handle.insert_source(events, |event, _, state| {
@@ -281,9 +141,7 @@ impl Reader {
 
         let mut reader = Self {
             requests,
-            suspend,
-            lease,
-            suspend_requested: false,
+            policy,
             deadline: None,
         };
         reader.set_active(true);
@@ -297,6 +155,9 @@ pub(super) fn request_refresh(state: &mut Ferese, reactivate: bool) {
 
 /// Listener recovery reconciles hardware without resetting idle activity.
 pub(super) fn request_reconcile(state: &mut Ferese) {
+    if let Some(backend) = state.direct_backend.as_mut() {
+        backend.lid_reader.policy.reconnect();
+    }
     request(state, false, false);
 }
 
@@ -319,13 +180,7 @@ fn request(state: &mut Ferese, reactivate: bool, wake: bool) {
             cancel_output_timers(&state.loop_handle, output);
         }
     }
-    backend.lid_reader.suspend_requested = false;
-    backend
-        .lid_reader
-        .lease
-        .lock()
-        .expect("lid policy lease must remain consistent across workers")
-        .suspend = false;
+    backend.lid_reader.policy.request_suspend(false);
     let probe = backend.lid.begin(reactivate, wake);
     let sent = backend.lid_reader.requests.send(probe).is_ok();
     let timer = state.loop_handle.insert_source(
@@ -371,7 +226,7 @@ fn complete_refresh(state: &mut Ferese, probe: Probe, value: Option<bool>) {
 
     // Waking a locked session may request redraws. Hold them until the fresh
     // device/connector snapshot has been reconciled.
-    backend.lid_reader.suspend_requested = false;
+    backend.lid_reader.policy.request_suspend(false);
     if probe.wake {
         backend.topology.reconciling = true;
         state.reset_animation_clock();
@@ -393,38 +248,12 @@ pub(super) fn apply_suspend_policy(state: &mut Ferese) {
         return;
     };
     let requested = backend.active && backend.desired_outputs.suspend && backend.lid.closed();
-    backend
-        .lid_reader
-        .lease
-        .lock()
-        .expect("lid policy lease must remain consistent across workers")
-        .suspend = requested;
-    if backend.lid_reader.suspend_requested != requested {
-        backend.lid_reader.suspend_requested = requested;
-        let _ = backend.lid_reader.suspend.send(PolicyRequest::Suspend);
-    }
+    backend.lid_reader.policy.request_suspend(requested);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn pause_releases_inhibitor_and_rejects_delayed_acquisition() {
-        let mut lease = InhibitorLease::default();
-        let first = lease.activate(true);
-        lease.accept(first, "fd");
-        assert_eq!(lease.descriptor, Some("fd"));
-        lease.activate(false);
-        assert_eq!(lease.descriptor, None);
-        lease.accept(first, "late fd");
-        assert_eq!(lease.descriptor, None);
-        let next = lease.activate(true);
-        lease.accept(first, "old session fd");
-        assert_eq!(lease.descriptor, None);
-        lease.accept(next, "new session fd");
-        assert_eq!(lease.descriptor, Some("new session fd"));
-    }
 
     #[test]
     #[ignore = "requires dbus-daemon and private test sockets"]
