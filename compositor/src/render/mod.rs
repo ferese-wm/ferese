@@ -189,6 +189,7 @@ struct BlurCapture {
     scratch: GlesTexture,
     dirty: Arc<AtomicBool>,
     geometry: Rectangle<i32, Logical>,
+    transform: Transform,
 }
 
 #[derive(Clone, Debug)]

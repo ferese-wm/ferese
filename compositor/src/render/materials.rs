@@ -368,7 +368,7 @@ pub(super) fn material_element_with_role(
         if buffers
             .captures
             .get(&capture_key)
-            .is_none_or(|c| c.geometry != sample_geometry || c.texture.size() != capture_size)
+            .is_none_or(|c| c.texture.size() != capture_size)
         {
             let texture = Offscreen::<GlesTexture>::create_buffer(
                 renderer,
@@ -393,11 +393,23 @@ pub(super) fn material_element_with_role(
                         scratch,
                         dirty: Arc::new(AtomicBool::new(true)),
                         geometry: sample_geometry,
+                        transform,
                     },
                 );
             } else {
                 buffers.captures.remove(&capture_key);
             }
+        }
+        if let Some(capture) = buffers.captures.get_mut(&capture_key)
+            && (capture.geometry != sample_geometry || capture.transform != transform)
+        {
+            // Translation and output rotation change the sampled pixels even
+            // when the framebuffer rectangle and storage dimensions match.
+            capture.geometry = sample_geometry;
+            capture.transform = transform;
+            capture
+                .dirty
+                .store(true, std::sync::atomic::Ordering::Relaxed);
         }
         buffers
             .captures

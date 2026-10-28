@@ -327,3 +327,256 @@ fn opaque_window_above_blur_does_not_contaminate_visible_edges() {
         );
     }
 }
+
+#[test]
+#[ignore = "requires an EGL rendering device"]
+fn translated_material_reuses_both_textures_and_element_until_storage_size_changes() {
+    use smithay::output::{Mode, PhysicalProperties, Scale, Subpixel};
+    use smithay::wayland::seat::WaylandFocus;
+    if !crate::startup_tests::private_runtime(
+        "render::blur_tests::translated_material_reuses_both_textures_and_element_until_storage_size_changes",
+    ) {
+        return;
+    }
+    let mut events = smithay::reexports::calloop::EventLoop::try_new().unwrap();
+    let mut state = crate::startup_tests::state(&mut events);
+    let output = Output::new(
+        "material-translation".into(),
+        PhysicalProperties {
+            size: (0, 0).into(),
+            subpixel: Subpixel::Unknown,
+            make: String::new(),
+            model: String::new(),
+            serial_number: String::new(),
+        },
+    );
+    output.change_current_state(
+        Some(Mode {
+            size: (1024, 768).into(),
+            refresh: 60_000,
+        }),
+        None,
+        None,
+        None,
+    );
+    state.space.map_output(&output, (0, 0));
+    state.register_output(&output, "material-translation".into());
+    let (window, _client) = crate::state::test_window(&mut state, &mut events, 0xffff0000);
+    let surface = window.wl_surface().unwrap().into_owned();
+    let mut renderer = super::corner_tests::renderer();
+    state.theme_settings.shell_opacity = 0.7;
+    state.theme_settings.backdrop_blur = 12.0;
+    for scale in [1.0, 1.25, 1.5] {
+        for transform in [Transform::Normal, Transform::_90, Transform::Flipped180] {
+            output.change_current_state(
+                None,
+                Some(transform),
+                Some(Scale::Fractional(scale)),
+                None,
+            );
+            state.theme_settings.material_style = crate::config::MaterialStyle::Translucent;
+            let make = |state: &mut Ferese, renderer: &mut GlesRenderer, x| {
+                let geometry = Rectangle::new((x, 80).into(), (160, 100).into());
+                materials::material_element_with_role(
+                    state,
+                    renderer,
+                    &output,
+                    &surface,
+                    MaterialSurface {
+                        shape_origin: geometry.loc,
+                        geometry,
+                        corners: RoundedRect::from_logical(geometry, scale, 16.0),
+                        index: 0,
+                        capture_geometry: geometry,
+                        alpha: 1.0,
+                    },
+                    (crate::effects::SemanticRole::Modal, 0, 1.0),
+                )
+                .unwrap()
+                .0
+            };
+            let AnimatedWindowRenderElement::Blur(initial) = make(&mut state, &mut renderer, 80)
+            else {
+                panic!("translucent material must have a blur element");
+            };
+            for x in [84, 88, 92] {
+                initial.capture_dirty.store(false, Ordering::Relaxed);
+                let AnimatedWindowRenderElement::Blur(moved) = make(&mut state, &mut renderer, x)
+                else {
+                    panic!("moving a material must preserve blur");
+                };
+                assert_eq!(
+                    moved.texture.tex_id(),
+                    initial.texture.tex_id(),
+                    "{scale} {transform:?}"
+                );
+                assert_eq!(
+                    moved.scratch.tex_id(),
+                    initial.scratch.tex_id(),
+                    "{scale} {transform:?}"
+                );
+                assert_eq!(
+                    moved.id(),
+                    initial.id(),
+                    "translation must preserve element identity"
+                );
+                assert!(
+                    initial.capture_dirty.load(Ordering::Relaxed),
+                    "new backdrop must be recaptured"
+                );
+            }
+            let AnimatedWindowRenderElement::Blur(clipped) = make(&mut state, &mut renderer, 0)
+            else {
+                panic!("edge-clipped material must retain blur");
+            };
+            assert_ne!(clipped.texture.size(), initial.texture.size());
+            assert_ne!(clipped.texture.tex_id(), initial.texture.tex_id());
+            assert_ne!(clipped.scratch.tex_id(), initial.scratch.tex_id());
+            state.theme_settings.material_style = crate::config::MaterialStyle::Solid;
+            assert!(matches!(
+                make(&mut state, &mut renderer, 80),
+                AnimatedWindowRenderElement::Border(_) | AnimatedWindowRenderElement::Effect(_)
+            ));
+            assert!(state.render.surfaces[&surface].captures.is_empty());
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires an EGL rendering device"]
+fn centered_material_refreshes_after_output_rotation_without_reallocating() {
+    use smithay::backend::renderer::element::solid::SolidColorRenderElement;
+    use smithay::output::{Mode, PhysicalProperties, Subpixel};
+    if !crate::startup_tests::private_runtime(
+        "render::blur_tests::centered_material_refreshes_after_output_rotation_without_reallocating",
+    ) {
+        return;
+    }
+    let mut events = smithay::reexports::calloop::EventLoop::try_new().unwrap();
+    let mut state = crate::startup_tests::state(&mut events);
+    let output = Output::new(
+        "centered-material".into(),
+        PhysicalProperties {
+            size: (0, 0).into(),
+            subpixel: Subpixel::Unknown,
+            make: String::new(),
+            model: String::new(),
+            serial_number: String::new(),
+        },
+    );
+    output.change_current_state(
+        Some(Mode {
+            size: (128, 96).into(),
+            refresh: 60_000,
+        }),
+        None,
+        None,
+        None,
+    );
+    state.space.map_output(&output, (0, 0));
+    state.register_output(&output, "centered-material".into());
+    let (window, _client) = crate::state::test_window(&mut state, &mut events, 0xffff0000);
+    let surface = window.toplevel().unwrap().wl_surface().clone();
+    let mut renderer = super::corner_tests::renderer();
+    state.theme_settings.shell_opacity = 0.7;
+    state.theme_settings.backdrop_blur = 12.0;
+    state.theme_settings.material_style = crate::config::MaterialStyle::Translucent;
+    let geometry = Rectangle::new((32, 24).into(), (64, 48).into());
+    let make = |state: &mut Ferese, renderer: &mut GlesRenderer| {
+        let (AnimatedWindowRenderElement::Blur(blur), _) = materials::material_element_with_role(
+            state,
+            renderer,
+            &output,
+            &surface,
+            MaterialSurface {
+                shape_origin: geometry.loc,
+                geometry,
+                corners: RoundedRect::from_logical(geometry, 1.0, 4.0),
+                index: 0,
+                capture_geometry: geometry,
+                alpha: 1.0,
+            },
+            (crate::effects::SemanticRole::Modal, 0, 1.0),
+        )
+        .unwrap() else {
+            panic!("translucent material must have a blur element")
+        };
+        blur
+    };
+    let backgrounds: Vec<SolidColorRenderElement> = [
+        ((0, 0), [0.9_f32, 0.0, 0.0, 1.0]),
+        ((64, 0), [0.0_f32, 0.0, 0.9, 1.0]),
+    ]
+    .into_iter()
+    .map(|(origin, color)| {
+        SolidColorRenderElement::new(
+            Id::new(),
+            Rectangle::new(origin.into(), (64, 96).into()),
+            CommitCounter::default(),
+            color,
+            RenderElementKind::Unspecified,
+        )
+        .into()
+    })
+    .collect();
+    let mut target: GlesTexture = renderer
+        .create_buffer(Fourcc::Abgr8888, (128, 96).into())
+        .unwrap();
+    let render =
+        |renderer: &mut GlesRenderer, target: &mut GlesTexture, blur: BlurRenderElement| {
+            let mut scene = vec![AnimatedWindowRenderElement::Blur(blur)];
+            scene.extend(
+                backgrounds
+                    .iter()
+                    .cloned()
+                    .map(AnimatedWindowRenderElement::from),
+            );
+            super::backdrop::update(&scene, 1.0);
+            let mut framebuffer = renderer.bind(target).unwrap();
+            redraw_output(renderer, &mut framebuffer, &output, &scene).unwrap();
+            let mapping = renderer
+                .copy_framebuffer(
+                    &framebuffer,
+                    Rectangle::from_size((128, 96).into()),
+                    Fourcc::Abgr8888,
+                )
+                .unwrap();
+            renderer.map_texture(&mapping).unwrap().to_vec()
+        };
+    let initial = make(&mut state, &mut renderer);
+    render(&mut renderer, &mut target, initial.clone());
+    assert!(!initial.capture_dirty.load(Ordering::Relaxed));
+    for transform in [
+        Transform::_180,
+        Transform::Flipped,
+        Transform::Flipped180,
+        Transform::Normal,
+    ] {
+        output.change_current_state(None, Some(transform), None, None);
+        let rotated = make(&mut state, &mut renderer);
+        assert_eq!(
+            rotated.capture_rect, initial.capture_rect,
+            "fixture must keep the sampling rectangle unchanged"
+        );
+        assert_eq!(rotated.texture.tex_id(), initial.texture.tex_id());
+        assert_eq!(rotated.scratch.tex_id(), initial.scratch.tex_id());
+        assert_eq!(rotated.id(), initial.id());
+        let invalidated = rotated.capture_dirty.load(Ordering::Relaxed);
+        let retained = render(&mut renderer, &mut target, rotated.clone());
+        rotated.capture_dirty.store(true, Ordering::Relaxed);
+        let fresh = render(&mut renderer, &mut target, rotated);
+        let different_bytes = retained
+            .iter()
+            .zip(&fresh)
+            .filter(|(left, right)| left != right)
+            .count();
+        assert_eq!(
+            different_bytes, 0,
+            "output rotation retained stale blurred pixels (dirty={invalidated})"
+        );
+        assert!(
+            invalidated,
+            "output rotation must invalidate the retained sample even when its rectangle is symmetric"
+        );
+    }
+}
