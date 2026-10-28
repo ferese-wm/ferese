@@ -310,6 +310,10 @@ fn workspace_shell_pixels_follow_consent_and_visibility() {
 
     let (mut events, mut state, output) = fixture();
     let (_window, _window_client) = crate::state::test_window(&mut state, &mut events, 0xffff0000);
+    state.theme_settings.bar_background_color.0 = [1.0, 0.0, 1.0, 1.0];
+    state.theme_settings.surface_raised_color.0 = [1.0, 0.0, 1.0, 1.0];
+    state.theme_settings.material_style = crate::config::MaterialStyle::Solid;
+    state.panel_background_opacity = Some(1.0);
     let workspace = state.workspaces.active_id();
     let (mut wire, server) = UnixStream::pair().unwrap();
     let client = state
@@ -333,17 +337,21 @@ fn workspace_shell_pixels_follow_consent_and_visibility() {
     let shm = client
         .create_resource::<WlShm, _, Ferese>(&state.display_handle, 1, smithay::wayland::GlobalData)
         .unwrap();
+    let effects = client
+        .create_resource::<ferese_protocols::effects::v1::server::ferese_effects_manager_v1::FereseEffectsManagerV1, _, Ferese>(
+            &state.display_handle, 6, (),
+        ).unwrap();
     request(&mut wire, compositor.id().protocol_id(), 0, &[2], None);
-    // A 64x48 overlay at the top-left, with no exclusive zone.
+    // A bottom panel in the same layer used by ferese-shell.
     request(
         &mut wire,
         layers.id().protocol_id(),
         0,
-        &[3, 2, 0, 3, 4, u32::from_ne_bytes(*b"tst\0")],
+        &[3, 2, 0, 2, 4, u32::from_ne_bytes(*b"tst\0")],
         None,
     );
     request(&mut wire, 3, 0, &[64, 48], None);
-    request(&mut wire, 3, 1, &[1 | 4], None);
+    request(&mut wire, 3, 1, &[2 | 4], None);
     request(&mut wire, 2, 6, &[], None);
     dispatch(&mut events, &mut state);
     wire.set_nonblocking(true).unwrap();
@@ -364,8 +372,8 @@ fn workspace_shell_pixels_follow_consent_and_visibility() {
     }
     request(&mut wire, 3, 6, &[serial.expect("layer configure")], None);
     let mut file = tempfile::tempfile().unwrap();
-    file.write_all(&0xffff00ffu32.to_ne_bytes().repeat(64 * 48))
-        .unwrap();
+    // Real shell buffers leave their material background to the compositor.
+    file.write_all(&0u32.to_ne_bytes().repeat(64 * 48)).unwrap();
     request(
         &mut wire,
         shm.id().protocol_id(),
@@ -374,6 +382,13 @@ fn workspace_shell_pixels_follow_consent_and_visibility() {
         Some(file.as_raw_fd()),
     );
     request(&mut wire, 4, 0, &[5, 0, 64, 48, 64 * 4, 0], None);
+    request(&mut wire, effects.id().protocol_id(), 1, &[6, 2], None);
+    let mut panel = vec![20];
+    panel.extend([0.0f32, 0.0, 64.0, 48.0, 0.0].map(f32::to_bits));
+    panel.push(40);
+    panel.extend([0.0f32, 0.0, 64.0, 48.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0].map(f32::to_bits));
+    panel.extend([0, 1000]);
+    request(&mut wire, 6, 7, &panel, None);
     request(&mut wire, 2, 1, &[5, 0, 0], None);
     request(&mut wire, 2, 2, &[0, 0, 64, 48], None);
     request(&mut wire, 2, 6, &[], None);
@@ -400,15 +415,45 @@ fn workspace_shell_pixels_follow_consent_and_visibility() {
                 .any(|pixel| pixel == [255, 0, 255, 255])
         };
     // Exercise the separate layer-map and render-output coordinate systems.
-    for (scale, transform) in [(2.0, Transform::Normal), (1.25, Transform::_90)] {
-        output.change_current_state(None, Some(transform), Some(Scale::Fractional(scale)), None);
+    for (scale, transform, quality) in [
+        (
+            2.0,
+            Transform::Normal,
+            super::super::workspace_capture::Quality::Balanced,
+        ),
+        (
+            1.85,
+            Transform::Normal,
+            super::super::workspace_capture::Quality::Native,
+        ),
+        (
+            1.75,
+            Transform::Normal,
+            super::super::workspace_capture::Quality::High,
+        ),
+        (
+            1.25,
+            Transform::_90,
+            super::super::workspace_capture::Quality::Balanced,
+        ),
+    ] {
+        state.space.map_output(&output, (1646, 0));
+        output.change_current_state(
+            Some(Mode {
+                size: (2880, 1800).into(),
+                refresh: 60_000,
+            }),
+            Some(transform),
+            Some(Scale::Fractional(scale)),
+            None,
+        );
         state.relayout();
         let mut plain = WorkspaceCapture::new(
-            WorkspaceSource::new(&state, workspace, false).unwrap(),
+            WorkspaceSource::with_quality(&state, workspace, false, quality).unwrap(),
             state.capture_epoch,
         );
         let mut shell = WorkspaceCapture::new(
-            WorkspaceSource::new(&state, workspace, true).unwrap(),
+            WorkspaceSource::with_quality(&state, workspace, true, quality).unwrap(),
             state.capture_epoch,
         );
         assert!(!plain.source.shell_visible(&state));

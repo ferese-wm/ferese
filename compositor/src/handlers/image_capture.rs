@@ -71,6 +71,26 @@ struct WindowStamp {
     scale: f64,
     epoch: u64,
     cursor: Option<CursorStamp>,
+    appearance: WindowAppearance,
+}
+
+#[derive(PartialEq)]
+struct WindowAppearance {
+    effects: crate::config::WindowEffectsSettings,
+    blur: f64,
+    reduce_transparency: bool,
+    wallpaper: CommitCounter,
+}
+
+impl WindowAppearance {
+    fn new(state: &Ferese) -> Self {
+        Self {
+            effects: state.window_effects,
+            blur: state.theme_settings.backdrop_blur,
+            reduce_transparency: state.theme_settings.reduce_transparency,
+            wallpaper: state.wallpaper.revision(),
+        }
+    }
 }
 
 #[derive(PartialEq)]
@@ -842,6 +862,7 @@ impl Ferese {
                         scale: info.scale,
                         epoch: self.capture_epoch,
                         cursor: None,
+                        appearance: WindowAppearance::new(self),
                     };
                     if let Some(toplevel) = info.window.toplevel() {
                         stamp.surfaces = surface_stamp(toplevel.wl_surface(), Some(info.geometry));

@@ -71,7 +71,13 @@ pub(super) fn window_blur_element(
         opaque: false,
         visible_framebuffer: framebuffer_clip_rect(corners.rect, mode.size, transform),
     };
-    let key = (renderer.context_id().erased(), state.output_id(output)?);
+    let output_id = state.output_id(output).or_else(|| {
+        output
+            .user_data()
+            .get::<crate::handlers::workspace_capture::CaptureOutputId>()
+            .map(|id| id.0)
+    })?;
+    let key = (renderer.context_id().erased(), output_id);
     let program = blur_program(&mut state.render, renderer)?;
     let buffers = &mut state
         .render

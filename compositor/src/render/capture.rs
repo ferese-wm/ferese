@@ -18,9 +18,10 @@ pub(crate) fn capture_resize_snapshot(
 ) -> Result<Option<ResizeSnapshot>, GlesError> {
     // Called before on_commit_buffer_handler: renderer surface state still
     // owns the previous buffer during an actual resize handoff.
-    render_window_texture(renderer, window, geometry, scale, remaining, None)
+    render_window_texture(renderer, window, geometry, scale, remaining, None, &[], 1.0)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_window_texture(
     renderer: &mut GlesRenderer,
     window: &smithay::desktop::Window,
@@ -28,6 +29,8 @@ fn render_window_texture(
     scale: f64,
     remaining: usize,
     reusable: Option<GlesTexture>,
+    background: &[super::AnimatedWindowRenderElement],
+    alpha: f32,
 ) -> Result<Option<ResizeSnapshot>, GlesError> {
     let Some(toplevel) = window.toplevel() else {
         return Ok(None);
@@ -48,7 +51,7 @@ fn render_window_texture(
         Point::<i32, Logical>::from((-geometry.loc.x, -geometry.loc.y))
             .to_physical_precise_round(scale),
         scale,
-        1.0,
+        alpha,
         RenderElementKind::Unspecified,
     );
     if content.is_empty() {
@@ -66,7 +69,13 @@ fn render_window_texture(
         let mut target = renderer.bind(&mut texture)?;
         let mut frame = renderer.render(&mut target, size, Transform::Normal)?;
         let damage = Rectangle::from_size(size);
-        frame.clear(Color32F::new(0.0, 0.0, 0.0, 0.0), &[damage])?;
+        let clear = if background.is_empty() {
+            Color32F::new(0.0, 0.0, 0.0, 0.0)
+        } else {
+            Color32F::new(0.035, 0.04, 0.055, 1.0)
+        };
+        frame.clear(clear, &[damage])?;
+        draw_render_elements(&mut frame, scale, background, &[damage])?;
         draw_render_elements(&mut frame, scale, &content, &[damage])?;
         let _ = frame.finish()?;
     }
@@ -115,6 +124,8 @@ fn window_mapping(
         scale,
         128 * 1024 * 1024,
         reusable,
+        &[],
+        1.0,
     )
     .map_err(|error| error.to_string())?
     .ok_or("Window has no capturable content")?;
@@ -234,6 +245,157 @@ pub(crate) fn convert_window_pixels(pixels: &mut [u8]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[ignore = "requires private Wayland sockets and an offscreen EGL device"]
+    fn window_stream_blurs_wallpaper_without_sampling_other_clients() {
+        if !crate::startup_tests::private_runtime(
+            "render::capture::tests::window_stream_blurs_wallpaper_without_sampling_other_clients",
+        ) {
+            return;
+        }
+        use smithay::backend::renderer::ImportMem;
+        let mut renderer = super::super::corner_tests::renderer();
+        let mut events = smithay::reexports::calloop::EventLoop::try_new().unwrap();
+        let mut state = crate::startup_tests::state(&mut events);
+        let output = smithay::output::Output::new(
+            "window-stream-test".into(),
+            smithay::output::PhysicalProperties {
+                size: (0, 0).into(),
+                subpixel: smithay::output::Subpixel::Unknown,
+                make: String::new(),
+                model: String::new(),
+                serial_number: String::new(),
+            },
+        );
+        output.change_current_state(
+            Some(smithay::output::Mode {
+                size: (800, 600).into(),
+                refresh: 60_000,
+            }),
+            None,
+            None,
+            None,
+        );
+        state.space.map_output(&output, (0, 0));
+        state.register_output(&output, "window-stream-test".into());
+        let (window, _client) = crate::state::test_window(&mut state, &mut events, 0xffff0000);
+        // An unrelated green client must never enter the window backdrop.
+        let (_other, _other_client) =
+            crate::state::test_window(&mut state, &mut events, 0xff00ff00);
+        state.window_effects.enabled = true;
+        state.window_effects.blur = true;
+        state.window_effects.opacity = 0.5;
+        state.theme_settings.backdrop_blur = 16.0;
+        let workspace = state.workspaces.active_id();
+        let view =
+            crate::handlers::workspace_capture::WorkspaceSource::new(&state, workspace, false)
+                .unwrap();
+        let scene = state.sample_workspace_frame(workspace, &output);
+        assert!(
+            scene
+                .windows
+                .values()
+                .all(|sample| sample.presentation.window_alpha == 0.5)
+        );
+        let mut resources = super::super::RenderResources::default();
+        let elements = super::super::capture_workspace_elements(
+            &mut state,
+            &mut renderer,
+            &view,
+            false,
+            &scene,
+            &mut resources,
+        );
+        assert!(
+            elements.iter().any(|element| matches!(
+                element,
+                super::super::AnimatedWindowRenderElement::Blur(_)
+            )),
+            "workspace descriptors must support window blur"
+        );
+        assert!(
+            state
+                .render
+                .windows
+                .values()
+                .all(|window| window.blur.is_empty()),
+            "capture must not populate display blur caches"
+        );
+        let info = crate::handlers::window_capture::WindowInfo {
+            geometry: window.geometry(),
+            window,
+            output,
+            scale: 1.0,
+            bytes: 64 * 48 * 4,
+        };
+        let background = stream_window_background(&mut state, &mut renderer, &info, 0.5);
+        assert!(matches!(
+            background.first(),
+            Some(super::super::AnimatedWindowRenderElement::Blur(_))
+        ));
+        // A stripe pattern provides a visible filtering signal independently
+        // of asynchronous wallpaper decoding.
+        let size = info.geometry.size;
+        let pixels = (0..size.w * size.h)
+            .flat_map(|i| {
+                if i % 2 == 0 {
+                    [0, 0, 255, 255]
+                } else {
+                    [0, 0, 0, 255]
+                }
+            })
+            .collect::<Vec<_>>();
+        let texture = renderer
+            .import_memory(&pixels, Fourcc::Abgr8888, (size.w, size.h).into(), false)
+            .unwrap();
+        let wallpaper: super::super::AnimatedWindowRenderElement =
+            crate::presentation::NativeTextureElement {
+                id: Id::new(),
+                commit: CommitCounter::default(),
+                texture,
+                geometry: Rectangle::from_size((size.w, size.h).into()),
+                source: Rectangle::from_size((f64::from(size.w), f64::from(size.h)).into()),
+                alpha: 1.0,
+                program: None,
+                uniforms: vec![],
+            }
+            .into();
+        let elements = vec![background.into_iter().next().unwrap(), wallpaper];
+        super::super::backdrop::update(&elements, 1.0);
+        let snapshot = render_window_texture(
+            &mut renderer,
+            &info.window,
+            info.geometry,
+            1.0,
+            128 * 1024 * 1024,
+            None,
+            &elements,
+            0.5,
+        )
+        .unwrap()
+        .unwrap();
+        let mapping = renderer
+            .copy_texture(
+                &snapshot.texture,
+                Rectangle::from_size(snapshot.texture.size()),
+                Fourcc::Abgr8888,
+            )
+            .unwrap();
+        let pixels = renderer.map_texture(&mapping).unwrap();
+        let center = ((size.h / 2 * size.w + size.w / 2) * 4) as usize;
+        for pixel in pixels[center..center + 8].chunks_exact(4) {
+            assert!((126..=129).contains(&pixel[0]), "red content: {pixel:?}");
+            assert!(pixel[1] <= 1, "another client leaked: {pixel:?}");
+            assert!(
+                (40..=90).contains(&pixel[2]),
+                "wallpaper was not blurred: {pixel:?}"
+            );
+            assert_eq!(pixel[3], 255);
+        }
+        state.window_effects.blur = false;
+        assert!(stream_window_background(&mut state, &mut renderer, &info, 0.5).is_empty());
+    }
 
     #[test]
     #[ignore = "manual release benchmark for window-capture pixel conversion"]
@@ -422,7 +584,7 @@ pub(crate) enum StreamCopy {
 
 pub(crate) fn capture_stream_window(
     renderer: &mut GlesRenderer,
-    state: &Ferese,
+    state: &mut Ferese,
     info: &crate::handlers::window_capture::WindowInfo,
     cursor: Option<Rectangle<i32, Logical>>,
     buffer: &smithay::reexports::wayland_server::protocol::wl_buffer::WlBuffer,
@@ -443,6 +605,8 @@ pub(crate) fn capture_stream_window(
             let size = info.geometry.size.to_physical_precise_round(info.scale);
             (size.w, size.h).into()
         });
+    let alpha = state.window_effects.resolve(1.0, false, 0.0).0;
+    let background = stream_window_background(state, renderer, info, alpha);
     let mut snapshot = render_window_texture(
         renderer,
         &info.window,
@@ -450,6 +614,8 @@ pub(crate) fn capture_stream_window(
         info.scale,
         128 * 1024 * 1024,
         reusable,
+        &background,
+        alpha,
     )
     .map_err(|error| error.to_string())?
     .ok_or("Window has no capturable content")?;
@@ -476,7 +642,7 @@ pub(crate) fn capture_stream_window(
         &snapshot.texture,
         buffer,
         Transform::Normal,
-        true,
+        background.is_empty(),
         &state.readbacks,
     );
     cache
@@ -485,6 +651,76 @@ pub(crate) fn capture_stream_window(
         .expect("stream texture cache mutex poisoned")
         .put_texture(snapshot.texture);
     result
+}
+
+/// Window streams have no consent to sample other clients. Build their blur
+/// from wallpaper only, using capture-owned resources and a window-sized canvas.
+fn stream_window_background(
+    state: &mut Ferese,
+    renderer: &mut GlesRenderer,
+    info: &crate::handlers::window_capture::WindowInfo,
+    alpha: f32,
+) -> Vec<super::AnimatedWindowRenderElement> {
+    use ferese_animation::{AnimatedRect, AnimatedValue};
+    use smithay::output::{Mode, Output, Scale};
+
+    let Some(&id) = state.windows.ids().get(&info.window) else {
+        return Vec::new();
+    };
+    let Some(owner) = state.output_id(&info.output) else {
+        return Vec::new();
+    };
+    let size = info.geometry.size.to_physical_precise_round(info.scale);
+    let output = Output::new("window-capture".into(), info.output.physical_properties());
+    output.change_current_state(
+        Some(Mode {
+            size,
+            refresh: 60_000,
+        }),
+        Some(Transform::Normal),
+        Some(Scale::Fractional(info.scale)),
+        None,
+    );
+    output
+        .user_data()
+        .insert_if_missing(|| crate::handlers::workspace_capture::CaptureOutputId(owner));
+    let bounds = ferese_layout::Rect {
+        x: 0.0,
+        y: 0.0,
+        width: f64::from(info.geometry.size.w),
+        height: f64::from(info.geometry.size.h),
+    };
+    let presentation = crate::presentation::WindowPresentation {
+        id,
+        bounds: AnimatedRect::new(bounds),
+        opacity: AnimatedValue::new(1.0),
+        window_alpha: alpha,
+        dim: 0.0,
+        emphasis: AnimatedValue::new(1.0),
+        shadow: AnimatedValue::new(1.0),
+        scale_content: false,
+        native_size: None,
+    };
+    std::mem::swap(&mut state.render, &mut state.capture_render);
+    let blur = super::window_blur::window_blur_element(
+        state,
+        renderer,
+        &output,
+        || super::window_blur::client_is_opaque(&info.window),
+        presentation,
+        super::RoundedRect::new(bounds, (0, 0).into(), info.scale, 0.0),
+    );
+    std::mem::swap(&mut state.render, &mut state.capture_render);
+    let Some(blur) = blur else {
+        return Vec::new();
+    };
+    state.prepare_theme_wallpaper(renderer, &info.output);
+    let mut elements = vec![blur];
+    if let Some(wallpaper) = state.wallpaper.element(renderer, &output) {
+        elements.push(wallpaper.into());
+    }
+    super::backdrop::update(&elements, info.scale);
+    elements
 }
 
 pub(crate) fn capture_stream_texture(

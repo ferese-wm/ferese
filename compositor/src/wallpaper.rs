@@ -88,6 +88,10 @@ pub(crate) struct WallpaperState {
 }
 
 impl WallpaperState {
+    pub(crate) fn revision(&self) -> CommitCounter {
+        self.commit
+    }
+
     #[cfg(test)]
     pub fn new(config: WallpaperConfig) -> Self {
         Self::with_wakeup(config, None)

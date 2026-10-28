@@ -76,6 +76,9 @@ window resizes and backing buffer density changes; closing the window ends shari
 At fractional scales, clients can round the two backing dimensions separately.
 Capture preserves those pixel dimensions rather than adding a row or column
 by applying the larger axis density to both axes, which would soften text.
+Window streams include compositor blur when enabled. Their blur uses the wallpaper
+fitted to the window's canvas, so transparent areas never reveal another app or
+shell surface. Window screenshots retain their original alpha channel.
 
 A shared workspace stays attached to its identity when you switch elsewhere. It
 includes that workspace's windows, their popups and decorations, and the wallpaper.
@@ -102,7 +105,8 @@ than silently reducing native quality. Older compositors offer 1080p only.
 The canvas and quality are fixed for the session. Changing the
 source output's scale, transform, geometry, or workspace ownership ends sharing;
 select the workspace again. Removing the workspace or locking also ends sharing.
-Window blur and desktop transition effects are omitted from the workspace view.
+Window opacity and blur are preserved using only the shared workspace's backdrop.
+Desktop transition effects are omitted from the workspace view.
 
 Workspaces appear when an application requests display sharing. The portal
 exposes them as restricted views of an existing monitor using the standard

@@ -440,7 +440,7 @@ impl Ferese {
                 id,
                 bounds: geometry.visual,
                 opacity: AnimatedValue::new(1.0),
-                window_alpha: 1.0,
+                window_alpha: self.window_effects.resolve(1.0, false, 0.0).0,
                 dim: 0.0,
                 emphasis,
                 shadow: emphasis,

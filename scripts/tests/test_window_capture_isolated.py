@@ -42,7 +42,13 @@ class WindowCapture(unittest.TestCase):
             runtime.mkdir(mode=0o700)
             config = root / "config/ferese/config.kdl"
             config.parent.mkdir(parents=True)
-            config.write_text('window-rule app-id="ferese.test.window-capture" floating=#true\n')
+            # Window streams now include a blurred wallpaper backdrop. Keep it
+            # small and deterministic so startup decoding is not a late repaint.
+            wallpaper = root / "wallpaper.png"
+            Image.new("RGB", (8, 8), (9, 10, 14)).save(wallpaper)
+            config.write_text('animations { reduced-motion #true; }\n'
+                              f'theme {{ background {{ path "{wallpaper}"; }}; }}\n'
+                              'window-rule app-id="ferese.test.window-capture" floating=#true\n')
             # Remembered geometry deliberately places both clients together;
             # ordinary placement now avoids overlap. Keep host state isolated.
             state = root / "state/ferese"

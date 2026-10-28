@@ -399,6 +399,7 @@ fn canceled_shm_failure_cannot_reset_a_replacement_submission() {
         scale: 1.,
         epoch: state.capture_epoch,
         cursor: None,
+        appearance: WindowAppearance::new(&state),
     };
     state.image_capture.active[0].revision = Some(42);
     state.image_capture.active[0].window_stamp = Some(stamp);
@@ -524,6 +525,7 @@ fn refresh_during_submitted_capture_is_satisfied_once_but_waiting_capture_resume
     for gpu in [false, true] {
         let mut fixture = capture_fixture();
         messages(&mut fixture.wire);
+        let appearance = WindowAppearance::new(&fixture.state);
         let active = &mut fixture.state.image_capture.active[0];
         let frame = active.pending.take().unwrap();
         let session = active.session.as_ref();
@@ -535,6 +537,7 @@ fn refresh_during_submitted_capture_is_satisfied_once_but_waiting_capture_resume
             scale: 1.,
             epoch: fixture.state.capture_epoch,
             cursor: None,
+            appearance,
         });
         let expected = [8, 32, 64, 255].repeat((WIDTH * HEIGHT) as usize);
         let (fence, ready, mut signal) = delayed_fence();

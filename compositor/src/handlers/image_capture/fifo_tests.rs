@@ -157,6 +157,7 @@ fn captured_window_fifo_scope_excludes_cropped_children_and_other_clients() {
         geometry: crop,
         scale: 1.0,
         epoch: fixture.state.capture_epoch,
+        appearance: WindowAppearance::new(&fixture.state),
         cursor: Some(CursorStamp {
             location: (100.0, 100.0).into(),
             geometry: crop,
