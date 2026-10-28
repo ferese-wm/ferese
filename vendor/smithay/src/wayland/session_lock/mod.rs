@@ -54,6 +54,7 @@ use std::sync::{Arc, Mutex};
 use _session_lock::ext_session_lock_manager_v1::{ExtSessionLockManagerV1, Request};
 use _session_lock::ext_session_lock_v1::ExtSessionLockV1;
 use wayland_protocols::ext::session_lock::v1::server as _session_lock;
+use wayland_server::backend::GlobalId;
 use wayland_server::protocol::wl_output::WlOutput;
 use wayland_server::protocol::wl_surface::WlSurface;
 use wayland_server::{Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New};
@@ -90,10 +91,17 @@ impl LockStatus {
 /// State of the [`ExtSessionLockManagerV1`] Global.
 #[derive(Debug)]
 pub struct SessionLockManagerState {
+    global: GlobalId,
     lock_status: Arc<Mutex<LockStatus>>,
 }
 
 impl SessionLockManagerState {
+    /// Returns the global so backends without secure presentation can disable it.
+    #[must_use]
+    pub fn global(&self) -> GlobalId {
+        self.global.clone()
+    }
+
     /// Create new [`ExtSessionLockManagerV1`] global.
     pub fn new<D, F>(display: &DisplayHandle, filter: F) -> Self
     where
@@ -107,9 +115,10 @@ impl SessionLockManagerState {
         let data = SessionLockManagerGlobalData {
             filter: Box::new(filter),
         };
-        display.create_global::<D, ExtSessionLockManagerV1, _>(MANAGER_VERSION, data);
+        let global = display.create_global::<D, ExtSessionLockManagerV1, _>(MANAGER_VERSION, data);
 
         Self {
+            global,
             lock_status: Arc::new(Mutex::new(LockStatus::Unlocked)),
         }
     }

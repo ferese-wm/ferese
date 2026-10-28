@@ -323,9 +323,6 @@ pub fn init(event_loop: &mut EventLoop<Ferese>, state: &mut Ferese) -> Result<()
                     state.display_presentation.presented(&output);
                     state.refresh_idle_inhibition();
 
-                    if state.session_lock.active() {
-                        state.lock_frame_presented(&output);
-                    }
                     let elapsed = render_started.elapsed();
                     if elapsed > refresh.get() {
                         missed_deadlines.set(missed_deadlines.get() + (elapsed.as_nanos() / refresh.get().as_nanos()) as u64);
@@ -349,6 +346,10 @@ pub fn init(event_loop: &mut EventLoop<Ferese>, state: &mut Ferese) -> Result<()
 }
 
 fn configure_nested_protocols(state: &mut Ferese) {
+    // Submission alone cannot satisfy ext-session-lock's presentation barrier.
+    state
+        .display_handle
+        .disable_global::<Ferese>(state.session_lock_state.global());
     state
         .presentation_constraints
         .disable_timing(&state.display_handle);
@@ -635,6 +636,11 @@ mod tests {
             globals
                 .windows(b"wl_compositor\0".len())
                 .any(|bytes| bytes == b"wl_compositor\0")
+        );
+        assert!(
+            !globals
+                .windows(b"ext_session_lock_manager_v1\0".len())
+                .any(|bytes| bytes == b"ext_session_lock_manager_v1\0")
         );
         assert!(
             !globals
