@@ -60,12 +60,19 @@ def main():
         parser.error("Run this preview inside a Wayland session")
     if not display.is_absolute():
         display = Path(os.environ["XDG_RUNTIME_DIR"]) / display
+    # Keep large snapshots on the build filesystem rather than RAM-backed /tmp.
+    # Runtime sockets still need a short path below the platform temp directory.
+    preview_storage = REPO / "target" / "previews"
+    preview_storage.mkdir(parents=True, exist_ok=True)
     children = []
-    with tempfile.TemporaryDirectory(prefix="ferese-panel-preview-") as temporary:
+    with (
+        tempfile.TemporaryDirectory(prefix="panel-binaries-", dir=preview_storage) as snapshot,
+        tempfile.TemporaryDirectory(prefix="ferese-panel-preview-") as temporary,
+    ):
         root = Path(temporary)
         # Keep sibling validation and apps opened from the shell on this build,
         # even if Cargo replaces target/release while the preview is running.
-        preview_bin = root / "bin"
+        preview_bin = Path(snapshot) / "bin"
         preview_bin.mkdir()
         for name, binary in binaries.items():
             shutil.copy2(binary, preview_bin / name)
