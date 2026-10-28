@@ -366,10 +366,9 @@ fn accessibility_activation_in_scrolled_app_grid_keeps_target_identity() {
         ))
         .unwrap();
     let mut shell = shell();
+    shell.render.motion.reduced_motion = true;
     let launcher = shell.launcher.as_mut().unwrap();
     launcher.category = Some(Category::Apps);
-    launcher.progress = AnimatedValue::new(1.);
-    launcher.height = AnimatedValue::new(404.);
     launcher.apps_first_row = 2;
     launcher.selected = 8;
     launcher.rows = (0..24)
@@ -467,6 +466,7 @@ fn small_launcher_views_keep_selected_controls_inside_the_surface() {
         ))
         .unwrap();
     let mut shell = shell();
+    shell.render.motion.reduced_motion = true;
     for (width, height) in [(320, 220), (480, 300), (720, 404)] {
         for apps in [false, true] {
             for activating in [false, true] {
@@ -481,8 +481,6 @@ fn small_launcher_views_keep_selected_controls_inside_the_surface() {
                 launcher.alternatives = !apps;
                 launcher.activating = activating;
                 launcher.rows = (0..24).map(|n| row(&format!("result {n}"))).collect();
-                launcher.progress = AnimatedValue::new(1.);
-                launcher.height = AnimatedValue::new(launcher.target_height());
                 let id = launcher.id;
                 let mut view = shell.view_launcher(id);
                 let mut tree = Tree::new(&view);
@@ -520,4 +518,221 @@ fn small_launcher_views_keep_selected_controls_inside_the_surface() {
             }
         }
     }
+}
+
+#[test]
+fn motion_does_not_subscribe_to_application_ticks() {
+    let mut shell = shell();
+    assert_eq!(shell.launcher_subscription().units(), 0);
+    let launcher = shell.launcher.as_mut().unwrap();
+    launcher.category = Some(Category::Windows);
+    assert_eq!(shell.launcher_subscription().units(), 1);
+    shell.launcher.as_mut().unwrap().file_status = files::Status::Indexing;
+    assert_eq!(shell.launcher_subscription().units(), 2);
+    shell.launcher.as_mut().unwrap().category = Some(Category::Files);
+    assert_eq!(shell.launcher_subscription().units(), 1);
+    shell.launcher.as_mut().unwrap().closing = true;
+    assert_eq!(shell.launcher_subscription().units(), 0);
+}
+
+#[test]
+fn sampled_motion_tracks_every_refresh_and_settles_without_updates() {
+    let start = Instant::now();
+    for hz in [60, 144, 240] {
+        let settings = motion::Settings::default();
+        let mut animation = animation::Animation::new(settings, start);
+        animation.retarget(220., false, settings, start);
+        let mut previous = animation.sample(start);
+        let mut samples = 0;
+        for frame in 1..hz * 2 {
+            let now = start + Duration::from_secs_f64(frame as f64 / hz as f64);
+            let sample = animation.sample(now);
+            if previous.active() {
+                if previous.progress.is_animating() {
+                    assert!(sample.progress.current > previous.progress.current);
+                }
+                if previous.height.is_animating() {
+                    assert!(sample.height.current > previous.height.current);
+                }
+                samples += 1;
+            }
+            previous = sample;
+        }
+        assert!(
+            samples > hz / 4,
+            "motion is sampled at the surface's refresh cadence"
+        );
+        assert!(!previous.active());
+        assert_eq!(previous.progress.current, 1.);
+        assert_eq!(previous.height.current, 220.);
+        assert!(!animation.sample(start + Duration::from_secs(60)).active());
+    }
+}
+
+#[test]
+fn retargeting_preserves_the_presented_state_and_clock() {
+    let start = Instant::now();
+    let settings = motion::Settings::default();
+    let mut animation = animation::Animation::new(settings, start);
+    let now = start + Duration::from_millis(80);
+    let before = animation.sample(now);
+    animation.retarget(220., false, settings, now);
+    let after = animation.sample(now);
+    assert_eq!(before.progress, after.progress);
+    assert_eq!(before.height.current, after.height.current);
+    animation.retarget(220., false, settings, now + Duration::from_millis(20));
+    assert_eq!(
+        animation.started, now,
+        "an unrelated view build must not restart motion"
+    );
+    animation.retarget(220., true, settings, now + Duration::from_millis(40));
+    let closed = animation.sample(now + Duration::from_secs(2));
+    assert_eq!(closed.progress.current, 0.);
+    assert!(!closed.active());
+}
+
+#[test]
+fn stale_close_completion_cannot_destroy_a_reopened_launcher() {
+    let mut shell = shell();
+    let old = shell.launcher.as_ref().unwrap().id;
+    let _ = shell.destroy_launcher();
+    let _ = shell.toggle_launcher("test".into());
+    let _ = shell.update_launcher(Message::Closed(old));
+    let id = shell.launcher.as_ref().unwrap().id;
+    let _ = shell.update_launcher(Message::Closed(id));
+    assert!(
+        shell.launcher.is_some(),
+        "only a settled closing invocation can complete"
+    );
+}
+
+#[test]
+fn reduced_motion_samples_final_geometry_immediately() {
+    let now = Instant::now();
+    let settings = motion::Settings {
+        reduced_motion: true,
+        ..Default::default()
+    };
+    let mut animation = animation::Animation::new(settings, now);
+    animation.retarget(220., false, settings, now);
+    let sample = animation.sample(now);
+    assert_eq!(sample.progress.current, 1.);
+    assert_eq!(sample.height.current, 220.);
+    assert!(!sample.active());
+    animation.retarget(72., true, settings, now);
+    assert_eq!(animation.sample(now).progress.current, 0.);
+    assert!(!animation.sample(now).active());
+}
+
+#[test]
+fn launcher_redraws_locally_and_emits_only_its_close_completion() {
+    use cosmic::iced::advanced::renderer::Headless;
+    use cosmic::iced::advanced::{Layout, Shell, clipboard, layout, mouse, widget};
+    use cosmic::iced::window::RedrawRequest;
+    use cosmic::iced::{Rectangle, Size};
+
+    let renderer = cosmic::iced::futures::executor::block_on(cosmic::Renderer::new(
+        cosmic::iced::Font::default(),
+        cosmic::iced::Pixels(14.),
+        Some("tiny-skia"),
+    ))
+    .unwrap();
+    let viewport = Rectangle::with_size(Size::new(720., 404.));
+    for hz in [60, 144, 240] {
+        for closing in [false, true] {
+            let mut shell = shell();
+            let settings = shell.render.motion;
+            let launcher = shell.launcher.as_mut().unwrap();
+            let id = launcher.id;
+            let start = Instant::now();
+            launcher.category = Some(Category::Windows);
+            launcher.closing = closing;
+            let animation = launcher.animation.get_mut();
+            *animation = animation::Animation::new(
+                settings,
+                if closing {
+                    start - Duration::from_secs(2)
+                } else {
+                    start
+                },
+            );
+            animation.retarget(220., closing, settings, start);
+            let mut view = shell.view_launcher(id);
+            let mut tree = widget::Tree::new(&view);
+            let node = view.as_widget_mut().layout(
+                &mut tree,
+                &renderer,
+                &layout::Limits::new(Size::ZERO, viewport.size()),
+            );
+            let mut messages = Vec::new();
+            let mut settled = false;
+            for frame in 0..hz * 2 {
+                let at = start + Duration::from_secs_f64(frame as f64 / hz as f64);
+                let active = shell
+                    .launcher
+                    .as_ref()
+                    .unwrap()
+                    .animation
+                    .borrow()
+                    .sample(at)
+                    .active();
+                for _ in 0..2 {
+                    let mut event_shell = Shell::new(&mut messages);
+                    view.as_widget_mut().update(
+                        &mut tree,
+                        &Event::Window(window::Event::RedrawRequested(at)),
+                        Layout::new(&node),
+                        mouse::Cursor::Unavailable,
+                        &renderer,
+                        &mut clipboard::Null,
+                        &mut event_shell,
+                        &viewport,
+                    );
+                    assert!(
+                        !event_shell.are_widgets_invalid(),
+                        "surface animation must not invalidate application-wide views"
+                    );
+                    assert_eq!(
+                        event_shell.redraw_request(),
+                        if active {
+                            RedrawRequest::NextFrame
+                        } else {
+                            RedrawRequest::Wait
+                        }
+                    );
+                }
+                if !active || (closing && !messages.is_empty()) {
+                    settled = true;
+                    break;
+                }
+                assert!(
+                    messages.is_empty(),
+                    "animation frames must not cause application updates"
+                );
+            }
+            assert!(settled);
+            if closing {
+                assert!(
+                    matches!(messages.as_slice(), [cosmic::Action::App(super::super::Message::Launcher(Message::Closed(closed)))] if *closed == id)
+                );
+            } else {
+                assert!(messages.is_empty());
+            }
+        }
+    }
+}
+
+#[test]
+fn close_completion_finishes_the_settled_invocation() {
+    let mut shell = shell();
+    let settings = shell.render.motion;
+    let launcher = shell.launcher.as_mut().unwrap();
+    let id = launcher.id;
+    let now = Instant::now();
+    let animation = launcher.animation.get_mut();
+    *animation = animation::Animation::new(settings, now - Duration::from_secs(4));
+    animation.retarget(72., true, settings, now - Duration::from_secs(2));
+    launcher.closing = true;
+    let _ = shell.update_launcher(Message::Closed(id));
+    assert!(shell.launcher.is_none());
 }

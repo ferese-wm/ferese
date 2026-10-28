@@ -1,3 +1,4 @@
+mod animation;
 mod apps;
 pub(super) mod files;
 mod icons;
@@ -18,8 +19,8 @@ use super::{
 };
 use cosmic::iced::keyboard::Key;
 use cosmic::iced::keyboard::key::Named;
-use ferese_animation::{AnimatedValue, SpringConfig};
 use sources::{Category, Row, Source, Target};
+use std::cell::RefCell;
 use std::sync::Arc;
 
 #[derive(Clone, Debug)]
@@ -29,7 +30,9 @@ pub(super) enum Message {
     Browse(window::Id, Category),
     ActivateRow(window::Id, sources::ResultId),
     Accept(bool),
-    Tick,
+    RefreshThumbnails(window::Id),
+    RefreshIndex(window::Id),
+    Closed(window::Id),
     AppsScrolled(window::Id, usize),
     Loaded(window::Id, Arc<apps::Apps>),
     Results(window::Id, u64, Vec<Row>, files::Status),
@@ -60,9 +63,7 @@ pub(super) struct Launcher {
     preferred_result: Option<sources::ResultId>,
     closing: bool,
     keyboard_nav: bool,
-    progress: AnimatedValue,
-    height: AnimatedValue,
-    tick: Instant,
+    animation: RefCell<animation::Animation>,
     thumbnails: thumbnails::Thumbnails,
     effects: Option<EffectsBinding>,
     regions: motion::Regions,
@@ -201,11 +202,6 @@ impl FereseShell {
             .max(0);
         let dismissed = Task::batch([self.destroy_menu(), self.destroy_system_modal(true)]);
         let id = window::Id::unique();
-        let mut progress = AnimatedValue::new(0.);
-        progress.set_target(1.);
-        if !self.render.motion.motion_enabled() {
-            progress.snap();
-        }
         let lifetime = work::Cancellation::default();
         let load_cancel = lifetime.clone();
         self.launcher = Some(Launcher {
@@ -231,9 +227,10 @@ impl FereseShell {
             preferred_result: None,
             closing: false,
             keyboard_nav: self.core.keyboard_nav(),
-            progress,
-            height: AnimatedValue::new(72.),
-            tick: Instant::now(),
+            animation: RefCell::new(animation::Animation::new(
+                self.render.motion,
+                Instant::now(),
+            )),
             thumbnails: Default::default(),
             effects: None,
             regions: Default::default(),
@@ -297,7 +294,11 @@ impl FereseShell {
         launcher.lifetime.cancel();
         launcher.search_cancel.cancel();
         launcher.closing = true;
-        launcher.progress.set_target(0.);
+        let height = launcher.target_height();
+        launcher
+            .animation
+            .get_mut()
+            .retarget(height, true, self.render.motion, Instant::now());
         if !self.render.motion.motion_enabled() {
             return self.finish_launcher();
         }
@@ -325,19 +326,26 @@ impl FereseShell {
         let Some(launcher) = &self.launcher else {
             return Subscription::none();
         };
-        let interval = if launcher.progress.is_animating()
-            || launcher.height.needs_update(launcher.target_height())
-        {
-            16
-        } else if launcher.category == Some(Category::Windows) && launcher.query.is_empty() {
-            500
-        } else if matches!(launcher.file_status, files::Status::Indexing) {
-            1000
-        } else {
+        if launcher.closing {
             return Subscription::none();
-        };
-        cosmic::iced::time::every(Duration::from_millis(interval))
-            .map(|_| super::Message::Launcher(Message::Tick))
+        }
+        let id = launcher.id;
+        let mut subscriptions = Vec::new();
+        if launcher.category == Some(Category::Windows) && launcher.query.is_empty() {
+            subscriptions.push(
+                cosmic::iced::time::every(Duration::from_millis(500))
+                    .with(id)
+                    .map(|(id, _)| super::Message::Launcher(Message::RefreshThumbnails(id))),
+            );
+        }
+        if matches!(launcher.file_status, files::Status::Indexing) {
+            subscriptions.push(
+                cosmic::iced::time::every(Duration::from_secs(1))
+                    .with(id)
+                    .map(|(id, _)| super::Message::Launcher(Message::RefreshIndex(id))),
+            );
+        }
+        Subscription::batch(subscriptions)
     }
     pub(super) fn refresh_launcher(&mut self) -> Task<super::Message> {
         self.merge_launcher_windows(false)
@@ -372,6 +380,16 @@ impl FereseShell {
             launcher.rows.truncate(100);
         }
         launcher.restore_selection(selected);
+        // Request the first visible thumbnails with the result change. Subsequent
+        // refreshes have their own deadline rather than riding animation frames.
+        if launcher.category == Some(Category::Windows)
+            && launcher.query.is_empty()
+            && let Some(control) = &self.control
+        {
+            launcher
+                .thumbnails
+                .refresh(&launcher.rows, launcher.selected, control, Instant::now());
+        }
         Task::none()
     }
     fn query_launcher(&mut self) -> Task<super::Message> {
@@ -543,45 +561,35 @@ impl FereseShell {
                 launcher.restore_selection(selected);
                 task
             }
-            Message::Tick => {
-                let now = Instant::now();
-                let delta = now
-                    .duration_since(launcher.tick)
-                    .min(Duration::from_millis(64))
-                    .mul_f64(self.render.motion.speed);
-                launcher.tick = now;
-                let base = self.render.motion.spring_config().unwrap_or_default();
-                let stiffness = base.stiffness * if launcher.closing { 1.6 } else { 1. };
-                let spring = SpringConfig {
-                    stiffness,
-                    damping: 2. * (stiffness * base.mass).sqrt(),
-                    position_tolerance: 0.001,
-                    velocity_tolerance: 0.001,
-                    crossing: ferese_animation::CrossingPolicy::NoCrossing,
-                    ..base
-                };
-                launcher.height.set_target(launcher.target_height());
-                if self.render.motion.motion_enabled() {
-                    launcher.progress.advance(delta, spring);
-                    launcher.height.advance(delta, spring);
-                } else {
-                    launcher.progress.snap();
-                    launcher.height.snap();
-                }
-                if launcher.closing && !launcher.progress.is_animating() {
-                    return self.finish_launcher();
-                }
-                if !launcher.closing
-                    && launcher.query.is_empty()
+            Message::Closed(id)
+                if id == launcher.id
+                    && launcher.closing
+                    && !launcher
+                        .animation
+                        .borrow()
+                        .sample(Instant::now())
+                        .progress
+                        .is_animating() =>
+            {
+                self.finish_launcher()
+            }
+            Message::RefreshThumbnails(id) if id == launcher.id && !launcher.closing => {
+                if launcher.query.is_empty()
                     && launcher.category == Some(Category::Windows)
                     && let Some(control) = &self.control
                 {
-                    launcher
-                        .thumbnails
-                        .refresh(&launcher.rows, launcher.selected, control, now);
+                    launcher.thumbnails.refresh(
+                        &launcher.rows,
+                        launcher.selected,
+                        control,
+                        Instant::now(),
+                    );
                 }
-                if !launcher.closing
-                    && now.duration_since(launcher.refresh) >= Duration::from_secs(1)
+                Task::none()
+            }
+            Message::RefreshIndex(id) if id == launcher.id && !launcher.closing => {
+                let now = Instant::now();
+                if now.duration_since(launcher.refresh) >= Duration::from_secs(1)
                     && matches!(launcher.file_status, files::Status::Indexing)
                 {
                     launcher.refresh = now;

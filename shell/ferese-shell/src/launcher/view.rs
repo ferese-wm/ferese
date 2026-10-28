@@ -64,33 +64,52 @@ fn button_radius(color: Color, radius: f32, high_contrast: bool) -> theme::Butto
 }
 impl FereseShell {
     pub(super) fn view_launcher(&self, id: window::Id) -> Ui<'_> {
-        motion::frame_driven(
-            None,
-            move |_| self.launcher_content(id),
-            |_| false,
-            move |_| {
-                if let Some(launcher) = self.launcher.as_ref().filter(|launcher| launcher.id == id)
-                    && let Some(effects) = &launcher.effects
-                {
+        let Some(launcher) = self.launcher.as_ref().filter(|launcher| launcher.id == id) else {
+            return Space::new().into();
+        };
+        launcher.animation.borrow_mut().retarget(
+            launcher.target_height(),
+            launcher.closing,
+            self.render.motion,
+            super::Instant::now(),
+        );
+        let revision = Some(launcher.animation.borrow().started);
+        motion::geometry_driven(
+            revision,
+            move |now| self.launcher_content(id, now),
+            move |now| launcher.animation.borrow().sample(now).active(),
+            move |now| {
+                if let Some(effects) = &launcher.effects {
                     let _ = effects.set_presentation(
                         &launcher.regions.lock().expect(
                             "surface rendering state must remain consistent across callbacks",
                         ),
-                        launcher.progress.current as f32,
+                        launcher.animation.borrow().sample(now).progress.current as f32,
                         [],
                         ferese_surface_effects_v1::Role::Popover,
                     );
                 }
             },
-            |_| None,
+            move |now| {
+                (launcher.closing
+                    && !launcher
+                        .animation
+                        .borrow()
+                        .sample(now)
+                        .progress
+                        .is_animating())
+                .then_some(message(Message::Closed(id)))
+            },
+            None,
         )
     }
-    fn launcher_content(&self, id: window::Id) -> Ui<'_> {
+    fn launcher_content(&self, id: window::Id, now: super::Instant) -> Ui<'_> {
         let Some(launcher) = self.launcher.as_ref().filter(|l| l.id == id) else {
             return Space::new().into();
         };
+        let sample = launcher.animation.borrow().sample(now);
         let palette = self.config.theme.palette();
-        let opacity = launcher.progress.current as f32;
+        let opacity = sample.progress.current as f32;
         let text = palette.text.scale_alpha(opacity);
         let muted = palette.muted.scale_alpha(opacity);
         let appearance = move |_: &cosmic::Theme| text_input::Appearance {
@@ -624,7 +643,7 @@ impl FereseShell {
                     .0
                     .min(if launcher.apps_browse() { 720 } else { 560 }) as f32,
             )
-            .height(launcher.height.current as f32)
+            .height(sample.height.current as f32)
             .clip(true)
             .class(theme::Container::custom(move |_| container::Style {
                 background: (!compositor_material).then_some(background.into()),
