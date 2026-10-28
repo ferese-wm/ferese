@@ -3,7 +3,7 @@ use std::error::Error;
 use std::os::fd::{FromRawFd, RawFd};
 use std::os::unix::net::UnixStream;
 use std::sync::mpsc::{Receiver, Sender, TryRecvError};
-use std::sync::{Arc, mpsc};
+use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 
 use ferese_protocols::shell::v1::client::ferese_shell_manager_v1::FereseShellManagerV1;
@@ -77,6 +77,7 @@ pub(crate) struct ShellControl {
     _manager: FereseShellManagerV1,
     shell: FereseShellV1,
     updates: Receiver<ControlUpdate>,
+    latest: Arc<Mutex<LatestUpdates>>,
     wake: Wake,
     background_title_updates: Cell<bool>,
 }
@@ -118,14 +119,46 @@ impl Wake {
     }
 }
 
+// Replaceable state occupies one slot per kind, regardless of consumer backlog.
+#[derive(Default)]
+struct LatestUpdates {
+    config: Option<String>,
+    snapshot: Option<ShellSnapshot>,
+    overview_active: Option<bool>,
+}
+
+const MAX_COMMANDS_PER_POLL: usize = 64;
+
 struct UpdateSender {
     sender: Sender<ControlUpdate>,
+    latest: Arc<Mutex<LatestUpdates>>,
     wake: Wake,
 }
 
 impl UpdateSender {
     fn send(&self, update: ControlUpdate) -> Result<(), mpsc::SendError<ControlUpdate>> {
-        self.sender.send(update)?;
+        match update {
+            ControlUpdate::Config(source) => {
+                self.latest.lock().expect("shell state lock").config = Some(source);
+            }
+            ControlUpdate::Snapshot(snapshot) => {
+                let previous = self
+                    .latest
+                    .lock()
+                    .expect("shell state lock")
+                    .snapshot
+                    .replace(snapshot);
+                // Destroy obsolete window lists outside the lock used by the UI.
+                drop(previous);
+            }
+            ControlUpdate::OverviewState(active) => {
+                self.latest
+                    .lock()
+                    .expect("shell state lock")
+                    .overview_active = Some(active);
+            }
+            command => self.sender.send(command)?,
+        }
         self.wake.0.notify_one();
         Ok(())
     }
@@ -155,9 +188,11 @@ impl ShellControl {
         let shell = manager.get_shell(&qh, ());
         shell.set_background_title_updates(0);
         let (sender, updates) = mpsc::channel();
+        let latest = Arc::new(Mutex::new(LatestUpdates::default()));
         let wake = Wake(Arc::new(tokio::sync::Notify::new()));
         let mut state = ControlState::new(UpdateSender {
             sender,
+            latest: latest.clone(),
             wake: wake.clone(),
         });
 
@@ -174,6 +209,7 @@ impl ShellControl {
             _manager: manager,
             shell,
             updates,
+            latest,
             wake,
             background_title_updates: Cell::new(false),
         })
@@ -199,7 +235,8 @@ impl ShellControl {
             commands: Vec::new(),
         };
 
-        loop {
+        // Commands retain FIFO order but cannot monopolize an application update.
+        for _ in 0..MAX_COMMANDS_PER_POLL {
             match self.updates.try_recv() {
                 Ok(ControlUpdate::Logout(serial, output)) => {
                     poll.commands.push(ControlCommand::Logout(serial, output))
@@ -225,16 +262,32 @@ impl ShellControl {
                 Ok(ControlUpdate::LogoutCancelled(serial)) => {
                     poll.commands.push(ControlCommand::CancelLogout(serial))
                 }
-                Ok(ControlUpdate::Config(source)) => poll.config = Some(source),
-                Ok(ControlUpdate::Snapshot(snapshot)) => poll.snapshot = Some(snapshot),
-                Ok(ControlUpdate::OverviewState(active)) => poll.overview_active = Some(active),
+                Ok(
+                    ControlUpdate::Config(_)
+                    | ControlUpdate::Snapshot(_)
+                    | ControlUpdate::OverviewState(_),
+                ) => {
+                    unreachable!("replaceable state is coalesced before the command queue")
+                }
                 Ok(ControlUpdate::Disconnected) | Err(TryRecvError::Disconnected) => {
                     poll.disconnected = true;
-                    return poll;
+                    break;
                 }
-                Err(TryRecvError::Empty) => return poll,
+                Err(TryRecvError::Empty) => break,
             }
         }
+        // Notify stores a permit even if the subscription is processing its prior wake.
+        // Re-arm after a full batch so queued commands need no further producer traffic.
+        if poll.commands.len() == MAX_COMMANDS_PER_POLL {
+            self.wake.0.notify_one();
+        }
+        // State is published before its following commands. Take it after draining
+        // those commands so a concurrent new-output/toggle pair cannot lose its state.
+        let latest = std::mem::take(&mut *self.latest.lock().expect("shell state lock"));
+        poll.config = latest.config;
+        poll.snapshot = latest.snapshot;
+        poll.overview_active = latest.overview_active;
+        poll
     }
 
     pub(crate) fn thumbnail(&self, token: u32, window: u64) {
@@ -629,9 +682,11 @@ mod tests {
         let manager = registry.bind::<FereseShellManagerV1, _, _>(1, version, &qh, ());
         let shell = manager.get_shell(&qh, ());
         let (sender, updates) = mpsc::channel();
+        let latest = Arc::new(Mutex::new(LatestUpdates::default()));
         let wake = Wake(Arc::new(tokio::sync::Notify::new()));
         let state = ControlState::new(UpdateSender {
             sender,
+            latest: latest.clone(),
             wake: wake.clone(),
         });
         connection.flush().unwrap();
@@ -644,10 +699,140 @@ mod tests {
             _manager: manager,
             shell,
             updates,
+            latest,
             wake,
             background_title_updates: Cell::new(true),
         };
         (control, state, queue, peer)
+    }
+
+    #[test]
+    fn snapshot_bursts_keep_only_latest_state_without_queueing_obsolete_versions() {
+        let (control, state, _queue, _peer) = control_fixture();
+        for revision in 0..10_000 {
+            state
+                .sender
+                .send(ControlUpdate::Snapshot(ShellSnapshot {
+                    binding_mode: Some(format!("mode-{revision}")),
+                    ..Default::default()
+                }))
+                .unwrap();
+        }
+        assert!(matches!(
+            control.updates.try_recv(),
+            Err(TryRecvError::Empty)
+        ));
+        assert_eq!(
+            control.poll().snapshot.unwrap().binding_mode.as_deref(),
+            Some("mode-9999")
+        );
+        assert!(control.poll().snapshot.is_none());
+    }
+
+    #[test]
+    fn concurrent_commands_observe_the_state_published_before_them() {
+        let (control, state, _queue, _peer) = control_fixture();
+        let sender = state.sender;
+        let producer = thread::spawn(move || {
+            for revision in 1..=10_000 {
+                sender
+                    .send(ControlUpdate::Snapshot(ShellSnapshot {
+                        binding_mode: Some(revision.to_string()),
+                        ..Default::default()
+                    }))
+                    .unwrap();
+                sender
+                    .send(ControlUpdate::Logout(revision, "output".into()))
+                    .unwrap();
+                if revision.is_multiple_of(31) {
+                    thread::yield_now();
+                }
+            }
+        });
+        let mut latest = 0;
+        let mut received = 0;
+        while received < 10_000 {
+            let poll = control.poll();
+            if let Some(snapshot) = poll.snapshot {
+                latest = snapshot.binding_mode.unwrap().parse::<u32>().unwrap();
+            }
+            for command in poll.commands {
+                let ControlCommand::Logout(serial, _) = command else {
+                    panic!("unexpected command");
+                };
+                received += 1;
+                assert_eq!(
+                    serial, received,
+                    "commands must keep their publication order"
+                );
+                assert!(
+                    latest >= serial,
+                    "a command must not outrun its preceding state"
+                );
+            }
+            thread::yield_now();
+        }
+        producer.join().unwrap();
+    }
+
+    #[test]
+    fn command_batches_remain_ordered_and_rearm_wakes_while_state_is_coalesced() {
+        use cosmic::iced::futures::FutureExt;
+
+        let (control, state, _queue, _peer) = control_fixture();
+        let total = MAX_COMMANDS_PER_POLL * 3 + 7;
+        for revision in 0..total {
+            state
+                .sender
+                .send(ControlUpdate::Logout(revision as u32, "output".into()))
+                .unwrap();
+            state
+                .sender
+                .send(ControlUpdate::Config(format!("config-{revision}")))
+                .unwrap();
+            state
+                .sender
+                .send(ControlUpdate::OverviewState(revision.is_multiple_of(2)))
+                .unwrap();
+            state
+                .sender
+                .send(ControlUpdate::Snapshot(ShellSnapshot {
+                    binding_mode: Some(format!("mode-{revision}")),
+                    ..Default::default()
+                }))
+                .unwrap();
+        }
+        let mut seen = Vec::new();
+        while seen.len() < total {
+            assert!(
+                control.wake.0.notified().now_or_never().is_some(),
+                "a queued batch needs a wake without producer traffic"
+            );
+            let poll = control.poll();
+            assert!(poll.commands.len() <= MAX_COMMANDS_PER_POLL);
+            if seen.is_empty() {
+                assert_eq!(poll.config, Some(format!("config-{}", total - 1)));
+                assert_eq!(poll.overview_active, Some((total - 1).is_multiple_of(2)));
+                assert_eq!(
+                    poll.snapshot.unwrap().binding_mode,
+                    Some(format!("mode-{}", total - 1))
+                );
+            } else {
+                assert!(poll.snapshot.is_none());
+                assert!(poll.config.is_none());
+                assert!(poll.overview_active.is_none());
+            }
+            for command in poll.commands {
+                let ControlCommand::Logout(serial, _) = command else {
+                    panic!("unexpected command");
+                };
+                seen.push(serial as usize);
+            }
+        }
+        assert_eq!(seen, (0..total).collect::<Vec<_>>());
+        assert!(control.poll().commands.is_empty());
+        drop(state);
+        assert!(control.poll().disconnected);
     }
 
     #[test]
@@ -1193,8 +1378,10 @@ mod wake_tests {
     fn control_updates_wake_without_a_clock_tick_even_before_subscription() {
         let wake = Wake(Arc::new(tokio::sync::Notify::new()));
         let (sender, receiver) = mpsc::channel();
+        let latest = Arc::new(Mutex::new(LatestUpdates::default()));
         let sender = UpdateSender {
             sender,
+            latest: latest.clone(),
             wake: wake.clone(),
         };
         sender
@@ -1205,10 +1392,8 @@ mod wake_tests {
         cosmic::iced::futures::pin_mut!(stream);
 
         assert_eq!(stream.next().now_or_never(), Some(Some(())));
-        assert!(matches!(
-            receiver.try_recv(),
-            Ok(ControlUpdate::OverviewState(true))
-        ));
+        assert!(matches!(receiver.try_recv(), Err(TryRecvError::Empty)));
+        assert_eq!(latest.lock().unwrap().overview_active, Some(true));
         assert_eq!(stream.next().now_or_never(), None);
 
         sender
