@@ -113,10 +113,29 @@ pub fn navigation_style(p: Palette, selected: bool) -> theme::Button {
 
 #[must_use]
 pub fn settings_input(p: Palette) -> theme::TextInput {
+    input_style(p, 1.)
+}
+
+/// Inputs on a modal material use the same translucent fill as selection cards.
+#[must_use]
+pub fn material_input(p: Palette, material_opacity: f32) -> theme::TextInput {
+    let opacity = if material_opacity.is_finite() {
+        material_opacity.clamp(0., 1.)
+    } else {
+        1.
+    };
+    input_style(p, if opacity < 1. { opacity * 0.25 } else { 1. })
+}
+
+fn input_style(p: Palette, opacity: f32) -> theme::TextInput {
     let appearance = move |focused: bool, hovered: bool| cosmic::widget::text_input::Appearance {
         shape: Some(BorderShape::Continuous),
         outline: None,
-        background: mix(p.card, p.text, if hovered { 0.06 } else { 0.035 }).into(),
+        background: Color {
+            a: opacity,
+            ..mix(p.card, p.text, if hovered { 0.06 } else { 0.035 })
+        }
+        .into(),
         border_radius: p.radius.min(7.).into(),
         border_width: 1.,
         border_offset: None,
@@ -432,6 +451,37 @@ pub fn filled_button(fill: Color, foreground: Color, radius: f32, opacity: f32) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn material_inputs_keep_translucent_fills_when_hovered_or_focused() {
+        let palette = Palette::from_resolved(&ferese_config::theme::default_theme());
+        let theme = palette.native_theme();
+        for opacity in [0.65, 1.] {
+            let theme::TextInput::Custom {
+                active,
+                hovered,
+                focused,
+                error,
+                disabled,
+            } = material_input(palette, opacity)
+            else {
+                panic!("custom input style")
+            };
+            for paint in [active, hovered, focused, error, disabled] {
+                let style = paint(&theme);
+                let Background::Color(background) = style.background else {
+                    panic!("color fill")
+                };
+                if opacity < 1. {
+                    assert!(background.a < opacity);
+                } else {
+                    assert_eq!(background.a, 1.);
+                }
+                assert_eq!(style.text_color, Some(palette.text));
+                assert_eq!(style.placeholder_color, palette.muted);
+            }
+        }
+    }
 
     #[test]
     fn hiding_modal_focus_preserves_button_borders_and_materials() {

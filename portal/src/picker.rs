@@ -1,14 +1,70 @@
 use std::io::{Read, Write};
 
 use cosmic::app::{Core, Settings, Task};
-use cosmic::iced::{Alignment, Length};
-use cosmic::widget::{button, column, container, row, scrollable};
 use cosmic::{ApplicationExt, Element};
-use ferese_theme::icons::symbolic as glyph;
 use serde::{Deserialize, Serialize};
 
 use crate::capture::Source;
 use crate::recording::Audio;
+
+mod backdrop;
+mod view;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SourceGroup {
+    Displays,
+    Workspaces,
+    Windows,
+}
+
+impl SourceGroup {
+    fn available(prompt: &Prompt) -> impl Iterator<Item = Self> + '_ {
+        [Self::Displays, Self::Workspaces, Self::Windows]
+            .into_iter()
+            .filter(|group| group.count(prompt) > 0)
+    }
+
+    fn contains(self, source: &Source) -> bool {
+        matches!(
+            (self, source.kind()),
+            (Self::Displays, crate::capture::SourceKind::Monitor)
+                | (Self::Workspaces, crate::capture::SourceKind::Workspace(_))
+                | (Self::Windows, crate::capture::SourceKind::Window(_))
+        )
+    }
+
+    fn count(self, prompt: &Prompt) -> usize {
+        prompt
+            .sources
+            .iter()
+            .filter(|source| self.contains(source))
+            .count()
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Displays => "Displays",
+            Self::Workspaces => "Workspaces",
+            Self::Windows => "Windows",
+        }
+    }
+
+    fn icon(self) -> &'static [u8] {
+        match self {
+            Self::Displays => ferese_theme::icons::DISPLAY,
+            Self::Workspaces => ferese_theme::icons::morph::WORKSPACES,
+            Self::Windows => ferese_theme::icons::WINDOW,
+        }
+    }
+
+    fn description(self) -> &'static str {
+        match self {
+            Self::Displays => "Everything visible on the selected display is shared.",
+            Self::Workspaces => "This workspace keeps sharing when you switch away.",
+            Self::Windows => "Only the selected window is captured.",
+        }
+    }
+}
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Prompt {
@@ -55,21 +111,18 @@ impl Prompt {
             })
     }
 
-    fn source_list_height(&self) -> f32 {
-        let visible = &self.sources[..self.sources.len().min(4)];
-        let mut sections = 0;
-        let mut previous_kind = None;
-        if !self.window_capture {
-            for source in visible {
-                let kind = source.kind().category();
-                if previous_kind != Some(kind) {
-                    sections += 1;
-                    previous_kind = Some(kind);
-                }
-            }
-        }
-        let rows = visible.len();
-        (rows * 64 + rows.saturating_sub(1) * 6 + sections * 24) as f32
+    fn dialog_height(&self) -> f32 {
+        let groups: Vec<_> = SourceGroup::available(self).collect();
+        let rows = groups
+            .iter()
+            .map(|group| group.count(self))
+            .max()
+            .unwrap_or(1);
+        (260.
+            + rows.min(4) as f32 * 64.
+            + if groups.len() > 1 { 44. } else { 0. }
+            + if rows > 6 { 44. } else { 0. })
+        .clamp(400., 600.)
     }
 }
 
@@ -94,6 +147,11 @@ enum Message {
     WindowOpened(cosmic::iced::window::Id),
     Attached(crate::parent::Attachment),
     Select(usize),
+    Group(SourceGroup),
+    Search(String),
+    OpenOptions(usize),
+    CloseOptions,
+    Escape,
     Remember,
     Audio(Audio),
     Region,
@@ -109,6 +167,9 @@ struct Picker {
     parent: Option<std::sync::Arc<crate::parent::Parent>>,
     prompt: Prompt,
     selected: Vec<usize>,
+    group: SourceGroup,
+    query: String,
+    options_source: Option<usize>,
     remember: bool,
     audio: Audio,
     region: bool,
@@ -134,15 +195,10 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let (theme, font, background, palette) = appearance();
-    let height = 180.
-        + prompt.source_list_height()
-        + if prompt.persist_mode > 0 { 48. } else { 0. }
-        + if prompt.recording { 190. } else { 0. }
-        + if prompt.workspace_shell { 80. } else { 0. }
-        + if prompt.workspace_quality { 110. } else { 0. };
+    let height = prompt.dialog_height();
     cosmic::app::run::<Picker>(
         Settings::default()
-            .size(cosmic::iced::Size::new(400., height))
+            .size(cosmic::iced::Size::new(560., height))
             .client_decorations(false)
             .transparent(true)
             .theme(theme)
@@ -183,12 +239,18 @@ impl cosmic::Application for Picker {
         core.window.content_container = false;
         core.window.use_template = false;
         // No preselected source: clicking Share must be a deliberate choice.
+        let group = SourceGroup::available(&prompt)
+            .next()
+            .unwrap_or(SourceGroup::Displays);
         let mut app = Self {
             core,
             material: None,
             parent: None,
             prompt,
             selected: Vec::new(),
+            group,
+            query: String::new(),
+            options_source: None,
             remember: false,
             audio: Audio::Off,
             region: false,
@@ -226,6 +288,11 @@ impl cosmic::Application for Picker {
                 cosmic::iced::Event::Window(cosmic::iced::window::Event::Opened { .. }) => {
                     Some(Message::WindowOpened(id))
                 }
+                cosmic::iced::Event::Keyboard(cosmic::iced::keyboard::Event::KeyPressed {
+                    key:
+                        cosmic::iced::keyboard::Key::Named(cosmic::iced::keyboard::key::Named::Escape),
+                    ..
+                }) => Some(Message::Escape),
                 _ => None,
             }),
         ])
@@ -265,7 +332,12 @@ impl cosmic::Application for Picker {
                 eprintln!("ferese portal: {error}");
                 return cosmic::iced::exit();
             }
-            Message::Select(index) if index < self.prompt.sources.len() => {
+            Message::Select(index)
+                if self.options_source.is_none() && index < self.prompt.sources.len() =>
+            {
+                if !self.visible_sources().any(|(visible, _)| visible == index) {
+                    return Task::none();
+                }
                 if self.selected.contains(&index) {
                     self.selected.retain(|i| *i != index);
                 } else {
@@ -279,17 +351,52 @@ impl cosmic::Application for Picker {
                 }
                 self.remember &= self.can_remember();
                 self.include_shell &= self.can_include_shell();
+                if self.selected.is_empty() {
+                    self.options_source = None;
+                }
             }
-            Message::Remember if self.can_remember() => self.remember = !self.remember,
-            Message::Audio(audio) if self.prompt.recording => self.audio = audio,
-            Message::Region if self.prompt.recording => self.region = !self.region,
-            Message::IncludeShell if self.can_include_shell() => {
+            Message::Group(group)
+                if self.options_source.is_none()
+                    && group.count(&self.prompt) > 0
+                    && group != self.group =>
+            {
+                self.group = group;
+                self.query.clear();
+                // Single-source consent always belongs to the visible tab.
+                if !self.prompt.multiple {
+                    self.selected.clear();
+                    self.remember = false;
+                    self.include_shell = false;
+                    self.options_source = None;
+                }
+            }
+            Message::Search(query) if self.options_source.is_none() => self.query = query,
+            Message::OpenOptions(index)
+                if self.source_has_options(index)
+                    && self.visible_sources().any(|(visible, _)| visible == index) =>
+            {
+                self.options_source = Some(index);
+            }
+            Message::CloseOptions => self.options_source = None,
+            Message::Escape if self.options_source.is_some() => self.options_source = None,
+            Message::Remember if self.options_monitor() && self.can_remember() => {
+                self.remember = !self.remember
+            }
+            Message::Audio(audio) if self.options_monitor() && self.prompt.recording => {
+                self.audio = audio
+            }
+            Message::Region if self.options_monitor() && self.prompt.recording => {
+                self.region = !self.region
+            }
+            Message::IncludeShell if self.options_workspace() && self.can_include_shell() => {
                 self.include_shell = !self.include_shell
             }
-            Message::WorkspaceQuality(quality) if self.can_choose_quality() => {
+            Message::WorkspaceQuality(quality)
+                if self.options_workspace() && self.can_choose_quality() =>
+            {
                 self.workspace_quality = quality;
             }
-            Message::Share if !self.selected.is_empty() => {
+            Message::Share if self.options_source.is_none() && !self.selected.is_empty() => {
                 let names: Vec<_> = self
                     .selected
                     .iter()
@@ -327,7 +434,7 @@ impl cosmic::Application for Picker {
                 let _ = std::io::stdout().flush();
                 return cosmic::iced::exit();
             }
-            Message::Cancel => return cosmic::iced::exit(),
+            Message::Cancel | Message::Escape => return cosmic::iced::exit(),
             _ => (),
         }
         Task::none()
@@ -342,241 +449,46 @@ impl cosmic::Application for Picker {
     }
 
     fn view(&self) -> Element<'_, Message> {
-        let app = if self.prompt.app.is_empty() {
-            "this application"
-        } else {
-            &self.prompt.app
-        };
-        let header = row![
-            glyph(ferese_theme::icons::DISPLAY, 24),
-            column![
-                self.text(if self.prompt.recording {
-                    "Record your screen"
-                } else if self.prompt.window_capture {
-                    "Choose a window"
-                } else {
-                    "Choose what to share"
-                })
-                .size(17),
-                self.text(if self.prompt.recording {
-                    "Saved to your Videos folder".to_owned()
-                } else {
-                    format!(
-                        "{} {app}",
-                        if self.prompt.window_capture {
-                            "Screenshot for"
-                        } else {
-                            "Share with"
-                        }
-                    )
-                })
-                .size(12),
-            ]
-            .spacing(2)
-            .width(Length::Fill),
-        ]
-        .spacing(12)
-        .align_y(Alignment::Center);
-        let mut sources = column([]).spacing(6);
-        let mut previous_kind = None;
-        for (index, source) in self.prompt.sources.iter().enumerate() {
-            let kind = source.kind().category();
-            if !self.prompt.window_capture && previous_kind != Some(kind) {
-                sources = sources.push(self.text(source.kind().label()).size(12));
-                previous_kind = Some(kind);
-            }
-            let selected = self.selected.contains(&index);
-            let mut entry = row![
-                glyph(ferese_theme::icons::DISPLAY, 24),
-                column![
-                    self.text(if self.prompt.window_capture || !source.is_monitor() {
-                        &source.label
-                    } else {
-                        &source.name
-                    })
-                    .size(14),
-                    self.text(format!("{} × {}", source.width, source.height))
-                        .size(12)
-                ]
-                .spacing(3)
-                .width(Length::Fill),
-            ]
-            .spacing(12)
-            .align_y(Alignment::Center);
-            if selected {
-                entry = entry.push(glyph(ferese_theme::icons::CHECK, 20));
-            }
-            sources = sources.push(
-                button::custom(entry)
-                    .class(ferese_theme::controls::material_button_style(
-                        self.palette,
-                        selected,
-                        self.background.a,
-                    ))
-                    .padding(8)
-                    .width(Length::Fill)
-                    .on_press(Message::Select(index)),
-            );
-        }
-        let mut content = column![sources].width(Length::Fill).spacing(10);
-        content = content.push(
-            self.text(if self.prompt.recording {
-                "Choose a display, then record it in full or select a region."
-            } else if self.prompt.window_capture {
-                "Only the selected window will be captured."
-            } else if self.selected.iter().any(|index| self.prompt.sources[*index].workspace_id().is_some()) {
-                if self.include_shell {
-                    "Panels, launcher and notifications are included while the workspace is visible. Switching away or opening overview hides the shell from the stream; the workspace keeps sharing."
-                } else {
-                    "The workspace keeps sharing when you switch away. Panels, launcher and notifications are excluded."
-                }
-            } else {
-                "Displays share everything visible. Windows share only their own content."
-            })
-            .size(12)
-            .width(Length::Fill),
-        );
-        if self.can_include_shell() {
-            content = content.push(
-                row![
-                    self.text("Include shell").width(Length::Fill),
-                    ferese_theme::controls::switch(self.include_shell, self.palette)
-                        .on_press(Message::IncludeShell),
-                ]
-                .align_y(Alignment::Center),
-            );
-        }
-        if self.can_choose_quality() {
-            let mut choices = row([]).spacing(4);
-            for quality in [
-                crate::workspace::Quality::Balanced,
-                crate::workspace::Quality::High,
-                crate::workspace::Quality::Native,
-            ] {
-                choices = choices.push(
-                    button::custom(self.text(quality.label()))
-                        .class(ferese_theme::controls::material_button_style(
-                            self.palette,
-                            quality == self.workspace_quality,
-                            self.background.a,
-                        ))
-                        .padding(7)
-                        .width(Length::Fill)
-                        .on_press(Message::WorkspaceQuality(quality)),
-                );
-            }
-            content = content.push(
-                column![
-                    self.text("Workspace quality"),
-                    choices,
-                    self.text(self.workspace_quality.description()).size(12)
-                ]
-                .spacing(5),
-            );
-        }
-        if self.prompt.recording {
-            content = content.push(
-                row![
-                    self.text("Select a region").width(Length::Fill),
-                    ferese_theme::controls::switch(self.region, self.palette)
-                        .on_press(Message::Region),
-                ]
-                .align_y(Alignment::Center),
-            );
-            let mut audio = column([]).spacing(4);
-            for choices in [
-                [Audio::Off, Audio::System],
-                [Audio::Microphone, Audio::Both],
-            ] {
-                let mut choices_row = row([]).spacing(4);
-                for choice in choices {
-                    choices_row = choices_row.push(
-                        ferese_theme::controls::text_button(
-                            choice.label(),
-                            self.font,
-                            self.palette,
-                            self.audio == choice,
-                        )
-                        .width(Length::Fill)
-                        .on_press(Message::Audio(choice)),
-                    );
-                }
-                audio = audio.push(choices_row);
-            }
-            content = content.push(self.text("Audio").size(12)).push(audio).push(
-                self.text("Uses the default output and microphone selected in audio settings.")
-                    .size(12),
-            );
-        }
-        if self.prompt.persist_mode > 0 && !self.prompt.window_capture {
-            let label = if !self.can_remember() {
-                "This selection needs approval each time"
-            } else if self.prompt.persist_mode == 1 {
-                "Allow without asking while this app is running"
-            } else {
-                "Allow this selection without asking again"
-            };
-
-            content = content.push(
-                row![
-                    self.text(label).size(12).width(Length::Fill),
-                    ferese_theme::controls::switch(self.remember, self.palette)
-                        .on_press_maybe(self.can_remember().then_some(Message::Remember)),
-                ]
-                .align_y(Alignment::Center),
-            );
-        }
-
-        let share = ferese_theme::controls::text_button(
-            if self.prompt.recording {
-                if self.region {
-                    "Select region"
-                } else {
-                    "Record"
-                }
-            } else if self.prompt.window_capture {
-                "Capture"
-            } else {
-                "Share"
-            },
-            self.font,
-            self.palette,
-            true,
-        )
-        .on_press_maybe((!self.selected.is_empty()).then_some(Message::Share));
-        let cancel = ferese_theme::controls::text_button("Cancel", self.font, self.palette, false)
-            .class(ferese_theme::controls::material_button_style(
-                self.palette,
-                false,
-                self.background.a,
-            ))
-            .on_press(Message::Cancel);
-        let footer = row![
-            cosmic::iced::widget::Space::new().width(Length::Fill),
-            cancel,
-            share
-        ]
-        .spacing(10)
-        .align_y(Alignment::Center);
-        // Reserve space for the actions even when the compositor shrinks the
-        // dialog. The source list and options share the remaining scroll area.
-        container(
-            column![
-                header,
-                scrollable(content).height(Length::Fill).width(Length::Fill),
-                footer
-            ]
-            .spacing(10)
-            .height(Length::Fill),
-        )
-        .padding(14)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
+        self.view_dialog()
     }
 }
 
 impl Picker {
+    fn visible_sources(&self) -> impl Iterator<Item = (usize, &Source)> {
+        let query = self.query.trim().to_lowercase();
+        self.prompt
+            .sources
+            .iter()
+            .enumerate()
+            .filter(move |(_, source)| {
+                self.group.contains(source)
+                    && (query.is_empty()
+                        || source.label.to_lowercase().contains(&query)
+                        || source.name.to_lowercase().contains(&query))
+            })
+    }
+
+    fn source_has_options(&self, index: usize) -> bool {
+        self.selected.contains(&index)
+            && self.prompt.sources.get(index).is_some_and(|source| {
+                (source.workspace_id().is_some()
+                    && (self.can_include_shell() || self.can_choose_quality()))
+                    || (source.is_monitor() && (self.prompt.recording || self.can_remember()))
+            })
+    }
+
+    fn options_workspace(&self) -> bool {
+        self.options_source
+            .and_then(|index| self.prompt.sources.get(index))
+            .is_some_and(|source| source.workspace_id().is_some())
+    }
+
+    fn options_monitor(&self) -> bool {
+        self.options_source
+            .and_then(|index| self.prompt.sources.get(index))
+            .is_some_and(Source::is_monitor)
+    }
+
     fn can_choose_quality(&self) -> bool {
         self.prompt.allows_quality(
             self.selected
@@ -594,7 +506,8 @@ impl Picker {
     }
 
     fn can_remember(&self) -> bool {
-        !self.selected.is_empty()
+        self.prompt.persist_mode > 0
+            && !self.selected.is_empty()
             && self.selected.len() <= 16
             && self.selected.iter().all(|index| {
                 self.prompt
@@ -632,76 +545,4 @@ pub(crate) fn appearance() -> (
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn prompt() -> Prompt {
-        serde_json::from_value(serde_json::json!({
-            "app": "test", "multiple": true, "workspace_shell": true, "workspace_quality": true,
-            "sources": [
-                {"name":"workspace:1", "label":"Workspace 1", "width":800, "height":600, "x":0, "y":0, "scale":1},
-                {"name":"DP-1", "label":"Display", "width":800, "height":600, "x":0, "y":0, "scale":1},
-                {"name":"window:2", "label":"Window", "width":80, "height":60, "x":0, "y":0, "scale":1}
-            ]
-        })).unwrap()
-    }
-
-    #[test]
-    fn shell_requires_a_selected_workspace_and_compositor_support() {
-        let mut prompt = prompt();
-        assert!(!prompt.allows_shell([]));
-        assert!(!prompt.allows_shell(["DP-1", "window:2"]));
-        assert!(!prompt.allows_shell(["workspace:99"]));
-        assert!(prompt.allows_shell(["workspace:1"]));
-        assert!(prompt.allows_shell(["workspace:1", "DP-1"]));
-        prompt.workspace_shell = false;
-        assert!(!prompt.allows_shell(["workspace:1"]));
-        prompt.workspace_shell = true;
-        prompt.recording = true;
-        assert!(!prompt.allows_shell(["workspace:1"]));
-        prompt.recording = false;
-        prompt.window_capture = true;
-        assert!(!prompt.allows_shell(["workspace:1"]));
-    }
-
-    #[test]
-    fn older_picker_messages_do_not_enable_shell_capture() {
-        let selection: Selection =
-            serde_json::from_str(r#"{"names":["workspace:1"],"persist_mode":0}"#).unwrap();
-        assert!(!selection.include_shell);
-        assert_eq!(
-            selection.workspace_quality,
-            crate::workspace::Quality::Balanced
-        );
-        let mut value = serde_json::to_value(prompt()).unwrap();
-        value.as_object_mut().unwrap().remove("workspace_shell");
-        let prompt: Prompt = serde_json::from_value(value).unwrap();
-        assert!(!prompt.allows_shell(["workspace:1"]));
-    }
-
-    #[test]
-    fn quality_requires_workspace_selection_and_protocol_support() {
-        let mut prompt = prompt();
-        assert!(!prompt.allows_quality([]));
-        assert!(!prompt.allows_quality(["DP-1", "window:2", "workspace:99"]));
-        assert!(prompt.allows_quality(["workspace:1", "DP-1"]));
-        prompt.workspace_quality = false;
-        assert!(!prompt.allows_quality(["workspace:1"]));
-        prompt.workspace_quality = true;
-        prompt.recording = true;
-        assert!(!prompt.allows_quality(["workspace:1"]));
-        prompt.recording = false;
-        prompt.window_capture = true;
-        assert!(!prompt.allows_quality(["workspace:1"]));
-        let mut value = serde_json::to_value(prompt).unwrap();
-        value.as_object_mut().unwrap().remove("workspace_quality");
-        let older: Prompt = serde_json::from_value(value).unwrap();
-        assert!(!older.workspace_quality);
-        assert!(
-            serde_json::from_str::<Selection>(
-                r#"{"names":["workspace:1"],"persist_mode":0,"workspace_quality":"unknown"}"#
-            )
-            .is_err()
-        );
-    }
-}
+mod tests;

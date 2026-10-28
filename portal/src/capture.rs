@@ -39,14 +39,6 @@ impl SourceKind {
             Self::Monitor
         }
     }
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Monitor => "Displays",
-            Self::Window(_) => "Windows",
-            Self::Workspace(_) => "Workspaces",
-            Self::Invalid => "Unavailable",
-        }
-    }
     pub fn category(self) -> u8 {
         match self {
             Self::Monitor => 0,
