@@ -1120,3 +1120,49 @@ fn keyboard_trace_does_not_record_key_material_during_locking() {
         );
     }
 }
+
+#[test]
+fn locked_keyboard_layout_query_tracks_group_without_disclosing_key_state() {
+    use smithay::input::keyboard::XkbConfig;
+    let Some(mut fixture) = Fixture::new(
+        "session_lock::tests::locked_keyboard_layout_query_tracks_group_without_disclosing_key_state",
+    ) else {
+        return;
+    };
+    let keyboard = fixture.state.seat.get_keyboard().expect("test keyboard");
+    keyboard
+        .set_xkb_config(
+            &mut fixture.state,
+            XkbConfig {
+                layout: "us,fr",
+                ..Default::default()
+            },
+        )
+        .expect("test keymap");
+    let _owner = fixture.acquire();
+    assert!(fixture.state.session_lock.active());
+    for expected in ["English (US)", "French"] {
+        if expected == "French" {
+            keyboard.with_xkb_state(&mut fixture.state, |mut context| {
+                context.cycle_next_layout()
+            });
+        }
+        let worker = std::thread::spawn(|| {
+            let mut connection = ferese_ipc::Connection::connect().expect("private compositor IPC");
+            connection
+                .call("get-keyboard-layout", serde_json::json!({}))
+                .expect("layout query during lock")
+        });
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while !worker.is_finished() && Instant::now() < deadline {
+            fixture.dispatch();
+        }
+        assert!(worker.is_finished(), "layout IPC must not hang");
+        let result = worker.join().expect("layout query worker");
+        assert_eq!(
+            result,
+            serde_json::json!({ "name": expected }),
+            "only the current layout name is public"
+        );
+    }
+}

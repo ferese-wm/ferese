@@ -972,6 +972,7 @@ impl Ferese {
                     | "input-capture-disable"
                     | "input-capture-release"
                     | "get-session-state"
+                    | "get-keyboard-layout"
                     | ferese_ipc::xwayland::STATUS_COMMAND
                     | "portal-inhibit"
                     | "portal-monitor-register"
@@ -1024,6 +1025,21 @@ impl Ferese {
                     .map_err(|error| CommandError::new("invalid_argument", error))?;
                 self.refresh_idle_inhibition();
                 return Ok(json!({}));
+            }
+            "get-keyboard-layout" => {
+                let keyboard = self
+                    .seat
+                    .get_keyboard()
+                    .ok_or_else(|| CommandError::new("unavailable", "No keyboard is available"))?;
+                // Safe during lock: only a layout label, never key state or desktop metadata.
+                let name = keyboard.with_xkb_state(self, |context| {
+                    let xkb = context
+                        .xkb()
+                        .lock()
+                        .expect("keyboard state remains consistent");
+                    xkb.layout_name(xkb.active_layout()).to_owned()
+                });
+                return Ok(json!({ "name": name }));
             }
             "get-session-state" => {
                 return Ok(self.portal_session.snapshot());
