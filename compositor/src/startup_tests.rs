@@ -20,6 +20,10 @@ use crate::{Ferese, RedrawRequest, after_dispatch, after_dispatch_with_redraw};
 // Each state needs its own sockets and environment. A subprocess also bounds
 // the cursor deadlock test without changing environment variables across tests.
 pub(crate) fn private_runtime(test: &str) -> bool {
+    private_runtime_with_env(test, &[])
+}
+
+pub(crate) fn private_runtime_with_env(test: &str, env: &[(&str, &str)]) -> bool {
     const CHILD: &str = "FERESE_STARTUP_TEST_CHILD";
     if std::env::var_os(CHILD).is_some_and(|value| value == test) {
         return true;
@@ -31,6 +35,7 @@ pub(crate) fn private_runtime(test: &str) -> bool {
     let mut child = Command::new(std::env::current_exe().unwrap())
         .args(["--exact", test, "--include-ignored", "--nocapture"])
         .env(CHILD, test)
+        .envs(env.iter().copied())
         .env("XDG_RUNTIME_DIR", directory.path())
         .env("XDG_CONFIG_HOME", directory.path())
         .env("XDG_STATE_HOME", directory.path())

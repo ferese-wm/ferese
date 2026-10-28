@@ -684,7 +684,10 @@ impl Ferese {
         let input_method_enabled =
             std::env::var_os("FERESE_ENABLE_INPUT_METHOD").is_some_and(|value| value == "1");
         let input_method_manager_state =
-            InputMethodManagerState::new::<Self, _>(&display_handle, move |_| input_method_enabled);
+            InputMethodManagerState::new::<Self, _>(&display_handle, move |client| {
+                input_method_enabled
+                    && crate::handlers::security_context::unrestricted_client(client)
+            });
         let keyboard_shortcuts_inhibit_state =
             KeyboardShortcutsInhibitState::new::<Self>(&display_handle);
         let shortcut_inhibit_enabled =
@@ -726,7 +729,10 @@ impl Ferese {
 
         let relative_pointer_state = RelativePointerManagerState::new::<Self>(&display_handle);
         let viewporter_state = ViewporterState::new::<Self>(&display_handle);
-        let layer_shell_state = WlrLayerShellState::new::<Self>(&display_handle);
+        let layer_shell_state = WlrLayerShellState::new_with_filter::<Self, _>(
+            &display_handle,
+            crate::handlers::security_context::unrestricted_client,
+        );
         let xdg_activation_state = XdgActivationState::new::<Self>(&display_handle);
         let xdg_foreign_state = XdgForeignState::new::<Self>(&display_handle);
         let xdg_toplevel_icon_manager = XdgToplevelIconManager::new::<Self>(&display_handle);

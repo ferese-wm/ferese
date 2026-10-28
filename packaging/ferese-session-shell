@@ -5,11 +5,27 @@ shell_pid=
 agent_pid=
 autostart_pid=
 manage_session=0
+# Only the shell may inherit these capability-bearing Wayland connections.
+close_private_sockets() {
+    local fd
+    for fd in "${WAYLAND_SOCKET:-}" "${FERESE_SHELL_CONTROL_SOCKET:-}"; do
+        if [[ $fd =~ ^[0-9]+$ ]] && ((10#$fd >= 3)); then
+            exec {fd}>&-
+        fi
+    done
+    unset WAYLAND_SOCKET FERESE_SHELL_CONTROL_SOCKET
+}
+public_command() (
+    close_private_sockets
+    export WAYLAND_DISPLAY=${FERESE_PUBLIC_WAYLAND_DISPLAY:-${WAYLAND_DISPLAY:-}}
+    exec "$@"
+)
 if [[ ${FERESE_SESSION_MODE:-desktop} == desktop && ${FERESE_SESSION_IMPORT_ENV:-0} == 1 ]]; then
     manage_session=1
 fi
 cleanup() {
     trap - EXIT INT TERM
+    close_private_sockets
     if [[ -n $autostart_pid ]]; then
         kill "$autostart_pid" 2>/dev/null || true
         wait "$autostart_pid" 2>/dev/null || true
@@ -20,7 +36,7 @@ cleanup() {
         wait "$agent_pid" 2>/dev/null || true
     fi
     if ((session_target_started)); then
-        systemctl --user stop ferese-session.target || true
+        public_command systemctl --user stop ferese-session.target || true
     fi
 }
 trap cleanup EXIT
@@ -44,32 +60,32 @@ if ((manage_session)); then
         XDG_SESSION_TYPE
     )
     if command -v dbus-update-activation-environment >/dev/null; then
-        if ! env WAYLAND_DISPLAY="$public_display" \
+        if ! public_command env WAYLAND_DISPLAY="$public_display" \
             dbus-update-activation-environment --systemd "${activation_vars[@]}"; then
-            env WAYLAND_DISPLAY="$public_display" \
+            public_command env WAYLAND_DISPLAY="$public_display" \
                 dbus-update-activation-environment "${activation_vars[@]}" || true
         fi
     fi
     # User buses can outlive logout and may predate a newly installed service directory.
     if command -v dbus-send >/dev/null; then
-        dbus-send --session --type=method_call --print-reply \
+        public_command dbus-send --session --type=method_call --print-reply \
             --dest=org.freedesktop.DBus /org/freedesktop/DBus \
             org.freedesktop.DBus.ReloadConfig >/dev/null || true
     fi
     if command -v systemctl >/dev/null; then
-        systemctl --user daemon-reload || true
-        if systemctl --user start ferese-session.target; then
+        public_command systemctl --user daemon-reload || true
+        if public_command systemctl --user start ferese-session.target; then
             session_target_started=1
             # A user manager can retain the target across session transitions.
             # Refresh an already-running portal after importing this session's
             # environment so it uses the installed release and current display.
-            systemctl --user try-restart xdg-desktop-portal-ferese.service || true
+            public_command systemctl --user try-restart xdg-desktop-portal-ferese.service || true
         else
             echo 'Ferese: graphical session target could not start; portal activation may be unavailable.' >&2
         fi
     fi
 fi
-release_dir=$(dirname -- "$(readlink -f -- "$0")")
+release_dir=$(public_command dirname -- "$(public_command readlink -f -- "$0")")
 # Agent failures must not take down a healthy shell. The compositor supervises
 # this helper (and creates fresh private connections) when the shell itself exits.
 supervise_agent() {
@@ -92,10 +108,11 @@ supervise_agent() {
         if ((delay > 30)); then delay=30; fi
     done
 }
-supervise_agent &
-agent_pid=$!
 "$release_dir/ferese-shell" &
 shell_pid=$!
+close_private_sockets
+supervise_agent &
+agent_pid=$!
 if ((manage_session)) && [[ ${FERESE_CLIENT_RESTART:-0} != 1 && -x $release_dir/feresectl ]]; then
     env WAYLAND_DISPLAY="${FERESE_PUBLIC_WAYLAND_DISPLAY:-${WAYLAND_DISPLAY:-}}" \
         "$release_dir/feresectl" autostart &

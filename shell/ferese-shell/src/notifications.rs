@@ -717,6 +717,36 @@ impl Center {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn dismissed_launcher_errors_are_delivered_without_touching_a_new_view() {
+        use crate::launcher::Message;
+        for reopen in [false, true] {
+            let mut shell = crate::tests::shell_with_measured_panel();
+            let (sender, receiver) = std::sync::mpsc::sync_channel(4);
+            shell.notifications.service.commands = sender;
+            let _ = shell.toggle_launcher("test".into());
+            let old = shell.launcher.as_ref().unwrap().id;
+            let _ = shell.destroy_launcher();
+            if reopen {
+                let _ = shell.toggle_launcher("test".into());
+            }
+            let current = shell.launcher.as_ref().map(|l| l.id);
+            let _ = shell.update_launcher(Message::Launched(
+                old,
+                "Editor".into(),
+                Err("missing executable".into()),
+            ));
+            match receiver.try_recv().unwrap() {
+                super::Command::Local(title, body) => {
+                    assert_eq!(title, "Could not open Editor");
+                    assert_eq!(body, "missing executable");
+                }
+                _ => panic!("expected a visible local notification"),
+            }
+            assert_eq!(shell.launcher.as_ref().map(|l| l.id), current);
+        }
+    }
+
     use ferese_config::notifications::NotificationConfig;
 
     use super::*;

@@ -18,6 +18,10 @@ pub(crate) fn init_global(display: &DisplayHandle) {
 }
 
 impl GlobalDispatch<ZwlrGammaControlManagerV1, ()> for Ferese {
+    fn can_view(client: Client, _data: &()) -> bool {
+        super::security_context::unrestricted_client(&client)
+    }
+
     fn bind(
         _state: &mut Self,
         _display: &DisplayHandle,

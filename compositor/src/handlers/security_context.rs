@@ -32,3 +32,6 @@ impl SecurityContextHandler for Ferese {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

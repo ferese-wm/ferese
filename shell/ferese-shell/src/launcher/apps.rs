@@ -69,7 +69,7 @@ impl Apps {
         let mut seen = HashSet::new();
         let usage = history();
         let now = now();
-        let rows: Vec<Row> = fde::Iter::new(fde::default_paths())
+        let mut rows: Vec<Row> = fde::Iter::new(fde::default_paths())
             .entries(Some(&locales))
             .take_while(|_| !cancel.cancelled())
             .filter(|entry| seen.insert(entry.appid.clone()))
@@ -109,6 +109,7 @@ impl Apps {
         if cancel.cancelled() {
             return Self::empty();
         }
+        distinguish_names(&mut rows);
         let normalized_names = rows.iter().map(|row| row.title.to_lowercase()).collect();
         let by_id = rows
             .iter()
@@ -158,4 +159,63 @@ pub(super) fn record(id: &str) -> Result<(), String> {
     serde_json::to_writer(file.as_file_mut(), &history).map_err(|e| e.to_string())?;
     file.persist(path).map_err(|e| e.to_string())?;
     Ok(())
+}
+
+// Preserve concise ordinary rows while identifying applications whose names collide.
+fn distinguish_names(rows: &mut [Row]) {
+    let mut counts = HashMap::new();
+    for row in rows.iter() {
+        *counts.entry(row.title.to_lowercase()).or_insert(0usize) += 1;
+    }
+    for row in rows {
+        if counts[&row.title.to_lowercase()] > 1
+            && let Target::App { id, .. } = &row.target
+        {
+            row.subtitle = id.clone();
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn duplicate_names_remain_distinct_and_display_their_application_ids() {
+        let mut rows = [
+            "org.first.Editor",
+            "org.second.Editor",
+            "org.unique.Terminal",
+        ]
+        .map(|id| Row {
+            id: ResultId::App(id.into()),
+            title: if id.ends_with("Editor") {
+                "Editor"
+            } else {
+                "Terminal"
+            }
+            .into(),
+            icon: None,
+            subtitle: "Application".into(),
+            target: Target::App {
+                id: id.into(),
+                desktop: format!("/applications/{id}.desktop").into(),
+            },
+            score: 0.,
+        });
+        distinguish_names(&mut rows);
+        for row in &rows[..2] {
+            let Target::App { id, desktop } = &row.target else {
+                panic!("expected application")
+            };
+            assert_eq!(&row.subtitle, id);
+            assert_eq!(row.id, ResultId::App(id.as_str().into()));
+            assert_eq!(
+                desktop,
+                &PathBuf::from(format!("/applications/{id}.desktop"))
+            );
+        }
+        assert_ne!(rows[0].subtitle, rows[1].subtitle);
+        assert_eq!(rows[2].subtitle, "Application");
+    }
 }

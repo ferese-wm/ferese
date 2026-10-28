@@ -22,22 +22,44 @@ fn fill(color: Color, radius: f32) -> theme::Container<'static> {
         ..Default::default()
     })
 }
-fn button_style(color: Color) -> theme::Button {
-    button_radius(color, 20.)
+fn button_style(color: Color, high_contrast: bool) -> theme::Button {
+    button_radius(color, 20., high_contrast)
 }
-fn button_radius(color: Color, radius: f32) -> theme::Button {
-    let paint = move |hovered| button::Style {
-        background: Some(color.scale_alpha(if hovered { 0.18 } else { 0.09 }).into()),
-        border_radius: radius.into(),
-        border_width: 0.,
-        shape: Some(Shape::Continuous),
-        ..Default::default()
+fn button_radius(color: Color, radius: f32, high_contrast: bool) -> theme::Button {
+    let paint = move |theme: &cosmic::Theme, focused, hovered| {
+        let color = if focused && color.a == 0. {
+            Color::from(theme.cosmic().accent.base)
+        } else {
+            color
+        };
+        button::Style {
+            background: Some(
+                color
+                    .scale_alpha(if high_contrast {
+                        0.35
+                    } else if hovered {
+                        0.24
+                    } else {
+                        0.16
+                    })
+                    .into(),
+            ),
+            border_radius: radius.into(),
+            border_width: if focused || color.a > 0. {
+                if high_contrast { 2. } else { 1. }
+            } else {
+                0.
+            },
+            border_color: color,
+            shape: Some(Shape::Continuous),
+            ..Default::default()
+        }
     };
     theme::Button::Custom {
-        active: Box::new(move |_, _| paint(false)),
-        hovered: Box::new(move |_, _| paint(true)),
-        pressed: Box::new(move |_, _| paint(true)),
-        disabled: Box::new(move |_| paint(false)),
+        active: Box::new(move |focused, theme| paint(theme, focused, false)),
+        hovered: Box::new(move |focused, theme| paint(theme, focused, true)),
+        pressed: Box::new(move |focused, theme| paint(theme, focused, true)),
+        disabled: Box::new(move |theme| paint(theme, false, false)),
     }
 }
 impl FereseShell {
@@ -87,6 +109,7 @@ impl FereseShell {
             selected_fill: palette.accent.scale_alpha(0.3 * opacity),
         };
         let accent = palette.accent.scale_alpha(opacity);
+        let high_contrast = self.config.theme.high_contrast;
         let medium = cosmic::font::Font {
             weight: cosmic::iced::font::Weight::Medium,
             ..self.render.font
@@ -98,7 +121,6 @@ impl FereseShell {
             .size(24)
             .line_height(cosmic::iced::widget::text::LineHeight::Absolute(32.into()))
             .padding(0)
-            .on_input(move |value| message(Message::Input(id, value)))
             .style(theme::TextInput::Custom {
                 active: Box::new(appearance),
                 error: Box::new(appearance),
@@ -106,9 +128,13 @@ impl FereseShell {
                 focused: Box::new(appearance),
                 disabled: Box::new(appearance),
             });
+        let input = if launcher.activating {
+            input
+        } else {
+            input.on_input(move |value| message(Message::Input(id, value)))
+        };
         let completion = launcher
-            .rows
-            .get(launcher.selected)
+            .selected_row()
             .filter(|_| {
                 !launcher.query.is_empty()
                     && launcher.ghost_visible
@@ -158,8 +184,7 @@ impl FereseShell {
             .clip(true)
             .into();
         let search_match = launcher
-            .rows
-            .get(launcher.selected)
+            .selected_row()
             .filter(|_| !launcher.query.is_empty());
         let icon_category = search_match.map_or(launcher.category, Row::category);
         let icon = match icon_category {
@@ -256,31 +281,38 @@ impl FereseShell {
                 .align_y(cosmic::iced::Alignment::Center)
         ];
         if launcher.apps_browse() {
-            let total = launcher.rows.len().div_ceil(4);
+            let columns = launcher.grid_columns();
+            let visible_rows = launcher.grid_rows();
+            let total = launcher.rows.len().div_ceil(columns);
             let first = launcher
                 .apps_first_row
                 .min(total.saturating_sub(1))
                 .saturating_sub(1);
-            let end = (first + 6).min(total);
+            let end = (first + visible_rows + 2).min(total);
             let mut grid = cosmic::iced::widget::keyed_column(Vec::<(usize, Ui<'_>)>::new());
             if first > 0 {
                 grid = grid.push(usize::MAX, Space::new().height(first as f32 * 108.));
             }
             for (row_index, apps) in launcher
                 .rows
-                .chunks(4)
+                .chunks(columns)
                 .enumerate()
                 .skip(first)
                 .take(end - first)
             {
                 let mut tiles = row![].spacing(12);
                 for (column_index, app) in apps.iter().enumerate() {
+                    let icon_size = if app.subtitle == "Application" {
+                        44
+                    } else {
+                        32
+                    };
                     let glyph: Ui<'_> = match &app.icon {
                         Some(handle) => cosmic::widget::icon::icon(handle.clone())
-                            .size(44)
+                            .size(icon_size)
                             .opacity(opacity)
                             .into(),
-                        None => bar_icon(ferese_theme::icons::APPS, 44, accent).into(),
+                        None => bar_icon(ferese_theme::icons::APPS, icon_size, accent).into(),
                     };
                     let label = container(
                         self.render
@@ -292,26 +324,48 @@ impl FereseShell {
                     .center_x(Length::Fill)
                     .height(20)
                     .clip(true);
+                    let mut content = column![container(glyph).center_x(Length::Fill), label]
+                        .spacing(4)
+                        .align_x(cosmic::iced::Alignment::Center);
+                    if app.subtitle != "Application" {
+                        content = content.push(
+                            container(
+                                self.render
+                                    .text(&app.subtitle)
+                                    .size(10)
+                                    .class(theme::Text::Color(muted)),
+                            )
+                            .height(16)
+                            .clip(true),
+                        );
+                    }
                     tiles = tiles.push(
-                        button::custom(
-                            column![container(glyph).center_x(Length::Fill), label]
-                                .spacing(8)
-                                .align_x(cosmic::iced::Alignment::Center),
-                        )
-                        .width(Length::Fill)
-                        .height(100)
-                        .padding(12)
-                        .class(button_style(
-                            if launcher.selected == row_index * 4 + column_index {
-                                palette.accent.scale_alpha(opacity)
-                            } else {
-                                Color::TRANSPARENT
-                            },
-                        ))
-                        .on_press(message(Message::ActivateRow(id, app.id.clone()))),
+                        button::custom(content)
+                            .width(Length::Fill)
+                            .height(100)
+                            .padding(12)
+                            .class(button_style(
+                                if !launcher.selection_missing
+                                    && launcher.selected == row_index * columns + column_index
+                                {
+                                    palette.accent.scale_alpha(opacity)
+                                } else {
+                                    Color::TRANSPARENT
+                                },
+                                self.config.theme.high_contrast,
+                            ))
+                            .selected(
+                                !launcher.selection_missing
+                                    && launcher.selected == row_index * columns + column_index,
+                            )
+                            .name(format!("{}, {}", app.title, app.subtitle))
+                            .on_press_maybe(
+                                (!launcher.activating)
+                                    .then(|| message(Message::ActivateRow(id, app.id.clone()))),
+                            ),
                     );
                 }
-                for _ in apps.len()..4 {
+                for _ in apps.len()..columns {
                     tiles = tiles.push(Space::new().width(Length::Fill));
                 }
                 grid = grid.push(
@@ -341,7 +395,9 @@ impl FereseShell {
                     .height(100),
                 );
             }
-            let height = launcher.rows.len().div_ceil(4).clamp(1, 3) as f32 * 108. - 8.;
+            let height =
+                (launcher.rows.len().div_ceil(columns).clamp(1, visible_rows) as f32 * 108. - 8.)
+                    .min(launcher.viewport.1.saturating_sub(80) as f32);
             body = body.push(
                 container(
                     cosmic::iced::widget::scrollable(grid)
@@ -357,13 +413,15 @@ impl FereseShell {
                 .padding([0, 16]),
             );
         } else if launcher.query.is_empty() && launcher.category == Some(Category::Windows) {
+            let capacity = launcher.grid_columns().min(3);
+            let preview_height = launcher.viewport.1.saturating_sub(120).min(84) as f32;
             let mut cards = row![].spacing(12);
             for (index, result) in launcher
                 .rows
                 .iter()
                 .enumerate()
-                .skip(launcher.selected.saturating_sub(2))
-                .take(3)
+                .skip(launcher.selected.saturating_sub(capacity - 1))
+                .take(capacity)
             {
                 let Target::Window(id) = result.target else {
                     continue;
@@ -378,13 +436,13 @@ impl FereseShell {
                 let thumbnail: Ui<'_> = match launcher.thumbnails.images.get(&id) {
                     Some(handle) => image(handle.clone())
                         .width(Length::Fill)
-                        .height(84)
+                        .height(preview_height)
                         .content_fit(ContentFit::Contain)
                         .opacity(opacity)
                         .into(),
                     None => container(bar_icon(ferese_theme::icons::WINDOW, 28, muted))
                         .center_x(Length::Fill)
-                        .center_y(84)
+                        .center_y(preview_height)
                         .into(),
                 };
                 let badge = container(
@@ -413,7 +471,7 @@ impl FereseShell {
                     }))
                     .size(14)
                     .class(theme::Text::Color(text));
-                let selected = index == launcher.selected;
+                let selected = !launcher.selection_missing && index == launcher.selected;
                 let card = container(column![preview, label].spacing(8))
                     .padding(6)
                     .class(theme::Container::custom(move |_| container::Style {
@@ -422,6 +480,11 @@ impl FereseShell {
                         border: Border {
                             radius: 20.into(),
                             color: palette.accent.scale_alpha(opacity),
+                            width: if selected {
+                                if high_contrast { 2. } else { 1. }
+                            } else {
+                                0.
+                            },
                             shape: Shape::Continuous,
                             ..Default::default()
                         },
@@ -431,11 +494,15 @@ impl FereseShell {
                     button::custom(card)
                         .width(Length::Fill)
                         .padding(0)
-                        .class(button_style(Color::TRANSPARENT))
-                        .on_press(message(Message::ActivateRow(
-                            launcher.id,
-                            result.id.clone(),
-                        ))),
+                        .class(button_style(
+                            Color::TRANSPARENT,
+                            self.config.theme.high_contrast,
+                        ))
+                        .selected(selected)
+                        .name(format!("{}, {}", result.title, result.subtitle))
+                        .on_press_maybe((!launcher.activating).then(|| {
+                            message(Message::ActivateRow(launcher.id, result.id.clone()))
+                        })),
                 );
             }
             if launcher.rows.is_empty() {
@@ -450,9 +517,10 @@ impl FereseShell {
         } else if launcher.alternatives
             || (launcher.query.is_empty() && launcher.category.is_some())
         {
-            let start = launcher.selected.saturating_sub(4);
+            let capacity = launcher.list_rows();
+            let start = launcher.selected.saturating_sub(capacity - 1);
             let mut rows = column![].spacing(0);
-            for (index, result) in launcher.rows.iter().enumerate().skip(start).take(5) {
+            for (index, result) in launcher.rows.iter().enumerate().skip(start).take(capacity) {
                 let symbol = match result.category() {
                     Some(Category::Windows) => ferese_theme::icons::WINDOW,
                     Some(Category::Files) => ferese_theme::icons::FOLDER,
@@ -487,7 +555,7 @@ impl FereseShell {
                 let mut content = row![glyph, labels]
                     .spacing(12)
                     .align_y(cosmic::iced::Alignment::Center);
-                if index == launcher.selected {
+                if !launcher.selection_missing && index == launcher.selected {
                     content = content.push(
                         self.render
                             .text(if result.requires_alt() {
@@ -509,17 +577,20 @@ impl FereseShell {
                     .width(Length::Fill)
                     .padding([0, 12])
                     .class(button_radius(
-                        if index == launcher.selected {
+                        if !launcher.selection_missing && index == launcher.selected {
                             palette.accent.scale_alpha(opacity)
                         } else {
                             Color::TRANSPARENT
                         },
                         18.,
+                        self.config.theme.high_contrast,
                     ))
-                    .on_press(message(Message::ActivateRow(
-                        launcher.id,
-                        result.id.clone(),
-                    ))),
+                    .selected(!launcher.selection_missing && index == launcher.selected)
+                    .name(format!("{}, {}", result.title, result.subtitle))
+                    .on_press_maybe(
+                        (!launcher.activating)
+                            .then(|| message(Message::ActivateRow(launcher.id, result.id.clone()))),
+                    ),
                 );
             }
             if launcher.rows.is_empty() {
@@ -547,7 +618,12 @@ impl FereseShell {
         let compositor_material = launcher.effects.is_some();
         let panel = container(body)
             .id("ferese-blur-card")
-            .width(if launcher.apps_browse() { 720 } else { 560 })
+            .width(
+                launcher
+                    .viewport
+                    .0
+                    .min(if launcher.apps_browse() { 720 } else { 560 }) as f32,
+            )
             .height(launcher.height.current as f32)
             .clip(true)
             .class(theme::Container::custom(move |_| container::Style {
