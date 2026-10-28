@@ -135,11 +135,20 @@ impl Ferese {
     }
 
     pub(super) fn unmap_invisible_windows(&mut self, visible: &HashSet<WindowId>) -> bool {
+        self.unmap_invisible_windows_in(visible, None)
+    }
+
+    fn unmap_invisible_windows_in(
+        &mut self,
+        visible: &HashSet<WindowId>,
+        workspace: Option<WorkspaceId>,
+    ) -> bool {
         let mut changed = false;
         let inactive_tabs: HashSet<_> = self
             .tab_bars
-            .values()
-            .flatten()
+            .iter()
+            .filter(|(id, _)| workspace.is_none_or(|selected| selected == **id))
+            .flat_map(|(_, bars)| bars)
             .flat_map(|bar| {
                 bar.group
                     .windows
@@ -148,12 +157,18 @@ impl Ferese {
                     .filter(|id| *id != bar.group.active)
             })
             .collect();
-        let windows = self
-            .windows
-            .ids()
-            .iter()
-            .map(|(window, id)| (window.clone(), *id))
-            .collect::<Vec<_>>();
+        let windows = if let Some(workspace) = workspace {
+            self.workspace_window_ids(workspace)
+                .into_iter()
+                .filter_map(|id| Some((self.windows.window(id)?.clone(), id)))
+                .collect::<Vec<_>>()
+        } else {
+            self.windows
+                .ids()
+                .iter()
+                .map(|(window, id)| (window.clone(), *id))
+                .collect()
+        };
 
         for (window, id) in windows {
             if visible.contains(&id) {
@@ -174,13 +189,15 @@ impl Ferese {
             }
             self.space.unmap_elem(&window);
         }
-        self.refresh_idle_inhibition();
+        if workspace.is_none() || changed {
+            self.refresh_idle_inhibition();
+        }
 
         changed
     }
 
     pub fn relayout(&mut self) {
-        self.relayout_outputs(None, true);
+        self.relayout_outputs(None, true, None);
     }
 
     pub(crate) fn relayout_window(&mut self, id: WindowId) {
@@ -194,15 +211,103 @@ impl Ferese {
     }
 
     pub(crate) fn relayout_on(&mut self, outputs: &[Output]) {
-        self.relayout_outputs(Some(outputs.to_vec()), true);
+        self.relayout_outputs(Some(outputs.to_vec()), true, None);
     }
 
     pub(super) fn relayout_desktop(&mut self) {
-        self.relayout_outputs(None, false);
+        self.relayout_outputs(None, false, None);
     }
 
-    fn relayout_outputs(&mut self, mut redraw_outputs: Option<Vec<Output>>, finalize: bool) {
-        self.image_capture.invalidate_workspaces();
+    /// Resolve a geometry-only change without revisiting other workspaces. Structural
+    /// changes (membership, outputs, layers, lock and overview) use the full path.
+    pub(crate) fn relayout_workspace_geometry(&mut self, workspace: WorkspaceId) {
+        let output = self
+            .output_workspaces
+            .output_for_workspace(workspace)
+            .filter(|output| self.output_workspaces.active_workspace(*output) == Some(workspace))
+            .and_then(|output| self.outputs_by_id.get(&output))
+            .cloned();
+        if !self.workspace_slides.is_empty()
+            || self.overview.is_presenting()
+            || self.session_lock.active()
+            || output.is_none()
+        {
+            self.relayout();
+            return;
+        }
+        self.relayout_outputs(output.map(|output| vec![output]), true, Some(workspace));
+    }
+
+    fn workspace_window_ids(&self, workspace: WorkspaceId) -> Vec<WindowId> {
+        self.workspaces
+            .workspace(workspace)
+            .into_iter()
+            .flat_map(|workspace| {
+                workspace
+                    .layout
+                    .window_ids()
+                    .chain(workspace.floating.iter().copied())
+            })
+            .collect()
+    }
+
+    fn source_column_widths(&self, selected: Option<WorkspaceId>) -> HashMap<WindowId, f64> {
+        let mut widths = HashMap::new();
+        for workspace in self
+            .workspaces
+            .iter()
+            .filter(|workspace| selected.is_none_or(|selected| selected == workspace.id))
+        {
+            let WorkspaceLayout::Scrolling(layout) = &workspace.layout else {
+                continue;
+            };
+            for column in layout.columns() {
+                // Read each column's presented cohort source once. A sibling may
+                // already have committed while another configure still holds it.
+                let sibling_source = column
+                    .windows
+                    .iter()
+                    .filter(|id| {
+                        column.display != ferese_layout::ColumnDisplay::Tabbed
+                            || **id == column.windows[column.active]
+                    })
+                    .find_map(|id| {
+                        self.windows
+                            .transaction(id)?
+                            .column_width()
+                            .map(|(source, _)| source)
+                    });
+                for id in &column.windows {
+                    let Some(record) = self.windows.record(*id) else {
+                        continue;
+                    };
+                    if let Some(source) = record
+                        .resize
+                        .and_then(|transaction| {
+                            transaction.column_width().map(|(source, _)| source)
+                        })
+                        .or(sibling_source)
+                        .or_else(|| layout.allocated_column_width(*id))
+                    {
+                        widths.insert(*id, source);
+                    }
+                }
+            }
+        }
+        widths
+    }
+
+    fn relayout_outputs(
+        &mut self,
+        mut redraw_outputs: Option<Vec<Output>>,
+        finalize: bool,
+        selected: Option<WorkspaceId>,
+    ) {
+        if let Some(workspace) = selected {
+            self.image_capture.workspace_geometry_changed(workspace);
+        } else {
+            self.image_capture.invalidate_workspaces();
+        }
         if self
             .desktop_transition
             .as_ref()
@@ -230,73 +335,44 @@ impl Ferese {
             );
         }
 
-        self.refresh_input_capture_zones();
-        let visible_workspaces = self.visible_workspace_ids();
-        self.reconcile_workspaces(&visible_workspaces);
-        self.tab_bars
-            .retain(|id, _| visible_workspaces.contains(id));
-        if self.session_lock.active() {
-            self.configure_lock_surfaces();
+        if selected.is_none() {
+            self.refresh_input_capture_zones();
+            let visible_workspaces = self.visible_workspace_ids();
+            self.reconcile_workspaces(&visible_workspaces);
+            self.tab_bars
+                .retain(|id, _| visible_workspaces.contains(id));
+            if self.session_lock.active() {
+                self.configure_lock_surfaces();
+            }
         }
         // Consume idle time before setting new targets; it must not become a
         // large first animation step after a keypress on an idle desktop.
         self.advance_animations(Instant::now());
-        self.stacking_cache.invalidate();
-        self.arrange_layers();
-        let source_column_widths = self
-            .windows
-            .records()
-            .filter_map(|(&id, record)| {
-                let layout = &self
-                    .workspaces
-                    .workspace(self.workspaces.workspace_for_window(id)?)?
-                    .layout;
-                let WorkspaceLayout::Scrolling(layout) = layout else {
-                    return None;
-                };
-                Some((
-                    id,
-                    record
-                        .resize
-                        .and_then(|transaction| {
-                            transaction.column_width().map(|(source, _)| source)
-                        })
-                        .or_else(|| {
-                            // A sibling may have committed while this column is still
-                            // held. Replacement configures must share that cohort's
-                            // presented source, rather than its latest allocated width.
-                            layout
-                                .columns()
-                                .iter()
-                                .find(|column| column.windows.contains(&id))
-                                .and_then(|column| {
-                                    column
-                                        .windows
-                                        .iter()
-                                        .filter(|sibling| {
-                                            column.display != ferese_layout::ColumnDisplay::Tabbed
-                                                || **sibling == column.windows[column.active]
-                                        })
-                                        .find_map(|sibling| {
-                                            self.windows.transaction(sibling).and_then(
-                                                |transaction| {
-                                                    transaction
-                                                        .column_width()
-                                                        .map(|(source, _)| source)
-                                                },
-                                            )
-                                        })
-                                })
-                        })
-                        .or_else(|| layout.allocated_column_width(id))?,
-                ))
-            })
-            .collect::<HashMap<_, _>>();
-        let mut previous_scrolling_world_x = self.windows.take_world_positions();
-        let mut pending_column_width_cycles = self.windows.take_column_width_requests();
+        if selected.is_none() {
+            self.stacking_cache.invalidate();
+            self.arrange_layers();
+        }
+        let source_column_widths = self.source_column_widths(selected);
+        let (mut previous_scrolling_world_x, mut pending_column_width_cycles) =
+            if let Some(workspace) = selected {
+                let ids = self.workspace_window_ids(workspace);
+                (
+                    self.windows.take_world_positions_for(ids.iter().copied()),
+                    self.windows.take_column_width_requests_for(ids.into_iter()),
+                )
+            } else {
+                (
+                    self.windows.take_world_positions(),
+                    self.windows.take_column_width_requests(),
+                )
+            };
         let mut column_width_sources = HashMap::new();
         if !pending_column_width_cycles.is_empty() {
-            for workspace in self.workspaces.iter() {
+            for workspace in self
+                .workspaces
+                .iter()
+                .filter(|workspace| selected.is_none_or(|selected| selected == workspace.id))
+            {
                 let WorkspaceLayout::Scrolling(layout) = &workspace.layout else {
                     continue;
                 };
@@ -342,7 +418,7 @@ impl Ferese {
             }
         }
         let outputs = self.space.outputs().cloned().collect::<Vec<_>>();
-        let constraints = self.window_constraints();
+        let constraints = self.window_constraints_for(selected);
         let mut visible = HashSet::new();
         let mut placements = Vec::new();
         let mut visible_workspace_pairs = Vec::new();
@@ -355,6 +431,9 @@ impl Ferese {
             let Some(active_workspace) = self.output_workspaces.active_workspace(output_id) else {
                 continue;
             };
+            if selected.is_some_and(|selected| selected != active_workspace) {
+                continue;
+            }
             visible_workspace_pairs.push((output.clone(), active_workspace));
             if let Some(slide) = self.workspace_slides.get(&output_id) {
                 for item in &slide.items {
@@ -394,6 +473,8 @@ impl Ferese {
                 continue;
             };
 
+            #[cfg(test)]
+            locality_tests::resolved_workspace(workspace_id);
             let layout = match workspace.layout.resolve_geometry_with_constraints(
                 layout_bounds,
                 self.gap_config,
@@ -429,10 +510,13 @@ impl Ferese {
                 );
             }
 
-            for (window, id) in self.windows.ids() {
-                if self.workspaces.workspace_for_window(*id) != Some(workspace_id) {
+            for id in self.workspace_window_ids(workspace_id) {
+                #[cfg(test)]
+                locality_tests::visited_window(id);
+                let Some(window) = self.windows.window(id) else {
                     continue;
-                }
+                };
+                let id = &id;
 
                 if let Some(toplevel) = window.toplevel() {
                     crate::handlers::set_surface_tree_output(toplevel.wl_surface(), &output);
@@ -500,7 +584,7 @@ impl Ferese {
             }
         }
 
-        self.unmap_invisible_windows(&visible);
+        self.unmap_invisible_windows_in(&visible, selected);
 
         let now = self.presentation_now();
 
@@ -691,7 +775,11 @@ impl Ferese {
             }
         }
 
-        self.rebuild_presentation_dependencies();
+        if let Some(workspace) = selected {
+            self.rebuild_workspace_presentation_dependencies(workspace);
+        } else {
+            self.rebuild_presentation_dependencies();
+        }
         self.sync_window_stacking();
         self.retarget_overview();
         self.reconcile_tab_indicator();
@@ -1039,3 +1127,7 @@ impl Ferese {
 #[cfg(test)]
 #[path = "panel_clearance_tests.rs"]
 mod panel_clearance_tests;
+
+#[cfg(test)]
+#[path = "layout_locality_tests.rs"]
+mod locality_tests;

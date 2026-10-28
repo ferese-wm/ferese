@@ -387,23 +387,76 @@ fn viewport_dependencies(
 impl Ferese {
     pub(super) fn release_presentation_dependencies(&mut self) {
         let paused_reflow = self.presentation_dependencies.paused_reflow.clone();
-        self.rebuild_presentation_dependencies_with_release(true);
+        self.rebuild_presentation_dependencies_with_release(true, None);
         self.presentation_dependencies
             .paused_reflow
             .extend(paused_reflow);
     }
 
     pub(super) fn rebuild_presentation_dependencies(&mut self) {
-        self.rebuild_presentation_dependencies_with_release(false);
+        self.rebuild_presentation_dependencies_with_release(false, None);
     }
 
-    fn rebuild_presentation_dependencies_with_release(&mut self, release_tick: bool) {
+    pub(super) fn rebuild_workspace_presentation_dependencies(&mut self, workspace: WorkspaceId) {
+        self.rebuild_presentation_dependencies_with_release(false, Some(workspace));
+    }
+
+    fn rebuild_presentation_dependencies_with_release(
+        &mut self,
+        release_tick: bool,
+        selected: Option<WorkspaceId>,
+    ) {
         let mut reflow = HashMap::new();
         let mut viewport = HashMap::new();
-        let mut previous_viewport = std::mem::take(&mut self.presentation_dependencies.viewport);
+        let mut previous_viewport = if let Some(workspace) = selected {
+            self.presentation_dependencies
+                .viewport
+                .remove(&workspace)
+                .map(|previous| HashMap::from([(workspace, previous)]))
+                .unwrap_or_default()
+        } else {
+            std::mem::take(&mut self.presentation_dependencies.viewport)
+        };
+        let ids = if let Some(workspace) = selected {
+            self.workspaces
+                .workspace(workspace)
+                .into_iter()
+                .flat_map(|workspace| {
+                    workspace
+                        .layout
+                        .window_ids()
+                        .chain(workspace.floating.iter().copied())
+                })
+                .collect::<Vec<_>>()
+        } else {
+            self.windows.records().map(|(&id, _)| id).collect()
+        };
+        let resizing = ids
+            .iter()
+            .filter(|id| self.windows.transaction(id).is_some())
+            .copied()
+            .collect::<Vec<_>>();
+        // Column membership is stable during this rebuild. Resolve it once,
+        // rather than searching the strip again for every pending sibling.
+        let column_indices = self
+            .workspaces
+            .iter()
+            .filter(|workspace| selected.is_none_or(|selected| selected == workspace.id))
+            .flat_map(|workspace| {
+                match &workspace.layout {
+                    WorkspaceLayout::Scrolling(layout) => Some(layout.columns()),
+                    WorkspaceLayout::Tree(_) => None,
+                }
+                .into_iter()
+                .flatten()
+                .enumerate()
+                .flat_map(|(index, column)| column.windows.iter().map(move |id| (*id, index)))
+            })
+            .collect::<HashMap<_, _>>();
         let tree_groups = self
             .workspaces
             .iter()
+            .filter(|workspace| selected.is_none_or(|selected| selected == workspace.id))
             .filter_map(|workspace| {
                 let WorkspaceLayout::Tree(tree) = &workspace.layout else {
                     return None;
@@ -433,22 +486,16 @@ impl Ferese {
                 ))
             })
             .collect::<HashMap<_, _>>();
-        for (&id, _) in self.windows.records() {
+        for &id in &ids {
             let Some(workspace_id) = self.workspaces.workspace_for_window(id) else {
                 continue;
             };
             let Some(workspace) = self.workspaces.workspace(workspace_id) else {
                 continue;
             };
-            let own_column = match &workspace.layout {
-                WorkspaceLayout::Scrolling(layout) => layout
-                    .columns()
-                    .iter()
-                    .position(|column| column.windows.contains(&id)),
-                WorkspaceLayout::Tree(_) => None,
-            };
+            let own_column = column_indices.get(&id).copied();
             let mut waits = Vec::new();
-            for slow in self.windows.resizing() {
+            for slow in &resizing {
                 if self.workspaces.workspace_for_window(*slow) != Some(workspace_id) {
                     continue;
                 }
@@ -466,15 +513,10 @@ impl Ferese {
                 let linked = id == *slow
                     || (workspace.fullscreen != Some(id)
                         && match &workspace.layout {
-                            WorkspaceLayout::Scrolling(layout) => own_column.is_some_and(|own| {
-                                layout
-                                    .columns()
-                                    .iter()
-                                    .position(|column| column.windows.contains(slow))
-                                    .is_some_and(|source| {
-                                        source == own
-                                            || (source < own && transaction.width_changes())
-                                    })
+                            WorkspaceLayout::Scrolling(_) => own_column.is_some_and(|own| {
+                                column_indices.get(slow).is_some_and(|source| {
+                                    *source == own || (*source < own && transaction.width_changes())
+                                })
                             }),
                             WorkspaceLayout::Tree(_) => {
                                 tree_groups.get(&workspace_id).is_some_and(|groups| {
@@ -492,7 +534,11 @@ impl Ferese {
                 reflow.insert(id, waits);
             }
         }
-        for workspace in self.workspaces.iter() {
+        for workspace in self
+            .workspaces
+            .iter()
+            .filter(|workspace| selected.is_none_or(|selected| selected == workspace.id))
+        {
             let layout = self
                 .focus_swipe()
                 .filter(|swipe| swipe.workspace == workspace.id)
@@ -504,9 +550,8 @@ impl Ferese {
             let Some(layout) = layout else { continue };
             let waits = viewport_dependencies(
                 layout,
-                &self
-                    .windows
-                    .resizing()
+                &resizing
+                    .iter()
                     .filter(|id| {
                         self.workspaces.workspace_for_window(**id) == Some(workspace.id)
                             && layout.contains(**id)
@@ -528,17 +573,35 @@ impl Ferese {
         }
         // A retarget uses the new dependency set immediately. A dependency that
         // disappeared must not freeze a newly independent target for one frame.
-        self.presentation_dependencies
-            .paused_reflow
-            .retain(|id| reflow.contains_key(id));
-        self.presentation_dependencies.reflow = reflow;
-        self.presentation_dependencies.viewport = viewport;
-        for (workspace, presentation) in &mut self.viewports {
-            presentation.reconcile_hold(
-                self.presentation_dependencies
-                    .viewport_blocked(*workspace, &self.windows),
-                release_tick,
-            );
+        if let Some(workspace) = selected {
+            for id in ids {
+                self.presentation_dependencies.reflow.remove(&id);
+                if !reflow.contains_key(&id) {
+                    self.presentation_dependencies.paused_reflow.remove(&id);
+                }
+            }
+            self.presentation_dependencies.reflow.extend(reflow);
+            self.presentation_dependencies.viewport.extend(viewport);
+            if let Some(presentation) = self.viewports.get_mut(&workspace) {
+                presentation.reconcile_hold(
+                    self.presentation_dependencies
+                        .viewport_blocked(workspace, &self.windows),
+                    release_tick,
+                );
+            }
+        } else {
+            self.presentation_dependencies
+                .paused_reflow
+                .retain(|id| reflow.contains_key(id));
+            self.presentation_dependencies.reflow = reflow;
+            self.presentation_dependencies.viewport = viewport;
+            for (workspace, presentation) in &mut self.viewports {
+                presentation.reconcile_hold(
+                    self.presentation_dependencies
+                        .viewport_blocked(*workspace, &self.windows),
+                    release_tick,
+                );
+            }
         }
     }
 }

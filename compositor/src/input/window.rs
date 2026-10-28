@@ -452,12 +452,12 @@ impl Ferese {
         } else {
             0.0
         };
-        if let Some(workspace) = self.workspaces.workspace_mut(workspace)
-            && workspace.fullscreen.is_none()
-            && let WorkspaceLayout::Scrolling(layout) = &mut workspace.layout
+        if let Some(workspace_state) = self.workspaces.workspace_mut(workspace)
+            && workspace_state.fullscreen.is_none()
+            && let WorkspaceLayout::Scrolling(layout) = &mut workspace_state.layout
             && layout.scroll_viewport(wheel + edge * elapsed * 800.0)
         {
-            self.relayout();
+            self.relayout_workspace_geometry(workspace);
         }
     }
 
@@ -491,7 +491,7 @@ impl Ferese {
             if let Some(workspace) = self.workspaces.workspace_mut(operation.workspace) {
                 workspace.layout = layout;
             }
-            self.relayout();
+            self.relayout_workspace_geometry(operation.workspace);
             if let Some(workspace) = self.workspaces.workspace(operation.workspace) {
                 operation.applied_layout = workspace.layout.clone();
             }

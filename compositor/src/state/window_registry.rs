@@ -138,6 +138,27 @@ impl<W: Eq + Hash> WindowRegistry<W> {
             .collect()
     }
 
+    /// Drain only the layout being recomputed; other workspaces retain their motion.
+    pub fn take_world_positions_for(
+        &mut self,
+        ids: impl Iterator<Item = WindowId>,
+    ) -> HashMap<WindowId, (WorkspaceId, AnimatedValue)> {
+        ids.filter_map(|id| Some((id, self.records.get_mut(&id)?.world_x.take()?)))
+            .collect()
+    }
+
+    pub fn take_column_width_requests_for(
+        &mut self,
+        ids: impl Iterator<Item = WindowId>,
+    ) -> HashSet<WindowId> {
+        ids.filter(|id| {
+            self.records
+                .get_mut(id)
+                .is_some_and(|record| std::mem::take(&mut record.column_width_pending))
+        })
+        .collect()
+    }
+
     pub fn geometry(&self, id: &WindowId) -> Option<&WindowGeometry> {
         self.records.get(id)?.geometry.as_ref()
     }
@@ -370,6 +391,38 @@ mod tests {
         assert_eq!(windows.resizing().count(), 0);
         assert!(windows.ids().is_empty());
         assert!(windows.take_column_width_requests().is_empty());
+    }
+
+    #[test]
+    fn scoped_layout_drains_preserve_other_workspaces_and_ignore_removed_windows() {
+        let mut windows = WindowRegistry::default();
+        for (handle, id) in [("first", WindowId(1)), ("second", WindowId(2))] {
+            windows.register(handle, id);
+            windows.update(id, |record| {
+                record.world_x = Some((WorkspaceId(id.0), AnimatedValue::new(id.0 as f64)));
+                record.column_width_pending = true;
+            });
+        }
+        let first = WindowId(1);
+        let other = WindowId(2);
+        let removed = WindowId(3);
+        assert_eq!(
+            windows
+                .take_world_positions_for([removed, first, first].into_iter())
+                .len(),
+            1
+        );
+        assert!(windows.record(first).unwrap().world_x.is_none());
+        assert_eq!(
+            windows.record(other).unwrap().world_x.unwrap().1.current,
+            2.0
+        );
+        assert_eq!(
+            windows.take_column_width_requests_for([removed, first, first].into_iter()),
+            HashSet::from([first])
+        );
+        assert!(!windows.record(first).unwrap().column_width_pending);
+        assert!(windows.record(other).unwrap().column_width_pending);
     }
 
     #[test]
