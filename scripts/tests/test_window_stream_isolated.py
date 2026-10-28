@@ -138,9 +138,24 @@ class WindowStream(unittest.TestCase):
                 locker = subprocess.Popen([str(root / "locker")], env=ipc_environment(env), stdout=subprocess.PIPE, stderr=log, text=True, start_new_session=True)
                 processes.append(locker)
                 self.assertTrue(select.select([locker.stdout], [], [], 5)[0], "Nested lock request did not complete")
-                self.assertIn(locker.stdout.readline().strip(), ("locked", "requested"))
-                wait_for(lambda: paused.poll() is not None, "Lock did not end a paused window stream")
-                print("PASS: isolated pixels, private manager, upright video, inactive workspace, resize renegotiation, closure and paused lock revocation")
+                self.assertEqual(locker.stdout.readline().strip(), "unavailable",
+                                 "nested compositors must hide unsupported secure locking")
+                self.assertEqual(locker.wait(timeout=3), 2)
+                self.assertIsNone(paused.poll(), "a refused nested lock must not revoke capture")
+                # Actual accepted-lock revocation is covered by the offscreen
+                # real-protocol harness; nested mode cannot protect host outputs.
+                # Keep a real no-consumer worker here to prove paused shutdown.
+                paused.stdin.close()
+                self.assertEqual(paused.wait(timeout=7), 0, "paused stream ignored its stop pipe")
+                revoked = subprocess.Popen([str(REPO / "target/debug/xdg-desktop-portal-ferese"), "--stream-window", str(cover_id), "hidden"], env=ipc_environment(env), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=log, text=True, start_new_session=True)
+                processes.append(revoked)
+                self.assertTrue(select.select([revoked.stdout], [], [], 10)[0])
+                self.assertGreater(json.loads(revoked.stdout.readline())["width"], 0)
+                cover.terminate()
+                cover.wait(timeout=3)
+                wait_for(lambda: revoked.poll() is not None,
+                         "source revocation left a no-consumer window stream running")
+                print("PASS: isolated pixels, private manager, upright video, inactive workspace, resize renegotiation, closure, nested lock refusal, paused stop and no-consumer source revocation")
             except Exception:
                 print((root / "test.log").read_text())
                 raise

@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <wayland-client.h>
 #include "ext-session-lock-client-protocol.h"
@@ -24,6 +25,9 @@ static void locked(void *data, struct ext_session_lock_v1 *lock) {
 
 static void finished(void *data, struct ext_session_lock_v1 *lock) {
     (void)data; (void)lock;
+    puts("finished");
+    fflush(stdout);
+    _Exit(4);
 }
 
 int main(void) {
@@ -32,7 +36,12 @@ int main(void) {
     const struct wl_registry_listener registry_listener = {global, removed};
     struct wl_registry *registry = wl_display_get_registry(display);
     wl_registry_add_listener(registry, &registry_listener, NULL);
-    if (wl_display_roundtrip(display) < 0 || !manager) return 2;
+    if (wl_display_roundtrip(display) < 0) return 3;
+    if (!manager) {
+        puts("unavailable");
+        fflush(stdout);
+        return 2;
+    }
     struct ext_session_lock_v1 *lock = ext_session_lock_manager_v1_lock(manager);
     const struct ext_session_lock_v1_listener listener = {locked, finished};
     ext_session_lock_v1_add_listener(lock, &listener, NULL);

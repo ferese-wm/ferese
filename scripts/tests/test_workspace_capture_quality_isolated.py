@@ -5,6 +5,7 @@ Requires a Wayland host, PipeWire, wayland-scanner, cc, and Pillow. The private
 nested output must exceed the 1080p capture bounds to exercise downsampling.
 Only a synthetic striped window is shared; the host desktop is never captured.
 """
+import io
 import json
 import os
 from pathlib import Path
@@ -54,8 +55,14 @@ class WorkspaceCaptureQuality(unittest.TestCase):
             runtime.mkdir(mode=0o700)
             config = root / "config/ferese/config.kdl"
             config.parent.mkdir(parents=True)
+            wallpaper_color = (17, 39, 73)
+            wallpaper = root / "wallpaper.png"
+            Image.new("RGB", (1, 1), wallpaper_color).save(wallpaper)
             config.write_text('animations { reduced-motion #true; }\n'
-                              'window-rule app-id="ferese.test.capture-scale" floating=#true\n')
+                              'theme { mode "dark"; background { path ' + json.dumps(str(wallpaper)) + '; }; }\n'
+                              'appearance { window-effects { enabled #false; blur #false; }; }\n'
+                              'window-rule app-id="ferese.test.capture-scale" floating=#true width=640.0 height=480.0\n')
+            subprocess.run([str(COMPOSITOR), "--check-config", str(config)], check=True)
             host_runtime = Path(os.environ["XDG_RUNTIME_DIR"])
             display = Path(os.environ["WAYLAND_DISPLAY"])
             if not display.is_absolute():
@@ -132,6 +139,16 @@ class WorkspaceCaptureQuality(unittest.TestCase):
                     aligned_row = (native[0] * 4 + 4095) & ~4095
                     if aligned_row * native[1] * 10 > 400 * 1024**2:
                         self.skipTest(f"private output {native} exceeds the paired-stream test budget")
+                    # Readiness is observed through the real capture path;
+                    # asynchronous wallpaper decoding must finish before the
+                    # quality-view equality workload starts.
+                    def wallpaper_ready():
+                        encoded = subprocess.check_output([str(CTL), "screenshot"],
+                                                          env=ipc_environment(env), timeout=5)
+                        image = Image.open(io.BytesIO(encoded)).convert("RGB")
+                        return image.getextrema() == tuple((value, value) for value in wallpaper_color)
+
+                    until(wallpaper_ready, "fixture wallpaper did not reach capture")
                     env["FERESE_TEST_OUTPUT_SCALE"] = str(output["scale"])
                     client = launch([str(root / "client"), "workspace-native"], stdin=subprocess.PIPE)
                     window = until(lambda: next((w for w in call("windows")
@@ -217,6 +234,17 @@ class WorkspaceCaptureQuality(unittest.TestCase):
                         row = list(getattr(sample, "get_flattened_data", sample.getdata)())
                         return sum(abs(a - b) for a, b in zip(row, row[1:])) / (len(row) - 1)
 
+                    artifact_dir = os.environ.get("FERESE_TEST_CAPTURE_QUALITY_ARTIFACTS")
+                    if artifact_dir:
+                        destination = Path(artifact_dir)
+                        destination.mkdir(parents=True, exist_ok=True)
+                        native_image.save(destination / "native.png")
+                        balanced_image.save(destination / "balanced.png")
+                        high_image.save(destination / "high.png")
+                        (destination / "capture.json").write_text(json.dumps({
+                            "output": output, "initial_window": window, "windows": call("windows"),
+                            "sample_region": [x0, y0, x1, y0 + 1], "config": config.read_text(),
+                        }, indent=2))
                     detail = edge_contrast(native_image)
                     balanced_detail = edge_contrast(balanced_image.resize(native, Image.Resampling.BILINEAR))
                     high_detail = edge_contrast(high_image.resize(native, Image.Resampling.BILINEAR))

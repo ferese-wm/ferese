@@ -675,6 +675,156 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires private Wayland sockets and an offscreen EGL device"]
+    fn retained_transparent_crop_matches_legacy_material_and_excludes_outside_child() {
+        if !crate::startup_tests::private_runtime(
+            "render::capture::tests::retained_transparent_crop_matches_legacy_material_and_excludes_outside_child",
+        ) {
+            return;
+        }
+        use crate::state::{dispatch_test_client, test_client_request as request};
+        use smithay::reexports::wayland_server::{
+            Resource,
+            protocol::{
+                wl_compositor::WlCompositor, wl_shm::WlShm, wl_subcompositor::WlSubcompositor,
+            },
+        };
+        use std::os::fd::AsRawFd;
+        use std::os::unix::fs::FileExt;
+        let mut renderer = super::super::corner_tests::renderer();
+        let mut events = smithay::reexports::calloop::EventLoop::try_new().unwrap();
+        let mut state = crate::startup_tests::state(&mut events);
+        let output = smithay::output::Output::new(
+            "transparent-crop".into(),
+            smithay::output::PhysicalProperties {
+                size: (0, 0).into(),
+                subpixel: smithay::output::Subpixel::Unknown,
+                make: String::new(),
+                model: String::new(),
+                serial_number: String::new(),
+            },
+        );
+        output.change_current_state(
+            Some(smithay::output::Mode {
+                size: (1320, 990).into(),
+                refresh: 60_000,
+            }),
+            Some(Transform::Normal),
+            Some(smithay::output::Scale::Fractional(1.65)),
+            None,
+        );
+        state.space.map_output(&output, (0, 0));
+        state.register_output(&output, "transparent-crop".into());
+        let (window, mut wire) = crate::state::test_window(&mut state, &mut events, 0);
+        let client = window.toplevel().unwrap().wl_surface().client().unwrap();
+        let compositor = client
+            .create_resource::<WlCompositor, _, Ferese>(
+                &state.display_handle,
+                6,
+                smithay::wayland::GlobalData,
+            )
+            .unwrap();
+        let subcompositor = client
+            .create_resource::<WlSubcompositor, _, Ferese>(
+                &state.display_handle,
+                1,
+                smithay::wayland::GlobalData,
+            )
+            .unwrap();
+        let shm = client
+            .create_resource::<WlShm, _, Ferese>(
+                &state.display_handle,
+                1,
+                smithay::wayland::GlobalData,
+            )
+            .unwrap();
+        let file = tempfile::tempfile().unwrap();
+        file.write_all_at(&0xff00ff00u32.to_ne_bytes().repeat(16 * 16), 0)
+            .unwrap();
+        request(&mut wire, compositor.id().protocol_id(), 0, &[7], None);
+        request(
+            &mut wire,
+            subcompositor.id().protocol_id(),
+            1,
+            &[8, 7, 2],
+            None,
+        );
+        request(
+            &mut wire,
+            shm.id().protocol_id(),
+            0,
+            &[9, 16 * 16 * 4],
+            Some(file.as_raw_fd()),
+        );
+        request(&mut wire, 9, 0, &[10, 0, 16, 16, 16 * 4, 0], None);
+        request(&mut wire, 8, 1, &[1280, 0], None);
+        request(&mut wire, 7, 1, &[10, 0, 0], None);
+        request(&mut wire, 7, 6, &[], None);
+        request(&mut wire, 2, 6, &[], None);
+        dispatch_test_client(&mut events, &mut state);
+        let size: Size<i32, Physical> = window.geometry().size.to_physical_precise_round(1.65);
+        let info = crate::handlers::window_capture::WindowInfo {
+            geometry: window.geometry(),
+            window,
+            output,
+            scale: 1.65,
+            bytes: size.w as usize * size.h as usize * 4,
+        };
+        let read = |renderer: &mut GlesRenderer, texture: &GlesTexture| {
+            let mapping = renderer
+                .copy_texture(
+                    texture,
+                    Rectangle::from_size(texture.size()),
+                    Fourcc::Abgr8888,
+                )
+                .unwrap();
+            renderer.map_texture(&mapping).unwrap().to_vec()
+        };
+        state.window_effects.enabled = true;
+        state.window_effects.blur = true;
+        state.theme_settings.backdrop_blur = 16.0;
+        let alpha = state.window_effects.resolve(1.0, false, 0.0).0;
+        let background = stream_window_background(&mut state, &mut renderer, &info, alpha);
+        assert!(!background.is_empty());
+        let legacy = render_window_texture(
+            &mut renderer,
+            &info.window,
+            info.geometry,
+            info.scale,
+            128 * 1024 * 1024,
+            None,
+            &background,
+            alpha,
+        )
+        .unwrap()
+        .unwrap();
+        let (retained, _, straight) =
+            stream_window_image(&mut renderer, &mut state, &info, None).unwrap();
+        assert!(!straight);
+        let retained_pixels = read(&mut renderer, &retained);
+        assert_eq!(
+            retained_pixels,
+            read(&mut renderer, &legacy.texture),
+            "retained capture must preserve legacy material pixels for the identical cropped source"
+        );
+        assert!(
+            retained_pixels
+                .chunks_exact(4)
+                .any(|pixel| pixel[..3] != [0, 0, 0]),
+            "material backgrounds legitimately appear behind fully transparent clients"
+        );
+        state.window_effects.enabled = false;
+        state.window_effects.blur = false;
+        let (plain, _, straight) =
+            stream_window_image(&mut renderer, &mut state, &info, None).unwrap();
+        assert!(straight);
+        assert!(
+            read(&mut renderer, &plain).iter().all(|byte| *byte == 0),
+            "a child entirely outside the selected crop must contribute no pixels"
+        );
+    }
+
+    #[test]
     #[ignore = "manual release benchmark for window-capture pixel conversion"]
     fn profile_window_conversion() {
         use std::{

@@ -1,9 +1,11 @@
 //! Private protocol clients and offscreen EGL; no host desktop or DRM required.
+use std::cell::RefCell;
 use std::io::{Read, Write};
 use std::os::fd::{AsRawFd, RawFd};
 use std::os::unix::net::UnixStream;
+use std::rc::Rc;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use smithay::backend::allocator::Fourcc;
 use smithay::backend::egl::{EGLContext, EGLDevice, EGLDisplay};
@@ -277,25 +279,101 @@ fn app_id(state: &mut Ferese, window: &Window, app: &str) {
     state.app_id_changed(top.clone());
 }
 
+struct OutputReadback {
+    request: u64,
+    parts: calloop::channel::Channel<crate::handlers::screenshot::PartOutcome>,
+    _reply: std::sync::mpsc::Receiver<ferese_ipc::Response>,
+}
+
+impl OutputReadback {
+    fn queue(
+        state: &mut Ferese,
+        output: &Output,
+        region: Rectangle<i32, smithay::utils::Buffer>,
+    ) -> Self {
+        let (reply, replies) = std::sync::mpsc::sync_channel(1);
+        let scale = output.current_scale().fractional_scale();
+        let request = state
+            .screenshot
+            .admit(
+                1,
+                1,
+                reply,
+                vec![crate::handlers::screenshot::PartSpec {
+                    preserve_alpha: false,
+                    premultiplied_rgba: false,
+                    transform: output.current_transform(),
+                    scale,
+                    location: (0, 0),
+                    logical_width: (f64::from(region.size.w) / scale).round() as i32,
+                    logical_height: (f64::from(region.size.h) / scale).round() as i32,
+                    buffer_width: region.size.w,
+                    buffer_height: region.size.h,
+                }],
+            )
+            .unwrap();
+        let (sender, parts) = calloop::channel::channel();
+        let permit = state.screenshot.permit(request);
+        state.pending_screencopies.push(
+            crate::handlers::screencopy::PendingScreencopy::owned(
+                request,
+                0,
+                sender,
+                output.clone(),
+                region,
+            )
+            .with_permit(permit),
+        );
+        Self {
+            request,
+            parts,
+            _reply: replies,
+        }
+    }
+
+    fn wait(
+        self,
+        events: &mut EventLoop<'static, Ferese>,
+        state: &mut Ferese,
+    ) -> crate::handlers::screenshot::CaptureBuffer {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            match self.parts.try_recv() {
+                Ok(part) => {
+                    assert_eq!(part.request, self.request);
+                    state
+                        .screenshot
+                        .reject(self.request, "fixture consumed the readback");
+                    return part.result.expect("the admitted GPU readback must succeed");
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {
+                    assert!(
+                        Instant::now() < deadline,
+                        "GPU fixture readback did not complete within five seconds"
+                    );
+                    // The fixture's external renderer borrow has ended. Its
+                    // registered owner is now available to the real completion.
+                    events.dispatch(Duration::from_millis(2), state).unwrap();
+                    state.display_handle.flush_clients().unwrap();
+                }
+                Err(error) => panic!("GPU fixture completion channel closed: {error}"),
+            }
+        }
+    }
+}
+
 fn pixels(
     state: &mut Ferese,
-    renderer: &mut GlesRenderer,
+    renderer: &Rc<RefCell<GlesRenderer>>,
+    events: &mut EventLoop<'static, Ferese>,
     output: &Output,
     capture: bool,
     texture: &mut GlesTexture,
 ) -> Vec<u8> {
     let scene = state.sample_frame(output, Duration::ZERO);
     if capture {
-        let (sender, receiver) = smithay::reexports::calloop::channel::channel();
-        state
-            .pending_screencopies
-            .push(crate::handlers::screencopy::PendingScreencopy::owned(
-                1,
-                0,
-                sender,
-                output.clone(),
-                Rectangle::from_size((320, 240).into()),
-            ));
+        let pending = OutputReadback::queue(state, output, Rectangle::from_size((320, 240).into()));
+        let mut renderer = renderer.borrow_mut();
         // Retain damage history as well as pixels: changing privacy policy
         // must erase content already present in the reused capture target.
         let mut target = std::mem::take(&mut state.nested_capture_texture);
@@ -304,21 +382,24 @@ fn pixels(
         });
         crate::backends::direct::capture::capture_output(
             state,
-            renderer,
+            &mut renderer,
             &mut target,
             output,
             &scene,
         );
         state.nested_capture_texture = target;
-        let mut result = receiver.try_recv().unwrap().result.unwrap().pixels;
+        drop(renderer);
+        let mut result = pending.wait(events, state).pixels;
         for pixel in result.chunks_exact_mut(4) {
             pixel.swap(0, 2);
         }
         return result;
     }
-    let elements = crate::render::sampled_output_elements(state, renderer, output, false, &scene);
+    let mut renderer = renderer.borrow_mut();
+    let elements =
+        crate::render::sampled_output_elements(state, &mut renderer, output, false, &scene);
     let mut target = renderer.bind(texture).unwrap();
-    crate::render::redraw_output(renderer, &mut target, output, &elements).unwrap();
+    crate::render::redraw_output(&mut *renderer, &mut target, output, &elements).unwrap();
     let mapping = renderer
         .copy_framebuffer(
             &target,
@@ -570,24 +651,33 @@ fn capture_privacy_pixels_and_policy_transitions() {
     let context = EGLContext::new(&display).unwrap();
     // SAFETY: The fresh EGL context is exclusively owned by this renderer; this test issues GL
     // work only through its renderer methods.
-    let mut renderer = unsafe { GlesRenderer::new(context).unwrap() };
-    let mut display_texture =
-        Offscreen::<GlesTexture>::create_buffer(&mut renderer, Fourcc::Abgr8888, (320, 240).into())
-            .unwrap();
-    let mut capture_texture =
-        Offscreen::<GlesTexture>::create_buffer(&mut renderer, Fourcc::Abgr8888, (320, 240).into())
-            .unwrap();
+    let renderer = Rc::new(RefCell::new(unsafe { GlesRenderer::new(context).unwrap() }));
+    state.readbacks.set_test_renderer(renderer.clone());
+    let mut display_texture = Offscreen::<GlesTexture>::create_buffer(
+        &mut *renderer.borrow_mut(),
+        Fourcc::Abgr8888,
+        (320, 240).into(),
+    )
+    .unwrap();
+    let mut capture_texture = Offscreen::<GlesTexture>::create_buffer(
+        &mut *renderer.borrow_mut(),
+        Fourcc::Abgr8888,
+        (320, 240).into(),
+    )
+    .unwrap();
     let has_red = |bytes: &[u8]| bytes.chunks_exact(4).any(|pixel| pixel == [255, 0, 0, 255]);
     assert!(has_red(&pixels(
         &mut state,
-        &mut renderer,
+        &renderer,
+        &mut events,
         &output,
         false,
         &mut display_texture
     )));
     assert!(has_red(&pixels(
         &mut state,
-        &mut renderer,
+        &renderer,
+        &mut events,
         &output,
         true,
         &mut capture_texture
@@ -608,7 +698,8 @@ fn capture_privacy_pixels_and_policy_transitions() {
     assert!(
         !has_red(&pixels(
             &mut state,
-            &mut renderer,
+            &renderer,
+            &mut events,
             &output,
             true,
             &mut capture_texture
@@ -618,7 +709,8 @@ fn capture_privacy_pixels_and_policy_transitions() {
     assert!(
         has_red(&pixels(
             &mut state,
-            &mut renderer,
+            &renderer,
+            &mut events,
             &output,
             false,
             &mut display_texture
@@ -634,7 +726,8 @@ fn capture_privacy_pixels_and_policy_transitions() {
     crate::handlers::window_capture::tests::check_deferred_snapshot(&state, &secret, epoch, false);
     assert!(has_red(&pixels(
         &mut state,
-        &mut renderer,
+        &renderer,
+        &mut events,
         &output,
         true,
         &mut capture_texture
@@ -650,7 +743,8 @@ fn capture_privacy_pixels_and_policy_transitions() {
     assert!(state.capture_protected(&secret));
     assert!(!has_red(&pixels(
         &mut state,
-        &mut renderer,
+        &renderer,
+        &mut events,
         &output,
         true,
         &mut capture_texture
@@ -675,7 +769,8 @@ fn capture_privacy_pixels_and_policy_transitions() {
             assert!(
                 has_red(&pixels(
                     &mut state,
-                    &mut renderer,
+                    &renderer,
+                    &mut events,
                     &output,
                     false,
                     &mut display_texture
@@ -685,7 +780,8 @@ fn capture_privacy_pixels_and_policy_transitions() {
             assert!(
                 !has_red(&pixels(
                     &mut state,
-                    &mut renderer,
+                    &renderer,
+                    &mut events,
                     &output,
                     true,
                     &mut capture_texture
@@ -715,7 +811,8 @@ fn capture_privacy_pixels_and_policy_transitions() {
     assert!(state.capture_protected(&child));
     let captured = pixels(
         &mut state,
-        &mut renderer,
+        &renderer,
+        &mut events,
         &output,
         true,
         &mut capture_texture,
@@ -730,7 +827,8 @@ fn capture_privacy_pixels_and_policy_transitions() {
     state.set_overview_active(true);
     let overview = pixels(
         &mut state,
-        &mut renderer,
+        &renderer,
+        &mut events,
         &output,
         true,
         &mut capture_texture,
@@ -744,27 +842,22 @@ fn capture_privacy_pixels_and_policy_transitions() {
     state.set_overview_active(false);
 
     // Region requests go through the same filtered output readback.
-    let (sender, receiver) = smithay::reexports::calloop::channel::channel();
-    state
-        .pending_screencopies
-        .push(crate::handlers::screencopy::PendingScreencopy::owned(
-            2,
-            0,
-            sender,
-            output.clone(),
-            Rectangle::new((32, 24).into(), (160, 120).into()),
-        ));
+    let pending = OutputReadback::queue(
+        &mut state,
+        &output,
+        Rectangle::new((32, 24).into(), (160, 120).into()),
+    );
     let scene = state.sample_frame(&output, Duration::ZERO);
     let mut target = std::mem::take(&mut state.nested_capture_texture);
     crate::backends::direct::capture::capture_output(
         &mut state,
-        &mut renderer,
+        &mut renderer.borrow_mut(),
         &mut target,
         &output,
         &scene,
     );
     state.nested_capture_texture = target;
-    let region = receiver.try_recv().unwrap().result.unwrap();
+    let region = pending.wait(&mut events, &mut state);
     assert_eq!((region.width, region.height), (160, 120));
     assert!(
         !region
@@ -818,7 +911,8 @@ fn capture_privacy_pixels_and_policy_transitions() {
     assert!(
         pixels(
             &mut state,
-            &mut renderer,
+            &renderer,
+            &mut events,
             &second,
             false,
             &mut display_texture
@@ -829,7 +923,8 @@ fn capture_privacy_pixels_and_policy_transitions() {
     assert!(
         !pixels(
             &mut state,
-            &mut renderer,
+            &renderer,
+            &mut events,
             &second,
             true,
             &mut capture_texture
@@ -842,7 +937,8 @@ fn capture_privacy_pixels_and_policy_transitions() {
     let (public, mut public_wire) = window(&mut state, &mut events, 0x80000080);
     let captured = pixels(
         &mut state,
-        &mut renderer,
+        &renderer,
+        &mut events,
         &output,
         true,
         &mut capture_texture,
@@ -877,14 +973,16 @@ fn capture_privacy_pixels_and_policy_transitions() {
     );
     let before = pixels(
         &mut state,
-        &mut renderer,
+        &renderer,
+        &mut events,
         &output,
         false,
         &mut display_texture,
     );
     let protected = pixels(
         &mut state,
-        &mut renderer,
+        &renderer,
+        &mut events,
         &output,
         true,
         &mut capture_texture,
@@ -893,7 +991,8 @@ fn capture_privacy_pixels_and_policy_transitions() {
     state.space.unmap_elem(&child);
     let absent = pixels(
         &mut state,
-        &mut renderer,
+        &renderer,
+        &mut events,
         &output,
         true,
         &mut capture_texture,
@@ -904,7 +1003,8 @@ fn capture_privacy_pixels_and_policy_transitions() {
     );
     let without = pixels(
         &mut state,
-        &mut renderer,
+        &renderer,
+        &mut events,
         &output,
         false,
         &mut display_texture,
@@ -949,7 +1049,7 @@ fn capture_privacy_pixels_and_policy_transitions() {
     let mut presentation = state.current_window_presentation(id).unwrap();
     presentation.close();
     let snapshot = crate::render::capture_resize_snapshot(
-        &mut renderer,
+        &mut renderer.borrow_mut(),
         &secret,
         secret.geometry(),
         1.0,
@@ -988,14 +1088,16 @@ fn capture_privacy_pixels_and_policy_transitions() {
     );
     assert!(has_red(&pixels(
         &mut state,
-        &mut renderer,
+        &renderer,
+        &mut events,
         &output,
         false,
         &mut display_texture
     )));
     assert!(!has_red(&pixels(
         &mut state,
-        &mut renderer,
+        &renderer,
+        &mut events,
         &output,
         true,
         &mut capture_texture
@@ -1176,17 +1278,24 @@ fn resize_dependencies_protocol_and_pixels() {
     let context = EGLContext::new(&display).unwrap();
     // SAFETY: The fresh EGL context is exclusively owned by this renderer; this test issues GL
     // work only through its renderer methods.
-    let mut renderer = unsafe { GlesRenderer::new(context).unwrap() };
-    let mut display_texture =
-        Offscreen::<GlesTexture>::create_buffer(&mut renderer, Fourcc::Abgr8888, (320, 240).into())
-            .unwrap();
-    let mut capture_texture =
-        Offscreen::<GlesTexture>::create_buffer(&mut renderer, Fourcc::Abgr8888, (320, 240).into())
-            .unwrap();
+    let renderer = Rc::new(RefCell::new(unsafe { GlesRenderer::new(context).unwrap() }));
+    state.readbacks.set_test_renderer(renderer.clone());
+    let mut display_texture = Offscreen::<GlesTexture>::create_buffer(
+        &mut *renderer.borrow_mut(),
+        Fourcc::Abgr8888,
+        (320, 240).into(),
+    )
+    .unwrap();
+    let mut capture_texture = Offscreen::<GlesTexture>::create_buffer(
+        &mut *renderer.borrow_mut(),
+        Fourcc::Abgr8888,
+        (320, 240).into(),
+    )
+    .unwrap();
     // Offscreen fixture explicitly captures the existing native frame; production
     // capture-before-commit is exercised separately in the privacy regression.
     let snapshot = crate::render::capture_resize_snapshot(
-        &mut renderer,
+        &mut renderer.borrow_mut(),
         &b,
         b.geometry(),
         1.0,
@@ -1202,7 +1311,8 @@ fn resize_dependencies_protocol_and_pixels() {
     let actual = state.windows.geometry(&b_id).unwrap().visual.current;
     let displayed = pixels(
         &mut state,
-        &mut renderer,
+        &renderer,
+        &mut events,
         &output,
         false,
         &mut display_texture,
@@ -1215,7 +1325,8 @@ fn resize_dependencies_protocol_and_pixels() {
     );
     let captured = pixels(
         &mut state,
-        &mut renderer,
+        &renderer,
+        &mut events,
         &output,
         true,
         &mut capture_texture,

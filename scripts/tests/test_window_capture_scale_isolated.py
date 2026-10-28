@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import selectors
+import shutil
 import signal
 import subprocess
 import tempfile
@@ -49,7 +50,9 @@ class WindowCaptureScale(unittest.TestCase):
             config.mkdir(parents=True)
             (config / "config.kdl").write_text(
                 'animations { reduced-motion #true; }\n'
+                'appearance { window-effects { enabled #false; blur #false; }; }\n'
                 'window-rule app-id="ferese.test.capture-scale" floating=#true\n')
+            subprocess.run([str(COMPOSITOR), "--check-config", str(config / "config.kdl")], check=True)
             host_runtime = Path(os.environ["XDG_RUNTIME_DIR"])
             display = Path(os.environ["WAYLAND_DISPLAY"])
             if not display.is_absolute():
@@ -142,6 +145,18 @@ class WindowCaptureScale(unittest.TestCase):
                             pixels = raw.read_bytes()
                             self.assertEqual(len(pixels), width * height * 4 * 3)
                             if mode == "subsurface-outside":
+                                artifact_dir = os.environ.get("FERESE_TEST_CAPTURE_SCALE_ARTIFACTS")
+                                if artifact_dir:
+                                    destination = Path(artifact_dir)
+                                    destination.mkdir(parents=True, exist_ok=True)
+                                    shutil.copy2(raw, destination / raw.name)
+                                    shutil.copy2(config / "config.kdl", destination / "config.kdl")
+                                    shutil.copy2(log_path, destination / "session.log")
+                                    (destination / "capture.json").write_text(json.dumps({
+                                        "mode": mode, "output_scale": scale, "size": expected,
+                                        "first_pixels_bgrx": list(pixels[:32]),
+                                        "nonzero_rgb_bytes": sum(value != 0 for index, value in enumerate(pixels) if index % 4 != 3),
+                                    }, indent=2))
                                 self.assertFalse(any(pixels[0::4]) or any(pixels[1::4])
                                                  or any(pixels[2::4]),
                                                  "content outside the window was captured")

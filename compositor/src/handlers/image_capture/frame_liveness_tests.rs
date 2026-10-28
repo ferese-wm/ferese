@@ -1085,3 +1085,103 @@ fn window_capture_caches_follow_local_tree_changes_and_subsurface_destruction() 
         "destroying the parent must close capture even if child surfaces and cached stamps remain alive"
     );
 }
+
+#[test]
+fn session_lock_revokes_a_paused_window_session_without_a_pending_frame() {
+    if !private_capture_runtime(
+        "handlers::image_capture::frame_liveness_tests::session_lock_revokes_a_paused_window_session_without_a_pending_frame",
+    ) {
+        return;
+    }
+    use smithay::reexports::wayland_protocols::ext::session_lock::v1::server::ext_session_lock_manager_v1::ExtSessionLockManagerV1;
+    let mut fixture = capture_fixture();
+    assert!(fixture.state.nested_backend.is_none());
+    let (window, _window_wire) =
+        crate::state::test_window(&mut fixture.state, &mut fixture.events, 0xffff0000);
+    let id = fixture.state.windows.ids()[&window];
+    let (server, mut wire) = UnixStream::pair().unwrap();
+    let client = fixture
+        .state
+        .display_handle
+        .insert_client(
+            server,
+            Arc::new(ClientState {
+                capabilities: crate::private_client::ClientCapabilities::WINDOW_CAPTURE,
+                ..ClientState::default()
+            }),
+        )
+        .unwrap();
+    let source = ImageCaptureSource::new();
+    source.user_data().insert_if_missing(|| Source::Window(id));
+    source
+        .user_data()
+        .insert_if_missing(|| SourcePaused(AtomicBool::new(true)));
+    let resource = client
+        .create_resource::<ExtImageCaptureSourceV1, _, Ferese>(
+            &fixture.state.display_handle,
+            1,
+            ImageCaptureSourceData {
+                source: source.clone(),
+            },
+        )
+        .unwrap();
+    source.add_instance(&resource);
+    let manager = client
+        .create_resource::<ExtImageCopyCaptureManagerV1, _, Ferese>(
+            &fixture.state.display_handle,
+            1,
+            smithay::wayland::GlobalData,
+        )
+        .unwrap();
+    request(
+        &mut wire,
+        manager.id().protocol_id(),
+        0,
+        &[2, resource.id().protocol_id(), 0],
+        None,
+    );
+    dispatch_test_client(&mut fixture.events, &mut fixture.state);
+    let session = fixture
+        .state
+        .image_capture
+        .active
+        .iter()
+        .find(|active| active.session.source() == source)
+        .unwrap();
+    assert!(session.pending.is_none());
+    assert!(!source_active(&source));
+    let session = session.session.as_ref();
+    assert!(session.alive());
+    messages(&mut wire);
+    let lock_manager = client
+        .create_resource::<ExtSessionLockManagerV1, _, Ferese>(
+            &fixture.state.display_handle,
+            1,
+            smithay::wayland::GlobalData,
+        )
+        .unwrap();
+    request(&mut wire, lock_manager.id().protocol_id(), 1, &[3], None);
+    dispatch_test_client(&mut fixture.events, &mut fixture.state);
+    assert!(
+        fixture.state.session_lock.active(),
+        "the offscreen harness must accept a real unrestricted lock request"
+    );
+    fixture.state.refresh_capture_sessions();
+    dispatch_test_client(&mut fixture.events, &mut fixture.state);
+    assert!(
+        !session.alive(),
+        "lock must revoke a paused capture even though no image was submitted"
+    );
+    assert!(
+        messages(&mut wire).contains(&(2, 5)),
+        "the paused consumer must receive the real session stopped event"
+    );
+    assert!(
+        fixture
+            .state
+            .image_capture
+            .active
+            .iter()
+            .all(|active| active.session.source() != source)
+    );
+}

@@ -83,9 +83,25 @@ pub(crate) struct Readbacks {
     bytes: usize,
     next: u64,
     quarantined: Vec<(ErasedContextId, SyncPoint)>,
+    #[cfg(test)]
+    test_renderer: Option<std::rc::Rc<std::cell::RefCell<GlesRenderer>>>,
 }
 
 impl Readbacks {
+    /// Offscreen protocol fixtures own a renderer without a display backend.
+    /// Register its actual owner so queued completions use the real PBO path.
+    #[cfg(test)]
+    pub(crate) fn set_test_renderer(
+        &mut self,
+        renderer: std::rc::Rc<std::cell::RefCell<GlesRenderer>>,
+    ) {
+        assert!(
+            self.pending.is_empty(),
+            "register the test renderer before queuing readbacks"
+        );
+        self.test_renderer = Some(renderer);
+    }
+
     pub(crate) fn prepare(&self, renderer: &mut GlesRenderer, bytes: usize) -> Result<(), String> {
         if !self.can_admit_in_context(bytes, &renderer.context_id().erased()) {
             return Err("GPU readback queue is full or its renderer is quarantined".into());
@@ -230,6 +246,27 @@ impl Ferese {
             }
             self.direct_backend = Some(backend);
         }
+        #[cfg(test)]
+        if let Some(renderer) = self.readbacks.test_renderer.clone()
+            && let Ok(mut renderer) = renderer.try_borrow_mut()
+            && renderer.context_id().erased() == readback.context
+        {
+            let pixels = readback.map(&mut renderer);
+            if pixels.is_err()
+                && let Some(fence) = &readback.fence
+            {
+                self.readbacks
+                    .quarantine(readback.context.clone(), fence.clone());
+            }
+            let result = pixels.and_then(consume);
+            drop(readback);
+            renderer
+                .cleanup_texture_cache()
+                .expect("retire fixture readback resources");
+            drop(renderer);
+            complete(self, result);
+            return;
+        }
         complete(self, Err("Capture renderer is unavailable".into()));
     }
 
@@ -248,6 +285,13 @@ impl Ferese {
         }
         if let Some(backend) = self.direct_backend.as_mut()
             && let Some(renderer) = backend.readback_renderer(&context)
+        {
+            let _ = renderer.cleanup_texture_cache();
+        }
+        #[cfg(test)]
+        if let Some(renderer) = self.readbacks.test_renderer.clone()
+            && let Ok(mut renderer) = renderer.try_borrow_mut()
+            && renderer.context_id().erased() == context
         {
             let _ = renderer.cleanup_texture_cache();
         }
@@ -424,6 +468,14 @@ impl Ferese {
         if let Some(backend) = self.nested_backend.clone() {
             if let Ok(mut backend) = backend.try_borrow_mut() {
                 contexts.push(backend.renderer().context_id().erased());
+            } else {
+                context_inventory_known = false;
+            }
+        }
+        #[cfg(test)]
+        if let Some(renderer) = self.readbacks.test_renderer.clone() {
+            if let Ok(renderer) = renderer.try_borrow() {
+                contexts.push(renderer.context_id().erased());
             } else {
                 context_inventory_known = false;
             }
