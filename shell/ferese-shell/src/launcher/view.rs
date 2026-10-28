@@ -417,9 +417,10 @@ impl FereseShell {
                 let card = container(column![preview, label].spacing(8))
                     .padding(6)
                     .class(theme::Container::custom(move |_| container::Style {
+                        background: selected
+                            .then_some(palette.accent.scale_alpha(0.14 * opacity).into()),
                         border: Border {
                             radius: 20.into(),
-                            width: if selected { 2. } else { 0. },
                             color: palette.accent.scale_alpha(opacity),
                             shape: Shape::Continuous,
                             ..Default::default()
@@ -554,7 +555,6 @@ impl FereseShell {
                 text_color: Some(text),
                 border: Border {
                     color: muted.scale_alpha(0.16),
-                    width: 0.5,
                     radius: 28.into(),
                     shape: Shape::Continuous,
                     ..Default::default()

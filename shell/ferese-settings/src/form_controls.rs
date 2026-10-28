@@ -201,10 +201,7 @@ impl App {
                             .on_press(Message::Change(set(&path, *key))),
                     );
                 }
-                container(options)
-                    .padding(3)
-                    .class(visuals::surface(palette.sidebar, 10.))
-                    .into()
+                container(options).padding(3).into()
             }
             Kind::Text { default, argv } => {
                 let value = self.inputs.get(&path).cloned().unwrap_or_else(|| {

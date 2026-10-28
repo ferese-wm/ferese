@@ -599,8 +599,6 @@ impl Locker {
                     border: iced::Border {
                         shape: cosmic::iced::border::Shape::Continuous,
                         radius: (avatar_size / 2.).into(),
-                        width: 1.,
-                        color: a.accent.scale_alpha(0.3),
                         ..Default::default()
                     },
                     ..Default::default()

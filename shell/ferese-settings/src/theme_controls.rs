@@ -86,11 +86,7 @@ impl App {
         let mut controls = row([])
             .spacing(6)
             .align_y(Alignment::Center)
-            .push(
-                container(scopes)
-                    .padding(3)
-                    .class(visuals::surface(palette.sidebar, 10.)),
-            )
+            .push(container(scopes).padding(3))
             .push(self.settings_button(
                 if file.is_empty() {
                     "Choose…"

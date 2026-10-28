@@ -32,16 +32,9 @@ pub fn panel_button(p: Palette, selected: bool) -> cosmic::theme::Button {
             }),
             icon_color: Some(if enabled { p.text } else { p.muted }),
             border_radius: 8.into(),
-            border_width: if focused {
-                2.
-            } else if selected {
-                1.
-            } else {
-                0.
-            },
-            border_color: p.accent.scale_alpha(if focused { 1. } else { 0.45 }),
             outline_width: 0.,
             outline: None,
+            overlay: focused.then_some(p.accent.scale_alpha(0.12).into()),
             ..Default::default()
         }
     };

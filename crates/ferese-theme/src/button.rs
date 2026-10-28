@@ -38,8 +38,7 @@ pub(crate) fn accent_button_style(
         text_color: Some(foreground),
         icon_color: Some(foreground),
         border_radius: native.corner_radii.radius_xl.into(),
-        outline_width: if focused { 1. } else { 0. },
-        outline_color: foreground,
+        overlay: crate::controls::focus_overlay(foreground, focused),
         ..Default::default()
     }
 }

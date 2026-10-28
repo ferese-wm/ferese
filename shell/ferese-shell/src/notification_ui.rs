@@ -623,7 +623,7 @@ impl FereseShell {
                 border: Border {
                     shape: BorderShape::Continuous,
                     color: color_with_opacity(palette.text_muted, 0.18 * opacity),
-                    width: if history { 0.0 } else { 1.0 },
+                    width: 0.,
                     radius: palette.material_radius.into(),
                     ..Default::default()
                 },
@@ -933,7 +933,7 @@ impl FereseShell {
                     border: Border {
                         shape: BorderShape::Continuous,
                         color: color_with_opacity(palette.text_muted, 0.18 * opacity),
-                        width: 1.0,
+                        width: 0.,
                         radius: palette.material_radius.into(),
                         ..Default::default()
                     },
@@ -1179,7 +1179,7 @@ mod tests {
                         border: Border {
                             shape: BorderShape::Continuous,
                             radius: 14.0.into(),
-                            width: if history { 0.0 } else { 1.0 },
+                            width: 0.,
                             ..Default::default()
                         },
                         snap: true,

@@ -1,26 +1,27 @@
-use cosmic::iced::advanced::{Layout, Widget, layout, mouse, renderer, widget::Tree};
+use cosmic::iced::advanced::widget::Tree;
+use cosmic::iced::advanced::{Layout, Widget, layout, mouse, renderer};
 use cosmic::iced::{Color, Length, Rectangle, Size};
 use cosmic::{Element, Renderer, Theme};
 
 /// Leave the compositor's material visible beneath the popup. Painting the
 /// source list, a scrim, and another material fill there would stack their alpha
 /// and make a translucent dialog look opaque.
-pub(super) fn backdrop<'a, M: 'a>(
-    content: Element<'a, M>,
-    popup_measure: Element<'a, M>,
-) -> Element<'a, M> {
+pub(super) fn backdrop<'a, Message: 'a>(
+    content: Element<'a, Message>,
+    popup_measure: Element<'a, Message>,
+) -> Element<'a, Message> {
     Element::new(Backdrop {
         content,
         popup_measure,
     })
 }
 
-struct Backdrop<'a, M> {
-    content: Element<'a, M>,
-    popup_measure: Element<'a, M>,
+struct Backdrop<'a, Message> {
+    content: Element<'a, Message>,
+    popup_measure: Element<'a, Message>,
 }
 
-impl<M> Widget<M, Theme, Renderer> for Backdrop<'_, M> {
+impl<Message> Widget<Message, Theme, Renderer> for Backdrop<'_, Message> {
     fn children(&self) -> Vec<Tree> {
         vec![Tree::new(&self.content), Tree::new(&self.popup_measure)]
     }
@@ -65,8 +66,12 @@ impl<M> Widget<M, Theme, Renderer> for Backdrop<'_, M> {
     ) {
         use cosmic::iced::advanced::Renderer as _;
         let mut children = layout.children();
-        let content = children.next().unwrap();
-        let popup = children.next().unwrap();
+        let content = children
+            .next()
+            .expect("backdrop layout contains the picker and measured popup");
+        let popup = children
+            .next()
+            .expect("backdrop layout contains the picker and measured popup");
         for region in outside_popup(layout.bounds(), popup.bounds().size()) {
             if let Some(clip) = region.intersection(viewport) {
                 renderer.with_layer(clip, |renderer| {

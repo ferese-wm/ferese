@@ -1183,12 +1183,16 @@ impl FereseShell {
             let selected = focus.as_ref() == Some(&activity.id);
             let radius = self.render.radius(10.);
             let appearance = move |strength: f32, focused: bool| button::Style {
-                background: Some(palette.text.scale_alpha(strength * opacity).into()),
+                background: Some(
+                    palette
+                        .text
+                        .scale_alpha((strength + if focused { 0.08 } else { 0. }) * opacity)
+                        .into(),
+                ),
                 text_color: Some(palette.text.scale_alpha(opacity)),
                 icon_color: Some(palette.text.scale_alpha(opacity)),
                 shape: Some(cosmic::iced::border::Shape::Continuous),
                 border_radius: radius.into(),
-                outline_width: if focused { 1. } else { 0. },
                 outline_color: palette.accent.scale_alpha(opacity),
                 ..Default::default()
             };

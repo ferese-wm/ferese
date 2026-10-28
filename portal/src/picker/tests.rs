@@ -1,10 +1,12 @@
-use super::*;
+use super::{Message, Prompt, Selection, SourceGroup, SourcePicker};
+use crate::capture::Source;
 use cosmic::Application;
+use cosmic::app::Core;
 
-fn picker(prompt: Prompt) -> Picker {
+fn picker(prompt: Prompt) -> SourcePicker {
     let snapshot = ferese_theme_client::service::fallback();
     let palette = ferese_theme::Palette::from_resolved(&snapshot.presented).flat();
-    Picker::init(
+    SourcePicker::init(
         Core::default(),
         (
             prompt,
@@ -24,7 +26,7 @@ fn prompt() -> Prompt {
             {"name":"DP-1", "label":"Display", "width":800, "height":600, "x":0, "y":0, "scale":1},
             {"name":"window:2", "label":"Window", "width":80, "height":60, "x":0, "y":0, "scale":1}
         ]
-    })).unwrap()
+    })).expect("picker request fixture deserializes")
 }
 
 #[test]
@@ -48,15 +50,20 @@ fn shell_requires_a_selected_workspace_and_compositor_support() {
 #[test]
 fn older_picker_messages_do_not_enable_shell_capture() {
     let selection: Selection =
-        serde_json::from_str(r#"{"names":["workspace:1"],"persist_mode":0}"#).unwrap();
+        serde_json::from_str(r#"{"names":["workspace:1"],"persist_mode":0}"#)
+            .expect("legacy selection fixture deserializes");
     assert!(!selection.include_shell);
     assert_eq!(
         selection.workspace_quality,
         crate::workspace::Quality::Balanced
     );
-    let mut value = serde_json::to_value(prompt()).unwrap();
-    value.as_object_mut().unwrap().remove("workspace_shell");
-    let prompt: Prompt = serde_json::from_value(value).unwrap();
+    let mut value = serde_json::to_value(prompt()).expect("prompt serializes to JSON");
+    value
+        .as_object_mut()
+        .expect("serialized prompt is a JSON object")
+        .remove("workspace_shell");
+    let prompt: Prompt =
+        serde_json::from_value(value).expect("legacy request fixture deserializes");
     assert!(!prompt.allows_shell(["workspace:1"]));
 }
 
@@ -74,9 +81,12 @@ fn quality_requires_workspace_selection_and_protocol_support() {
     prompt.recording = false;
     prompt.window_capture = true;
     assert!(!prompt.allows_quality(["workspace:1"]));
-    let mut value = serde_json::to_value(prompt).unwrap();
-    value.as_object_mut().unwrap().remove("workspace_quality");
-    let older: Prompt = serde_json::from_value(value).unwrap();
+    let mut value = serde_json::to_value(prompt).expect("prompt serializes to JSON");
+    value
+        .as_object_mut()
+        .expect("serialized prompt is a JSON object")
+        .remove("workspace_quality");
+    let older: Prompt = serde_json::from_value(value).expect("legacy request fixture deserializes");
     assert!(!older.workspace_quality);
     assert!(
         serde_json::from_str::<Selection>(
@@ -168,7 +178,11 @@ fn search_keeps_source_indices_and_cannot_bypass_the_selection_limit() {
     let mut picker = picker(prompt);
     drop(picker.update(Message::Group(SourceGroup::Windows)));
     drop(picker.update(Message::Search(" EDITOR 12 ".into())));
-    let index = picker.visible_sources().next().unwrap().0;
+    let index = picker
+        .visible_sources()
+        .next()
+        .expect("search finds the requested window")
+        .0;
     assert_eq!(picker.prompt.sources[index].name, "window:12");
     drop(picker.update(Message::Select(index)));
     drop(picker.update(Message::Search(String::new())));
@@ -186,16 +200,18 @@ fn search_keeps_source_indices_and_cannot_bypass_the_selection_limit() {
 
 #[test]
 fn actions_stay_visible_with_many_sources_and_expanded_options() {
-    use cosmic::iced::advanced::{layout, renderer::Headless, widget::Tree};
+    use cosmic::iced::advanced::layout;
+    use cosmic::iced::advanced::renderer::Headless;
+    use cosmic::iced::advanced::widget::Tree;
     use cosmic::iced::{Font, Pixels, Size};
-    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let runtime = tokio::runtime::Runtime::new().expect("test runtime starts");
     let renderer = runtime
         .block_on(<cosmic::Renderer as Headless>::new(
             Font::default(),
             Pixels(14.),
             Some("tiny-skia"),
         ))
-        .unwrap();
+        .expect("headless renderer is available");
     let mut prompt = prompt();
     prompt.sources[0].label = "A long workspace title that should fit on one row without moving the dialog actions out of view".into();
     prompt.sources.extend((3..200).map(|id| Source {
@@ -222,7 +238,7 @@ fn actions_stay_visible_with_many_sources_and_expanded_options() {
             );
             let base = if expanded { &node.children()[0] } else { &node };
             let content = &base.children()[0];
-            let footer = content.children().last().unwrap();
+            let footer = content.children().last().expect("picker has a footer");
             assert!(
                 footer.bounds().y + footer.size().height <= content.size().height + 0.5,
                 "actions overflow at {width}×{height}, expanded={expanded}"
@@ -256,7 +272,13 @@ fn actions_stay_visible_with_many_sources_and_expanded_options() {
                     fields.size().height + 40. <= popup_node.size().height + 0.5,
                     "mini modal content must fit without scrolling"
                 );
-                let done = fields.children().last().unwrap().children().last().unwrap();
+                let done = fields
+                    .children()
+                    .last()
+                    .expect("options have a footer")
+                    .children()
+                    .last()
+                    .expect("options footer has a Done button");
                 assert!(done.size().width <= 160.);
                 assert!(done.size().height >= 24.);
             }
@@ -266,20 +288,18 @@ fn actions_stay_visible_with_many_sources_and_expanded_options() {
 
 #[test]
 fn options_leave_native_material_visible_without_background_text_or_double_tint() {
-    use cosmic::iced::advanced::{
-        Layout, layout, mouse,
-        renderer::{self, Headless, Renderer as _},
-        widget::Tree,
-    };
+    use cosmic::iced::advanced::renderer::{self, Headless, Renderer as _};
+    use cosmic::iced::advanced::widget::Tree;
+    use cosmic::iced::advanced::{Layout, layout, mouse};
     use cosmic::iced::{Color, Font, Pixels, Rectangle, Size};
-    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let runtime = tokio::runtime::Runtime::new().expect("test runtime starts");
     let mut renderer = runtime
         .block_on(<cosmic::Renderer as Headless>::new(
             Font::default(),
             Pixels(14.),
             Some("tiny-skia"),
         ))
-        .unwrap();
+        .expect("headless renderer is available");
     let mut picker = picker(prompt());
     picker.background.a = 0.71;
     drop(picker.update(Message::Group(SourceGroup::Workspaces)));
@@ -320,7 +340,7 @@ fn options_leave_native_material_visible_without_background_text_or_double_tint(
                 &bounds,
                 cosmic::iced::Vector::ZERO,
             )
-            .unwrap();
+            .expect("selected source has an options overlay");
         let popup = overlay.as_overlay_mut().layout(&renderer, bounds.size());
         renderer.with_layer(popup.bounds(), |renderer| {
             overlay.as_overlay().draw(
@@ -355,25 +375,23 @@ fn options_leave_native_material_visible_without_background_text_or_double_tint(
 #[test]
 #[ignore = "exports native picker previews for visual review"]
 fn render_picker_previews() {
-    use cosmic::iced::advanced::{
-        Layout, layout, mouse,
-        renderer::{self, Headless, Renderer as _},
-        widget::Tree,
-    };
+    use cosmic::iced::advanced::renderer::{self, Headless, Renderer as _};
+    use cosmic::iced::advanced::widget::Tree;
+    use cosmic::iced::advanced::{Layout, layout, mouse};
     use cosmic::iced::{Font, Pixels, Rectangle, Size};
-    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let runtime = tokio::runtime::Runtime::new().expect("test runtime starts");
     let mut renderer = runtime
         .block_on(<cosmic::Renderer as Headless>::new(
             Font::default(),
             Pixels(14.),
             Some("tiny-skia"),
         ))
-        .unwrap();
+        .expect("headless renderer is available");
     let output = std::path::PathBuf::from(
         std::env::var("FERESE_PICKER_PREVIEW_DIR")
             .unwrap_or_else(|_| "/tmp/ferese-picker-previews".into()),
     );
-    std::fs::create_dir_all(&output).unwrap();
+    std::fs::create_dir_all(&output).expect("preview directory is writable");
     for appearance in [
         ferese_config::theme::Appearance::Light,
         ferese_config::theme::Appearance::Dark,
@@ -412,12 +430,12 @@ fn render_picker_previews() {
                         "theme { mode \"dark\"; }"
                     },
                 )
-                .unwrap(),
+                .expect("preview configuration parses"),
                 std::path::Path::new("/tmp"),
                 jiff::Timestamp::now(),
                 |_| Err("preview has no theme imports".into()),
             )
-            .unwrap()
+            .expect("preview theme resolves")
             .theme;
             picker.palette = ferese_theme::Palette::from_resolved(&resolved).flat();
             picker.background = picker.palette.sidebar;
@@ -488,7 +506,7 @@ fn render_picker_previews() {
                 size.height,
                 image::ColorType::Rgba8,
             )
-            .unwrap();
+            .expect("preview image writes successfully");
         }
     }
 }

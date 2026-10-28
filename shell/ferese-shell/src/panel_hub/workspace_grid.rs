@@ -409,7 +409,6 @@ impl FereseShell {
                         let appearance = button::Style {
                             background: Some(fill.into()),
                             border_radius: 10.0.into(),
-                            border_width: 0.5,
                             border_color: palette.accent.scale_alpha(progress * alpha * 0.5),
                             text_color: Some(foreground),
                             ..Default::default()
@@ -465,7 +464,11 @@ impl FereseShell {
                                 .padding([4, 6])
                                 .class(theme::Button::Custom {
                                     active: Box::new(move |focused, _| button::Style {
-                                        outline_width: if focused { 1. } else { 0. },
+                                        background: if focused {
+                                            Some(palette.accent.scale_alpha(0.16 * alpha).into())
+                                        } else {
+                                            appearance.background
+                                        },
                                         outline_color: palette.accent.scale_alpha(alpha),
                                         ..appearance
                                     }),

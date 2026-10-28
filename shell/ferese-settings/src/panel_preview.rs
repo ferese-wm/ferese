@@ -476,7 +476,7 @@ impl App {
 }
 
 /// Preview controls sit on a shared surface. Only interaction paints a background;
-/// keep their hit area and border geometry identical in every state.
+/// keep their hit area and corner geometry identical in every state.
 fn preview_button(palette: visuals::Palette, selected: bool) -> cosmic::theme::Button {
     let paint = move |hovered: bool, pressed: bool, focused: bool| {
         let background = if selected {
@@ -499,14 +499,7 @@ fn preview_button(palette: visuals::Palette, selected: bool) -> cosmic::theme::B
             text_color: Some(palette.text),
             icon_color: Some(palette.text),
             border_radius: 6.into(),
-            border_width: 1.,
-            border_color: if focused {
-                palette.accent
-            } else if selected {
-                palette.accent.scale_alpha(0.6)
-            } else {
-                cosmic::iced::Color::TRANSPARENT
-            },
+            overlay: focused.then_some(palette.accent.scale_alpha(0.12).into()),
             outline: None,
             outline_width: 0.,
             ..Default::default()

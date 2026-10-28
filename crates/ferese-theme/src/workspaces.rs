@@ -91,17 +91,14 @@ pub fn indicator<'a, M: 'a>(
             .width(6. + 10. * progress)
             .height(6)
             .class(theme::Container::custom(move |_| {
-                let mut paint = crate::controls::surface_appearance(
+                crate::controls::surface_appearance(
                     foreground.scale_alpha(if occupied {
                         0.65 + 0.35 * progress
                     } else {
-                        progress
+                        0.18 + 0.82 * progress
                     }),
                     3.,
-                );
-                paint.border.width = 1.;
-                paint.border.color = foreground.scale_alpha(if occupied { 0.65 } else { 0.55 });
-                paint
+                )
             }))
             .into(),
         WorkspaceStyle::WindowStacks => {
@@ -185,13 +182,14 @@ pub fn indicator<'a, M: 'a>(
                 Color::TRANSPARENT
             };
 
-            let mut paint = crate::controls::surface_appearance(fill, palette.radius.min(8.));
-
-            if workspace.visible_elsewhere {
-                paint.border.width = 1.;
-                paint.border.color = palette.accent.scale_alpha(0.55);
-            }
-            paint
+            crate::controls::surface_appearance(
+                if workspace.visible_elsewhere {
+                    palette.accent.scale_alpha(0.10)
+                } else {
+                    fill
+                },
+                palette.radius.min(8.),
+            )
         }))
         .into()
 }

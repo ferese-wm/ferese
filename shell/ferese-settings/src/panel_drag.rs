@@ -360,7 +360,6 @@ impl Widget<Message, Theme, Renderer> for Editor<'_> {
                             bounds: target.marker(),
                             border: Border {
                                 color: self.accent,
-                                width: 2.,
                                 radius: 6.into(),
                                 ..Border::default()
                             },
@@ -382,7 +381,6 @@ impl Widget<Message, Theme, Renderer> for Editor<'_> {
                         bounds: ghost,
                         border: Border {
                             color: self.accent,
-                            width: 1.,
                             radius: 8.into(),
                             ..Border::default()
                         },

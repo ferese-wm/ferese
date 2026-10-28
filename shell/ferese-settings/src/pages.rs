@@ -210,11 +210,20 @@ impl App {
                     body = body.push(self.theme_gallery(None));
                 }
                 body = body.push(
-                    widget::checkbox(split)
-                        .label("Use different themes for light and dark")
-                        .text_size(12)
-                        .font(self.font)
-                        .on_toggle(Message::SplitThemes),
+                    button::custom(
+                        row([])
+                            .spacing(8)
+                            .align_y(Alignment::Center)
+                            .push(ferese_theme::menus::switch(split, palette, 1.))
+                            .push(self.label("Use different themes for light and dark", 12.)),
+                    )
+                    .name(format!(
+                        "Use different themes for light and dark: {}",
+                        if split { "on" } else { "off" },
+                    ))
+                    .class(visuals::button_style(palette, false))
+                    .padding([4, 8])
+                    .on_press(Message::SplitThemes(!split)),
                 );
                 if let Some(note) = &self.resolved.fallback_note {
                     body = body.push(self.note(note));
@@ -504,8 +513,7 @@ impl App {
                     }))
                     .spacing(2),
                 )
-                .padding(3)
-                .class(visuals::surface(palette.sidebar, 9.)),
+                .padding(3),
             );
         }
         if self.page == Page::Bar && self.search.is_empty() {

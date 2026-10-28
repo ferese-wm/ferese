@@ -137,16 +137,11 @@ impl App {
                 }))
                 .spacing(2);
                 rows = rows.push(
-                    widget::container(
-                        self.panel_appearance_row(
-                            "Position",
-                            "Choose the screen edge for the panel.",
-                            widget::container(position)
-                                .padding(3)
-                                .class(crate::visuals::surface(palette.sidebar, 9.))
-                                .into(),
-                        ),
-                    )
+                    widget::container(self.panel_appearance_row(
+                        "Position",
+                        "Choose the screen edge for the panel.",
+                        widget::container(position).padding(3).into(),
+                    ))
                     .padding(16)
                     .class(crate::visuals::surface(palette.card, 14.)),
                 );
@@ -228,16 +223,14 @@ impl App {
                             .into()
                     }))
                     .spacing(2);
-                    behaviour = behaviour.push(self.panel_divider()).push(
-                        self.panel_appearance_row(
-                            "Visible activities",
-                            "Maximum activities in the collapsed and peek island.",
-                            widget::container(choices)
-                                .padding(3)
-                                .class(crate::visuals::surface(palette.sidebar, 9.))
-                                .into(),
-                        ),
-                    );
+                    behaviour =
+                        behaviour
+                            .push(self.panel_divider())
+                            .push(self.panel_appearance_row(
+                                "Visible activities",
+                                "Maximum activities in the collapsed and peek island.",
+                                widget::container(choices).padding(3).into(),
+                            ));
                 }
                 let show_badge = self.draft.boolean("activities.show_badge", true);
                 behaviour = behaviour.push(self.panel_divider()).push(
@@ -524,9 +517,7 @@ impl App {
             },
         ))
         .spacing(2);
-        let modes = widget::container(modes)
-            .padding(3)
-            .class(crate::visuals::surface(palette.sidebar, 9.));
+        let modes = widget::container(modes).padding(3);
         let mut corners = Vec::new();
         // Match the physical corners: top row first, then bottom-left / bottom-right.
         for (index, label, icon) in [

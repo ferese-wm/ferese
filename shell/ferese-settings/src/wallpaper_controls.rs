@@ -141,16 +141,20 @@ fn setting(snapshot: &Snapshot, target: Target, token: &str, fallback: &str) -> 
 fn image_button_style(palette: visuals::Palette, selected: bool) -> cosmic::theme::Button {
     let paint = move |hovered: bool, focused: bool| button::Style {
         shape: Some(cosmic::iced::border::Shape::Continuous),
-        background: None,
+        background: Some(palette.card.into()),
         border_radius: palette.radius.min(10.).into(),
-        border_width: if selected || focused {
-            2.
-        } else if hovered {
-            1.
-        } else {
-            0.
-        },
-        border_color: palette.accent,
+        overlay: (selected || focused || hovered).then_some(
+            palette
+                .accent
+                .scale_alpha(if focused {
+                    0.20
+                } else if selected {
+                    0.14
+                } else {
+                    0.08
+                })
+                .into(),
+        ),
         ..Default::default()
     };
     cosmic::theme::Button::Custom {

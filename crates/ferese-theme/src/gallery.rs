@@ -88,24 +88,22 @@ pub fn tile<M: Clone + 'static>(
         .name(format!("{}, {}", family.name, family.availability()))
         .width(Length::Fill)
         .padding(0)
-        .class(tile_style(palette, selected))
+        .class(tile_style(palette))
         .on_press(on_select);
     radio_with_tab_stop(tile, id, selected, tab_stop, navigate)
 }
 
-fn tile_style(palette: crate::Palette, selected: bool) -> cosmic::theme::Button {
+fn tile_style(palette: crate::Palette) -> cosmic::theme::Button {
     let style = move |focused: bool, hovered: bool| cosmic::widget::button::Style {
         shape: Some(BorderShape::Continuous),
         outline: None,
         background: None,
-        border_width: if selected || focused {
-            2.
-        } else if hovered {
-            1.
-        } else {
-            0.
-        },
-        border_color: palette.accent,
+        overlay: (focused || hovered).then_some(
+            palette
+                .accent
+                .scale_alpha(if focused { 0.20 } else { 0.08 })
+                .into(),
+        ),
         border_radius: 10.into(),
         outline_width: 0.,
         outline_color: palette.text,
@@ -533,14 +531,12 @@ impl<M: Clone> Widget<M, Theme, Renderer> for Radio<'_, M> {
                     bounds: layout.bounds(),
                     border: cosmic::iced::Border {
                         shape: BorderShape::Continuous,
-                        color: style.text_color,
-                        width: 2.,
                         radius: 10.into(),
                         ..Default::default()
                     },
                     ..Default::default()
                 },
-                cosmic::iced::Color::TRANSPARENT,
+                style.text_color.scale_alpha(0.12),
             );
         }
     }

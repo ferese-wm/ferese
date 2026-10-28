@@ -74,12 +74,11 @@ pub fn switch<'a, M: Clone + 'a>(enabled: bool, palette: Palette) -> button::But
     let paint = move |focused| button::Style {
         shape: Some(BorderShape::Continuous),
         outline: None,
-        background: None,
+        background: Some(Color::TRANSPARENT.into()),
         text_color: Some(palette.text),
         icon_color: Some(palette.text),
         border_radius: 12.into(),
-        border_width: if focused { 1. } else { 0. },
-        border_color: palette.accent,
+        overlay: focus_overlay(palette.text, focused),
         ..Default::default()
     };
     button::custom(crate::menus::switch(enabled, palette, 1.))
@@ -117,6 +116,7 @@ pub fn settings_input(p: Palette) -> theme::TextInput {
 }
 
 /// Inputs on a modal material use the same translucent fill as selection cards.
+/// Opacity is clamped to `0..=1`; a non-finite value uses an opaque fill.
 #[must_use]
 pub fn material_input(p: Palette, material_opacity: f32) -> theme::TextInput {
     let opacity = if material_opacity.is_finite() {
@@ -133,17 +133,17 @@ fn input_style(p: Palette, opacity: f32) -> theme::TextInput {
         outline: None,
         background: Color {
             a: opacity,
-            ..mix(p.card, p.text, if hovered { 0.06 } else { 0.035 })
+            ..if focused {
+                mix(p.card, p.accent, 0.14)
+            } else {
+                mix(p.card, p.text, if hovered { 0.06 } else { 0.035 })
+            }
         }
         .into(),
         border_radius: p.radius.min(7.).into(),
-        border_width: 1.,
+        border_width: 0.,
         border_offset: None,
-        border_color: if focused {
-            p.accent
-        } else {
-            mix(p.card, p.text, if hovered { 0.26 } else { 0.18 })
-        },
+        border_color: Color::TRANSPARENT,
         icon_color: Some(p.muted),
         text_color: Some(p.text),
         placeholder_color: p.muted,
@@ -169,8 +169,6 @@ pub fn select<'a, M: 'a>(
         background: Some(mix(p.card, p.text, 0.035).into()),
         border: Border {
             shape: BorderShape::Continuous,
-            width: 1.,
-            color: mix(p.card, p.text, 0.18),
             radius: p.radius.min(7.).into(),
             ..Default::default()
         },
@@ -230,17 +228,11 @@ fn styled_button(
             text_color: Some(on),
             icon_color: Some(on),
             border_radius: p.radius.min(9.).into(),
-            border_width: if selected || !navigation { 1. } else { 0. },
-            border_color: if selected {
-                p.accent
-            } else if !navigation {
-                mix(p.card, p.text, 0.18)
-            } else {
-                Color::TRANSPARENT
-            },
-            outline_width: if focused && focus_visible { 2. } else { 0. },
+            border_width: 0.,
+            border_color: Color::TRANSPARENT,
+            outline_width: 0.,
             outline_color: p.accent,
-            overlay: None,
+            overlay: focus_overlay(on, focused && focus_visible),
             shadow_offset: Vector::ZERO,
         }
     };
@@ -274,7 +266,7 @@ pub fn authentication_button(palette: Palette) -> theme::Button {
             text_color: Some(foreground),
             icon_color: Some(foreground),
             border_radius: palette.radius.into(),
-            outline_width: if focused { 1. } else { 0. },
+            overlay: focus_overlay(foreground, focused),
             outline_color: foreground,
             ..Default::default()
         }
@@ -296,15 +288,15 @@ pub fn authentication_input(palette: Palette) -> theme::TextInput {
     let appearance = move |focused: bool| widget::text_input::Appearance {
         shape: Some(BorderShape::Continuous),
         outline: None,
-        background: Color::from_rgba(text.r, text.g, text.b, 0.045).into(),
+        background: Color {
+            a: if focused { 0.10 } else { 0.045 },
+            ..text
+        }
+        .into(),
         border_radius: radius.into(),
-        border_width: 1.,
+        border_width: 0.,
         border_offset: None,
-        border_color: if focused {
-            accent.scale_alpha(0.82)
-        } else {
-            muted.scale_alpha(0.26)
-        },
+        border_color: Color::TRANSPARENT,
         icon_color: Some(muted),
         text_color: Some(text),
         placeholder_color: muted,
@@ -334,17 +326,13 @@ pub fn lock_input(
             (surface.r + 1.) * 0.5,
             (surface.g + 1.) * 0.5,
             (surface.b + 1.) * 0.5,
-            0.24,
+            if focused { 0.34 } else { 0.24 },
         )
         .into(),
         border_radius: (radius * 2.).min(26.).into(),
-        border_width: 1.,
+        border_width: 0.,
         border_offset: None,
-        border_color: if focused {
-            accent.scale_alpha(0.7)
-        } else {
-            cosmic::iced::Color::WHITE.scale_alpha(0.15)
-        },
+        border_color: Color::TRANSPARENT,
         icon_color: Some(cosmic::iced::Color::WHITE.scale_alpha(0.8)),
         text_color: Some(cosmic::iced::Color::WHITE),
         placeholder_color: cosmic::iced::Color::WHITE.scale_alpha(0.55),
@@ -429,22 +417,40 @@ pub fn notification_button(
 
 #[must_use]
 pub fn filled_button(fill: Color, foreground: Color, radius: f32, opacity: f32) -> theme::Button {
-    let paint = move |outline| button::Style {
+    let paint = move |highlight| button::Style {
         shape: Some(BorderShape::Continuous),
         outline: None,
         background: Some(Color { a: opacity, ..fill }.into()),
         text_color: Some(foreground),
         icon_color: Some(foreground),
         border_radius: radius.into(),
-        outline_width: outline,
-        outline_color: foreground,
+        overlay: (highlight > 0.).then(|| {
+            Color {
+                a: highlight,
+                ..focus_shade(foreground)
+            }
+            .into()
+        }),
         ..Default::default()
     };
     theme::Button::Custom {
-        active: Box::new(move |focused, _| paint(if focused { 1. } else { 0. })),
-        hovered: Box::new(move |_, _| paint(1.)),
-        pressed: Box::new(move |_, _| paint(2.)),
+        active: Box::new(move |focused, _| paint(if focused { 0.12 } else { 0. })),
+        hovered: Box::new(move |_, _| paint(0.12)),
+        pressed: Box::new(move |_, _| paint(0.20)),
         disabled: Box::new(move |_| paint(0.)),
+    }
+}
+
+/// Indicate keyboard focus through a fill without adding a border or outline.
+pub(crate) fn focus_overlay(foreground: Color, focused: bool) -> Option<Background> {
+    focused.then(|| focus_shade(foreground).scale_alpha(0.12).into())
+}
+
+fn focus_shade(foreground: Color) -> Color {
+    if crate::contrast(foreground, Color::BLACK) >= crate::contrast(foreground, Color::WHITE) {
+        Color::BLACK
+    } else {
+        Color::WHITE
     }
 }
 
@@ -484,7 +490,7 @@ mod tests {
     }
 
     #[test]
-    fn hiding_modal_focus_preserves_button_borders_and_materials() {
+    fn hiding_modal_focus_preserves_materials_without_border_strokes() {
         use cosmic::widget::button::Catalog;
 
         let palette = Palette::from_resolved(&ferese_config::theme::default_theme());
@@ -513,9 +519,12 @@ mod tests {
                     ),
                 ] {
                     assert_eq!(hidden.outline_width, 0.0);
-                    assert_eq!(visible.outline_width, 2.0);
+                    assert_eq!(visible.outline_width, 0.0);
+                    assert!(hidden.overlay.is_none());
+                    assert!(resting.overlay.is_none());
+                    assert!(visible.overlay.is_some());
                     assert_eq!(resting.outline_width, 0.0);
-                    assert_eq!(hidden.border_width, 1.0);
+                    assert_eq!(hidden.border_width, 0.0);
                     assert_eq!(hidden.border_width, visible.border_width);
                     assert_eq!(hidden.border_color, visible.border_color);
                     assert_eq!(hidden.border_radius, visible.border_radius);
@@ -527,8 +536,9 @@ mod tests {
             let hidden = button_style_with_focus(palette, selected, false);
             let visible = button_style_with_focus(palette, selected, true);
             assert_eq!(theme.active(true, selected, &hidden).outline_width, 0.0);
-            assert_eq!(theme.active(true, selected, &visible).outline_width, 2.0);
-            assert_eq!(theme.active(true, selected, &hidden).border_width, 1.0);
+            assert_eq!(theme.active(true, selected, &visible).outline_width, 0.0);
+            assert!(theme.active(true, selected, &visible).overlay.is_some());
+            assert_eq!(theme.active(true, selected, &hidden).border_width, 0.0);
         }
     }
 
