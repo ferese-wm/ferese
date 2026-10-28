@@ -516,7 +516,6 @@ fn centered_material_refreshes_after_output_rotation_without_reallocating() {
             color,
             RenderElementKind::Unspecified,
         )
-        .into()
     })
     .collect();
     let mut target: GlesTexture = renderer

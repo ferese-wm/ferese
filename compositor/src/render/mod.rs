@@ -638,6 +638,7 @@ impl RenderElement<GlesRenderer> for RoundedSurfaceRenderElement {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn redraw_output<R, E>(
     renderer: &mut R,
     framebuffer: &mut R::Framebuffer<'_>,
