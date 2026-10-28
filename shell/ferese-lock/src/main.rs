@@ -1,11 +1,15 @@
 mod appearance;
 mod auth;
+mod auth_worker;
 #[cfg(test)]
 mod lock_tests;
 mod password;
+mod password_field;
 #[cfg(test)]
 mod refusal_tests;
 mod runtime;
+mod screen;
+mod wallpaper;
 
 use std::collections::HashMap;
 use std::error::Error;
@@ -17,17 +21,20 @@ use std::time::{Duration, Instant};
 use cosmic::app::{Core, Settings, Task};
 use cosmic::iced::event::{PlatformSpecific, wayland};
 use cosmic::iced::platform_specific::shell::commands::session_lock;
-use cosmic::iced::{Event, Length, Subscription, event, window};
-use cosmic::widget::{column, container, image, row};
-use cosmic::{Element, iced, theme, widget};
+use cosmic::iced::{Event, Subscription, event, window};
+use cosmic::{Element, iced, widget};
 use wayland_client::protocol::wl_output::WlOutput;
 use zeroize::Zeroizing;
 
 use appearance::Appearance;
+use auth::Outcome;
 use password::Password;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let args: Vec<_> = std::env::args().skip(1).collect();
+    if args == ["--authenticate"] {
+        std::process::exit(auth_worker::run()?);
+    }
     if args == ["--help"] {
         println!(
             "Usage: ferese-lock [--preview | --foreground]\nWithout arguments, lock the session using PAM.\n--preview opens an ordinary window; it never locks or authenticates."
@@ -120,10 +127,11 @@ enum Message {
     ClearPassword,
     InputExpired(Instant),
     Submit,
-    Authenticated(bool),
+    Authenticated(Outcome),
     Tick,
     RetryReady,
     FocusPassword,
+    KeyboardLayout(Option<String>),
 }
 
 // Never derive Debug for password-bearing messages.
@@ -147,6 +155,10 @@ impl AuthState {
         matches!(self, Self::Ready)
     }
 
+    fn may_edit(&self) -> bool {
+        matches!(self, Self::Ready | Self::Rejected(_))
+    }
+
     fn retry_ready(&mut self, now: Instant) -> bool {
         if matches!(self, Self::Rejected(at) if now.saturating_duration_since(*at) >= Duration::from_secs(2))
         {
@@ -157,10 +169,11 @@ impl AuthState {
         }
     }
 
-    fn complete(&mut self, success: bool) -> bool {
+    fn complete(&mut self, outcome: Outcome) -> bool {
         if *self != Self::Checking {
             return false;
         }
+        let success = outcome == Outcome::Accepted;
         *self = if success {
             Self::Unlocking
         } else {
@@ -188,6 +201,9 @@ struct Locker {
     date: String,
     confirmation: runtime::Confirmation,
     caps_lock: bool,
+    keyboard_layout: Option<String>,
+    layout_pending: bool,
+    layout_dirty: bool,
 }
 
 impl cosmic::Application for Locker {
@@ -238,11 +254,14 @@ impl cosmic::Application for Locker {
                 password,
                 input_at: None,
                 state: AuthState::Ready,
-                status: "Press Enter to unlock",
+                status: "Enter your password to unlock",
                 outputs: HashMap::new(),
                 started: false,
                 confirmation: Default::default(),
                 caps_lock: false,
+                keyboard_layout: None,
+                layout_pending: false,
+                layout_dirty: false,
                 clock,
                 date: now.strftime("%A, %B %-d").to_string(),
             },
@@ -314,6 +333,13 @@ impl cosmic::Application for Locker {
 
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
+            Message::KeyboardLayout(name) => {
+                self.layout_pending = false;
+                self.keyboard_layout = name;
+                if std::mem::take(&mut self.layout_dirty) {
+                    return self.refresh_keyboard_layout();
+                }
+            }
             Message::AppearanceLoaded(result) => {
                 match result {
                     Ok(appearance) => self.appearance = *appearance,
@@ -327,6 +353,9 @@ impl cosmic::Application for Locker {
             Message::ThemeChanged(snapshot) => {
                 let palette = ferese_theme::Palette::from_resolved(&snapshot.presented);
                 self.appearance.appearance = snapshot.presented.appearance;
+                self.appearance.high_contrast = snapshot.presented.accessibility.increase_contrast;
+                self.appearance.reduce_transparency =
+                    snapshot.presented.accessibility.reduce_transparency;
                 self.appearance.panel = palette.sidebar;
                 self.appearance.text = palette.text;
                 self.appearance.accent = palette.accent;
@@ -367,18 +396,20 @@ impl cosmic::Application for Locker {
                 }
             }
             Message::FocusPassword => {
-                if self.state.may_submit() {
+                if self.state.may_edit() {
                     return focus();
                 }
             }
             Message::Input(value) => {
-                if self.state.may_submit() && !value.is_empty() && self.password.push_str(&value) {
+                if self.state.may_edit() && !value.is_empty() && self.password.push_str(&value) {
                     self.input_at = Some(Instant::now());
-                    self.status = "Press Enter to unlock";
+                    if self.state.may_submit() {
+                        self.status = "Press Enter to unlock";
+                    }
                 }
             }
             Message::Backspace => {
-                if self.state.may_submit() {
+                if self.state.may_edit() {
                     self.password.pop();
                     self.input_at = (!self.password.is_empty()).then(Instant::now);
                 }
@@ -401,10 +432,7 @@ impl cosmic::Application for Locker {
                     return focus();
                 }
 
-                if !self.confirmation.confirmed()
-                    || !self.state.may_submit()
-                    || self.password.is_empty()
-                {
+                if !self.can_submit() {
                     return Task::none();
                 }
 
@@ -420,21 +448,18 @@ impl cosmic::Application for Locker {
                 self.status = "Checking password…";
                 self.input_at = None;
                 let password = std::mem::replace(&mut self.password, replacement);
-                let user = self.user.clone();
-                return Task::perform(
-                    async move {
-                        tokio::task::spawn_blocking(move || auth::authenticate(user, password))
-                            .await
-                            .unwrap_or(false)
-                    },
-                    |accepted| cosmic::Action::App(Message::Authenticated(accepted)),
-                );
+                return Task::perform(auth_worker::authenticate(password), |outcome| {
+                    cosmic::Action::App(Message::Authenticated(outcome))
+                });
             }
-            Message::Authenticated(accepted) => {
-                if self.state.complete(accepted) && !self.preview {
+            Message::Authenticated(outcome) => {
+                if self.state != AuthState::Checking {
+                    return Task::none();
+                }
+                self.status = outcome.message();
+                if self.state.complete(outcome) && !self.preview {
                     return session_lock::unlock();
                 }
-                self.status = "Password not accepted. Try again.";
                 return focus();
             }
         }
@@ -474,10 +499,38 @@ fn focus() -> Task<Message> {
 }
 
 impl Locker {
+    fn refresh_keyboard_layout(&mut self) -> Task<Message> {
+        if self.layout_pending {
+            self.layout_dirty = true;
+            return Task::none();
+        }
+        self.layout_pending = true;
+        cosmic::task::future(async {
+            let name = tokio::task::spawn_blocking(|| {
+                let mut connection = ferese_ipc::Connection::connect().ok()?;
+                let value = connection
+                    .call("get-keyboard-layout", serde_json::json!({}))
+                    .ok()?;
+                value["name"].as_str().map(str::to_owned)
+            })
+            .await
+            .ok()
+            .flatten();
+            Message::KeyboardLayout(name)
+        })
+    }
+
+    fn can_submit(&self) -> bool {
+        (self.preview || self.confirmation.confirmed())
+            && self.state.may_submit()
+            && !self.password.is_empty()
+    }
+
     fn handle_event(&mut self, event: Event) -> Task<Message> {
         match event {
             Event::Keyboard(iced::keyboard::Event::ModifiersChanged(modifiers)) => {
                 self.caps_lock = modifiers.contains(iced::keyboard::Modifiers::CAPS_LOCK);
+                return self.refresh_keyboard_layout();
             }
             Event::PlatformSpecific(PlatformSpecific::Wayland(wayland::Event::Output(
                 event,
@@ -513,7 +566,9 @@ impl Locker {
                         }),
                     );
                 }
-                wayland::SessionLockEvent::Focused(..) => return focus(),
+                wayland::SessionLockEvent::Focused(..) => {
+                    return Task::batch([focus(), self.refresh_keyboard_layout()]);
+                }
                 wayland::SessionLockEvent::Unlocked if self.state == AuthState::Unlocking => {
                     self.completed.store(true, Ordering::Release);
                     return iced::exit();
@@ -525,203 +580,20 @@ impl Locker {
                 _ => {}
             },
             Event::Window(window::Event::Opened { .. }) => {
-                return focus();
+                return Task::batch([focus(), self.refresh_keyboard_layout()]);
             }
             _ => {}
         }
 
         Task::none()
     }
-
-    fn label<'a>(
-        &self,
-        label: impl Into<std::borrow::Cow<'a, str>> + 'a,
-        size: u16,
-    ) -> widget::Text<'a, cosmic::Theme, cosmic::Renderer> {
-        ferese_theme::text(label, self.appearance.font).size(size)
-    }
-
-    fn screen(&self) -> Element<'_, Message> {
-        iced::widget::responsive(move |size| self.screen_content(size)).into()
-    }
-
-    fn screen_content(&self, size: iced::Size) -> Element<'_, Message> {
-        let avatar_size = (size.height * 0.08).clamp(56., 88.);
-        let clock_size = (size.height * 0.06)
-            .min(
-                size.width
-                    * if self.appearance.twelve_hour {
-                        0.055
-                    } else {
-                        0.085
-                    },
-            )
-            .clamp(32., 72.) as u16;
-        let margin = if size.width < 640. { 24. } else { 36. };
-        let top = (size.height * 0.09).max(24.);
-        let a = &self.appearance;
-        // The toolkit receives bullets only. Keyboard events edit the locked buffer directly.
-        let mut input = widget::text_input("Password", self.password.mask())
-            .padding([4, 10])
-            .size(14)
-            .style(ferese_theme::controls::lock_input(
-                a.radius, a.accent, a.panel,
-            ))
-            .font(a.font)
-            .id(widget::Id::new("password"));
-
-        let submit = widget::button::custom(widget::icon::from_name("go-next-symbolic").size(16))
-            .class(theme::Button::Icon)
-            .padding(4)
-            .on_press_maybe(self.state.may_submit().then_some(Message::Submit));
-        input = input.trailing_icon(container(submit).padding([0, 4]).into());
-        let avatar: Element<'_, Message> = if let Some(photo) = &a.avatar {
-            image(photo.clone())
-                .width(avatar_size)
-                .height(avatar_size)
-                .content_fit(iced::ContentFit::Cover)
-                .border_radius(avatar_size / 2.)
-                .into()
-        } else {
-            container(line_icon(
-                "M16 8a4 4 0 1 1-8 0 4 4 0 0 1 8 0 M4 21v-2a8 8 0 0 1 16 0v2",
-                46,
-            ))
-            .center_x(avatar_size)
-            .center_y(avatar_size)
-            .class(theme::Container::custom(move |_| {
-                let fill = ferese_theme::composite(a.accent.scale_alpha(0.18), a.panel);
-                let on = ferese_theme::foreground(fill, a.accent);
-                widget::container::Style {
-                    background: Some(iced::Background::Color(fill)),
-                    text_color: Some(on),
-                    icon_color: Some(on),
-                    border: iced::Border {
-                        shape: cosmic::iced::border::Shape::Continuous,
-                        radius: (avatar_size / 2.).into(),
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                }
-            }))
-            .into()
-        };
-        let identity = column![
-            avatar,
-            self.label(&self.user, 16).class(iced::Color::WHITE),
-            widget::Space::new().height(6),
-            input,
-            self.label(
-                if self.caps_lock {
-                    "Caps Lock is on"
-                } else {
-                    self.status
-                },
-                12
-            )
-            .class(iced::Color::WHITE.scale_alpha(0.68)),
-        ]
-        .spacing(12)
-        .align_x(iced::Alignment::Center)
-        .width(
-            (size.height * 0.23)
-                .clamp(200., 240.)
-                .min((size.width - margin * 2.).max(160.)),
-        );
-        let mut clock = column([]).spacing(0).align_x(iced::Alignment::Center);
-
-        if a.show_clock {
-            clock = clock.push(
-                self.label(&self.clock, clock_size)
-                    .font(cosmic::font::Font {
-                        weight: cosmic::iced::font::Weight::Light,
-                        ..a.font
-                    })
-                    .class(iced::Color::WHITE),
-            );
-        }
-
-        if a.show_date {
-            clock = clock.push(
-                self.label(&self.date, 18)
-                    .class(iced::Color::WHITE.scale_alpha(0.72)),
-            );
-        }
-
-        let clock_height = if a.show_clock {
-            clock_size as f32 * 1.3
-        } else {
-            0.
-        } + if a.show_date { 24. } else { 0. };
-        let gap = (size.height * 0.44 - top - clock_height).max(24.);
-        let foreground = container(
-            column![
-                container(clock).center_x(Length::Fill),
-                widget::Space::new().height(gap),
-                container(identity).center_x(Length::Fill),
-                widget::Space::new().height(Length::Fill),
-                row![
-                    row![ferese_symbol(), self.label("Ferese", 13)]
-                        .spacing(5)
-                        .align_y(iced::Alignment::Center),
-                    widget::Space::new().width(Length::Fill),
-                    self.label(
-                        if self.preview {
-                            "Preview · your session is not locked"
-                        } else {
-                            ""
-                        },
-                        11
-                    )
-                ]
-                .align_y(iced::Alignment::Center),
-            ]
-            .height(Length::Fill),
-        )
-        .padding(iced::Padding {
-            top,
-            right: margin,
-            bottom: margin,
-            left: margin,
-        })
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .class(theme::Container::custom(move |_| {
-            widget::container::Style {
-                text_color: Some(iced::Color::WHITE.scale_alpha(0.65)),
-                background: Some(iced::Background::Color(iced::Color::from_rgba(
-                    0.025, 0.035, 0.06, a.dim,
-                ))),
-                ..Default::default()
-            }
-        }));
-        let background: Element<'_, Message> = image(a.wallpaper.clone())
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .content_fit(iced::ContentFit::Cover)
-            .into();
-        widget::mouse_area(iced::widget::stack![background, foreground])
-            .on_press(Message::FocusPassword)
-            .into()
-    }
-}
-
-fn line_icon(path: &str, size: u16) -> widget::icon::Icon {
-    let svg = format!(
-        r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="{path}" fill="none" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>"#
-    );
-    widget::icon(widget::icon::from_svg_bytes(svg.into_bytes()).symbolic(true)).size(size)
-}
-
-fn ferese_symbol() -> widget::icon::Icon {
-    widget::icon(widget::icon::from_svg_bytes(ferese_theme::icons::FERESE).symbolic(true)).size(30)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     #[test]
-    fn retry_reenables_input_only_after_the_deadline() {
+    fn retry_reenables_submission_only_after_the_deadline() {
         let now = Instant::now();
         let mut state = AuthState::Rejected(now);
         assert!(!state.retry_ready(now + Duration::from_millis(1999)));
@@ -736,14 +608,14 @@ mod tests {
     #[test]
     fn only_an_active_successful_attempt_unlocks() {
         let mut state = AuthState::Ready;
-        assert!(!state.complete(true));
+        assert!(!state.complete(Outcome::Accepted));
         state = AuthState::Checking;
-        assert!(!state.complete(false));
+        assert!(!state.complete(Outcome::Rejected));
         assert!(!state.may_submit());
-        assert!(!state.complete(true));
+        assert!(!state.complete(Outcome::Accepted));
         state = AuthState::Checking;
-        assert!(state.complete(true));
-        assert!(!state.complete(true));
+        assert!(state.complete(Outcome::Accepted));
+        assert!(!state.complete(Outcome::Accepted));
     }
     #[test]
     fn password_messages_are_redacted() {

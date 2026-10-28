@@ -16,9 +16,11 @@ Do not enter your real password in a preview. The account picture comes from
 AccountsService or `~/.face`; a silhouette is used when neither is available.
 
 Press Escape or Ctrl+U to clear the password, or Backspace to remove the last character.
-Partial input clears after ten seconds without typing. The authentication status also shows whether
-Caps Lock is on. A failed attempt displays an error and delays the next retry.
-Authentication uses the system's PAM policy; both password and account validation must succeed.
+Partial input clears after ten seconds without typing. The current keyboard layout and
+Caps Lock warning appear below the authentication status, so neither hides an error.
+After a failed attempt you can edit immediately, while submission pauses for two seconds.
+Authentication uses the system's PAM policy and requires both password and account validation;
+account restrictions and unavailable authentication are reported separately from a wrong password.
 
 The screen brightness keys work while locked, including when brightness is zero.
 They require `brightnessctl` and adjust brightness in 2% steps. While locked,
@@ -77,8 +79,11 @@ Restricted Wayland clients cannot discover or bind `ext_session_lock_manager_v1`
 including after a locker crash. Recovery requires an unrestricted desktop client.
 
 The password buffer occupies a fixed, locked memory mapping that is excluded from
-core dumps and wiped before release. The authentication worker takes ownership of that
-mapping, while the text widget receives only bullets. Short-lived toolkit keyboard
+core dumps and wiped before release. A private pipe transfers it directly into locked
+storage in a PAM subprocess, while the UI receives only the result. If authentication
+has not finished after sixty seconds, the locker terminates the worker and its helpers
+and reaps the worker before allowing another attempt. The password widget renders only
+bullets and exposes a protected-entry accessibility node without a value. Short-lived toolkit keyboard
 events and PAM-owned responses still sit outside this buffer's memory guarantees;
 this does not provide end-to-end protection for every copy made by those dependencies.
 Keyboard traces omit keycodes, keysyms and modifier contents, even at TRACE level.

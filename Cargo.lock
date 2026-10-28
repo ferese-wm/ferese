@@ -1900,6 +1900,7 @@ dependencies = [
  "ferese-ipc",
  "ferese-theme",
  "ferese-theme-client",
+ "iced_accessibility",
  "image",
  "jiff",
  "libc",

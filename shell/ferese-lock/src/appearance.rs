@@ -21,6 +21,7 @@ pub struct Appearance {
     pub wallpaper_blur: f32,
     pub wallpaper_revision: u64,
     wallpaper_loaded: bool,
+    wallpaper_reduced: bool,
     wallpaper_pending: Option<(std::path::PathBuf, bool)>,
     pub reduce_transparency: bool,
     pub avatar: Option<image::Handle>,
@@ -128,6 +129,7 @@ impl Appearance {
             wallpaper_blur: blur,
             wallpaper_revision: 0,
             wallpaper_loaded: false,
+            wallpaper_reduced: reduce_transparency,
             wallpaper_pending: None,
             reduce_transparency,
             avatar: None,
@@ -151,9 +153,7 @@ impl Appearance {
         if self.wallpaper_pending.as_ref() == Some(&desired) {
             return None;
         }
-        if self.wallpaper_loaded
-            && path == self.wallpaper_path
-            && reduce == self.reduce_transparency
+        if self.wallpaper_loaded && path == self.wallpaper_path && reduce == self.wallpaper_reduced
         {
             if self.wallpaper_pending.take().is_some() {
                 self.wallpaper_revision = self.wallpaper_revision.wrapping_add(1);
@@ -183,7 +183,7 @@ impl Appearance {
         let wallpaper = result?;
         self.wallpaper = wallpaper;
         self.wallpaper_path = path;
-        self.reduce_transparency = reduce;
+        self.wallpaper_reduced = reduce;
         self.wallpaper_loaded = true;
         Ok(())
     }

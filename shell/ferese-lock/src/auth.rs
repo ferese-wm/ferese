@@ -2,6 +2,26 @@ use std::ffi::{CStr, CString, c_char, c_int, c_void};
 
 use crate::password::Password;
 
+/// Public explanations deliberately omit PAM's internal diagnostics.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Outcome {
+    Accepted,
+    Rejected,
+    AccountAttention,
+    Unavailable,
+}
+
+impl Outcome {
+    pub(super) fn message(self) -> &'static str {
+        match self {
+            Self::Accepted => "Unlocking…",
+            Self::Rejected => "Password not accepted.",
+            Self::AccountAttention => "Your account needs attention. Contact your administrator.",
+            Self::Unavailable => "Authentication is unavailable. Try again shortly.",
+        }
+    }
+}
+
 #[repr(C)]
 struct Message {
     style: c_int,
@@ -126,16 +146,16 @@ pub fn available() -> bool {
         && unsafe { libloading::Library::new("libpam.so.0") }.is_ok()
 }
 
-pub fn authenticate(user: String, password: Password) -> bool {
-    authenticate_with(&user, &password, None)
+pub(super) fn authenticate(user: &str, password: &Password) -> Outcome {
+    authenticate_with(user, password, None)
 }
 
-fn authenticate_with(user: &str, password: &Password, config: Option<&CStr>) -> bool {
+fn authenticate_with(user: &str, password: &Password, config: Option<&CStr>) -> Outcome {
     if password.is_empty() {
-        return false;
+        return Outcome::Rejected;
     }
     let Ok(user) = CString::new(user) else {
-        return false;
+        return Outcome::Unavailable;
     };
     let mut credentials = Credentials {
         user,
@@ -146,7 +166,7 @@ fn authenticate_with(user: &str, password: &Password, config: Option<&CStr>) -> 
     // alive through pam_end, and the library outlives every symbol call.
     unsafe {
         let Ok(library) = libloading::Library::new("libpam.so.0") else {
-            return false;
+            return Outcome::Unavailable;
         };
         type Start = unsafe extern "C" fn(
             *const c_char,
@@ -168,7 +188,7 @@ fn authenticate_with(user: &str, password: &Password, config: Option<&CStr>) -> 
             library.get::<Check>(b"pam_acct_mgmt\0"),
             library.get::<Check>(b"pam_end\0"),
         ) else {
-            return false;
+            return Outcome::Unavailable;
         };
         let conversation = Conversation {
             callback: converse,
@@ -177,7 +197,7 @@ fn authenticate_with(user: &str, password: &Password, config: Option<&CStr>) -> 
         let mut handle = std::ptr::null_mut();
         let status = if let Some(config) = config {
             let Ok(start) = library.get::<StartConf>(b"pam_start_confdir\0") else {
-                return false;
+                return Outcome::Unavailable;
             };
             start(
                 c"ferese-lock".as_ptr(),
@@ -195,14 +215,30 @@ fn authenticate_with(user: &str, password: &Password, config: Option<&CStr>) -> 
             )
         };
         if status != SUCCESS || handle.is_null() {
-            return false;
+            return Outcome::Unavailable;
         }
-        let mut status = auth(handle, 1); // PAM_DISALLOW_NULL_AUTHTOK
-        if status == SUCCESS {
-            status = account(handle, 0);
+        let authenticated = auth(handle, 1); // PAM_DISALLOW_NULL_AUTHTOK
+        let status = if authenticated == SUCCESS {
+            account(handle, 0)
+        } else {
+            authenticated
+        };
+        let outcome = classify(authenticated, status);
+        if end(handle, status) == SUCCESS {
+            outcome
+        } else {
+            Outcome::Unavailable
         }
-        let ended = end(handle, status);
-        status == SUCCESS && ended == SUCCESS
+    }
+}
+
+fn classify(authentication: c_int, account: c_int) -> Outcome {
+    // Linux-PAM return codes; all unrecognized or infrastructure failures fail closed.
+    match (authentication, account) {
+        (SUCCESS, SUCCESS) => Outcome::Accepted,
+        (SUCCESS, 6 | 7 | 10 | 12 | 13) => Outcome::AccountAttention,
+        (7 | 10, _) => Outcome::Rejected, // PAM_AUTH_ERR / PAM_USER_UNKNOWN
+        _ => Outcome::Unavailable,
     }
 }
 
@@ -211,7 +247,7 @@ mod tests {
     use super::*;
     fn authenticate_test(user: &str, text: &str, config: Option<&CStr>) -> bool {
         let mut password = Password::try_new().expect("test password memory can be locked");
-        password.push_str(text) && authenticate_with(user, &password, config)
+        password.push_str(text) && authenticate_with(user, &password, config) == Outcome::Accepted
     }
     #[test]
     fn pam_requires_authentication_and_account_permission() {
@@ -232,6 +268,17 @@ mod tests {
         assert!(!authenticate_test("test", "", Some(&path)));
         assert!(!authenticate_test("test", "bad\0value", Some(&path)));
     }
+    #[test]
+    fn outcomes_distinguish_credentials_policy_and_service_failures() {
+        assert_eq!(classify(0, 0), Outcome::Accepted);
+        assert_eq!(classify(7, 7), Outcome::Rejected);
+        assert_eq!(classify(0, 6), Outcome::AccountAttention);
+        assert_eq!(classify(0, 12), Outcome::AccountAttention);
+        for status in [1, 4, 9, 11, 19, 26, 999] {
+            assert_eq!(classify(status, status), Outcome::Unavailable);
+        }
+    }
+
     #[test]
     fn conversation_rejects_multiple_secret_prompts_and_unknown_styles() {
         let mut credentials = Credentials {

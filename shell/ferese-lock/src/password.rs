@@ -31,6 +31,31 @@ impl Password {
         true
     }
 
+    /// Reads the private worker pipe directly into locked storage, without a String copy.
+    pub(super) fn read_from(reader: &mut impl io::Read) -> io::Result<Self> {
+        let mut length = [0; 2];
+        reader.read_exact(&mut length)?;
+        let length = usize::from(u16::from_le_bytes(length));
+        if length == 0 || length >= CAPACITY {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "invalid password length",
+            ));
+        }
+        let mut password = Self::try_new()?;
+        reader.read_exact(&mut password.bytes[..length])?;
+        let text = std::str::from_utf8(&password.bytes[..length])
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid password encoding"))?;
+        if text.chars().any(char::is_control) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "invalid password input",
+            ));
+        }
+        password.length = length;
+        Ok(password)
+    }
+
     pub(super) fn pop(&mut self) {
         use zeroize::Zeroize;
         if let Some((start, _)) = self.as_str().char_indices().next_back() {
@@ -93,6 +118,22 @@ mod tests {
         password.clear();
         assert!(password.is_empty());
         assert!(password.bytes.iter().all(|byte| *byte == 0));
+    }
+
+    #[test]
+    fn worker_pipe_is_bounded_and_validated() {
+        let mut valid = &b"\x03\x00a\xc3\xa9"[..];
+        let password = Password::read_from(&mut valid).expect("valid UTF-8 worker input");
+        assert_eq!(password.as_bytes_with_nul(), b"a\xc3\xa9\0");
+        for bytes in [
+            &b"\x00\x00"[..],
+            &b"\xff\xff"[..],
+            &b"\x01\x00\0"[..],
+            &b"\x01\x00\xff"[..],
+            &b"\x03\x00a"[..],
+        ] {
+            assert!(Password::read_from(&mut &*bytes).is_err());
+        }
     }
 
     #[test]

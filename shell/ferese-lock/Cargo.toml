@@ -15,6 +15,7 @@ serde_json.workspace = true
 ferese-theme = { path = "../../crates/ferese-theme" }
 ferese-config = { path = "../../crates/ferese-config" }
 libcosmic.workspace = true
+iced_accessibility.workspace = true
 jiff.workspace = true
 image = { version = "0.25.10", default-features = false }
 libc.workspace = true
@@ -22,7 +23,7 @@ memmap2 = "0.9.11"
 libloading = "0.8.9"
 zeroize = "1.9"
 wayland-client.workspace = true
-tokio = { version = "1", features = ["rt", "time"] }
+tokio = { version = "1", features = ["rt", "time", "process", "io-util"] }
 
 [dev-dependencies]
 tempfile.workspace = true
