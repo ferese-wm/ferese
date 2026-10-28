@@ -292,3 +292,113 @@ fn lock_controls_remain_visible_and_accessible_over_white_wallpaper() {
         }
     }
 }
+
+#[test]
+fn long_password_masks_stay_on_one_line_inside_the_field() {
+    use cosmic::iced::advanced::renderer::{Headless, Renderer as _};
+    use cosmic::iced::advanced::widget::Tree;
+    use cosmic::iced::advanced::{Layout, layout, mouse, renderer};
+    use cosmic::iced::{Color, Font, Pixels, Rectangle, Size};
+    use iced_accessibility::accesskit::Role;
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("render runtime");
+    let mut renderer = runtime
+        .block_on(<cosmic::Renderer as Headless>::new(
+            Font::default(),
+            Pixels(14.),
+            None,
+        ))
+        .expect("headless renderer");
+    let (mut locker, _) = locker(None);
+    for size in [Size::new(320., 300.), Size::new(1280., 720.)] {
+        for scale in [1., 1.25, 1.5] {
+            let bounds = Rectangle::with_size(size);
+            let physical = Size::new((size.width * scale) as u32, (size.height * scale) as u32);
+            let mut captures = Vec::new();
+            for length in [1, 4095] {
+                locker.password.clear();
+                assert!(locker.password.push_str(&"x".repeat(length)));
+                let mut view = locker.screen_content(size);
+                let mut tree = Tree::new(&view);
+                let node = view.as_widget_mut().layout(
+                    &mut tree,
+                    &renderer,
+                    &layout::Limits::new(Size::ZERO, size),
+                );
+                let accessible = view.as_widget().a11y_nodes(
+                    Layout::new(&node),
+                    &tree,
+                    mouse::Cursor::Unavailable,
+                );
+                let entry = accessible
+                    .root()
+                    .iter()
+                    .chain(accessible.children())
+                    .map(|node| node.node())
+                    .find(|node| node.role() == Role::PasswordInput)
+                    .expect("password entry remains accessible");
+                assert!(entry.value().is_none());
+                assert!(entry.children().is_empty());
+                let field = entry.bounds().expect("field bounds");
+                renderer.reset(bounds);
+                view.as_widget().draw(
+                    &tree,
+                    &mut renderer,
+                    &locker.appearance.theme(),
+                    &renderer::Style {
+                        text_color: Color::WHITE,
+                        icon_color: Color::WHITE,
+                        scale_factor: scale as f64,
+                    },
+                    Layout::new(&node),
+                    mouse::Cursor::Unavailable,
+                    &bounds,
+                );
+                captures.push((
+                    field,
+                    Headless::screenshot(&mut renderer, physical, scale, Color::BLACK),
+                ));
+            }
+            let (field, short) = &captures[0];
+            let (long_field, long) = &captures[1];
+            assert_eq!(
+                field, long_field,
+                "password length must not move the controls"
+            );
+            let mut changed_rows = Vec::new();
+            for y in 0..physical.height {
+                let mut row_changed = false;
+                for x in 0..physical.width {
+                    let offset = ((y * physical.width + x) * 4) as usize;
+                    if short[offset..offset + 4] == long[offset..offset + 4] {
+                        continue;
+                    }
+                    assert!(
+                        x >= (field.x0 * scale as f64).floor() as u32
+                            && x < (field.x1 * scale as f64).ceil() as u32
+                            && y >= (field.y0 * scale as f64).floor() as u32
+                            && y < (field.y1 * scale as f64).ceil() as u32,
+                        "password mask escaped its field at ({x}, {y}), size {size:?}, scale {scale}",
+                    );
+                    row_changed = true;
+                }
+                if row_changed {
+                    changed_rows.push(y);
+                }
+            }
+            let first = changed_rows
+                .first()
+                .expect("additional bullets must be visible");
+            let last = changed_rows
+                .last()
+                .expect("additional bullets must be visible");
+            assert!(
+                last - first < (14. * scale).ceil() as u32,
+                "mask must occupy only one line"
+            );
+        }
+    }
+}

@@ -50,14 +50,17 @@ impl Locker {
         let top = (size.height * 0.09).max(24.);
         let a = &self.appearance;
         let mask = self.password.mask();
-        let input_content = container(self.label(
-            if mask.is_empty() {
-                "Password".into()
-            } else {
-                mask
-            },
-            14,
-        ))
+        let input_content = container(
+            self.label(
+                if mask.is_empty() {
+                    "Password".into()
+                } else {
+                    mask
+                },
+                14,
+            )
+            .wrapping(iced::widget::text::Wrapping::None),
+        )
         .center_y(24)
         .width(Length::Fill)
         .class(theme::Container::custom(|_| Style {
@@ -146,6 +149,8 @@ impl Locker {
             .push(
                 container(
                     self.status_label(status, "authentication-status")
+                        .width(Length::Fill)
+                        .align_x(Alignment::Center)
                         .class(Color::WHITE),
                 )
                 .height(60)
@@ -197,7 +202,7 @@ impl Locker {
 
         if a.show_date && !compact {
             clock = clock.push(
-                self.label(&self.date, 18)
+                self.label(&self.date, 16)
                     .class(Color::WHITE.scale_alpha(0.72)),
             );
         }

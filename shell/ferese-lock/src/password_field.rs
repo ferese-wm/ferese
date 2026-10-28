@@ -162,15 +162,20 @@ impl Widget<Message, Theme, Renderer> for PasswordField<'_> {
         cursor: mouse::Cursor,
         viewport: &Rectangle,
     ) {
-        self.content.as_widget().draw(
-            &tree.children[0],
-            renderer,
-            theme,
-            style,
-            layout,
-            cursor,
-            viewport,
-        );
+        use cosmic::iced::advanced::Renderer as _;
+        if let Some(clip) = layout.bounds().intersection(viewport) {
+            renderer.with_layer(clip, |renderer| {
+                self.content.as_widget().draw(
+                    &tree.children[0],
+                    renderer,
+                    theme,
+                    style,
+                    layout,
+                    cursor,
+                    &clip,
+                );
+            });
+        }
     }
 }
 
