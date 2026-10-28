@@ -8382,6 +8382,7 @@ dependencies = [
  "futures-util",
  "gbm",
  "gstreamer",
+ "iced_accessibility",
  "image",
  "jiff",
  "libc",

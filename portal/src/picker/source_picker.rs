@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use crate::capture::Source;
 use crate::recording::Audio;
 
-use super::backdrop;
+use super::{backdrop, content_size};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SourceGroup {
@@ -115,17 +115,17 @@ impl Prompt {
     }
 
     fn dialog_height(&self) -> f32 {
-        let mut groups = 0;
-        let mut rows = 1;
-        for group in SourceGroup::available(self) {
-            groups += 1;
-            rows = rows.max(group.count(self));
-        }
-        (260.
-            + rows.min(4) as f32 * 64.
-            + if groups > 1 { 44. } else { 0. }
-            + if rows > 6 { 44. } else { 0. })
-        .clamp(400., 600.)
+        let groups = SourceGroup::available(self).count();
+        let rows = SourceGroup::available(self)
+            .next()
+            .map_or(1, |group| group.count(self));
+        // Startup hint; the rendered content supplies the final window size.
+        (200.
+            + rows.min(4) as f32 * 60.
+            + rows.min(4).saturating_sub(1) as f32 * 6.
+            + if groups > 1 { 52. } else { 0. }
+            + if rows > 6 { 50. } else { 0. })
+        .min(600.)
     }
 }
 
@@ -149,6 +149,9 @@ enum Message {
     ThemeChanged(Box<ferese_ipc::theme::Snapshot>),
     WindowOpened(cosmic::iced::window::Id),
     Attached(crate::parent::Attachment),
+    Measure,
+    ContentSize(Option<cosmic::iced::Size>),
+    MonitorSize(Option<cosmic::iced::Size>),
     Select(usize),
     Group(SourceGroup),
     Search(String),
@@ -173,6 +176,9 @@ struct SourcePicker {
     group: SourceGroup,
     query: String,
     options_source: Option<usize>,
+    content_limited: bool,
+    max_height: f32,
+    last_size: Option<cosmic::iced::Size>,
     remember: bool,
     audio: Audio,
     region: bool,
@@ -254,6 +260,9 @@ impl cosmic::Application for SourcePicker {
             group,
             query: String::new(),
             options_source: None,
+            content_limited: false,
+            max_height: 600.,
+            last_size: None,
             remember: false,
             audio: Audio::Off,
             region: false,
@@ -291,6 +300,9 @@ impl cosmic::Application for SourcePicker {
                 cosmic::iced::Event::Window(cosmic::iced::window::Event::Opened { .. }) => {
                     Some(Message::WindowOpened(id))
                 }
+                cosmic::iced::Event::Window(cosmic::iced::window::Event::Resized(_)) => {
+                    Some(Message::Measure)
+                }
                 cosmic::iced::Event::Keyboard(cosmic::iced::keyboard::Event::KeyPressed {
                     key:
                         cosmic::iced::keyboard::Key::Named(cosmic::iced::keyboard::key::Named::Escape),
@@ -302,7 +314,31 @@ impl cosmic::Application for SourcePicker {
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
+        if !matches!(message, Message::ContentSize(_)) {
+            self.content_limited = false;
+        }
         match message {
+            Message::ContentSize(Some(size)) => {
+                if !self.content_limited && size.height > self.max_height + 0.5 {
+                    self.content_limited = true;
+                    return Task::none();
+                }
+                let size = cosmic::iced::Size::new(
+                    size.width.ceil(),
+                    size.height.min(self.max_height).ceil(),
+                );
+                if self.last_size != Some(size) {
+                    self.last_size = Some(size);
+                    if let Some(id) = self.core.main_window_id() {
+                        return cosmic::iced::window::resize(id, size);
+                    }
+                }
+                return Task::none();
+            }
+            Message::ContentSize(None) => return Task::none(),
+            Message::MonitorSize(Some(size)) if size.height.is_finite() && size.height > 24. => {
+                self.max_height = (size.height - 24.).min(600.);
+            }
             Message::ThemeChanged(snapshot) => {
                 self.palette = ferese_theme::Palette::from_resolved(&snapshot.presented).flat();
                 self.font =
@@ -315,7 +351,7 @@ impl cosmic::Application for SourcePicker {
             }
             Message::WindowOpened(id) => {
                 let parent = self.prompt.parent.clone();
-                return cosmic::iced::window::run(id, move |window| {
+                let attach = cosmic::iced::window::run(id, move |window| {
                     let attached = crate::parent::Parent::attach(window, &parent)?;
                     if let Some(diagnostic) = attached.diagnostic {
                         eprintln!("ferese portal: {diagnostic}");
@@ -326,6 +362,11 @@ impl cosmic::Application for SourcePicker {
                     ))
                 })
                 .map(|result| cosmic::Action::App(Message::Attached(result)));
+                return Task::batch([
+                    attach,
+                    cosmic::iced::window::monitor_size(id)
+                        .map(|size| cosmic::Action::App(Message::MonitorSize(size))),
+                ]);
             }
             Message::Attached(Ok((parent, material))) => {
                 self.parent = parent;
@@ -452,7 +493,11 @@ impl cosmic::Application for SourcePicker {
     }
 
     fn view(&self) -> Element<'_, Message> {
-        self.view_dialog()
+        content_size::fit(
+            self.view_dialog(),
+            self.content_limited.then_some(self.max_height),
+            |size| Message::ContentSize(Some(size)),
+        )
     }
 }
 
@@ -611,7 +656,12 @@ impl SourcePicker {
         .spacing(16)
         .align_y(Alignment::Start);
 
-        let mut content = column![header].spacing(18).height(Length::Fill);
+        let height = if self.content_limited {
+            Length::Fill
+        } else {
+            Length::Shrink
+        };
+        let mut content = column![header].spacing(18).height(height);
         if SourceGroup::available(&self.prompt).count() > 1 {
             content = content.push(self.source_tabs());
         }
@@ -638,16 +688,20 @@ impl SourcePicker {
         let source_list: Element<'_, Message> = if empty {
             widget::container(self.muted("No matching sources".into()).size(14))
                 .center_x(Length::Fill)
-                .center_y(Length::Fill)
+                .center_y(60)
                 .into()
         } else {
-            widget::scrollable(sources)
+            let sources = widget::scrollable(sources)
                 .direction(cosmic::iced::widget::scrollable::Direction::Vertical(
                     cosmic::iced::widget::scrollable::Scrollbar::hidden(),
                 ))
-                .height(Length::Fill)
-                .width(Length::Fill)
-                .into()
+                .height(height)
+                .width(Length::Fill);
+            if self.content_limited {
+                sources.into()
+            } else {
+                widget::container(sources).max_height(258).into()
+            }
         };
         content = content.push(source_list);
 
@@ -690,7 +744,7 @@ impl SourcePicker {
         widget::container(content.push(footer))
             .padding(24)
             .width(Length::Fill)
-            .height(Length::Fill)
+            .height(height)
             .into()
     }
 

@@ -47,9 +47,17 @@ impl<Message> Widget<Message, Theme, Renderer> for Backdrop<'_, Message> {
         let popup = self.popup_measure.as_widget_mut().layout(
             &mut tree.children[1],
             renderer,
-            &layout::Limits::new(Size::UNIT, content.size()),
+            &layout::Limits::new(Size::UNIT, limits.max()),
         );
-        layout::Node::with_children(content.size(), vec![content, popup])
+        let size = Size::new(
+            content.size().width,
+            content
+                .size()
+                .height
+                .max(popup.size().height + 32.)
+                .min(limits.max().height),
+        );
+        layout::Node::with_children(size, vec![content, popup])
     }
 
     // This is the inactive picker behind a modal. It intentionally receives no

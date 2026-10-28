@@ -1,4 +1,5 @@
 mod backdrop;
+mod content_size;
 mod source_picker;
 
 pub use source_picker::{Prompt, run};

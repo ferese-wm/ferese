@@ -32,6 +32,7 @@ futures-util = "0.3"
 dirs = "6"
 jiff.workspace = true
 libcosmic.workspace = true
+iced_accessibility.workspace = true
 ferese-config = { path = "../crates/ferese-config" }
 libc.workspace = true
 memmap2 = "0.9"

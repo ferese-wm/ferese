@@ -229,12 +229,18 @@ fn actions_stay_visible_with_many_sources_and_expanded_options() {
     for expanded in [false, true] {
         picker.options_source = expanded.then_some(0);
         for (width, height) in [(560., 600.), (400., 460.), (360., 400.)] {
+            picker.max_height = height;
+            picker.content_limited = true;
             let mut view = picker.view();
             let mut tree = Tree::new(view.as_widget());
             let node = view.as_widget_mut().layout(
                 &mut tree,
                 &renderer,
                 &layout::Limits::new(Size::ZERO, Size::new(width, height)),
+            );
+            assert!(
+                node.size().height <= height + 0.5,
+                "picker exceeds the available height"
             );
             let base = if expanded { &node.children()[0] } else { &node };
             let content = &base.children()[0];
@@ -284,6 +290,92 @@ fn actions_stay_visible_with_many_sources_and_expanded_options() {
             }
         }
     }
+}
+
+#[test]
+fn short_lists_and_search_results_fit_content_and_keep_actions_adjacent() {
+    use cosmic::iced::advanced::layout;
+    use cosmic::iced::advanced::renderer::Headless;
+    use cosmic::iced::advanced::widget::Tree;
+    use cosmic::iced::{Font, Pixels, Size};
+
+    fn settle(picker: &mut SourcePicker, renderer: &cosmic::Renderer) -> layout::Node {
+        for _ in 0..3 {
+            let node = {
+                let mut view = picker.view();
+                let mut tree = Tree::new(view.as_widget());
+                view.as_widget_mut().layout(
+                    &mut tree,
+                    renderer,
+                    &layout::Limits::new(Size::ZERO, Size::new(560., picker.max_height)),
+                )
+            };
+            let was_limited = picker.content_limited;
+            drop(picker.update(Message::ContentSize(Some(node.size()))));
+            if picker.content_limited == was_limited {
+                let fields = &node.children()[0];
+                let footer = fields.children().last().expect("picker has actions");
+                let sources = &fields.children()[fields.children().len() - 2];
+                let gap = footer.bounds().y - sources.bounds().y - sources.size().height;
+                assert!(
+                    (gap - 18.).abs() < 0.5,
+                    "actions have an unnecessary {gap}px gap"
+                );
+                assert!(node.size().height <= picker.max_height + 0.5);
+                return node;
+            }
+        }
+        panic!("picker layout must settle without a resize loop")
+    }
+
+    let runtime = tokio::runtime::Runtime::new().expect("test runtime starts");
+    let renderer = runtime
+        .block_on(<cosmic::Renderer as Headless>::new(
+            Font::default(),
+            Pixels(14.),
+            Some("tiny-skia"),
+        ))
+        .expect("headless renderer is available");
+    let mut prompt = prompt();
+    prompt.window_capture = true;
+    prompt
+        .sources
+        .retain(|source| SourceGroup::Windows.contains(source));
+    prompt.sources[0].label = "Editor unique match".into();
+    let mut picker = picker(prompt);
+    picker.max_height = 400.;
+    let one = settle(&mut picker, &renderer).size().height;
+    assert!(
+        one < 300.,
+        "one window should not need a tall dialog: {one}"
+    );
+    assert!(!picker.content_limited);
+
+    picker.prompt.sources.extend((3..18).map(|id| Source {
+        name: format!("window:{id}"),
+        label: format!("Other window {id}"),
+        width: 1280,
+        height: 800,
+        x: 0,
+        y: 0,
+        scale: 1,
+    }));
+    drop(picker.update(Message::Measure));
+    assert_eq!(settle(&mut picker, &renderer).size().height, 400.);
+    assert!(
+        picker.content_limited,
+        "long lists must scroll within the available area"
+    );
+
+    drop(picker.update(Message::Search("unique match".into())));
+    let filtered = settle(&mut picker, &renderer).size().height;
+    assert!(
+        filtered < 400.,
+        "search results must shrink the picker again"
+    );
+    assert!(!picker.content_limited);
+    drop(picker.update(Message::Search("no matching window".into())));
+    assert!((settle(&mut picker, &renderer).size().height - filtered).abs() < 1.);
 }
 
 #[test]
