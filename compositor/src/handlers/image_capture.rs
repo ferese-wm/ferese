@@ -64,14 +64,100 @@ struct SurfaceStamp {
     alpha: Option<f32>,
 }
 
-#[derive(PartialEq)]
 struct WindowStamp {
-    surfaces: Vec<SurfaceStamp>,
+    output: Output,
+    topology: u64,
+    surfaces: Arc<Vec<SurfaceStamp>>,
     geometry: Rectangle<i32, Logical>,
     scale: f64,
     epoch: u64,
     cursor: Option<CursorStamp>,
     appearance: WindowAppearance,
+}
+
+impl PartialEq for WindowStamp {
+    fn eq(&self, other: &Self) -> bool {
+        self.output == other.output
+            && self.topology == other.topology
+            && self.geometry == other.geometry
+            && self.scale == other.scale
+            && self.epoch == other.epoch
+            && self.cursor == other.cursor
+            && self.appearance == other.appearance
+            && (Arc::ptr_eq(&self.surfaces, &other.surfaces) || self.surfaces == other.surfaces)
+    }
+}
+
+#[derive(Default)]
+struct WindowSurfaceCache(std::cell::RefCell<Option<CachedWindowSurfaces>>);
+
+struct CachedWindowSurfaces {
+    revision: u64,
+    geometry: Rectangle<i32, Logical>,
+    surfaces: Arc<Vec<SurfaceStamp>>,
+    callbacks: bool,
+}
+
+fn window_surfaces(
+    window: &smithay::desktop::Window,
+    geometry: Rectangle<i32, Logical>,
+) -> Arc<Vec<SurfaceStamp>> {
+    let revision = super::window_capture::tree_revision(window);
+    let cache = window
+        .user_data()
+        .get_or_insert(WindowSurfaceCache::default);
+    let mut cached = cache.0.borrow_mut();
+    if cached
+        .as_ref()
+        .is_none_or(|cached| cached.revision != revision || cached.geometry != geometry)
+    {
+        let (surfaces, callbacks) = window.toplevel().map_or_else(
+            || (Vec::new(), false),
+            |toplevel| {
+                (
+                    surface_stamp(toplevel.wl_surface(), Some(geometry)),
+                    pending_frame_callbacks(toplevel.wl_surface()),
+                )
+            },
+        );
+        *cached = Some(CachedWindowSurfaces {
+            revision,
+            geometry,
+            surfaces: Arc::new(surfaces),
+            callbacks,
+        });
+    }
+    cached
+        .as_ref()
+        .expect("window surfaces were cached")
+        .surfaces
+        .clone()
+}
+
+fn window_pending_frame_callbacks(
+    window: &smithay::desktop::Window,
+    geometry: Rectangle<i32, Logical>,
+) -> bool {
+    let _ = window_surfaces(window, geometry);
+    window
+        .user_data()
+        .get::<WindowSurfaceCache>()
+        .expect("window surfaces were cached")
+        .0
+        .borrow()
+        .as_ref()
+        .is_some_and(|cached| cached.callbacks)
+}
+
+fn update_window_frame_callbacks(window: &smithay::desktop::Window) {
+    let Some(cache) = window.user_data().get::<WindowSurfaceCache>() else {
+        return;
+    };
+    if let Some(cached) = cache.0.borrow_mut().as_mut() {
+        cached.callbacks = window
+            .toplevel()
+            .is_some_and(|toplevel| pending_frame_callbacks(toplevel.wl_surface()));
+    }
 }
 
 #[derive(PartialEq)]
@@ -545,6 +631,7 @@ impl ImageCopyCaptureHandler for Ferese {
     }
     fn new_session(&mut self, session: Session) {
         if self.image_capture.active.len() >= MAX_SESSIONS {
+            tracing::debug!(limit = MAX_SESSIONS, "capture session limit reached");
             return;
         }
         let Some(constraints) = session.current_constraints() else {
@@ -557,6 +644,14 @@ impl ImageCopyCaptureHandler for Ferese {
             .map(|active| stream_bytes(active.size))
             .sum();
         if stream_bytes(constraints.size) > MAX_STREAM_BYTES.saturating_sub(reserved) {
+            tracing::debug!(
+                width = constraints.size.w,
+                height = constraints.size.h,
+                requested_bytes = stream_bytes(constraints.size),
+                reserved_bytes = reserved,
+                limit_bytes = MAX_STREAM_BYTES,
+                "capture reservation limit reached"
+            );
             return;
         }
         self.image_capture.active.push(Active {
@@ -776,6 +871,14 @@ impl Ferese {
                     .saturating_sub(stream_bytes(active.size))
                     .saturating_add(stream_bytes(size));
                 if next_reserved > MAX_STREAM_BYTES {
+                    tracing::debug!(
+                        width = size.w,
+                        height = size.h,
+                        requested_bytes = stream_bytes(size),
+                        reserved_bytes = reserved,
+                        limit_bytes = MAX_STREAM_BYTES,
+                        "capture resize exceeds reservation limit"
+                    );
                     self.cancel_session_fences(active.session.as_ref());
                     reserved = reserved.saturating_sub(stream_bytes(active.size));
                     return false;
@@ -846,7 +949,7 @@ impl Ferese {
                                 .unwrap_or(60_000),
                     );
                     if let Some(toplevel) = info.window.toplevel()
-                        && pending_frame_callbacks(toplevel.wl_surface())
+                        && window_pending_frame_callbacks(&info.window, info.geometry)
                     {
                         smithay::desktop::utils::send_frames_surface_tree(
                             toplevel.wl_surface(),
@@ -855,18 +958,18 @@ impl Ferese {
                             Some(callback_interval),
                             |_, _| None,
                         );
+                        update_window_frame_callbacks(&info.window);
                     }
                     let mut stamp = WindowStamp {
-                        surfaces: Vec::new(),
+                        output: info.output.clone(),
+                        topology: super::window_capture::topology_revision(&info.window),
+                        surfaces: window_surfaces(&info.window, info.geometry),
                         geometry: info.geometry,
                         scale: info.scale,
                         epoch: self.capture_epoch,
                         cursor: None,
                         appearance: WindowAppearance::new(self),
                     };
-                    if let Some(toplevel) = info.window.toplevel() {
-                        stamp.surfaces = surface_stamp(toplevel.wl_surface(), Some(info.geometry));
-                    }
                     let cursor = active
                         .session
                         .draw_cursor()
@@ -909,11 +1012,7 @@ impl Ferese {
                         // The retained image already represents this selected surface crop.
                         release_captured_window_fifo(self, &stamp);
                         active.pending = Some(frame);
-                        if info
-                            .window
-                            .toplevel()
-                            .is_some_and(|toplevel| pending_frame_callbacks(toplevel.wl_surface()))
-                        {
+                        if window_pending_frame_callbacks(&info.window, info.geometry) {
                             callback_delay =
                                 Some(callback_delay.map_or(callback_interval, |delay| {
                                     delay.min(callback_interval)
@@ -932,6 +1031,7 @@ impl Ferese {
                                         &info,
                                         cursor,
                                         &frame.buffer(),
+                                        active.revision,
                                     )
                                 })
                         } else if let Some(mut backend) = self.direct_backend.take() {
@@ -945,6 +1045,7 @@ impl Ferese {
                                         &info,
                                         cursor,
                                         &frame.buffer(),
+                                        active.revision,
                                     )
                                 });
                             self.direct_backend = Some(backend);
@@ -956,7 +1057,24 @@ impl Ferese {
                             release_captured_window_fifo(self, &stamp);
                         }
                         active.window_stamp = result.as_ref().ok().map(|_| stamp);
-                        self.finish_stream_frame(frame, active.session.as_ref(), result);
+                        match result {
+                            Ok(crate::render::WindowStreamCopy::Unchanged) => {
+                                active.pending = Some(frame);
+                                if window_pending_frame_callbacks(&info.window, info.geometry) {
+                                    callback_delay =
+                                        Some(callback_delay.map_or(callback_interval, |delay| {
+                                            delay.min(callback_interval)
+                                        }));
+                                }
+                            }
+                            Ok(crate::render::WindowStreamCopy::Copied { revision, copy }) => {
+                                active.revision = Some(revision);
+                                self.finish_stream_frame(frame, active.session.as_ref(), Ok(copy));
+                            }
+                            Err(error) => {
+                                self.finish_stream_frame(frame, active.session.as_ref(), Err(error))
+                            }
+                        }
                     }
                 }
             }

@@ -23,7 +23,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 pub(crate) use capture::{
-    StreamCopy, WindowReadback, capture_resize_snapshot, capture_stream_texture,
+    StreamCopy, WindowReadback, WindowStreamCopy, capture_resize_snapshot, capture_stream_texture,
     capture_stream_window, clear_stream_capture_targets, convert_window_pixels,
     prepare_window_readback,
 };

@@ -32,8 +32,21 @@ impl CompositorHandler for Ferese {
         self.update_surface_preferences(surface);
     }
 
-    fn new_subsurface(&mut self, surface: &WlSurface, _parent: &WlSurface) {
+    fn new_subsurface(&mut self, surface: &WlSurface, parent: &WlSurface) {
         self.update_surface_preferences(surface);
+        super::window_capture::topology_changed(parent);
+    }
+
+    fn subsurface_tree_changed(&mut self, _surface: &WlSurface, parent: &WlSurface) {
+        super::window_capture::topology_changed(parent);
+        let mut root = parent.clone();
+        while let Some(parent) = get_parent(&root) {
+            root = parent;
+        }
+        if let Some(window) = self.window_for_surface(&root) {
+            window.on_commit();
+        }
+        crate::backends::direct::render_surface(self, parent);
     }
 
     fn commit(&mut self, surface: &WlSurface) {
@@ -45,6 +58,7 @@ impl CompositorHandler for Ferese {
             return;
         }
 
+        super::window_capture::surface_changed(surface);
         self.update_surface_preferences(surface);
         self.capture_resize_before_commit(surface);
         self.capture_close_before_commit(surface);
@@ -87,6 +101,7 @@ impl CompositorHandler for Ferese {
     }
 
     fn destroyed(&mut self, surface: &WlSurface) {
+        super::window_capture::topology_changed(surface);
         self.cancel_surface_buffer_waits(surface);
         self.presentation_constraint_destroyed(surface);
         self.dmabuf_feedback.destroyed(surface);

@@ -64,6 +64,7 @@ pub(super) fn snapshot_element(
     Some(NativeTextureElement {
         id: snapshot.id.clone(),
         commit: snapshot.commit,
+        damage: None,
         texture: snapshot.texture.clone(),
         geometry: visible,
         source: Rectangle::from_size(Size::from((

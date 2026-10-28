@@ -42,7 +42,7 @@ use smithay::backend::egl::EGLDisplay;
 use smithay::backend::input::InputEvent;
 use smithay::backend::libinput::{LibinputInputBackend, LibinputSessionInterface};
 use smithay::backend::renderer::element::{RenderElement, UnderlyingStorage};
-use smithay::backend::renderer::gles::{GlesRenderer, GlesTexture};
+use smithay::backend::renderer::gles::GlesRenderer;
 use smithay::backend::renderer::utils::CommitCounter;
 use smithay::backend::renderer::{ImportDma, ImportMemWl, Renderer};
 use smithay::backend::session::libseat::LibSeatSession;
@@ -313,11 +313,9 @@ struct DirectOutput {
     global: Option<GlobalId>,
     identity: String,
     mirror_source: Option<String>,
-    mirror_texture: Option<GlesTexture>,
+    mirror_texture: Option<capture::CaptureTarget>,
     mirror_capture_texture: [Option<capture::CaptureTarget>; 2],
     mirror_canvas: Option<Output>,
-    mirror_id: smithay::backend::renderer::element::Id,
-    mirror_commit: CommitCounter,
     surface: OutputCompositor,
     primary_commit: Option<CommitCounter>,
     capture_texture: [Option<capture::CaptureTarget>; 2],
@@ -2811,8 +2809,6 @@ fn create_direct_output(
         mirror_texture: None,
         mirror_capture_texture: Default::default(),
         mirror_canvas: None,
-        mirror_id: smithay::backend::renderer::element::Id::new(),
-        mirror_commit: CommitCounter::default(),
         surface,
         primary_commit: None,
         capture_texture: Default::default(),

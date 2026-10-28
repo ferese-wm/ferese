@@ -1,3 +1,4 @@
+use std::cell::{Cell, RefCell};
 use std::os::unix::fs::MetadataExt;
 use std::sync::{Arc, Mutex};
 
@@ -19,6 +20,79 @@ use smithay::wayland::shm::with_buffer_contents_mut;
 use super::screencopy::FrameData;
 use super::screenshot::CaptureBuffer;
 use crate::Ferese;
+
+/// Cache invalidation follows the selected surface tree. Commits invalidate
+/// traversal results; immediate topology changes also change capture ordering.
+#[derive(Default)]
+struct CaptureTreeRevision {
+    content: Cell<u64>,
+    topology: Cell<u64>,
+}
+
+fn change_tree(
+    surface: &smithay::reexports::wayland_server::protocol::wl_surface::WlSurface,
+    topology: bool,
+) {
+    let mut root = surface.clone();
+    while let Some(parent) = smithay::wayland::compositor::get_parent(&root) {
+        root = parent;
+    }
+    smithay::wayland::compositor::with_states(&root, |states| {
+        let revision = states.data_map.get_or_insert(CaptureTreeRevision::default);
+        revision.content.set(revision.content.get().wrapping_add(1));
+        if topology {
+            revision
+                .topology
+                .set(revision.topology.get().wrapping_add(1));
+        }
+    });
+}
+
+pub(super) fn surface_changed(
+    surface: &smithay::reexports::wayland_server::protocol::wl_surface::WlSurface,
+) {
+    change_tree(surface, false);
+}
+
+pub(super) fn topology_changed(
+    surface: &smithay::reexports::wayland_server::protocol::wl_surface::WlSurface,
+) {
+    change_tree(surface, true);
+}
+
+pub(super) fn tree_revision(window: &smithay::desktop::Window) -> u64 {
+    window.toplevel().map_or(0, |toplevel| {
+        smithay::wayland::compositor::with_states(toplevel.wl_surface(), |states| {
+            states
+                .data_map
+                .get_or_insert(CaptureTreeRevision::default)
+                .content
+                .get()
+        })
+    })
+}
+
+pub(super) fn topology_revision(window: &smithay::desktop::Window) -> u64 {
+    window.toplevel().map_or(0, |toplevel| {
+        smithay::wayland::compositor::with_states(toplevel.wl_surface(), |states| {
+            states
+                .data_map
+                .get_or_insert(CaptureTreeRevision::default)
+                .topology
+                .get()
+        })
+    })
+}
+
+#[derive(Default)]
+struct CaptureScaleCache(RefCell<Option<CachedScale>>);
+
+struct CachedScale {
+    revision: u64,
+    geometry: Rectangle<i32, Logical>,
+    output_scale: f64,
+    scale: f64,
+}
 
 const MAX_BYTES: usize = 128 * 1024 * 1024;
 const MAX_FRAMES: usize = 8;
@@ -474,13 +548,7 @@ impl Ferese {
         if self.session_lock.active() || !super::screencopy::capture_allowed() {
             return None;
         }
-        let window = self
-            .windows
-            .ids()
-            .iter()
-            .find(|(_, candidate)| **candidate == id)?
-            .0
-            .clone();
+        let window = self.windows.window(id)?.clone();
         if self.capture_protected(&window) {
             return None;
         }
@@ -496,8 +564,21 @@ impl Ferese {
         let output_scale = output.current_scale().fractional_scale();
         // A low-density parent can contain higher-density content. Match the
         // rendered surface tree, excluding buffers outside the captured geometry.
-        let mut scale = output_scale;
-        if let Some(toplevel) = window.toplevel() {
+        let revision = tree_revision(&window);
+        let cached = window.user_data().get_or_insert(CaptureScaleCache::default);
+        let mut cache = cached.0.borrow_mut();
+        let cached_scale = cache
+            .as_ref()
+            .filter(|cached| {
+                cached.revision == revision
+                    && cached.geometry == geometry
+                    && cached.output_scale == output_scale
+            })
+            .map(|cached| cached.scale);
+        let mut scale = cached_scale.unwrap_or(output_scale);
+        if cached_scale.is_none()
+            && let Some(toplevel) = window.toplevel()
+        {
             with_surface_tree_downward(
                 toplevel.wl_surface(),
                 Point::<f64, Logical>::default(),
@@ -521,6 +602,15 @@ impl Ferese {
                 |_, _, _| true,
             );
         }
+        if cached_scale.is_none() {
+            *cache = Some(CachedScale {
+                revision,
+                geometry,
+                output_scale,
+                scale,
+            });
+        }
+        drop(cache);
         let size: smithay::utils::Size<i32, smithay::utils::Physical> =
             geometry.size.to_physical_precise_round(scale);
         let bytes = usize::try_from(size.w)

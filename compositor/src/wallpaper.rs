@@ -416,6 +416,7 @@ impl WallpaperState {
         Some(NativeTextureElement {
             id: cached.id.clone(),
             commit: self.commit,
+            damage: None,
             texture: cached.texture.clone(),
             geometry,
             source,

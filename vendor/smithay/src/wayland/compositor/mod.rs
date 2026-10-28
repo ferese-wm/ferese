@@ -588,6 +588,15 @@ pub trait CompositorHandler {
         let _ = parent;
     }
 
+    /// A subsurface was reordered or its role was destroyed and detached.
+    ///
+    /// These tree changes can happen without another surface commit. The
+    /// previous parent is supplied because a detached surface no longer
+    /// identifies its old tree. Called after the tree has been updated.
+    fn subsurface_tree_changed(&mut self, surface: &WlSurface, parent: &WlSurface) {
+        let _ = (surface, parent);
+    }
+
     /// Surface commit handler
     ///
     /// This is called when any changed state from a commit actually becomes visible.

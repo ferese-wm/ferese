@@ -18,7 +18,9 @@ const READBACK_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_POLL_DELAY: Duration = Duration::from_millis(16);
 
 pub(crate) type Valid = Box<dyn Fn(&Ferese) -> bool>;
-type Completion = Box<dyn FnOnce(&mut Ferese, Result<(), String>)>;
+pub(crate) type Completion = Box<dyn FnOnce(&mut Ferese, Result<(), String>)>;
+pub(crate) type Mapped<T> = Box<dyn FnOnce(&[u8]) -> Result<T, String>>;
+type MappedCompletion<T> = Box<dyn FnOnce(&mut Ferese, Result<T, String>)>;
 pub(crate) type Pixels = Box<dyn FnOnce(&mut Ferese, Result<Vec<u8>, String>)>;
 
 pub(crate) struct Readback {
@@ -150,12 +152,25 @@ impl Ferese {
     }
 
     pub(crate) fn queue_readback(&mut self, readback: Readback, valid: Valid, complete: Pixels) {
+        self.queue_mapped_readback(readback, valid, Box::new(copy_pixels), complete);
+    }
+
+    /// Consume ready PBO bytes on their renderer thread without an owned image.
+    /// The sink cannot retain the mapping or access compositor/backend state.
+    /// Completion runs after the renderer resources and backend borrow are restored.
+    pub(crate) fn queue_mapped_readback<T: 'static>(
+        &mut self,
+        readback: Readback,
+        valid: Valid,
+        consume: Mapped<T>,
+        complete: MappedCompletion<T>,
+    ) {
         self.wait_readback(
             readback.fence.clone(),
             readback.bytes,
             valid,
             Box::new(move |state, status| match status {
-                Ok(()) => state.map_ready_readback(readback, complete),
+                Ok(()) => state.map_ready_readback(readback, consume, complete),
                 Err(error) => {
                     state.discard_readback(readback);
                     // Registration can fail while a render path temporarily
@@ -169,41 +184,48 @@ impl Ferese {
         );
     }
 
-    fn map_ready_readback(&mut self, readback: Readback, complete: Pixels) {
+    fn map_ready_readback<T: 'static>(
+        &mut self,
+        readback: Readback,
+        consume: Mapped<T>,
+        complete: MappedCompletion<T>,
+    ) {
         if let Some(backend) = self.nested_backend.clone()
             && let Ok(mut backend) = backend.try_borrow_mut()
             && backend.renderer().context_id().erased() == readback.context
         {
-            let pixels = copy_pixels(readback.map(backend.renderer()));
+            let pixels = readback.map(backend.renderer());
             if pixels.is_err()
                 && let Some(fence) = &readback.fence
             {
                 self.readbacks
                     .quarantine(readback.context.clone(), fence.clone());
             }
+            let result = pixels.and_then(consume);
             drop(readback);
             if let Err(error) = backend.renderer().cleanup_texture_cache() {
                 tracing::debug!(%error, "could not retire readback resources");
             }
             drop(backend);
-            complete(self, pixels);
+            complete(self, result);
             return;
         }
         if let Some(mut backend) = self.direct_backend.take() {
             if let Some(renderer) = backend.readback_renderer(&readback.context) {
-                let pixels = copy_pixels(readback.map(renderer));
+                let pixels = readback.map(renderer);
                 if pixels.is_err()
                     && let Some(fence) = &readback.fence
                 {
                     self.readbacks
                         .quarantine(readback.context.clone(), fence.clone());
                 }
+                let result = pixels.and_then(consume);
                 drop(readback);
                 if let Err(error) = renderer.cleanup_texture_cache() {
                     tracing::debug!(%error, "could not retire readback resources");
                 }
                 self.direct_backend = Some(backend);
-                complete(self, pixels);
+                complete(self, result);
                 return;
             }
             self.direct_backend = Some(backend);
@@ -412,8 +434,7 @@ impl Ferese {
     }
 }
 
-fn copy_pixels(source: Result<&[u8], String>) -> Result<Vec<u8>, String> {
-    let source = source?;
+fn copy_pixels(source: &[u8]) -> Result<Vec<u8>, String> {
     let mut pixels = Vec::new();
     pixels
         .try_reserve_exact(source.len())

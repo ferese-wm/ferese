@@ -153,7 +153,9 @@ fn captured_window_fifo_scope_excludes_cropped_children_and_other_clients() {
     ];
     let crop = Rectangle::from_size((64, 48).into());
     let mut stamp = WindowStamp {
-        surfaces: surface_stamp(&fixture.root, Some(crop)),
+        output: fixture.output.clone(),
+        topology: 0,
+        surfaces: Arc::new(surface_stamp(&fixture.root, Some(crop))),
         geometry: crop,
         scale: 1.0,
         epoch: fixture.state.capture_epoch,

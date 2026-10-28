@@ -594,6 +594,8 @@ where
                         wl_subsurface::Error::BadSurface,
                         "Provided surface is not a sibling or parent.",
                     )
+                } else if let Some(parent) = PrivateSurfaceData::get_parent(&self.surface) {
+                    state.subsurface_tree_changed(&self.surface, &parent);
                 }
             }
             wl_subsurface::Request::PlaceBelow { sibling } => {
@@ -602,6 +604,8 @@ where
                         wl_subsurface::Error::BadSurface,
                         "Provided surface is not a sibling or parent.",
                     )
+                } else if let Some(parent) = PrivateSurfaceData::get_parent(&self.surface) {
+                    state.subsurface_tree_changed(&self.surface, &parent);
                 }
             }
             wl_subsurface::Request::SetSync => PrivateSurfaceData::with_states(&self.surface, |state| {
@@ -629,10 +633,11 @@ where
 
     fn destroyed(
         &self,
-        _state: &mut D,
+        state: &mut D,
         _client_id: wayland_server::backend::ClientId,
         _object: &WlSubsurface,
     ) {
+        let parent = PrivateSurfaceData::get_parent(&self.surface);
         PrivateSurfaceData::unset_parent(&self.surface);
         PrivateSurfaceData::with_states(&self.surface, |state| {
             state
@@ -646,6 +651,9 @@ where
             *guard.pending() = Default::default();
             *guard.current() = Default::default();
         });
+        if let Some(parent) = parent {
+            state.subsurface_tree_changed(&self.surface, &parent);
+        }
     }
 }
 

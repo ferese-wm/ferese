@@ -45,6 +45,14 @@ impl Ferese {
             if super::stream_bytes(constraints.size)
                 > super::MAX_STREAM_BYTES.saturating_sub(reserved)
             {
+                tracing::debug!(
+                    width = constraints.size.w,
+                    height = constraints.size.h,
+                    requested_bytes = super::stream_bytes(constraints.size),
+                    reserved_bytes = reserved,
+                    limit_bytes = super::MAX_STREAM_BYTES,
+                    "capture completion resize exceeds reservation limit"
+                );
                 self.cancel_session_fences(session.clone());
                 self.image_capture
                     .active
@@ -76,10 +84,12 @@ impl Ferese {
         readback: super::super::readback::Readback,
         size: Size<i32, Buffer>,
     ) {
-        let (valid, complete) = self.stream_readback_callbacks(frame, session, generation, size);
-        self.queue_readback(readback, valid, complete);
+        let (valid, consume, complete) =
+            self.stream_readback_mapped_callbacks(frame, session, generation, size);
+        self.queue_mapped_readback(readback, valid, consume, complete);
     }
 
+    #[cfg(test)]
     pub(super) fn stream_readback_callbacks(
         &self,
         frame: Frame,
@@ -89,6 +99,27 @@ impl Ferese {
     ) -> (
         super::super::readback::Valid,
         super::super::readback::Pixels,
+    ) {
+        let (valid, consume, complete) =
+            self.stream_readback_mapped_callbacks(frame, session, generation, size);
+        (
+            valid,
+            Box::new(move |state, pixels| {
+                complete(state, pixels.and_then(|pixels| consume(&pixels)))
+            }),
+        )
+    }
+
+    pub(super) fn stream_readback_mapped_callbacks(
+        &self,
+        frame: Frame,
+        session: SessionRef,
+        generation: u64,
+        size: Size<i32, Buffer>,
+    ) -> (
+        super::super::readback::Valid,
+        super::super::readback::Mapped<()>,
+        super::super::readback::Completion,
     ) {
         let guard = session.clone();
         let reference = (*frame).clone();
@@ -122,66 +153,63 @@ impl Ferese {
                         .current_constraints()
                         .is_some_and(|constraints| constraints.size == size)
             }),
-            Box::new(move |state, pixels| {
-                let copied = pixels.and_then(|pixels| {
-                    let row = usize::try_from(size.w)
-                        .ok()
-                        .and_then(|width| width.checked_mul(4))
-                        .ok_or("Invalid capture dimensions")?;
-                    let bytes = usize::try_from(size.h)
-                        .ok()
-                        .and_then(|height| height.checked_mul(row))
-                        .ok_or("Invalid capture dimensions")?;
-                    if pixels.len() < bytes {
-                        return Err("Incomplete stream readback".into());
+            Box::new(move |pixels| {
+                let row = usize::try_from(size.w)
+                    .ok()
+                    .and_then(|width| width.checked_mul(4))
+                    .ok_or("Invalid capture dimensions")?;
+                let bytes = usize::try_from(size.h)
+                    .ok()
+                    .and_then(|height| height.checked_mul(row))
+                    .ok_or("Invalid capture dimensions")?;
+                if bytes == 0 || pixels.len() < bytes {
+                    return Err("Incomplete stream readback".into());
+                }
+                with_buffer_contents_mut(&buffer, |destination, length, data| {
+                    let valid = data.width == size.w
+                        && data.height == size.h
+                        && data.format == wl_shm::Format::Xrgb8888
+                        && i64::from(data.stride) >= i64::from(size.w) * 4
+                        && data.offset >= 0
+                        && usize::try_from(
+                            i64::from(data.offset)
+                                + i64::from(data.stride) * i64::from(data.height),
+                        )
+                        .is_ok_and(|end| end <= length);
+                    if !valid {
+                        return false;
                     }
-                    with_buffer_contents_mut(&buffer, |destination, length, data| {
-                        let valid = data.width == size.w
-                            && data.height == size.h
-                            && data.format == wl_shm::Format::Xrgb8888
-                            && data.stride >= size.w * 4
-                            && data.offset >= 0
-                            && usize::try_from(
-                                i64::from(data.offset)
-                                    + i64::from(data.stride) * i64::from(data.height),
-                            )
-                            .is_ok_and(|end| end <= length);
-                        if !valid {
-                            return false;
+                    for (y, source) in pixels[..bytes].chunks_exact(row).enumerate() {
+                        // SAFETY: offset, dimensions, stride and mapped bounds were
+                        // rechecked above. Client SHM cannot alias the renderer PBO.
+                        unsafe {
+                            std::ptr::copy_nonoverlapping(
+                                source.as_ptr(),
+                                destination.add(data.offset as usize + y * data.stride as usize),
+                                row,
+                            );
                         }
-                        for (y, source) in pixels[..bytes].chunks_exact(row).enumerate() {
-                            // SAFETY: offset, dimensions, stride and mapped bounds were
-                            // rechecked above. Client SHM cannot alias the renderer PBO.
-                            unsafe {
-                                std::ptr::copy_nonoverlapping(
-                                    source.as_ptr(),
-                                    destination
-                                        .add(data.offset as usize + y * data.stride as usize),
-                                    row,
-                                );
-                            }
-                        }
-                        true
-                    })
-                    .map_err(|error| format!("{error:?}"))?
-                    .then_some(())
-                    .ok_or_else(|| "Invalid stream SHM buffer".into())
-                });
-                match copied {
-                    Ok(()) => {
-                        super::complete_submission(&session, generation);
-                        frame.success(
-                            Transform::Normal,
-                            None,
-                            smithay::utils::Clock::<smithay::utils::Monotonic>::new().now(),
-                        );
                     }
-                    Err(error) => {
-                        tracing::debug!(%error, "stream readback failed");
-                        state.reset_stream_submission(&session, generation);
-                        let reason = state.stream_failure_reason(&session, size);
-                        frame.fail(reason);
-                    }
+                    true
+                })
+                .map_err(|error| format!("{error:?}"))?
+                .then_some(())
+                .ok_or_else(|| "Invalid stream SHM buffer".into())
+            }),
+            Box::new(move |state, copied| match copied {
+                Ok(()) => {
+                    super::complete_submission(&session, generation);
+                    frame.success(
+                        Transform::Normal,
+                        None,
+                        smithay::utils::Clock::<smithay::utils::Monotonic>::new().now(),
+                    );
+                }
+                Err(error) => {
+                    tracing::debug!(%error, "stream readback failed");
+                    state.reset_stream_submission(&session, generation);
+                    let reason = state.stream_failure_reason(&session, size);
+                    frame.fail(reason);
                 }
             }),
         )

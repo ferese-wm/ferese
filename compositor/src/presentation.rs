@@ -8,7 +8,7 @@ use smithay::backend::renderer::element::{Element, Id, Kind, RenderElement, Rend
 use smithay::backend::renderer::gles::{
     GlesError, GlesFrame, GlesRenderer, GlesTexProgram, GlesTexture, Uniform,
 };
-use smithay::backend::renderer::utils::{CommitCounter, DamageSet};
+use smithay::backend::renderer::utils::{CommitCounter, DamageSet, DamageSnapshot};
 use smithay::desktop::utils::OutputPresentationFeedback;
 use smithay::output::Output;
 use smithay::reexports::wayland_protocols::wp::presentation_time::server::wp_presentation_feedback;
@@ -334,6 +334,8 @@ impl RenderElement<GlesRenderer> for PhysicalShaderElement {
 pub(crate) struct NativeTextureElement {
     pub id: Id,
     pub commit: CommitCounter,
+    /// Optional history in texture pixels; absent means a changed image is fully dirty.
+    pub damage: Option<DamageSnapshot<i32, Physical>>,
     pub texture: GlesTexture,
     pub geometry: Rectangle<i32, Physical>,
     pub source: Rectangle<f64, Buffer>,
@@ -374,10 +376,53 @@ impl Element for NativeTextureElement {
     ) -> DamageSet<i32, Physical> {
         if commit == Some(self.commit) {
             DamageSet::default()
+        } else if let Some(damage) = self
+            .damage
+            .as_ref()
+            .and_then(|history| history.damage_since(commit))
+        {
+            texture_damage(&damage, self.source, self.geometry.size)
         } else {
             DamageSet::from_slice(&[Rectangle::from_size(self.geometry.size)])
         }
     }
+}
+
+/// Map changed texture pixels to element-local pixels. Linear filtering can
+/// sample one texel beyond a changed rectangle, even when downscaling.
+fn texture_damage(
+    damage: &[Rectangle<i32, Physical>],
+    source: Rectangle<f64, Buffer>,
+    destination: smithay::utils::Size<i32, Physical>,
+) -> DamageSet<i32, Physical> {
+    if source.is_empty() || destination.is_empty() {
+        return DamageSet::default();
+    }
+    let bounds = Rectangle::<f64, Physical>::new(
+        (source.loc.x, source.loc.y).into(),
+        (source.size.w, source.size.h).into(),
+    );
+    damage
+        .iter()
+        .filter_map(|rect| {
+            if rect.is_empty() {
+                return None;
+            }
+            let padded = Rectangle::new(
+                (f64::from(rect.loc.x) - 1.0, f64::from(rect.loc.y) - 1.0).into(),
+                (f64::from(rect.size.w) + 2.0, f64::from(rect.size.h) + 2.0).into(),
+            );
+            let mut rect = padded.intersection(bounds)?;
+            rect.loc -= bounds.loc;
+            Some(
+                rect.upscale(Scale::from((
+                    f64::from(destination.w) / source.size.w,
+                    f64::from(destination.h) / source.size.h,
+                )))
+                .to_i32_up(),
+            )
+        })
+        .collect()
 }
 
 impl RenderElement<GlesRenderer> for NativeTextureElement {
@@ -406,6 +451,28 @@ impl RenderElement<GlesRenderer> for NativeTextureElement {
 
 #[cfg(test)]
 mod tests {
+    use super::{Buffer, Physical, Rectangle, texture_damage};
+
+    #[test]
+    fn retained_texture_damage_expands_for_filtering_then_rounds_outward() {
+        let source = Rectangle::<f64, Buffer>::from_size((100.0, 100.0).into());
+        let damage = [Rectangle::<i32, Physical>::new(
+            (10, 10).into(),
+            (1, 1).into(),
+        )];
+        let result = texture_damage(&damage, source, (150, 75).into());
+        assert_eq!(&*result, &[Rectangle::new((13, 6).into(), (5, 3).into())]);
+        let crop = Rectangle::new((8.5, 10.5).into(), (50.0, 40.0).into());
+        let damage = [Rectangle::new((8, 10).into(), (1, 1).into())];
+        assert_eq!(
+            &*texture_damage(&damage, crop, (100, 80).into()),
+            &[Rectangle::new((0, 0).into(), (3, 3).into())]
+        );
+        assert!(texture_damage(&[], source, (150, 75).into()).is_empty());
+        assert!(texture_damage(&[Rectangle::default()], source, (150, 75).into()).is_empty());
+        assert!(texture_damage(&damage, source, (0, 75).into()).is_empty());
+    }
+
     #[test]
     fn window_opacity_composes_with_lifecycle_without_retargeting_it() {
         let mut presentation = moving_presentation();

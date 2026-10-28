@@ -394,7 +394,9 @@ fn canceled_shm_failure_cannot_reset_a_replacement_submission() {
         (WIDTH, HEIGHT).into(),
     );
     let stamp = WindowStamp {
-        surfaces: Vec::new(),
+        output: state.space.outputs().next().unwrap().clone(),
+        topology: 0,
+        surfaces: Arc::new(Vec::new()),
         geometry: Rectangle::from_size((WIDTH, HEIGHT).into()),
         scale: 1.,
         epoch: state.capture_epoch,
@@ -532,7 +534,9 @@ fn refresh_during_submitted_capture_is_satisfied_once_but_waiting_capture_resume
         let reference = (*frame).clone();
         active.revision = Some(51);
         active.window_stamp = Some(WindowStamp {
-            surfaces: Vec::new(),
+            output: fixture.output.clone(),
+            topology: 0,
+            surfaces: Arc::new(Vec::new()),
             geometry: Rectangle::from_size((WIDTH, HEIGHT).into()),
             scale: 1.,
             epoch: fixture.state.capture_epoch,
@@ -825,4 +829,259 @@ fn stale_readbacks_publish_resize_constraints_and_keep_valid_sources_retryable()
         assert_eq!(pixels(&fixture.file), expected);
         assert!(messages(&mut fixture.wire).contains(&(next, 3)));
     }
+}
+
+#[test]
+fn mapped_stream_copy_preserves_shm_guards_and_rejects_incomplete_pixels() {
+    if !private_capture_runtime(
+        "handlers::image_capture::frame_liveness_tests::mapped_stream_copy_preserves_shm_guards_and_rejects_incomplete_pixels",
+    ) {
+        return;
+    }
+    let mut fixture = capture_fixture();
+    let active = &mut fixture.state.image_capture.active[0];
+    let frame = active.pending.take().unwrap();
+    let session = active.session.as_ref();
+    let generation = next_submission(&session, &frame);
+    let (valid, consume, complete) = fixture.state.stream_readback_mapped_callbacks(
+        frame,
+        session.clone(),
+        generation,
+        (WIDTH, HEIGHT).into(),
+    );
+    assert!(valid(&fixture.state));
+    let expected = [4, 17, 203, 255].repeat((WIDTH * HEIGHT) as usize);
+    let result = consume(&expected[..expected.len() - 1]);
+    assert!(result.is_err());
+    complete(&mut fixture.state, result);
+    assert_eq!(
+        pixels(&fixture.file),
+        [0xb7; BYTES],
+        "a short PBO must not partially overwrite client memory"
+    );
+
+    request(&mut fixture.wire, 5, 0, &[], None);
+    let stride = WIDTH * 4 + 16;
+    let offset = 16;
+    let length = offset + stride * HEIGHT;
+    let file = tempfile::tempfile().unwrap();
+    let guards = vec![0x6du8; length as usize];
+    file.write_all_at(&guards, 0).unwrap();
+    request(
+        &mut fixture.wire,
+        fixture.shm_id,
+        0,
+        &[6, length as u32],
+        Some(file.as_raw_fd()),
+    );
+    request(
+        &mut fixture.wire,
+        6,
+        0,
+        &[
+            7,
+            offset as u32,
+            WIDTH as u32,
+            HEIGHT as u32,
+            stride as u32,
+            1,
+        ],
+        None,
+    );
+    request(&mut fixture.wire, 2, 0, &[8], None);
+    request(&mut fixture.wire, 8, 1, &[7], None);
+    request(&mut fixture.wire, 8, 3, &[], None);
+    dispatch_test_client(&mut fixture.events, &mut fixture.state);
+    let frame = fixture.state.image_capture.active[0]
+        .pending
+        .take()
+        .unwrap();
+    let generation = next_submission(&session, &frame);
+    let (valid, consume, complete) = fixture.state.stream_readback_mapped_callbacks(
+        frame,
+        session,
+        generation,
+        (WIDTH, HEIGHT).into(),
+    );
+    assert!(valid(&fixture.state));
+    let result = consume(&expected);
+    assert!(result.is_ok());
+    complete(&mut fixture.state, result);
+    let mut actual = vec![0; length as usize];
+    file.read_exact_at(&mut actual, 0).unwrap();
+    let mut guarded_expected = guards;
+    for y in 0..HEIGHT as usize {
+        let row = WIDTH as usize * 4;
+        let start = offset as usize + y * stride as usize;
+        guarded_expected[start..start + row].copy_from_slice(&expected[y * row..(y + 1) * row]);
+    }
+    assert_eq!(
+        actual, guarded_expected,
+        "copy only image rows, preserving offset and stride padding"
+    );
+}
+
+#[test]
+fn window_capture_caches_follow_local_tree_changes_and_subsurface_destruction() {
+    if !private_capture_runtime(
+        "handlers::image_capture::frame_liveness_tests::window_capture_caches_follow_local_tree_changes_and_subsurface_destruction",
+    ) {
+        return;
+    }
+    use smithay::reexports::wayland_server::protocol::wl_compositor::WlCompositor;
+    use smithay::reexports::wayland_server::protocol::wl_subcompositor::WlSubcompositor;
+    let mut fixture = capture_fixture();
+    let (window, mut wire) =
+        crate::state::test_window(&mut fixture.state, &mut fixture.events, 0xffff0000);
+    let (other, mut other_wire) =
+        crate::state::test_window(&mut fixture.state, &mut fixture.events, 0xff00ff00);
+    let id = fixture.state.windows.ids()[&window];
+    let geometry = window.geometry();
+    let first = window_surfaces(&window, geometry);
+    assert!(Arc::ptr_eq(&first, &window_surfaces(&window, geometry)));
+    request(&mut other_wire, 2, 6, &[], None);
+    dispatch_test_client(&mut fixture.events, &mut fixture.state);
+    assert!(
+        Arc::ptr_eq(&first, &window_surfaces(&window, geometry)),
+        "an unrelated client commit must not rebuild this stamp"
+    );
+    assert_ne!(super::super::window_capture::tree_revision(&other), 0);
+    let initial = fixture.state.window_capture_info(id).unwrap().scale;
+    let topology = super::super::window_capture::topology_revision(&window);
+
+    request(&mut wire, 2, 3, &[7], None);
+    request(&mut wire, 2, 6, &[], None);
+    dispatch_test_client(&mut fixture.events, &mut fixture.state);
+    let committed = window_surfaces(&window, geometry);
+    assert!(!Arc::ptr_eq(&first, &committed));
+    assert_eq!(
+        topology,
+        super::super::window_capture::topology_revision(&window)
+    );
+    let callback_stamp = |surfaces| WindowStamp {
+        output: fixture.output.clone(),
+        topology,
+        surfaces,
+        geometry,
+        scale: initial,
+        epoch: fixture.state.capture_epoch,
+        cursor: None,
+        appearance: WindowAppearance::new(&fixture.state),
+    };
+    assert!(
+        callback_stamp(first.clone()) == callback_stamp(committed.clone()),
+        "a callback-only commit must retain semantic capture equality"
+    );
+    assert!(window_pending_frame_callbacks(&window, geometry));
+    smithay::desktop::utils::send_frames_surface_tree(
+        window.toplevel().unwrap().wl_surface(),
+        &fixture.output,
+        fixture.state.start_time.elapsed(),
+        None,
+        |_, _| Some(fixture.output.clone()),
+    );
+    update_window_frame_callbacks(&window);
+    assert!(!window_pending_frame_callbacks(&window, geometry));
+    assert!(Arc::ptr_eq(&committed, &window_surfaces(&window, geometry)));
+
+    let client = window.toplevel().unwrap().wl_surface().client().unwrap();
+    let compositor = client
+        .create_resource::<WlCompositor, _, Ferese>(
+            &fixture.state.display_handle,
+            6,
+            smithay::wayland::GlobalData,
+        )
+        .unwrap();
+    let subcompositor = client
+        .create_resource::<WlSubcompositor, _, Ferese>(
+            &fixture.state.display_handle,
+            1,
+            smithay::wayland::GlobalData,
+        )
+        .unwrap();
+    request(&mut wire, compositor.id().protocol_id(), 0, &[8], None);
+    request(
+        &mut wire,
+        subcompositor.id().protocol_id(),
+        1,
+        &[9, 8, 2],
+        None,
+    );
+    request(&mut wire, 8, 8, &[2], None);
+    request(&mut wire, 8, 1, &[6, 0, 0], None);
+    request(&mut wire, 8, 6, &[], None);
+    request(&mut wire, 2, 6, &[], None);
+    dispatch_test_client(&mut fixture.events, &mut fixture.state);
+    assert_eq!(
+        fixture.state.window_capture_info(id).unwrap().scale,
+        initial.max(2.0)
+    );
+    let with_child = window_surfaces(&window, geometry);
+    assert!(
+        with_child
+            .iter()
+            .any(|surface| surface.id.protocol_id() == 8)
+    );
+    let old_topology = super::super::window_capture::topology_revision(&window);
+    request(&mut wire, 9, 3, &[2], None);
+    dispatch_test_client(&mut fixture.events, &mut fixture.state);
+    let reordered = window_surfaces(&window, geometry);
+    assert!(
+        !Arc::ptr_eq(&with_child, &reordered),
+        "a reorder-only request must invalidate the source tree"
+    );
+    let stamp_for = |surfaces, topology| WindowStamp {
+        output: fixture.output.clone(),
+        topology,
+        surfaces,
+        geometry,
+        scale: initial.max(2.0),
+        epoch: fixture.state.capture_epoch,
+        cursor: None,
+        appearance: WindowAppearance::new(&fixture.state),
+    };
+    assert!(
+        stamp_for(with_child.clone(), old_topology)
+            != stamp_for(
+                reordered,
+                super::super::window_capture::topology_revision(&window)
+            ),
+        "equal preorder descriptors must not hide a stacking revision"
+    );
+    request(&mut wire, 9, 0, &[], None);
+    dispatch_test_client(&mut fixture.events, &mut fixture.state);
+    assert_eq!(
+        fixture.state.window_capture_info(id).unwrap().scale,
+        initial,
+        "detaching a dense child must invalidate scale without another parent commit"
+    );
+    let without_child = window_surfaces(&window, geometry);
+    assert!(!Arc::ptr_eq(&with_child, &without_child));
+    assert!(
+        !without_child
+            .iter()
+            .any(|surface| surface.id.protocol_id() == 8)
+    );
+    request(
+        &mut wire,
+        subcompositor.id().protocol_id(),
+        1,
+        &[10, 8, 2],
+        None,
+    );
+    request(&mut wire, 8, 6, &[], None);
+    request(&mut wire, 2, 6, &[], None);
+    dispatch_test_client(&mut fixture.events, &mut fixture.state);
+    assert_eq!(
+        fixture.state.window_capture_info(id).unwrap().scale,
+        initial.max(2.0)
+    );
+    request(&mut wire, 4, 0, &[], None);
+    request(&mut wire, 3, 0, &[], None);
+    request(&mut wire, 2, 0, &[], None);
+    dispatch_test_client(&mut fixture.events, &mut fixture.state);
+    assert!(
+        fixture.state.window_capture_info(id).is_none(),
+        "destroying the parent must close capture even if child surfaces and cached stamps remain alive"
+    );
 }

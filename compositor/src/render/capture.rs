@@ -353,6 +353,7 @@ mod tests {
             crate::presentation::NativeTextureElement {
                 id: Id::new(),
                 commit: CommitCounter::default(),
+                damage: None,
                 texture,
                 geometry: Rectangle::from_size((size.w, size.h).into()),
                 source: Rectangle::from_size((f64::from(size.w), f64::from(size.h)).into()),
@@ -395,6 +396,282 @@ mod tests {
         }
         state.window_effects.blur = false;
         assert!(stream_window_background(&mut state, &mut renderer, &info, 0.5).is_empty());
+    }
+
+    #[test]
+    #[ignore = "requires private Wayland sockets and an offscreen EGL device"]
+    fn retained_window_capture_matches_fresh_after_cursor_and_appearance_changes() {
+        if !crate::startup_tests::private_runtime(
+            "render::capture::tests::retained_window_capture_matches_fresh_after_cursor_and_appearance_changes",
+        ) {
+            return;
+        }
+        use smithay::input::pointer::{CursorImageStatus, MotionEvent};
+        use smithay::utils::SERIAL_COUNTER;
+        let mut renderer = super::super::corner_tests::renderer();
+        let mut events = smithay::reexports::calloop::EventLoop::try_new().unwrap();
+        let mut state = crate::startup_tests::state(&mut events);
+        let output = smithay::output::Output::new(
+            "retained-window-test".into(),
+            smithay::output::PhysicalProperties {
+                size: (0, 0).into(),
+                subpixel: smithay::output::Subpixel::Unknown,
+                make: String::new(),
+                model: String::new(),
+                serial_number: String::new(),
+            },
+        );
+        output.change_current_state(
+            Some(smithay::output::Mode {
+                size: (800, 600).into(),
+                refresh: 60_000,
+            }),
+            None,
+            None,
+            None,
+        );
+        state.space.map_output(&output, (0, 0));
+        state.register_output(&output, "retained-window-test".into());
+        let (window, mut wire) = crate::state::test_window(&mut state, &mut events, 0x80800000);
+        let (cursor, _cursor_client) =
+            crate::state::test_window(&mut state, &mut events, 0xff00ff00);
+        state.window_effects.enabled = false;
+        state.window_effects.blur = false;
+        let mut info = crate::handlers::window_capture::WindowInfo {
+            geometry: window.geometry(),
+            window,
+            output,
+            scale: 1.0,
+            bytes: 64 * 48 * 4,
+        };
+        let read = |renderer: &mut GlesRenderer, texture: &GlesTexture| {
+            let mapping = renderer
+                .copy_texture(
+                    texture,
+                    Rectangle::from_size(texture.size()),
+                    Fourcc::Abgr8888,
+                )
+                .unwrap();
+            renderer.map_texture(&mapping).unwrap().to_vec()
+        };
+        let (texture, first, straight) =
+            stream_window_image(&mut renderer, &mut state, &info, None).unwrap();
+        assert!(straight);
+        let first_pixels = read(&mut renderer, &texture);
+        assert!(
+            first_pixels
+                .chunks_exact(4)
+                .all(|pixel| pixel[1] == 0 && pixel[3] == 128),
+            "transparent window capture must not become an opaque output composition"
+        );
+        let (same, second, _) =
+            stream_window_image(&mut renderer, &mut state, &info, None).unwrap();
+        assert_eq!(
+            first, second,
+            "matching consumers must reuse an unchanged source composition"
+        );
+        assert_eq!(texture.tex_id(), same.tex_id());
+        use smithay::reexports::wayland_server::Resource;
+        let source_buffer = info.window.toplevel().unwrap().wl_surface().client().unwrap()
+            .object_from_protocol_id::<smithay::reexports::wayland_server::protocol::wl_buffer::WlBuffer>(&state.display_handle, 6).unwrap();
+        assert!(
+            matches!(
+                capture_stream_window(
+                    &mut renderer,
+                    &mut state,
+                    &info,
+                    None,
+                    &source_buffer,
+                    Some(first)
+                )
+                .unwrap(),
+                WindowStreamCopy::Unchanged
+            ),
+            "an unchanged source must not validate, submit or overwrite another destination"
+        );
+
+        let pointer = state.seat.get_pointer().unwrap();
+        pointer.motion(
+            &mut state,
+            None,
+            &MotionEvent {
+                location: (10.0, 10.0).into(),
+                serial: SERIAL_COUNTER.next_serial(),
+                time: smithay::backend::input::InputTime::from_millis(0),
+            },
+        );
+        state.cursor_status =
+            CursorImageStatus::Surface(cursor.toplevel().unwrap().wl_surface().clone());
+        let (with_cursor, old_cursor_revision, _) =
+            stream_window_image(&mut renderer, &mut state, &info, Some(info.geometry)).unwrap();
+        let old_pixels = read(&mut renderer, &with_cursor);
+        pointer.motion(
+            &mut state,
+            None,
+            &MotionEvent {
+                location: (13.0, 10.0).into(),
+                serial: SERIAL_COUNTER.next_serial(),
+                time: smithay::backend::input::InputTime::from_millis(1),
+            },
+        );
+        let (moved, new_cursor_revision, _) =
+            stream_window_image(&mut renderer, &mut state, &info, Some(info.geometry)).unwrap();
+        assert_eq!(
+            with_cursor.tex_id(),
+            moved.tex_id(),
+            "cursor movement must retain the source allocation"
+        );
+        assert_ne!(old_cursor_revision, new_cursor_revision);
+        let moved_pixels = read(&mut renderer, &moved);
+        assert_ne!(old_pixels, moved_pixels);
+        let old_only = (10 * 64 + 10) * 4;
+        assert_eq!(
+            &moved_pixels[old_only..old_only + 4],
+            &first_pixels[old_only..old_only + 4],
+            "old cursor pixels must restore selected-window content"
+        );
+        clear_stream_capture_targets(&mut renderer);
+        let (fresh, _, _) =
+            stream_window_image(&mut renderer, &mut state, &info, Some(info.geometry)).unwrap();
+        assert_eq!(
+            moved_pixels,
+            read(&mut renderer, &fresh),
+            "incremental cursor damage must match a complete fresh composition"
+        );
+        state.capture_epoch = state.capture_epoch.wrapping_add(1);
+        state.window_effects.enabled = true;
+        state.window_effects.opacity = 0.5;
+        state.window_effects.blur = false;
+        let (changed, changed_revision, _) =
+            stream_window_image(&mut renderer, &mut state, &info, Some(info.geometry)).unwrap();
+        assert_eq!(
+            fresh.tex_id(),
+            changed.tex_id(),
+            "epoch and appearance invalidation must retain a compatible texture"
+        );
+        let changed_pixels = read(&mut renderer, &changed);
+        assert_ne!(moved_pixels, changed_pixels);
+        let (unchanged, settled_revision, _) =
+            stream_window_image(&mut renderer, &mut state, &info, Some(info.geometry)).unwrap();
+        assert_eq!(changed_revision, settled_revision);
+        assert_eq!(changed.tex_id(), unchanged.tex_id());
+        clear_stream_capture_targets(&mut renderer);
+        let (fresh, fresh_revision, _) =
+            stream_window_image(&mut renderer, &mut state, &info, Some(info.geometry)).unwrap();
+        assert_eq!(changed_pixels, read(&mut renderer, &fresh));
+        let output = smithay::output::Output::new(
+            "other-window-output".into(),
+            info.output.physical_properties(),
+        );
+        output.change_current_state(
+            info.output.current_mode(),
+            Some(Transform::Normal),
+            Some(info.output.current_scale()),
+            None,
+        );
+        info.output = output;
+        let (migrated, migrated_revision, _) =
+            stream_window_image(&mut renderer, &mut state, &info, Some(info.geometry)).unwrap();
+        assert_eq!(fresh.tex_id(), migrated.tex_id());
+        assert_ne!(
+            migrated_revision, fresh_revision,
+            "same-scale output migration must invalidate source ownership"
+        );
+        assert_eq!(changed_pixels, read(&mut renderer, &migrated));
+
+        // The pinned Smithay applies place_above/below without a parent commit.
+        // Exercise overlapping child buffers so stale ordering changes pixels.
+        use crate::state::{dispatch_test_client, test_client_request as request};
+        use smithay::reexports::wayland_server::protocol::{
+            wl_compositor::WlCompositor, wl_shm::WlShm, wl_subcompositor::WlSubcompositor,
+        };
+        use std::os::fd::AsRawFd;
+        use std::os::unix::fs::FileExt;
+        let client = info
+            .window
+            .toplevel()
+            .unwrap()
+            .wl_surface()
+            .client()
+            .unwrap();
+        let compositor = client
+            .create_resource::<WlCompositor, _, Ferese>(
+                &state.display_handle,
+                6,
+                smithay::wayland::GlobalData,
+            )
+            .unwrap();
+        let subcompositor = client
+            .create_resource::<WlSubcompositor, _, Ferese>(
+                &state.display_handle,
+                1,
+                smithay::wayland::GlobalData,
+            )
+            .unwrap();
+        let shm = client
+            .create_resource::<WlShm, _, Ferese>(
+                &state.display_handle,
+                1,
+                smithay::wayland::GlobalData,
+            )
+            .unwrap();
+        for (surface, role, pool, buffer, color, position) in [
+            (7, 8, 9, 10, 0xff00ff00u32, 4),
+            (11, 12, 13, 14, 0xff0000ffu32, 8),
+        ] {
+            let file = tempfile::tempfile().unwrap();
+            file.write_all_at(&color.to_ne_bytes().repeat(16 * 16), 0)
+                .unwrap();
+            request(
+                &mut wire,
+                compositor.id().protocol_id(),
+                0,
+                &[surface],
+                None,
+            );
+            request(
+                &mut wire,
+                subcompositor.id().protocol_id(),
+                1,
+                &[role, surface, 2],
+                None,
+            );
+            request(
+                &mut wire,
+                shm.id().protocol_id(),
+                0,
+                &[pool, 16 * 16 * 4],
+                Some(file.as_raw_fd()),
+            );
+            request(&mut wire, pool, 0, &[buffer, 0, 16, 16, 16 * 4, 0], None);
+            request(&mut wire, role, 1, &[position, position], None);
+            request(&mut wire, surface, 1, &[buffer, 0, 0], None);
+            request(&mut wire, surface, 6, &[], None);
+        }
+        request(&mut wire, 2, 6, &[], None);
+        dispatch_test_client(&mut events, &mut state);
+        let (before_reorder, before_revision, _) =
+            stream_window_image(&mut renderer, &mut state, &info, None).unwrap();
+        let before_pixels = read(&mut renderer, &before_reorder);
+        request(&mut wire, 8, 2, &[11], None);
+        dispatch_test_client(&mut events, &mut state);
+        let (after_reorder, after_revision, _) =
+            stream_window_image(&mut renderer, &mut state, &info, None).unwrap();
+        let after_pixels = read(&mut renderer, &after_reorder);
+        assert_eq!(before_reorder.tex_id(), after_reorder.tex_id());
+        assert_ne!(before_revision, after_revision);
+        let overlap = (10 * 64 + 10) * 4;
+        assert_ne!(
+            &before_pixels[overlap..overlap + 4],
+            &after_pixels[overlap..overlap + 4]
+        );
+        clear_stream_capture_targets(&mut renderer);
+        let (fresh, _, _) = stream_window_image(&mut renderer, &mut state, &info, None).unwrap();
+        assert_eq!(
+            after_pixels,
+            read(&mut renderer, &fresh),
+            "incremental subsurface reorder must match fresh composition without a parent commit"
+        );
     }
 
     #[test]
@@ -497,15 +774,79 @@ mod tests {
     }
 }
 
+#[derive(PartialEq)]
+struct WindowCaptureConfiguration {
+    output: smithay::output::Output,
+    geometry: Rectangle<i32, Logical>,
+    scale: f64,
+    epoch: u64,
+    effects: crate::config::WindowEffectsSettings,
+    blur: f64,
+    reduce_transparency: bool,
+    wallpaper: CommitCounter,
+}
+
+struct WindowCaptureTarget {
+    key: (ferese_layout::WindowId, bool),
+    canvas: smithay::output::Output,
+    image: Option<crate::backends::direct::capture::CaptureTarget>,
+    configuration: Option<WindowCaptureConfiguration>,
+    bytes: usize,
+}
+
+impl WindowCaptureTarget {
+    fn new(
+        key: (ferese_layout::WindowId, bool),
+        info: &crate::handlers::window_capture::WindowInfo,
+    ) -> Self {
+        Self {
+            key,
+            canvas: smithay::output::Output::new(
+                "window-stream-canvas".into(),
+                info.output.physical_properties(),
+            ),
+            image: None,
+            configuration: None,
+            bytes: 0,
+        }
+    }
+}
+
 #[derive(Default)]
 struct StreamResources {
     textures: std::collections::VecDeque<GlesTexture>,
     bytes: usize,
+    windows: std::collections::VecDeque<WindowCaptureTarget>,
+    window_bytes: usize,
     straight: Option<smithay::backend::renderer::gles::GlesTexProgram>,
     copy: Option<smithay::backend::renderer::gles::GlesTexProgram>,
 }
 
 impl StreamResources {
+    fn take_window(&mut self, key: (ferese_layout::WindowId, bool)) -> Option<WindowCaptureTarget> {
+        let index = self.windows.iter().position(|window| window.key == key)?;
+        let target = self.windows.remove(index)?;
+        self.window_bytes -= target.bytes;
+        Some(target)
+    }
+
+    fn put_window(&mut self, target: WindowCaptureTarget) {
+        // Per-context source compositions are shared across matching consumers.
+        // Keep their total storage bounded independently of transfer scratch targets.
+        const MAX_BYTES: usize = 128 * 1024 * 1024;
+        if target.bytes > MAX_BYTES {
+            return;
+        }
+        while self.windows.len() >= 16 || self.window_bytes + target.bytes > MAX_BYTES {
+            let Some(old) = self.windows.pop_front() else {
+                break;
+            };
+            self.window_bytes -= old.bytes;
+        }
+        self.window_bytes += target.bytes;
+        self.windows.push_back(target);
+    }
+
     fn take_texture(&mut self, size: Size<i32, smithay::utils::Buffer>) -> Option<GlesTexture> {
         let index = self
             .textures
@@ -582,74 +923,153 @@ pub(crate) enum StreamCopy {
     },
 }
 
+pub(crate) enum WindowStreamCopy {
+    Unchanged,
+    Copied { revision: u64, copy: StreamCopy },
+}
+
 pub(crate) fn capture_stream_window(
     renderer: &mut GlesRenderer,
     state: &mut Ferese,
     info: &crate::handlers::window_capture::WindowInfo,
     cursor: Option<Rectangle<i32, Logical>>,
     buffer: &smithay::reexports::wayland_server::protocol::wl_buffer::WlBuffer,
-) -> Result<StreamCopy, String> {
-    if smithay::wayland::dmabuf::get_dmabuf(buffer).is_err() {
-        state.readbacks.prepare(renderer, info.bytes)?;
+    previous_revision: Option<u64>,
+) -> Result<WindowStreamCopy, String> {
+    let (texture, revision, straight) = stream_window_image(renderer, state, info, cursor)?;
+    if previous_revision == Some(revision) {
+        return Ok(WindowStreamCopy::Unchanged);
     }
+    // Destination pool buffers remain fully stale. Retaining source damage
+    // only reduces composition; every returned buffer still receives all pixels.
+    let copy = capture_stream_texture(
+        renderer,
+        &texture,
+        buffer,
+        Transform::Normal,
+        straight,
+        &state.readbacks,
+    )?;
+    Ok(WindowStreamCopy::Copied { revision, copy })
+}
+
+fn stream_window_image(
+    renderer: &mut GlesRenderer,
+    state: &mut Ferese,
+    info: &crate::handlers::window_capture::WindowInfo,
+    cursor: Option<Rectangle<i32, Logical>>,
+) -> Result<(GlesTexture, u64, bool), String> {
     let cache = renderer
         .egl_context()
         .user_data()
         .get_or_insert_threadsafe(|| Arc::new(StreamCache::default()))
         .clone();
-    let reusable = cache
+    let id = *state
+        .windows
+        .ids()
+        .get(&info.window)
+        .ok_or("Capture window was removed")?;
+    let key = (id, cursor.is_some());
+    let mut source = cache
         .0
         .lock()
         .expect("stream texture cache mutex poisoned")
-        .take_texture({
-            let size = info.geometry.size.to_physical_precise_round(info.scale);
-            (size.w, size.h).into()
+        .take_window(key)
+        .unwrap_or_else(|| WindowCaptureTarget::new(key, info));
+    let size = info.geometry.size.to_physical_precise_round(info.scale);
+    source.canvas.change_current_state(
+        Some(smithay::output::Mode {
+            size,
+            refresh: info
+                .output
+                .current_mode()
+                .map_or(60_000, |mode| mode.refresh),
+        }),
+        Some(Transform::Normal),
+        Some(smithay::output::Scale::Fractional(info.scale)),
+        None,
+    );
+    let configuration = WindowCaptureConfiguration {
+        output: info.output.clone(),
+        geometry: info.geometry,
+        scale: info.scale,
+        epoch: state.capture_epoch,
+        effects: state.window_effects,
+        blur: state.theme_settings.backdrop_blur,
+        reduce_transparency: state.theme_settings.reduce_transparency,
+        wallpaper: state.wallpaper.revision(),
+    };
+    if source.configuration.as_ref() != Some(&configuration) {
+        if let Some(image) = &mut source.image {
+            image.invalidate();
+        }
+        source.configuration = Some(configuration);
+    }
+    let result = (|| {
+        let Some(toplevel) = info.window.toplevel() else {
+            return Err("Window has no capturable content".into());
+        };
+        let alpha = state.window_effects.resolve(1.0, false, 0.0).0;
+        let background = stream_window_background(state, renderer, info, alpha);
+        let straight = background.is_empty();
+        let mut elements = cursor.map_or_else(Vec::new, |cursor| {
+            cursor_elements(state, renderer, cursor, info.scale)
         });
-    let alpha = state.window_effects.resolve(1.0, false, 0.0).0;
-    let background = stream_window_background(state, renderer, info, alpha);
-    let mut snapshot = render_window_texture(
-        renderer,
-        &info.window,
-        info.geometry,
-        info.scale,
-        128 * 1024 * 1024,
-        reusable,
-        &background,
-        alpha,
-    )
-    .map_err(|error| error.to_string())?
-    .ok_or("Window has no capturable content")?;
-    let size = snapshot.texture.size();
-    if let Some(cursor) = cursor {
-        let elements = cursor_elements(state, renderer, cursor, info.scale);
-        let mut target = renderer
-            .bind(&mut snapshot.texture)
-            .map_err(|error| error.to_string())?;
-        let mut frame = renderer
-            .render(&mut target, (size.w, size.h).into(), Transform::Normal)
-            .map_err(|error| error.to_string())?;
-        draw_render_elements(
-            &mut frame,
+        let content = render_elements_from_surface_tree::<
+            GlesRenderer,
+            WaylandSurfaceRenderElement<GlesRenderer>,
+        >(
+            renderer,
+            toplevel.wl_surface(),
+            Point::<i32, Logical>::from((-info.geometry.loc.x, -info.geometry.loc.y))
+                .to_physical_precise_round(info.scale),
             info.scale,
+            alpha,
+            RenderElementKind::Unspecified,
+        );
+        if content.is_empty() {
+            return Err("Window has no capturable content".into());
+        }
+        elements.extend(
+            content
+                .into_iter()
+                .map(super::AnimatedWindowRenderElement::from),
+        );
+        elements.extend(background);
+        let clear = if straight {
+            [0.0; 4]
+        } else {
+            [0.035, 0.04, 0.055, 1.0]
+        };
+        let (framebuffer, _) = crate::backends::direct::capture::render_capture_with_clear(
+            renderer,
+            &mut source.image,
+            &source.canvas,
             &elements,
-            &[Rectangle::from_size((size.w, size.h).into())],
+            clear,
         )
         .map_err(|error| error.to_string())?;
-        let _ = frame.finish().map_err(|error| error.to_string())?;
+        drop(framebuffer);
+        let (texture, revision) = source
+            .image
+            .as_ref()
+            .expect("window composition was allocated")
+            .image();
+        source.bytes = info.bytes;
+        Ok((texture, revision, straight))
+    })();
+    if let Some(image) = &mut source.image {
+        let (texture, _) = image.image();
+        source.bytes = texture.size().w as usize * texture.size().h as usize * 4;
+        if result.is_err() {
+            image.invalidate();
+        }
     }
-    let result = capture_stream_texture(
-        renderer,
-        &snapshot.texture,
-        buffer,
-        Transform::Normal,
-        background.is_empty(),
-        &state.readbacks,
-    );
     cache
         .0
         .lock()
         .expect("stream texture cache mutex poisoned")
-        .put_texture(snapshot.texture);
+        .put_window(source);
     result
 }
 
@@ -873,6 +1293,8 @@ pub(crate) fn clear_stream_capture_targets(renderer: &mut GlesRenderer) {
         let mut cache = cache.0.lock().expect("stream texture cache mutex poisoned");
         cache.textures.clear();
         cache.bytes = 0;
+        cache.windows.clear();
+        cache.window_bytes = 0;
     }
 }
 

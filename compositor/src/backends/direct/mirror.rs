@@ -6,11 +6,16 @@ use smithay::backend::allocator::Fourcc;
 use smithay::output::Scale;
 
 use super::{
-    CommitCounter, DirectOutput, Ferese, GlesRenderer, GlesTexture, Output, OutputMode,
-    PhysicalProperties, Subpixel, Transform, capture, sampled_output_elements,
+    DirectOutput, Ferese, GlesRenderer, Output, OutputMode, PhysicalProperties, Subpixel,
+    Transform, capture, sampled_output_elements,
 };
 use smithay::backend::renderer::Texture;
-use smithay::utils::{Buffer, Physical, Rectangle};
+use smithay::backend::renderer::damage::Error as DamageError;
+use smithay::utils::{Physical, Rectangle};
+
+#[cfg(test)]
+#[path = "mirror_damage_tests.rs"]
+mod damage_tests;
 
 /// Fit the complete source into the transformed target; black letterbox, never crop.
 fn fit(source: (i32, i32), target: (i32, i32)) -> Rectangle<i32, Physical> {
@@ -32,7 +37,7 @@ pub(super) fn elements(
     target: &mut DirectOutput,
 ) -> Result<
     Vec<crate::render::AnimatedWindowRenderElement>,
-    smithay::backend::renderer::gles::GlesError,
+    DamageError<smithay::backend::renderer::gles::GlesError>,
 > {
     let elements = sampled_output_elements(state, renderer, source, true, frame);
     // Target renderer owns this texture, including when source and target use different GPUs.
@@ -55,34 +60,29 @@ pub(super) fn elements(
         source,
         &elements,
     )?;
-    let texture = target
+    let image = target
         .mirror_texture
         .as_ref()
-        .expect("source composition has a texture")
-        .clone();
-    target.mirror_commit.increment();
-    Ok(vec![
-        fitted_texture(
-            texture,
-            &target.output,
-            target.mirror_id.clone(),
-            target.mirror_commit,
-        )
-        .into(),
-    ])
+        .expect("source composition has a texture");
+    Ok(vec![fitted_texture(image, &target.output).into()])
 }
 
 pub(super) fn compose(
     renderer: &mut GlesRenderer,
-    texture: &mut Option<GlesTexture>,
+    texture: &mut Option<capture::CaptureTarget>,
     canvas: &Output,
     source: &Output,
     elements: &[crate::render::AnimatedWindowRenderElement],
-) -> Result<(), smithay::backend::renderer::gles::GlesError> {
+) -> Result<(), DamageError<smithay::backend::renderer::gles::GlesError>> {
     configure_canvas(canvas, source);
-    let framebuffer = capture::render_texture(renderer, texture, canvas, elements)?;
-    drop(framebuffer);
-    Ok(())
+    let result = capture::render_capture_with_revision(renderer, texture, canvas, elements)
+        .map(|(framebuffer, _)| drop(framebuffer));
+    if result.is_err() {
+        // A failed draw may already have changed pixels. Recreate both image
+        // and history before another attempt, rather than exposing that image.
+        *texture = None;
+    }
+    result
 }
 
 pub(super) fn configure_canvas(canvas: &Output, source: &Output) {
@@ -99,30 +99,21 @@ pub(super) fn configure_canvas(canvas: &Output, source: &Output) {
 }
 
 pub(super) fn fitted_texture(
-    texture: GlesTexture,
+    image: &capture::CaptureTarget,
     target: &Output,
-    id: smithay::backend::renderer::element::Id,
-    commit: CommitCounter,
 ) -> crate::presentation::NativeTextureElement {
+    let (texture, _) = image.image();
     let source_size = texture.size();
     let size = target
         .current_transform()
         .transform_size(target.current_mode().expect("target has a mode").size);
-    crate::presentation::NativeTextureElement {
-        id,
-        commit,
-        source: Rectangle::<f64, Buffer>::from_size(source_size.to_f64()),
-        texture,
-        geometry: fit((source_size.w, source_size.h), (size.w, size.h)),
-        alpha: 1.0,
-        program: None,
-        uniforms: Vec::new(),
-    }
+    image.element(fit((source_size.w, source_size.h), (size.w, size.h)))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use smithay::backend::renderer::utils::CommitCounter;
 
     #[test]
     fn different_native_sizes_fit_without_cropping() {
@@ -189,7 +180,7 @@ mod tests {
                 .collect();
         let mut texture = None;
         compose(&mut renderer, &mut texture, &canvas, &source, &colors).unwrap();
-        assert_eq!(texture.as_ref().unwrap().size(), (32, 64).into());
+        assert_eq!(texture.as_ref().unwrap().image().0.size(), (32, 64).into());
         let target = output("target");
         for (transform, colored_area) in [(Transform::Normal, 2048), (Transform::_90, 4608)] {
             target.change_current_state(
@@ -201,12 +192,7 @@ mod tests {
                 Some(Scale::Fractional(1.5)),
                 None,
             );
-            let element = fitted_texture(
-                texture.as_ref().unwrap().clone(),
-                &target,
-                Id::new(),
-                CommitCounter::default(),
-            );
+            let element = fitted_texture(texture.as_ref().unwrap(), &target);
             let mut target_texture = None;
             let framebuffer =
                 capture::render_capture(&mut renderer, &mut target_texture, &target, &[element])

@@ -2,6 +2,7 @@ use smithay::backend::allocator::Fourcc;
 use smithay::backend::renderer::damage::{Error as DamageError, OutputDamageTracker};
 use smithay::backend::renderer::element::RenderElement;
 use smithay::backend::renderer::gles::{GlesError, GlesRenderer, GlesTarget, GlesTexture};
+use smithay::backend::renderer::utils::DamageBag;
 use smithay::backend::renderer::{Bind, Offscreen, Texture};
 use smithay::output::Output;
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
@@ -9,7 +10,9 @@ use std::fmt::Display;
 use std::time::{Duration, Instant};
 
 use crate::Ferese;
-use crate::render::{capture_output_elements, redraw_output};
+use crate::render::capture_output_elements;
+#[cfg(test)]
+use crate::render::redraw_output;
 use crate::state::FrameScene;
 
 const CACHE_IDLE: Duration = Duration::from_secs(2);
@@ -24,6 +27,7 @@ pub(crate) struct CaptureTarget {
     revision: u64,
     id: smithay::backend::renderer::element::Id,
     commit: smithay::backend::renderer::utils::CommitCounter,
+    pixel_damage: DamageBag<i32, smithay::utils::Physical>,
     stamp: Option<changes::Stamp>,
     preparations: u64,
     reuses: u64,
@@ -33,6 +37,11 @@ pub(crate) struct CaptureTarget {
 }
 
 impl CaptureTarget {
+    pub(crate) fn invalidate(&mut self) {
+        self.damage = OutputDamageTracker::from_output(&self.output);
+        self.pixel_damage.reset();
+    }
+
     pub(crate) fn report_if_used(&mut self, include_cursor: bool) {
         if !self.trace || self.preparations + self.reuses + self.compositions == 0 {
             return;
@@ -59,6 +68,23 @@ impl CaptureTarget {
         (self.texture.clone(), self.revision)
     }
 
+    pub(super) fn element(
+        &self,
+        geometry: smithay::utils::Rectangle<i32, smithay::utils::Physical>,
+    ) -> crate::presentation::NativeTextureElement {
+        crate::presentation::NativeTextureElement {
+            id: self.id.clone(),
+            commit: self.commit,
+            damage: Some(self.pixel_damage.snapshot()),
+            texture: self.texture.clone(),
+            geometry,
+            source: smithay::utils::Rectangle::from_size(self.texture.size().to_f64()),
+            alpha: 1.0,
+            program: None,
+            uniforms: Vec::new(),
+        }
+    }
+
     pub(crate) fn new(texture: GlesTexture, output: &Output) -> Self {
         Self {
             texture,
@@ -68,6 +94,7 @@ impl CaptureTarget {
             revision: 0,
             id: smithay::backend::renderer::element::Id::new(),
             commit: Default::default(),
+            pixel_damage: Default::default(),
             stamp: None,
             preparations: 0,
             reuses: 0,
@@ -202,12 +229,7 @@ pub(super) fn capture_mirror(
         let source_target = source_target
             .as_ref()
             .expect("mirror capture target allocated");
-        let element = super::mirror::fitted_texture(
-            source_target.texture.clone(),
-            &output.output,
-            source_target.id.clone(),
-            source_target.commit,
-        );
+        let element = super::mirror::fitted_texture(source_target, &output.output);
         let Some((target, revision)) =
             capture_request(state, &output.output, include_cursor, || {
                 render_capture_with_revision(
@@ -329,6 +351,22 @@ pub(crate) fn render_capture_with_revision<'a, E: RenderElement<GlesRenderer>>(
     output: &Output,
     elements: &[E],
 ) -> Result<(GlesTarget<'a>, u64), DamageError<GlesError>> {
+    render_capture_with_clear(
+        renderer,
+        target,
+        output,
+        elements,
+        [0.035, 0.04, 0.055, 1.0],
+    )
+}
+
+pub(crate) fn render_capture_with_clear<'a, E: RenderElement<GlesRenderer>>(
+    renderer: &mut GlesRenderer,
+    target: &'a mut Option<CaptureTarget>,
+    output: &Output,
+    elements: &[E],
+    clear: [f32; 4],
+) -> Result<(GlesTarget<'a>, u64), DamageError<GlesError>> {
     let size = output.current_mode().expect("output has a mode").size;
     if target
         .as_ref()
@@ -347,6 +385,7 @@ pub(crate) fn render_capture_with_revision<'a, E: RenderElement<GlesRenderer>>(
     let target = target.as_mut().expect("capture target allocated");
     if target.output != *output {
         target.damage = OutputDamageTracker::from_output(output);
+        target.pixel_damage.reset();
         target.output = output.clone();
     }
     // This texture retains the previous capture, independently of display
@@ -355,20 +394,24 @@ pub(crate) fn render_capture_with_revision<'a, E: RenderElement<GlesRenderer>>(
     let mut framebuffer = renderer
         .bind(&mut target.texture)
         .map_err(DamageError::Rendering)?;
-    let result = target.damage.render_output(
-        renderer,
-        &mut framebuffer,
-        1,
-        elements,
-        [0.035, 0.04, 0.055, 1.0],
-    )?;
+    let result = target
+        .damage
+        .render_output(renderer, &mut framebuffer, 1, elements, clear)?;
     if result
         .damage
         .as_ref()
         .is_some_and(|damage| !damage.is_empty())
     {
         static NEXT_REVISION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
-        target.commit.increment();
+        target.pixel_damage.add(
+            result
+                .damage
+                .as_ref()
+                .expect("nonempty damage")
+                .iter()
+                .copied(),
+        );
+        target.commit = target.pixel_damage.current_commit();
         target.compositions += 1;
         target.revision = NEXT_REVISION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
@@ -376,6 +419,7 @@ pub(crate) fn render_capture_with_revision<'a, E: RenderElement<GlesRenderer>>(
     Ok((framebuffer, target.revision))
 }
 
+#[cfg(test)]
 pub(super) fn render_texture<'a, E: RenderElement<GlesRenderer>>(
     renderer: &mut GlesRenderer,
     texture: &'a mut Option<GlesTexture>,
