@@ -282,6 +282,153 @@ impl Fixture {
     }
 }
 
+struct RegistryPeer {
+    wire: UnixStream,
+    client: Client,
+    lock_global: Option<u32>,
+}
+
+impl RegistryPeer {
+    fn new(fixture: &mut Fixture, creator: Option<&Client>) -> Self {
+        use smithay::wayland::security_context::SecurityContext;
+        let (server, mut wire) = UnixStream::pair().expect("private Wayland socket pair");
+        let data = crate::state::ClientState {
+            security_context: creator.map(|creator| SecurityContext {
+                sandbox_engine: Some("test-sandbox".into()),
+                app_id: Some("test.restricted".into()),
+                instance_id: None,
+                creator_client_id: creator.id(),
+            }),
+            ..Default::default()
+        };
+        let client = fixture
+            .state
+            .display_handle
+            .insert_client(server, Arc::new(data))
+            .expect("register test client");
+        request(&mut wire, 1, 1, &[2]);
+        fixture.dispatch();
+        wire.set_nonblocking(true)
+            .expect("registry read must not block");
+        let mut events = Vec::new();
+        let _ = wire.read_to_end(&mut events);
+        wire.set_nonblocking(false).expect("restore socket mode");
+        let mut offset = 0;
+        let mut lock_global = None;
+        while offset < events.len() {
+            let object =
+                u32::from_ne_bytes(events[offset..offset + 4].try_into().expect("object id"));
+            let header = u32::from_ne_bytes(
+                events[offset + 4..offset + 8]
+                    .try_into()
+                    .expect("event header"),
+            );
+            if object == 2 && header & 0xffff == 0 {
+                let length = u32::from_ne_bytes(
+                    events[offset + 12..offset + 16]
+                        .try_into()
+                        .expect("interface length"),
+                ) as usize;
+                if &events[offset + 16..offset + 16 + length] == b"ext_session_lock_manager_v1\0" {
+                    lock_global = Some(u32::from_ne_bytes(
+                        events[offset + 8..offset + 12]
+                            .try_into()
+                            .expect("global name"),
+                    ));
+                }
+            }
+            offset += (header >> 16) as usize;
+        }
+        Self {
+            wire,
+            client,
+            lock_global,
+        }
+    }
+
+    fn bind_lock(&mut self, fixture: &mut Fixture, name: u32) {
+        let interface = b"ext_session_lock_manager_v1\0";
+        let mut bytes = interface.to_vec();
+        bytes.resize(bytes.len().next_multiple_of(4), 0);
+        let mut arguments = vec![name, interface.len() as u32];
+        arguments.extend(
+            bytes
+                .chunks_exact(4)
+                .map(|chunk| u32::from_ne_bytes(chunk.try_into().expect("aligned interface"))),
+        );
+        arguments.extend([1, 3]);
+        request(&mut self.wire, 2, 0, &arguments);
+        fixture.dispatch();
+    }
+}
+
+#[test]
+fn restricted_registry_cannot_bind_lock_before_or_after_owner_death() {
+    let Some(mut fixture) = Fixture::new(
+        "session_lock::tests::restricted_registry_cannot_bind_lock_before_or_after_owner_death",
+    ) else {
+        return;
+    };
+    let trusted = RegistryPeer::new(&mut fixture, None);
+    let global = trusted
+        .lock_global
+        .expect("trusted client sees lock manager");
+    for orphaned in [false, true] {
+        if orphaned {
+            let mut owner = fixture.acquire();
+            owner.expect_locked();
+            drop(owner);
+            fixture.dispatch();
+            assert!(matches!(
+                fixture.state.session_lock.lifecycle,
+                Lifecycle::Orphaned
+            ));
+        }
+        let mut restricted = RegistryPeer::new(&mut fixture, Some(&trusted.client));
+        assert_eq!(
+            restricted.lock_global, None,
+            "restricted registry exposed session lock"
+        );
+        restricted.bind_lock(&mut fixture, global);
+        restricted
+            .wire
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .expect("bounded error read");
+        let mut header = [0; 8];
+        restricted
+            .wire
+            .read_exact(&mut header)
+            .expect("forbidden bind must produce a display error");
+        assert_eq!(
+            u32::from_ne_bytes(header[..4].try_into().expect("object")),
+            1
+        );
+        assert_eq!(
+            u32::from_ne_bytes(header[4..].try_into().expect("opcode")) & 0xffff,
+            0
+        );
+        assert_eq!(
+            fixture.state.session_lock.active(),
+            orphaned,
+            "rejected client changed protection"
+        );
+    }
+    let mut replacement = RegistryPeer::new(&mut fixture, None);
+    replacement.bind_lock(&mut fixture, global);
+    request(&mut replacement.wire, 3, 1, &[4]);
+    fixture.dispatch();
+    assert!(matches!(
+        fixture.state.session_lock.lifecycle,
+        Lifecycle::Locked(_)
+    ));
+    request(&mut replacement.wire, 4, 2, &[]);
+    fixture.dispatch();
+    assert!(
+        !fixture.state.session_lock.active(),
+        "unrestricted replacement must retain unlock authority"
+    );
+}
+
 struct Locker {
     wire: UnixStream,
     client: Client,
@@ -912,4 +1059,64 @@ fn ipc_events_follow_lock_lifecycle_without_exposing_desktop_objects() {
     assert!(receive.try_iter().any(
         |event| matches!(&event.change, ferese_ipc::events::Change::LockChanged { lock } if lock.phase == "unlocked")
     ));
+}
+
+#[test]
+fn keyboard_trace_does_not_record_key_material_during_locking() {
+    use smithay::backend::input::{InputTime, KeyState};
+    use smithay::input::keyboard::{FilterResult, Keycode};
+    use std::sync::Mutex;
+    let Some(mut fixture) = Fixture::new(
+        "session_lock::tests::keyboard_trace_does_not_record_key_material_during_locking",
+    ) else {
+        return;
+    };
+    #[derive(Clone)]
+    struct Log(Arc<Mutex<Vec<u8>>>);
+    impl Write for Log {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0
+                .lock()
+                .expect("trace buffer")
+                .extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let log = Log(Arc::new(Mutex::new(Vec::new())));
+    let writer = log.clone();
+    let subscriber = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::TRACE)
+        .with_ansi(false)
+        .with_span_events(tracing_subscriber::fmt::format::FmtSpan::FULL)
+        .with_writer(move || writer.clone())
+        .finish();
+    tracing::subscriber::with_default(subscriber, || {
+        let _owner = fixture.acquire();
+        let keyboard = fixture.state.seat.get_keyboard().expect("test keyboard");
+        for state in [KeyState::Pressed, KeyState::Released] {
+            keyboard.input::<(), _>(
+                &mut fixture.state,
+                Keycode::new(24),
+                state,
+                SERIAL_COUNTER.next_serial(),
+                InputTime::now(),
+                |_, _, _| FilterResult::Forward,
+            );
+        }
+    });
+    let bytes = log.0.lock().expect("captured trace");
+    let text = std::str::from_utf8(&bytes).expect("trace is UTF-8");
+    assert!(
+        text.contains("Calling input filter"),
+        "trace must exercise the sensitive path"
+    );
+    for field in ["sym=", "keycode=", "mods_state="] {
+        assert!(
+            !text.contains(field),
+            "keyboard trace leaked {field}: {text}"
+        );
+    }
 }

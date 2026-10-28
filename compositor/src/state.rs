@@ -677,10 +677,10 @@ impl Ferese {
         let fractional_scale_state = FractionalScaleManagerState::new::<Self>(&display_handle);
         let idle_inhibit_state = IdleInhibitManagerState::new::<Self>(&display_handle);
         let idle_notifier_state = IdleNotifierState::new(&display_handle, event_loop.handle());
-        let session_lock_state = smithay::wayland::session_lock::SessionLockManagerState::new::<
-            Self,
-            _,
-        >(&display_handle, |_| true);
+        let session_lock_state = SessionLockManagerState::new::<Self, _>(
+            &display_handle,
+            crate::handlers::security_context::unrestricted_client,
+        );
         let input_method_enabled =
             std::env::var_os("FERESE_ENABLE_INPUT_METHOD").is_some_and(|value| value == "1");
         let input_method_manager_state =

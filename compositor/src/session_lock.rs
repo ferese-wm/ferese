@@ -452,6 +452,15 @@ impl SessionLockHandler for Ferese {
     }
 
     fn lock(&mut self, confirmation: SessionLocker) {
+        if self.nested_backend.is_some()
+            || !confirmation
+                .ext_session_lock()
+                .client()
+                .as_ref()
+                .is_some_and(crate::handlers::security_context::unrestricted_client)
+        {
+            return;
+        }
         self.dismiss_launcher();
         if !self.session_lock.lifecycle.can_acquire() {
             return;

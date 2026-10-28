@@ -1048,7 +1048,7 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
     ///
     /// The module [`keysyms`] exposes definitions of all possible keysyms to be compared against.
     /// This includes non-character keysyms, such as XF86 special keys.
-    #[instrument(level = "trace", parent = &self.arc.span, skip(self, data, filter))]
+    #[instrument(level = "trace", parent = &self.arc.span, skip_all)]
     pub fn input<T, F>(
         &self,
         data: &mut D,
@@ -1157,7 +1157,8 @@ impl<D: SeatHandler + 'static> KeyboardHandle<D> {
         }
 
         let key_handle = KeysymHandle { xkb: &xkb, keycode };
-        trace!(mods_state = ?mods_state, sym = xkb::keysym_get_name(key_handle.modified_sym()), "Calling input filter");
+        // Keysyms and modifiers can reveal passwords, even before the compositor filter runs.
+        trace!("Calling input filter");
         let filter_result = filter(data, &mods_state, key_handle);
 
         Some((filter_result, mods_changed))
