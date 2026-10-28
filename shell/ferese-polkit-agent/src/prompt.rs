@@ -1,27 +1,33 @@
 use std::collections::VecDeque;
-use std::io::{BufRead, BufReader, Write};
+use std::io::BufReader;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use cosmic::app::{Core, Settings, Task};
+use cosmic::font::Font;
 use cosmic::iced::{Alignment, Color, Length, Size, Subscription, window};
-use cosmic::widget::{button, column, container, row, scrollable};
+use cosmic::widget::{button, column, row};
 use cosmic::{Element, theme, widget};
+use ferese_config::theme::{Appearance as ThemeAppearance, ResolvedTheme};
+use ferese_ipc::theme::Snapshot;
+use ferese_theme::Palette;
+use ferese_theme_client::material::ModalMaterial;
 use zeroize::{Zeroize, Zeroizing};
 
-use crate::{AuthenticationRequest, Generation, PromptEvent};
+use crate::agent::{AuthenticationRequest, Generation, PromptEvent};
 
 #[derive(Clone)]
 struct Appearance {
-    appearance: ferese_config::theme::Appearance,
+    appearance: ThemeAppearance,
     high_contrast: bool,
     surface: Color,
     text: Color,
     muted: Color,
+    error: Color,
     accent: Color,
     on_accent: Color,
     radius: f32,
-    font: cosmic::font::Font,
+    font: Font,
 }
 
 impl Appearance {
@@ -30,8 +36,8 @@ impl Appearance {
         Self::from_resolved(&snapshot.presented)
     }
 
-    fn from_resolved(theme: &ferese_config::theme::ResolvedTheme) -> Self {
-        let palette = ferese_theme::Palette::from_resolved(theme).flat();
+    fn from_resolved(theme: &ResolvedTheme) -> Self {
+        let palette = Palette::from_resolved(theme).flat();
         let family = &theme.tokens.typography.font_family;
         Self {
             appearance: theme.appearance,
@@ -42,6 +48,16 @@ impl Appearance {
             },
             text: palette.text,
             muted: palette.muted,
+            error: if ferese_theme::contrast(palette.sidebar, palette.error)
+                >= if theme.accessibility.increase_contrast {
+                    7.
+                } else {
+                    4.5
+                } {
+                palette.error
+            } else {
+                palette.text
+            },
             accent: palette.accent,
             on_accent: palette.on_accent,
             radius: palette.radius,
@@ -49,8 +65,8 @@ impl Appearance {
         }
     }
 
-    fn palette(&self) -> ferese_theme::Palette {
-        ferese_theme::Palette {
+    fn palette(&self) -> Palette {
+        Palette {
             appearance: self.appearance,
             high_contrast: self.high_contrast,
             background: self.surface,
@@ -62,7 +78,7 @@ impl Appearance {
             accent_gradient: None,
             on_accent: self.on_accent,
             radius: self.radius,
-            error: Color::from_rgb8(235, 98, 98),
+            error: self.error,
         }
     }
 
@@ -73,11 +89,12 @@ impl Appearance {
 
 #[derive(Clone)]
 enum Message {
-    ThemeChanged(Box<ferese_ipc::theme::Snapshot>),
+    ThemeChanged(Box<Snapshot>),
     WindowOpened(cosmic::iced::window::Id),
-    MaterialAttached(Result<ferese_theme_client::material::ModalMaterial, String>),
+    MaterialAttached(cosmic::iced::window::Id, Result<ModalMaterial, String>),
+    Modifiers(cosmic::iced::keyboard::Modifiers),
     Tick,
-    Input(String),
+    Input(Zeroizing<String>),
     Submit,
     SelectIdentity(usize),
     ToggleDetails,
@@ -92,7 +109,7 @@ impl std::fmt::Debug for Message {
 
 struct Prompt {
     core: Core,
-    material: Option<ferese_theme_client::material::ModalMaterial>,
+    material: Option<ModalMaterial>,
     appearance: Appearance,
     incoming: Arc<Mutex<VecDeque<PromptEvent>>>,
     request: AuthenticationRequest,
@@ -102,13 +119,16 @@ struct Prompt {
     question: String,
     echo: bool,
     answer: Zeroizing<String>,
+    finished: bool,
     waiting: bool,
+    caps_lock: bool,
     awaiting_ack: bool,
     error: Option<String>,
     info: Option<String>,
     height: f32,
 }
 
+#[must_use]
 fn content_height(description: &str, status: Option<&str>) -> f32 {
     let lines: usize = description
         .lines()
@@ -117,9 +137,10 @@ fn content_height(description: &str, status: Option<&str>) -> f32 {
     let status_height = status.map_or(0, |message| {
         14 + 18 * message.chars().count().div_ceil(48).clamp(1, 3)
     });
-    (214 + 18 * lines.saturating_sub(1) + status_height).min(360) as f32
+    (258 + 18 * lines.saturating_sub(1) + status_height).min(440) as f32
 }
 
+#[must_use]
 fn dialog_height(request: &AuthenticationRequest, status: Option<&str>, expanded: bool) -> f32 {
     let extra = if request.identities.len() > 1 {
         54.
@@ -127,13 +148,18 @@ fn dialog_height(request: &AuthenticationRequest, status: Option<&str>, expanded
         0.
     } + if has_details(request) { 40. } else { 0. }
         + if expanded { 96. } else { 0. };
-    (content_height(&request.message, status) + extra).min(360.)
+    (content_height(&request.message, status) + extra).min(440.)
 }
 
+#[must_use]
 fn has_details(request: &AuthenticationRequest) -> bool {
-    !request.details.is_empty() || !request.vendor_name.is_empty() || !request.vendor_url.is_empty()
+    !request.action_id.is_empty()
+        || !request.details.is_empty()
+        || !request.vendor_name.is_empty()
+        || !request.vendor_url.is_empty()
 }
 
+#[must_use]
 fn action_icon(name: &str) -> Option<widget::icon::Handle> {
     if name.is_empty() {
         return None;
@@ -167,6 +193,8 @@ fn read_events(
 }
 
 pub fn run() -> Result<(), Box<dyn std::error::Error>> {
+    use std::io::BufRead;
+
     let stdin = std::io::stdin();
     let mut lines = BufReader::new(stdin).lines();
     let Some(Ok(first)) = lines.next() else {
@@ -197,10 +225,15 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn reply(mut event: PromptEvent) {
+    use std::io::Write;
+    use std::os::fd::AsFd;
+
     if let Ok(mut line) = serde_json::to_string(&event) {
-        let mut stdout = std::io::stdout().lock();
-        let _ = writeln!(stdout, "{line}");
-        let _ = stdout.flush();
+        if let Ok(fd) = std::io::stdout().as_fd().try_clone_to_owned() {
+            // Write directly to the pipe, without retaining plaintext in stdout's buffer.
+            let mut stdout = std::fs::File::from(fd);
+            let _ = writeln!(stdout, "{line}");
+        }
         line.zeroize();
     }
     if let PromptEvent::Response { value, .. } = &mut event {
@@ -224,6 +257,9 @@ impl Prompt {
     }
 
     fn select_identity(&mut self, index: usize) -> Option<u32> {
+        if self.finished {
+            return None;
+        }
         let uid = self.request.identities.get(index)?.uid;
         if uid == self.request.selected_uid {
             return None;
@@ -298,7 +334,7 @@ impl cosmic::Application for Prompt {
         let action_icon = action_icon(&request.icon_name);
         let bounds = core
             .main_window_id()
-            .map(|id| window::set_max_size(id, Some(Size::new(434., 360.))))
+            .map(|id| window::set_max_size(id, Some(Size::new(434., 440.))))
             .unwrap_or_else(Task::none);
         (
             Self {
@@ -313,7 +349,9 @@ impl cosmic::Application for Prompt {
                 question: "Waiting for authentication…".into(),
                 echo: false,
                 answer: Zeroizing::new(String::new()),
+                finished: false,
                 waiting: true,
+                caps_lock: false,
                 awaiting_ack: true,
                 error: None,
                 info: None,
@@ -332,6 +370,9 @@ impl cosmic::Application for Prompt {
                 cosmic::iced::Event::Window(cosmic::iced::window::Event::Opened { .. }) => {
                     Some(Message::WindowOpened(id))
                 }
+                cosmic::iced::Event::Keyboard(cosmic::iced::keyboard::Event::ModifiersChanged(
+                    modifiers,
+                )) => Some(Message::Modifiers(modifiers)),
                 _ => None,
             }),
         ])
@@ -343,16 +384,19 @@ impl cosmic::Application for Prompt {
                 self.appearance = Appearance::from_resolved(&snapshot.presented);
                 return cosmic::command::set_theme(self.appearance.theme());
             }
-            Message::WindowOpened(id) => {
-                return cosmic::iced::window::run(
-                    id,
-                    ferese_theme_client::material::ModalMaterial::attach,
-                )
-                .map(|result| cosmic::Action::App(Message::MaterialAttached(result)));
+            Message::Modifiers(modifiers) => {
+                self.caps_lock = modifiers.contains(cosmic::iced::keyboard::Modifiers::CAPS_LOCK);
             }
-            Message::MaterialAttached(result) => {
-                self.material = result.ok();
+            Message::WindowOpened(id) if Some(id) == self.core.main_window_id() => {
+                return cosmic::iced::window::run(id, ModalMaterial::attach)
+                    .map(move |result| cosmic::Action::App(Message::MaterialAttached(id, result)));
             }
+            Message::MaterialAttached(id, Ok(material))
+                if Some(id) == self.core.main_window_id() =>
+            {
+                self.material = Some(material);
+            }
+            Message::WindowOpened(_) | Message::MaterialAttached(_, _) => {}
             Message::Tick => {
                 let events: Vec<_> = self
                     .incoming
@@ -362,6 +406,9 @@ impl cosmic::Application for Prompt {
                     .collect();
                 let mut refocus = false;
                 for event in events {
+                    if self.finished && !matches!(event, PromptEvent::Cancel) {
+                        continue;
+                    }
                     match event {
                         PromptEvent::IdentityChanged { generation, uid }
                             if uid == self.request.selected_uid
@@ -395,6 +442,14 @@ impl cosmic::Application for Prompt {
                         {
                             self.error = Some(text)
                         }
+                        // Attempt/account generations cannot supersede request-wide failure.
+                        PromptEvent::Finished { text } => {
+                            self.answer.zeroize();
+                            self.waiting = true;
+                            self.finished = true;
+                            self.error = Some(text);
+                            self.info = None;
+                        }
                         PromptEvent::Cancel => {
                             self.answer.zeroize();
                             self.waiting = true;
@@ -412,13 +467,13 @@ impl cosmic::Application for Prompt {
             Message::Input(mut value) => {
                 if !self.waiting && value.len() <= 4096 {
                     self.answer.zeroize();
-                    *self.answer = std::mem::take(&mut value);
+                    *self.answer = std::mem::take(&mut *value);
                     self.error = None;
                 }
                 value.zeroize();
             }
             Message::Submit if !self.waiting && !self.answer.is_empty() => {
-                let value = std::mem::take(&mut *self.answer);
+                let value = std::mem::take(&mut self.answer);
                 reply(PromptEvent::Response {
                     generation: self.request.generation,
                     uid: self.request.selected_uid,
@@ -461,6 +516,8 @@ impl cosmic::Application for Prompt {
         };
         let mut input = widget::text_input(&self.question, self.answer.as_str())
             .id(widget::Id::new("auth-response"))
+            .label(&self.question)
+            .on_escape(Message::Cancel)
             .font(palette.font)
             .padding([7, 12])
             .style(ferese_theme::controls::authentication_input(
@@ -470,10 +527,12 @@ impl cosmic::Application for Prompt {
             input = input.password();
         }
         if !self.waiting {
-            input = input.on_input(Message::Input).on_submit(|mut value| {
-                value.zeroize();
-                Message::Submit
-            });
+            input = input
+                .on_input(|value| Message::Input(Zeroizing::new(value)))
+                .on_submit(|mut value| {
+                    value.zeroize();
+                    Message::Submit
+                });
         }
         let action = button::custom(ferese_theme::text("Authenticate", palette.font).size(13))
             .class(ferese_theme::controls::authentication_button(
@@ -496,7 +555,7 @@ impl cosmic::Application for Prompt {
             .map(|index| self.request.identities[index].name.as_str())
             .unwrap_or("Unknown account");
         let heading = row![
-            container(lock_icon)
+            widget::container(lock_icon)
                 .width(40)
                 .height(40)
                 .center_x(40)
@@ -546,6 +605,7 @@ impl cosmic::Application for Prompt {
                     details = details.push(detail_row(key, value, palette));
                 }
                 for (label, value) in [
+                    ("Action", &self.request.action_id),
                     ("Vendor", &self.request.vendor_name),
                     ("Vendor URL", &self.request.vendor_url),
                 ] {
@@ -556,12 +616,15 @@ impl cosmic::Application for Prompt {
                 information = information.push(details);
             }
         }
-        let mut body = column![heading, scrollable(information).height(Length::Fill)]
-            .spacing(14)
-            .width(Length::Fill);
+        let mut body = column![
+            heading,
+            widget::scrollable(information).height(Length::Fill)
+        ]
+        .spacing(14)
+        .width(Length::Fill);
         if self.request.identities.len() > 1 {
             body = body.push(
-                container(
+                widget::container(
                     row![
                         ferese_theme::text("Account", palette.font)
                             .size(12)
@@ -589,10 +652,16 @@ impl cosmic::Application for Prompt {
             );
         }
         body = body.push(input);
+        if self.caps_lock {
+            body = body.push(ferese_theme::text("Caps Lock is on", palette.font).size(12));
+        }
+        if self.waiting && !self.awaiting_ack && !self.finished {
+            body = body.push(ferese_theme::text("Checking…", palette.font).size(12));
+        }
         if let Some((status, color)) = self
             .error
             .as_deref()
-            .map(|text| (text, Color::from_rgb8(235, 98, 98)))
+            .map(|text| (text, palette.error))
             .or_else(|| self.info.as_deref().map(|text| (text, palette.muted)))
         {
             let lines: usize = status
@@ -600,7 +669,7 @@ impl cosmic::Application for Prompt {
                 .map(|line| line.chars().count().div_ceil(48).max(1))
                 .sum();
             body = body.push(
-                scrollable(
+                widget::scrollable(
                     ferese_theme::text(status, palette.font)
                         .size(12)
                         .class(theme::Text::Color(color)),
@@ -610,20 +679,26 @@ impl cosmic::Application for Prompt {
         }
         body = body.push(
             row![
-                button::custom(ferese_theme::text("Cancel", palette.font).size(13))
-                    .class(ferese_theme::controls::material_button_style(
-                        palette.palette(),
-                        false,
-                        material_opacity,
-                    ))
-                    .padding([8, 14])
-                    .on_press(Message::Cancel),
+                button::custom(
+                    ferese_theme::text(
+                        if self.finished { "Close" } else { "Cancel" },
+                        palette.font
+                    )
+                    .size(13)
+                )
+                .class(ferese_theme::controls::material_button_style(
+                    palette.palette(),
+                    false,
+                    material_opacity,
+                ))
+                .padding([8, 14])
+                .on_press(Message::Cancel),
                 action
             ]
             .spacing(8)
             .align_y(Alignment::Center),
         );
-        container(body)
+        widget::container(body)
             .padding(20)
             .width(Length::Fill)
             .height(Length::Fill)
@@ -650,12 +725,137 @@ mod tests {
     use std::collections::VecDeque;
     use std::sync::{Arc, Mutex};
 
+    use crate::agent::PromptEvent;
     use cosmic::app::Core;
+    use cosmic::iced::window;
 
     use super::{
         Appearance, Message, Prompt, action_icon, content_height, dialog_height, has_details,
     };
-    use crate::tests::request_fixture;
+    use crate::agent::tests;
+
+    #[test]
+    fn authentication_controls_fit_with_accounts_caps_lock_and_long_feedback() {
+        use cosmic::Application;
+        use cosmic::iced::advanced::renderer::Headless;
+        use cosmic::iced::advanced::widget::Tree;
+        use cosmic::iced::advanced::{Layout, layout};
+        use cosmic::iced::{Font, Pixels, Size, mouse};
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let renderer = runtime
+            .block_on(<cosmic::Renderer as Headless>::new(
+                Font::default(),
+                Pixels(14.),
+                Some("tiny-skia"),
+            ))
+            .unwrap();
+        let (mut prompt, _) = Prompt::init(
+            Core::default(),
+            (
+                Arc::new(Mutex::new(VecDeque::new())),
+                tests::request_fixture(),
+                Appearance::from_resolved(&ferese_config::theme::default_theme()),
+            ),
+        );
+        prompt.waiting = false;
+        prompt.awaiting_ack = false;
+        prompt.caps_lock = true;
+        prompt.question = "Administrator password:".into();
+        prompt.error = Some("Authentication was not accepted. Check your account and password, then try again after confirming the active keyboard layout.".into());
+        let height = dialog_height(&prompt.request, prompt.error.as_deref(), false);
+        let mut element = prompt.view();
+        let mut tree = Tree::new(&element);
+        let node = element.as_widget_mut().layout(
+            &mut tree,
+            &renderer,
+            &layout::Limits::new(Size::new(434., height), Size::new(434., height)),
+        );
+        let nodes =
+            element
+                .as_widget()
+                .a11y_nodes(Layout::new(&node), &tree, mouse::Cursor::Unavailable);
+        for label in [
+            "Authenticate",
+            "Cancel",
+            "Caps Lock is on",
+            "Administrator password:",
+        ] {
+            let matches: Vec<_> = nodes
+                .root()
+                .iter()
+                .chain(nodes.children())
+                .filter(|node| node.node().label() == Some(label))
+                .collect();
+            assert!(!matches.is_empty(), "missing accessible control {label}");
+            for node in matches {
+                let bounds = node.node().bounds().expect("control has bounds");
+                assert!(
+                    bounds.y0 >= 0.
+                        && bounds.y1 <= f64::from(height)
+                        && bounds.y1 - bounds.y0 >= 12.,
+                    "{label} has clipped bounds {bounds:?}, dialog height {height}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn popup_open_events_never_start_a_material_attachment() {
+        use cosmic::Application;
+        let main = window::Id::unique();
+        let popup = window::Id::unique();
+        let mut core = Core::default();
+        core.set_main_window_id(Some(main));
+        let (mut prompt, _) = Prompt::init(
+            core,
+            (
+                Arc::new(Mutex::new(VecDeque::new())),
+                tests::request_fixture(),
+                Appearance::from_resolved(&ferese_config::theme::default_theme()),
+            ),
+        );
+        assert_eq!(prompt.update(Message::WindowOpened(popup)).units(), 0);
+        assert!(prompt.update(Message::WindowOpened(main)).units() > 0);
+        assert_eq!(
+            prompt
+                .update(Message::MaterialAttached(popup, Err("stale popup".into())))
+                .units(),
+            0
+        );
+    }
+
+    #[test]
+    fn terminal_failure_clears_the_secret_and_prevents_another_attempt() {
+        use cosmic::Application;
+        let incoming = Arc::new(Mutex::new(VecDeque::from([PromptEvent::Finished {
+            text: "Authentication failed after 3 attempts".into(),
+        }])));
+        let (mut prompt, _) = Prompt::init(
+            Core::default(),
+            (
+                incoming,
+                tests::request_fixture(),
+                Appearance::from_resolved(&ferese_config::theme::default_theme()),
+            ),
+        );
+        *prompt.answer = "dummy-secret".into();
+        assert_eq!(prompt.select_identity(1), Some(1001));
+        assert!(prompt.awaiting_ack);
+        let _ = prompt.update(Message::Tick);
+        assert!(prompt.finished);
+        assert!(prompt.waiting);
+        assert!(prompt.answer.is_empty());
+        assert_eq!(prompt.select_identity(1), None);
+        let _ = prompt.update(Message::Input("another-secret".to_owned().into()));
+        assert!(prompt.answer.is_empty());
+        assert_eq!(
+            prompt.error.as_deref(),
+            Some("Authentication failed after 3 attempts")
+        );
+    }
 
     #[test]
     fn agent_pipe_eof_cancels_the_prompt_and_clears_the_password() {
@@ -664,7 +864,7 @@ mod tests {
 
         use cosmic::Application;
 
-        use crate::PromptEvent;
+        use crate::agent::PromptEvent;
 
         let (reader, mut writer) = UnixStream::pair().unwrap();
         let incoming = Arc::new(Mutex::new(VecDeque::new()));
@@ -683,8 +883,10 @@ mod tests {
             Some(PromptEvent::Cancel)
         ));
         let appearance = Appearance::from_resolved(&ferese_config::theme::default_theme());
-        let (mut prompt, _) =
-            Prompt::init(Core::default(), (incoming, request_fixture(), appearance));
+        let (mut prompt, _) = Prompt::init(
+            Core::default(),
+            (incoming, tests::request_fixture(), appearance),
+        );
         *prompt.answer = "test-password".into();
         prompt.waiting = false;
         let _ = prompt.update(Message::Tick);
@@ -696,13 +898,13 @@ mod tests {
     fn stale_prompts_and_acknowledgements_cannot_undo_a_newer_selection() {
         use cosmic::Application;
 
-        use crate::{Generation, PromptEvent};
+        use crate::agent::{Generation, PromptEvent};
 
         let incoming = Arc::new(Mutex::new(VecDeque::new()));
         let appearance = Appearance::from_resolved(&ferese_config::theme::default_theme());
         let (mut prompt, _) = Prompt::init(
             Core::default(),
-            (incoming.clone(), request_fixture(), appearance),
+            (incoming.clone(), tests::request_fixture(), appearance),
         );
         assert_eq!(prompt.select_identity(1), Some(1001));
         let older = prompt.request.generation;
@@ -804,7 +1006,7 @@ mod tests {
             Core::default(),
             (
                 Arc::new(Mutex::new(VecDeque::new())),
-                request_fixture(),
+                tests::request_fixture(),
                 appearance,
             ),
         );
@@ -822,16 +1024,16 @@ mod tests {
         assert_eq!(prompt.select_identity(20), None);
         let _ = <Prompt as cosmic::Application>::update(&mut prompt, Message::ToggleDetails);
         assert!(prompt.details_expanded);
-        assert!(prompt.height <= 360.);
+        assert!(prompt.height <= 440.);
     }
 
     #[test]
     fn full_requests_and_expanded_details_keep_the_height_cap() {
-        let request = request_fixture();
-        assert_eq!(dialog_height(&request, None, false), 360.);
+        let request = tests::request_fixture();
+        assert_eq!(dialog_height(&request, None, false), 440.);
         assert_eq!(
             dialog_height(&request, Some("Password not accepted"), true),
-            360.
+            440.
         );
         assert!(has_details(&request));
         let mut short = request;
@@ -841,6 +1043,11 @@ mod tests {
         short.details.clear();
         short.vendor_name.clear();
         short.vendor_url.clear();
+        assert!(
+            has_details(&short),
+            "the action identifier remains available in Details"
+        );
+        short.action_id.clear();
         assert!(!has_details(&short));
     }
 
@@ -852,9 +1059,10 @@ mod tests {
 
     #[test]
     fn dialog_grows_for_long_messages_and_caps_its_height() {
-        assert_eq!(content_height("Short request", None), 214.);
-        assert!(content_height(&"Long message ".repeat(20), None) > 214.);
-        assert_eq!(content_height(&"Long message ".repeat(100), None), 360.);
-        assert!(content_height("Short request", Some("Password not accepted")) > 214.);
+        // Persistent challenge and keyboard/checking feedback need 44 extra logical pixels.
+        assert_eq!(content_height("Short request", None), 258.);
+        assert!(content_height(&"Long message ".repeat(20), None) > 258.);
+        assert_eq!(content_height(&"Long message ".repeat(100), None), 440.);
+        assert!(content_height("Short request", Some("Password not accepted")) > 258.);
     }
 }

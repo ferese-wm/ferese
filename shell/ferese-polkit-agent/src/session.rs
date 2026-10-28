@@ -1,16 +1,16 @@
 use std::ffi::{CStr, CString, c_char, c_int, c_void};
-use std::io::{BufRead, BufReader, BufWriter, Write};
+use std::io::{self, BufWriter, Read, Write};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, OnceLock, mpsc};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use glib::gobject_ffi;
 use libloading::Library;
 use zeroize::{Zeroize, Zeroizing};
 
-use crate::{AuthenticationRequest, Generation, PromptEvent};
+use crate::agent::{AuthenticationRequest, Generation, IdentityChoice, PromptEvent};
 
 enum SessionEvent {
     Request(String, bool),
@@ -78,17 +78,32 @@ pub fn check() -> Result<(), String> {
     Api::load().map(|_| ())
 }
 
-pub(crate) fn username(uid: u32) -> String {
-    let output = Command::new("getent")
-        .args(["passwd", &uid.to_string()])
-        .output();
-    output
-        .ok()
-        .filter(|output| output.status.success())
-        .and_then(|output| String::from_utf8(output.stdout).ok())
-        .and_then(|entry| entry.split(':').next().map(str::to_owned))
-        .filter(|name| !name.is_empty())
-        .unwrap_or_else(|| uid.to_string())
+/// Display names are optional; one slow NSS lookup cannot delay the request indefinitely.
+pub(crate) async fn identities(uids: &[u32]) -> Vec<IdentityChoice> {
+    let mut choices: Vec<_> = uids
+        .iter()
+        .map(|&uid| IdentityChoice {
+            uid,
+            name: uid.to_string(),
+        })
+        .collect();
+    let lookup = async {
+        for choice in &mut choices {
+            if let Ok(output) = tokio::process::Command::new("getent")
+                .args(["passwd", &choice.uid.to_string()])
+                .kill_on_drop(true)
+                .output()
+                .await
+                && output.status.success()
+                && let Ok(entry) = String::from_utf8(output.stdout)
+                && let Some(name) = entry.split(':').next().filter(|name| !name.is_empty())
+            {
+                choice.name = name.to_owned();
+            }
+        }
+    };
+    let _ = tokio::time::timeout(Duration::from_secs(2), lookup).await;
+    choices
 }
 
 fn send(writer: &mut BufWriter<ChildStdin>, event: &PromptEvent) -> Result<(), String> {
@@ -121,19 +136,10 @@ fn prompt_process(request: AuthenticationRequest) -> Result<PromptProcess, Strin
     let stdin = child.stdin.take().ok_or("Prompt has no input")?;
     let stdout = child.stdout.take().ok_or("Prompt has no output")?;
     let writer = BufWriter::new(stdin);
-    let (tx, rx) = mpsc::channel();
+    let (tx, rx) = mpsc::sync_channel(8);
     std::thread::spawn(move || {
-        for line in BufReader::new(stdout).lines() {
-            let Ok(mut line) = line else { break };
-            if let Ok(event) = serde_json::from_str(&line) {
-                line.zeroize();
-                if tx.send(event).is_err() {
-                    break;
-                }
-            } else {
-                line.zeroize();
-            }
-        }
+        let mut stdout = stdout;
+        let _ = read_responses(&mut stdout, |event| tx.send(event).is_ok());
     });
     let mut process = PromptProcess {
         child,
@@ -142,6 +148,43 @@ fn prompt_process(request: AuthenticationRequest) -> Result<PromptProcess, Strin
     };
     send(&mut process.writer, &PromptEvent::Start(request))?;
     Ok(process)
+}
+
+/// Bounded, zeroizing framing avoids retaining submitted secrets in a BufReader.
+fn read_responses(
+    reader: &mut impl Read,
+    mut receive: impl FnMut(PromptEvent) -> bool,
+) -> io::Result<()> {
+    let mut chunk = Zeroizing::new([0u8; 4096]);
+    let mut frame = Zeroizing::new(Vec::with_capacity(32 * 1024));
+    loop {
+        let count = reader.read(&mut *chunk)?;
+        if count == 0 {
+            return Ok(());
+        }
+        for &byte in &chunk[..count] {
+            if byte == b'\n' {
+                let event = serde_json::from_slice(&frame).map_err(|_| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "Invalid authentication response",
+                    )
+                })?;
+                frame.zeroize();
+                if !receive(event) {
+                    return Ok(());
+                }
+            } else if frame.len() < 32 * 1024 {
+                frame.push(byte);
+            } else {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "Authentication response is too large",
+                ));
+            }
+        }
+        chunk.zeroize();
+    }
 }
 
 /// # Safety
@@ -255,6 +298,7 @@ impl Drop for SessionGuard {
     }
 }
 
+#[must_use]
 fn permitted_selection(request: &AuthenticationRequest, uid: u32) -> bool {
     request
         .identities
@@ -262,6 +306,7 @@ fn permitted_selection(request: &AuthenticationRequest, uid: u32) -> bool {
         .any(|identity| identity.uid == uid)
 }
 
+#[must_use]
 fn response_buffer(value: &str) -> Option<Zeroizing<Vec<u8>>> {
     if value.as_bytes().contains(&0) {
         return None;
@@ -377,6 +422,7 @@ fn run_session(
 
     let mut outcome = None;
     let mut stopped = false;
+    let mut awaiting_response = false;
     let mut selected_uid = None;
     while outcome.is_none() {
         while context.pending() {
@@ -385,6 +431,7 @@ fn run_session(
         while let Ok(event) = rx.try_recv() {
             match event {
                 SessionEvent::Request(prompt, echo) => {
+                    awaiting_response = true;
                     send(
                         &mut process.writer,
                         &PromptEvent::Request {
@@ -404,10 +451,16 @@ fn run_session(
                 SessionEvent::Completed(success) => outcome = Some(success),
             }
         }
-        if outcome.is_some() {
-            break;
-        }
-        while let Ok(event) = process.input.try_recv() {
+        // Drain UI cancellation and account changes before committing a terminal result.
+        loop {
+            let event = match process.input.try_recv() {
+                Ok(event) => event,
+                Err(mpsc::TryRecvError::Empty) => break,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    cancelled.store(true, Ordering::Release);
+                    break;
+                }
+            };
             match event {
                 PromptEvent::Response {
                     generation: response_generation,
@@ -417,10 +470,14 @@ fn run_session(
                     if uid == request.selected_uid
                         && response_generation == generation
                         && !stopped
+                        && outcome.is_none()
+                        && awaiting_response
+                        && !cancelled.load(Ordering::Acquire)
                         && selected_uid.is_none()
                         && let Some(response) = response_buffer(&value)
                     {
                         value.zeroize();
+                        awaiting_response = false;
                         // SAFETY: SessionGuard keeps the session alive and response_buffer
                         // supplies a NUL-terminated response for the synchronous call.
                         unsafe { (api.response)(session, response.as_ptr().cast()) };
@@ -453,12 +510,15 @@ fn run_session(
                     .map_err(|e| e.to_string())?
                     .is_some())
         {
-            // SAFETY: SessionGuard still owns this live session and the cancellation symbol
-            // remains loaded.
-            unsafe { (api.cancel)(session) };
+            if outcome.is_none() {
+                // SAFETY: SessionGuard owns this live session and the symbol remains loaded.
+                unsafe { (api.cancel)(session) };
+            }
             stopped = true;
         }
-        std::thread::sleep(Duration::from_millis(10));
+        if outcome.is_none() {
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
 
     session_guard.completed = true;
@@ -525,9 +585,10 @@ fn authenticate_sessions(
                 failures += 1;
                 // Switching accounts never resets this request's attempt budget.
                 if failures >= MAX_AUTH_ATTEMPTS {
-                    break Err(format!(
-                        "Authentication failed after {MAX_AUTH_ATTEMPTS} attempts"
-                    ));
+                    let failure =
+                        format!("Authentication failed after {MAX_AUTH_ATTEMPTS} attempts");
+                    show_failure(process, &failure, cancelled)?;
+                    break Err(failure);
                 }
                 request.generation.attempt += 1;
             }
@@ -537,10 +598,40 @@ fn authenticate_sessions(
     }
 }
 
+fn show_failure(
+    process: &mut PromptProcess,
+    text: &str,
+    cancelled: &AtomicBool,
+) -> Result<(), String> {
+    send(
+        &mut process.writer,
+        &PromptEvent::Finished { text: text.into() },
+    )?;
+    // Give the user a chance to read the outcome, while bounding ownership of the prompt.
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while Instant::now() < deadline && !cancelled.load(Ordering::Acquire) {
+        match process.input.recv_timeout(Duration::from_millis(50)) {
+            Ok(PromptEvent::Cancel) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            _ => {}
+        }
+        if process
+            .child
+            .try_wait()
+            .map_err(|error| error.to_string())?
+            .is_some()
+        {
+            break;
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
+    use std::io::{BufRead, BufReader};
+
     use super::*;
-    use crate::tests::request_fixture;
+    use crate::agent::tests;
 
     static RESPONSES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
@@ -580,6 +671,136 @@ mod tests {
         }
     }
 
+    unsafe extern "C" fn completed_at_start(session: Object) {
+        // SAFETY: The fixture uses the real session signal signature, without a PAM helper.
+        unsafe {
+            gobject_ffi::g_signal_emit_by_name(session.cast(), c"completed".as_ptr(), 1 as c_int);
+        }
+    }
+
+    #[test]
+    fn queued_cancel_and_account_switch_beat_already_completed_authentication() {
+        for event in [
+            PromptEvent::Cancel,
+            PromptEvent::SelectIdentity {
+                generation: Generation {
+                    selection: 1,
+                    attempt: 0,
+                },
+                uid: 1001,
+            },
+        ] {
+            let mut api = Api::load().unwrap();
+            api.initiate = completed_at_start;
+            api.cancel = fake_cancel;
+            let context = glib::MainContext::new();
+            context
+                .with_thread_default(|| {
+                    let mut child = Command::new("cat")
+                        .stdin(Stdio::piped())
+                        .stdout(Stdio::null())
+                        .spawn()
+                        .unwrap();
+                    let writer = BufWriter::new(child.stdin.take().unwrap());
+                    let (tx, input) = mpsc::channel();
+                    let is_cancel = matches!(event, PromptEvent::Cancel);
+                    tx.send(event).unwrap();
+                    let mut process = PromptProcess {
+                        child,
+                        writer,
+                        input,
+                    };
+                    let result = run_session(
+                        &api,
+                        &tests::request_fixture(),
+                        &CString::new("test-cookie").unwrap(),
+                        &context,
+                        &mut process,
+                        &AtomicBool::new(false),
+                    )
+                    .unwrap();
+                    if is_cancel {
+                        assert_eq!(result, SessionOutcome::Cancelled);
+                    } else {
+                        assert_eq!(
+                            result,
+                            SessionOutcome::IdentityChanged {
+                                uid: 1001,
+                                generation: Generation {
+                                    selection: 1,
+                                    attempt: 0
+                                }
+                            }
+                        );
+                    }
+                })
+                .unwrap();
+        }
+    }
+
+    #[test]
+    fn disconnected_prompt_cannot_commit_success() {
+        let mut api = Api::load().unwrap();
+        api.initiate = completed_at_start;
+        api.cancel = fake_cancel;
+        let context = glib::MainContext::new();
+        context
+            .with_thread_default(|| {
+                let mut child = Command::new("cat")
+                    .stdin(Stdio::piped())
+                    .stdout(Stdio::null())
+                    .spawn()
+                    .unwrap();
+                let writer = BufWriter::new(child.stdin.take().unwrap());
+                let (tx, input) = mpsc::channel();
+                drop(tx);
+                let mut process = PromptProcess {
+                    child,
+                    writer,
+                    input,
+                };
+                assert_eq!(
+                    run_session(
+                        &api,
+                        &tests::request_fixture(),
+                        &CString::new("test-cookie").unwrap(),
+                        &context,
+                        &mut process,
+                        &AtomicBool::new(false)
+                    )
+                    .unwrap(),
+                    SessionOutcome::Cancelled
+                );
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn response_framing_handles_chunks_and_rejects_oversized_or_invalid_frames() {
+        let response = PromptEvent::Response {
+            generation: Generation::default(),
+            uid: 1000,
+            value: "dummy-secret".to_owned().into(),
+        };
+        let encoded = format!(
+            "{}\n{{\"type\":\"cancel\"}}\n",
+            serde_json::to_string(&response).unwrap()
+        );
+        let mut events = Vec::new();
+        read_responses(&mut encoded.as_bytes(), |event| {
+            events.push(event);
+            true
+        })
+        .unwrap();
+        assert_eq!(events.len(), 2);
+        assert!(
+            matches!(&events[0], PromptEvent::Response { value, .. } if value.as_str() == "dummy-secret")
+        );
+        assert!(!format!("{:?}", events[0]).contains("dummy-secret"));
+        assert!(read_responses(&mut vec![b'x'; 32769].as_slice(), |_| true).is_err());
+        assert!(read_responses(&mut &b"invalid\n"[..], |_| true).is_err());
+    }
+
     #[test]
     fn registered_identity_types_survive_between_api_loads() {
         for _ in 0..3 {
@@ -617,9 +838,12 @@ mod tests {
                     let mut uid = 1000;
                     for line in BufReader::new(output).lines() {
                         let Ok(line) = line else { break };
-                        if let Ok(PromptEvent::Request { generation, .. }) =
-                            serde_json::from_str::<PromptEvent>(&line)
-                        {
+                        let event = serde_json::from_str::<PromptEvent>(&line);
+                        if matches!(event, Ok(PromptEvent::Finished { .. })) {
+                            let _ = tx.send(PromptEvent::Cancel);
+                            break;
+                        }
+                        if let Ok(PromptEvent::Request { generation, .. }) = event {
                             let count = counter.fetch_add(1, Ordering::SeqCst) + 1;
                             let event = if count == 3 {
                                 uid = 1001;
@@ -634,7 +858,7 @@ mod tests {
                                 PromptEvent::Response {
                                     generation,
                                     uid,
-                                    value: "incorrect".into(),
+                                    value: "incorrect".to_owned().into(),
                                 }
                             };
                             if tx.send(event).is_err() {
@@ -648,7 +872,7 @@ mod tests {
                     writer,
                     input,
                 };
-                let mut request = request_fixture();
+                let mut request = tests::request_fixture();
                 let result = authenticate_sessions(
                     &api,
                     &mut request,
@@ -695,7 +919,7 @@ mod tests {
                 let writer = BufWriter::new(child.stdin.take().unwrap());
                 let cookie = CString::new("test-cookie").unwrap();
                 let cancelled = AtomicBool::new(false);
-                let mut request = request_fixture();
+                let mut request = tests::request_fixture();
                 let (tx, input) = mpsc::channel();
                 let mut process = PromptProcess {
                     child,
@@ -713,7 +937,7 @@ mod tests {
                 tx.send(PromptEvent::Response {
                     generation: Generation::default(),
                     uid: 1000,
-                    value: "stale-response".into(),
+                    value: "stale-response".to_owned().into(),
                 })
                 .unwrap();
                 assert_eq!(
@@ -736,7 +960,7 @@ mod tests {
                 tx.send(PromptEvent::Response {
                     generation: Generation::default(),
                     uid: 1000,
-                    value: "stale-response".into(),
+                    value: "stale-response".to_owned().into(),
                 })
                 .unwrap();
                 // Matching UID alone is insufficient: reject responses from a
@@ -744,7 +968,7 @@ mod tests {
                 tx.send(PromptEvent::Response {
                     generation: Generation::default(),
                     uid: 1001,
-                    value: "same-user-old-generation".into(),
+                    value: "same-user-old-generation".to_owned().into(),
                 })
                 .unwrap();
                 request.generation.attempt = 1;
@@ -754,13 +978,13 @@ mod tests {
                         ..request.generation
                     },
                     uid: 1001,
-                    value: "same-user-old-attempt".into(),
+                    value: "same-user-old-attempt".to_owned().into(),
                 })
                 .unwrap();
                 tx.send(PromptEvent::Response {
                     generation: request.generation,
                     uid: 1001,
-                    value: "new-response".into(),
+                    value: "new-response".to_owned().into(),
                 })
                 .unwrap();
                 assert_eq!(
@@ -812,7 +1036,7 @@ mod tests {
                 assert_eq!(
                     run_session(
                         &api,
-                        &request_fixture(),
+                        &tests::request_fixture(),
                         &CString::new("test-cookie").unwrap(),
                         &context,
                         &mut process,
@@ -844,7 +1068,7 @@ mod tests {
 
     #[test]
     fn account_switches_accept_only_offered_identities() {
-        let request = request_fixture();
+        let request = tests::request_fixture();
         assert!(permitted_selection(&request, 1001));
         assert!(permitted_selection(&request, 1000));
         assert!(!permitted_selection(&request, 0));

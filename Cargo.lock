@@ -712,7 +712,7 @@ dependencies = [
 [[package]]
 name = "build_helpers"
 version = "0.14.0"
-source = "git+https://github.com/ferese-wm/libcosmic?tag=ferese-v0.1.3-rc.4#1addb61ac65e2edf538ba8faa329d3d976b93c12"
+source = "git+https://github.com/ferese-wm/libcosmic?tag=ferese-v0.1.3-rc.5#4e586477d4661d241415ad2f72b68f5403c2d5e5"
 dependencies = [
  "cfg_aliases",
 ]
@@ -1117,7 +1117,7 @@ dependencies = [
 [[package]]
 name = "cosmic-config"
 version = "1.0.0"
-source = "git+https://github.com/ferese-wm/libcosmic?tag=ferese-v0.1.3-rc.4#1addb61ac65e2edf538ba8faa329d3d976b93c12"
+source = "git+https://github.com/ferese-wm/libcosmic?tag=ferese-v0.1.3-rc.5#4e586477d4661d241415ad2f72b68f5403c2d5e5"
 dependencies = [
  "atomicwrites",
  "cosmic-config-derive",
@@ -1138,7 +1138,7 @@ dependencies = [
 [[package]]
 name = "cosmic-config-derive"
 version = "1.0.0"
-source = "git+https://github.com/ferese-wm/libcosmic?tag=ferese-v0.1.3-rc.4#1addb61ac65e2edf538ba8faa329d3d976b93c12"
+source = "git+https://github.com/ferese-wm/libcosmic?tag=ferese-v0.1.3-rc.5#4e586477d4661d241415ad2f72b68f5403c2d5e5"
 dependencies = [
  "quote",
  "syn 2.0.119",
@@ -1207,7 +1207,7 @@ dependencies = [
 [[package]]
 name = "cosmic-theme"
 version = "1.0.0"
-source = "git+https://github.com/ferese-wm/libcosmic?tag=ferese-v0.1.3-rc.4#1addb61ac65e2edf538ba8faa329d3d976b93c12"
+source = "git+https://github.com/ferese-wm/libcosmic?tag=ferese-v0.1.3-rc.5#4e586477d4661d241415ad2f72b68f5403c2d5e5"
 dependencies = [
  "almost",
  "configparser",
@@ -1934,12 +1934,14 @@ dependencies = [
  "ferese-ipc",
  "ferese-theme",
  "ferese-theme-client",
+ "futures-util",
  "glib",
  "libc",
  "libcosmic",
  "libloading",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "zbus",
  "zeroize",
@@ -3020,7 +3022,7 @@ dependencies = [
 [[package]]
 name = "iced"
 version = "0.14.0"
-source = "git+https://github.com/ferese-wm/libcosmic?tag=ferese-v0.1.3-rc.4#1addb61ac65e2edf538ba8faa329d3d976b93c12"
+source = "git+https://github.com/ferese-wm/libcosmic?tag=ferese-v0.1.3-rc.5#4e586477d4661d241415ad2f72b68f5403c2d5e5"
 dependencies = [
  "build_helpers",
  "dnd",
@@ -3042,7 +3044,7 @@ dependencies = [
 [[package]]
 name = "iced_accessibility"
 version = "0.1.0"
-source = "git+https://github.com/ferese-wm/libcosmic?tag=ferese-v0.1.3-rc.4#1addb61ac65e2edf538ba8faa329d3d976b93c12"
+source = "git+https://github.com/ferese-wm/libcosmic?tag=ferese-v0.1.3-rc.5#4e586477d4661d241415ad2f72b68f5403c2d5e5"
 dependencies = [
  "accesskit",
  "accesskit_winit",
@@ -3051,7 +3053,7 @@ dependencies = [
 [[package]]
 name = "iced_core"
 version = "0.14.0"
-source = "git+https://github.com/ferese-wm/libcosmic?tag=ferese-v0.1.3-rc.4#1addb61ac65e2edf538ba8faa329d3d976b93c12"
+source = "git+https://github.com/ferese-wm/libcosmic?tag=ferese-v0.1.3-rc.5#4e586477d4661d241415ad2f72b68f5403c2d5e5"
 dependencies = [
  "bitflags 2.13.2",
  "build_helpers",
@@ -3079,7 +3081,7 @@ dependencies = [
 [[package]]
 name = "iced_debug"
 version = "0.14.0"
-source = "git+https://github.com/ferese-wm/libcosmic?tag=ferese-v0.1.3-rc.4#1addb61ac65e2edf538ba8faa329d3d976b93c12"
+source = "git+https://github.com/ferese-wm/libcosmic?tag=ferese-v0.1.3-rc.5#4e586477d4661d241415ad2f72b68f5403c2d5e5"
 dependencies = [
  "iced_core",
  "iced_futures",
@@ -3089,7 +3091,7 @@ dependencies = [
 [[package]]
 name = "iced_futures"
 version = "0.14.0"
-source = "git+https://github.com/ferese-wm/libcosmic?tag=ferese-v0.1.3-rc.4#1addb61ac65e2edf538ba8faa329d3d976b93c12"
+source = "git+https://github.com/ferese-wm/libcosmic?tag=ferese-v0.1.3-rc.5#4e586477d4661d241415ad2f72b68f5403c2d5e5"
 dependencies = [
  "futures",
  "iced_core",
@@ -3103,7 +3105,7 @@ dependencies = [
 [[package]]
 name = "iced_graphics"
 version = "0.14.0"
-source = "git+https://github.com/ferese-wm/libcosmic?tag=ferese-v0.1.3-rc.4#1addb61ac65e2edf538ba8faa329d3d976b93c12"
+source = "git+https://github.com/ferese-wm/libcosmic?tag=ferese-v0.1.3-rc.5#4e586477d4661d241415ad2f72b68f5403c2d5e5"
 dependencies = [
  "bitflags 2.13.2",
  "bytemuck",
@@ -3124,7 +3126,7 @@ dependencies = [
 [[package]]
 name = "iced_program"
 version = "0.14.0"
-source = "git+https://github.com/ferese-wm/libcosmic?tag=ferese-v0.1.3-rc.4#1addb61ac65e2edf538ba8faa329d3d976b93c12"
+source = "git+https://github.com/ferese-wm/libcosmic?tag=ferese-v0.1.3-rc.5#4e586477d4661d241415ad2f72b68f5403c2d5e5"
 dependencies = [
  "iced_graphics",
  "iced_runtime",
@@ -3133,7 +3135,7 @@ dependencies = [
 [[package]]
 name = "iced_renderer"
 version = "0.14.0"
-source = "git+https://github.com/ferese-wm/libcosmic?tag=ferese-v0.1.3-rc.4#1addb61ac65e2edf538ba8faa329d3d976b93c12"
+source = "git+https://github.com/ferese-wm/libcosmic?tag=ferese-v0.1.3-rc.5#4e586477d4661d241415ad2f72b68f5403c2d5e5"
 dependencies = [
  "iced_graphics",
  "iced_tiny_skia",
@@ -3145,7 +3147,7 @@ dependencies = [
 [[package]]
 name = "iced_runtime"
 version = "0.14.0"
-source = "git+https://github.com/ferese-wm/libcosmic?tag=ferese-v0.1.3-rc.4#1addb61ac65e2edf538ba8faa329d3d976b93c12"
+source = "git+https://github.com/ferese-wm/libcosmic?tag=ferese-v0.1.3-rc.5#4e586477d4661d241415ad2f72b68f5403c2d5e5"
 dependencies = [
  "build_helpers",
  "bytes",
@@ -3162,7 +3164,7 @@ dependencies = [
 [[package]]
 name = "iced_tiny_skia"
 version = "0.14.0"
-source = "git+https://github.com/ferese-wm/libcosmic?tag=ferese-v0.1.3-rc.4#1addb61ac65e2edf538ba8faa329d3d976b93c12"
+source = "git+https://github.com/ferese-wm/libcosmic?tag=ferese-v0.1.3-rc.5#4e586477d4661d241415ad2f72b68f5403c2d5e5"
 dependencies = [
  "bytemuck",
  "cosmic-text",
@@ -3179,7 +3181,7 @@ dependencies = [
 [[package]]
 name = "iced_wgpu"
 version = "0.14.0"
-source = "git+https://github.com/ferese-wm/libcosmic?tag=ferese-v0.1.3-rc.4#1addb61ac65e2edf538ba8faa329d3d976b93c12"
+source = "git+https://github.com/ferese-wm/libcosmic?tag=ferese-v0.1.3-rc.5#4e586477d4661d241415ad2f72b68f5403c2d5e5"
 dependencies = [
  "as-raw-xcb-connection",
  "bitflags 2.13.2",
@@ -3211,7 +3213,7 @@ dependencies = [
 [[package]]
 name = "iced_widget"
 version = "0.14.2"
-source = "git+https://github.com/ferese-wm/libcosmic?tag=ferese-v0.1.3-rc.4#1addb61ac65e2edf538ba8faa329d3d976b93c12"
+source = "git+https://github.com/ferese-wm/libcosmic?tag=ferese-v0.1.3-rc.5#4e586477d4661d241415ad2f72b68f5403c2d5e5"
 dependencies = [
  "build_helpers",
  "cosmic-client-toolkit",
@@ -3231,7 +3233,7 @@ dependencies = [
 [[package]]
 name = "iced_winit"
 version = "0.14.0"
-source = "git+https://github.com/ferese-wm/libcosmic?tag=ferese-v0.1.3-rc.4#1addb61ac65e2edf538ba8faa329d3d976b93c12"
+source = "git+https://github.com/ferese-wm/libcosmic?tag=ferese-v0.1.3-rc.5#4e586477d4661d241415ad2f72b68f5403c2d5e5"
 dependencies = [
  "build_helpers",
  "cosmic-client-toolkit",
@@ -3784,7 +3786,7 @@ checksum = "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2"
 [[package]]
 name = "libcosmic"
 version = "1.0.0"
-source = "git+https://github.com/ferese-wm/libcosmic?tag=ferese-v0.1.3-rc.4#1addb61ac65e2edf538ba8faa329d3d976b93c12"
+source = "git+https://github.com/ferese-wm/libcosmic?tag=ferese-v0.1.3-rc.5#4e586477d4661d241415ad2f72b68f5403c2d5e5"
 dependencies = [
  "apply",
  "ashpd 0.12.3",
@@ -8669,6 +8671,9 @@ name = "zeroize"
 version = "1.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e13c156562582aa81c60cb29407084cdb54c4164760106ab78e6c5b0858cf64e"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "zerotrie"

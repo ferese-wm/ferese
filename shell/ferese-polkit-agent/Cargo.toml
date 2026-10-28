@@ -19,6 +19,10 @@ libcosmic = { workspace = true, features = ["wgpu"] }
 libloading = "0.8.9"
 serde.workspace = true
 serde_json.workspace = true
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "process"] }
 zbus = "5.19.0"
-zeroize = "1.9"
+zeroize = { version = "1.9", features = ["serde"] }
+futures-util = "0.3"
+
+[dev-dependencies]
+tempfile = "3"
