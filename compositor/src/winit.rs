@@ -27,7 +27,7 @@ pub(crate) type NestedBackend = Rc<RefCell<winit::WinitGraphicsBackend<GlesRende
 pub(crate) struct FrameWakeup {
     timer: Option<RegistrationToken>,
     requested: bool,
-    last_frame: Option<Instant>,
+    last_deadline: Option<Instant>,
     capture_timer: Option<RegistrationToken>,
     last_capture: Option<Instant>,
 }
@@ -65,12 +65,13 @@ fn queue_frame(
     let now = Instant::now();
     let deadline = state
         .nested_frames
-        .last_frame
+        .last_deadline
         .map_or(now, |last| (last + interval).max(now));
     match state
         .loop_handle
         .insert_source(Timer::from_deadline(deadline), move |_, _, state| {
             state.nested_frames.timer = None;
+            state.nested_frames.last_deadline = Some(deadline);
             request(state);
             TimeoutAction::Drop
         }) {
@@ -83,11 +84,16 @@ fn queue_frame(
 }
 
 fn frame_started(state: &mut Ferese) {
+    let scheduled = state.nested_frames.requested && state.nested_frames.timer.is_none();
     if let Some(timer) = state.nested_frames.timer.take() {
         state.loop_handle.remove(timer);
     }
     state.nested_frames.requested = false;
-    state.nested_frames.last_frame = Some(Instant::now());
+    // Keep timer and host-dispatch delays out of the next frame's cadence.
+    // An unsolicited host redraw starts a new cadence and cancels old work.
+    if !scheduled {
+        state.nested_frames.last_deadline = Some(Instant::now());
+    }
 }
 
 fn continue_frames(state: &mut Ferese, output: &Output) {
@@ -499,7 +505,7 @@ mod tests {
         assert!(!state.nested_frames.requested);
         assert!(state.nested_frames.timer.is_none());
 
-        state.nested_frames.last_frame = Some(Instant::now() - Duration::from_secs(2));
+        state.nested_frames.last_deadline = Some(Instant::now() - Duration::from_secs(2));
         let requests_next = requests.clone();
         queue_frame(&mut state, Duration::from_millis(16), move |_| {
             requests_next.set(requests_next.get() + 1)
@@ -512,6 +518,29 @@ mod tests {
             2,
             "the first request after idle must not wait an extra refresh"
         );
+    }
+
+    #[test]
+    fn delayed_host_redraw_preserves_the_scheduled_frame_phase() {
+        if !crate::startup_tests::private_runtime(
+            "winit::tests::delayed_host_redraw_preserves_the_scheduled_frame_phase",
+        ) {
+            return;
+        }
+        let mut events = EventLoop::try_new().unwrap();
+        let mut state = crate::startup_tests::state(&mut events);
+        queue_frame(&mut state, Duration::from_millis(16), |_| {});
+        events
+            .dispatch(Duration::from_millis(2), &mut state)
+            .unwrap();
+        assert!(state.nested_frames.requested);
+        assert!(state.nested_frames.timer.is_none());
+        let deadline = state.nested_frames.last_deadline.unwrap();
+        assert!(deadline < Instant::now());
+
+        frame_started(&mut state);
+        assert_eq!(state.nested_frames.last_deadline, Some(deadline));
+        assert!(!state.nested_frames.requested);
     }
 
     #[test]
@@ -528,7 +557,9 @@ mod tests {
             panic!("obsolete timer fired after host redraw")
         });
         assert!(state.nested_frames.timer.is_some());
+        let before_redraw = Instant::now();
         frame_started(&mut state);
+        assert!(state.nested_frames.last_deadline.unwrap() >= before_redraw);
         events
             .dispatch(Duration::from_millis(20), &mut state)
             .unwrap();

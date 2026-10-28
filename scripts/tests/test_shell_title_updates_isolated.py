@@ -1,4 +1,4 @@
-"""Keep a real GPU panel idle during background title changes.
+"""Check focused and background title updates on a real GPU panel.
 
 FERESE_TEST_SHELL_TITLES=1 python3 scripts/tests/test_shell_title_updates_isolated.py
 Requires a Wayland host, cc, wayland-scanner, and dbus-daemon.
@@ -21,7 +21,7 @@ from test_shell_motion_isolated import panel_config
 
 @unittest.skipUnless(os.environ.get("FERESE_TEST_SHELL_TITLES") == "1", "opt-in nested shell test")
 class ShellTitleUpdatesTest(unittest.TestCase):
-    def test_background_titles_only_redraw_visible_window_lists(self):
+    def test_titles_redraw_only_the_required_panel_frames(self):
         repo = Path(__file__).resolve().parents[2]
         binary = repo / os.environ.get("FERESE_TEST_BINARY", "target/release/ferese")
         shell = repo / os.environ.get("FERESE_TEST_SHELL", "target/release/ferese-shell")
@@ -83,16 +83,19 @@ class ShellTitleUpdatesTest(unittest.TestCase):
             def snapshots():
                 return log_path.read_text().count(".snapshot_end(")
 
+            def frames():
+                return len(re.findall(r"wl_surface[@#]\d+\.attach\(wl_buffer[@#]", log_path.read_text()))
+
             def title(index, value):
                 client.stdin.write(f"{index} {value}\n")
                 client.stdin.flush()
                 self.assertTrue(select.select([client.stdout], [], [], 5)[0], "title client did not reply")
                 self.assertEqual(client.stdout.readline().strip(), "changed")
 
-            def burst(index, prefix):
+            def burst(index, prefix, period=.05):
                 for number in range(20):
                     title(index, f"{prefix} {number}")
-                    time.sleep(.05)
+                    time.sleep(period)
                 time.sleep(.2)
 
             def wait_title(value):
@@ -135,6 +138,20 @@ class ShellTitleUpdatesTest(unittest.TestCase):
                     wait_title("Current focused title")
                     wait_for(lambda: snapshots() > before)
                     self.assertIn('"Current focused title"', log_path.read_text())
+
+                    time.sleep(.3)
+                    before = frames()
+                    burst(1, "Focused spinner", .1)
+                    wait_title("Focused spinner 19")
+                    self.assertIn('"Focused spinner 19"', log_path.read_text())
+                    rendered = frames() - before
+                    self.assertGreater(rendered, 0, "focused titles did not repaint the panel")
+                    # Allow unrelated clock/status updates, but not a second
+                    # GPU submission for every title received by the runtime.
+                    self.assertLessEqual(rendered, 24, f"20 title changes submitted {rendered} frames")
+                    print(f"Focused: 20 actual title changes submitted {rendered} panel frames", flush=True)
+                    title(1, "Current focused title")
+                    wait_title("Current focused title")
 
                     control("focus-last-window")
                     wait_for(lambda: focused_title() == "Hidden spinner 19")
