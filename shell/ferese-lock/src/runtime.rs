@@ -1,6 +1,6 @@
 use std::io::{BufRead, BufReader};
 use std::process::{Child, Command, Stdio};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use wayland_client::globals::{GlobalListContents, registry_queue_init};
 use wayland_client::protocol::wl_registry;
@@ -172,4 +172,23 @@ mod clock_tests {
             Duration::from_secs(55)
         );
     }
+}
+
+/// A normal event-loop exit is successful only after the requested unlock completed.
+pub fn check_completion(completed: bool) -> Result<(), String> {
+    if completed {
+        Ok(())
+    } else {
+        Err("compositor refused or interrupted session locking".into())
+    }
+}
+
+pub fn password_deadline(
+    at: &Instant,
+) -> impl cosmic::iced::futures::Stream<Item = Instant> + use<> {
+    let at = *at;
+    cosmic::iced::futures::stream::once(async move {
+        tokio::time::sleep(Duration::from_secs(10).saturating_sub(at.elapsed())).await;
+        at
+    })
 }

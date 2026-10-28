@@ -18,6 +18,7 @@ libcosmic.workspace = true
 jiff.workspace = true
 image = { version = "0.25.10", default-features = false }
 libc.workspace = true
+memmap2 = "0.9.11"
 libloading = "0.8.9"
 zeroize = "1.9"
 wayland-client.workspace = true
@@ -25,3 +26,5 @@ tokio = { version = "1", features = ["rt", "time"] }
 
 [dev-dependencies]
 tempfile.workspace = true
+wayland-server.workspace = true
+wayland-protocols = { version = "0.32.13", features = ["client", "server", "staging"] }

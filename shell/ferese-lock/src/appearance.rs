@@ -27,6 +27,13 @@ pub struct Appearance {
 }
 
 impl Appearance {
+    /// A fully opaque first frame that performs no file or IPC access.
+    #[must_use]
+    pub fn fallback() -> Self {
+        let theme = ferese_config::theme::default_theme();
+        Self::from_document(None, &theme)
+    }
+
     pub fn load(user: &str, path: Option<&std::path::Path>) -> Self {
         let doc = path
             .and_then(|path| std::fs::read_to_string(path).ok())
@@ -47,14 +54,24 @@ impl Appearance {
                 theme = preview;
             }
         }
-        Self::from_document(user, doc, &theme)
+        let mut appearance = Self::from_document(doc, &theme);
+        let loaded = load_wallpaper(
+            &appearance.wallpaper_path,
+            if appearance.reduce_transparency {
+                0.
+            } else {
+                appearance.wallpaper_blur
+            },
+        );
+        if let Ok(wallpaper) = loaded {
+            appearance.wallpaper = wallpaper;
+            appearance.wallpaper_loaded = true;
+        }
+        appearance.avatar = account_picture(user);
+        appearance
     }
 
-    fn from_document(
-        user: &str,
-        doc: Option<Document>,
-        theme: &ferese_config::theme::ResolvedTheme,
-    ) -> Self {
+    fn from_document(doc: Option<Document>, theme: &ferese_config::theme::ResolvedTheme) -> Self {
         let doc = doc.map(|doc| doc.with_theme(theme));
         let string = |key: &str, fallback: &str| {
             doc.as_ref()
@@ -82,13 +99,6 @@ impl Appearance {
             .unwrap_or(18.)
             .clamp(0., 40.) as f32;
         let reduce_transparency = theme.accessibility.reduce_transparency;
-        let loaded = load_wallpaper(&wallpaper_path, if reduce_transparency { 0. } else { blur });
-        let wallpaper_loaded = loaded.is_ok();
-        let wallpaper = loaded.unwrap_or_else(|_| {
-            image::Handle::from_bytes(
-                include_bytes!("../../../assets/wallpapers/ferese.png").as_slice(),
-            )
-        });
         let boolean = |key, fallback| {
             doc.as_ref()
                 .and_then(|d| d.get(key))
@@ -113,14 +123,14 @@ impl Appearance {
             on_accent: palette.on_accent,
             radius: palette.radius,
             font: ferese_theme::font(Some(&font)),
-            wallpaper,
+            wallpaper: image::Handle::from_rgba(1, 1, vec![6, 9, 15, 255]),
             wallpaper_path,
             wallpaper_blur: blur,
             wallpaper_revision: 0,
-            wallpaper_loaded,
+            wallpaper_loaded: false,
             wallpaper_pending: None,
             reduce_transparency,
-            avatar: account_picture(user),
+            avatar: None,
         }
     }
 
@@ -305,8 +315,19 @@ pub fn load_wallpaper(path: &std::path::Path, blur: f32) -> Result<image::Handle
 
 fn prepare_wallpaper(path: &std::path::Path, blur: f32) -> Result<image::Handle, String> {
     use ::image::ImageDecoder;
-    let mut reader = ::image::ImageReader::open(path)
-        .map_err(|e| e.to_string())?
+    use std::fs::OpenOptions;
+    use std::io::BufReader;
+    use std::os::unix::fs::OpenOptionsExt;
+    let file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK)
+        .open(path)
+        .map_err(|error| error.to_string())?;
+    let metadata = file.metadata().map_err(|error| error.to_string())?;
+    if !metadata.is_file() || metadata.len() > 32 * 1024 * 1024 {
+        return Err("Lock wallpaper must be a regular file of at most 32 MiB".into());
+    }
+    let mut reader = ::image::ImageReader::new(BufReader::new(file))
         .with_guessed_format()
         .map_err(|e| e.to_string())?;
     let mut limits = ::image::Limits::default();
@@ -317,13 +338,10 @@ fn prepare_wallpaper(path: &std::path::Path, blur: f32) -> Result<image::Handle,
     if width == 0 || height == 0 || u64::from(width) * u64::from(height) > (256 * 1024 * 1024) / 4 {
         return Err("Lock wallpaper exceeds the decode limit".into());
     }
-    if blur <= 0. {
-        // Iced decodes the path and releases its host buffer after GPU upload.
-        // An RGBA handle would retain those pixels for the handle's lifetime.
-        return Ok(image::Handle::from_path(path));
-    }
-    let pixels = {
-        let decoded = ::image::DynamicImage::from_decoder(decoder).map_err(|e| e.to_string())?;
+    let decoded = ::image::DynamicImage::from_decoder(decoder).map_err(|e| e.to_string())?;
+    let pixels = if blur <= 0. {
+        decoded.into_rgba8()
+    } else {
         let thumbnail = decoded.thumbnail(640, 640).into_rgba8();
         ::image::imageops::blur(&thumbnail, blur)
     };
@@ -338,14 +356,39 @@ fn prepare_wallpaper(path: &std::path::Path, blur: f32) -> Result<image::Handle,
 mod tests {
     use super::*;
     #[test]
-    fn wallpaper_handles_keep_only_paths_or_blurred_thumbnails() {
+    fn wallpaper_rejects_fifo_without_waiting_for_a_writer() {
+        let directory = tempfile::tempdir().expect("private wallpaper directory");
+        let path = directory.path().join("wallpaper.fifo");
+        assert!(
+            std::process::Command::new("mkfifo")
+                .arg(&path)
+                .status()
+                .expect("create FIFO")
+                .success()
+        );
+        let (send, receive) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = send.send(load_wallpaper(&path, 0.));
+        });
+        let result = receive
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .expect("wallpaper open must not wait for a FIFO writer");
+        assert!(
+            result
+                .expect_err("FIFO must be rejected")
+                .contains("regular file")
+        );
+    }
+
+    #[test]
+    fn wallpaper_handles_contain_decoded_pixels_without_deferred_file_reads() {
         let file = tempfile::NamedTempFile::new().unwrap();
         ::image::RgbaImage::from_pixel(1280, 720, ::image::Rgba([32, 80, 160, 255]))
             .save_with_format(file.path(), ::image::ImageFormat::Png)
             .unwrap();
         match load_wallpaper(file.path(), 0.).unwrap() {
-            image::Handle::Path(_, path) => assert_eq!(path, file.path()),
-            _ => panic!("unblurred wallpaper must not retain RGBA pixels"),
+            image::Handle::Rgba { width, height, .. } => assert_eq!((width, height), (1280, 720)),
+            _ => panic!("unblurred wallpaper must be decoded on the worker"),
         }
         match load_wallpaper(file.path(), 2.).unwrap() {
             image::Handle::Rgba {
@@ -379,7 +422,11 @@ mod tests {
         theme.tokens.background.path = Some(initial.clone());
         theme.tokens.background.lock_path = None;
         let document = Document::parse("").unwrap();
-        let mut appearance = Appearance::from_document("no-such-test-user", Some(document), &theme);
+        let mut appearance = Appearance::from_document(Some(document), &theme);
+        let (revision, path, blur) = appearance.request_wallpaper(&theme).unwrap();
+        appearance
+            .finish_wallpaper(revision, load_wallpaper(&path, blur))
+            .unwrap();
         assert!(appearance.request_wallpaper(&theme).is_none());
         let next = directory.path().join("next.png");
         theme.tokens.background.path = Some(next.clone());
@@ -473,7 +520,7 @@ mod tests {
         )
         .unwrap()
         .theme;
-        let appearance = Appearance::from_document("no-such-test-user", Some(document), &theme);
+        let appearance = Appearance::from_document(Some(document), &theme);
         assert_eq!(appearance.radius, 0.);
         assert_eq!(theme.requested_accent, "#FF5500");
         assert_eq!(

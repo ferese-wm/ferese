@@ -135,13 +135,17 @@ cargo test --locked -p ferese mirrored_pixels_fit -- --ignored
 
 ```sh
 cargo test --release --locked -p ferese session_lock::tests -- --nocapture
+cargo test --release --locked -p ferese-lock
 ```
 
 These tests create private runtime directories and Wayland clients. They run in
 normal test suites and in the workspace CI job, without a host desktop or DRM.
-They cover confirmation, rejected unlocks, owner death and replacement, output
-removal, keyboard focus and idle timers. Physical display protection still needs
-hardware testing.
+They cover registry admission, confirmation, rejected unlocks, owner death and
+replacement, output removal, keyboard focus, trace redaction and idle timers. The
+locker tests also check startup without reading artwork, refusal outcomes and password
+clearing. The nested smoke test checks that secure locking is unavailable there;
+it cannot validate physical presentation. Before release, test native DRM lock entry
+from direct scanout, mirrored outputs, hotplug and suspend/resume on real displays.
 
 ## Resume listener checks
 

@@ -1905,10 +1905,13 @@ dependencies = [
  "libc",
  "libcosmic",
  "libloading",
+ "memmap2 0.9.11",
  "serde_json",
  "tempfile",
  "tokio",
  "wayland-client",
+ "wayland-protocols",
+ "wayland-server",
  "zeroize",
 ]
 

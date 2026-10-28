@@ -1,8 +1,17 @@
 mod appearance;
 mod auth;
+#[cfg(test)]
+mod lock_tests;
+mod password;
+#[cfg(test)]
+mod refusal_tests;
 mod runtime;
 
 use std::collections::HashMap;
+use std::error::Error;
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use cosmic::app::{Core, Settings, Task};
@@ -12,9 +21,12 @@ use cosmic::iced::{Event, Length, Subscription, event, window};
 use cosmic::widget::{column, container, image, row};
 use cosmic::{Element, iced, theme, widget};
 use wayland_client::protocol::wl_output::WlOutput;
-use zeroize::{Zeroize, Zeroizing};
+use zeroize::Zeroizing;
 
-fn main() -> iced::Result {
+use appearance::Appearance;
+use password::Password;
+
+fn main() -> Result<(), Box<dyn Error>> {
     let args: Vec<_> = std::env::args().skip(1).collect();
     if args == ["--help"] {
         println!(
@@ -25,9 +37,9 @@ fn main() -> iced::Result {
     let preview = args == ["--preview"]
         || (args.len() == 3 && args[0] == "--preview" && args[1] == "--config");
     let config = if preview && args.len() == 3 {
-        Some(std::path::PathBuf::from(&args[2]))
+        Some(PathBuf::from(&args[2]))
     } else {
-        ferese_config::config_path()
+        None
     };
 
     if !args.is_empty() && !preview && args != ["--foreground"] {
@@ -62,11 +74,12 @@ fn main() -> iced::Result {
 
     // Password-bearing UI processes must not create core dumps.
     // SAFETY: PR_SET_DUMPABLE takes an integer value and does not dereference caller memory.
-    unsafe {
-        libc::prctl(libc::PR_SET_DUMPABLE, 0);
+    if unsafe { libc::prctl(libc::PR_SET_DUMPABLE, 0) } != 0 {
+        return Err(std::io::Error::last_os_error().into());
     }
 
-    let appearance = appearance::Appearance::load(&user, config.as_deref());
+    let appearance = Appearance::fallback();
+    let completed = Arc::new(AtomicBool::new(preview));
     cosmic::app::run::<Locker>(
         Settings::default()
             .no_main_window(!preview)
@@ -76,16 +89,36 @@ fn main() -> iced::Result {
             .default_font(appearance.font)
             .theme(appearance.theme())
             .antialiasing(true),
-        (preview, user, appearance),
-    )
+        Flags {
+            password: Password::try_new()?,
+            preview,
+            user,
+            config,
+            completed: completed.clone(),
+        },
+    )?;
+    runtime::check_completion(completed.load(Ordering::Acquire))?;
+    Ok(())
+}
+
+struct Flags {
+    password: Password,
+    preview: bool,
+    user: String,
+    config: Option<PathBuf>,
+    completed: Arc<AtomicBool>,
 }
 
 #[derive(Clone)]
 enum Message {
+    AppearanceLoaded(Result<Box<Appearance>, String>),
     ThemeChanged(Box<ferese_ipc::theme::Snapshot>),
     WallpaperLoaded(u64, Result<widget::image::Handle, String>),
     Event(Box<Event>),
     Input(Zeroizing<String>),
+    Backspace,
+    ClearPassword,
+    InputExpired(Instant),
     Submit,
     Authenticated(bool),
     Tick,
@@ -141,8 +174,12 @@ struct Locker {
     core: Core,
     preview: bool,
     user: String,
-    appearance: appearance::Appearance,
-    password: Zeroizing<String>,
+    appearance: Appearance,
+    appearance_loaded: bool,
+    config: Option<PathBuf>,
+    completed: Arc<AtomicBool>,
+    password: Password,
+    input_at: Option<Instant>,
     state: AuthState,
     status: &'static str,
     outputs: HashMap<WlOutput, window::Id>,
@@ -155,7 +192,7 @@ struct Locker {
 
 impl cosmic::Application for Locker {
     type Executor = cosmic::executor::Default;
-    type Flags = (bool, String, appearance::Appearance);
+    type Flags = Flags;
     type Message = Message;
 
     const APP_ID: &'static str = "dev.ferese.Lock";
@@ -168,7 +205,20 @@ impl cosmic::Application for Locker {
         &mut self.core
     }
 
-    fn init(mut core: Core, (preview, user, appearance): Self::Flags) -> (Self, Task<Message>) {
+    fn init(mut core: Core, flags: Self::Flags) -> (Self, Task<Message>) {
+        let Flags {
+            password,
+            preview,
+            user,
+            config,
+            completed,
+        } = flags;
+        let appearance = Appearance::fallback();
+        let artwork = if preview {
+            load_appearance(user.clone(), config.clone())
+        } else {
+            Task::none()
+        };
         core.window.show_headerbar = false;
         let now = jiff::Zoned::now();
         let clock = now.strftime(appearance.clock_format()).to_string();
@@ -182,7 +232,11 @@ impl cosmic::Application for Locker {
                 preview,
                 user,
                 appearance,
-                password: Zeroizing::new(String::new()),
+                appearance_loaded: false,
+                config,
+                completed,
+                password,
+                input_at: None,
                 state: AuthState::Ready,
                 status: "Press Enter to unlock",
                 outputs: HashMap::new(),
@@ -193,7 +247,7 @@ impl cosmic::Application for Locker {
                 date: now.strftime("%A, %B %-d").to_string(),
             },
             if preview {
-                Task::batch([title_task, focus()])
+                Task::batch([title_task, focus(), artwork])
             } else {
                 session_lock::lock()
             },
@@ -202,13 +256,36 @@ impl cosmic::Application for Locker {
 
     fn subscription(&self) -> Subscription<Message> {
         Subscription::batch([
-            if self.preview {
+            if self.preview || !self.appearance_loaded {
                 Subscription::none()
             } else {
                 ferese_theme_client::service::subscription()
                     .map(|snapshot| Message::ThemeChanged(Box::new(snapshot)))
             },
             event::listen_with(|event, _, _| match event {
+                Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                    key,
+                    modifiers,
+                    text,
+                    ..
+                }) => {
+                    use iced::keyboard::{Key, key::Named};
+                    match key {
+                        Key::Named(Named::Enter) => Some(Message::Submit),
+                        Key::Named(Named::Escape) => Some(Message::ClearPassword),
+                        Key::Named(Named::Backspace) if modifiers.control() => {
+                            Some(Message::ClearPassword)
+                        }
+                        Key::Named(Named::Backspace) => Some(Message::Backspace),
+                        Key::Character(ref key) if modifiers.control() && key.as_str() == "u" => {
+                            Some(Message::ClearPassword)
+                        }
+                        _ if !modifiers.control() && !modifiers.logo() => {
+                            text.map(|text| Message::Input(Zeroizing::new(text.to_string())))
+                        }
+                        _ => None,
+                    }
+                }
                 Event::PlatformSpecific(PlatformSpecific::Wayland(
                     wayland::Event::Output(..) | wayland::Event::SessionLock(..),
                 ))
@@ -223,6 +300,9 @@ impl cosmic::Application for Locker {
             } else {
                 Subscription::none()
             },
+            self.input_at.map_or_else(Subscription::none, |at| {
+                Subscription::run_with(at, runtime::password_deadline).map(Message::InputExpired)
+            }),
             match self.state {
                 AuthState::Rejected(at) => {
                     Subscription::run_with(at, runtime::retry_deadline).map(|_| Message::RetryReady)
@@ -234,6 +314,16 @@ impl cosmic::Application for Locker {
 
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
+            Message::AppearanceLoaded(result) => {
+                match result {
+                    Ok(appearance) => self.appearance = *appearance,
+                    Err(error) => eprintln!("ferese-lock: using fallback appearance: {error}"),
+                }
+                self.appearance_loaded = true;
+                let now = jiff::Zoned::now();
+                self.clock = now.strftime(self.appearance.clock_format()).to_string();
+                return cosmic::command::set_theme(self.appearance.theme());
+            }
             Message::ThemeChanged(snapshot) => {
                 let palette = ferese_theme::Palette::from_resolved(&snapshot.presented);
                 self.appearance.appearance = snapshot.presented.appearance;
@@ -282,15 +372,31 @@ impl cosmic::Application for Locker {
                 }
             }
             Message::Input(value) => {
-                if self.state.may_submit() && value.len() <= 4096 {
-                    self.password.zeroize();
-                    self.password = value;
+                if self.state.may_submit() && !value.is_empty() && self.password.push_str(&value) {
+                    self.input_at = Some(Instant::now());
                     self.status = "Press Enter to unlock";
+                }
+            }
+            Message::Backspace => {
+                if self.state.may_submit() {
+                    self.password.pop();
+                    self.input_at = (!self.password.is_empty()).then(Instant::now);
+                }
+            }
+            Message::ClearPassword => {
+                self.password.clear();
+                self.input_at = None;
+            }
+            Message::InputExpired(at) => {
+                if self.input_at == Some(at) {
+                    self.password.clear();
+                    self.input_at = None;
                 }
             }
             Message::Submit => {
                 if self.preview {
-                    self.password.zeroize();
+                    self.password.clear();
+                    self.input_at = None;
                     self.status = "Preview only · your session is not locked";
                     return focus();
                 }
@@ -302,9 +408,18 @@ impl cosmic::Application for Locker {
                     return Task::none();
                 }
 
+                let replacement = match Password::try_new() {
+                    Ok(password) => password,
+                    Err(error) => {
+                        eprintln!("ferese-lock: cannot lock password memory: {error}");
+                        self.status = "Cannot prepare authentication. Try again.";
+                        return Task::none();
+                    }
+                };
                 self.state = AuthState::Checking;
                 self.status = "Checking password…";
-                let password = Zeroizing::new(std::mem::take(&mut *self.password));
+                self.input_at = None;
+                let password = std::mem::replace(&mut self.password, replacement);
                 let user = self.user.clone();
                 return Task::perform(
                     async move {
@@ -328,7 +443,8 @@ impl cosmic::Application for Locker {
     }
 
     fn on_escape(&mut self) -> Task<Message> {
-        self.password.zeroize();
+        self.password.clear();
+        self.input_at = None;
         focus()
     }
 
@@ -339,6 +455,18 @@ impl cosmic::Application for Locker {
     fn view_window(&self, _: window::Id) -> Element<'_, Message> {
         self.screen()
     }
+}
+
+fn load_appearance(user: String, config: Option<PathBuf>) -> Task<Message> {
+    cosmic::task::future(async move {
+        let result = tokio::task::spawn_blocking(move || {
+            let config = config.or_else(ferese_config::config_path);
+            Box::new(Appearance::load(&user, config.as_deref()))
+        })
+        .await
+        .map_err(|error| error.to_string());
+        Message::AppearanceLoaded(result)
+    })
 }
 
 fn focus() -> Task<Message> {
@@ -375,6 +503,7 @@ impl Locker {
                     if std::env::var_os("FERESE_LOCK_READY").is_some() {
                         let _ = writeln!(std::io::stdout().lock(), "FERESE_LOCKED");
                     }
+                    return load_appearance(self.user.clone(), self.config.clone());
                 }
                 wayland::SessionLockEvent::Requested if !self.started => {
                     self.started = true;
@@ -386,6 +515,7 @@ impl Locker {
                 }
                 wayland::SessionLockEvent::Focused(..) => return focus(),
                 wayland::SessionLockEvent::Unlocked if self.state == AuthState::Unlocking => {
+                    self.completed.store(true, Ordering::Release);
                     return iced::exit();
                 }
                 wayland::SessionLockEvent::Finished | wayland::SessionLockEvent::NotSupported => {
@@ -430,8 +560,8 @@ impl Locker {
         let margin = if size.width < 640. { 24. } else { 36. };
         let top = (size.height * 0.09).max(24.);
         let a = &self.appearance;
-        let mut input = widget::text_input("Password", self.password.as_str())
-            .password()
+        // The toolkit receives bullets only. Keyboard events edit the locked buffer directly.
+        let mut input = widget::text_input("Password", self.password.mask())
             .padding([4, 10])
             .size(14)
             .style(ferese_theme::controls::lock_input(
@@ -439,15 +569,6 @@ impl Locker {
             ))
             .font(a.font)
             .id(widget::Id::new("password"));
-
-        if self.state.may_submit() {
-            input = input
-                .on_input(|value| Message::Input(Zeroizing::new(value)))
-                .on_submit(|value| {
-                    drop(Zeroizing::new(value));
-                    Message::Submit
-                });
-        }
 
         let submit = widget::button::custom(widget::icon::from_name("go-next-symbolic").size(16))
             .class(theme::Button::Icon)

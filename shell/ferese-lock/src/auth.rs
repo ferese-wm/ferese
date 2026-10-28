@@ -1,6 +1,6 @@
 use std::ffi::{CStr, CString, c_char, c_int, c_void};
 
-use zeroize::Zeroizing;
+use crate::password::Password;
 
 #[repr(C)]
 struct Message {
@@ -18,9 +18,9 @@ struct Conversation {
         unsafe extern "C" fn(c_int, *mut *const Message, *mut *mut Response, *mut c_void) -> c_int,
     data: *mut c_void,
 }
-struct Credentials {
+struct Credentials<'a> {
     user: CString,
-    password: Zeroizing<Vec<u8>>,
+    password: &'a [u8],
     password_prompts: u8,
 }
 const SUCCESS: c_int = 0;
@@ -59,8 +59,7 @@ unsafe extern "C" fn converse(
                     1 => {
                         credentials.password_prompts =
                             credentials.password_prompts.saturating_add(1);
-                        (credentials.password_prompts == 1)
-                            .then_some(credentials.password.as_slice())
+                        (credentials.password_prompts == 1).then_some(credentials.password)
                     } // Never send the password as a second-factor response.
                     2 => Some(credentials.user.as_bytes_with_nul()), // PAM_PROMPT_ECHO_ON
                     3 | 4 => Some(&[][..]), // PAM_ERROR_MSG / PAM_TEXT_INFO
@@ -127,22 +126,20 @@ pub fn available() -> bool {
         && unsafe { libloading::Library::new("libpam.so.0") }.is_ok()
 }
 
-pub fn authenticate(user: String, password: Zeroizing<String>) -> bool {
+pub fn authenticate(user: String, password: Password) -> bool {
     authenticate_with(&user, &password, None)
 }
 
-fn authenticate_with(user: &str, password: &str, config: Option<&CStr>) -> bool {
-    if password.is_empty() || password.contains('\0') {
+fn authenticate_with(user: &str, password: &Password, config: Option<&CStr>) -> bool {
+    if password.is_empty() {
         return false;
     }
     let Ok(user) = CString::new(user) else {
         return false;
     };
-    let mut secret = Zeroizing::new(password.as_bytes().to_vec());
-    secret.push(0);
     let mut credentials = Credentials {
         user,
-        password: secret,
+        password: password.as_bytes_with_nul(),
         password_prompts: 0,
     };
     // SAFETY: The typed symbols match the PAM ABI. Strings, conversation and credentials remain
@@ -212,6 +209,10 @@ fn authenticate_with(user: &str, password: &str, config: Option<&CStr>) -> bool 
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn authenticate_test(user: &str, text: &str, config: Option<&CStr>) -> bool {
+        let mut password = Password::try_new().expect("test password memory can be locked");
+        password.push_str(text) && authenticate_with(user, &password, config)
+    }
     #[test]
     fn pam_requires_authentication_and_account_permission() {
         let directory = tempfile::tempdir().unwrap();
@@ -226,16 +227,16 @@ mod tests {
                 format!("auth required pam_{auth}.so\naccount required pam_{account}.so\n"),
             )
             .unwrap();
-            assert_eq!(authenticate_with("test", "test-only", Some(&path)), allowed);
+            assert_eq!(authenticate_test("test", "test-only", Some(&path)), allowed);
         }
-        assert!(!authenticate_with("test", "", Some(&path)));
-        assert!(!authenticate_with("test", "bad\0value", Some(&path)));
+        assert!(!authenticate_test("test", "", Some(&path)));
+        assert!(!authenticate_test("test", "bad\0value", Some(&path)));
     }
     #[test]
     fn conversation_rejects_multiple_secret_prompts_and_unknown_styles() {
         let mut credentials = Credentials {
             user: CString::new("tester").unwrap(),
-            password: Zeroizing::new(b"test-only\0".to_vec()),
+            password: b"test-only\0",
             password_prompts: 0,
         };
         let first = Message {

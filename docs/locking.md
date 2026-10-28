@@ -15,7 +15,8 @@ ferese-lock --foreground   # stay attached until unlock
 Do not enter your real password in a preview. The account picture comes from
 AccountsService or `~/.face`; a silhouette is used when neither is available.
 
-Press Escape to clear the password. The authentication status also shows whether
+Press Escape or Ctrl+U to clear the password, or Backspace to remove the last character.
+Partial input clears after ten seconds without typing. The authentication status also shows whether
 Caps Lock is on. A failed attempt displays an error and delays the next retry.
 Authentication uses the system's PAM policy; both password and account validation must succeed.
 
@@ -51,8 +52,7 @@ lock-screen {
 ```
 
 Both delays start when the session locks, separately from the automatic-lock timer.
-Display sleep does not suspend the computer. A nested preview shows black
-instead of powering off the host display.
+Display sleep does not suspend the computer.
 
 ## Recovery and limits
 
@@ -62,19 +62,31 @@ locker to take over. A running locker cannot be replaced. To recover, launch
 `ferese-lock` with the affected session's Wayland environment. You can also end the
 session from another TTY; see [Recovery](installation.md#logout-and-recovery).
 
-The locker reports readiness only after protocol confirmation. At that point,
-every connected output has presented protected content, or there are no outputs.
-The pinned Iced runtime also emits a synthetic `Locked` event when it sends the
-request. The locker keeps a two-event guard until upstream separates that event
-from protocol confirmation. Dependency upgrades must re-audit this workaround.
+The native DRM backend reports readiness after every connected output has presented
+protected content, or immediately when there are no outputs. The locker accepts the
+runtime's real `Locked` event; sending a lock request is not confirmation. It starts
+with an opaque fallback and loads the wallpaper and account picture after confirmation,
+so a slow image cannot delay the lock request. A refused or interrupted foreground
+lock exits with an error.
 
-Password messages use zeroizing storage. Avatar files are limited to 8 MiB,
-4096 pixels per dimension, and a 32 MiB decoding budget. The clock updates at
-minute boundaries; authentication retry deadlines are independent.
+Nested Ferese sessions do not advertise session locking because their backend cannot
+verify when the host presents a submitted frame. Use `ferese-lock --preview` to inspect
+the UI, and lock the host session for protection.
 
-When restricted clients are introduced, their registry must omit
-`ext_session_lock_manager_v1`. This restriction is deferred until that client
-classification exists.
+Restricted Wayland clients cannot discover or bind `ext_session_lock_manager_v1`,
+including after a locker crash. Recovery requires an unrestricted desktop client.
+
+The password buffer occupies a fixed, locked memory mapping that is excluded from
+core dumps and wiped before release. The authentication worker takes ownership of that
+mapping, while the text widget receives only bullets. Short-lived toolkit keyboard
+events and PAM-owned responses still sit outside this buffer's memory guarantees;
+this does not provide end-to-end protection for every copy made by those dependencies.
+Keyboard traces omit keycodes, keysyms and modifier contents, even at TRACE level.
+
+Avatar files are limited to 8 MiB, 4096 pixels per dimension and a 32 MiB decoding
+budget. Wallpapers must be regular files no larger than 32 MiB and are decoded on a
+worker before they reach the UI. The clock updates at minute boundaries, independently
+of authentication and password-clearing deadlines.
 
 The password interface does not support password changes or interactive
 multi-factor prompts. Update expired credentials outside the locker.
