@@ -208,6 +208,39 @@ suspended, and unplug/reconnect the managed GPU where supported. Verify current
 output geometry, idle notifications, recovery after failures and continued lock
 protection. Nested sessions do not validate DRM reacquisition.
 
+## Performance measurements
+
+Set `FERESE_TRACE_PERFORMANCE=1` when starting a test compositor to enable render
+summaries. `average_render_us` covers all damaged render attempts in the report
+interval. The p95/p99 values cover only the latest `percentile_samples` frames,
+bounded by `percentile_sample_limit` (512), within that interval. At 240 rendered
+frames per second, a full sample buffer spans about 2.13 seconds. No-damage
+attempts are counted separately.
+
+The render timer starts inside output rendering. It excludes earlier input and
+layout work, asynchronous capture completion, GPU execution after submission,
+and the wait until physical presentation. Measure those separately before using
+render summaries to assess input latency, total CPU cost, or GPU cost.
+
+Use release builds and record the source revision, GPU, driver, kernel, output
+modes, scales and effects. Useful correctness checks include:
+
+```sh
+cargo test --locked -p ferese state::layout::locality_tests
+cargo test --locked -p ferese-shell launcher
+cargo test --locked -p ferese-shell control::wake_tests
+LIBGL_ALWAYS_SOFTWARE=1 EGL_PLATFORM=surfaceless cargo test --locked -p ferese backends::direct::mirror -- --include-ignored
+LIBGL_ALWAYS_SOFTWARE=1 EGL_PLATFORM=surfaceless cargo test --locked -p ferese translated_material_reuses -- --include-ignored
+```
+
+The synthetic redraw, layout-visit and offscreen pixel tests establish behavior;
+they do not establish smoothness or latency on a physical display. Hardware
+measurements should include idle and multi-output workloads, launcher motion at
+60/144/240 Hz, tiled resizing as unrelated window counts grow, fixed-size blurred
+surface movement, cursor-only mirror updates, and 1080p/4K capture through both
+DMA-BUF and forced SHM. Include input/layout and capture-completion durations,
+texture allocations, damaged pixels, CPU/GPU time, and presentation timestamps.
+
 ## Capture and DRM failure checks
 
 The compositor tests cover screenshot admission across requests, cancellation

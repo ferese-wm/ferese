@@ -4,6 +4,7 @@ use std::time::{Duration, Instant};
 use smithay::utils::{Physical, Rectangle};
 
 const REPORT_INTERVAL: Duration = Duration::from_secs(5);
+const MAX_FRAME_SAMPLES: usize = 512;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct FrameEffectMetrics;
@@ -77,7 +78,7 @@ impl RenderMetrics {
         self.damaged_pixels += damage.iter().map(rectangle_area).sum::<u64>();
         self.total_render_time += render_time;
         self.longest_render_time = self.longest_render_time.max(render_time);
-        if self.frame_times.len() == 512 {
+        if self.frame_times.len() == MAX_FRAME_SAMPLES {
             self.frame_times.pop_front();
         }
         self.frame_times.push_back(render_time);
@@ -137,6 +138,8 @@ impl RenderMetrics {
             damaged_pixels = self.damaged_pixels,
             average_render_us,
             longest_render_us = self.longest_render_time.as_micros(),
+            percentile_samples = self.frame_times.len(),
+            percentile_sample_limit = MAX_FRAME_SAMPLES,
             p95_render_us = percentile(95),
             p99_render_us = percentile(99),
             missed_deadlines,

@@ -192,6 +192,22 @@ bookkeeping, wallpaper storage, or the recording application's encoder. The
 existing per-image and session-count limits also apply. GPU fences remain
 asynchronous; slow consumers do not accumulate a queue of rendered frames.
 
+The reservation is `align_up(width × 4, 4096) × height × 10` bytes per session.
+At common native sizes, the aggregate limit admits at most:
+
+| Native size | Reserved per session | Equal-sized sessions |
+| --- | ---: | ---: |
+| 1920 × 1080 | 84.375 MiB | 6 |
+| 2560 × 1440 | 168.75 MiB | 3 |
+| 3840 × 2160 | 337.5 MiB | 1 |
+| 5120 × 2880 | 562.5 MiB | 0 |
+
+These are admission reservations, not measured memory use. Other active streams
+consume the same budget, and per-image limits still apply. If a native source
+exceeds the available budget, choose High (1440p) or Balanced (1080p) workspace
+quality, share a smaller window, or stop another capture. Frame-rate changes do
+not reduce this pixel-storage reservation.
+
 ## Troubleshooting
 
 - Confirm PipeWire and WirePlumber are running.
