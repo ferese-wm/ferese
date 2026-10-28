@@ -364,6 +364,7 @@ pub(super) fn material_element_with_role(
     })?;
     let capture_key = (context.clone(), output_id, index);
     let buffers = state.render.surfaces.entry(surface.clone()).or_default();
+    let mut sampling_changed = false;
     let capture = if let Some(blur_program) = blur_program {
         if buffers
             .captures
@@ -403,6 +404,7 @@ pub(super) fn material_element_with_role(
         if let Some(capture) = buffers.captures.get_mut(&capture_key)
             && (capture.geometry != sample_geometry || capture.transform != transform)
         {
+            sampling_changed = true;
             // Translation and output rotation change the sampled pixels even
             // when the framebuffer rectangle and storage dimensions match.
             capture.geometry = sample_geometry;
@@ -469,7 +471,7 @@ pub(super) fn material_element_with_role(
     if replace {
         cached.element = make_element();
     }
-    if cached.parameters != parameters {
+    if cached.parameters != parameters || sampling_changed {
         if cached.parameters.shadow_rect != parameters.shadow_rect
             || cached.parameters.shadow_values != parameters.shadow_values
             || cached.parameters.shadow_bounds != parameters.shadow_bounds

@@ -13,6 +13,7 @@ use smithay::backend::renderer::gles::GlesTexture;
 use smithay::backend::renderer::utils::CommitCounter;
 
 use ferese_layout::WindowId;
+use smithay::reexports::wayland_server::Resource;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 
 use super::{
@@ -30,6 +31,54 @@ pub(crate) struct RenderResources {
     pub(super) contexts: HashMap<ErasedContextId, ContextPrograms>,
     pub(super) outputs: HashMap<OutputId, OverviewScrim>,
     pub(super) surfaces: HashMap<WlSurface, MaterialBuffers>,
+}
+
+/// Framebuffer samples belong to their scene, including normalized mirrors.
+/// Keep presentation snapshots and closing windows in the shared render state.
+#[derive(Default)]
+pub(crate) struct MaterialResources {
+    surfaces: HashMap<WlSurface, MaterialBuffers>,
+}
+
+impl MaterialResources {
+    pub(crate) fn with_scene<T>(
+        &mut self,
+        state: &mut crate::Ferese,
+        output: &smithay::output::Output,
+        context: ErasedContextId,
+        build: impl FnOnce(&mut crate::Ferese) -> T,
+    ) -> T {
+        let output = state.output_id(output);
+        let closing = state
+            .render
+            .closing
+            .iter()
+            .filter_map(|window| {
+                window
+                    .material
+                    .as_ref()
+                    .map(|(surface, ..)| surface.clone())
+            })
+            .collect::<std::collections::HashSet<_>>();
+        self.surfaces.retain(|surface, buffers| {
+            if !surface.is_alive() && !closing.contains(surface) {
+                return false;
+            }
+            // A mirror can be reassigned without retaining resources for its
+            // previous source or an output that has since been disconnected.
+            buffers
+                .contexts
+                .retain(|(owner, id, _), _| *owner == context && Some(*id) == output);
+            buffers
+                .captures
+                .retain(|(owner, id, _), _| *owner == context && Some(*id) == output);
+            !buffers.contexts.is_empty()
+        });
+        std::mem::swap(&mut state.render.surfaces, &mut self.surfaces);
+        let result = build(state);
+        std::mem::swap(&mut state.render.surfaces, &mut self.surfaces);
+        result
+    }
 }
 
 #[derive(Default)]

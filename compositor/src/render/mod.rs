@@ -11,6 +11,8 @@ mod blur_tests;
 mod corner_tests;
 mod decorations;
 mod materials;
+#[cfg(test)]
+mod mirror_material_tests;
 mod overview;
 mod resources;
 mod scene;
@@ -39,7 +41,7 @@ use materials::{
     material_program, material_program_for_corners,
 };
 use overview::{overview_chrome_element, overview_strip_elements};
-pub(crate) use resources::RenderResources;
+pub(crate) use resources::{MaterialResources, RenderResources};
 use scene::cursor_elements;
 pub(crate) use scene::{
     capture_output_elements, capture_workspace_elements, frame_effect_metrics, layer_surfaces,

@@ -9,8 +9,8 @@ use super::{
     DirectOutput, Ferese, GlesRenderer, Output, OutputMode, PhysicalProperties, Subpixel,
     Transform, capture, sampled_output_elements,
 };
-use smithay::backend::renderer::Texture;
 use smithay::backend::renderer::damage::Error as DamageError;
+use smithay::backend::renderer::{Renderer, Texture};
 use smithay::utils::{Physical, Rectangle};
 
 #[cfg(test)]
@@ -39,7 +39,12 @@ pub(super) fn elements(
     Vec<crate::render::AnimatedWindowRenderElement>,
     DamageError<smithay::backend::renderer::gles::GlesError>,
 > {
-    let elements = sampled_output_elements(state, renderer, source, true, frame);
+    let elements = target.mirror_materials.with_scene(
+        state,
+        source,
+        renderer.context_id().erased(),
+        |state| sampled_output_elements(state, renderer, source, true, frame),
+    );
     // Target renderer owns this texture, including when source and target use different GPUs.
     let canvas = target.mirror_canvas.get_or_insert_with(|| {
         Output::new(
