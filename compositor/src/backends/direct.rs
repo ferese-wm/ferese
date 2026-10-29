@@ -57,14 +57,15 @@ use smithay::output::{
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 use smithay::reexports::calloop::{EventLoop, RegistrationToken};
 use smithay::reexports::drm::control::{
-    Device as ControlDevice, Mode as DrmMode, ModeTypeFlags, connector, crtc, property,
+    Device as ControlDevice, Mode as DrmMode, ModeTypeFlags, ResourceHandles, connector, crtc,
+    property,
 };
 use smithay::reexports::input::{Device as LibinputDevice, Libinput};
 use smithay::reexports::wayland_server::backend::GlobalId;
 use smithay::utils::{Monotonic, Time, Transform};
 use smithay::wayland::dmabuf::DmabufFeedbackBuilder;
 use smithay::wayland::presentation::Refresh;
-use topology::{Topology, reconcile_outputs};
+use topology::{ReconcileReason, Topology, reconcile_outputs};
 
 use crate::Ferese;
 use crate::config::{OutputModeRequest, OutputProfile, OutputSettings, OutputTransform};
@@ -290,7 +291,54 @@ type OutputCompositor = DrmCompositor<
     DrmDeviceFd,
 >;
 
+// A successful probe replaces the complete inventory. Failed probes retain the
+// previous snapshot, including disconnected heads, until discovery recovers.
+struct ConnectorInventory {
+    resources: ResourceHandles,
+    connectors: Vec<DetectedConnector>,
+}
+
+struct DetectedConnector {
+    info: connector::Info,
+    desktop: bool,
+    edid: Option<Vec<u8>>,
+    adaptive_sync_supported: bool,
+}
+
+fn refresh_connector_inventory(device: &mut DirectDevice) -> io::Result<()> {
+    let drm = &device.drm;
+    let resources = drm.resource_handles()?;
+    let connectors = resources
+        .connectors()
+        .iter()
+        .map(|handle| {
+            let info = drm.get_connector(*handle, true)?;
+            let connected = info.state() == connector::State::Connected;
+            let desktop = connected && !leasing::non_desktop(drm, &info)?;
+            let edid = if connected {
+                connector_edid(drm, &info)
+            } else {
+                None
+            };
+            let adaptive_sync_supported =
+                desktop && presentation_mode::connector_capable(drm, &info)?;
+            Ok(DetectedConnector {
+                info,
+                desktop,
+                edid,
+                adaptive_sync_supported,
+            })
+        })
+        .collect::<io::Result<Vec<_>>>()?;
+    device.inventory = Some(ConnectorInventory {
+        resources,
+        connectors,
+    });
+    Ok(())
+}
+
 struct DirectDevice {
+    inventory: Option<ConnectorInventory>,
     active_leases: Vec<smithay::wayland::drm_lease::DrmLease>,
     notifier: RegistrationToken,
     dmabuf_global: smithay::wayland::dmabuf::DmabufGlobal,
@@ -704,7 +752,7 @@ pub(crate) fn reload_outputs(state: &mut Ferese, layout_dirty: bool) {
     if let Some(backend) = state.direct_backend.as_mut() {
         backend.topology.layout_dirty |= layout_dirty;
     }
-    reconcile_outputs(state, false);
+    reconcile_outputs(state, ReconcileReason::Configuration);
 }
 
 pub(crate) fn set_output_profile(state: &mut Ferese, name: &str) -> Result<(), String> {
@@ -747,7 +795,7 @@ pub(crate) fn set_output_profile(state: &mut Ferese, name: &str) -> Result<(), S
             .manual_outputs = previous;
         return Err(error);
     }
-    reconcile_outputs(state, false);
+    reconcile_outputs(state, ReconcileReason::Configuration);
     if let Some(error) = state
         .direct_backend
         .as_ref()
@@ -824,7 +872,7 @@ pub(crate) fn set_output_layout(
             .manual_outputs = previous;
         return Err(error);
     }
-    reconcile_outputs(state, false);
+    reconcile_outputs(state, ReconcileReason::Configuration);
     if let Some(error) = state
         .direct_backend
         .as_ref()
@@ -865,7 +913,7 @@ pub(crate) fn set_internal_output(state: &mut Ferese, enabled: bool) -> Result<(
     backend.manual_outputs.internal = Some(enabled);
     backend.manual_outputs.configuration = None;
     backend.manual_outputs.layout = None;
-    reconcile_outputs(state, false);
+    reconcile_outputs(state, ReconcileReason::Configuration);
     if let Some(error) = state
         .direct_backend
         .as_ref()
@@ -961,7 +1009,7 @@ pub(crate) fn confirm_output_configuration(
             &backend.monitors,
         ));
         backend.manual_outputs = manual;
-        reconcile_outputs(state, false);
+        reconcile_outputs(state, ReconcileReason::Configuration);
         if let Some(error) = state
             .direct_backend
             .as_ref()
@@ -1010,7 +1058,7 @@ pub(crate) fn validate_live_outputs(
         &backend.manual_outputs,
     );
     resolve_output_positions(backend, &mut desired)?;
-    let usable = validate_output_configuration(backend, &desired)?;
+    let usable = validate_output_configuration(backend, &desired, &[])?;
     if usable == 0 {
         return Err("display configuration would leave no usable output".into());
     }
@@ -1237,6 +1285,7 @@ fn open_device(state: &mut Ferese, path: &Path) -> Result<DrmNode, Box<dyn Error
         .insert(
             node,
             DirectDevice {
+                inventory: None,
                 active_leases: Vec::new(),
                 _session_device: session_device,
                 drm,
@@ -1533,7 +1582,7 @@ pub(crate) fn set_lid_closed(state: &mut Ferese, closed: bool) {
     // Even an unchanged switch observation supersedes an in-flight DBus read.
     if backend.lid.observe(closed) {
         tracing::info!(closed, "laptop lid state changed");
-        reconcile_outputs(state, false);
+        reconcile_outputs(state, ReconcileReason::Configuration);
     }
 }
 
@@ -1958,18 +2007,20 @@ fn rescan_device(state: &mut Ferese, node: DrmNode) -> Result<bool, ()> {
     Ok(result.is_ok())
 }
 
-fn refresh_connected_info(state: &mut Ferese) {
+fn refresh_connected_info(state: &mut Ferese, deferred: &[DrmNode]) {
     let backend = state
         .direct_backend
         .as_mut()
         .expect("DRM callbacks require an installed direct backend");
-    for device in backend.devices.values_mut() {
-        if let Ok(scan) = select_outputs(
-            device,
-            &backend.monitors,
-            &backend.desired_outputs,
-            backend.low_power,
-        ) {
+    for (node, device) in &mut backend.devices {
+        if !deferred.contains(node)
+            && let Ok(scan) = select_outputs(
+                device,
+                &backend.monitors,
+                &backend.desired_outputs,
+                backend.low_power,
+            )
+        {
             device.connected_outputs = scan.connected_outputs;
         }
         transaction::update_applied_info(device);
@@ -2045,22 +2096,31 @@ fn remember_applied_configuration(state: &mut Ferese) {
     backend.applied_outputs = applied;
 }
 
-fn validate_desired_outputs(state: &Ferese) -> Result<(), String> {
+fn validate_desired_outputs(state: &Ferese, deferred: &[DrmNode]) -> Result<(), String> {
     let backend = state
         .direct_backend
         .as_ref()
         .ok_or("direct backend unavailable")?;
-    validate_output_configuration(backend, &backend.desired_outputs).map(|_| ())
+    validate_output_configuration(backend, &backend.desired_outputs, deferred).map(|_| ())
 }
 
+/// Only background recovery may defer known devices. Interactive callers pass
+/// an empty slice so every requested output and hardware test remains required.
 fn validate_output_configuration(
     backend: &DirectBackendState,
     desired: &DesiredOutputConfiguration,
+    deferred: &[DrmNode],
 ) -> Result<usize, String> {
+    let deferred_keys = deferred
+        .iter()
+        .filter_map(|node| backend.devices.get(node))
+        .map(|device| format!("{}/", drm_device_key(&device.drm)))
+        .collect::<Vec<_>>();
     let scans = backend
         .devices
-        .values()
-        .map(|device| {
+        .iter()
+        .filter(|(node, _)| !deferred.contains(node))
+        .map(|(_, device)| {
             select_outputs(device, &backend.monitors, desired, backend.low_power)
                 .map(|scan| (device, scan))
                 .map_err(|error| error.to_string())
@@ -2075,7 +2135,7 @@ fn validate_output_configuration(
                 .map(move |selection| format!("{device_key}/{}", selection.connector))
         })
         .collect::<Vec<_>>();
-    validate_output_plan(desired, &selected, || {
+    validate_output_plan(desired, &selected, &deferred_keys, || {
         for (device, scan) in &scans {
             transaction::validate_device(device, scan).map_err(|error| error.to_string())?;
         }
@@ -2089,9 +2149,16 @@ fn validate_output_configuration(
 fn validate_output_plan(
     desired: &DesiredOutputConfiguration,
     selected: &[String],
+    deferred: &[String],
     test_hardware: impl FnOnce() -> Result<(), String>,
 ) -> Result<(), String> {
-    validate_selected_outputs(&desired.outputs, selected)?;
+    validate_selected_outputs(
+        desired
+            .outputs
+            .iter()
+            .filter(|output| !deferred.iter().any(|prefix| output.key.starts_with(prefix))),
+        selected,
+    )?;
     test_hardware()
 }
 
@@ -2486,25 +2553,23 @@ fn select_outputs(
     low_power: bool,
 ) -> io::Result<OutputScan> {
     let drm = &device.drm;
-    let resources = drm.resource_handles()?;
-    let connected = resources
-        .connectors()
-        .iter()
-        .map(|handle| drm.get_connector(*handle, true))
-        .collect::<io::Result<Vec<_>>>()?
-        .into_iter()
-        .filter(|connector| connector.state() == connector::State::Connected)
-        .collect::<Vec<_>>();
+    let inventory = device
+        .inventory
+        .as_ref()
+        .ok_or_else(|| io::Error::other("connector inventory is unavailable"))?;
+    let resources = &inventory.resources;
     let device_key = drm_device_key(drm);
     let mut selections = Vec::new();
     let mut connected_outputs = Vec::new();
     let mut candidates = Vec::new();
     let mut requests = Vec::new();
 
-    for connector in connected {
-        if leasing::non_desktop(drm, &connector)? {
-            continue;
-        }
+    for detected in inventory
+        .connectors
+        .iter()
+        .filter(|connector| connector.desktop)
+    {
+        let connector = detected.info.clone();
         let key = format!("{device_key}/{}", connector);
         let monitor = monitors
             .iter()
@@ -2575,7 +2640,7 @@ fn select_outputs(
             profile: desired.profile.clone(),
             requested_profile: desired.profile.clone(),
             auto_refresh: settings.auto_refresh,
-            adaptive_sync_supported: presentation_mode::connector_capable(drm, &connector)?,
+            adaptive_sync_supported: detected.adaptive_sync_supported,
             adaptive_sync_requested: settings.adaptive_sync,
             adaptive_sync_enabled: false,
             tearing_supported: presentation_mode::tearing_capable(drm),
@@ -3001,22 +3066,18 @@ fn refresh_monitor_policy(state: &mut Ferese) -> Result<(), String> {
     for device in backend.devices.values() {
         let drm = &device.drm;
         let key = drm_device_key(drm);
-        for handle in drm
-            .resource_handles()
-            .map_err(|error| error.to_string())?
-            .connectors()
-        {
-            let connector = drm
-                .get_connector(*handle, true)
-                .map_err(|error| error.to_string())?;
-            if connector.state() != connector::State::Connected {
-                continue;
+        if let Some(inventory) = &device.inventory {
+            for detected in inventory
+                .connectors
+                .iter()
+                .filter(|connector| connector.desktop)
+            {
+                discovered.push((
+                    format!("{key}/{}", detected.info),
+                    detected.info.clone(),
+                    detected.edid.clone(),
+                ));
             }
-            if leasing::non_desktop(drm, &connector).map_err(|error| error.to_string())? {
-                continue;
-            }
-            let edid = connector_edid(drm, &connector);
-            discovered.push((format!("{key}/{}", connector), connector, edid));
         }
     }
     discovered.sort_by(|a, b| a.0.cmp(&b.0));
@@ -3197,16 +3258,39 @@ mod tests {
     }
 
     #[test]
+    fn deferred_gpu_does_not_block_due_retries_or_hide_other_missing_outputs() {
+        let mut desired = three_monitor_plan(crate::config::OutputLayout::Extend);
+        desired.outputs[0].key = "gpu-one/A".into();
+        desired.outputs[1].key = "gpu-two/B".into();
+        desired.outputs[2].key = "gpu-two/C".into();
+        let selected = ["gpu-one/A".into()];
+        let deferred = ["gpu-two/".into()];
+        assert!(validate_output_plan(&desired, &selected, &deferred, || Ok(())).is_ok());
+        assert_eq!(
+            validate_output_plan(&desired, &selected, &deferred, || Err(
+                "KMS test failed".into()
+            )),
+            Err("KMS test failed".into())
+        );
+        assert!(validate_output_plan(&desired, &[], &deferred, || Ok(())).is_err());
+        assert!(validate_output_plan(&desired, &selected, &[], || Ok(())).is_err());
+        desired.outputs[2].key = "gpu-other/C".into();
+        assert!(
+            validate_output_plan(&desired, &selected, &deferred, || Ok(()))
+                .unwrap_err()
+                .contains("gpu-other/C")
+        );
+    }
+
+    #[test]
     fn complete_live_plan_still_requires_hardware_success() {
         let desired = three_monitor_plan(crate::config::OutputLayout::Extend);
         let selected = vec!["A".into(), "B".into(), "C".into()];
-        assert!(validate_output_plan(&desired, &selected, || Ok(())).is_ok());
+        assert!(validate_output_plan(&desired, &selected, &[], || Ok(())).is_ok());
         assert_eq!(
-            validate_output_plan(
-                &desired,
-                &selected,
-                || Err("atomic TEST_ONLY failed".into())
-            ),
+            validate_output_plan(&desired, &selected, &[], || Err(
+                "atomic TEST_ONLY failed".into()
+            )),
             Err("atomic TEST_ONLY failed".into())
         );
     }
@@ -3216,10 +3300,10 @@ mod tests {
         let mut desired = three_monitor_plan(crate::config::OutputLayout::Extend);
         desired.outputs[2].settings.required = false;
         let error =
-            validate_output_plan(&desired, &["A".into(), "B".into()], || Ok(())).unwrap_err();
+            validate_output_plan(&desired, &["A".into(), "B".into()], &[], || Ok(())).unwrap_err();
         assert!(error.contains("C"));
         desired.outputs[2].settings.enabled = false;
-        assert!(validate_output_plan(&desired, &["A".into(), "B".into()], || Ok(())).is_ok());
+        assert!(validate_output_plan(&desired, &["A".into(), "B".into()], &[], || Ok(())).is_ok());
     }
 
     #[test]
@@ -3256,7 +3340,9 @@ mod tests {
                 if required { None } else { Some("dock") }
             );
             assert_eq!(desired.outputs.len(), 2);
-            assert!(validate_output_plan(&desired, &["A".into(), "B".into()], || Ok(())).is_ok());
+            assert!(
+                validate_output_plan(&desired, &["A".into(), "B".into()], &[], || Ok(())).is_ok()
+            );
         }
     }
 
@@ -3267,7 +3353,7 @@ mod tests {
         desired.outputs[1].key = "gpu-two/B".into();
         desired.outputs[2].key = "gpu-two/C".into();
         let selected = vec!["gpu-one/A".into(), "gpu-two/B".into(), "gpu-one/C".into()];
-        assert!(validate_output_plan(&desired, &selected, || Ok(())).is_err());
+        assert!(validate_output_plan(&desired, &selected, &[], || Ok(())).is_err());
         // A device-local rescan checks only its own enabled outputs.
         assert!(
             validate_selected_outputs(
@@ -3299,7 +3385,7 @@ mod tests {
             .filter(|(_, assignment)| assignment.is_some())
             .map(|(output, _)| output.key.clone())
             .collect::<Vec<_>>();
-        assert!(validate_output_plan(&desired, &selected, || Ok(())).is_err());
+        assert!(validate_output_plan(&desired, &selected, &[], || Ok(())).is_err());
     }
 
     #[test]
@@ -3322,7 +3408,7 @@ mod tests {
             .map(|(output, _)| output.key.clone())
             .collect::<Vec<_>>();
         assert_eq!(selected.len(), 3);
-        assert!(validate_output_plan(&desired, &selected, || Ok(())).is_ok());
+        assert!(validate_output_plan(&desired, &selected, &[], || Ok(())).is_ok());
     }
 
     #[test]
@@ -3339,7 +3425,7 @@ mod tests {
                     .map(String::from)
                     .collect::<Vec<_>>();
                 let probed = std::cell::Cell::new(false);
-                let result = validate_output_plan(&desired, &selected, || {
+                let result = validate_output_plan(&desired, &selected, &[], || {
                     probed.set(true);
                     Ok(()) // A driver can accept the incomplete two-output request.
                 });

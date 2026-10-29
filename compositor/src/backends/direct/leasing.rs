@@ -100,20 +100,23 @@ fn routes(
 }
 
 fn inventory(device: &DirectDevice) -> io::Result<Vec<connector::Info>> {
-    let drm = &device.drm;
-    let mut connectors = Vec::new();
-    for handle in drm.resource_handles()?.connectors() {
-        let info = drm.get_connector(*handle, true)?;
-        if info.state() == connector::State::Connected
-            && non_desktop(drm, &info)?
-            && !device
-                .outputs
-                .values()
-                .any(|output| output.connector == info.handle())
-        {
-            connectors.push(info);
-        }
-    }
+    let inventory = device
+        .inventory
+        .as_ref()
+        .ok_or_else(|| io::Error::other("connector inventory is unavailable"))?;
+    let mut connectors = inventory
+        .connectors
+        .iter()
+        .filter(|connector| {
+            connector.info.state() == connector::State::Connected
+                && !connector.desktop
+                && !device
+                    .outputs
+                    .values()
+                    .any(|output| output.connector == connector.info.handle())
+        })
+        .map(|connector| connector.info.clone())
+        .collect::<Vec<_>>();
     connectors.sort_by_key(|connector| u32::from(connector.handle()));
     Ok(connectors)
 }
@@ -129,6 +132,9 @@ pub(super) fn prune(state: &mut Ferese) {
         return;
     };
     for (node, device) in &mut backend.devices {
+        if !device.drm.is_active() {
+            continue;
+        }
         let Some(entry) = backend
             .leasing
             .devices
@@ -179,6 +185,13 @@ pub(super) fn refresh(state: &mut Ferese) {
         return;
     }
     for (node, device) in &mut backend.devices {
+        if !device.drm.is_active() {
+            if let Some(entry) = backend.leasing.devices.get_mut(node) {
+                entry.protocol.suspend();
+                entry.suspended = true;
+            }
+            continue;
+        }
         let connectors = match inventory(device) {
             Ok(connectors) => connectors,
             Err(error) => {
@@ -372,6 +385,7 @@ impl DrmLeaseHandler for Ferese {
         let device = backend
             .devices
             .get(&node)
+            .filter(|device| device.drm.is_active())
             .ok_or_else(LeaseRejected::default)?;
         let mut unique = HashSet::new();
         let mut connectors = Vec::new();

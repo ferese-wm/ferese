@@ -239,7 +239,12 @@ fn complete_refresh(state: &mut Ferese, probe: Probe, value: Option<bool>) {
             .reconciling = false;
     }
 
-    reconcile_outputs(state, reactivate);
+    let reason = if reactivate {
+        super::ReconcileReason::Resume
+    } else {
+        super::ReconcileReason::Configuration
+    };
+    reconcile_outputs(state, reason);
 }
 
 /// Only logind requests suspend. Inactive events wait for fresh resume topology.

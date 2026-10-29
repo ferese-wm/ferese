@@ -119,7 +119,7 @@ pub(super) fn reconcile_device(state: &mut Ferese, node: DrmNode) {
         match state
             .loop_handle
             .insert_source(Timer::immediate(), |_, _, state| {
-                reconcile_outputs(state, false);
+                reconcile_outputs(state, super::ReconcileReason::Hotplug);
                 TimeoutAction::Drop
             }) {
             Ok(_) => (),

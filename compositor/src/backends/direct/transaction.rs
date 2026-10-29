@@ -673,10 +673,14 @@ pub(super) fn retire_disconnected(state: &mut Ferese) {
         .flat_map(|(node, device)| {
             device.outputs.iter().filter_map(|(crtc, output)| {
                 device
-                    .drm
-                    .get_connector(output.connector, true)
-                    .ok()
-                    .filter(|connector| connector.state() != connector::State::Connected)
+                    .inventory
+                    .as_ref()
+                    .filter(|inventory| {
+                        !inventory.connectors.iter().any(|connector| {
+                            connector.info.handle() == output.connector
+                                && connector.info.state() == connector::State::Connected
+                        })
+                    })
                     .map(|_| (*node, *crtc))
             })
         })
@@ -700,7 +704,7 @@ pub(super) fn retire_disconnected(state: &mut Ferese) {
 
 /// If initial activation or rollback leaves no usable desktop, try a preferred
 /// mode on each physical monitor independently. Never disable a surviving output.
-pub(super) fn recover_last_output(state: &mut Ferese) {
+pub(super) fn recover_last_output(state: &mut Ferese, deferred: &[DrmNode]) {
     if state
         .direct_backend
         .as_ref()
@@ -754,14 +758,15 @@ pub(super) fn recover_last_output(state: &mut Ferese) {
         let nodes = backend
             .devices
             .iter()
-            .filter(|(_, device)| {
-                candidate
-                    .key
-                    .starts_with(&format!("{}/", drm_device_key(&device.drm)))
+            .filter(|(node, device)| {
+                !deferred.contains(node)
+                    && candidate
+                        .key
+                        .starts_with(&format!("{}/", drm_device_key(&device.drm)))
             })
             .map(|(node, _)| *node)
             .collect::<Vec<_>>();
-        if validate_desired_outputs(state).is_ok() {
+        if validate_desired_outputs(state, deferred).is_ok() {
             for node in nodes {
                 let _ = rescan_device(state, node);
             }

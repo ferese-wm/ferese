@@ -49,7 +49,7 @@ pub(crate) fn configure_outputs(
         suspend: false,
     };
     super::resolve_output_positions(backend, &mut desired)?;
-    if super::validate_output_configuration(backend, &desired)? == 0 {
+    if super::validate_output_configuration(backend, &desired, &[])? == 0 {
         return Err("configuration would disable every usable output".into());
     }
     if test_only {
@@ -65,7 +65,7 @@ pub(crate) fn configure_outputs(
     backend.manual_outputs.profile = None;
     backend.manual_outputs.internal = None;
     backend.manual_outputs.layout = None;
-    super::reconcile_outputs(state, false);
+    super::reconcile_outputs(state, super::ReconcileReason::Configuration);
     let backend = state
         .direct_backend
         .as_mut()
@@ -73,7 +73,7 @@ pub(crate) fn configure_outputs(
     if let Some(error) = backend.output_error.clone() {
         backend.manual_outputs = previous;
         backend.revert_outputs = Some(known_good);
-        super::reconcile_outputs(state, false);
+        super::reconcile_outputs(state, super::ReconcileReason::Configuration);
         return Err(error);
     }
     // A pending native confirmation must not later undo a successful request.

@@ -1,4 +1,5 @@
 //! Desired device identities survive temporary loss of their DRM resources.
+use std::io;
 use std::path::PathBuf;
 
 use super::{
@@ -20,8 +21,7 @@ pub(super) enum Availability<Node = DrmNode> {
 pub(super) struct DeviceState<Node = DrmNode> {
     pub availability: Availability<Node>,
     identity: Option<PathBuf>,
-    failures: u32,
-    retry_at: Option<Instant>,
+    retry: Retry,
 }
 
 impl<Node> Default for DeviceState<Node> {
@@ -29,10 +29,42 @@ impl<Node> Default for DeviceState<Node> {
         Self {
             availability: Availability::Missing,
             identity: None,
-            failures: 0,
-            retry_at: None,
+            retry: Retry::default(),
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ReconcileReason {
+    Configuration,
+    Hotplug,
+    Resume,
+    Retry,
+}
+
+#[derive(Default)]
+struct Retry {
+    failures: u32,
+    deadline: Option<Instant>,
+}
+
+impl Retry {
+    fn failed(&mut self, now: Instant) {
+        self.failures = self.failures.saturating_add(1);
+        self.deadline =
+            Some(now + Duration::from_secs(1u64 << self.failures.saturating_sub(1).min(5)));
+    }
+
+    fn due(&self, now: Instant) -> bool {
+        self.deadline.is_none_or(|deadline| deadline <= now)
+    }
+}
+
+type ObservedDevice = (PathBuf, Option<PathBuf>);
+
+struct DeviceWork<Node> {
+    paths: Vec<PathBuf>,
+    deferred: Vec<Node>,
 }
 
 pub(super) fn device_identity(path: &Path) -> Option<PathBuf> {
@@ -49,7 +81,7 @@ impl<Node> DeviceState<Node> {
     fn current_path<'a>(
         &self,
         original: &Path,
-        observed: &'a [(PathBuf, Option<PathBuf>)],
+        observed: &'a [ObservedDevice],
     ) -> Option<&'a Path> {
         observed
             .iter()
@@ -62,21 +94,17 @@ impl<Node> DeviceState<Node> {
 
     pub fn failed(&mut self, now: Instant) {
         self.availability = Availability::Unavailable;
-        self.failures = self.failures.saturating_add(1);
-        self.retry_at =
-            Some(now + Duration::from_secs(1u64 << self.failures.saturating_sub(1).min(5)));
+        self.retry.failed(now);
     }
 
     pub fn ready(&mut self, node: Node) {
         self.availability = Availability::Ready(node);
-        self.failures = 0;
-        self.retry_at = None;
+        self.retry = Retry::default();
     }
 
     pub fn missing(&mut self) {
         self.availability = Availability::Missing;
-        self.failures = 0;
-        self.retry_at = None;
+        self.retry = Retry::default();
     }
 
     fn degraded(&mut self, node: Node, now: Instant) {
@@ -89,6 +117,7 @@ pub(super) struct Topology<Node = DrmNode> {
     // Hardware paths are stable keys; use the card path only when sysfs identity
     // is unavailable. A reused card number must not replace another GPU's slot.
     pub devices: HashMap<PathBuf, DeviceState<Node>>,
+    discovery_retry: Retry,
     pub invalidated: HashSet<Node>,
     pub reconciling: bool,
     pub dirty: bool,
@@ -103,6 +132,7 @@ impl<Node> Default for Topology<Node> {
     fn default() -> Self {
         Self {
             devices: HashMap::new(),
+            discovery_retry: Retry::default(),
             invalidated: HashSet::new(),
             reconciling: false,
             dirty: false,
@@ -118,7 +148,70 @@ impl<Node> Default for Topology<Node> {
 // Node identity is opaque to reconciliation; tests use integers without opening
 // DRM devices or depending on which nodes happen to exist in the host's sysfs.
 impl<Node: Copy + Eq + std::hash::Hash> Topology<Node> {
-    pub fn observe_devices(&mut self, observed: &[(PathBuf, Option<PathBuf>)]) {
+    fn observe_discovery(
+        &mut self,
+        observed: io::Result<Vec<ObservedDevice>>,
+        now: Instant,
+    ) -> io::Result<Vec<ObservedDevice>> {
+        match observed {
+            Ok(observed) => {
+                self.discovery_retry = Retry::default();
+                self.observe_devices(&observed);
+                Ok(observed)
+            }
+            Err(error) => {
+                self.discovery_retry.failed(now);
+                self.dirty = true;
+                Err(error)
+            }
+        }
+    }
+
+    fn work(&self, reason: ReconcileReason, now: Instant) -> DeviceWork<Node> {
+        let mut paths = Vec::new();
+        let mut deferred = Vec::new();
+        for (path, device) in &self.devices {
+            if reason == ReconcileReason::Retry && !device.retry.due(now) {
+                if let Availability::Ready(node) | Availability::Degraded(node) =
+                    device.availability
+                {
+                    deferred.push(node);
+                }
+            } else {
+                paths.push(path.clone());
+            }
+        }
+        paths.sort();
+        DeviceWork { paths, deferred }
+    }
+
+    // Partial recovery must not disable a working display based on a profile
+    // whose destination GPU is still unavailable. Apply the complete policy
+    // once every participating device can be reconciled again.
+    fn hold_healthy_outputs(
+        &self,
+        reason: ReconcileReason,
+        now: Instant,
+        ready: &mut Vec<(PathBuf, Node)>,
+        deferred: &mut Vec<Node>,
+    ) {
+        if reason != ReconcileReason::Retry
+            || (deferred.is_empty() && !self.devices.values().any(|device| !device.retry.due(now)))
+        {
+            return;
+        }
+        ready.retain(|(path, node)| {
+            let healthy = self.devices.get(path).is_some_and(|device| {
+                device.availability == Availability::Ready(*node) && device.retry.deadline.is_none()
+            });
+            if healthy {
+                deferred.push(*node);
+            }
+            !healthy
+        });
+    }
+
+    pub fn observe_devices(&mut self, observed: &[ObservedDevice]) {
         for (path, identity) in observed {
             let key = identity.as_ref().unwrap_or(path);
             let fallback = if identity.is_some() {
@@ -139,14 +232,16 @@ impl<Node: Copy + Eq + std::hash::Hash> Topology<Node> {
 
     fn retire_changed_devices(
         &mut self,
-        observed: &[(PathBuf, Option<PathBuf>)],
+        observed: &[ObservedDevice],
         node_for_path: impl Fn(&Path) -> Option<Node>,
     ) -> HashSet<Node> {
         let mut retired = HashSet::new();
         for (key, slot) in &mut self.devices {
             if let Availability::Ready(previous) | Availability::Degraded(previous) =
                 slot.availability
-                && slot.current_path(key, observed).and_then(&node_for_path) != Some(previous)
+                && slot
+                    .current_path(key, observed)
+                    .is_none_or(|path| node_for_path(path).is_some_and(|node| node != previous))
             {
                 retired.insert(previous);
                 slot.missing();
@@ -163,10 +258,14 @@ impl<Node: Copy + Eq + std::hash::Hash> Topology<Node> {
     pub fn retry_deadline(&self, active: bool) -> Option<Instant> {
         active
             .then(|| {
-                self.devices
-                    .values()
-                    .filter_map(|device| device.retry_at)
-                    .min()
+                // Device work cannot proceed while discovery is unknown. An
+                // expired device deadline must not spin the discovery retry.
+                self.discovery_retry.deadline.or_else(|| {
+                    self.devices
+                        .values()
+                        .filter_map(|device| device.retry.deadline)
+                        .min()
+                })
             })
             .flatten()
     }
@@ -184,7 +283,7 @@ fn slot_mut<'a>(state: &'a mut Ferese, path: &Path) -> &'a mut DeviceState {
 }
 
 /// The only entry point for applying the current output configuration to DRM.
-pub(super) fn reconcile_outputs(state: &mut Ferese, reactivate: bool) {
+pub(super) fn reconcile_outputs(state: &mut Ferese, reason: ReconcileReason) {
     let Some(backend) = state.direct_backend.as_mut() else {
         return;
     };
@@ -201,8 +300,8 @@ pub(super) fn reconcile_outputs(state: &mut Ferese, reactivate: bool) {
     backend.topology.coalescer.clear();
     backend.topology.reconciling = true;
     backend.topology.dirty = false;
-    backend.output_error = None;
-    if reactivate {
+    let previous_error = backend.output_error.take();
+    if reason == ReconcileReason::Resume {
         for clock in backend.presentation.values_mut() {
             clock.reset_timing();
         }
@@ -230,8 +329,8 @@ pub(super) fn reconcile_outputs(state: &mut Ferese, reactivate: bool) {
             super::super::power::battery_percent(),
         );
 
+    let observed = backend.topology.observe_discovery(observed, Instant::now());
     if let Ok(observed) = &observed {
-        backend.topology.observe_devices(observed);
         // Retire every obsolete node before opening any replacement. Otherwise
         // a later missing slot could remove a new GPU that reused its dev_t.
         invalidated.extend(
@@ -240,14 +339,43 @@ pub(super) fn reconcile_outputs(state: &mut Ferese, reactivate: bool) {
                 .retire_changed_devices(observed, |path| DrmNode::from_path(path).ok()),
         );
     }
-    let mut paths = backend.topology.devices.keys().cloned().collect::<Vec<_>>();
-    paths.sort();
-    let mut ready = Vec::new();
     state.begin_desktop_transition();
-
+    // Explicit device invalidations are authoritative even if enumeration
+    // fails. A failed scan alone must never retire a working device.
     for node in invalidated {
         remove_device(state, node);
     }
+    let observed = match observed {
+        Ok(observed) => observed,
+        Err(error) => {
+            tracing::warn!(%error, "could not enumerate DRM topology; retaining live devices");
+            state
+                .direct_backend
+                .as_mut()
+                .expect("direct backend exists")
+                .output_error = Some(error.to_string());
+            let deferred = state
+                .direct_backend
+                .as_ref()
+                .expect("direct backend exists")
+                .devices
+                .keys()
+                .copied()
+                .collect::<Vec<_>>();
+            finish_reconciliation(state, &deferred);
+            return;
+        }
+    };
+    let DeviceWork {
+        paths,
+        mut deferred,
+    } = state
+        .direct_backend
+        .as_ref()
+        .expect("direct backend exists")
+        .topology
+        .work(reason, Instant::now());
+    let mut ready = Vec::new();
 
     for path in paths {
         let slot = &state
@@ -256,38 +384,44 @@ pub(super) fn reconcile_outputs(state: &mut Ferese, reactivate: bool) {
             .expect("DRM callbacks require an installed direct backend")
             .topology
             .devices[&path];
-        let current_path = observed
-            .as_ref()
-            .ok()
-            .and_then(|devices| slot.current_path(&path, devices));
-        let existing = current_path
-            .and_then(|path| DrmNode::from_path(path).ok())
-            .filter(|node| {
+        let refresh = matches!(reason, ReconcileReason::Hotplug | ReconcileReason::Resume)
+            || slot.retry.deadline.is_some();
+        let current_path = slot.current_path(&path, &observed);
+        let previous = match slot.availability {
+            Availability::Ready(node) | Availability::Degraded(node) => Some(node),
+            _ => None,
+        };
+        let existing = match current_path.map(DrmNode::from_path).transpose() {
+            Ok(node) => node.filter(|node| {
                 state
                     .direct_backend
                     .as_ref()
-                    .expect("DRM callbacks require an installed direct backend")
+                    .expect("direct backend exists")
                     .devices
                     .contains_key(node)
-            });
-        let previous = match slot.availability {
-            Availability::Ready(node) | Availability::Degraded(node) => Some(node),
-            _ => existing,
+            }),
+            Err(error) => {
+                tracing::warn!(%error, ?path, "could not inspect DRM node; retaining live resources");
+                if let Some(node) = previous {
+                    slot_mut(state, &path).degraded(node, Instant::now());
+                    deferred.push(node);
+                } else {
+                    slot_mut(state, &path).failed(Instant::now());
+                }
+                state
+                    .direct_backend
+                    .as_mut()
+                    .expect("direct backend exists")
+                    .output_error = Some(error.to_string());
+                continue;
+            }
         };
-        let found = observed.as_ref().map(|_| current_path.is_some());
-        if !matches!(found, Ok(true)) {
+        let previous = previous.or(existing);
+        if current_path.is_none() {
             if let Some(node) = previous {
                 remove_device(state, node);
             }
-            let entry = slot_mut(state, &path);
-            match found {
-                Ok(false) => entry.missing(),
-                Err(error) => {
-                    tracing::warn!(%error, ?path, "could not enumerate DRM topology");
-                    entry.failed(Instant::now());
-                }
-                Ok(true) => unreachable!(),
-            }
+            slot_mut(state, &path).missing();
             continue;
         }
 
@@ -310,7 +444,16 @@ pub(super) fn reconcile_outputs(state: &mut Ferese, reactivate: bool) {
         };
 
         let mut failed_outputs = Vec::new();
-        let activation = if reactivate && existing.is_some() {
+        let reactivate = existing.is_some()
+            && (reason == ReconcileReason::Resume
+                || !state
+                    .direct_backend
+                    .as_ref()
+                    .expect("direct backend exists")
+                    .devices[&node]
+                    .drm
+                    .is_active());
+        let activation = if reactivate {
             let device = state
                 .direct_backend
                 .as_mut()
@@ -378,8 +521,35 @@ pub(super) fn reconcile_outputs(state: &mut Ferese, reactivate: bool) {
                 .remove(&(node, crtc));
         }
 
+        let device = state
+            .direct_backend
+            .as_mut()
+            .expect("reconciliation requires a direct backend")
+            .devices
+            .get_mut(&node)
+            .expect("device remains registered");
+        if (refresh || reactivate || device.inventory.is_none())
+            && let Err(error) = super::refresh_connector_inventory(device)
+        {
+            tracing::warn!(%error, ?node, "connector discovery failed; retaining the previous inventory");
+            slot_mut(state, &path).degraded(node, Instant::now());
+            deferred.push(node);
+            state
+                .direct_backend
+                .as_mut()
+                .expect("reconciliation requires a direct backend")
+                .output_error = Some(error.to_string());
+            continue;
+        }
         ready.push((path, node));
     }
+
+    state
+        .direct_backend
+        .as_ref()
+        .expect("reconciliation requires a direct backend")
+        .topology
+        .hold_healthy_outputs(reason, Instant::now(), &mut ready, &mut deferred);
 
     let known_good = state
         .direct_backend
@@ -387,10 +557,22 @@ pub(super) fn reconcile_outputs(state: &mut Ferese, reactivate: bool) {
         .expect("DRM callbacks require an installed direct backend")
         .applied_outputs
         .clone();
+    // A background retry may advance independently, but a fresh request must
+    // not partially apply while another device's inventory is unknown.
+    let blocked = reason != ReconcileReason::Retry && !deferred.is_empty();
     super::leasing::prune(state);
     if let Err(error) = refresh_monitor_policy(state).and_then(|()| {
         transaction::retire_disconnected(state);
-        validate_desired_outputs(state)
+        if blocked {
+            return Err(state
+                .direct_backend
+                .as_ref()
+                .expect("reconciliation requires a direct backend")
+                .output_error
+                .clone()
+                .unwrap_or_else(|| "connector discovery is incomplete".into()));
+        }
+        validate_desired_outputs(state, &deferred)
     }) {
         tracing::warn!(%error, "monitor policy validation failed; retaining applied outputs");
         state
@@ -398,8 +580,10 @@ pub(super) fn reconcile_outputs(state: &mut Ferese, reactivate: bool) {
             .as_mut()
             .expect("DRM callbacks require an installed direct backend")
             .output_error = Some(error);
-        for (path, node) in &ready {
-            slot_mut(state, path).degraded(*node, Instant::now());
+        if !blocked {
+            for (path, node) in &ready {
+                slot_mut(state, path).degraded(*node, Instant::now());
+            }
         }
     } else {
         // Activate destinations before disabling former owners, including across GPUs.
@@ -457,12 +641,31 @@ pub(super) fn reconcile_outputs(state: &mut Ferese, reactivate: bool) {
             .expect("DRM callbacks require an installed direct backend")
             .output_error
             .is_none()
+            && deferred.is_empty()
         {
             remember_applied_configuration(state);
         }
     }
 
-    transaction::recover_last_output(state);
+    if !deferred.is_empty()
+        && state
+            .direct_backend
+            .as_ref()
+            .expect("direct backend exists")
+            .output_error
+            .is_none()
+    {
+        state
+            .direct_backend
+            .as_mut()
+            .expect("direct backend exists")
+            .output_error = previous_error;
+    }
+    transaction::recover_last_output(state, &deferred);
+    finish_reconciliation(state, &deferred);
+}
+
+fn finish_reconciliation(state: &mut Ferese, deferred: &[DrmNode]) {
     let mut desktop_changes = publish_runtime_desktop(state);
     if std::mem::take(
         &mut state
@@ -487,7 +690,7 @@ pub(super) fn reconcile_outputs(state: &mut Ferese, reactivate: bool) {
     if std::mem::take(&mut backend.topology.remember_applied) {
         remember_applied_configuration(state);
     }
-    refresh_connected_info(state);
+    refresh_connected_info(state, deferred);
     if let Some(deadline) = retry {
         match state
             .loop_handle
@@ -495,7 +698,7 @@ pub(super) fn reconcile_outputs(state: &mut Ferese, reactivate: bool) {
                 if let Some(backend) = state.direct_backend.as_mut() {
                     backend.topology.retry_timer = None;
                 }
-                reconcile_outputs(state, false);
+                reconcile_outputs(state, ReconcileReason::Retry);
                 TimeoutAction::Drop
             }) {
             Ok(token) => {
@@ -623,7 +826,7 @@ pub(super) fn hotplug(state: &mut Ferese) {
                     return TimeoutAction::Drop;
                 }
             }
-            reconcile_outputs(state, false);
+            reconcile_outputs(state, ReconcileReason::Hotplug);
             TimeoutAction::Drop
         }) {
         Ok(token) => {
@@ -636,7 +839,7 @@ pub(super) fn hotplug(state: &mut Ferese) {
         }
         Err(error) => {
             tracing::warn!(%error, "could not debounce output events");
-            reconcile_outputs(state, false);
+            reconcile_outputs(state, ReconcileReason::Hotplug);
         }
     }
 }
@@ -644,6 +847,182 @@ pub(super) fn hotplug(state: &mut Ferese) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn failed_discovery_keeps_live_devices_and_pending_invalidations() {
+        let now = Instant::now();
+        let card = PathBuf::from("/dev/dri/card0");
+        let mut topology = Topology::<u64>::default();
+        let mut device = DeviceState::default();
+        device.ready(7);
+        topology.devices.insert(card.clone(), device);
+        topology.invalidated.insert(9);
+
+        let error = topology
+            .observe_discovery(Err(io::Error::other("udev unavailable")), now)
+            .unwrap_err();
+        assert_eq!(error.to_string(), "udev unavailable");
+        assert_eq!(topology.devices[&card].availability, Availability::Ready(7));
+        assert_eq!(topology.invalidated, HashSet::from([9]));
+        assert!(topology.dirty);
+        assert_eq!(
+            topology.retry_deadline(true),
+            Some(now + Duration::from_secs(1))
+        );
+        assert_eq!(topology.retry_deadline(false), None);
+
+        // Device deadlines cannot cause a busy loop while global discovery is
+        // unavailable, and a successful scan restores the normal retry policy.
+        topology
+            .devices
+            .get_mut(&card)
+            .unwrap()
+            .degraded(7, now - Duration::from_secs(2));
+        assert_eq!(
+            topology.retry_deadline(true),
+            Some(now + Duration::from_secs(1))
+        );
+        topology
+            .observe_discovery(
+                Err(io::Error::other("still unavailable")),
+                now + Duration::from_secs(1),
+            )
+            .unwrap_err();
+        assert_eq!(
+            topology.retry_deadline(true),
+            Some(now + Duration::from_secs(3))
+        );
+        let observed = vec![(card.clone(), None)];
+        assert_eq!(
+            topology
+                .observe_discovery(Ok(observed.clone()), now + Duration::from_secs(3))
+                .unwrap(),
+            observed
+        );
+        assert_eq!(
+            topology.devices[&card].availability,
+            Availability::Degraded(7)
+        );
+        assert_eq!(
+            topology.retry_deadline(true),
+            Some(now - Duration::from_secs(1))
+        );
+    }
+
+    #[test]
+    fn retry_work_executes_only_due_devices_and_explicit_changes_override_backoff() {
+        let now = Instant::now();
+        let mut topology = Topology::<u64>::default();
+        let fast = PathBuf::from("/dev/dri/card0");
+        let slow = PathBuf::from("/dev/dri/card1");
+        let healthy = PathBuf::from("/dev/dri/card2");
+        let mut a = DeviceState::default();
+        a.failed(now);
+        let mut b = DeviceState::default();
+        for _ in 0..6 {
+            b.degraded(11, now);
+        }
+        let mut c = DeviceState::default();
+        c.ready(12);
+        topology
+            .devices
+            .extend([(fast.clone(), a), (slow.clone(), b), (healthy.clone(), c)]);
+
+        let work = topology.work(ReconcileReason::Retry, now + Duration::from_secs(1));
+        assert_eq!(work.paths, vec![fast.clone(), healthy.clone()]);
+        assert_eq!(work.deferred, vec![11]);
+        assert_eq!(
+            topology.devices[&slow].retry.deadline,
+            Some(now + Duration::from_secs(32))
+        );
+        let work = topology.work(ReconcileReason::Retry, now + Duration::from_secs(32));
+        assert_eq!(
+            work.paths,
+            vec![fast.clone(), slow.clone(), healthy.clone()]
+        );
+        assert!(work.deferred.is_empty());
+        for reason in [
+            ReconcileReason::Configuration,
+            ReconcileReason::Hotplug,
+            ReconcileReason::Resume,
+        ] {
+            let work = topology.work(reason, now);
+            assert_eq!(
+                work.paths,
+                vec![fast.clone(), slow.clone(), healthy.clone()]
+            );
+            assert!(work.deferred.is_empty());
+        }
+        // An unopened GPU must also stay out of the actual execution list.
+        topology.devices.get_mut(&slow).unwrap().failed(now);
+        let work = topology.work(ReconcileReason::Retry, now + Duration::from_secs(2));
+        assert_eq!(work.paths, vec![fast, healthy]);
+        assert!(work.deferred.is_empty());
+    }
+
+    #[test]
+    fn partial_recovery_holds_working_displays_until_the_destination_gpu_is_ready() {
+        let now = Instant::now();
+        let recovering = PathBuf::from("/dev/dri/card0");
+        let waiting = PathBuf::from("/dev/dri/card1");
+        let healthy = PathBuf::from("/dev/dri/card2");
+        let mut topology = Topology::<u64>::default();
+        let mut a = DeviceState::default();
+        a.degraded(10, now - Duration::from_secs(2));
+        let mut b = DeviceState::default();
+        b.failed(now);
+        let mut c = DeviceState::default();
+        c.ready(12);
+        topology
+            .devices
+            .extend([(recovering.clone(), a), (waiting, b), (healthy.clone(), c)]);
+        let ready = vec![(recovering.clone(), 10), (healthy.clone(), 12)];
+        let mut selected = ready.clone();
+        let mut deferred = Vec::new();
+        topology.hold_healthy_outputs(ReconcileReason::Retry, now, &mut selected, &mut deferred);
+        assert_eq!(selected, vec![(recovering, 10)]);
+        assert_eq!(deferred, vec![12]);
+        selected = ready.clone();
+        deferred.clear();
+        topology.hold_healthy_outputs(
+            ReconcileReason::Retry,
+            now + Duration::from_secs(1),
+            &mut selected,
+            &mut deferred,
+        );
+        assert_eq!(selected, ready);
+        assert!(deferred.is_empty());
+        topology.hold_healthy_outputs(
+            ReconcileReason::Configuration,
+            now,
+            &mut selected,
+            &mut deferred,
+        );
+        assert_eq!(selected, ready);
+        assert!(deferred.is_empty());
+    }
+
+    #[test]
+    fn failed_node_inspection_does_not_prove_device_removal() {
+        let card = PathBuf::from("/dev/dri/card0");
+        let mut topology = Topology::<u64>::default();
+        let mut device = DeviceState::default();
+        device.ready(7);
+        topology.devices.insert(card.clone(), device);
+        assert!(
+            topology
+                .retire_changed_devices(&[(card, None)], |_| None)
+                .is_empty()
+        );
+        assert_eq!(
+            topology.devices.values().next().unwrap().availability,
+            Availability::Ready(7)
+        );
+        assert_eq!(
+            topology.retire_changed_devices(&[], |_| None),
+            HashSet::from([7])
+        );
+    }
 
     #[test]
     fn replacement_gpu_at_the_same_card_path_gets_its_own_slot() {
@@ -867,11 +1246,11 @@ mod tests {
             .get_mut(Path::new("/dev/dri/card0"))
             .unwrap();
         device.failed(now);
-        assert_eq!(device.retry_at, Some(now + Duration::from_secs(1)));
+        assert_eq!(device.retry.deadline, Some(now + Duration::from_secs(1)));
         for _ in 0..20 {
             device.failed(now);
         }
-        assert_eq!(device.retry_at, Some(now + Duration::from_secs(32)));
+        assert_eq!(device.retry.deadline, Some(now + Duration::from_secs(32)));
         assert_eq!(
             topology.devices[Path::new("/dev/dri/card1")].availability,
             Availability::Ready(healthy)
