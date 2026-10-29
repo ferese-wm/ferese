@@ -1488,7 +1488,9 @@ pub(crate) fn render_surface(
         root = parent;
     }
 
-    if matches!(&state.cursor_status, CursorImageStatus::Surface(cursor) if cursor == &root) {
+    if matches!(&state.cursor_status, CursorImageStatus::Surface(cursor) if cursor == &root)
+        || state.is_drag_icon(&root)
+    {
         render_cursor(state);
         return;
     }

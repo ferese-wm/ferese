@@ -421,13 +421,28 @@ impl ScrollingLayout {
         self.viewport_x
     }
 
+    /// Whether panning can advance in this direction without changing focus.
+    #[must_use]
+    pub fn can_scroll_viewport(&self, delta: f64) -> bool {
+        self.scroll_viewport_target(delta)
+            .is_some_and(|next| (next - self.viewport_x) * delta > 0.0)
+    }
+
     /// Pan without changing focus, keeping the viewport inside the column strip.
     pub fn scroll_viewport(&mut self, delta: f64) -> bool {
-        let Some(sizing) = self.last_sizing else {
+        let Some(next) = self.scroll_viewport_target(delta) else {
             return false;
         };
+        self.viewport_x = next;
+        self.pending_viewport = None;
+        self.viewport_basis = None;
+        true
+    }
+
+    fn scroll_viewport_target(&self, delta: f64) -> Option<f64> {
+        let sizing = self.last_sizing?;
         if !delta.is_finite() || delta == 0.0 {
-            return false;
+            return None;
         }
         let width = self
             .columns
@@ -443,13 +458,7 @@ impl ScrollingLayout {
             .sum::<f64>()
             + sizing.inner_gap * self.columns.len().saturating_sub(1) as f64;
         let next = (self.viewport_x + delta).clamp(0.0, (width - sizing.viewport_width).max(0.0));
-        if next == self.viewport_x {
-            return false;
-        }
-        self.viewport_x = next;
-        self.pending_viewport = None;
-        self.viewport_basis = None;
-        true
+        (next != self.viewport_x).then_some(next)
     }
 
     #[must_use]

@@ -12,7 +12,8 @@ Local changes are limited to the following library boundaries:
 
 - Drag requests match their origin against the implicit grab's surface, so a
   serial from another client cannot authorize the request. Drag grabs expose
-  source liveness for compositor cleanup, and a dead source cannot complete a drop.
+  source liveness and the initiating contact's position for compositor cleanup and
+  icon rendering, and a dead source cannot complete a drop.
 - DRM frame submission can carry an optional asynchronous presentation request
   through Smithay's existing queued/pending/current frame ownership. Ordinary
   `queue_frame` callers retain synchronized presentation. Modesets remain

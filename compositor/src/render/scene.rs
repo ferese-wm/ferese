@@ -610,6 +610,42 @@ pub(super) fn cursor_elements(
     output_geometry: Rectangle<i32, Logical>,
     scale: f64,
 ) -> Vec<AnimatedWindowRenderElement> {
+    // Elements are front-to-back: the pointer glyph stays above the drag icon.
+    let mut elements = pointer_elements(state, renderer, output_geometry, scale);
+    if let Some((icon, location)) = state.drag_icon() {
+        let physical_location =
+            (location - output_geometry.loc.to_f64()).to_physical_precise_round(scale);
+        let crop = Rectangle::<i32, Logical>::from_size(output_geometry.size)
+            .to_physical_precise_round(scale);
+        let origin = Point::<i32, Physical>::default();
+        let icon_elements = render_elements_from_surface_tree::<
+            GlesRenderer,
+            WaylandSurfaceRenderElement<GlesRenderer>,
+        >(
+            renderer,
+            icon,
+            physical_location,
+            scale,
+            1.0,
+            RenderElementKind::Cursor,
+        )
+        .into_iter()
+        .filter_map(|element| {
+            let element = RescaleRenderElement::from_element(element, origin, 1.0);
+            let element = RelocateRenderElement::from_element(element, origin, Relocate::Relative);
+            CropRenderElement::from_element(element, scale, crop).map(Into::into)
+        });
+        elements.extend(icon_elements);
+    }
+    elements
+}
+
+fn pointer_elements(
+    state: &Ferese,
+    renderer: &mut GlesRenderer,
+    output_geometry: Rectangle<i32, Logical>,
+    scale: f64,
+) -> Vec<AnimatedWindowRenderElement> {
     if state.input_capture.active() {
         return Vec::new();
     }

@@ -10,6 +10,7 @@ impl Ferese {
         // Keep them on the display and use the filtered scene for captures.
         !self.capture_protected_windows.is_empty()
             || self.capture_protected_cursor.is_some()
+            || self.drag_capture_protected()
             || !self.render.closing.is_empty()
     }
 
@@ -74,6 +75,9 @@ impl Ferese {
     }
 
     pub(crate) fn capture_cursor_protected(&self) -> bool {
+        if self.drag_capture_protected() {
+            return true;
+        }
         use smithay::input::pointer::CursorImageStatus;
         use smithay::reexports::wayland_server::Resource;
         use smithay::wayland::compositor::get_parent;

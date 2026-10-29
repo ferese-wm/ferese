@@ -57,6 +57,11 @@ impl<D: SeatHandler, S: Source, F: DndFocus<D> + 'static> DnDGrab<D, S, F> {
     pub fn source(&self) -> &S {
         &self.data_source
     }
+
+    /// Current logical position of the pointer or initiating touch contact.
+    pub fn location(&self) -> Point<f64, Logical> {
+        self.last_position
+    }
 }
 
 impl<D, S, F> fmt::Debug for DnDGrab<D, S, F>

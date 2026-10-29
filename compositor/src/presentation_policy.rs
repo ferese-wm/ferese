@@ -51,6 +51,11 @@ impl Ferese {
             surfaces.push(surface.clone());
         }
 
+        if let Some((icon, _)) = self.drag_icon() {
+            smithay::desktop::utils::with_surfaces_surface_tree(icon, |surface, _| {
+                surfaces.push(surface.clone());
+            });
+        }
         surfaces
             .into_iter()
             .filter(mapped_tree)

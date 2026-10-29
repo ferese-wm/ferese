@@ -165,24 +165,31 @@ impl Ferese {
     }
 
     pub fn send_cursor_frame(&self, output: &Output) {
-        let eligible = self.callback_outputs();
-        let CursorImageStatus::Surface(surface) = &self.cursor_status else {
-            return;
+        let cursor = match &self.cursor_status {
+            CursorImageStatus::Surface(surface)
+                if self.seat.get_pointer().is_some_and(|pointer| {
+                    self.space.output_under(pointer.current_location()).next() == Some(output)
+                }) =>
+            {
+                Some(surface)
+            }
+            _ => None,
         };
-        let Some(pointer) = self.seat.get_pointer() else {
-            return;
-        };
-        if self.space.output_under(pointer.current_location()).next() != Some(output) {
+        let icon = self.drag_icon().map(|(icon, _)| icon);
+        if cursor.is_none() && icon.is_none() {
             return;
         }
-
-        send_frames_surface_tree(
-            surface,
-            output,
-            self.start_time.elapsed(),
-            None,
-            |surface, _| eligible.get(&surface.into()).cloned(),
-        );
+        let eligible = self.callback_outputs();
+        let surface_iter = cursor.into_iter().chain(icon);
+        for surface in surface_iter {
+            send_frames_surface_tree(
+                surface,
+                output,
+                self.start_time.elapsed(),
+                None,
+                |surface, _| eligible.get(&surface.into()).cloned(),
+            );
+        }
     }
 
     pub fn window_under_visual(&self, position: Point<f64, Logical>) -> Option<Window> {

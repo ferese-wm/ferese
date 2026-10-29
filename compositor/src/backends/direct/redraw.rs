@@ -124,6 +124,21 @@ pub(super) fn cursor_on_output(state: &crate::Ferese, output: &smithay::output::
     let Some(bounds) = state.space.output_geometry(output) else {
         return false;
     };
+    // One logical pixel covers physical rounding at fractional scales.
+    let bounds = Rectangle::<f64, Logical>::new(
+        (f64::from(bounds.loc.x) - 1.0, f64::from(bounds.loc.y) - 1.0).into(),
+        (
+            f64::from(bounds.size.w) + 2.0,
+            f64::from(bounds.size.h) + 2.0,
+        )
+            .into(),
+    );
+    if state
+        .drag_icon_bounds()
+        .is_some_and(|icon| icon.overlaps(bounds))
+    {
+        return true;
+    }
     let location = pointer.current_location();
     let rect = match &state.cursor_status {
         CursorImageStatus::Surface(surface) => {
@@ -157,15 +172,6 @@ pub(super) fn cursor_on_output(state: &crate::Ferese, output: &smithay::output::
 
         CursorImageStatus::Hidden => return false,
     };
-    // One logical pixel covers physical rounding at fractional scales.
-    let bounds = Rectangle::<f64, Logical>::new(
-        (f64::from(bounds.loc.x) - 1.0, f64::from(bounds.loc.y) - 1.0).into(),
-        (
-            f64::from(bounds.size.w) + 2.0,
-            f64::from(bounds.size.h) + 2.0,
-        )
-            .into(),
-    );
     rect.overlaps(bounds)
 }
 

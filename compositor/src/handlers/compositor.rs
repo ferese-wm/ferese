@@ -63,6 +63,7 @@ impl CompositorHandler for Ferese {
         self.capture_resize_before_commit(surface);
         self.capture_close_before_commit(surface);
         self.commit_synced_buffers(surface);
+        self.commit_drag_icon(surface);
         self.presentation_constraint_committed(surface);
         crate::effects::commit_presentation(surface);
         if !is_sync_subsurface(surface) {
