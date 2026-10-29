@@ -18,6 +18,8 @@ Local changes are limited to the following library boundaries:
   through Smithay's existing queued/pending/current frame ownership. Ordinary
   `queue_frame` callers retain synchronized presentation. Modesets remain
   synchronized, and rejected asynchronous requests retry ordinary submission.
+- When a popup grab ends, its first pointer motion reaches the destination
+  instead of being consumed by grab cleanup.
 - Renderer surface attachments consume each explicit synchronization acquire and
   release point, including when a client reattaches the same `wl_buffer`.
 - GLES exposes a shared completion snapshot covering normal, dropped, and cleanup-

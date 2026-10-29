@@ -332,6 +332,66 @@ fn overlapping_mice_keep_the_button_down_until_the_last_device_releases() {
 }
 
 #[test]
+fn real_button_release_serials_authorize_only_the_recipient() {
+    use smithay::reexports::wayland_server::Resource;
+    use smithay::utils::Serial;
+    use std::time::Instant;
+
+    if !private("real_button_release_serials_authorize_only_the_recipient") {
+        return;
+    }
+    for completion in ["release", "remove", "pause"] {
+        let (mut state, mut events, mut wire) = fixture();
+        let pointer = state.seat.get_pointer().unwrap();
+        let owner = pointer.current_focus().unwrap().client().unwrap().id();
+        add(&mut state, 1);
+        button(&mut state, 1, true);
+        match completion {
+            "release" => button(&mut state, 1, false),
+            "remove" => remove(&mut state, 1),
+            "pause" => state.reset_session_input(),
+            _ => unreachable!(),
+        }
+        state.display_handle.flush_clients().unwrap();
+        let buttons = messages(&mut wire)
+            .into_iter()
+            .filter(|message| message.object == 10 && message.opcode == 3)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            buttons.len(),
+            2,
+            "{completion}: press and release delivered"
+        );
+        assert_eq!(buttons[1].args[3], 0);
+        let release = Serial::from(buttons[1].args[0]);
+        assert_eq!(
+            state
+                .activation_inputs
+                .validate(release, &owner, Instant::now())
+                .is_some(),
+            completion == "release",
+            "{completion}: only a real release can authorize an action"
+        );
+        let (foreign, _foreign_wire) =
+            crate::state::test_window(&mut state, &mut events, 0xff334455);
+        let foreign_owner = foreign
+            .toplevel()
+            .unwrap()
+            .wl_surface()
+            .client()
+            .unwrap()
+            .id();
+        assert!(
+            state
+                .activation_inputs
+                .validate(release, &foreign_owner, Instant::now())
+                .is_none(),
+            "a release never authorizes another client"
+        );
+    }
+}
+
+#[test]
 fn removing_one_touchscreen_retires_only_its_remapped_contacts() {
     if !private("removing_one_touchscreen_retires_only_its_remapped_contacts") {
         return;

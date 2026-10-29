@@ -23,11 +23,9 @@ pub(super) fn status_summary<'a>(
     } = style;
     let accent = color_with_opacity(theme.accent, opacity);
     let badge_color = if enabled { accent } else { primary };
-    let badge = container(accented_icon(source, 22, primary, accent))
-        .width(32)
-        .height(32)
-        .center_x(32)
-        .center_y(32)
+    let badge = container(accented_icon(source, 18, primary, accent))
+        .center_x(28)
+        .center_y(28)
         .class(theme::Container::custom(move |_| container::Style {
             background: Some(Background::Color(Color {
                 a: if enabled {
@@ -39,7 +37,7 @@ pub(super) fn status_summary<'a>(
             })),
             border: Border {
                 shape: BorderShape::Continuous,
-                radius: render.radius(16.0).into(),
+                radius: render.radius(10.0).into(),
                 ..Default::default()
             },
             ..Default::default()
@@ -61,13 +59,20 @@ pub(super) fn status_summary<'a>(
     let summary = row![
         badge,
         column![
-            render.text(title).size(14),
+            render
+                .text(title)
+                .size(13)
+                .width(Length::Fill)
+                .wrapping(cosmic::iced::widget::text::Wrapping::None)
+                .ellipsize(cosmic::iced::widget::text::Ellipsize::End(
+                    cosmic::iced::advanced::text::EllipsizeHeightLimit::Lines(1),
+                )),
             render
                 .text(subtitle)
-                .size(12)
+                .size(11)
                 .class(theme::Text::Color(muted)),
         ]
-        .spacing(4)
+        .spacing(2)
         .width(Length::Fill)
     ]
     .spacing(8)
@@ -118,8 +123,14 @@ pub(super) fn control_card<'a>(
     content: Element<'a, cosmic::Action<Message>>,
     foreground: Color,
     opacity: f32,
-) -> Element<'a, cosmic::Action<Message>> {
-    ferese_theme::menus::section(content, foreground, opacity, render.radius(22.))
+) -> cosmic::widget::Container<'a, cosmic::Action<Message>, cosmic::Theme, cosmic::Renderer> {
+    container(content)
+        .padding(10)
+        .width(Length::Fill)
+        .class(ferese_theme::controls::surface(
+            foreground.scale_alpha(0.045 * opacity),
+            render.radius(14.),
+        ))
 }
 
 pub(super) fn menu_button<'a>(
@@ -174,35 +185,80 @@ pub(super) fn toggle_row<'a>(
     )
 }
 
-pub(super) fn slider_row(
+pub(super) fn level_control<'a>(
     render: crate::rendering::Rendering,
-    source: &'static [u8],
+    label: &'static str,
+    icon: Element<'a, cosmic::Action<Message>>,
     value: u8,
-    brightness: bool,
-    foreground: Color,
-    icon_accent: Color,
-    opacity: f32,
-) -> Element<'static, cosmic::Action<Message>> {
-    let control = slider(
-        if brightness { 1..=100 } else { 0..=100 },
-        value,
-        move |value| {
-            cosmic::Action::App(Message::Control(if brightness {
-                Action::Brightness(value)
-            } else {
-                Action::Volume(value)
-            }))
-        },
-    )
+    range: std::ops::RangeInclusive<u8>,
+    change: fn(u8) -> Action,
+    style: super::MenuStyle,
+) -> Element<'a, cosmic::Action<Message>> {
+    let super::MenuStyle {
+        primary,
+        muted,
+        opacity,
+        ..
+    } = style;
+    let control = slider(range, value, move |value| {
+        cosmic::Action::App(Message::Control(change(value)))
+    })
     .width(Length::Fill)
-    .height(24)
-    .class(ferese_theme::menus::slider(foreground, opacity));
-    row![
-        accented_icon(source, 18, foreground, icon_accent),
-        control,
-        render.text(format!("{value}%")).size(12).width(36)
-    ]
-    .spacing(8)
-    .align_y(Alignment::Center)
+    .height(20)
+    .handle_width(8)
+    .class(level_slider(primary));
+    control_card(
+        render,
+        column![
+            row![
+                icon,
+                render.text(label).size(12).width(Length::Fill),
+                render
+                    .text(format!("{value}%"))
+                    .size(12)
+                    .class(theme::Text::Color(muted)),
+            ]
+            .spacing(5)
+            .align_y(Alignment::Center),
+            control,
+        ]
+        .spacing(2)
+        .into(),
+        primary,
+        opacity,
+    )
+    .padding([4, 10])
     .into()
+}
+
+pub(super) fn level_slider(foreground: Color) -> cosmic::theme::iced::Slider {
+    let paint = std::rc::Rc::new(move |_: &cosmic::Theme| {
+        use cosmic::iced::widget::slider::{Breakpoint, Handle, HandleShape, Rail, Style};
+        Style {
+            rail: Rail {
+                backgrounds: (foreground.into(), foreground.scale_alpha(0.10).into()),
+                width: 8.,
+                border: Border {
+                    shape: BorderShape::Circular,
+                    radius: 4.into(),
+                    ..Default::default()
+                },
+            },
+            handle: Handle {
+                corner_shape: BorderShape::Circular,
+                shape: HandleShape::Circle { radius: 4. },
+                background: foreground.into(),
+                border_width: 0.,
+                border_color: Color::TRANSPARENT,
+            },
+            breakpoint: Breakpoint {
+                color: Color::TRANSPARENT,
+            },
+        }
+    });
+    cosmic::theme::iced::Slider::Custom {
+        active: paint.clone(),
+        hovered: paint.clone(),
+        dragging: paint,
+    }
 }

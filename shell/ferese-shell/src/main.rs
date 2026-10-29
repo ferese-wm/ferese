@@ -85,7 +85,7 @@ impl From<panel::PanelGeometry> for BarMetrics {
         let height = geometry.height;
         let control_height = (height - 4.0).max(21.0).min(height);
         // Leave two logical pixels inside the group border on each side,
-        // including compact bars with 20 px icons.
+        // including compact bars.
         let group_height = control_height.max(24.0).min(height);
 
         Self {
@@ -93,8 +93,8 @@ impl From<panel::PanelGeometry> for BarMetrics {
             // Logical sizes: Wayland/iced applies each surface's output scale.
             // Compacting the bar must not also shrink its readable content.
             text_size: 14,
-            icon_size: 20,
-            overview_icon_size: 20,
+            icon_size: 16,
+            overview_icon_size: 16,
             control_height,
             group_item_height: (group_height - 4.0).max(0.0),
         }
@@ -177,7 +177,7 @@ struct FereseShell {
     theme_error: Option<String>,
     pending_config_error: Option<String>,
     menu: Option<status_ui::OpenMenu>,
-    closing_menu_effects: std::collections::HashMap<window::Id, EffectsBinding>,
+    closing_effects: std::collections::HashMap<window::Id, EffectsBinding>,
     system_modal: Option<system_modal::SystemModal>,
     launcher: Option<launcher::Launcher>,
     launcher_files: launcher::files::Files,
@@ -366,7 +366,7 @@ impl cosmic::Application for FereseShell {
             theme_error: None,
             pending_config_error,
             menu: None,
-            closing_menu_effects: Default::default(),
+            closing_effects: Default::default(),
             system_modal: None,
             launcher: None,
             launcher_files: Default::default(),
@@ -1395,7 +1395,7 @@ mod tests {
             theme_error: None,
             pending_config_error: None,
             menu: None,
-            closing_menu_effects: Default::default(),
+            closing_effects: Default::default(),
             system_modal: None,
             launcher: None,
             launcher_files: Default::default(),
@@ -1896,8 +1896,8 @@ mod tests {
                 ..Default::default()
             });
             assert_eq!(metrics.text_size, 14);
-            assert_eq!(metrics.icon_size, 20);
-            assert_eq!(metrics.overview_icon_size, 20);
+            assert_eq!(metrics.icon_size, 16);
+            assert_eq!(metrics.overview_icon_size, 16);
             assert!(metrics.control_height >= f32::from(metrics.icon_size));
             assert!(metrics.control_height <= height);
         }

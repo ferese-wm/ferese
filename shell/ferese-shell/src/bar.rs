@@ -14,6 +14,8 @@ use crate::panel_layout::Placement;
 
 #[cfg(test)]
 mod binding_mode_tests;
+#[cfg(test)]
+mod click_tests;
 
 impl FereseShell {
     pub(super) fn binding_mode_transition(
@@ -554,15 +556,19 @@ impl FereseShell {
             }
             ItemKind::DisplayMode => motion::button(
                 self.render,
-                button::custom(bar_content(
-                    bar_icon(ferese_theme::icons::DISPLAY, bar.icon_size, foreground),
-                    control_height,
-                ))
+                button::custom(
+                    bar_content(
+                        bar_icon(ferese_theme::icons::DISPLAY, bar.icon_size, foreground),
+                        control_height,
+                    )
+                    .width(20)
+                    .align_x(alignment::Horizontal::Center),
+                )
                 .name("Display mode")
                 .height(control_height)
                 .padding([
                     0.0,
-                    ((bar.height - f32::from(bar.icon_size)) * 0.5).max(4.0),
+                    ((bar.height - f32::from(bar.icon_size.max(20))) * 0.5).max(4.0),
                 ])
                 .on_press(cosmic::Action::App(Message::OpenDisplays(
                     self.outputs
@@ -868,7 +874,7 @@ pub(super) fn overview_control(
         ),
         bar.control_height,
     )
-    .width(bar.overview_icon_size)
+    .width(bar.overview_icon_size.max(20))
     .align_x(alignment::Horizontal::Center)
     .into()
 }

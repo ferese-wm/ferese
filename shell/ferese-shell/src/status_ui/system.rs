@@ -1,12 +1,13 @@
-use cosmic::iced::{Alignment, Color, Length, alignment};
-use cosmic::widget::{button, column, container, row};
+use cosmic::iced::{Alignment, Length};
+use cosmic::widget::{Space, button, column, container, row};
 use cosmic::{Element, theme};
+use ferese_config::theme::{Appearance, Mode};
 
 use super::bar::status_icon;
 use super::controls::control_card;
-use super::{Menu, MenuRows, MenuStyle, audio, battery, notification_controls};
-use crate::status::{self, Action};
-use crate::{FereseShell, Message, accented_icon, color, color_with_opacity, motion};
+use super::{Menu, MenuRows, MenuStyle, audio, battery};
+use crate::status::Action;
+use crate::{FereseShell, Message, bar_icon, color, motion};
 
 pub(super) fn view<'a>(
     shell: &'a FereseShell,
@@ -14,300 +15,236 @@ pub(super) fn view<'a>(
     style: MenuStyle,
     show_settings_link: bool,
 ) -> MenuRows<'a> {
-    let MenuStyle {
-        theme,
-        primary,
-        muted,
-        opacity: p,
-    } = style;
-    use ferese_config::theme::{Appearance, Mode};
-    let mut modes = row([]).spacing(6);
-    for (mode, label) in [
-        (Mode::Light, "☀ Light"),
-        (Mode::Dark, "☾ Dark"),
-        (Mode::Auto, "◐ Auto"),
-    ] {
-        modes = modes.push(motion::button(
-            shell.render,
-            button::custom(shell.render.text(label).font(shell.render.font).size(13))
-                .width(Length::Fill)
-                .padding(9)
-                .on_press(cosmic::Action::App(Message::ThemeMode(mode))),
-            primary,
-            shell.config.theme_mode == mode,
-            p,
-        ));
-    }
-    if show_settings_link
-        && shell
-            .config
-            .status
-            .settings_command
-            .as_ref()
-            .is_some_and(|command| !command.is_empty())
-    {
-        let settings = motion::button(
-            shell.render,
-            button::custom(
-                ferese_theme::icons::tinted(
-                    ferese_theme::icons::SETTINGS,
-                    18,
-                    color(theme.text_primary),
-                )
-                .opacity(p),
-            )
-            .name("Open Ferese Settings")
-            .width(30)
+    if show_settings_link {
+        rows = rows.push(heading(
+            shell,
+            row![
+                shell
+                    .render
+                    .text("Control Center")
+                    .size(14)
+                    .width(Length::Fill)
+            ]
             .height(28)
-            .padding([5, 3])
-            .on_press(cosmic::Action::App(Message::Control(Action::Settings))),
-            primary,
-            false,
-            p,
-        );
-        modes = modes.push(cosmic::widget::tooltip(
-            settings,
-            shell.render.text("Open Ferese Settings").size(12),
-            cosmic::widget::tooltip::Position::Left,
+            .align_y(Alignment::Center),
+            style,
         ));
     }
-    rows = rows.push(modes.align_y(Alignment::Center));
-    if shell.config.theme_mode == Mode::Auto {
-        rows = rows.push(
-            shell
-                .render
-                .text(if theme.appearance == Appearance::Light {
-                    "Auto · currently light"
-                } else {
-                    "Auto · currently dark"
-                })
-                .font(shell.render.font)
-                .size(12)
-                .class(cosmic::theme::Text::Color(muted)),
-        );
-    }
-    let mut connections = row::with_capacity(3).spacing(8).width(Length::Fill);
-
-    if let Some(n) = &shell.status.network {
-        connections = connections.push(connection_control(
-            shell.render,
+    let mut tiles = Vec::with_capacity(6);
+    if let Some(network) = &shell.status.network {
+        tiles.push(quick_tile(
+            shell,
             "Wi-Fi",
-            if n.enabled {
-                n.connection.as_deref().unwrap_or("Not connected")
-            } else {
+            if !network.enabled {
                 "Off"
+            } else if network.connection.is_some() {
+                "Connected"
+            } else {
+                "Not connected"
             },
             status_icon(Menu::Network, &shell.status).0,
-            n.enabled,
-            Some(Action::Wifi(!n.enabled)),
+            network.enabled,
+            Some(Message::Control(Action::Wifi(!network.enabled))),
             style,
         ));
     }
-
-    if let Some(b) = &shell.status.bluetooth {
-        connections = connections.push(connection_control(
-            shell.render,
+    if let Some(bluetooth) = &shell.status.bluetooth {
+        tiles.push(quick_tile(
+            shell,
             "Bluetooth",
-            if b.enabled {
-                b.devices.first().map(String::as_str).unwrap_or("On")
-            } else {
+            if !bluetooth.enabled {
                 "Off"
+            } else {
+                bluetooth
+                    .devices
+                    .first()
+                    .map(String::as_str)
+                    .unwrap_or("On")
             },
             status_icon(Menu::Bluetooth, &shell.status).0,
-            b.enabled,
-            Some(Action::Bluetooth(!b.enabled)),
+            bluetooth.enabled,
+            Some(Message::Control(Action::Bluetooth(!bluetooth.enabled))),
             style,
         ));
     }
-
-    if shell.status.battery.is_some() {
-        connections = connections.push(
-            container(
-                column![
-                    container(shell.battery_indicator(theme, p, true))
-                        .center_x(Length::Fill)
-                        .center_y(28),
-                    shell
-                        .render
-                        .text("Battery")
-                        .size(11)
-                        .width(Length::Fill)
-                        .height(16)
-                        .align_x(alignment::Horizontal::Center)
-                        .class(theme::Text::Color(muted)),
-                ]
-                .spacing(2)
-                .align_x(Alignment::Center),
-            )
-            .width(Length::FillPortion(1))
-            .padding(4),
-        );
+    let night_light = shell.status.night_light.as_ref();
+    let supported = night_light.is_some_and(|status| status.supported_outputs > 0);
+    let enabled = night_light.is_some_and(|status| status.enabled);
+    tiles.push(quick_tile(
+        shell,
+        "Night Light",
+        if !supported {
+            "Unavailable"
+        } else if enabled {
+            "On"
+        } else {
+            "Off"
+        },
+        ferese_theme::icons::NIGHT_LIGHT,
+        supported && enabled,
+        supported.then_some(Message::Control(Action::NightLight(!enabled))),
+        style,
+    ));
+    if let Some(notifications) = &shell.status.notifications {
+        tiles.push(quick_tile(
+            shell,
+            "Do Not Disturb",
+            if notifications.dnd { "On" } else { "Off" },
+            ferese_theme::icons::DND,
+            notifications.dnd,
+            Some(Message::Control(Action::Dnd(!notifications.dnd))),
+            style,
+        ));
     }
-
-    if shell.status.network.is_some()
-        || shell.status.bluetooth.is_some()
-        || shell.status.battery.is_some()
-    {
-        rows = rows.push(control_card(shell.render, connections.into(), primary, p));
+    let dark = style.theme.appearance == Appearance::Dark;
+    tiles.push(quick_tile(
+        shell,
+        "Dark Mode",
+        if dark { "On" } else { "Off" },
+        ferese_theme::icons::APPEARANCE,
+        dark,
+        Some(Message::ThemeMode(if dark {
+            Mode::Light
+        } else {
+            Mode::Dark
+        })),
+        style,
+    ));
+    if let Some(battery) = &shell.status.battery {
+        tiles.push(quick_tile(
+            shell,
+            "Battery",
+            format!(
+                "{}%{}",
+                battery.percent,
+                if matches!(battery.status.as_str(), "Charging" | "Pending charge") {
+                    " · Charging"
+                } else {
+                    ""
+                }
+            ),
+            status_icon(Menu::Battery, &shell.status).0,
+            matches!(battery.status.as_str(), "Charging" | "Pending charge"),
+            None,
+            style,
+        ));
     }
-    rows = audio::view(shell, rows, style, true);
+    let mut grid = column::with_capacity(3).spacing(4).width(Length::Fill);
+    let mut tiles = tiles.into_iter();
+    while let Some(first) = tiles.next() {
+        let second = tiles
+            .next()
+            .unwrap_or_else(|| Space::new().width(Length::FillPortion(1)).into());
+        grid = grid.push(row![first, second].spacing(8).width(Length::Fill));
+    }
+    rows = rows.push(grid);
     rows = battery::brightness(shell, rows, style);
-    rows = super::night_light::view(shell, rows, style);
-    rows = notification_controls(shell, rows, style, true);
-    rows
+    audio::view(shell, rows, style, true)
 }
 
-fn connection_caption(detail: &str) -> String {
-    const MAX_CHARS: usize = 12;
-    let normalized = detail.split_whitespace().collect::<Vec<_>>().join(" ");
-    let mut chars = normalized.chars();
-    let mut caption: String = chars.by_ref().take(MAX_CHARS).collect();
-    if chars.next().is_some() {
-        caption.pop();
-        caption.push('…');
-    }
-    caption
-}
-
-fn connection_control<'a>(
-    render: crate::rendering::Rendering,
+fn quick_tile<'a>(
+    shell: &'a FereseShell,
     label: &'static str,
-    detail: &str,
+    detail: impl Into<std::borrow::Cow<'a, str>>,
     source: &'static [u8],
     enabled: bool,
-    action: Option<Action>,
+    action: Option<Message>,
     style: MenuStyle,
 ) -> Element<'a, cosmic::Action<Message>> {
-    let MenuStyle {
-        theme: palette,
-        opacity,
-        ..
-    } = style;
-    let selected = enabled && action.is_some();
-    let (fill, on_accent) = ferese_theme::accent_pair(
-        ferese_theme::composite(color(palette.accent), color(palette.surface_base)),
-        color(palette.text_primary),
-    );
-    let foreground = if selected {
-        Color {
-            a: opacity,
-            ..on_accent
-        }
+    let render = shell.render;
+    let foreground = if enabled { style.primary } else { style.muted };
+    let icon_fill = ferese_theme::mix(
+        color(style.theme.surface_base),
+        color(style.theme.accent),
+        if enabled { 0.12 } else { 0.0 },
+    )
+    .scale_alpha(style.opacity);
+    let icon_color = if enabled {
+        ferese_theme::foreground(icon_fill, color(style.theme.accent)).scale_alpha(style.opacity)
     } else {
-        color_with_opacity(palette.text_primary, opacity)
-    };
-    let icon_color = foreground;
-    let muted = if selected {
         foreground
-    } else {
-        color_with_opacity(palette.text_muted, opacity)
     };
-    let icon = container(accented_icon(source, 28, icon_color, icon_color))
-        .width(Length::Fill)
-        .height(28)
-        .align_x(alignment::Horizontal::Center)
-        .align_y(alignment::Vertical::Center);
-    let content = column![icon]
-        .spacing(2)
-        .width(Length::Fill)
-        .align_x(Alignment::Center);
-    let content = content.push(
+    let icon = container(bar_icon(source, 18, icon_color))
+        .center_x(28)
+        .center_y(28)
+        .class(ferese_theme::controls::surface(
+            icon_fill,
+            render.radius(8.),
+        ));
+    let detail = detail.into();
+    let name = format!("{label}: {detail}");
+    let text = |label: std::borrow::Cow<'a, str>, size: f32, foreground| {
         render
-            .text(connection_caption(detail))
-            .size(11)
+            .text(label)
+            .size(size)
+            .line_height(cosmic::iced::widget::text::LineHeight::Absolute(
+                (size + 1.).into(),
+            ))
             .width(Length::Fill)
-            .height(16)
-            .align_x(alignment::Horizontal::Center)
             .wrapping(cosmic::iced::widget::text::Wrapping::None)
             .ellipsize(cosmic::iced::widget::text::Ellipsize::End(
                 cosmic::iced::advanced::text::EllipsizeHeightLimit::Lines(1),
             ))
-            .class(theme::Text::Color(muted)),
-    );
-    let Some(action) = action else {
-        return container(content)
-            .width(Length::FillPortion(1))
-            .padding(4)
-            .into();
+            .class(theme::Text::Color(foreground))
     };
-    let button = button::custom(content)
-        .width(Length::Fill)
-        .padding(4)
-        .name(format!(
-            "{label}: {}, {detail}",
-            if enabled { "on" } else { "off" }
-        ))
-        .on_press(cosmic::Action::App(Message::Control(action)));
-    let tile: Element<'_, cosmic::Action<Message>> = if selected {
-        button
-            .class(ferese_theme::controls::filled_button(
-                fill,
-                foreground,
-                render.radius(14.),
-                opacity,
-            ))
-            .into()
-    } else {
-        motion::button(render, button, foreground, false, opacity)
-    };
-    container(tile).width(Length::FillPortion(1)).into()
+    let content = row![
+        icon,
+        column![
+            text(label.into(), 12., style.primary),
+            text(detail, 11., style.muted)
+        ]
+        .spacing(0)
+        .width(Length::Fill),
+    ]
+    .spacing(8)
+    .align_y(Alignment::Center);
+    let mut button = button::custom(control_card(
+        render,
+        content.into(),
+        style.primary,
+        style.opacity,
+    ))
+    .width(Length::FillPortion(1))
+    .padding(0)
+    .name(name);
+    if let Some(action) = action {
+        button = button.on_press(cosmic::Action::App(action));
+    }
+    motion::button(render, button, foreground, false, style.opacity)
 }
 
-pub(super) fn heading<'a>(
+fn settings_button<'a>(
     shell: &'a FereseShell,
-    mut heading: super::MenuHeading<'a>,
     style: MenuStyle,
-) -> super::MenuHeading<'a> {
-    let MenuStyle {
-        theme,
-        primary,
-        opacity: p,
-        ..
-    } = style;
-    if shell
+) -> Option<Element<'a, cosmic::Action<Message>>> {
+    shell
         .config
         .status
         .settings_command
         .as_ref()
-        .and_then(|command| command.first())
-        .is_some_and(|program| status::available(program))
-    {
-        heading = heading.push(motion::button(
-            shell.render,
-            button::custom(accented_icon(
-                ferese_theme::icons::SETTINGS,
-                20,
-                primary,
-                color_with_opacity(theme.accent, p),
-            ))
-            .padding(6)
+        .filter(|command| !command.is_empty())?;
+    Some(motion::button(
+        shell.render,
+        button::custom(bar_icon(ferese_theme::icons::SETTINGS, 18, style.primary))
+            .width(28)
+            .height(28)
+            .padding(5)
             .name("Open Settings")
             .on_press(cosmic::Action::App(Message::Control(Action::Settings))),
-            primary,
-            false,
-            p,
-        ));
-    }
-    heading
+        style.primary,
+        false,
+        style.opacity,
+    ))
 }
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn connection_captions_fit_one_short_line() {
-        assert_eq!(super::connection_caption("88%"), "88%");
-        assert_eq!(super::connection_caption("Flow84@Lofree"), "Flow84@Lofr…");
-        assert_eq!(super::connection_caption("123456789012"), "123456789012");
-        assert_eq!(
-            super::connection_caption("My very long headphones"),
-            "My very lon…"
-        );
-        assert_eq!(
-            super::connection_caption("  Device\n name  "),
-            "Device name"
-        );
-        let caption = super::connection_caption("耳機耳機耳機耳機耳機耳機耳機");
-        assert_eq!(caption.chars().count(), 12);
-        assert!(caption.ends_with('…'));
+pub(super) fn heading<'a>(
+    shell: &'a FereseShell,
+    heading: super::MenuHeading<'a>,
+    style: MenuStyle,
+) -> super::MenuHeading<'a> {
+    if let Some(settings) = settings_button(shell, style) {
+        heading.push(settings)
+    } else {
+        heading
     }
 }

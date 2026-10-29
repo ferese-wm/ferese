@@ -554,7 +554,10 @@ where
         event: &MotionEvent,
     ) {
         if self.popup_grab.has_ended() {
-            handle.unset_grab(self, data, event.serial, event.time, true);
+            // This event already supplies the destination. Restore focus there
+            // instead of discarding the first motion after the popup closes.
+            handle.unset_grab(self, data, event.serial, event.time, false);
+            handle.motion(data, focus, event);
             return;
         }
 

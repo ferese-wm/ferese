@@ -114,6 +114,23 @@ class ShellMotionTest(unittest.TestCase):
                 identity, start = surface
                 return re.search(r'wl_surface[@#]' + identity + r'\.destroy\(', log_path.read_text()[start:]) is not None
 
+            def assert_effects_outlive_surface(surface):
+                identity, start = surface
+                trace = log_path.read_text()[start:]
+                binding = re.search(
+                    r'get_surface_effects\(new id ferese_surface_effects_v1[@#](\d+), wl_surface[@#]'
+                    + identity + r'\)', trace)
+                self.assertIsNotNone(binding, "modal never attached its fade effect")
+                effects = binding.group(1)
+                wait_for(lambda: re.search(
+                    r'ferese_surface_effects_v1[@#]' + effects + r'\.destroy\(',
+                    log_path.read_text()[start:]))
+                trace = log_path.read_text()[start:]
+                surface_destroy = re.search(r'wl_surface[@#]' + identity + r'\.destroy\(', trace)
+                effects_destroy = re.search(r'ferese_surface_effects_v1[@#]' + effects + r'\.destroy\(', trace)
+                self.assertGreater(effects_destroy.start(), surface_destroy.start(),
+                                   "modal fade was removed before its surface, allowing a final opaque frame")
+
             def bar_region_count(surface):
                 identity, start = surface
                 trace = log_path.read_text()[start:]
@@ -249,6 +266,7 @@ class ShellMotionTest(unittest.TestCase):
                     before_close = frames(modal)
                     subprocess.run([str(ctl), "toggle-keybinding-guide"], env=ipc_environment(env), check=True, capture_output=True, timeout=5)
                     wait_for(lambda: destroyed(modal), timeout=5)
+                    assert_effects_outlive_surface(modal)
                     self.assertGreater(frames(modal), before_close, "modal close did not follow frames")
                     self.assertIsNone(compositor.poll(), log_path.read_text()[-8000:])
                     self.assertNotIn("panicked at", log_path.read_text())

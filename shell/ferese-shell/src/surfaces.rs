@@ -427,6 +427,14 @@ impl FereseShell {
             return self.close_hub(*layer);
         }
         match event {
+            Event::PlatformSpecific(PlatformSpecific::Wayland(wayland::Event::Layer(
+                wayland::LayerEvent::Done,
+                _,
+                layer,
+            ))) => {
+                self.closing_effects.remove(&layer);
+                Task::none()
+            }
             Event::PlatformSpecific(PlatformSpecific::Wayland(wayland::Event::Output(
                 event,
                 output,
@@ -476,7 +484,7 @@ impl FereseShell {
                 popup_id,
             ))) => {
                 if matches!(event, wayland::PopupEvent::Done) {
-                    self.closing_menu_effects.remove(&popup_id);
+                    self.closing_effects.remove(&popup_id);
                 }
                 if self.workspace_ui.tooltip == Some(popup_id)
                     && matches!(event, wayland::PopupEvent::Done)
@@ -525,7 +533,7 @@ impl FereseShell {
                 self.close_system_modal()
             }
             Event::Window(window::Event::Closed) => {
-                self.closing_menu_effects.remove(&id);
+                self.closing_effects.remove(&id);
                 Task::none()
             }
             Event::PlatformSpecific(PlatformSpecific::Wayland(wayland::Event::Frame(

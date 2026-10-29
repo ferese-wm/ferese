@@ -177,7 +177,7 @@ impl FereseShell {
         };
         // Keep opacity applied until Iced has destroyed the popup's Wayland surface.
         if let Some(effects) = menu.effects.take() {
-            self.closing_menu_effects.insert(menu.id, effects);
+            self.closing_effects.insert(menu.id, effects);
         }
         self.refresh_media_art(false);
         if menu.kind == Menu::Notifications {

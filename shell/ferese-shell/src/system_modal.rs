@@ -374,11 +374,15 @@ impl FereseShell {
         {
             control.cancel_logout(serial);
         }
-        let mut tasks = modal
-            .surfaces
-            .into_iter()
-            .map(|surface| destroy_layer_surface(surface.id))
-            .collect::<Vec<_>>();
+        let mut tasks = Vec::with_capacity(modal.surfaces.len() + 1);
+        for mut surface in modal.surfaces {
+            // Dropping the binding restores opacity immediately. Keep the
+            // faded surface hidden until Iced confirms its native teardown.
+            if let Some(effects) = surface.effects.take() {
+                self.closing_effects.insert(surface.id, effects);
+            }
+            tasks.push(destroy_layer_surface(surface.id));
+        }
         if cancel && let Some(approval) = modal.inhibitors {
             tasks.push(Self::cancel_query(approval));
         }

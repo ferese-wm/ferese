@@ -93,7 +93,14 @@ impl FereseShell {
             ]
             .into();
         }
-        let mut content = row![indicator].spacing(4).align_y(Alignment::Center);
+        let icon_width = if kind == Menu::Battery {
+            crate::battery_indicator::WIDTH
+        } else {
+            f32::from(metrics.icon_size.max(20))
+        };
+        let mut content = row![container(indicator).center_x(icon_width)]
+            .spacing(4)
+            .align_y(Alignment::Center);
 
         if kind == Menu::Recording
             && let Some(elapsed) = self.recorder.elapsed()
@@ -105,13 +112,8 @@ impl FereseShell {
                     .class(theme::Text::Color(foreground)),
             );
         }
-        let content = bar_content(content, metrics.group_item_height);
         let recording_busy = kind == Menu::Recording && self.recorder.busy();
-        let icon_width = if kind == Menu::Battery {
-            crate::battery_indicator::WIDTH
-        } else {
-            f32::from(metrics.icon_size)
-        };
+        let content = bar_content(content, metrics.group_item_height);
         let control = button::custom(content)
             .name(if recording_busy {
                 self.recorder.label().into()
@@ -203,7 +205,7 @@ pub(super) fn audio_icon(volume: u8, muted: bool) -> &'static [u8] {
 pub(super) fn status_icon(kind: Menu, s: &Snapshot) -> (&'static [u8], bool) {
     match kind {
         Menu::NightLight => (
-            ferese_theme::icons::MOON,
+            ferese_theme::icons::NIGHT_LIGHT,
             s.night_light.as_ref().is_some_and(|s| s.enabled),
         ),
         Menu::Network => {
@@ -239,7 +241,8 @@ pub(super) fn status_icon(kind: Menu, s: &Snapshot) -> (&'static [u8], bool) {
             let Some(b) = &s.battery else {
                 return (ferese_theme::icons::BATTERY_EMPTY, false);
             };
-            let icon: &'static [u8] = if b.status == "Charging" {
+            let icon: &'static [u8] = if matches!(b.status.as_str(), "Charging" | "Pending charge")
+            {
                 ferese_theme::icons::BATTERY_CHARGING
             } else if b.percent >= 80 {
                 ferese_theme::icons::BATTERY_FULL

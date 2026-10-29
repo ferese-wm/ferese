@@ -725,7 +725,7 @@ impl FereseShell {
                 .push(
                     self.render
                         .text("Notifications")
-                        .size(16)
+                        .size(14)
                         .font(bold)
                         .class(theme::Text::Color(primary)),
                 )
@@ -818,12 +818,12 @@ impl FereseShell {
                         self.render,
                         accented_icon(ferese_theme::icons::NOTIFICATIONS, 26, muted, accent),
                         primary,
-                        56,
+                        40,
                     ))
                     .push(
                         self.render
                             .text("You're all caught up")
-                            .size(15)
+                            .size(13)
                             .font(bold)
                             .class(theme::Text::Color(primary)),
                     )
@@ -920,9 +920,9 @@ impl FereseShell {
             }
             let panel = container(content)
                 .id("ferese-blur-card")
-                .padding(16)
+                .padding(12)
                 .height(if count == 0 {
-                    Length::Fixed(280.0_f32.min(self.notification_history_height_limit()))
+                    Length::Fixed(224.0_f32.min(self.notification_history_height_limit()))
                 } else {
                     Length::Shrink
                 })

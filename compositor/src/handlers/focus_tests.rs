@@ -276,6 +276,54 @@ fn keyboard_menus_nest_and_release_focus_when_another_window_activates() {
 }
 
 #[test]
+fn first_pointer_motion_after_popup_destruction_reaches_its_destination() {
+    let Some((mut events, mut state)) =
+        fixture("first_pointer_motion_after_popup_destruction_reaches_its_destination")
+    else {
+        return;
+    };
+    let (parent, mut wire) = window(&mut state, &mut events, 0xff112233);
+    let root = parent.toplevel().unwrap().wl_surface().clone();
+    let seat = bind_seat(&mut events, &mut state, &root.client().unwrap(), &mut wire);
+    let pointer = state.seat.get_pointer().unwrap();
+    pointer.motion(
+        &mut state,
+        Some((root.clone(), (0., 0.).into())),
+        &MotionEvent {
+            location: (20., 20.).into(),
+            serial: SERIAL_COUNTER.next_serial(),
+            time: InputTime::from_millis(1),
+        },
+    );
+    popup(
+        &mut events,
+        &mut state,
+        &mut wire,
+        &seat,
+        3,
+        9,
+        SERIAL_COUNTER.next_serial(),
+    );
+    assert!(pointer.is_grabbed());
+    request(&mut wire, 12, 0, &[], None); // xdg_popup.destroy
+    request(&mut wire, 10, 0, &[], None); // xdg_surface.destroy
+    request(&mut wire, 9, 0, &[], None); // wl_surface.destroy
+    dispatch(&mut events, &mut state);
+    state.popups.cleanup();
+    pointer.motion(
+        &mut state,
+        Some((root, (0., 0.).into())),
+        &MotionEvent {
+            location: (60., 30.).into(),
+            serial: SERIAL_COUNTER.next_serial(),
+            time: InputTime::from_millis(2),
+        },
+    );
+    assert_eq!(pointer.current_location(), (60., 30.).into());
+    assert!(!pointer.is_grabbed());
+}
+
+#[test]
 fn popup_cannot_replace_another_clients_pointer_grab() {
     let Some((mut events, mut state)) =
         fixture("popup_cannot_replace_another_clients_pointer_grab")

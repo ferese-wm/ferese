@@ -130,8 +130,12 @@ pub(super) fn bar<'a>(
     let preferred_label_width: f32 = if compact { 112. } else { 320. };
     // Outer padding, the transport button, details padding, and cover spacing
     // share the allocation with the label.
-    let chrome =
-        4. + 2. + f32::from(metrics.icon_size) + 12. + 8. + if compact { 0. } else { side + 8. };
+    let chrome = 4.
+        + 2.
+        + f32::from(metrics.icon_size.max(20))
+        + 12.
+        + 8.
+        + if compact { 0. } else { side + 8. };
     let label_width = width.map_or(preferred_label_width, |width| {
         (width - chrome).max(0.).min(preferred_label_width)
     });
@@ -159,19 +163,23 @@ pub(super) fn bar<'a>(
         ))
     });
     let playing = player.status == Playback::Playing;
-    let mut toggle = button::custom(bar_content(
-        accented_icon(
-            if playing {
-                icons::MEDIA_PAUSE
-            } else {
-                icons::MEDIA_PLAY
-            },
-            metrics.icon_size,
-            foreground,
-            color(palette.accent),
-        ),
-        height,
-    ))
+    let mut toggle = button::custom(
+        bar_content(
+            accented_icon(
+                if playing {
+                    icons::MEDIA_PAUSE
+                } else {
+                    icons::MEDIA_PLAY
+                },
+                metrics.icon_size,
+                foreground,
+                color(palette.accent),
+            ),
+            height,
+        )
+        .width(20)
+        .align_x(cosmic::iced::alignment::Horizontal::Center),
+    )
     .name(if playing { "Pause" } else { "Play" })
     .height(height)
     .padding([0, 6]);

@@ -5,13 +5,14 @@ mod battery;
 mod bluetooth;
 mod calendar;
 mod controls;
+#[cfg(test)]
+mod layout_tests;
 mod lifecycle;
 mod media;
 mod network;
 mod night_light;
 mod system;
 
-use bar::status_icon;
 use controls::{control_card, menu_button, toggle_row};
 use cosmic::iced::border::Shape as BorderShape;
 use cosmic::widget::column;
@@ -19,8 +20,8 @@ use status::{Action, Snapshot};
 
 use super::{
     Background, Border, Color, EffectsBinding, EffectsContext, Element, FereseShell, Instant,
-    Length, Limits, Message, Ordering, ShellTheme, accented_icon, color, color_with_opacity,
-    container, motion, row, status, theme, window, wl_surface,
+    Length, Limits, Message, Ordering, ShellTheme, color_with_opacity, container, motion, row,
+    status, theme, window, wl_surface,
 };
 
 type MenuHeading<'a> =
@@ -77,11 +78,11 @@ impl Menu {
 
     pub(crate) fn width(self) -> f32 {
         match self {
-            Self::System => 360.0,
-            Self::Battery => 328.0,
+            Self::System => 320.0,
+            Self::Battery => 300.0,
             Self::Calendar => 268.0,
-            Self::Notifications | Self::Media => 368.0,
-            _ => 300.0,
+            Self::Notifications | Self::Media => 336.0,
+            _ => 280.0,
         }
     }
 
@@ -425,25 +426,9 @@ impl FereseShell {
         let kind = menu.kind;
         let primary = color_with_opacity(theme.text_primary, p);
         let muted = color_with_opacity(theme.text_muted, p);
-        let heading_icon = if kind == Menu::Battery {
-            self.battery_indicator(theme, p, false)
-        } else {
-            accented_icon(
-                status_icon(kind, &self.status).0,
-                22,
-                primary,
-                color_with_opacity(theme.accent, p),
-            )
-            .width(Length::Fixed(22.))
-            .into()
-        };
-        let badge = ferese_theme::menus::badge(
-            heading_icon,
-            color(theme.accent),
-            p,
-            self.render.radius(20.),
-        );
-        let mut heading = ferese_theme::menus::heading(badge, kind.title(), self.render.font);
+        let mut heading = row![self.render.text(kind.title()).size(14).width(Length::Fill)]
+            .height(28)
+            .align_y(cosmic::iced::Alignment::Center);
         let style = MenuStyle {
             theme,
             primary,
@@ -456,7 +441,7 @@ impl FereseShell {
             Menu::Audio => audio::heading(self, heading, style),
             _ => heading,
         };
-        let mut rows = column::with_capacity(12).spacing(12).width(Length::Fill);
+        let mut rows = column::with_capacity(12).spacing(8).width(Length::Fill);
         if kind != Menu::Calendar {
             rows = rows.push(heading);
         }
@@ -514,7 +499,7 @@ impl FereseShell {
         let panel = container(body)
             .id("ferese-blur-card")
             .width(kind.width())
-            .padding(16)
+            .padding(12)
             .class(theme::Container::custom(move |_| container::Style {
                 background: (!compositor_material).then_some(Background::Color(
                     color_with_opacity(theme.surface_popover, p),
@@ -574,7 +559,7 @@ fn notification_controls<'a>(
             p,
         );
         rows = rows.push(if combined {
-            control_card(shell.render, toggle, primary, p)
+            control_card(shell.render, toggle, primary, p).into()
         } else {
             toggle
         });
@@ -610,6 +595,23 @@ fn notification_controls<'a>(
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[test]
+    fn charging_batteries_use_the_lightning_icon() {
+        for status in ["Charging", "Pending charge"] {
+            let snapshot = Snapshot {
+                battery: Some(status::Battery {
+                    percent: 92,
+                    status: status.into(),
+                }),
+                ..Default::default()
+            };
+            assert_eq!(
+                bar::status_icon(Menu::Battery, &snapshot).0,
+                ferese_theme::icons::BATTERY_CHARGING
+            );
+        }
+    }
 
     #[test]
     fn capture_status_popover_shows_application_and_source() {
@@ -850,14 +852,14 @@ mod tests {
 
     #[test]
     fn smaller_popups_have_content_specific_widths() {
-        assert_eq!(Menu::System.width(), 360.0);
-        assert_eq!(Menu::Network.width(), 300.0);
-        assert_eq!(Menu::Bluetooth.width(), 300.0);
-        assert_eq!(Menu::Battery.width(), 328.0);
+        assert_eq!(Menu::System.width(), 320.0);
+        assert_eq!(Menu::Network.width(), 280.0);
+        assert_eq!(Menu::Bluetooth.width(), 280.0);
+        assert_eq!(Menu::Battery.width(), 300.0);
         assert_eq!(Menu::Calendar.width(), 268.0);
         assert_eq!(Menu::Calendar.height_limit(), 270.0);
-        assert_eq!(Menu::Audio.width(), 300.0);
-        assert_eq!(Menu::Notifications.width(), 368.0);
+        assert_eq!(Menu::Audio.width(), 280.0);
+        assert_eq!(Menu::Notifications.width(), 336.0);
     }
 
     #[test]

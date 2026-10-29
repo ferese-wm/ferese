@@ -2,10 +2,12 @@ use cosmic::iced::{Alignment, Length};
 use cosmic::widget::{button, column, container, row};
 use cosmic::{Element, theme};
 
-use super::controls::{control_card, slider_row};
-use super::{MenuRows, MenuStyle};
+use super::controls::level_control;
+use super::{Menu, MenuRows, MenuStyle};
 use crate::status::Action;
-use crate::{FereseShell, Message, ShellTheme, bar_icon, color_with_opacity, motion};
+use crate::{
+    FereseShell, Message, ShellTheme, accented_icon, bar_icon, color_with_opacity, motion,
+};
 
 pub(super) fn view<'a>(
     shell: &'a FereseShell,
@@ -14,12 +16,24 @@ pub(super) fn view<'a>(
 ) -> MenuRows<'a> {
     let MenuStyle {
         theme,
-        primary: _,
+        primary,
         muted,
         opacity: p,
     } = style;
     if let Some(b) = &shell.status.battery {
-        rows = rows.push(container(shell.battery_indicator(theme, p, true)).padding([2, 0]));
+        rows = rows.push(
+            row![
+                accented_icon(
+                    super::bar::status_icon(Menu::Battery, &shell.status).0,
+                    28,
+                    primary,
+                    color_with_opacity(theme.accent, p)
+                ),
+                shell.render.text(format!("{}%", b.percent)).size(14),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center),
+        );
         rows = rows.push(
             shell
                 .render
@@ -128,27 +142,18 @@ pub(super) fn brightness<'a>(
     mut rows: MenuRows<'a>,
     style: MenuStyle,
 ) -> MenuRows<'a> {
-    let MenuStyle {
-        theme,
-        primary,
-        muted: _,
-        opacity: p,
-    } = style;
     if let Some(value) = shell.status.brightness {
-        let brightness = column![
-            shell.render.text("Brightness").size(13),
-            slider_row(
-                shell.render,
-                ferese_theme::icons::BRIGHTNESS,
-                value,
-                true,
-                primary,
-                color_with_opacity(theme.accent, p),
-                p,
-            )
-        ]
-        .spacing(6);
-        rows = rows.push(control_card(shell.render, brightness.into(), primary, p));
+        rows = rows.push(level_control(
+            shell.render,
+            "Display brightness",
+            container(bar_icon(ferese_theme::icons::BRIGHTNESS, 16, style.primary))
+                .padding(2)
+                .into(),
+            value,
+            1..=100,
+            Action::Brightness,
+            style,
+        ));
     }
     rows
 }

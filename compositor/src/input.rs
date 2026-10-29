@@ -809,9 +809,7 @@ impl Ferese {
                 if self.overview.is_active() {
                     let position = pointer.current_location();
                     if self.layer_under(position).is_some() {
-                        if event.state() == ButtonState::Pressed {
-                            self.record_activation_input(serial, pointer.current_focus());
-                        }
+                        self.record_activation_input(serial, pointer.current_focus());
 
                         self.send_pointer_button(
                             &pointer,
@@ -872,7 +870,10 @@ impl Ferese {
                             || grab.is::<smithay::input::pointer::ClickGrab<Self>>()
                     })
                     .unwrap_or(true);
-                if event.state() == ButtonState::Pressed && client_grab {
+                // Toolkits also open popovers on release. Keep proof of both
+                // real button edges for their recipient; synthetic releases
+                // during device/session teardown do not enter this path.
+                if client_grab {
                     self.record_activation_input(serial, pointer.current_focus());
                 }
 

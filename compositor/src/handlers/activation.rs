@@ -42,7 +42,7 @@ impl<C: PartialEq> InputHistory<C> {
         self.events.push_back((serial, client, time));
     }
 
-    pub(super) fn validate(&self, serial: Serial, client: &C, now: Instant) -> Option<Instant> {
+    pub(crate) fn validate(&self, serial: Serial, client: &C, now: Instant) -> Option<Instant> {
         self.events.iter().rev().find_map(|(event, owner, time)| {
             (*event == serial
                 && owner == client
