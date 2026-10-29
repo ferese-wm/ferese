@@ -1117,7 +1117,10 @@ mod test {
         utils::{Physical, Rectangle},
     };
 
-    use super::AtomicDrmSurface;
+    use super::{AtomicDrmSurface, AtomicRequest, PropMapping};
+    use drm::control::atomic::AtomicModeReq;
+    use drm::control::{connector, crtc, property};
+    use std::num::NonZeroU32;
 
     fn is_send<S: Send>() {}
 
@@ -1138,6 +1141,49 @@ mod test {
         let geometry: Rectangle<f64, Physical> = Rectangle::from_size((1920.1, 1080.0).into());
         let fixed = to_fixed(geometry.size.w) as u64;
         assert_eq!(125835674, fixed);
+    }
+
+    #[test]
+    fn modesets_reset_link_status_when_supported() {
+        let conn: connector::Handle = NonZeroU32::new(1).unwrap().into();
+        let crtc: crtc::Handle = NonZeroU32::new(2).unwrap().into();
+        let crtc_id: property::Handle = NonZeroU32::new(3).unwrap().into();
+        let link: property::Handle = NonZeroU32::new(4).unwrap().into();
+        for supported in [false, true] {
+            let mut mapping = PropMapping::default();
+            let props = mapping.connectors.entry(conn).or_default();
+            props.insert("CRTC_ID".into(), crtc_id);
+            if supported {
+                props.insert("link-status".into(), link);
+            }
+            let mut request = AtomicRequest::new(&mapping);
+            request.set_connector(conn, crtc).unwrap();
+            let actual = request.build().unwrap();
+            let mut expected = AtomicModeReq::new();
+            expected.add_property(conn, crtc_id, property::Value::CRTC(Some(crtc)));
+            if supported {
+                expected.add_raw_property(conn.into(), link, 0);
+            }
+            // AtomicModeReq exposes its wire properties through Debug only.
+            assert_eq!(format!("{actual:?}"), format!("{expected:?}"));
+        }
+    }
+
+    #[test]
+    fn disabling_a_connector_does_not_reset_its_link() {
+        let conn: connector::Handle = NonZeroU32::new(1).unwrap().into();
+        let crtc_id: property::Handle = NonZeroU32::new(3).unwrap().into();
+        let link: property::Handle = NonZeroU32::new(4).unwrap().into();
+        let mut mapping = PropMapping::default();
+        let props = mapping.connectors.entry(conn).or_default();
+        props.insert("CRTC_ID".into(), crtc_id);
+        props.insert("link-status".into(), link);
+        let mut request = AtomicRequest::new(&mapping);
+        request.reset_connector(conn).unwrap();
+        let actual = request.build().unwrap();
+        let mut expected = AtomicModeReq::new();
+        expected.add_property(conn, crtc_id, property::Value::CRTC(None));
+        assert_eq!(format!("{actual:?}"), format!("{expected:?}"));
     }
 }
 
@@ -1181,6 +1227,14 @@ impl<'a> AtomicRequest<'a> {
     fn set_connector(&mut self, conn: connector::Handle, crtc: crtc::Handle) -> Result<(), Error> {
         let connector_props = self.connector_props.entry(conn).or_default();
         connector_props.insert("CRTC_ID", property::Value::CRTC(Some(crtc)));
+        // A modeset must explicitly clear a failed link; setting the mode alone
+        // can otherwise succeed while the display remains black.
+        if self.mapping.conn_prop_handle(conn, "link-status").is_ok() {
+            connector_props.insert(
+                "link-status",
+                property::Value::Unknown(drm_sys::DRM_MODE_LINK_STATUS_GOOD.into()),
+            );
+        }
         Ok(())
     }
 
@@ -1380,6 +1434,9 @@ impl<'a> AtomicRequest<'a> {
             self.mapping.conn_prop_handle(conn, "CRTC_ID")?,
             property::Value::CRTC(Some(crtc)),
         );
+        if let Ok(prop) = self.mapping.conn_prop_handle(conn, "link-status") {
+            self.request.add_raw_property(conn.into(), prop, drm_sys::DRM_MODE_LINK_STATUS_GOOD.into());
+        }
         Ok(())
     }
 

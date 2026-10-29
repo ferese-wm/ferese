@@ -39,6 +39,36 @@ fn add<H: ResourceHandle>(
     Ok(())
 }
 
+// A failed link is still reported as connected. Read its live property instead
+// of relying on the configured mode or a cached connector snapshot.
+fn failed_links(
+    drm: &DrmDevice,
+    connectors: impl IntoIterator<Item = connector::Handle>,
+) -> io::Result<HashMap<connector::Handle, property::Handle>> {
+    let mut failed = HashMap::new();
+    for connector in connectors {
+        for (handle, value) in drm.get_properties(connector)? {
+            if drm.get_property(handle)?.name().to_bytes() == b"link-status" && value == 1 {
+                failed.insert(connector, handle);
+                break;
+            }
+        }
+    }
+    Ok(failed)
+}
+
+fn include_failed_links(
+    changes: &mut Vec<crtc::Handle>,
+    failed: &HashMap<connector::Handle, property::Handle>,
+    outputs: impl IntoIterator<Item = (crtc::Handle, connector::Handle)>,
+) {
+    for (crtc, connector) in outputs {
+        if failed.contains_key(&connector) && !changes.contains(&crtc) {
+            changes.push(crtc);
+        }
+    }
+}
+
 fn clear_secondary_planes(
     drm: &DrmDevice,
     request: &mut AtomicModeReq,
@@ -78,6 +108,12 @@ pub(super) fn validate_device(
     device: &DirectDevice,
     scan: &OutputScan,
 ) -> Result<(), Box<dyn Error>> {
+    let failed = failed_links(
+        &device.drm,
+        scan.selections
+            .iter()
+            .map(|selection| selection.connector.handle()),
+    )?;
     let color = super::sdr_color::Plan::capture(
         &device.drm,
         scan.selections
@@ -86,7 +122,8 @@ pub(super) fn validate_device(
     )?;
     if scan.selections.iter().all(|selection| {
         device.outputs.get(&selection.crtc).is_some_and(|output| {
-            output.connector == selection.connector.handle()
+            !failed.contains_key(&selection.connector.handle())
+                && output.connector == selection.connector.handle()
                 && output.mode == selection.mode
                 && output.settings.adaptive_sync == selection.settings.adaptive_sync
         })
@@ -103,6 +140,9 @@ pub(super) fn validate_device(
     let drm = &device.drm;
     let mut request = AtomicModeReq::new();
     color.extend_test(&mut request);
+    for (connector, property) in &failed {
+        request.add_raw_property((*connector).into(), *property, 0);
+    }
     let mut blobs = Blobs {
         fd: drm.device_fd().clone(),
         ids: Vec::new(),
@@ -290,6 +330,7 @@ struct DeviceTransaction<'transaction> {
     selections: &'transaction HashMap<crtc::Handle, OutputSelection>,
     staged: HashMap<crtc::Handle, DirectOutput>,
     replaced: HashSet<crtc::Handle>,
+    failed_links: HashMap<connector::Handle, property::Handle>,
     color_plan: Option<super::sdr_color::Plan>,
     color_applied: Option<super::sdr_color::Applied>,
 }
@@ -331,6 +372,16 @@ impl crate::output_transaction::HardwareTransaction for DeviceTransaction<'_> {
             .get_mut(&crtc)
             .or_else(|| self.device.outputs.get_mut(&crtc))
             .expect("the selected CRTC has a live or staged output in this transaction");
+        if self
+            .failed_links
+            .contains_key(&selection.connector.handle())
+        {
+            tracing::warn!(connector = %selection.connector, "display link failed; retrying modeset");
+            output
+                .surface
+                .reset_state()
+                .map_err(|error| error.to_string())?;
+        }
         output
             .surface
             .set_connectors(&[selection.connector.handle()])
@@ -505,6 +556,13 @@ pub(super) fn apply_device(
             .map(|selection| selection.connector.handle()),
     )
     .map_err(|error| format!("could not prepare SDR output state: {error}"))?;
+    let failed_links = failed_links(
+        &device.drm,
+        selections
+            .values()
+            .map(|selection| selection.connector.handle()),
+    )
+    .map_err(|error| format!("could not read display link state: {error}"))?;
     let mut changed = selections
         .iter()
         .filter_map(|(crtc, selection)| {
@@ -519,6 +577,13 @@ pub(super) fn apply_device(
             (!same).then_some(*crtc)
         })
         .collect::<Vec<_>>();
+    include_failed_links(
+        &mut changed,
+        &failed_links,
+        selections
+            .values()
+            .map(|selection| (selection.crtc, selection.connector.handle())),
+    );
     changed.sort_by_key(|crtc| (selections[crtc].mirror_source.is_some(), u32::from(*crtc)));
     let removals = device
         .outputs
@@ -526,7 +591,7 @@ pub(super) fn apply_device(
         .filter(|crtc| !selections.contains_key(crtc))
         .copied()
         .collect::<Vec<_>>();
-    let hardware_changes = changed
+    let mut hardware_changes = changed
         .iter()
         .filter(|crtc| {
             !device.outputs.get(crtc).is_some_and(|output| {
@@ -538,12 +603,22 @@ pub(super) fn apply_device(
         })
         .copied()
         .collect::<Vec<_>>();
+    include_failed_links(
+        &mut hardware_changes,
+        &failed_links,
+        changed
+            .iter()
+            .map(|crtc| (*crtc, selections[crtc].connector.handle())),
+    );
+    hardware_changes
+        .sort_by_key(|crtc| (selections[crtc].mirror_source.is_some(), u32::from(*crtc)));
     let mut driver = DeviceTransaction {
         state,
         device,
         selections: &selections,
         staged: HashMap::new(),
         replaced: HashSet::new(),
+        failed_links,
         color_plan: Some(color),
         color_applied: None,
     };
@@ -802,4 +877,41 @@ pub(super) fn recover_last_output(state: &mut Ferese, deferred: &[DrmNode]) {
         .expect("DRM callbacks require an installed direct backend");
     backend.desired_outputs = requested;
     backend.output_error = original_error;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::num::NonZeroU32;
+
+    #[test]
+    fn failed_link_requires_publication_and_modeset_without_configuration_changes() {
+        let internal: connector::Handle = NonZeroU32::new(1).unwrap().into();
+        let external: connector::Handle = NonZeroU32::new(2).unwrap().into();
+        let internal_crtc: crtc::Handle = NonZeroU32::new(3).unwrap().into();
+        let external_crtc: crtc::Handle = NonZeroU32::new(4).unwrap().into();
+        let link: property::Handle = NonZeroU32::new(5).unwrap().into();
+        let outputs = [(internal_crtc, internal), (external_crtc, external)];
+
+        // Both configurations match the applied state, so their ordinary
+        // change lists are empty. Only the failed internal link must be reset.
+        let failed = HashMap::from([(internal, link)]);
+        let mut changed = Vec::new();
+        let mut hardware_changes = Vec::new();
+        include_failed_links(&mut changed, &failed, outputs);
+        include_failed_links(&mut hardware_changes, &failed, outputs);
+        assert_eq!(changed, [internal_crtc]);
+        assert_eq!(hardware_changes, [internal_crtc]);
+
+        // A failure may coincide with another settings change; stage it once.
+        include_failed_links(&mut hardware_changes, &failed, outputs);
+        assert_eq!(hardware_changes, [internal_crtc]);
+
+        let mut unchanged = Vec::new();
+        include_failed_links(&mut unchanged, &HashMap::new(), outputs);
+        assert!(
+            unchanged.is_empty(),
+            "healthy outputs need no recovery modeset"
+        );
+    }
 }
