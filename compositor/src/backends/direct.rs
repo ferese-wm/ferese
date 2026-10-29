@@ -595,6 +595,11 @@ pub fn init(event_loop: &mut EventLoop<Ferese>, state: &mut Ferese) -> Result<()
 }
 
 fn configure_libinput_device(state: &Ferese, device: &mut LibinputDevice) {
+    if device.has_capability(smithay::reexports::input::DeviceCapability::Keyboard)
+        && let Some(keyboard) = state.seat.get_keyboard()
+    {
+        device.led_update(keyboard.led_state().into());
+    }
     let settings = state.input_settings.touchpad;
     let touchpad = device.config_tap_finger_count() > 0 || device.config_dwt_is_available();
     let mouse = state.input_settings.mouse;
@@ -670,6 +675,16 @@ fn configure_libinput_device(state: &Ferese, device: &mut LibinputDevice) {
             ?error,
             "failed to configure disable-while-typing"
         );
+    }
+}
+
+pub(crate) fn update_keyboard_leds(state: &mut Ferese, leds: smithay::input::keyboard::LedState) {
+    if let Some(backend) = state.direct_backend.as_mut() {
+        for device in &mut backend.input_devices {
+            if device.has_capability(smithay::reexports::input::DeviceCapability::Keyboard) {
+                device.led_update(leds.into());
+            }
+        }
     }
 }
 

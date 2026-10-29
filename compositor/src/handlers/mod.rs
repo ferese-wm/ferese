@@ -56,6 +56,14 @@ impl SeatHandler for Ferese {
         &mut self.seat_state
     }
 
+    fn led_state_changed(&mut self, seat: &Seat<Self>, leds: smithay::input::keyboard::LedState) {
+        if seat == &self.seat {
+            // The keyboard mutex is held here. Use the supplied state rather
+            // than querying the keyboard again.
+            crate::backends::direct::update_keyboard_leds(self, leds);
+        }
+    }
+
     fn cursor_image(&mut self, _seat: &Seat<Self>, image: CursorImageStatus) {
         if let CursorImageStatus::Named(icon) = &image
             && !self.named_cursors.contains_key(icon)
