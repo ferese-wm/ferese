@@ -469,6 +469,7 @@ impl SessionLockHandler for Ferese {
         // Replacing an orphan never passes through Unlocked. Existing protected
         // presentation facts remain valid, but old surfaces must not own input.
         self.session_lock.lifecycle = Lifecycle::Acquiring(confirmation);
+        self.revoke_activations();
         self.activities.set_locked(true);
         self.media_engine.set_locked(true);
         self.set_binding_mode("default");

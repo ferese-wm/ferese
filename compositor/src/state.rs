@@ -545,6 +545,7 @@ pub struct Ferese {
     pub(crate) presentation_constraints: crate::presentation_constraints::PresentationConstraints,
     pub(crate) dmabuf_feedback: crate::dmabuf_feedback::FeedbackManager,
     pub(crate) activation_inputs: crate::handlers::activation::InputHistory,
+    pub(crate) activation_timer_pending: bool,
     pub(crate) pending_screencopies: Vec<PendingScreencopy>,
     pub(crate) readbacks: crate::handlers::readback::Readbacks,
     // Screenshot requests outlive the readback that filled them: the
@@ -891,6 +892,7 @@ impl Ferese {
             presentation_constraints,
             dmabuf_feedback: Default::default(),
             activation_inputs: Default::default(),
+            activation_timer_pending: false,
             pending_screencopies: Vec::new(),
             readbacks: Default::default(),
             screenshot: Coordinator::new(),

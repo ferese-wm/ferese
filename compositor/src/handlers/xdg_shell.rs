@@ -1,9 +1,9 @@
 use smithay::desktop::{
-    PopupKeyboardGrab, PopupKind, PopupPointerGrab, Window, WindowSurfaceType, find_popup_root_surface,
-    get_popup_toplevel_coords,
+    PopupKeyboardGrab, PopupKind, PopupManager, PopupPointerGrab, Window, WindowSurfaceType,
+    find_popup_root_surface, get_popup_toplevel_coords,
 };
 use smithay::input::Seat;
-use smithay::input::pointer::{Focus, GrabStartData};
+use smithay::input::pointer::{ClickGrab, Focus, GrabStartData};
 use smithay::reexports::wayland_protocols::xdg::decoration::zv1::server::zxdg_toplevel_decoration_v1::Mode;
 use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
 use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::State as ToplevelState;
@@ -12,6 +12,7 @@ use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::reexports::wayland_server::{Client, DataInit, Dispatch, DisplayHandle, Resource, backend::ClientId};
 use smithay::utils::{Logical, Point, Rectangle, Serial};
 use smithay::wayland::compositor::with_states;
+use smithay::wayland::input_method::InputMethodSeat;
 use smithay::wayland::shell::xdg::decoration::XdgDecorationHandler;
 use smithay::wayland::shell::xdg::{
     PopupSurface, PositionerState, SurfaceCachedState, ToplevelSurface, XdgShellHandler, XdgShellState,
@@ -247,16 +248,18 @@ impl XdgShellHandler for Ferese {
     }
 
     fn grab(&mut self, surface: PopupSurface, seat: wl_seat::WlSeat, serial: Serial) {
-        if self.session_lock.active() || self.input_capture.active() {
-            return;
-        }
-        let Some(seat) = Seat::from_resource(&seat) else {
-            return;
-        };
         let popup = PopupKind::Xdg(surface);
         let Ok(root) = find_popup_root_surface(&popup) else {
             return;
         };
+        if Seat::from_resource(&seat).as_ref() != Some(&self.seat)
+            || !seat.id().same_client_as(&popup.wl_surface().id())
+            || !self.popup_grab_allowed(&root, serial)
+        {
+            let _ = PopupManager::dismiss_popup(&root, &popup);
+            return;
+        }
+        let seat = self.seat.clone();
         let popup_grab = match self.popups.grab_popup(root, popup, &seat, serial) {
             Ok(grab) => grab,
             Err(error) => {
@@ -274,7 +277,11 @@ impl XdgShellHandler for Ferese {
             );
         }
         if let Some(keyboard) = seat.get_keyboard() {
-            keyboard.set_grab(self, PopupKeyboardGrab::new(&popup_grab), serial);
+            // The input method must keep receiving keys while its client opens
+            // menus. Its grab forwards focus changes to the popup normally.
+            if !seat.input_method().keyboard_grabbed() {
+                keyboard.set_grab(self, PopupKeyboardGrab::new(&popup_grab), serial);
+            }
             // Focus the popup immediately, rather than waiting for its first
             // key event. Shell clients use focus to initialize popup effects,
             // and Escape must be delivered to the popup from the outset.
@@ -438,9 +445,174 @@ pub fn apply_initial_window_rules(state: &mut Ferese, window: &Window) {
             state.set_window_fullscreen(id, true);
         }
     }
+    if initial {
+        state.activate_pending_window(toplevel.wl_surface());
+    }
 }
 
 impl Ferese {
+    fn popup_focus_root(&self, mut surface: WlSurface) -> WlSurface {
+        while let Some(parent) = smithay::wayland::compositor::get_parent(&surface) {
+            surface = parent;
+        }
+        self.popups
+            .find_popup(&surface)
+            .and_then(|popup| find_popup_root_surface(&popup).ok())
+            .unwrap_or(surface)
+    }
+
+    fn popup_grab_allowed(&self, root: &WlSurface, serial: Serial) -> bool {
+        if self.session_lock.active()
+            || self.input_capture.active()
+            || self
+                .exclusive_keyboard_layer()
+                .is_some_and(|layer| layer.wl_surface() != root)
+        {
+            return false;
+        }
+        let Some(client) = root.client() else {
+            return false;
+        };
+        let Some(keyboard) = self.seat.get_keyboard() else {
+            return false;
+        };
+        let Some(pointer) = self.seat.get_pointer() else {
+            return false;
+        };
+        let keyboard_root = keyboard
+            .current_focus()
+            .map(|surface| self.popup_focus_root(surface));
+        let pointer_root = pointer
+            .current_focus()
+            .map(|surface| self.popup_focus_root(surface));
+        let touch_root = self
+            .seat
+            .get_touch()
+            .and_then(|touch| touch.grab_start_data())
+            .and_then(|start| start.focus)
+            .map(|(surface, _)| self.popup_focus_root(surface));
+        let layer = self
+            .space
+            .layer_for_surface(root, WindowSurfaceType::TOPLEVEL);
+        if let Some(layer) = layer {
+            if !self.layer_mapped_and_visible(&layer)
+                || ![
+                    keyboard_root.as_ref(),
+                    pointer_root.as_ref(),
+                    touch_root.as_ref(),
+                ]
+                .contains(&Some(root))
+            {
+                return false;
+            }
+        } else if self.overview.is_presenting()
+            || keyboard_root.as_ref() != Some(root)
+            || self.windows.id_for_surface(root) != self.focused_window
+            || !self
+                .window_for_surface(root)
+                .is_some_and(|window| crate::state::window_has_buffer(&window))
+        {
+            return false;
+        }
+
+        let keyboard_popup = keyboard
+            .with_grab(|_, grab| {
+                grab.is::<PopupKeyboardGrab<Self>>()
+                    && grab.start_data().focus.as_ref() == Some(root)
+            })
+            .unwrap_or(false);
+        let pointer_popup = pointer
+            .with_grab(|_, grab| {
+                grab.is::<PopupPointerGrab<Self>>()
+                    && grab
+                        .start_data()
+                        .focus
+                        .as_ref()
+                        .is_some_and(|(focus, _)| focus == root)
+            })
+            .unwrap_or(false);
+        let nested = (keyboard_popup && keyboard.has_grab(serial))
+            || (pointer_popup && pointer.has_grab(serial));
+        // Keyboard menus already belong to the focused client. Some toolkits
+        // reuse their last pointer serial even when a key opened the menu.
+        // Transferring focus from a window to a noninteractive layer, however,
+        // requires a recent interaction with that layer's client.
+        if !nested
+            && keyboard_root.as_ref() != Some(root)
+            && self
+                .activation_inputs
+                .validate(serial, &client.id(), std::time::Instant::now())
+                .is_none()
+        {
+            return false;
+        }
+        if keyboard.is_grabbed() && !keyboard_popup && !self.seat.input_method().keyboard_grabbed()
+        {
+            return false;
+        }
+        if self
+            .seat
+            .get_touch()
+            .is_some_and(|touch| touch.is_grabbed())
+            && touch_root.as_ref() != Some(root)
+        {
+            return false;
+        }
+        if pointer.is_grabbed() && !pointer_popup {
+            let click = pointer.has_grab(serial)
+                && pointer
+                    .with_grab(|_, grab| {
+                        grab.is::<ClickGrab<Self>>()
+                            && grab.start_data().focus.as_ref().is_some_and(|(focus, _)| {
+                                self.popup_focus_root(focus.clone()) == *root
+                            })
+                    })
+                    .unwrap_or(false);
+            if !click {
+                return false;
+            }
+        }
+        true
+    }
+
+    pub(crate) fn dismiss_popups_for_focus(&mut self, focus: Option<&WlSurface>) {
+        let Some(keyboard) = self.seat.get_keyboard() else {
+            return;
+        };
+        let Some(current) = keyboard.current_focus() else {
+            return;
+        };
+        let Some(popup) = self.popups.find_popup(&current) else {
+            return;
+        };
+        let Ok(root) = find_popup_root_surface(&popup) else {
+            return;
+        };
+        if focus.is_some_and(|surface| self.popup_focus_root(surface.clone()) == root) {
+            return;
+        }
+        for (popup, _) in PopupManager::popups_for_surface(&root) {
+            let _ = PopupManager::dismiss_popup(&root, &popup);
+        }
+        if keyboard
+            .with_grab(|_, grab| grab.is::<PopupKeyboardGrab<Self>>())
+            .unwrap_or(false)
+        {
+            keyboard.unset_grab(self);
+        }
+        if let Some(pointer) = self.seat.get_pointer()
+            && pointer
+                .with_grab(|_, grab| grab.is::<PopupPointerGrab<Self>>())
+                .unwrap_or(false)
+        {
+            pointer.unset_grab(
+                self,
+                smithay::utils::SERIAL_COUNTER.next_serial(),
+                self.last_pointer_time,
+            );
+        }
+    }
+
     pub(crate) fn unconstrain_popup(&self, popup: &PopupSurface) {
         let Ok(root) = find_popup_root_surface(&PopupKind::Xdg(popup.clone())) else {
             return;

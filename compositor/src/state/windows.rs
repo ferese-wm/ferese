@@ -138,7 +138,9 @@ impl Ferese {
             .and_then(|focused| self.presented_window_rect(focused))
             .unwrap_or(bounds);
         let fullscreen = self.workspaces.active().fullscreen;
-        let focus = true;
+        // Native authentication and portal dialogs must remain usable above a
+        // fullscreen app. Ordinary floating apps follow the tiled focus policy.
+        let focus = fullscreen.is_none() || crate::window_rules::is_native_dialog(app_id);
         if let Err(error) =
             self.workspaces
                 .insert_floating_window(id, self.workspaces.active_id(), rect, focus)
@@ -162,7 +164,7 @@ impl Ferese {
         }
 
         self.window_stack.insert(id);
-        if let Some(fullscreen) = fullscreen {
+        if let Some(fullscreen) = fullscreen.filter(|_| focus) {
             self.floating_above_fullscreen.insert(id, fullscreen);
         }
 

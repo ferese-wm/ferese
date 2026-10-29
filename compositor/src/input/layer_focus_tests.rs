@@ -32,7 +32,7 @@ fn layer_with_policy(
     layer_with_namespace(state, events, output, interactivity, level, "bar")
 }
 
-pub(super) fn layer_with_namespace(
+pub(crate) fn layer_with_namespace(
     state: &mut Ferese,
     events: &mut EventLoop<'static, Ferese>,
     output: &Output,

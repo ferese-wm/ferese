@@ -42,7 +42,7 @@ pub(crate) mod gesture_tests;
 #[cfg(test)]
 mod launcher_touch_tests;
 #[cfg(test)]
-mod layer_focus_tests;
+pub(crate) mod layer_focus_tests;
 
 pub(crate) struct LockedPointerHint {
     pub(crate) surface: WlSurface,
@@ -1265,12 +1265,14 @@ impl Ferese {
         let keyboard = self.seat.get_keyboard().expect("seat has a keyboard");
         self.focus_output_at(position);
         if let Some(layer) = self.exclusive_keyboard_layer() {
+            self.dismiss_popups_for_focus(Some(layer.wl_surface()));
             keyboard.set_focus(self, Some(layer.wl_surface().clone()), serial);
             return;
         }
 
         if let Some((layer, _, _)) = self.layer_under(position) {
             if self.layer_keyboard_eligible(&layer) {
+                self.dismiss_popups_for_focus(Some(layer.wl_surface()));
                 keyboard.set_focus(self, Some(layer.wl_surface().clone()), serial);
             } else if raise
                 && keyboard.current_focus().is_some_and(|surface| {
@@ -1338,6 +1340,7 @@ impl Ferese {
                 .expect("mapped window has a toplevel")
                 .wl_surface()
                 .clone();
+            self.dismiss_popups_for_focus(Some(&surface));
             keyboard.set_focus(self, Some(surface), serial);
         } else {
             if let Some(previous) = previous.and_then(|id| self.windows.window(id)) {
@@ -1349,6 +1352,7 @@ impl Ferese {
             }
 
             self.focused_window = None;
+            self.dismiss_popups_for_focus(None);
             keyboard.set_focus(self, Option::<WlSurface>::None, serial);
         }
 

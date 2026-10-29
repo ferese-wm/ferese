@@ -1,7 +1,9 @@
 use std::collections::VecDeque;
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use smithay::input::Seat;
+use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 use smithay::reexports::wayland_server::Resource;
 use smithay::reexports::wayland_server::backend::ClientId;
 use smithay::utils::Serial;
@@ -9,6 +11,7 @@ use smithay::utils::Serial;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 #[cfg(test)]
 use smithay::utils::SERIAL_COUNTER;
+use smithay::wayland::compositor::with_states;
 use smithay::wayland::xdg_activation::{
     XdgActivationHandler, XdgActivationState, XdgActivationToken, XdgActivationTokenData,
 };
@@ -17,6 +20,7 @@ use crate::Ferese;
 
 const TOKEN_MAX_AGE: Duration = Duration::from_secs(10);
 const MAX_INTERACTIONS: usize = 64;
+const MAX_TOKENS: usize = 256;
 
 pub(crate) struct InputHistory<C = ClientId> {
     events: VecDeque<(Serial, C, Instant)>,
@@ -39,7 +43,7 @@ impl<C: PartialEq> InputHistory<C> {
         self.events.push_back((serial, client, time));
     }
 
-    fn validate(&self, serial: Serial, client: &C, now: Instant) -> Option<Instant> {
+    pub(super) fn validate(&self, serial: Serial, client: &C, now: Instant) -> Option<Instant> {
         self.events.iter().rev().find_map(|(event, owner, time)| {
             (*event == serial
                 && owner == client
@@ -51,7 +55,71 @@ impl<C: PartialEq> InputHistory<C> {
 
 struct ApprovedInteraction(Instant);
 
+#[derive(Default)]
+struct PendingActivation(Mutex<Option<Instant>>);
+
+fn activation_deadline(data: &XdgActivationTokenData) -> Option<Instant> {
+    data.user_data
+        .get::<ApprovedInteraction>()
+        .map(|proof| data.timestamp.min(proof.0) + TOKEN_MAX_AGE)
+}
+
 impl Ferese {
+    fn prune_activation_tokens(&mut self, now: Instant) {
+        self.xdg_activation_state.retain_tokens(|_, data| {
+            activation_deadline(data).is_some_and(|deadline| now < deadline)
+        });
+    }
+
+    fn arm_activation_cleanup(&mut self) -> bool {
+        if self.activation_timer_pending {
+            return true;
+        }
+        match self
+            .loop_handle
+            .insert_source(Timer::from_duration(TOKEN_MAX_AGE), |_, _, state| {
+                state.prune_activation_tokens(Instant::now());
+                if state.xdg_activation_state.tokens().next().is_some() {
+                    TimeoutAction::ToDuration(TOKEN_MAX_AGE)
+                } else {
+                    state.activation_timer_pending = false;
+                    TimeoutAction::Drop
+                }
+            }) {
+            Ok(_) => {
+                self.activation_timer_pending = true;
+                true
+            }
+            Err(error) => {
+                tracing::warn!(%error, "could not schedule activation token cleanup");
+                false
+            }
+        }
+    }
+
+    pub(crate) fn revoke_activations(&mut self) {
+        self.activation_inputs.events.clear();
+        self.xdg_activation_state.retain_tokens(|_, _| false);
+        for window in self.space.elements() {
+            if let Some(toplevel) = window.toplevel() {
+                take_pending_activation(toplevel.wl_surface());
+            }
+        }
+    }
+
+    pub(crate) fn activate_pending_window(&mut self, surface: &WlSurface) {
+        let Some(deadline) = take_pending_activation(surface) else {
+            return;
+        };
+        if Instant::now() < deadline
+            && !self.session_lock.active()
+            && !self.input_capture.active()
+            && let Some(id) = self.windows.id_for_surface(surface)
+        {
+            self.activate_managed_window(id);
+        }
+    }
+
     pub(crate) fn record_activation_input(&mut self, serial: Serial, surface: Option<WlSurface>) {
         if self.session_lock.active() || self.input_capture.active() {
             return;
@@ -62,6 +130,21 @@ impl Ferese {
                 .record(serial, client.id(), Instant::now());
         }
     }
+}
+
+fn take_pending_activation(surface: &WlSurface) -> Option<Instant> {
+    with_states(surface, |states| {
+        states
+            .data_map
+            .get::<PendingActivation>()
+            .and_then(|pending| {
+                pending
+                    .0
+                    .lock()
+                    .expect("pending activation is not poisoned")
+                    .take()
+            })
+    })
 }
 
 impl XdgActivationHandler for Ferese {
@@ -98,7 +181,8 @@ impl XdgActivationHandler for Ferese {
         };
         data.user_data
             .insert_if_missing(|| ApprovedInteraction(time));
-        true
+        self.prune_activation_tokens(Instant::now());
+        self.xdg_activation_state.tokens().count() < MAX_TOKENS && self.arm_activation_cleanup()
     }
 
     fn request_activation(
@@ -108,23 +192,34 @@ impl XdgActivationHandler for Ferese {
         surface: WlSurface,
     ) {
         self.xdg_activation_state.remove_token(&token);
-        if self.session_lock.active() || self.input_capture.captures(1) {
+        if self.session_lock.active() || self.input_capture.active() {
             return;
         }
 
         // The recipient may be a different client: launcher-to-app token handoff.
         // Retain the original interaction time rather than renewing it at commit.
-        let valid = data.timestamp.elapsed() <= TOKEN_MAX_AGE
-            && data
-                .user_data
-                .get::<ApprovedInteraction>()
-                .is_some_and(|proof| proof.0.elapsed() <= TOKEN_MAX_AGE);
-        if !valid {
+        let Some(deadline) =
+            activation_deadline(&data).filter(|deadline| Instant::now() < *deadline)
+        else {
             tracing::debug!("ignored stale or non-interactive activation request");
             return;
-        }
+        };
 
         let Some(id) = self.windows.id_for_surface(&surface) else {
+            if self.window_for_surface(&surface).is_some() {
+                with_states(&surface, |states| {
+                    states
+                        .data_map
+                        .insert_if_missing(PendingActivation::default);
+                    *states
+                        .data_map
+                        .get::<PendingActivation>()
+                        .expect("pending activation exists")
+                        .0
+                        .lock()
+                        .expect("pending activation is not poisoned") = Some(deadline);
+                });
+            }
             return;
         };
         self.activate_managed_window(id);
@@ -237,6 +332,20 @@ mod tests {
         let approved = data();
         assert!(state.token_created(token.clone(), approved.clone()));
         assert!(approved.user_data.get::<ApprovedInteraction>().is_some());
+        for _ in 0..MAX_TOKENS {
+            state
+                .xdg_activation_state
+                .create_external_token(Some(approved.clone()));
+        }
+        assert!(
+            !state.token_created(token.clone(), data()),
+            "token pool must be bounded"
+        );
+        state.xdg_activation_state.retain_tokens(|_, _| false);
+        assert!(
+            state.token_created(token.clone(), data()),
+            "capacity must recover after cleanup"
+        );
 
         let (server, mut recipient_wire) = UnixStream::pair().unwrap();
         let recipient = state
@@ -299,6 +408,25 @@ mod tests {
             .expect("recipient's toplevel");
         state.request_activation(token, approved, target.clone());
         assert_eq!(state.seat.get_keyboard().unwrap().current_focus(), None);
+        assert!(with_states(&target, |states| {
+            states
+                .data_map
+                .get::<PendingActivation>()
+                .unwrap()
+                .0
+                .lock()
+                .unwrap()
+                .is_some()
+        }));
+        state.revoke_activations();
+        assert_eq!(take_pending_activation(&target), None);
+        assert_eq!(
+            state
+                .activation_inputs
+                .validate(serial, &launcher.id(), Instant::now()),
+            None
+        );
+        assert_eq!(state.xdg_activation_state.tokens().count(), 0);
     }
 
     #[test]

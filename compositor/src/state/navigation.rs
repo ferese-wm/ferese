@@ -133,6 +133,7 @@ impl Ferese {
                 } else {
                     self.focused_window = Some(id);
                     self.raise_window(&window, true);
+                    self.dismiss_popups_for_focus(Some(&surface));
                     self.seat
                         .get_keyboard()
                         .expect("seat has a keyboard")
@@ -198,6 +199,7 @@ impl Ferese {
 
         self.focused_window = Some(next);
         self.raise_window(&window, true);
+        self.dismiss_popups_for_focus(Some(&surface));
         self.seat
             .get_keyboard()
             .expect("seat has a keyboard")
@@ -790,6 +792,7 @@ impl Ferese {
                     .map(|toplevel| toplevel.wl_surface().clone())
             });
 
+        self.dismiss_popups_for_focus(surface.as_ref());
         self.seat
             .get_keyboard()
             .expect("seat has a keyboard")

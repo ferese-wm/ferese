@@ -246,7 +246,7 @@ impl Ferese {
 
     /// Layer-map membership tracks the role and output, not buffer mapping.
     /// Use the renderer state updated by on_commit_buffer_handler, as for windows.
-    fn layer_mapped_and_visible(&self, layer: &DesktopLayerSurface) -> bool {
+    pub(super) fn layer_mapped_and_visible(&self, layer: &DesktopLayerSurface) -> bool {
         layer.layer_surface().alive()
             && smithay::backend::renderer::utils::with_renderer_surface_state(
                 layer.wl_surface(),
@@ -325,6 +325,7 @@ impl Ferese {
             })
         }) {
             // A popup grab cannot keep an ineligible layer alive as input owner.
+            self.dismiss_popups_for_focus(None);
             for (popup, _) in smithay::desktop::PopupManager::popups_for_surface(&root) {
                 let _ = smithay::desktop::PopupManager::dismiss_popup(&root, &popup);
             }

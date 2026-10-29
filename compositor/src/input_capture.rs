@@ -557,6 +557,7 @@ impl crate::Ferese {
             (to.x - from.x, to.y - from.y)
         };
         if !active {
+            self.revoke_activations();
             self.set_binding_mode("default");
             self.cursor_redraw_pending = true;
             pointer.motion(
