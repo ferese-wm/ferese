@@ -453,22 +453,22 @@ impl Store {
     }
 
     pub fn remove_output(&mut self, output: &str, fallback: Option<&str>) {
-        for entry in self
+        let entry_iter = self
             .entries
             .values_mut()
-            .filter(|entry| entry.data.output.as_deref() == Some(output))
-        {
+            .filter(|entry| entry.data.output.as_deref() == Some(output));
+        for entry in entry_iter {
             entry.data.output = fallback.map(str::to_owned);
         }
     }
 
     pub fn attach_output(&mut self, output: &str) -> bool {
         let mut changed = false;
-        for entry in self
+        let entry_iter = self
             .entries
             .values_mut()
-            .filter(|entry| entry.data.output.is_none())
-        {
+            .filter(|entry| entry.data.output.is_none());
+        for entry in entry_iter {
             entry.data.output = Some(output.into());
             changed = true;
         }

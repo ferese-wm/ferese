@@ -410,7 +410,8 @@ mod sequences {
                     .filter(|view| view.output == output)
                     .collect::<Vec<_>>();
                 assert_eq!(rows.last().unwrap().window_count, 0);
-                for (index, row) in rows.iter().enumerate() {
+                let index_iter = rows.iter().enumerate();
+                for (index, row) in index_iter {
                     assert_eq!(row.index, index as u32 + 1);
                     if row.window_count == 0 && index + 1 != rows.len() {
                         assert!(row.visible, "abandoned empty workspace at step {step}");

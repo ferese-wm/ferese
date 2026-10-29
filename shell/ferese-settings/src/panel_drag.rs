@@ -27,11 +27,11 @@ enum Region {
     Empty(Zone),
 }
 
-pub(super) fn frame<'a>(
-    content: Element<'a, Message>,
+pub(super) fn frame<'editor>(
+    content: Element<'editor, Message>,
     panel: &Panel,
     accent: Color,
-) -> Element<'a, Message> {
+) -> Element<'editor, Message> {
     let mut regions = Vec::new();
     for zone in Zone::ALL {
         if zone.definition(panel).groups.is_empty() {
@@ -59,8 +59,8 @@ pub(super) fn frame<'a>(
     })
 }
 
-struct Editor<'a> {
-    content: Element<'a, Message>,
+struct Editor<'editor> {
+    content: Element<'editor, Message>,
     regions: Vec<(widget::Id, Region)>,
     accent: Color,
 }
@@ -105,8 +105,8 @@ impl Target {
     }
 }
 
-struct Bounds<'a> {
-    regions: &'a [(widget::Id, Region)],
+struct Bounds<'editor> {
+    regions: &'editor [(widget::Id, Region)],
     found: Vec<(Region, Rectangle)>,
 }
 impl widget::Operation for Bounds<'_> {
@@ -435,14 +435,14 @@ impl Widget<Message, Theme, Renderer> for Editor<'_> {
             .as_widget_mut()
             .operate(&mut tree.children[0], layout, renderer, operation);
     }
-    fn overlay<'a>(
-        &'a mut self,
-        tree: &'a mut widget::Tree,
-        layout: Layout<'a>,
+    fn overlay<'editor>(
+        &'editor mut self,
+        tree: &'editor mut widget::Tree,
+        layout: Layout<'editor>,
         renderer: &Renderer,
         viewport: &Rectangle,
         translation: Vector,
-    ) -> Option<cosmic::iced::advanced::overlay::Element<'a, Message, Theme, Renderer>> {
+    ) -> Option<cosmic::iced::advanced::overlay::Element<'editor, Message, Theme, Renderer>> {
         self.content.as_widget_mut().overlay(
             &mut tree.children[0],
             layout,

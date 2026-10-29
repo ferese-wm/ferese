@@ -268,13 +268,13 @@ impl Ferese {
                 with_renderer_surface_state(&surface, |data| data.buffer().cloned()).flatten();
             if let Some(buffer) = buffer.filter(Buffer::has_explicit_sync) {
                 if let Some(release) = release {
-                    for lease in self
+                    let lease_iter = self
                         .buffer_sync
                         .explicit
                         .leases
                         .iter()
-                        .filter_map(ArcWeak::upgrade)
-                    {
+                        .filter_map(ArcWeak::upgrade);
+                    for lease in lease_iter {
                         if lease.surface == surface.downgrade()
                             && lease.point.timeline() == release.timeline()
                             && lease.point.point() == release.point()
@@ -326,13 +326,13 @@ impl Ferese {
         // A synchronized child's pending transaction can outlive wl_surface
         // destruction while its wl_subsurface resource remains alive. It has
         // never been sampled; release that attachment without promoting it.
-        for lease in self
+        let lease_iter = self
             .buffer_sync
             .explicit
             .leases
             .iter()
-            .filter_map(ArcWeak::upgrade)
-        {
+            .filter_map(ArcWeak::upgrade);
+        for lease in lease_iter {
             if lease.surface == weak {
                 lease.retire_unused();
             }

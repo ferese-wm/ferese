@@ -10,7 +10,7 @@ struct Prepared {
 }
 
 impl Prepared {
-    fn new(source: String, directory: &std::path::Path) -> Result<Self, String> {
+    fn try_new(source: String, directory: &std::path::Path) -> Result<Self, String> {
         Self::with_watch(source, directory, &mut Vec::new())
     }
 
@@ -77,7 +77,7 @@ pub(crate) struct Worker {
 }
 
 impl Worker {
-    pub(crate) fn new(
+    pub(crate) fn try_new(
         event_loop: &mut calloop::EventLoop<'static, crate::Ferese>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let (requests, receiver) = std::sync::mpsc::sync_channel::<Request>(8);
@@ -260,7 +260,7 @@ impl crate::Ferese {
         let directory = crate::config::config_path()
             .and_then(|p| p.parent().map(ToOwned::to_owned))
             .unwrap_or_else(|| PathBuf::from("."));
-        let prepared = Prepared::new(source, &directory)?;
+        let prepared = Prepared::try_new(source, &directory)?;
         self.apply_prepared_config(prepared)
     }
 
@@ -407,20 +407,20 @@ mod tests {
         let (_, runtime, _) = crate::config::prepare("", std::path::Path::new(".")).unwrap();
         let mut event_loop = calloop::EventLoop::try_new().unwrap();
         let display = smithay::reexports::wayland_server::Display::new().unwrap();
-        let mut state = crate::Ferese::new(&mut event_loop, display, runtime).unwrap();
+        let mut state = crate::Ferese::try_new(&mut event_loop, display, runtime).unwrap();
         let path = crate::config::config_path().unwrap();
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         let valid = "animations { speed 0.5; }";
         std::fs::write(&path, valid).unwrap();
-        for (index, source) in [
+        let source_iter = [
             Some(valid),
             Some(valid),
             Some("animations { speed -1.0; }"),
             None,
         ]
         .into_iter()
-        .enumerate()
-        {
+        .enumerate();
+        for (index, source) in source_iter {
             if let Some(source) = source {
                 std::fs::write(&path, source).unwrap();
             } else {
@@ -499,7 +499,7 @@ mod tests {
         let (_, runtime, candidate) = crate::config::prepare(source, &directory.0).unwrap();
         let mut event_loop = smithay::reexports::calloop::EventLoop::try_new().unwrap();
         let display = smithay::reexports::wayland_server::Display::new().unwrap();
-        let mut state = crate::Ferese::new(&mut event_loop, display, runtime).unwrap();
+        let mut state = crate::Ferese::try_new(&mut event_loop, display, runtime).unwrap();
         state.config_source = Some(source.into());
         state.theme_engine.live.theme = candidate.theme.clone();
         state.theme_engine.live.presented = candidate.theme;
@@ -576,7 +576,7 @@ mod tests {
             crate::config::prepare("xwayland { enabled #false; }", &directory.0).unwrap();
         let mut event_loop = smithay::reexports::calloop::EventLoop::try_new().unwrap();
         let display = smithay::reexports::wayland_server::Display::new().unwrap();
-        let mut state = crate::Ferese::new(&mut event_loop, display, runtime).unwrap();
+        let mut state = crate::Ferese::try_new(&mut event_loop, display, runtime).unwrap();
 
         assert!(
             !state.xwayland_config.enabled,
@@ -629,7 +629,7 @@ mod tests {
         let (_, runtime, _) = crate::config::prepare(source, &directory.0).unwrap();
         let mut event_loop = smithay::reexports::calloop::EventLoop::try_new().unwrap();
         let display = smithay::reexports::wayland_server::Display::new().unwrap();
-        let mut state = crate::Ferese::new(&mut event_loop, display, runtime).unwrap();
+        let mut state = crate::Ferese::try_new(&mut event_loop, display, runtime).unwrap();
         state.config_source = Some(source.into());
         let accepted = state.output_profiles.clone();
         for invalid in [
@@ -680,10 +680,10 @@ mod tests {
         let source = format!("//{}", "x".repeat(60 * 1024 - 2));
         std::fs::write(&path, &source).unwrap();
         assert_eq!(crate::config::read_source(&path).unwrap(), source);
-        assert!(Prepared::new(source.clone(), &directory.0).is_ok());
+        assert!(Prepared::try_new(source.clone(), &directory.0).is_ok());
         let oversized = source + "x";
         std::fs::write(&path, &oversized).unwrap();
         assert!(crate::config::read_source(&path).is_err());
-        assert!(Prepared::new(oversized, &directory.0).is_err());
+        assert!(Prepared::try_new(oversized, &directory.0).is_err());
     }
 }

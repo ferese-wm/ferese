@@ -143,7 +143,8 @@ impl Ferese {
             .terminate_all_with_reason("Screenshot cancelled: capture privacy changed");
         // Drop cached blur pixels as well as their damage history.
         self.capture_render = Default::default();
-        for output in self.space.outputs().cloned().collect::<Vec<_>>() {
+        let output_iter = self.space.outputs().cloned().collect::<Vec<_>>();
+        for output in output_iter {
             self.defer_output_redraw(output);
         }
     }

@@ -228,10 +228,10 @@ impl FereseShell {
         if launcher.query.is_empty() && launcher.category.is_none() {
             let dark = self.config.theme.appearance == ferese_config::theme::Appearance::Dark;
             let mut pills = row![].spacing(6);
-            for (index, category) in [Category::Apps, Category::Files, Category::Windows]
+            let category_iter = [Category::Apps, Category::Files, Category::Windows]
                 .into_iter()
-                .enumerate()
-            {
+                .enumerate();
+            for (index, category) in category_iter {
                 let symbol = match category {
                     Category::Apps => ferese_theme::icons::APPS,
                     Category::Files => ferese_theme::icons::FOLDER,
@@ -312,15 +312,16 @@ impl FereseShell {
             if first > 0 {
                 grid = grid.push(usize::MAX, Space::new().height(first as f32 * 108.));
             }
-            for (row_index, apps) in launcher
+            let apps_iter = launcher
                 .rows
                 .chunks(columns)
                 .enumerate()
                 .skip(first)
-                .take(end - first)
-            {
+                .take(end - first);
+            for (row_index, apps) in apps_iter {
                 let mut tiles = row![].spacing(12);
-                for (column_index, app) in apps.iter().enumerate() {
+                let app_iter = apps.iter().enumerate();
+                for (column_index, app) in app_iter {
                     let icon_size = if app.subtitle == "Application" {
                         44
                     } else {
@@ -435,13 +436,13 @@ impl FereseShell {
             let capacity = launcher.grid_columns().min(3);
             let preview_height = launcher.viewport.1.saturating_sub(120).min(84) as f32;
             let mut cards = row![].spacing(12);
-            for (index, result) in launcher
+            let result_iter = launcher
                 .rows
                 .iter()
                 .enumerate()
                 .skip(launcher.selected.saturating_sub(capacity - 1))
-                .take(capacity)
-            {
+                .take(capacity);
+            for (index, result) in result_iter {
                 let Target::Window(id) = result.target else {
                     continue;
                 };
@@ -539,7 +540,8 @@ impl FereseShell {
             let capacity = launcher.list_rows();
             let start = launcher.selected.saturating_sub(capacity - 1);
             let mut rows = column![].spacing(0);
-            for (index, result) in launcher.rows.iter().enumerate().skip(start).take(capacity) {
+            let result_iter = launcher.rows.iter().enumerate().skip(start).take(capacity);
+            for (index, result) in result_iter {
                 let symbol = match result.category() {
                     Some(Category::Windows) => ferese_theme::icons::WINDOW,
                     Some(Category::Files) => ferese_theme::icons::FOLDER,

@@ -350,7 +350,8 @@ fn copy_oriented_pixels(
     // The usual DRM and nested outputs need only one contiguous copy per row.
     if matches!(transform, Transform::Normal | Transform::Flipped180) {
         let flip = y_invert ^ (transform == Transform::Flipped180);
-        for (y, dst) in pixels.chunks_exact_mut(row).enumerate() {
+        let y_iter = pixels.chunks_exact_mut(row).enumerate();
+        for (y, dst) in y_iter {
             let sy = if flip { height as usize - 1 - y } else { y };
             let start = sy * stride as usize;
             dst.copy_from_slice(&source[start..start + row]);

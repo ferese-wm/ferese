@@ -28,7 +28,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     {
         return activities::setup::configure(config);
     }
-    for alias in env::args().skip(1).filter(|arg| {
+    let alias_iter = env::args().skip(1).filter(|arg| {
         matches!(
             arg.as_str(),
             "get-outputs"
@@ -39,7 +39,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                 | "get-session-state"
                 | "get-keybindings"
         )
-    }) {
+    });
+    for alias in alias_iter {
         eprintln!(
             "feresectl: {alias} is deprecated; use {}",
             alias.trim_start_matches("get-")

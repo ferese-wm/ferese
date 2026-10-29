@@ -155,7 +155,8 @@ impl Ferese {
         self.output_ids.clear();
         self.outputs_by_id.clear();
         self.output_names.clear();
-        for (output, (id, geometry)) in runtime.into_iter().zip(inventory) {
+        let output_iter = runtime.into_iter().zip(inventory);
+        for (output, (id, geometry)) in output_iter {
             let state_changed = output.output.current_mode() != Some(output.mode)
                 || output.output.current_transform() != output.transform
                 || output.output.current_scale().fractional_scale()
@@ -304,10 +305,10 @@ mod tests {
     }
 
     fn request(wire: &mut UnixStream, object: u32, opcode: u32, args: &[u32]) {
-        for word in [object, (((args.len() + 2) * 4) as u32) << 16 | opcode]
+        let word_iter = [object, (((args.len() + 2) * 4) as u32) << 16 | opcode]
             .into_iter()
-            .chain(args.iter().copied())
-        {
+            .chain(args.iter().copied());
+        for word in word_iter {
             wire.write_all(&word.to_ne_bytes()).unwrap();
         }
     }
@@ -531,7 +532,7 @@ mod tests {
         }
         let mut event_loop = EventLoop::try_new().unwrap();
         let config = crate::config::Config::default().runtime_config().unwrap();
-        let mut state = Ferese::new(&mut event_loop, Display::new().unwrap(), config).unwrap();
+        let mut state = Ferese::try_new(&mut event_loop, Display::new().unwrap(), config).unwrap();
         let a = output("a", 0, 1200);
         let b = output("b", 1200, 800);
         let a_handle = a.output.clone();
@@ -758,7 +759,8 @@ mod tests {
             .unwrap();
         assert!(state.session_lock.active());
         state.begin_desktop_transition();
-        for output in state.output_ids.keys().cloned().collect::<Vec<_>>() {
+        let output_iter = state.output_ids.keys().cloned().collect::<Vec<_>>();
+        for output in output_iter {
             state.unregister_output(&output);
         }
         let changes = state.publish_desktop(Vec::new()).unwrap();

@@ -1039,7 +1039,7 @@ mod tests {
         let mut event_loop = EventLoop::try_new().unwrap();
         let display = Display::new().unwrap();
         let config = crate::config::Config::default().runtime_config().unwrap();
-        let mut state = Ferese::new(&mut event_loop, display, config).unwrap();
+        let mut state = Ferese::try_new(&mut event_loop, display, config).unwrap();
         let output = Output::new(
             "pause-test".into(),
             smithay::output::PhysicalProperties {

@@ -24,7 +24,10 @@ type Reply = (u32, Options);
 type RequestMap = HashMap<String, (String, Arc<Cancel>)>;
 
 #[derive(Clone)]
-pub(crate) struct Requests(Arc<Mutex<RequestMap>>, usize);
+pub(crate) struct Requests {
+    pending: Arc<Mutex<RequestMap>>,
+    limit: usize,
+}
 
 impl Default for Requests {
     fn default() -> Self {
@@ -34,11 +37,14 @@ impl Default for Requests {
 
 impl Requests {
     pub(crate) fn with_limit(limit: usize) -> Self {
-        Self(Default::default(), limit)
+        Self {
+            pending: Default::default(),
+            limit,
+        }
     }
 
     pub(crate) async fn revoke_stale(&self, owner: Option<&str>) {
-        for (request_owner, cancel) in self.0.lock().await.values() {
+        for (request_owner, cancel) in self.pending.lock().await.values() {
             if Some(request_owner.as_str()) != owner {
                 cancel.stop();
             }
@@ -56,9 +62,9 @@ impl Requests {
         if !handle.as_str().starts_with(&format!("{PATH}/request/")) {
             return Err(zbus::fdo::Error::InvalidArgs("Invalid request path".into()));
         }
-        let mut pending = self.0.lock().await;
+        let mut pending = self.pending.lock().await;
 
-        if pending.len() >= self.1 || pending.contains_key(handle.as_str()) {
+        if pending.len() >= self.limit || pending.contains_key(handle.as_str()) {
             return Err(zbus::fdo::Error::LimitsExceeded(
                 "Request limit reached".into(),
             ));
@@ -86,7 +92,7 @@ impl Requests {
     }
 
     pub(crate) async fn end(&self, connection: &Connection, handle: &OwnedObjectPath) {
-        self.0.lock().await.remove(handle.as_str());
+        self.pending.lock().await.remove(handle.as_str());
         let _ = connection
             .object_server()
             .remove::<Request, _>(handle)
@@ -492,7 +498,8 @@ fn window_sources(windows: &serde_json::Value) -> Result<Vec<crate::capture::Sou
     }
 
     let mut sources = Vec::new();
-    for window in windows.iter().filter(|window| window["mapped"] == true) {
+    let window_iter = windows.iter().filter(|window| window["mapped"] == true);
+    for window in window_iter {
         let Some(id) = window["id"].as_u64() else {
             continue;
         };

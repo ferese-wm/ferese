@@ -1,4 +1,4 @@
-use super::sources::{Matcher, ResultId, Row, Source, Target};
+use super::sources::{Matcher, ResultId, Row, Target};
 use fff_search::{
     FilePicker, FilePickerOptions, FuzzySearchOptions, PaginationArgs, QueryParser,
     SharedFilePicker, SharedFrecency,
@@ -138,7 +138,8 @@ impl Files {
             .collect()
     }
 }
-impl Source for Files {
+impl Files {
+    #[cfg(test)]
     fn query(&self, query: &str) -> Vec<Row> {
         self.search(query, &Default::default(), &Default::default())
     }

@@ -42,7 +42,8 @@ impl WindowStack {
         if let Some(rank) = self.ranks.remove(&id) {
             self.order.remove(rank);
             self.revision = self.revision.wrapping_add(1);
-            for (rank, candidate) in self.order.iter().enumerate().skip(rank) {
+            let candidate_iter = self.order.iter().enumerate().skip(rank);
+            for (rank, candidate) in candidate_iter {
                 self.ranks.insert(*candidate, rank);
             }
         }
@@ -192,7 +193,8 @@ mod tests {
                     reference.push(id);
                 }
             }
-            for id in (0..33).map(WindowId) {
+            let id_iter = (0..33).map(WindowId);
+            for id in id_iter {
                 assert_eq!(
                     stack.rank(id),
                     reference

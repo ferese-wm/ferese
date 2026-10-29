@@ -168,15 +168,15 @@ pub(super) fn elements(
             .tab_indicator
             .first_row
             .min(bar.group.windows.len().saturating_sub(g.rows));
-        for (row, id) in bar
+        let id_iter = bar
             .group
             .windows
             .iter()
             .copied()
             .skip(first)
             .take(g.rows)
-            .enumerate()
-        {
+            .enumerate();
+        for (row, id) in id_iter {
             let rect = g.row(row);
             let label = title(state, id, capture);
             if let Some(element) = text_element(
@@ -302,7 +302,8 @@ pub(super) fn elements(
             elements.push(element.into());
         }
     }
-    for (index, id) in bar.group.windows.iter().copied().enumerate() {
+    let id_iter = bar.group.windows.iter().copied().enumerate();
+    for (index, id) in id_iter {
         let rect = Rect::new(
             g.rail.x,
             g.rail.y + index as f64 * g.pitch,

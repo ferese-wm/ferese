@@ -6,11 +6,10 @@ use smithay::input::Seat;
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 use smithay::reexports::wayland_server::Resource;
 use smithay::reexports::wayland_server::backend::ClientId;
-use smithay::utils::Serial;
-
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 #[cfg(test)]
 use smithay::utils::SERIAL_COUNTER;
+use smithay::utils::Serial;
 use smithay::wayland::compositor::with_states;
 use smithay::wayland::xdg_activation::{
     XdgActivationHandler, XdgActivationState, XdgActivationToken, XdgActivationTokenData,

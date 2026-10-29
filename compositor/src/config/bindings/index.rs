@@ -22,7 +22,8 @@ impl From<Vec<Binding>> for BindingSet {
     fn from(ordered: Vec<Binding>) -> Self {
         let mut index = HashMap::with_capacity(ordered.len());
 
-        for (position, binding) in ordered.iter().enumerate() {
+        let binding_iter = ordered.iter().enumerate();
+        for (position, binding) in binding_iter {
             let identity = binding_identity_for_runtime(binding);
 
             if matches!(

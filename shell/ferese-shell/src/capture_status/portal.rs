@@ -100,10 +100,8 @@ fn stream_at(address: Option<String>) -> impl Stream<Item = Event> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{
-        Arc,
-        atomic::{AtomicUsize, Ordering},
-    };
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     struct Status(Arc<AtomicUsize>);
     #[zbus::interface(name = "org.ferese.CaptureStatus")]

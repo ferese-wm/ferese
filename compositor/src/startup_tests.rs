@@ -72,7 +72,7 @@ pub(crate) fn state(events: &mut EventLoop<'static, Ferese>) -> Ferese {
     let mut config = crate::config::Config::default().runtime_config().unwrap();
     config.wallpaper.path = None;
 
-    Ferese::new(events, Display::new().unwrap(), config).unwrap()
+    Ferese::try_new(events, Display::new().unwrap(), config).unwrap()
 }
 
 #[test]
@@ -93,7 +93,7 @@ fn nested_instances_share_a_runtime_and_route_launched_clients_to_their_own_ipc(
         config.wallpaper.path = None;
         config
     };
-    let mut first = Ferese::new_with_session(
+    let mut first = Ferese::try_new_with_session(
         &mut first_events,
         Display::new().unwrap(),
         config(),
@@ -101,7 +101,7 @@ fn nested_instances_share_a_runtime_and_route_launched_clients_to_their_own_ipc(
         crate::SessionPolicy::Embedded,
     )
     .unwrap();
-    let mut second = Ferese::new_with_session(
+    let mut second = Ferese::try_new_with_session(
         &mut second_events,
         Display::new().unwrap(),
         config(),

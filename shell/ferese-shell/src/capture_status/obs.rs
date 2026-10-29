@@ -1,15 +1,14 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use base64::{Engine, engine::general_purpose::STANDARD};
+use base64::engine::general_purpose::STANDARD;
 use cosmic::iced::futures::{SinkExt, Stream, StreamExt};
 use serde::Deserialize;
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
-use tokio_tungstenite::{
-    MaybeTlsStream, WebSocketStream,
-    tungstenite::{Message, protocol::WebSocketConfig},
-};
+use sha2::Sha256;
+use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
+use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
 use super::Event;
 
@@ -177,6 +176,9 @@ impl Snapshot {
 }
 
 fn identify(hello: &Value, password: &str) -> Result<Value, String> {
+    use base64::Engine;
+    use sha2::Digest;
+
     if hello["op"] != 0 || hello["d"]["rpcVersion"].as_u64().unwrap_or(0) < 1 {
         return Err("Unsupported OBS handshake".into());
     }
@@ -502,6 +504,9 @@ mod tests {
 
     #[test]
     fn authentication_subscribes_only_to_output_events() {
+        use base64::Engine;
+        use sha2::Digest;
+
         let hello = json!({"op":0,"d":{"rpcVersion":1,"authentication":{"salt":"salt","challenge":"challenge"}}});
         let reply = identify(&hello, "password").unwrap();
         let secret = STANDARD.encode(Sha256::digest(b"passwordsalt"));

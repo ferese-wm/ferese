@@ -1,9 +1,8 @@
-use smithay::desktop::Window;
-
 #[cfg(test)]
 use smithay::backend::renderer::element::Id;
 #[cfg(test)]
 use smithay::backend::renderer::utils::CommitCounter;
+use smithay::desktop::Window;
 
 use super::{
     AnimatedWindowRenderElement, ConstrainAlign, ConstrainBehavior, ConstrainReference,

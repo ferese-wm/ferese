@@ -29,7 +29,8 @@ impl FocusHistory {
         let mut remaining = available.as_ref().iter().copied().collect::<HashSet<_>>();
         let mut ordered = Vec::with_capacity(remaining.len());
 
-        for id in current.into_iter().chain(self.windows.iter().copied()) {
+        let id_iter = current.into_iter().chain(self.windows.iter().copied());
+        for id in id_iter {
             if remaining.remove(&id) {
                 ordered.push(id);
             }
@@ -126,11 +127,11 @@ mod tests {
                 sorted.dedup();
                 let mut expected = Vec::new();
 
-                for id in current
+                let id_iter = current
                     .into_iter()
                     .chain(history.windows.iter().copied())
-                    .chain(sorted.iter().copied())
-                {
+                    .chain(sorted.iter().copied());
+                for id in id_iter {
                     if sorted.contains(&id) && !expected.contains(&id) {
                         expected.push(id);
                     }

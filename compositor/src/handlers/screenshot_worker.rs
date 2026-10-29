@@ -75,7 +75,8 @@ pub(crate) fn sweep_stale_files() {
     let Ok(entries) = fs::read_dir(&directory) else {
         return;
     };
-    for entry in entries.flatten() {
+    let entry_iter = entries.flatten();
+    for entry in entry_iter {
         let path = entry.path();
         if path.extension().is_none_or(|extension| extension != "png") {
             continue;
@@ -278,7 +279,8 @@ mod tests {
             _permit: None,
         };
         let mut canvas = compose(&job.frames).unwrap();
-        for (index, pixel) in canvas.pixels.chunks_exact_mut(4).enumerate() {
+        let pixel_iter = canvas.pixels.chunks_exact_mut(4).enumerate();
+        for (index, pixel) in pixel_iter {
             pixel[..3].copy_from_slice(&[index as u8, 137, 241]);
         }
 

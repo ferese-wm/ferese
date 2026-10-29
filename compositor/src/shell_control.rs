@@ -292,12 +292,12 @@ impl Ferese {
     }
 
     pub(crate) fn notify_monitor_state(&self) {
-        for shell in self
+        let shell_iter = self
             .shell_resources
             .iter()
             .filter_map(|shell| shell.upgrade().ok())
-            .filter(|shell| shell.version() >= 6)
-        {
+            .filter(|shell| shell.version() >= 6);
+        for shell in shell_iter {
             shell.monitor_state_changed();
         }
     }
@@ -392,11 +392,11 @@ impl Ferese {
             self.portal_session.cancel_query(token);
         }
         if let Some(serial) = self.pending_logout.take() {
-            for shell in self
+            let shell_iter = self
                 .shell_resources
                 .iter()
-                .filter_map(|shell| shell.upgrade().ok())
-            {
+                .filter_map(|shell| shell.upgrade().ok());
+            for shell in shell_iter {
                 if self.logout_owner.as_ref() == Some(&shell.id()) && shell.version() >= 3 {
                     shell.logout_cancelled(serial);
                 }
@@ -820,12 +820,12 @@ fn send_request_failed(shell: &FereseShellV1, request: ferese_shell_v1::FailedRe
 
 impl Ferese {
     pub(crate) fn dismiss_launcher(&self) {
-        for shell in self
+        let shell_iter = self
             .shell_resources
             .iter()
             .filter_map(|s| s.upgrade().ok())
-            .filter(|s| s.version() >= 10)
-        {
+            .filter(|s| s.version() >= 10);
+        for shell in shell_iter {
             shell.dismiss_launcher();
         }
     }
@@ -982,7 +982,7 @@ mod tests {
         assert!(runtime.starts_with(std::env::temp_dir()));
         let mut event_loop = EventLoop::try_new().unwrap();
         let config = crate::config::Config::default().runtime_config().unwrap();
-        let mut state = Ferese::new(&mut event_loop, Display::new().unwrap(), config).unwrap();
+        let mut state = Ferese::try_new(&mut event_loop, Display::new().unwrap(), config).unwrap();
         let output = Output::new(
             "snapshot-test".into(),
             PhysicalProperties {

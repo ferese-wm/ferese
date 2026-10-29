@@ -326,34 +326,34 @@ impl cosmic::iced::advanced::widget::operation::Focusable for Focus {
     }
 }
 
-type Navigation<'a, M> = Box<dyn Fn(&keyboard::key::Named) -> Option<M> + 'a>;
+type Navigation<'content, M> = Box<dyn Fn(&keyboard::key::Named) -> Option<M> + 'content>;
 
-pub struct Radio<'a, M> {
-    content: Element<'a, M>,
+pub struct Radio<'content, M> {
+    content: Element<'content, M>,
     id: Id,
     selected: bool,
     tab_stop: bool,
     group: bool,
     label: String,
-    navigate: Option<Navigation<'a, M>>,
+    navigate: Option<Navigation<'content, M>>,
 }
 
-pub fn radio<'a, M: Clone + 'a>(
-    content: impl Into<Element<'a, M>>,
+pub fn radio<'content, M: Clone + 'content>(
+    content: impl Into<Element<'content, M>>,
     id: Id,
     selected: bool,
-    navigate: impl Fn(&keyboard::key::Named) -> Option<M> + 'a,
-) -> Element<'a, M> {
+    navigate: impl Fn(&keyboard::key::Named) -> Option<M> + 'content,
+) -> Element<'content, M> {
     radio_with_tab_stop(content, id, selected, selected, navigate)
 }
 
-fn radio_with_tab_stop<'a, M: Clone + 'a>(
-    content: impl Into<Element<'a, M>>,
+fn radio_with_tab_stop<'content, M: Clone + 'content>(
+    content: impl Into<Element<'content, M>>,
     id: Id,
     selected: bool,
     tab_stop: bool,
-    navigate: impl Fn(&keyboard::key::Named) -> Option<M> + 'a,
-) -> Element<'a, M> {
+    navigate: impl Fn(&keyboard::key::Named) -> Option<M> + 'content,
+) -> Element<'content, M> {
     Element::new(Radio {
         content: content.into(),
         id,
@@ -365,11 +365,11 @@ fn radio_with_tab_stop<'a, M: Clone + 'a>(
     })
 }
 
-pub fn group<'a, M: Clone + 'a>(
-    content: impl Into<Element<'a, M>>,
+pub fn group<'content, M: Clone + 'content>(
+    content: impl Into<Element<'content, M>>,
     id: Id,
     label: &str,
-) -> Element<'a, M> {
+) -> Element<'content, M> {
     Element::new(Radio {
         content: content.into(),
         id,

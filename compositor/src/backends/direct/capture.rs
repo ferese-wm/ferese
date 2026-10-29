@@ -469,7 +469,7 @@ mod tests {
         let mut config = crate::config::Config::default().runtime_config().unwrap();
         config.wallpaper.path = None;
         config.animations_enabled = false;
-        let mut state = Ferese::new(
+        let mut state = Ferese::try_new(
             &mut events,
             smithay::reexports::wayland_server::Display::new().unwrap(),
             config,
@@ -604,7 +604,8 @@ mod tests {
             Kind::Unspecified,
         );
         let item_id = Id::new();
-        for output in outputs.iter().chain(std::iter::once(&outputs[0])) {
+        let output_iter = outputs.iter().chain(std::iter::once(&outputs[0]));
+        for output in output_iter {
             for (width, height) in [(64, 48), (48, 64)] {
                 for scale in [1., 1.25, 1.5] {
                     for transform in [

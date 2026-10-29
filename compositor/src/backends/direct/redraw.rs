@@ -332,9 +332,10 @@ mod tests {
         let mut event_loop = smithay::reexports::calloop::EventLoop::try_new().unwrap();
         let display = smithay::reexports::wayland_server::Display::new().unwrap();
         let config = crate::config::Config::default().runtime_config().unwrap();
-        let mut state = crate::Ferese::new(&mut event_loop, display, config).unwrap();
+        let mut state = crate::Ferese::try_new(&mut event_loop, display, config).unwrap();
         let mut outputs = Vec::new();
-        for (index, refresh) in [60_000, 240_000].into_iter().enumerate() {
+        let refresh_iter = [60_000, 240_000].into_iter().enumerate();
+        for (index, refresh) in refresh_iter {
             let output = Output::new(
                 format!("cursor-test-{index}"),
                 PhysicalProperties {

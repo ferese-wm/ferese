@@ -5,10 +5,9 @@ use std::time::{Duration, Instant};
 use smithay::backend::renderer::gles::{GlesMapping, GlesRenderer};
 use smithay::backend::renderer::sync::SyncPoint;
 use smithay::backend::renderer::{ErasedContextId, ExportMem, Renderer};
+use smithay::reexports::calloop::generic::Generic;
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
-use smithay::reexports::calloop::{
-    Interest, Mode, PostAction, RegistrationToken, generic::Generic,
-};
+use smithay::reexports::calloop::{Interest, Mode, PostAction, RegistrationToken};
 
 use crate::Ferese;
 
@@ -33,7 +32,7 @@ pub(crate) struct Readback {
 impl Readback {
     /// Call immediately after copying into the PBO: a render-frame fence was
     /// inserted before the copy and cannot establish readback completion.
-    pub(crate) fn new(
+    pub(crate) fn try_new(
         renderer: &mut GlesRenderer,
         mapping: GlesMapping,
         bytes: usize,

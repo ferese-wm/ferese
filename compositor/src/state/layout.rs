@@ -58,10 +58,10 @@ impl Ferese {
             return bounds;
         };
         let map = layer_map_for_output(output);
-        for layer in map
+        let layer_iter = map
             .layers()
-            .filter(|layer| layer.namespace() == "ferese-shell-top-bar")
-        {
+            .filter(|layer| layer.namespace() == "ferese-shell-top-bar");
+        for layer in layer_iter {
             let policy = layer.cached_state();
             let ExclusiveZone::Exclusive(amount) = policy.exclusive_zone else {
                 continue;
@@ -253,11 +253,11 @@ impl Ferese {
 
     fn source_column_widths(&self, selected: Option<WorkspaceId>) -> HashMap<WindowId, f64> {
         let mut widths = HashMap::new();
-        for workspace in self
+        let workspace_iter = self
             .workspaces
             .iter()
-            .filter(|workspace| selected.is_none_or(|selected| selected == workspace.id))
-        {
+            .filter(|workspace| selected.is_none_or(|selected| selected == workspace.id));
+        for workspace in workspace_iter {
             let WorkspaceLayout::Scrolling(layout) = &workspace.layout else {
                 continue;
             };
@@ -368,11 +368,11 @@ impl Ferese {
             };
         let mut column_width_sources = HashMap::new();
         if !pending_column_width_cycles.is_empty() {
-            for workspace in self
+            let workspace_iter = self
                 .workspaces
                 .iter()
-                .filter(|workspace| selected.is_none_or(|selected| selected == workspace.id))
-            {
+                .filter(|workspace| selected.is_none_or(|selected| selected == workspace.id));
+            for workspace in workspace_iter {
                 let WorkspaceLayout::Scrolling(layout) = &workspace.layout else {
                     continue;
                 };

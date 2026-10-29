@@ -564,7 +564,8 @@ impl FereseShell {
                 .collect();
             if !available.is_empty() {
                 let mut actions = row([]);
-                for (index, (key, label)) in available.into_iter().enumerate() {
+                let key_iter = available.into_iter().enumerate();
+                for (index, (key, label)) in key_iter {
                     if index > 0 {
                         actions = actions.push(
                             container(cosmic::iced::widget::Space::new().width(1).height(38))

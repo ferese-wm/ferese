@@ -8,14 +8,14 @@ use iced_accessibility::accesskit::{Action, Node, Rect, Role};
 
 use crate::Message;
 
-pub(super) struct PasswordField<'a> {
-    content: Element<'a, Message>,
+pub(super) struct PasswordField<'content> {
+    content: Element<'content, Message>,
     enabled: bool,
     id: widget::Id,
 }
 
-impl<'a> PasswordField<'a> {
-    pub(super) fn new(content: Element<'a, Message>, enabled: bool) -> Self {
+impl<'content> PasswordField<'content> {
+    pub(super) fn new(content: Element<'content, Message>, enabled: bool) -> Self {
         Self {
             content,
             enabled,

@@ -7,10 +7,10 @@ use smithay::utils::{Logical, Rectangle};
 use crate::backends::direct::ConnectedOutputInfo;
 
 /// Connector data and policy borrowed for an exact, allocation-free comparison.
-pub(crate) struct State<'a> {
-    pub connected: &'a [ConnectedOutputInfo],
+pub(crate) struct State<'inventory> {
+    pub connected: &'inventory [ConnectedOutputInfo],
     pub focused: Option<OutputId>,
-    pub error: Option<&'a str>,
+    pub error: Option<&'inventory str>,
     pub confirmation_pending: bool,
     pub low_power: bool,
 }
@@ -91,7 +91,8 @@ impl Cache {
 }
 
 pub(super) fn redact(value: &mut Value) {
-    for output in value.as_array_mut().into_iter().flatten() {
+    let output_iter = value.as_array_mut().into_iter().flatten();
+    for output in output_iter {
         if let Some(fields) = output.as_object_mut() {
             fields.remove("workspace");
             fields.remove("focused");
@@ -253,7 +254,8 @@ mod tests {
             |info| info.transform = OutputTransform::Rotate90,
             |info| info.configured_position = None,
         ];
-        for (index, change) in changes.iter().enumerate() {
+        let change_iter = changes.iter().enumerate();
+        for (index, change) in change_iter {
             let mut cache = Cache::default();
             let mut connected = [connector()];
             let first = cache.get_or_update(

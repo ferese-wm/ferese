@@ -357,7 +357,8 @@ pub(crate) fn arrange_positions(
 ) -> Result<(), String> {
     let mut occupied = Vec::new();
     let mut automatic = Vec::new();
-    for (index, output) in desired.outputs.iter().enumerate() {
+    let output_iter = desired.outputs.iter().enumerate();
+    for (index, output) in output_iter {
         if !output.settings.enabled || output.mirror_source.is_some() {
             continue;
         }

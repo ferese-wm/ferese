@@ -21,7 +21,8 @@ fn prepare(source: &str) -> Result<String, Box<dyn Error>> {
             .clone(),
     )?;
     panel::validate(&panels)?;
-    for (index, bar) in panels.iter().enumerate() {
+    let bar_iter = panels.iter().enumerate();
+    for (index, bar) in bar_iter {
         let groups = [&bar.start, &bar.center, &bar.end]
             .into_iter()
             .flat_map(|zone| &zone.groups)

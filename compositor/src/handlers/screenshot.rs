@@ -133,7 +133,8 @@ fn scale_and_convert(
 
     for row in 0..target_height {
         let source_row = row * upright_height as usize / target_height;
-        for (column, source_column) in columns.iter().enumerate() {
+        let source_column_iter = columns.iter().enumerate();
+        for (column, source_column) in source_column_iter {
             let (x, y) = upright_source_pixel(
                 *source_column,
                 source_row as i32,
@@ -223,7 +224,8 @@ pub(crate) fn compose(frames: &[OutputFrame]) -> Result<Canvas, String> {
     let mut canvas = Canvas::new(width as u32, height as u32)
         .ok_or("Screenshot image is too large to encode")?;
 
-    for (frame, (x0, y0, target_width, target_height)) in frames.iter().zip(placement) {
+    let frame_iter = frames.iter().zip(placement);
+    for (frame, (x0, y0, target_width, target_height)) in frame_iter {
         if target_width == 0 || target_height == 0 {
             continue;
         }
@@ -307,7 +309,7 @@ pub(crate) enum Geometry {
 impl Geometry {
     // IPC arguments arrive as JSON numbers, so this is the gate that keeps a
     // negative or zero extent from reaching rectangle arithmetic.
-    pub(crate) fn new_region(x: i32, y: i32, width: i32, height: i32) -> Result<Self, String> {
+    pub(crate) fn try_new_region(x: i32, y: i32, width: i32, height: i32) -> Result<Self, String> {
         if width <= 0 || height <= 0 {
             return Err("Screenshot region must have a positive size".into());
         }
@@ -339,7 +341,7 @@ pub(crate) fn parse_geometry(raw: &str) -> Result<Geometry, String> {
     let width: i32 = width.trim().parse().map_err(|_| invalid())?;
     let height: i32 = height.trim().parse().map_err(|_| invalid())?;
 
-    Geometry::new_region(x, y, width, height)
+    Geometry::try_new_region(x, y, width, height)
 }
 
 #[derive(Debug)]
@@ -802,7 +804,7 @@ pub(crate) fn plan(
         height,
     } = *geometry
     {
-        Geometry::new_region(x, y, width, height)?;
+        Geometry::try_new_region(x, y, width, height)?;
     }
     let output_rects = outputs
         .iter()
@@ -871,7 +873,8 @@ pub(crate) fn plan(
     }
 
     let mut parts = Vec::new();
-    for (index, (output, &output_rect)) in outputs.iter().zip(&output_rects).enumerate() {
+    let output_iter = outputs.iter().zip(&output_rects).enumerate();
+    for (index, (output, &output_rect)) in output_iter {
         let Some(clipped) = requested.intersection(output_rect) else {
             continue;
         };
@@ -1101,15 +1104,15 @@ mod planning {
     fn the_region_constructor_validates_instead_of_panicking() {
         // Size construction panics on a negative extent, so this must never
         // reach rectangle arithmetic.
-        assert!(Geometry::new_region(0, 0, 100, -5).is_err());
-        assert!(Geometry::new_region(0, 0, 0, 100).is_err());
-        assert!(Geometry::new_region(i32::MAX, 0, 2, 2).is_err());
-        assert!(Geometry::new_region(0, i32::MAX, 2, 2).is_err());
+        assert!(Geometry::try_new_region(0, 0, 100, -5).is_err());
+        assert!(Geometry::try_new_region(0, 0, 0, 100).is_err());
+        assert!(Geometry::try_new_region(i32::MAX, 0, 2, 2).is_err());
+        assert!(Geometry::try_new_region(0, i32::MAX, 2, 2).is_err());
         assert!(
-            Geometry::new_region(0, i32::MIN, 2, 2).is_ok(),
+            Geometry::try_new_region(0, i32::MIN, 2, 2).is_ok(),
             "a large negative origin is representable"
         );
-        let ok = Geometry::new_region(-5, -7, 10, 20).expect("negative origins are fine");
+        let ok = Geometry::try_new_region(-5, -7, 10, 20).expect("negative origins are fine");
         assert_eq!(
             ok,
             Geometry::Region {

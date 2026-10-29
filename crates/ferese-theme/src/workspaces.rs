@@ -8,8 +8,8 @@ use ferese_panel::WorkspaceStyle;
 use crate::Palette;
 
 #[derive(Clone)]
-pub struct Workspace<'a> {
-    pub name: Cow<'a, str>,
+pub struct Workspace<'workspace> {
+    pub name: Cow<'workspace, str>,
     pub index: u32,
     pub window_count: u32,
     pub active: bool,
@@ -47,15 +47,15 @@ pub fn tooltip_label(workspace: &Workspace<'_>) -> String {
 }
 
 #[must_use]
-pub fn indicator<'a, M: 'a>(
+pub fn indicator<'workspace, M: 'workspace>(
     style: WorkspaceStyle,
-    workspace: Workspace<'a>,
+    workspace: Workspace<'workspace>,
     palette: Palette,
     font: cosmic::font::Font,
     height: f32,
     progress: f32,
-    apps: Vec<Element<'a, M>>,
-) -> Element<'a, M> {
+    apps: Vec<Element<'workspace, M>>,
+) -> Element<'workspace, M> {
     let progress = progress.clamp(0., 1.);
     let occupied = workspace.window_count > 0;
     let neutral = if occupied {
@@ -64,7 +64,7 @@ pub fn indicator<'a, M: 'a>(
         palette.muted
     };
     let foreground = crate::mix(neutral, palette.accent, progress);
-    let content: Element<'a, M> = match style {
+    let content: Element<'workspace, M> = match style {
         WorkspaceStyle::Numbers | WorkspaceStyle::Tabs => {
             let label = if style == WorkspaceStyle::Tabs && !workspace.name.trim().is_empty() {
                 workspace.name.into_owned()
@@ -135,7 +135,8 @@ pub fn indicator<'a, M: 'a>(
             if apps.is_empty() {
                 icons = icons.push(crate::icons::tinted(crate::icons::OVERVIEW, 16, foreground));
             } else {
-                for app in apps.into_iter().take(2) {
+                let app_iter = apps.into_iter().take(2);
+                for app in app_iter {
                     icons = icons.push(app);
                 }
             }
@@ -144,7 +145,7 @@ pub fn indicator<'a, M: 'a>(
     };
 
     let face = container(content).center_x(width(style)).center_y(height);
-    let face: Element<'a, M> = if style == WorkspaceStyle::Dots {
+    let face: Element<'workspace, M> = if style == WorkspaceStyle::Dots {
         face.into()
     } else {
         let marker = container(Space::new())
@@ -195,12 +196,12 @@ pub fn indicator<'a, M: 'a>(
 }
 
 #[must_use]
-pub fn sample<'a, M: 'a>(
+pub fn sample<'workspace, M: 'workspace>(
     style: WorkspaceStyle,
     palette: Palette,
     font: cosmic::font::Font,
     height: f32,
-) -> Element<'a, M> {
+) -> Element<'workspace, M> {
     let mut samples = row::with_capacity(3).spacing(1).align_y(Alignment::Center);
 
     for (index, count, active) in [(1, 2, true), (2, 1, false), (3, 0, false)] {

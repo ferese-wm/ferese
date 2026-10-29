@@ -454,7 +454,7 @@ impl Ferese {
                 if mapping.format() != Fourcc::Argb8888 {
                     return Err("Unsupported readback format".into());
                 }
-                super::readback::Readback::new(renderer, mapping, bytes)
+                super::readback::Readback::try_new(renderer, mapping, bytes)
             });
         let readback = match readback {
             Ok(readback) => readback,

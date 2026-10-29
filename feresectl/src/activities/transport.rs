@@ -23,7 +23,8 @@ pub(super) fn connect(path: &Path, timeout: Duration) -> io::Result<Stream> {
         ));
     }
     address.sun_family = libc::AF_UNIX as libc::sa_family_t;
-    for (to, from) in address.sun_path.iter_mut().zip(path) {
+    let to_iter = address.sun_path.iter_mut().zip(path);
+    for (to, from) in to_iter {
         *to = *from as libc::c_char;
     }
     // SAFETY: socket creates a new descriptor; nonblocking connect cannot wait

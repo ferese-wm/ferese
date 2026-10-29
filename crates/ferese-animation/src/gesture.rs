@@ -71,15 +71,16 @@ impl VelocityTracker {
                 *entry /= divisor;
             }
             let pivot_row = matrix[col];
-            for (row, values) in matrix.iter_mut().enumerate().take(degree + 1) {
+            let values_iter = matrix.iter_mut().enumerate().take(degree + 1);
+            for (row, values) in values_iter {
                 if row == col {
                     continue;
                 }
                 let factor = values[col];
-                for (entry, pivot) in values[col..=degree + 1]
+                let entry_iter = values[col..=degree + 1]
                     .iter_mut()
-                    .zip(&pivot_row[col..=degree + 1])
-                {
+                    .zip(&pivot_row[col..=degree + 1]);
+                for (entry, pivot) in entry_iter {
                     *entry -= factor * pivot;
                 }
             }

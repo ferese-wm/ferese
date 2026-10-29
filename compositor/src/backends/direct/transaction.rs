@@ -45,7 +45,8 @@ fn clear_secondary_planes(
     crtc: crtc::Handle,
 ) -> Result<(), Box<dyn Error>> {
     let planes = drm.planes(&crtc)?;
-    for plane in planes.cursor.iter().chain(&planes.overlay) {
+    let plane_iter = planes.cursor.iter().chain(&planes.overlay);
+    for plane in plane_iter {
         let properties = drm.get_properties(plane.handle)?;
         let owned = properties.iter().any(|(handle, value)| {
             drm.get_property(*handle).is_ok_and(|info| {
@@ -183,12 +184,13 @@ pub(super) fn validate_device(
             .ok_or("primary plane disappeared")?
             .formats;
         let mut allocated = None;
-        for format in formats.iter().filter(|format| {
+        let format_iter = formats.iter().filter(|format| {
             matches!(
                 format.code,
                 Fourcc::Argb8888 | Fourcc::Abgr8888 | Fourcc::Xrgb8888 | Fourcc::Xbgr8888
             )
-        }) {
+        });
+        for format in format_iter {
             if let Ok(buffer) = allocator.create_buffer(
                 width.into(),
                 height.into(),
@@ -282,10 +284,10 @@ fn retire(state: &mut Ferese, output: &mut DirectOutput, node: DrmNode, crtc: cr
         .remove(&(node, crtc));
 }
 
-struct DeviceTransaction<'a> {
-    state: &'a mut Ferese,
-    device: &'a mut DirectDevice,
-    selections: &'a HashMap<crtc::Handle, OutputSelection>,
+struct DeviceTransaction<'transaction> {
+    state: &'transaction mut Ferese,
+    device: &'transaction mut DirectDevice,
+    selections: &'transaction HashMap<crtc::Handle, OutputSelection>,
     staged: HashMap<crtc::Handle, DirectOutput>,
     replaced: HashSet<crtc::Handle>,
     color_plan: Option<super::sdr_color::Plan>,

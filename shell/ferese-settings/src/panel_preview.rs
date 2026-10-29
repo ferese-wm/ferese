@@ -156,12 +156,12 @@ impl App {
         }
         let mut samples = Vec::new();
         for zone in [&panel.center, &panel.start, &panel.end] {
-            for item in zone
+            let item_iter = zone
                 .groups
                 .iter()
                 .flat_map(|group| &group.items)
-                .filter(|item| available(item))
-            {
+                .filter(|item| available(item));
+            for item in item_iter {
                 for representation in item.representations() {
                     samples.push(Sample {
                         id: item.id.clone(),
@@ -1007,11 +1007,11 @@ mod tests {
             let pixels = Headless::screenshot(&mut renderer, Size::new(96, 48), 1., backdrop);
             if let Some(baseline) = &baseline {
                 let mut changed = 0;
-                for (index, (before, after)) in baseline
+                let before_iter = baseline
                     .chunks_exact(4)
                     .zip(pixels.chunks_exact(4))
-                    .enumerate()
-                {
+                    .enumerate();
+                for (index, (before, after)) in before_iter {
                     if before != after {
                         changed += 1;
                         assert!(

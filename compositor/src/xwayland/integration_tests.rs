@@ -520,7 +520,8 @@ mod process {
         let Ok(entries) = std::fs::read_dir("/proc") else {
             return holders;
         };
-        for entry in entries.flatten() {
+        let entry_iter = entries.flatten();
+        for entry in entry_iter {
             let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
                 continue;
             };
@@ -530,7 +531,8 @@ mod process {
             let Ok(fds) = std::fs::read_dir(entry.path().join("fd")) else {
                 continue;
             };
-            for fd in fds.flatten() {
+            let fd_iter = fds.flatten();
+            for fd in fd_iter {
                 let Ok(target) = std::fs::read_link(fd.path()) else {
                     continue;
                 };
@@ -728,7 +730,8 @@ mod manager_loop {
         test_hooks::allocator_root(allocator);
         let mut event_loop = EventLoop::try_new().expect("create the event loop");
         let display = Display::new().expect("create the Wayland display");
-        let mut state = Ferese::new(&mut event_loop, display, runtime).expect("create the session");
+        let mut state =
+            Ferese::try_new(&mut event_loop, display, runtime).expect("create the session");
         state.xwayland_config = XwaylandConfig {
             enabled: true,
             startup: XwaylandStartup::OnDemand,

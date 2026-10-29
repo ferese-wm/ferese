@@ -55,7 +55,8 @@ fn lerp(a: Point2, b: Point2, t: f64) -> Point2 {
 
 fn curve(mut points: Cubic, t: f64) -> Point2 {
     // De Casteljau, independent of the shader's polynomial/Newton calculation.
-    for count in (1..4).rev() {
+    let count_iter = (1..4).rev();
+    for count in count_iter {
         for index in 0..count {
             points[index] = lerp(points[index], points[index + 1], t);
         }
@@ -357,7 +358,9 @@ fn panel_shader_matches_core_outlines_and_resets_for_popovers() {
             }
         }
     }
-    for scene in scenes.iter().chain(std::iter::once(&Scene::default())) {
+    let empty_scene = Scene::default();
+    let scene_iter = scenes.iter().chain(std::iter::once(&empty_scene));
+    for scene in scene_iter {
         let matrices = scene
             .packets()
             .into_iter()
@@ -832,12 +835,12 @@ fn corner_heavy_shader_timing_sample() {
         .create_buffer(Fourcc::Abgr8888, (1024, 768).into())
         .unwrap();
     let body = "\nvoid main() { float d = rounded_rect_distance(mod(gl_FragCoord.xy, vec2(64.0)), vec4(0.0, 0.0, 64.0, 64.0), radius); gl_FragColor = vec4(edge_coverage(d)); }";
-    for (name, source) in reference
+    let name_iter = reference
         .as_deref()
         .map(|s| ("reference", s))
         .into_iter()
-        .chain([("optimized", current)])
-    {
+        .chain([("optimized", current)]);
+    for (name, source) in name_iter {
         let shader = format!("precision highp float; uniform float radius;\n{source}{body}");
         let program = renderer
             .compile_custom_pixel_shader(shader, &[UniformName::new("radius", UniformType::_1f)])
@@ -1079,7 +1082,7 @@ fn floating_blur_sampling_halo_does_not_paint_neighboring_islands() {
                     &[],
                     Transform::Normal,
                     1.,
-                    Some(&program.0),
+                    Some(&program.material),
                     &uniforms,
                 )
                 .unwrap();
@@ -1093,7 +1096,8 @@ fn floating_blur_sampling_halo_does_not_paint_neighboring_islands() {
                 .unwrap();
             let rendered = renderer.map_texture(&mapping).unwrap().to_vec();
             let mut painted = 0;
-            for pixel in rendered.chunks_exact(4).enumerate() {
+            let pixel_iter = rendered.chunks_exact(4).enumerate();
+            for pixel in pixel_iter {
                 let (index, rgba) = pixel;
                 let x = (index % size.w as usize) as f32 + 0.5;
                 if x < visible[0] || x >= visible[0] + visible[2] {
@@ -1212,7 +1216,7 @@ fn cached_blur_matches_gaussian_and_restores_the_frame_on_every_transform() {
                     .unwrap()
             };
             let before = state(&mut frame);
-            super::blur_cache::refresh(&mut frame, &cache, &scratch, &program.1, rect, radius)
+            super::blur_cache::refresh(&mut frame, &cache, &scratch, &program.filter, rect, radius)
                 .unwrap();
             assert_eq!(state(&mut frame), before, "frame state: {transform:?}");
             let marker = Rectangle::from_size((4, 4).into());
@@ -1278,8 +1282,10 @@ fn cached_blur_matches_gaussian_and_restores_the_frame_on_every_transform() {
             ] {
                 for channel in 0..3 {
                     let mut expected = 0.0;
-                    for (j, wy) in weights.iter().enumerate() {
-                        for (i, wx) in weights.iter().enumerate() {
+                    let j_iter = weights.iter().enumerate();
+                    for (j, wy) in j_iter {
+                        let wx_iter = weights.iter().enumerate();
+                        for (i, wx) in wx_iter {
                             expected += sample(
                                 f64::from(x) + (i as f64 - 12.0) * step,
                                 f64::from(y) + (j as f64 - 12.0) * step,

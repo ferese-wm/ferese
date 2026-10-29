@@ -4,13 +4,11 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use smithay::output::Output;
-use smithay::reexports::wayland_protocols_wlr::output_management::v1::server::{
-    zwlr_output_configuration_head_v1::{self, ZwlrOutputConfigurationHeadV1},
-    zwlr_output_configuration_v1::{self, ZwlrOutputConfigurationV1},
-    zwlr_output_head_v1::{self, ZwlrOutputHeadV1},
-    zwlr_output_manager_v1::{self, ZwlrOutputManagerV1},
-    zwlr_output_mode_v1::ZwlrOutputModeV1,
-};
+use smithay::reexports::wayland_protocols_wlr::output_management::v1::server::zwlr_output_configuration_head_v1::{self, ZwlrOutputConfigurationHeadV1};
+use smithay::reexports::wayland_protocols_wlr::output_management::v1::server::zwlr_output_configuration_v1::{self, ZwlrOutputConfigurationV1};
+use smithay::reexports::wayland_protocols_wlr::output_management::v1::server::zwlr_output_head_v1::{self, ZwlrOutputHeadV1};
+use smithay::reexports::wayland_protocols_wlr::output_management::v1::server::zwlr_output_manager_v1::{self, ZwlrOutputManagerV1};
+use smithay::reexports::wayland_protocols_wlr::output_management::v1::server::zwlr_output_mode_v1::ZwlrOutputModeV1;
 use smithay::reexports::wayland_server::backend::ClientId;
 use smithay::reexports::wayland_server::protocol::wl_output;
 use smithay::reexports::wayland_server::{
@@ -288,12 +286,12 @@ fn publish_manager(display: &DisplayHandle, manager: &mut Manager, inventory: &[
             }
             live
         });
-        for mode in next
+        let mode_iter = next
             .info
             .available_modes
             .iter()
-            .chain(next.info.current_mode.iter())
-        {
+            .chain(next.info.current_mode.iter());
+        for mode in mode_iter {
             if head.modes.iter().any(|(existing, _)| existing == mode) {
                 continue;
             }

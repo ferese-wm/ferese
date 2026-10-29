@@ -30,7 +30,8 @@ fn write_plain(writer: &mut impl Write, value: &Value, indent: usize) -> io::Res
             }
         }
         Value::Array(items) => {
-            for (index, item) in items.iter().enumerate() {
+            let item_iter = items.iter().enumerate();
+            for (index, item) in item_iter {
                 if index > 0 && item.is_object() {
                     writeln!(writer)?;
                 }

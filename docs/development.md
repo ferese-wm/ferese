@@ -230,7 +230,7 @@ cargo test --locked -p ferese state::layout::locality_tests
 cargo test --locked -p ferese-shell launcher
 cargo test --locked -p ferese-shell control::wake_tests
 LIBGL_ALWAYS_SOFTWARE=1 EGL_PLATFORM=surfaceless cargo test --locked -p ferese backends::direct::mirror -- --include-ignored
-LIBGL_ALWAYS_SOFTWARE=1 EGL_PLATFORM=surfaceless cargo test --locked -p ferese translated_material_reuses -- --include-ignored
+FERESE_TEST_EGL_SOFTWARE=1 LIBGL_ALWAYS_SOFTWARE=1 EGL_PLATFORM=surfaceless cargo test --locked -p ferese translated_material_reuses -- --include-ignored
 ```
 
 The synthetic redraw, layout-visit and offscreen pixel tests establish behavior;

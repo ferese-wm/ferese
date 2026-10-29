@@ -20,11 +20,11 @@ struct Service {
     finished: bool,
 }
 
-pub(crate) struct Runner(
-    Vec<Service>,
-    HashMap<u32, RegistrationToken>,
-    Option<(RegistrationToken, Instant)>,
-);
+pub(crate) struct Runner {
+    services: Vec<Service>,
+    exit_watches: HashMap<u32, RegistrationToken>,
+    restart_timer: Option<(RegistrationToken, Instant)>,
+}
 
 impl Runner {
     pub fn start(state: &mut Ferese) -> Rc<RefCell<Self>> {
@@ -40,11 +40,11 @@ impl Runner {
         let mut runner = owner.borrow_mut();
         runner.tick(state);
         let pids = runner
-            .0
+            .services
             .iter()
             .filter_map(|service| service.child.as_ref().map(Child::id))
             .collect::<Vec<_>>();
-        runner.1.retain(|pid, token| {
+        runner.exit_watches.retain(|pid, token| {
             if pids.contains(pid) {
                 true
             } else {
@@ -55,7 +55,7 @@ impl Runner {
 
         let mut watch_retry = None;
         for pid in pids {
-            if runner.1.contains_key(&pid) {
+            if runner.exit_watches.contains_key(&pid) {
                 continue;
             }
             let weak = Rc::downgrade(owner);
@@ -65,7 +65,7 @@ impl Runner {
                     .loop_handle
                     .insert_source(source, move |_, _, state| {
                         if let Some(owner) = weak.upgrade() {
-                            owner.borrow_mut().1.remove(&pid);
+                            owner.borrow_mut().exit_watches.remove(&pid);
                             Self::refresh(&owner, state);
                         }
                         Ok(PostAction::Remove)
@@ -74,7 +74,7 @@ impl Runner {
             });
             match result {
                 Ok(token) => {
-                    runner.1.insert(pid, token);
+                    runner.exit_watches.insert(pid, token);
                 }
                 Err(error) => {
                     tracing::warn!(%error, pid, "could not watch daemon exit; retrying registration");
@@ -84,16 +84,16 @@ impl Runner {
         }
 
         let deadline = runner
-            .0
+            .services
             .iter()
             .filter(|service| service.child.is_none() && !service.finished)
             .map(|service| service.next_start)
             .chain(watch_retry)
             .min();
-        if runner.2.as_ref().map(|(_, deadline)| *deadline) == deadline {
+        if runner.restart_timer.as_ref().map(|(_, deadline)| *deadline) == deadline {
             return;
         }
-        if let Some((token, _)) = runner.2.take() {
+        if let Some((token, _)) = runner.restart_timer.take() {
             state.loop_handle.remove(token);
         }
         if let Some(deadline) = deadline {
@@ -102,26 +102,26 @@ impl Runner {
                 Timer::from_deadline(deadline),
                 move |_, _, state| {
                     if let Some(owner) = weak.upgrade() {
-                        owner.borrow_mut().2 = None;
+                        owner.borrow_mut().restart_timer = None;
                         Self::refresh(&owner, state);
                     }
                     TimeoutAction::Drop
                 },
             ) {
-                Ok(token) => runner.2 = Some((token, deadline)),
+                Ok(token) => runner.restart_timer = Some((token, deadline)),
                 Err(error) => tracing::warn!(%error, "could not arm daemon restart deadline"),
             }
         }
     }
 
     pub fn reconcile(&mut self, configs: &[DaemonConfig], policy: SessionPolicy) {
-        let mut previous = std::mem::take(&mut self.0);
-        for config in configs
+        let mut previous = std::mem::take(&mut self.services);
+        let config_iter = configs
             .iter()
-            .filter(|c| c.enabled && policy.allows_autostart(c.nested))
-        {
+            .filter(|c| c.enabled && policy.allows_autostart(c.nested));
+        for config in config_iter {
             if self
-                .0
+                .services
                 .iter()
                 .any(|service| service.config.command == config.command)
             {
@@ -136,9 +136,9 @@ impl Runner {
                     service.finished = false;
                 }
                 service.config = config.clone();
-                self.0.push(service);
+                self.services.push(service);
             } else {
-                self.0.push(Service {
+                self.services.push(Service {
                     config: config.clone(),
                     child: None,
                     next_start: Instant::now(),
@@ -156,8 +156,8 @@ impl Runner {
     }
 
     pub fn new(configs: &[DaemonConfig], policy: SessionPolicy) -> Self {
-        Self(
-            configs
+        Self {
+            services: configs
                 .iter()
                 .filter(|config| config.enabled && policy.allows_autostart(config.nested))
                 .map(|config| Service {
@@ -167,15 +167,15 @@ impl Runner {
                     finished: false,
                 })
                 .collect(),
-            HashMap::new(),
-            None,
-        )
+            exit_watches: HashMap::new(),
+            restart_timer: None,
+        }
     }
 
     pub fn tick(&mut self, state: &mut Ferese) {
         self.reconcile(&state.autostart, state.session_environment.policy);
         let now = Instant::now();
-        for service in &mut self.0 {
+        for service in &mut self.services {
             if let Some(child) = &mut service.child {
                 match child.try_wait() {
                     Ok(Some(status)) => {
@@ -206,7 +206,7 @@ impl Runner {
     }
 
     pub fn stop(&mut self) {
-        for service in &mut self.0 {
+        for service in &mut self.services {
             if let Some(mut child) = service.child.take() {
                 terminate_child(&mut child);
             }
@@ -261,22 +261,22 @@ mod tests {
             nested: false,
         };
         let mut runner = Runner::new(&[config.clone()], SessionPolicy::Desktop);
-        runner.0[0].child = Some(
+        runner.services[0].child = Some(
             std::process::Command::new("/bin/sleep")
                 .arg("30")
                 .spawn()
                 .unwrap(),
         );
-        let pid = runner.0[0].child.as_ref().unwrap().id();
+        let pid = runner.services[0].child.as_ref().unwrap().id();
         config.restart = true;
         runner.reconcile(&[config.clone()], SessionPolicy::Desktop);
-        assert_eq!(runner.0[0].child.as_ref().unwrap().id(), pid);
-        assert!(runner.0[0].config.restart);
+        assert_eq!(runner.services[0].child.as_ref().unwrap().id(), pid);
+        assert!(runner.services[0].config.restart);
         runner.reconcile(&[config.clone(), config.clone()], SessionPolicy::Desktop);
-        assert_eq!(runner.0.len(), 1);
+        assert_eq!(runner.services.len(), 1);
         config.enabled = false;
         runner.reconcile(&[config], SessionPolicy::Desktop);
-        assert!(runner.0.is_empty());
+        assert!(runner.services.is_empty());
         let deadline = Instant::now() + Duration::from_secs(2);
         // SAFETY: kill with signal zero only probes an integer PID and has no pointer arguments.
         while unsafe { libc::kill(pid as i32, 0) } == 0 {
@@ -296,11 +296,15 @@ mod tests {
             restart: true,
             nested: false,
         }];
-        assert!(Runner::new(&configs, SessionPolicy::Embedded).0.is_empty());
+        assert!(
+            Runner::new(&configs, SessionPolicy::Embedded)
+                .services
+                .is_empty()
+        );
         let mut direct = Runner::new(&configs, SessionPolicy::Desktop);
-        assert_eq!(direct.0.len(), 1);
+        assert_eq!(direct.services.len(), 1);
         direct.stop();
-        assert!(direct.0[0].finished);
+        assert!(direct.services[0].finished);
     }
 
     #[test]
@@ -311,8 +315,16 @@ mod tests {
             restart: true,
             nested: true,
         }];
-        assert!(Runner::new(&configs, SessionPolicy::Embedded).0.is_empty());
-        assert!(Runner::new(&configs, SessionPolicy::Desktop).0.is_empty());
+        assert!(
+            Runner::new(&configs, SessionPolicy::Embedded)
+                .services
+                .is_empty()
+        );
+        assert!(
+            Runner::new(&configs, SessionPolicy::Desktop)
+                .services
+                .is_empty()
+        );
     }
 
     #[test]
@@ -330,13 +342,13 @@ mod tests {
         };
         let configs = [regular, embedded.clone()];
         let mut runner = Runner::new(&configs, SessionPolicy::Embedded);
-        assert_eq!(runner.0.len(), 1);
-        assert_eq!(runner.0[0].config, embedded);
+        assert_eq!(runner.services.len(), 1);
+        assert_eq!(runner.services[0].config, embedded);
         runner.reconcile(&configs, SessionPolicy::Desktop);
-        assert_eq!(runner.0.len(), 2);
+        assert_eq!(runner.services.len(), 2);
         runner.reconcile(&configs, SessionPolicy::Embedded);
-        assert_eq!(runner.0.len(), 1);
-        assert_eq!(runner.0[0].config, embedded);
+        assert_eq!(runner.services.len(), 1);
+        assert_eq!(runner.services[0].config, embedded);
     }
 
     #[test]
@@ -357,11 +369,11 @@ mod tests {
             nested: false,
         }];
         let runner = Runner::start(&mut state);
-        assert_eq!(runner.borrow().0.len(), 1);
-        assert!(runner.borrow().0[0].child.is_some());
+        assert_eq!(runner.borrow().services.len(), 1);
+        assert!(runner.borrow().services[0].child.is_some());
         runner.borrow_mut().stop();
         state.session_environment.policy = SessionPolicy::Embedded;
         Runner::refresh(&runner, &mut state);
-        assert!(runner.borrow().0.is_empty());
+        assert!(runner.borrow().services.is_empty());
     }
 }

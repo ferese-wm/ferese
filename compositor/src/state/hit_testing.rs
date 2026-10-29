@@ -147,7 +147,8 @@ impl Ferese {
             if !self.layer_visible_on_output(output, *requested) {
                 continue;
             }
-            for layer in map.layers_on(*requested).rev() {
+            let layer_iter = map.layers_on(*requested).rev();
+            for layer in layer_iter {
                 let geometry = map.layer_geometry(layer)?;
                 let layer_position = output_position - geometry.loc.to_f64();
                 let Some((surface, surface_location)) =

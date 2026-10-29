@@ -164,10 +164,10 @@ fn material_region_geometry(
 fn framebuffer_corner_radii(radii: [f32; 4], transform: Transform) -> [f32; 4] {
     let size = Size::<f64, Physical>::from((1., 1.));
     let mut transformed = [0.; 4];
-    for (radius, point) in radii
+    let radius_iter = radii
         .into_iter()
-        .zip([(0., 0.), (1., 0.), (1., 1.), (0., 1.)])
-    {
+        .zip([(0., 0.), (1., 0.), (1., 1.), (0., 1.)]);
+    for (radius, point) in radius_iter {
         let point = transform.transform_point_in(Point::<f64, Physical>::from(point), &size);
         let index = match (point.x > 0.5, point.y > 0.5) {
             (false, false) => 0,
@@ -560,7 +560,10 @@ pub(super) fn blur_program(
                     return None;
                 }
             };
-            let program = BlurProgram(program, filter);
+            let program = BlurProgram {
+                material: program,
+                filter,
+            };
             resources.contexts.entry(context).or_default().blur = Some(program.clone());
             Some(program)
         }

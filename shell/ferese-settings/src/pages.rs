@@ -183,7 +183,8 @@ impl App {
                 body = body
                     .push(self.note("No matching settings. Try wallpaper, keyboard, or motion."));
             }
-            for page in pages().filter(|p| p.matches(&self.search)) {
+            let page_iter = pages().filter(|p| p.matches(&self.search));
+            for page in page_iter {
                 let destination = page.search_destination(&self.search);
                 body = body.push(
                     button::custom(

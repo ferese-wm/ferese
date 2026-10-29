@@ -438,7 +438,8 @@ impl Capture {
                 .as_ref()
                 .ok_or("Missing DMA-BUF global")?
                 .create_params(&qh, ());
-            for (index, plane) in planes.iter().enumerate() {
+            let plane_iter = planes.iter().enumerate();
+            for (index, plane) in plane_iter {
                 params.add(
                     plane.fd.as_fd(),
                     index as u32,

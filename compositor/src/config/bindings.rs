@@ -227,7 +227,8 @@ pub(super) fn parse_chord(chord: &str) -> Result<(BindingModifiers, String), Con
     let mut modifiers = BindingModifiers::default();
     let mut key = None;
 
-    for component in chord.split('+').map(str::trim) {
+    let component_iter = chord.split('+').map(str::trim);
+    for component in component_iter {
         if component.is_empty() {
             return Err(ConfigError::Binding(format!("invalid key chord {chord:?}")));
         }

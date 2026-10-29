@@ -314,9 +314,6 @@ impl cosmic::Application for SourcePicker {
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
-        if !matches!(message, Message::ContentSize(_)) {
-            self.content_limited = false;
-        }
         match message {
             Message::ContentSize(Some(size)) => {
                 if !self.content_limited && size.height > self.max_height + 0.5 {
@@ -336,10 +333,21 @@ impl cosmic::Application for SourcePicker {
                 return Task::none();
             }
             Message::ContentSize(None) => return Task::none(),
+            Message::Measure => {
+                if let Some(id) = self.core.main_window_id() {
+                    return cosmic::iced::window::monitor_size(id)
+                        .map(|size| cosmic::Action::App(Message::MonitorSize(size)));
+                }
+            }
             Message::MonitorSize(Some(size)) if size.height.is_finite() && size.height > 24. => {
-                self.max_height = (size.height - 24.).min(600.);
+                let max_height = (size.height - 24.).min(600.);
+                if (max_height - self.max_height).abs() > 0.5 {
+                    self.max_height = max_height;
+                    self.content_limited = false;
+                }
             }
             Message::ThemeChanged(snapshot) => {
+                self.content_limited = false;
                 self.palette = ferese_theme::Palette::from_resolved(&snapshot.presented).flat();
                 self.font =
                     ferese_theme::font(Some(&snapshot.presented.tokens.typography.font_family));
@@ -349,7 +357,7 @@ impl cosmic::Application for SourcePicker {
                 };
                 return cosmic::command::set_theme(self.palette.native_theme());
             }
-            Message::WindowOpened(id) => {
+            Message::WindowOpened(id) if Some(id) == self.core.main_window_id() => {
                 let parent = self.prompt.parent.clone();
                 let attach = cosmic::iced::window::run(id, move |window| {
                     let attached = crate::parent::Parent::attach(window, &parent)?;
@@ -404,6 +412,7 @@ impl cosmic::Application for SourcePicker {
                     && group.count(&self.prompt) > 0
                     && group != self.group =>
             {
+                self.content_limited = false;
                 self.group = group;
                 self.query.clear();
                 // Single-source consent always belongs to the visible tab.
@@ -414,15 +423,21 @@ impl cosmic::Application for SourcePicker {
                     self.options_source = None;
                 }
             }
-            Message::Search(query) if self.options_source.is_none() => self.query = query,
+            Message::Search(query) if self.options_source.is_none() && query != self.query => {
+                self.content_limited = false;
+                self.query = query;
+            }
             Message::OpenOptions(index)
                 if self.source_has_options(index)
                     && self.visible_sources().any(|(visible, _)| visible == index) =>
             {
+                self.content_limited = false;
                 self.options_source = Some(index);
             }
-            Message::CloseOptions => self.options_source = None,
-            Message::Escape if self.options_source.is_some() => self.options_source = None,
+            Message::CloseOptions | Message::Escape if self.options_source.is_some() => {
+                self.content_limited = false;
+                self.options_source = None;
+            }
             Message::Remember if self.options_monitor() && self.can_remember() => {
                 self.remember = !self.remember
             }

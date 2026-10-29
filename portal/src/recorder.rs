@@ -1072,7 +1072,8 @@ mod tests {
         let mut real = 0.;
         let mut imaginary = 0.;
         let mut weight = 0.;
-        for (index, sample) in samples.iter().enumerate() {
+        let sample_iter = samples.iter().enumerate();
+        for (index, sample) in sample_iter {
             let window = 0.5
                 - 0.5 * (std::f64::consts::TAU * index as f64 / (samples.len() - 1) as f64).cos();
             let angle = std::f64::consts::TAU * frequency * index as f64 / 48_000.;

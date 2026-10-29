@@ -21,11 +21,11 @@ pub fn group_border(
     style
 }
 
-pub struct Sample<'a, M> {
+pub struct Sample<'content, M> {
     pub id: ItemId,
     pub representation: Representation,
     pub minimum: Option<f32>,
-    pub view: Element<'a, M>,
+    pub view: Element<'content, M>,
 }
 
 pub struct Spacing {
@@ -42,14 +42,14 @@ impl From<f32> for Spacing {
     }
 }
 
-pub fn frame<'a, M: 'a>(
-    panel: Cow<'a, Panel>,
-    samples: Vec<Sample<'a, M>>,
+pub fn frame<'content, M: 'content>(
+    panel: Cow<'content, Panel>,
+    samples: Vec<Sample<'content, M>>,
     spacing: impl Into<Spacing>,
     initial: Resolution,
-    build: impl Fn(&Resolution) -> Element<'a, M> + 'a,
-    changed: impl Fn(Resolution) -> M + 'a,
-) -> Element<'a, M> {
+    build: impl Fn(&Resolution) -> Element<'content, M> + 'content,
+    changed: impl Fn(Resolution) -> M + 'content,
+) -> Element<'content, M> {
     let content = build(&initial);
     let spacing = spacing.into();
     Element::new(Adaptive {
@@ -68,16 +68,16 @@ pub fn frame<'a, M: 'a>(
 struct State {
     published: Option<Resolution>,
 }
-type Build<'a, M> = Box<dyn Fn(&Resolution) -> Element<'a, M> + 'a>;
-struct Adaptive<'a, M> {
-    panel: Cow<'a, Panel>,
-    samples: Vec<Sample<'a, M>>,
+type Build<'content, M> = Box<dyn Fn(&Resolution) -> Element<'content, M> + 'content>;
+struct Adaptive<'content, M> {
+    panel: Cow<'content, Panel>,
+    samples: Vec<Sample<'content, M>>,
     overflow_width: f32,
     zone_gap: f32,
-    content: Element<'a, M>,
+    content: Element<'content, M>,
     resolution: Resolution,
-    build: Build<'a, M>,
-    changed: Box<dyn Fn(Resolution) -> M + 'a>,
+    build: Build<'content, M>,
+    changed: Box<dyn Fn(Resolution) -> M + 'content>,
 }
 
 impl<M> Widget<M, Theme, cosmic::Renderer> for Adaptive<'_, M> {
@@ -102,7 +102,8 @@ impl<M> Widget<M, Theme, cosmic::Renderer> for Adaptive<'_, M> {
             tree.children.push(widget::Tree::new(&self.content));
         }
         tree.children[0].diff(self.content.as_widget_mut());
-        for (index, sample) in self.samples.iter_mut().enumerate() {
+        let sample_iter = self.samples.iter_mut().enumerate();
+        for (index, sample) in sample_iter {
             if tree.children.len() == index + 1 {
                 tree.children.push(widget::Tree::new(&sample.view));
             }
@@ -123,7 +124,8 @@ impl<M> Widget<M, Theme, cosmic::Renderer> for Adaptive<'_, M> {
         // a clipped wide control can look as small as its compact alternative.
         let measurement_limits =
             layout::Limits::new(Size::ZERO, Size::new(f32::INFINITY, limits.max().height));
-        for (index, sample) in self.samples.iter_mut().enumerate() {
+        let sample_iter = self.samples.iter_mut().enumerate();
+        for (index, sample) in sample_iter {
             let node = sample.view.as_widget_mut().layout(
                 &mut tree.children[index + 1],
                 renderer,
@@ -255,14 +257,15 @@ impl<M> Widget<M, Theme, cosmic::Renderer> for Adaptive<'_, M> {
             .as_widget_mut()
             .operate(&mut tree.children[0], layout, renderer, operation);
     }
-    fn overlay<'a>(
-        &'a mut self,
-        tree: &'a mut widget::Tree,
-        layout: Layout<'a>,
+    fn overlay<'content>(
+        &'content mut self,
+        tree: &'content mut widget::Tree,
+        layout: Layout<'content>,
         renderer: &cosmic::Renderer,
         viewport: &Rectangle,
         translation: Vector,
-    ) -> Option<cosmic::iced::advanced::overlay::Element<'a, M, Theme, cosmic::Renderer>> {
+    ) -> Option<cosmic::iced::advanced::overlay::Element<'content, M, Theme, cosmic::Renderer>>
+    {
         self.content.as_widget_mut().overlay(
             &mut tree.children[0],
             layout,

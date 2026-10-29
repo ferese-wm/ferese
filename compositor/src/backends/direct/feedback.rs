@@ -160,17 +160,17 @@ fn candidate_geometry(
 }
 
 #[derive(Clone)]
-struct OutputView<'a> {
+struct OutputView<'output> {
     global: DmabufGlobal,
-    feedback: &'a OutputFeedback,
+    feedback: &'output OutputFeedback,
     eligible: Option<Id>,
 }
 
-fn select<'a>(
+fn select<'output>(
     global: DmabufGlobal,
     surface: &Id,
-    outputs: impl IntoIterator<Item = OutputView<'a>>,
-) -> Option<&'a DmabufFeedback> {
+    outputs: impl IntoIterator<Item = OutputView<'output>>,
+) -> Option<&'output DmabufFeedback> {
     let mut visible = outputs
         .into_iter()
         .filter(|output| output.feedback.visible.contains(surface));

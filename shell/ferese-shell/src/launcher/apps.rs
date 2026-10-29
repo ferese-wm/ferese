@@ -1,4 +1,4 @@
-use super::sources::{Matcher, ResultId, Row, Source, Target};
+use super::sources::{Matcher, ResultId, Row, Target};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -140,11 +140,6 @@ impl Apps {
                 Some(row)
             })
             .collect()
-    }
-}
-impl Source for Apps {
-    fn query(&self, query: &str) -> Vec<Row> {
-        self.search(query, &Default::default())
     }
 }
 pub(super) fn record(id: &str) -> Result<(), String> {

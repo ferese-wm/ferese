@@ -122,7 +122,8 @@ fn update_shared<E: Element>(
 
 pub(super) fn update(elements: &[AnimatedWindowRenderElement], scale: f64) {
     // Resolve lower blurs first so their damage propagates to higher materials.
-    for (index, element) in elements.iter().enumerate().rev() {
+    let element_iter = elements.iter().enumerate().rev();
+    for (index, element) in element_iter {
         if let AnimatedWindowRenderElement::Blur(blur) = element {
             let changed = update_shared(
                 &blur.backdrop,

@@ -435,7 +435,8 @@ impl Center {
 
     pub fn history_groups(&self) -> Vec<Vec<&Notice>> {
         let mut groups: Vec<Vec<&Notice>> = Vec::new();
-        for notice in self.entries.iter().rev() {
+        let notice_iter = self.entries.iter().rev();
+        for notice in notice_iter {
             if let Some(group) = groups.iter_mut().find(|group| group[0].app == notice.app) {
                 group.push(notice);
             } else {

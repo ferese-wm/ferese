@@ -19,7 +19,7 @@ impl App {
                 |snapshot| cosmic::Action::App(Message::ConnectionsRefreshed(snapshot)),
             )
         } else {
-            Task::perform(Client::new(), |client| {
+            Task::perform(Client::try_new(), |client| {
                 cosmic::Action::App(Message::ConnectionsReady(client))
             })
         }

@@ -248,7 +248,8 @@ impl GlobalShortcuts {
                         .await;
                 }
             }
-            for event in value["events"].as_array().into_iter().flatten() {
+            let event_iter = value["events"].as_array().into_iter().flatten();
+            for event in event_iter {
                 let Some(id) = event["id"].as_str() else {
                     continue;
                 };

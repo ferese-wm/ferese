@@ -106,6 +106,10 @@ impl From<io::Error> for FrameError {
     }
 }
 
+/// Read a length-prefixed JSON value, rejecting oversized payloads before allocating them.
+///
+/// # Errors
+/// Fails for incomplete reads, other I/O errors, oversized payloads or invalid JSON values.
 pub fn read_frame<T: for<'de> Deserialize<'de>>(reader: &mut impl Read) -> Result<T, FrameError> {
     let mut header = [0_u8; 4];
     reader.read_exact(&mut header)?;
@@ -119,6 +123,11 @@ pub fn read_frame<T: for<'de> Deserialize<'de>>(reader: &mut impl Read) -> Resul
     serde_json::from_slice(&payload).map_err(FrameError::InvalidJson)
 }
 
+/// Serialize a bounded JSON frame before writing its length and payload to the peer.
+///
+/// # Errors
+/// Fails if serialization exceeds the size limit, serialization fails, or writing or
+/// flushing fails. Serialization errors leave the writer untouched; I/O errors may not.
 pub fn write_frame<T: Serialize>(writer: &mut impl Write, value: &T) -> Result<(), FrameError> {
     let mut payload = PayloadBuffer::default();
     if let Err(error) = serde_json::to_writer(&mut payload, value) {

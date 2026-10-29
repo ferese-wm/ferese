@@ -909,11 +909,11 @@ mod tests {
                         let edges = |rect: Rect| {
                             [rect.x, rect.y, rect.x + rect.width, rect.y + rect.height]
                         };
-                        for ((before, after), end) in edges(previous)
+                        let before_iter = edges(previous)
                             .into_iter()
                             .zip(edges(current))
-                            .zip(edges(target))
-                        {
+                            .zip(edges(target));
+                        for ((before, after), end) in before_iter {
                             assert!((after - end).abs() <= (before - end).abs() + 1e-9);
                         }
                         previous = current;

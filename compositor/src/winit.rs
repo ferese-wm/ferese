@@ -179,7 +179,8 @@ pub fn init(event_loop: &mut EventLoop<Ferese>, state: &mut Ferese) -> Result<()
             Timer::from_duration(Duration::from_secs(5)),
             move |_, _, state| {
                 metrics.borrow_mut().report_if_due(missed.get());
-                for (cursor, target) in state.nested_capture_texture.iter_mut().enumerate() {
+                let cursor_iter = state.nested_capture_texture.iter_mut().enumerate();
+                for (cursor, target) in cursor_iter {
                     if let Some(target) = target {
                         target.report_if_used(cursor != 0);
                     }
@@ -439,13 +440,14 @@ fn send_nested_frame_callbacks(state: &mut Ferese, output: &Output) {
         return;
     }
     let time = state.start_time.elapsed();
-    for window in state.space.elements().filter(|window| {
+    let window_iter = state.space.elements().filter(|window| {
         state
             .windows
             .ids()
             .get(*window)
             .is_some_and(|id| state.window_belongs_to_output(*id, output))
-    }) {
+    });
+    for window in window_iter {
         window.send_frame(output, time, None, |surface, _| {
             eligible.get(&surface.into()).cloned()
         });

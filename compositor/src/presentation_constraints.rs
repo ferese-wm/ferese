@@ -61,7 +61,8 @@ impl Budget {
         let counts = [self.total.clone(), client, surface];
         let limits = [MAX_PENDING, MAX_CLIENT_PENDING, MAX_SURFACE_PENDING];
         let mut accepted = true;
-        for (count, limit) in counts.iter().zip(limits) {
+        let limit_iter = counts.iter().zip(limits);
+        for (count, limit) in limit_iter {
             accepted &= count.fetch_add(1, Ordering::Relaxed) < limit;
         }
         let ticket = Ticket { counts };

@@ -11,8 +11,8 @@ pub(super) fn area(content: Element<'_, Action>, id: window::Id) -> Element<'_, 
 
 // Handle the event directly: the pinned toolkit's MouseArea emits its scroll
 // callback twice per wheel event, which doubles trackpad accumulation.
-struct WheelArea<'a> {
-    content: Element<'a, Action>,
+struct WheelArea<'content> {
+    content: Element<'content, Action>,
     id: window::Id,
 }
 
@@ -125,14 +125,15 @@ impl Widget<Action, Theme, cosmic::Renderer> for WheelArea<'_> {
             .as_widget_mut()
             .operate(&mut tree.children[0], layout, renderer, operation);
     }
-    fn overlay<'a>(
-        &'a mut self,
-        tree: &'a mut widget::Tree,
-        layout: Layout<'a>,
+    fn overlay<'content>(
+        &'content mut self,
+        tree: &'content mut widget::Tree,
+        layout: Layout<'content>,
         renderer: &cosmic::Renderer,
         viewport: &Rectangle,
         translation: Vector,
-    ) -> Option<cosmic::iced::advanced::overlay::Element<'a, Action, Theme, cosmic::Renderer>> {
+    ) -> Option<cosmic::iced::advanced::overlay::Element<'content, Action, Theme, cosmic::Renderer>>
+    {
         self.content.as_widget_mut().overlay(
             &mut tree.children[0],
             layout,

@@ -17,8 +17,8 @@ const ACTIVE_EXTRA: f32 = 12.;
 const DOT_INSET: f32 = 3.;
 const LIMIT: usize = 4;
 
-struct Selection<'a> {
-    workspaces: Vec<&'a WorkspaceSnapshot>,
+struct Selection<'workspace> {
+    workspaces: Vec<&'workspace WorkspaceSnapshot>,
     hidden: usize,
 }
 
@@ -327,7 +327,8 @@ impl FereseShell {
                     )
                 },
             );
-        for (index, workspace) in selection.workspaces.iter().enumerate() {
+        let workspace_iter = selection.workspaces.iter().enumerate();
+        for (index, workspace) in workspace_iter {
             let urgent = self
                 .snapshot
                 .windows

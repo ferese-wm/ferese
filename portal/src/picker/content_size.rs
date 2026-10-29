@@ -21,8 +21,8 @@ pub(super) fn fit<Message: 'static>(
 #[derive(Default)]
 struct ReportedSize(Option<Size>);
 
-struct ContentSize<'a, Message> {
-    content: Element<'a, Message>,
+struct ContentSize<'content, Message> {
+    content: Element<'content, Message>,
     height_limit: Option<f32>,
     on_resize: fn(Size) -> Message,
 }
@@ -150,14 +150,14 @@ impl<Message> Widget<Message, Theme, Renderer> for ContentSize<'_, Message> {
         )
     }
 
-    fn overlay<'a>(
-        &'a mut self,
-        tree: &'a mut Tree,
-        layout: Layout<'a>,
+    fn overlay<'content>(
+        &'content mut self,
+        tree: &'content mut Tree,
+        layout: Layout<'content>,
         renderer: &Renderer,
         viewport: &Rectangle,
         translation: Vector,
-    ) -> Option<overlay::Element<'a, Message, Theme, Renderer>> {
+    ) -> Option<overlay::Element<'content, Message, Theme, Renderer>> {
         self.content.as_widget_mut().overlay(
             &mut tree.children[0],
             layout,

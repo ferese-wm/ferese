@@ -11,7 +11,7 @@ fn fixture() -> (
     let mut config = crate::config::Config::default().runtime_config().unwrap();
     config.animations_enabled = false;
     config.wallpaper.path = None;
-    let mut state = Ferese::new(
+    let mut state = Ferese::try_new(
         &mut events,
         smithay::reexports::wayland_server::Display::new().unwrap(),
         config,
@@ -386,9 +386,8 @@ fn workspace_shell_pixels_follow_consent_and_visibility() {
     use smithay::backend::renderer::gles::GlesRenderer;
     use smithay::backend::renderer::{Bind, ExportMem};
     use smithay::reexports::wayland_protocols_wlr::layer_shell::v1::server::zwlr_layer_shell_v1::ZwlrLayerShellV1;
-    use smithay::reexports::wayland_server::protocol::{
-        wl_compositor::WlCompositor, wl_shm::WlShm,
-    };
+    use smithay::reexports::wayland_server::protocol::wl_compositor::WlCompositor;
+    use smithay::reexports::wayland_server::protocol::wl_shm::WlShm;
     use smithay::utils::Transform;
     use std::io::{Read, Write};
     use std::os::fd::AsRawFd;

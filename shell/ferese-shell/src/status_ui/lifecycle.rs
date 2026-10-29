@@ -366,7 +366,7 @@ mod tests {
         let id = menu.id;
         let regions = menu.regions.clone();
         menu.motion.begin(now);
-        for (index, kind) in [
+        let kind_iter = [
             Menu::Network,
             Menu::Bluetooth,
             Menu::Audio,
@@ -377,8 +377,8 @@ mod tests {
             Menu::Battery,
         ]
         .into_iter()
-        .enumerate()
-        {
+        .enumerate();
+        for (index, kind) in kind_iter {
             let at = now + Duration::from_secs(10 * (index as u64 + 1));
             assert_eq!(menu.motion.progress_at(at), 1.0);
             menu.switch_panel(kind, settings, at);

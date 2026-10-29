@@ -312,7 +312,8 @@ fn vanished_selection_requires_a_new_choice() {
 
 #[test]
 fn grid_capacity_and_navigation_follow_the_allocated_viewport() {
-    use cosmic::iced::keyboard::{self, Location, Modifiers, key::Code, key::Physical};
+    use cosmic::iced::keyboard::key::{Code, Physical};
+    use cosmic::iced::keyboard::{self, Location, Modifiers};
     let mut shell = shell();
     let launcher = shell.launcher.as_mut().unwrap();
     launcher.category = Some(Category::Apps);
@@ -348,8 +349,9 @@ fn grid_capacity_and_navigation_follow_the_allocated_viewport() {
 #[test]
 fn accessibility_activation_in_scrolled_app_grid_keeps_target_identity() {
     use cosmic::iced::advanced::renderer::Headless;
+    use cosmic::iced::advanced::widget::Tree;
     use cosmic::iced::advanced::widget::operation::scrollable;
-    use cosmic::iced::advanced::{Layout, Shell, layout, mouse, widget::Tree};
+    use cosmic::iced::advanced::{Layout, Shell, layout, mouse};
     use cosmic::iced::{Font, Pixels, Rectangle, Size};
     use iced_accessibility::A11yId;
     use iced_accessibility::accesskit::{Action, ActionRequest, TreeId};
@@ -450,7 +452,8 @@ fn accessibility_activation_in_scrolled_app_grid_keeps_target_identity() {
 #[test]
 fn small_launcher_views_keep_selected_controls_inside_the_surface() {
     use cosmic::iced::advanced::renderer::Headless;
-    use cosmic::iced::advanced::{Layout, layout, mouse, widget::Tree};
+    use cosmic::iced::advanced::widget::Tree;
+    use cosmic::iced::advanced::{Layout, layout, mouse};
     use cosmic::iced::{Font, Pixels, Size};
     use iced_accessibility::accesskit::Role;
 

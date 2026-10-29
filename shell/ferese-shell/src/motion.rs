@@ -111,13 +111,13 @@ impl PopupMotion {
 
 /// Animate paint only; the original button retains its layout, hit target,
 /// keyboard handling, pressed state, and accessibility identity.
-pub(crate) fn button<'a, M: Clone + 'a>(
+pub(crate) fn button<'content, M: Clone + 'content>(
     render: crate::rendering::Rendering,
-    button: cosmic::widget::button::Button<'a, M>,
+    button: cosmic::widget::button::Button<'content, M>,
     foreground: cosmic::iced::Color,
     selected: bool,
     opacity: f32,
-) -> Element<'a, M> {
+) -> Element<'content, M> {
     let paint = move |progress: f32, pressed: bool| {
         ferese_theme::controls::shell_button(
             foreground,
@@ -131,14 +131,14 @@ pub(crate) fn button<'a, M: Clone + 'a>(
     painted_button(render, button, paint)
 }
 
-pub(crate) fn circular_button<'a, M: Clone + 'a>(
+pub(crate) fn circular_button<'content, M: Clone + 'content>(
     render: crate::rendering::Rendering,
-    button: cosmic::widget::button::Button<'a, M>,
+    button: cosmic::widget::button::Button<'content, M>,
     foreground: cosmic::iced::Color,
     fill: Option<cosmic::iced::Color>,
     opacity: f32,
     diameter: f32,
-) -> Element<'a, M> {
+) -> Element<'content, M> {
     let paint = move |progress: f32, pressed: bool| {
         let mut style = ferese_theme::controls::shell_button(
             foreground,
@@ -164,11 +164,11 @@ pub(crate) fn circular_button<'a, M: Clone + 'a>(
     painted_button(render, button, paint)
 }
 
-fn painted_button<'a, M: Clone + 'a>(
+fn painted_button<'content, M: Clone + 'content>(
     render: crate::rendering::Rendering,
-    button: cosmic::widget::button::Button<'a, M>,
+    button: cosmic::widget::button::Button<'content, M>,
     paint: impl Fn(f32, bool) -> cosmic::widget::button::Style + Copy + 'static,
-) -> Element<'a, M> {
+) -> Element<'content, M> {
     let progress = std::rc::Rc::new(std::cell::Cell::new(0.0));
     let active = progress.clone();
     let hovered = progress.clone();
@@ -224,8 +224,8 @@ impl HoverState {
     }
 }
 
-struct Hover<'a, M> {
-    content: Element<'a, M>,
+struct Hover<'content, M> {
+    content: Element<'content, M>,
     progress: std::rc::Rc<std::cell::Cell<f32>>,
     duration: std::time::Duration,
 }
@@ -358,14 +358,15 @@ impl<M> Widget<M, Theme, cosmic::Renderer> for Hover<'_, M> {
             .operate(&mut tree.children[0], layout, renderer, operation);
     }
 
-    fn overlay<'a>(
-        &'a mut self,
-        tree: &'a mut widget::Tree,
-        layout: Layout<'a>,
+    fn overlay<'content>(
+        &'content mut self,
+        tree: &'content mut widget::Tree,
+        layout: Layout<'content>,
         renderer: &cosmic::Renderer,
         viewport: &Rectangle,
         translation: Vector,
-    ) -> Option<cosmic::iced::advanced::overlay::Element<'a, M, Theme, cosmic::Renderer>> {
+    ) -> Option<cosmic::iced::advanced::overlay::Element<'content, M, Theme, cosmic::Renderer>>
+    {
         self.content.as_widget_mut().overlay(
             &mut tree.children[0],
             layout,
@@ -376,22 +377,22 @@ impl<M> Widget<M, Theme, cosmic::Renderer> for Hover<'_, M> {
     }
 }
 
-pub fn animated<'a, M: 'a>(
-    content: Element<'a, M>,
+pub fn animated<'content, M: 'content>(
+    content: Element<'content, M>,
     progress: f32,
     regions: Regions,
     radius: f32,
-) -> Element<'a, M> {
+) -> Element<'content, M> {
     animated_from_edge(content, progress, regions, radius, ferese_panel::Edge::Top)
 }
 
-pub fn animated_from_edge<'a, M: 'a>(
-    content: Element<'a, M>,
+pub fn animated_from_edge<'content, M: 'content>(
+    content: Element<'content, M>,
     progress: f32,
     regions: Regions,
     radius: f32,
     edge: ferese_panel::Edge,
-) -> Element<'a, M> {
+) -> Element<'content, M> {
     Element::new(Motion {
         content,
         progress,
@@ -406,7 +407,11 @@ pub fn animated_from_edge<'a, M: 'a>(
     })
 }
 
-pub fn scaled<'a, M: 'a>(content: Element<'a, M>, scale: f32, regions: Regions) -> Element<'a, M> {
+pub fn scaled<'content, M: 'content>(
+    content: Element<'content, M>,
+    scale: f32,
+    regions: Regions,
+) -> Element<'content, M> {
     Element::new(Motion {
         content,
         progress: 1.,
@@ -417,8 +422,8 @@ pub fn scaled<'a, M: 'a>(content: Element<'a, M>, scale: f32, regions: Regions) 
     })
 }
 
-struct Motion<'a, M> {
-    content: Element<'a, M>,
+struct Motion<'content, M> {
+    content: Element<'content, M>,
     progress: f32,
     regions: Option<Regions>,
     radius: f32,
@@ -595,14 +600,15 @@ impl<M> Widget<M, Theme, cosmic::Renderer> for Motion<'_, M> {
             .operate(tree, layout, renderer, operation);
     }
 
-    fn overlay<'a>(
-        &'a mut self,
-        tree: &'a mut widget::Tree,
-        layout: Layout<'a>,
+    fn overlay<'content>(
+        &'content mut self,
+        tree: &'content mut widget::Tree,
+        layout: Layout<'content>,
         renderer: &cosmic::Renderer,
         viewport: &Rectangle,
         translation: Vector,
-    ) -> Option<cosmic::iced::advanced::overlay::Element<'a, M, Theme, cosmic::Renderer>> {
+    ) -> Option<cosmic::iced::advanced::overlay::Element<'content, M, Theme, cosmic::Renderer>>
+    {
         let translation = translation + self.translation();
         self.content
             .as_widget_mut()
@@ -643,7 +649,7 @@ fn transform_regions(
     }
 }
 
-struct ReuseRegions<'a>(&'a mut Vec<[f32; 5]>);
+struct ReuseRegions<'content>(&'content mut Vec<[f32; 5]>);
 impl widget::Operation for ReuseRegions<'_> {
     fn traverse(&mut self, children: &mut dyn FnMut(&mut dyn widget::Operation)) {
         children(self);
@@ -737,12 +743,12 @@ mod tests {
                 mouse::Cursor::Unavailable,
             );
             assert_eq!(accessible.root().len(), plain_a11y.root().len());
-            for (actual, expected) in accessible
+            let actual_iter = accessible
                 .root()
                 .iter()
                 .chain(accessible.children())
-                .zip(plain_a11y.root().iter().chain(plain_a11y.children()))
-            {
+                .zip(plain_a11y.root().iter().chain(plain_a11y.children()));
+            for (actual, expected) in actual_iter {
                 assert_eq!(actual.node().label(), expected.node().label());
                 if let Some(bounds) = expected.node().bounds() {
                     let actual = actual.node().bounds().unwrap();

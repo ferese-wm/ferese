@@ -1,9 +1,9 @@
 use std::fs::File;
 
 use smithay::output::Output;
-use smithay::reexports::wayland_protocols_wlr::gamma_control::v1::server::{
-    zwlr_gamma_control_manager_v1::{self, ZwlrGammaControlManagerV1},
-    zwlr_gamma_control_v1::{self, ZwlrGammaControlV1},
+use smithay::reexports::wayland_protocols_wlr::gamma_control::v1::server::zwlr_gamma_control_manager_v1::{self, ZwlrGammaControlManagerV1};
+use smithay::reexports::wayland_protocols_wlr::gamma_control::v1::server::zwlr_gamma_control_v1::{
+    self, ZwlrGammaControlV1,
 };
 use smithay::reexports::wayland_server::{
     Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource,

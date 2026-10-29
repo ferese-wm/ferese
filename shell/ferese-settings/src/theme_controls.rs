@@ -71,7 +71,8 @@ impl App {
                 widget::tooltip::Position::Bottom,
             ));
         let mut scopes = row([]).spacing(2);
-        for (index, label) in ["Shared", "Light", "Dark"].into_iter().enumerate() {
+        let label_iter = ["Shared", "Light", "Dark"].into_iter().enumerate();
+        for (index, label) in label_iter {
             scopes = scopes.push(
                 button::custom(self.label(label, 12.))
                     .name(format!("Theme file: {label}"))
@@ -155,10 +156,10 @@ impl App {
         );
         if scheduled {
             let mut times = row([]).spacing(6).align_y(Alignment::Center);
-            for field in schema::fields(Page::Appearance)
+            let field_iter = schema::fields(Page::Appearance)
                 .into_iter()
-                .filter(|field| field.path.starts_with("theme.schedule."))
-            {
+                .filter(|field| field.path.starts_with("theme.schedule."));
+            for field in field_iter {
                 let path = field.path.clone();
                 let Kind::Text { default, .. } = &field.kind else {
                     continue;
@@ -330,7 +331,8 @@ impl App {
             .any(|&index| self.resolved.families[index].id == selected_id);
         let ids = &self.family_ids;
         let mut tiles = row([]).spacing(6);
-        for (offset, &family_index) in families.iter().enumerate() {
+        let family_index_iter = families.iter().enumerate();
+        for (offset, &family_index) in family_index_iter {
             let family = &self.resolved.families[family_index];
             let selected = family.id == selected_id;
             let index = chunk * 3 + offset;

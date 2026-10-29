@@ -165,11 +165,11 @@ impl ResizeMetrics {
     pub(crate) fn pause_clock(&mut self, now: Duration) {
         // Activity overlap excludes globally paused presentation time. Barrier
         // and target-to-handoff durations remain actual wall-clock durations.
-        for client in self
+        let client_iter = self
             .clients
             .values_mut()
-            .filter(|client| client.started.is_some())
-        {
+            .filter(|client| client.started.is_some());
+        for client in client_iter {
             client.last_observation = now;
         }
     }

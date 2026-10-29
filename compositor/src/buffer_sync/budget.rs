@@ -3,8 +3,9 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 
+use smithay::reexports::wayland_server::Resource;
 use smithay::reexports::wayland_server::backend::ClientId;
-use smithay::reexports::wayland_server::{Resource, protocol::wl_surface::WlSurface};
+use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::wayland::compositor::{Blocker, BlockerState, add_blocker, with_states};
 
 use super::{AcquireGate, CANCELLED, MAX_PENDING, MAX_PER_CLIENT, MAX_PER_SURFACE};
@@ -109,13 +110,9 @@ impl Ferese {
     pub(super) fn retire_buffer_budget(&mut self, surface: &WlSurface) {
         with_states(surface, |states| {
             if let Some(counter) = states.data_map.get::<SurfaceBudget>() {
-                for ticket in counter
-                    .tickets
-                    .lock()
-                    .expect("surface budget poisoned")
-                    .iter()
-                    .filter_map(Weak::upgrade)
-                {
+                let tickets = counter.tickets.lock().expect("surface budget poisoned");
+                let live_tickets = tickets.iter().filter_map(Weak::upgrade);
+                for ticket in live_tickets {
                     ticket.retire();
                 }
             }

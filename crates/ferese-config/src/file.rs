@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 
 pub const LIMIT: usize = 60 * 1024;
 
+/// A size-limited configuration snapshot held under an exclusive sidecar lock.
 pub struct ConfigFile {
     path: PathBuf,
     source: String,
@@ -13,6 +14,12 @@ pub struct ConfigFile {
 }
 
 impl ConfigFile {
+    /// Lock a configuration path and read its current contents, following symlinks.
+    /// A missing configuration starts with an empty snapshot.
+    ///
+    /// # Errors
+    /// Fails for invalid paths, I/O errors, a lock held by another writer, invalid
+    /// UTF-8 or contents larger than [`LIMIT`].
     pub fn open(path: &Path) -> Result<Self, String> {
         let parent = path
             .parent()
@@ -63,6 +70,13 @@ impl ConfigFile {
         &self.source
     }
 
+    /// Validate a staged file, optionally save the old contents, then replace the
+    /// configuration atomically while retaining the writer lock.
+    ///
+    /// # Errors
+    /// Fails if the new contents exceed [`LIMIT`], validation fails, the on-disk
+    /// contents changed since opening, or any staging, backup or sync operation fails.
+    /// A directory-sync error can occur after the new contents have been installed.
     pub fn replace(
         self,
         desired: &str,

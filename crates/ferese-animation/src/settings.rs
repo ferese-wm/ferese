@@ -54,6 +54,11 @@ impl MotionSettings {
     }
 
     /// Only small opacity changes should use a timed duration.
+    ///
+    /// # Panics
+    /// When motion is enabled, panics if the scaled duration is negative, not
+    /// finite or outside the range of `Duration`. Validate the motion settings
+    /// and supply a finite, nonnegative duration before calling this method.
     #[must_use]
     pub fn duration(self, milliseconds: f64) -> std::time::Duration {
         if !self.motion_enabled() {

@@ -387,7 +387,8 @@ fn width_cycle_keeps_stacked_rows_together_through_holds_forecasts_and_reversal(
         state.focused_window = Some(b);
         state.relayout();
         let ids = [a, b];
-        for id in state.windows.resizing().copied().collect::<Vec<_>>() {
+        let id_iter = state.windows.resizing().copied().collect::<Vec<_>>();
+        for id in id_iter {
             state.windows.clear_transaction(&id);
         }
         state.release_presentation_dependencies();
@@ -1054,7 +1055,8 @@ fn dmabuf_validation_uses_the_originating_global_without_a_desktop_frame() {
     }
     assert_eq!(names.len(), 2);
     let interface = b"zwp_linux_dmabuf_v1\0";
-    for (name, id) in names.into_iter().zip([3, 4]) {
+    let name_iter = names.into_iter().zip([3, 4]);
+    for (name, id) in name_iter {
         let mut args = vec![name, interface.len() as u32];
         let mut padded = interface.to_vec();
         padded.resize(padded.len().next_multiple_of(4), 0);

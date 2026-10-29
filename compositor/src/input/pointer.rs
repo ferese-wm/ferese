@@ -226,7 +226,8 @@ impl Ferese {
                 Duration::from_millis(self.input_settings.mouse.scroll_cooldown_ms),
             );
         }
-        for (axis, steps) in steps.into_iter().enumerate() {
+        let axis_iter = steps.into_iter().enumerate();
+        for (axis, steps) in axis_iter {
             let index = axis * 2 + usize::from(steps > 0);
             if let Some(action) = &actions[index] {
                 for _ in 0..steps.unsigned_abs() {

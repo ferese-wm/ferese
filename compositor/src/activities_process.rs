@@ -55,7 +55,8 @@ impl Watcher {
                         ));
                     }
                     if let Ok(processes) = std::fs::read_dir("/proc") {
-                        for process in processes.take(4_096).flatten() {
+                        let process_iter = processes.take(4_096).flatten();
+                        for process in process_iter {
                             if worker_stop.load(Ordering::Acquire) || observed.len() >= 128 {
                                 break;
                             }

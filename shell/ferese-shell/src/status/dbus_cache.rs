@@ -16,7 +16,7 @@ struct Signals {
 }
 
 impl Signals {
-    fn new(
+    fn try_new(
         connection: &Connection,
         service: &str,
         wake: Option<Arc<PollState>>,
@@ -144,7 +144,7 @@ impl<T: Clone> Cache<T> {
         if self.signals.is_none() && Instant::now() >= self.retry_at {
             self.signals = self
                 .bus
-                .query(|connection| Signals::new(connection, self.service, self.wake.clone()));
+                .query(|connection| Signals::try_new(connection, self.service, self.wake.clone()));
             self.revision = 0;
         }
         // If subscription setup fails, read fresh rather than trusting a cache
@@ -289,7 +289,8 @@ mod tests {
             std::sync::Mutex::new((0, false, None, false, 0)),
             std::sync::Condvar::new(),
         ));
-        let signals = Signals::new(&client, "org.ferese.StatusTest", Some(wake.clone())).unwrap();
+        let signals =
+            Signals::try_new(&client, "org.ferese.StatusTest", Some(wake.clone())).unwrap();
         let wait = |before| {
             let deadline = Instant::now() + Duration::from_secs(2);
             while signals.revision.load(Ordering::Acquire) == before && Instant::now() < deadline {

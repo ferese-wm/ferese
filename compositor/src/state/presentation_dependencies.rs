@@ -536,11 +536,11 @@ impl Ferese {
                 reflow.insert(id, waits);
             }
         }
-        for workspace in self
+        let workspace_iter = self
             .workspaces
             .iter()
-            .filter(|workspace| selected.is_none_or(|selected| selected == workspace.id))
-        {
+            .filter(|workspace| selected.is_none_or(|selected| selected == workspace.id));
+        for workspace in workspace_iter {
             // Finger movement is an absolute viewport translation. Reflow waits
             // still protect the windows, while width-dependent snapping waits
             // are rebuilt after release from the selected destination.
@@ -1047,13 +1047,15 @@ mod tests {
             WindowId(5),
             WindowId(6),
         ];
-        for (i, id) in ids.iter().enumerate() {
+        let id_iter = ids.iter().enumerate();
+        for (i, id) in id_iter {
             layout
                 .insert(*id, i.checked_sub(1).map(|j| ids[j]))
                 .unwrap();
         }
 
-        for (id, width) in ids.into_iter().zip([40.0, 40.0, 80.0, 80.0, 40.0, 40.0]) {
+        let id_iter = ids.into_iter().zip([40.0, 40.0, 80.0, 80.0, 40.0, 40.0]);
+        for (id, width) in id_iter {
             layout
                 .set_column_width(id, ColumnWidth::Fixed(width))
                 .unwrap();

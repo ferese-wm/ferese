@@ -92,7 +92,8 @@ pub(super) fn tab_elements(
     };
     let mut elements = Vec::new();
     state.retain_overview_labels();
-    for (index, id) in bar.group.windows.iter().copied().enumerate() {
+    let id_iter = bar.group.windows.iter().copied().enumerate();
+    for (index, id) in id_iter {
         let rect = ferese_layout::Rect::new(
             content.x + width * index as f64,
             content.y - bar.rect.height,
@@ -163,10 +164,10 @@ pub(super) fn tab_elements(
             // The shell palette supplies the surface and accent. Keep selection
             // inside the shell so its corners follow the same continuous profile.
             let mut fill = state.theme_settings.surface_raised_color.0;
-            for (channel, accent) in fill[..3]
+            let channel_iter = fill[..3]
                 .iter_mut()
-                .zip(state.theme_settings.accent_color.0)
-            {
+                .zip(state.theme_settings.accent_color.0);
+            for (channel, accent) in channel_iter {
                 *channel += (accent - *channel) * 0.16;
             }
             fill[3] = alpha * opacity;

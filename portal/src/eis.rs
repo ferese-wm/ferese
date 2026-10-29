@@ -284,12 +284,14 @@ impl State {
                 Some("activated") => {
                     let activation = event["activation_id"].as_u64().unwrap_or(0) as u32;
                     self.activation = Some(activation);
-                    for device in [&self.keyboard, &self.pointer].into_iter().flatten() {
+                    let device_iter = [&self.keyboard, &self.pointer].into_iter().flatten();
+                    for device in device_iter {
                         device.start_emulating(activation);
                     }
                 }
                 Some("deactivated" | "disabled" | "closed") if self.activation.take().is_some() => {
-                    for device in [&self.keyboard, &self.pointer].into_iter().flatten() {
+                    let device_iter = [&self.keyboard, &self.pointer].into_iter().flatten();
+                    for device in device_iter {
                         device.stop_emulating();
                     }
                 }
@@ -297,12 +299,12 @@ impl State {
                     if let Some(device) = &self.keyboard
                         && let Some(keyboard) = device.interface::<eis::Keyboard>()
                     {
-                        for key in event["keys"]
+                        let key_iter = event["keys"]
                             .as_array()
                             .into_iter()
                             .flatten()
-                            .filter_map(Value::as_u64)
-                        {
+                            .filter_map(Value::as_u64);
+                        for key in key_iter {
                             keyboard.key(key as u32, eis::keyboard::KeyState::Press);
                         }
                         device.frame(now());

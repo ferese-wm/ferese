@@ -96,10 +96,10 @@ impl Inventory {
         let outputs = outputs.as_array().ok_or("Missing monitor inventory")?;
         let mut profile = None;
         let mut displays = Vec::new();
-        for output in outputs
+        let output_iter = outputs
             .iter()
-            .filter(|output| output["connected"].as_bool().unwrap_or(true))
-        {
+            .filter(|output| output["connected"].as_bool().unwrap_or(true));
+        for output in output_iter {
             if let Some(name) = output["profile"].as_str() {
                 profile = Some(name.to_owned());
             }
@@ -434,7 +434,8 @@ impl FereseShell {
         }
 
         let mut cards = row::with_capacity(4).spacing(8);
-        for (index, mode) in Mode::ALL.into_iter().enumerate() {
+        let mode_iter = Mode::ALL.into_iter().enumerate();
+        for (index, mode) in mode_iter {
             let available = !model.busy
                 && !pending
                 && model

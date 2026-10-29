@@ -21,7 +21,7 @@ pub(crate) struct ParentAttachment {
     pub diagnostic: Option<String>,
 }
 
-fn classify_parent<'a>(parent: &'a str) -> ParentKind<'a> {
+fn classify_parent<'parent>(parent: &'parent str) -> ParentKind<'parent> {
     if parent.is_empty() {
         return ParentKind::None;
     }
@@ -62,9 +62,9 @@ fn is_x11_window_identifier(identifier: &str) -> bool {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-enum ParentKind<'a> {
+enum ParentKind<'parent> {
     None,
-    Wayland(&'a str),
+    Wayland(&'parent str),
     X11,
     Unsupported,
 }

@@ -19,10 +19,10 @@ struct Registry {
 }
 
 fn request(wire: &mut UnixStream, object: u32, opcode: u32, args: &[u32]) {
-    for word in [object, ((args.len() as u32 + 2) * 4) << 16 | opcode]
+    let word_iter = [object, ((args.len() as u32 + 2) * 4) << 16 | opcode]
         .into_iter()
-        .chain(args.iter().copied())
-    {
+        .chain(args.iter().copied());
+    for word in word_iter {
         wire.write_all(&word.to_ne_bytes()).unwrap();
     }
 }

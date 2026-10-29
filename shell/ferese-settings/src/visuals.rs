@@ -534,7 +534,8 @@ mod tests {
 
     #[test]
     fn presets_are_distinct_and_readable_on_settings_surfaces() {
-        for (index, preset) in PRESETS.iter().enumerate() {
+        let preset_iter = PRESETS.iter().enumerate();
+        for (index, preset) in preset_iter {
             let tokens = ferese_config::theme::preset(preset.id, preset.appearance).unwrap();
             let theme = ferese_config::theme::ResolvedTheme {
                 appearance: preset.appearance,
@@ -554,7 +555,8 @@ mod tests {
                     preset.name
                 );
             }
-            for other in PRESETS.iter().skip(index + 1) {
+            let other_iter = PRESETS.iter().skip(index + 1);
+            for other in other_iter {
                 if preset.appearance == other.appearance {
                     assert_ne!(preset.accent, other.accent);
                 }
@@ -565,7 +567,8 @@ mod tests {
 
     #[test]
     fn selection_tracks_all_preset_colors_and_gradient_changes() {
-        for (index, preset) in PRESETS.iter().enumerate() {
+        let preset_iter = PRESETS.iter().enumerate();
+        for (index, preset) in preset_iter {
             let mut snapshot = configured_preset(index);
             assert!(preset_selected(&snapshot, index));
             let kind = if preset.appearance == ferese_config::theme::Appearance::Light {
@@ -599,7 +602,8 @@ mod tests {
 
     #[test]
     fn native_controls_follow_lightness() {
-        for (index, item) in PRESETS.iter().enumerate() {
+        let item_iter = PRESETS.iter().enumerate();
+        for (index, item) in item_iter {
             let _ = index;
             let resolved = ferese_config::theme::ResolvedTheme {
                 appearance: item.appearance,

@@ -134,10 +134,8 @@ impl crate::FereseShell {
         opacity: f32,
     ) -> cosmic::Element<'_, cosmic::Action<crate::Message>> {
         use cosmic::iced::{Alignment, Background, Border};
-        use cosmic::{
-            theme,
-            widget::{Space, container, row},
-        };
+        use cosmic::theme;
+        use cosmic::widget::{Space, container, row};
         let mut indicator = row![crate::bar_icon(
             self.capture_status.icon(),
             size,
@@ -171,7 +169,8 @@ impl crate::FereseShell {
 
     pub(crate) fn capture_timer_visible(&self) -> bool {
         use crate::panel_layout::Placement;
-        use ferese_panel::{ItemKind, Representation, morph::Mode};
+        use ferese_panel::morph::Mode;
+        use ferese_panel::{ItemKind, Representation};
         if self.snapshot.binding_mode.is_some() {
             return false;
         }
@@ -224,10 +223,8 @@ impl crate::FereseShell {
         selected: bool,
     ) -> cosmic::Element<'_, cosmic::Action<crate::Message>> {
         use cosmic::iced::{Alignment, Rectangle};
-        use cosmic::{
-            theme,
-            widget::{button, row},
-        };
+        use cosmic::theme;
+        use cosmic::widget::{button, row};
         let palette = self.config.theme.for_bar();
         let metrics = crate::BarMetrics::from(self.config.panels[0].resolved_geometry());
         let foreground = crate::color(if selected {

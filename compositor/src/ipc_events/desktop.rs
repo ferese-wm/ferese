@@ -6,18 +6,18 @@ use ferese_ipc::events::Window;
 use serde_json::{Value, json};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) struct WindowView<'a> {
+pub(crate) struct WindowView<'window> {
     pub id: u64,
-    pub app_id: &'a str,
-    pub title: &'a str,
+    pub app_id: &'window str,
+    pub title: &'window str,
     pub focused: bool,
     pub workspace: u64,
     pub floating: bool,
     pub fullscreen: bool,
 }
 
-impl<'a> From<&'a Window> for WindowView<'a> {
-    fn from(window: &'a Window) -> Self {
+impl<'window> From<&'window Window> for WindowView<'window> {
+    fn from(window: &'window Window) -> Self {
         Self {
             id: window.id,
             app_id: &window.app_id,
@@ -50,7 +50,7 @@ pub(crate) struct Windows {
 }
 
 impl Windows {
-    pub(crate) fn get_or_update<'a, I: Iterator<Item = WindowView<'a>>>(
+    pub(crate) fn get_or_update<'window, I: Iterator<Item = WindowView<'window>>>(
         &mut self,
         windows: impl Fn() -> I,
     ) -> Arc<Vec<Window>> {

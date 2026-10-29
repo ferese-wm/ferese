@@ -130,7 +130,7 @@ binding-mode launch { binding h binding-mode default; }
 fn state(events: &mut EventLoop<'static, Ferese>) -> Ferese {
     let (_, mut config, _) = crate::config::prepare(SOURCE, std::path::Path::new(".")).unwrap();
     config.wallpaper.path = None;
-    let mut state = Ferese::new(events, Display::new().unwrap(), config).unwrap();
+    let mut state = Ferese::try_new(events, Display::new().unwrap(), config).unwrap();
     state.config_source = Some(SOURCE.into());
     let mut sections = ferese_config::Document::parse(SOURCE)
         .unwrap()
@@ -251,14 +251,16 @@ fn escape_exits_with_every_modifier_combination() {
     let modifiers = [133, 37, 64, 50]; // Super, Ctrl, Alt, Shift.
     for bits in 0..16 {
         state.set_binding_mode("resize");
-        for (bit, code) in modifiers.iter().enumerate() {
+        let bit_iter = modifiers.iter().enumerate();
+        for (bit, code) in bit_iter {
             if bits & (1 << bit) != 0 {
                 key(&mut state, *code, true);
             }
         }
         tap(&mut state, 9);
         assert_eq!(state.binding_modes.active(), None, "modifiers={bits:04b}");
-        for (bit, code) in modifiers.iter().enumerate() {
+        let bit_iter = modifiers.iter().enumerate();
+        for (bit, code) in bit_iter {
             if bits & (1 << bit) != 0 {
                 key(&mut state, *code, false);
             }

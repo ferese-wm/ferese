@@ -132,7 +132,7 @@ impl fmt::Debug for Client {
 }
 
 impl Client {
-    pub async fn new() -> Result<Arc<Self>, String> {
+    pub async fn try_new() -> Result<Arc<Self>, String> {
         let connection = zbus::connection::Builder::system()
             .map_err(|e| e.to_string())?
             .method_timeout(Duration::from_secs(120))

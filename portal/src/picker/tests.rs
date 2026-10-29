@@ -602,3 +602,64 @@ fn render_picker_previews() {
         }
     }
 }
+
+#[test]
+fn selection_and_configure_events_keep_the_fitted_layout() {
+    use cosmic::iced::advanced::layout;
+    use cosmic::iced::advanced::renderer::Headless;
+    use cosmic::iced::advanced::widget::Tree;
+    use cosmic::iced::{Font, Pixels, Size};
+
+    let runtime = tokio::runtime::Runtime::new().expect("test runtime starts");
+    let renderer = runtime
+        .block_on(<cosmic::Renderer as Headless>::new(
+            Font::default(),
+            Pixels(14.),
+            Some("tiny-skia"),
+        ))
+        .expect("headless renderer is available");
+    let mut prompt = prompt();
+    prompt.sources.extend((3..30).map(|id| Source {
+        name: format!("workspace:{id}"),
+        label: format!("Workspace {id}"),
+        width: 1920,
+        height: 1080,
+        x: 0,
+        y: 0,
+        scale: 1,
+    }));
+    let mut picker = picker(prompt);
+    drop(picker.update(Message::Group(SourceGroup::Workspaces)));
+    picker.max_height = 400.;
+    let mut tree = Tree::new(picker.view().as_widget());
+    let layout = |picker: &SourcePicker, tree: &mut Tree| {
+        let mut view = picker.view();
+        view.as_widget_mut().diff(tree);
+        view.as_widget_mut().layout(
+            tree,
+            &renderer,
+            &layout::Limits::new(Size::ZERO, Size::new(560., 400.)),
+        )
+    };
+    let mut node = layout(&picker, &mut tree);
+    for _ in 0..3 {
+        drop(picker.update(Message::ContentSize(Some(node.size()))));
+        node = layout(&picker, &mut tree);
+    }
+    assert!(node.size().height <= 400.5);
+    let footer = |node: &layout::Node| node.children()[0].children().last().unwrap().bounds();
+    let original = footer(&node);
+    for message in [Message::Select(0), Message::Measure, Message::Select(0)] {
+        drop(picker.update(message));
+        node = layout(&picker, &mut tree);
+        assert!(
+            node.size().height <= 400.5,
+            "interaction must not draw an unrestricted-height frame"
+        );
+        assert_eq!(
+            footer(&node),
+            original,
+            "source clicks must not move the Share button"
+        );
+    }
+}

@@ -183,7 +183,10 @@ pub(crate) fn window_corner_shape(_window: &smithay::desktop::Window) -> CornerS
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct BlurProgram(GlesTexProgram, GlesTexProgram);
+pub(crate) struct BlurProgram {
+    material: GlesTexProgram,
+    filter: GlesTexProgram,
+}
 
 #[derive(Clone, Debug)]
 struct BlurCapture {
@@ -253,7 +256,7 @@ impl BlurRenderElement {
                 frame,
                 &self.texture,
                 &self.scratch,
-                &self.program.1,
+                &self.program.filter,
                 self.capture_rect,
                 self.blur,
             )?;
@@ -343,7 +346,7 @@ impl RenderElement<GlesRenderer> for BlurRenderElement {
             opaque_regions,
             Transform::Normal,
             1.0,
-            Some(&self.program.0),
+            Some(&self.program.material),
             &self.uniforms,
         )
     }
@@ -1156,10 +1159,10 @@ mod tests {
                 let max_x = xs.iter().copied().fold(f32::NEG_INFINITY, f32::max);
                 let min_y = ys.iter().copied().fold(f32::INFINITY, f32::min);
                 let max_y = ys.iter().copied().fold(f32::NEG_INFINITY, f32::max);
-                for (actual, expected) in
+                let actual_iter =
                     clip.into_iter()
-                        .zip([min_x, min_y, max_x - min_x, max_y - min_y])
-                {
+                        .zip([min_x, min_y, max_x - min_x, max_y - min_y]);
+                for (actual, expected) in actual_iter {
                     assert!(
                         (actual - expected).abs() < 0.001,
                         "{transform:?}, scale={scale}: {actual} != {expected}"

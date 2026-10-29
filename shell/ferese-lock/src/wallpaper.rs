@@ -7,8 +7,8 @@ use iced_accessibility::A11yTree;
 
 use crate::Message;
 
-pub(super) struct Wallpaper<'a> {
-    pub(super) content: Element<'a, Message>,
+pub(super) struct Wallpaper<'content> {
+    pub(super) content: Element<'content, Message>,
     pub(super) image: image::Handle,
 }
 
@@ -91,14 +91,14 @@ impl Widget<Message, Theme, Renderer> for Wallpaper<'_> {
             renderer,
         )
     }
-    fn overlay<'a>(
-        &'a mut self,
-        tree: &'a mut widget::Tree,
-        layout: Layout<'a>,
+    fn overlay<'content>(
+        &'content mut self,
+        tree: &'content mut widget::Tree,
+        layout: Layout<'content>,
         renderer: &Renderer,
         viewport: &Rectangle,
         translation: Vector,
-    ) -> Option<cosmic::iced::advanced::overlay::Element<'a, Message, Theme, Renderer>> {
+    ) -> Option<cosmic::iced::advanced::overlay::Element<'content, Message, Theme, Renderer>> {
         self.content.as_widget_mut().overlay(
             &mut tree.children[0],
             layout,

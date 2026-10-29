@@ -368,7 +368,8 @@ async fn monitor(
         })
         .collect();
     names.sort_unstable();
-    for name in names.into_iter().take(MAX_PLAYERS) {
+    let name_iter = names.into_iter().take(MAX_PLAYERS);
+    for name in name_iter {
         if let Ok(owner) = bus_call(&connection, "GetNameOwner", &name).await {
             let player = discover(&connection, name.clone(), owner).await;
             // Existing players have no known start order; bus names break ties.

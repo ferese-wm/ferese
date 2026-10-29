@@ -38,9 +38,9 @@ struct Conversation {
         unsafe extern "C" fn(c_int, *mut *const Message, *mut *mut Response, *mut c_void) -> c_int,
     data: *mut c_void,
 }
-struct Credentials<'a> {
+struct Credentials<'password> {
     user: CString,
-    password: &'a [u8],
+    password: &'password [u8],
     password_prompts: u8,
 }
 const SUCCESS: c_int = 0;

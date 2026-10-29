@@ -1,7 +1,6 @@
 use super::{Data, Duration, Engine, Id, Source, State, Template, Value};
 #[cfg(test)]
 use ferese_activities::Owner;
-
 use ferese_activities::pomodoro::{Session, Status};
 use ferese_ipc::activities::{PomodoroAction, PomodoroRequest};
 

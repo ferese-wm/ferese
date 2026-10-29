@@ -2,10 +2,8 @@
 use std::cell::RefCell;
 
 use smithay::output::Output;
-use smithay::reexports::wayland_protocols::wp::tearing_control::v1::server::{
-    wp_tearing_control_manager_v1::{self, WpTearingControlManagerV1},
-    wp_tearing_control_v1::{self, WpTearingControlV1},
-};
+use smithay::reexports::wayland_protocols::wp::tearing_control::v1::server::wp_tearing_control_manager_v1::{self, WpTearingControlManagerV1};
+use smithay::reexports::wayland_protocols::wp::tearing_control::v1::server::wp_tearing_control_v1::{self, WpTearingControlV1};
 use smithay::reexports::wayland_server::backend::GlobalId;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::reexports::wayland_server::{

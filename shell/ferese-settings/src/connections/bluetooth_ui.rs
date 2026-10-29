@@ -136,7 +136,8 @@ impl App {
                     "No nearby devices found."
                 }));
             }
-            for device in devices.iter().filter(|d| d.paired == paired) {
+            let device_iter = devices.iter().filter(|d| d.paired == paired);
+            for device in device_iter {
                 let state = if device.connected {
                     "Connected"
                 } else if device.paired {

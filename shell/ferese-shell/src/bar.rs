@@ -106,11 +106,11 @@ impl FereseShell {
         let mut samples = Vec::new();
         for zone in [&panel.center, &panel.start, &panel.end] {
             for group in &zone.groups {
-                for item in group
+                let item_iter = group
                     .items
                     .iter()
-                    .filter(|item| item.available(availability))
-                {
+                    .filter(|item| item.available(availability));
+                for item in item_iter {
                     if matches!(item.kind, ItemKind::FocusedWindow)
                         && focused_bar_title(&self.snapshot, self.output_for_bar(id)).is_empty()
                     {
@@ -672,10 +672,10 @@ impl FereseShell {
         let mut workspace_buttons = row::with_capacity(self.snapshot.workspaces.len())
             .spacing(1)
             .align_y(cosmic::iced::Alignment::Center);
-        for workspace in self
+        let workspace_iter = self
             .snapshot
-            .workspaces_for_output(focused_output.map(|output| output.id))
-        {
+            .workspaces_for_output(focused_output.map(|output| output.id));
+        for workspace in workspace_iter {
             let active = workspace_active_on_bar(workspace.id, focused_output);
             let owner = workspace
                 .output
@@ -805,11 +805,11 @@ fn view_zone<'a>(
         let mut controls =
             row::with_capacity(group.items.len()).align_y(cosmic::iced::Alignment::Center);
         let mut count = 0;
-        for item in group
+        let item_iter = group
             .items
             .iter()
-            .filter(|item| item.available(availability) && visible(item))
-        {
+            .filter(|item| item.available(availability) && visible(item));
+        for item in item_iter {
             if count > 0 {
                 controls = controls.push(
                     cosmic::iced::widget::Space::new()
@@ -1070,7 +1070,8 @@ mod island_tests {
             let label = content.labels[0];
             assert!(label.width > previous_label);
             previous_label = label.width;
-            for bounds in content.labels.iter().chain(&content.buttons) {
+            let bounds_iter = content.labels.iter().chain(&content.buttons);
+            for bounds in bounds_iter {
                 assert!(
                     bounds.x >= 0. && bounds.x + bounds.width <= width + 0.01,
                     "media control exceeds its allocation: {bounds:?}, width={width}"
@@ -1244,10 +1245,10 @@ mod island_tests {
         for padding in [0., 4., 13.5] {
             for background in [PanelStyle::Flat, PanelStyle::Floating] {
                 let mut panel = Panel::from_preset(background);
-                for group in [&mut panel.start, &mut panel.center, &mut panel.end]
+                let group_iter = [&mut panel.start, &mut panel.center, &mut panel.end]
                     .into_iter()
-                    .flat_map(|zone| &mut zone.groups)
-                {
+                    .flat_map(|zone| &mut zone.groups);
+                for group in group_iter {
                     group.island_padding = padding;
                 }
                 let start = measure_zone(&panel, &panel.start, Availability::default(), true);
@@ -1397,7 +1398,8 @@ mod island_tests {
         for zone in [&panel.start, &panel.center, &panel.end] {
             let measured = measure_zone(&panel, zone, Availability::default(), true);
             assert_eq!(measured.islands.len(), measured.groups.len());
-            for (island, group) in measured.islands.iter().zip(&measured.groups) {
+            let island_iter = measured.islands.iter().zip(&measured.groups);
+            for (island, group) in island_iter {
                 assert_eq!(island.height, 36.);
                 assert_eq!(island.width, group.width);
             }

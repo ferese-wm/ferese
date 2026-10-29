@@ -4,10 +4,13 @@ use cosmic::iced::{Alignment, Length};
 use ferese_panel::{Group, Item, ItemKind, Panel, Representation};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct Choice(&'static str, &'static str);
+struct Choice {
+    key: &'static str,
+    label: &'static str,
+}
 impl std::fmt::Display for Choice {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.1)
+        f.write_str(self.label)
     }
 }
 
@@ -352,7 +355,7 @@ impl App {
                     let selected = choices
                         .iter()
                         .find(|(key, _)| *key == value)
-                        .map(|&(key, label)| Choice(key, label));
+                        .map(|&(key, label)| Choice { key, label });
                     return widget::column([])
                         .spacing(8)
                         .push(self.label(field.label, 13.))
@@ -360,14 +363,14 @@ impl App {
                             cosmic::iced::widget::pick_list(
                                 choices
                                     .iter()
-                                    .map(|&(key, label)| Choice(key, label))
+                                    .map(|&(key, label)| Choice { key, label })
                                     .collect::<Vec<_>>(),
                                 selected,
                                 move |choice| {
                                     Message::PanelEdit(Action::Set(
                                         id.clone(),
                                         name.clone(),
-                                        choice.0.into(),
+                                        choice.key.into(),
                                     ))
                                 },
                             )

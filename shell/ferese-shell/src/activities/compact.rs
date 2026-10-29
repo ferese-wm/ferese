@@ -32,10 +32,10 @@ impl Compact {
             self.badge = None;
         }
         self.titles.retain(|id, _| selection.visible.contains(id));
-        for entry in entries
+        let entry_iter = entries
             .iter()
-            .filter(|entry| selection.visible.contains(&entry.id))
-        {
+            .filter(|entry| selection.visible.contains(&entry.id));
+        for entry in entry_iter {
             let title = &entry.data.title;
             if self
                 .titles

@@ -62,7 +62,7 @@ fn subscriptions_update_deduplicate_and_retire_device_preferences() {
     let mut events = EventLoop::try_new().unwrap();
     let mut config = crate::config::Config::default().runtime_config().unwrap();
     config.wallpaper.path = None;
-    let mut state = Ferese::new(&mut events, Display::new().unwrap(), config).unwrap();
+    let mut state = Ferese::try_new(&mut events, Display::new().unwrap(), config).unwrap();
     let output = Output::new(
         "feedback-test".into(),
         PhysicalProperties {

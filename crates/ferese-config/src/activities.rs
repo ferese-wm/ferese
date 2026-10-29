@@ -210,7 +210,8 @@ pub(crate) fn parse(node: &KdlNode) -> Result<Value, Error> {
     let mut values = Map::new();
     let mut rules = Vec::new();
     let mut names = std::collections::HashSet::new();
-    for child in node.children().into_iter().flat_map(|doc| doc.nodes()) {
+    let child_iter = node.children().into_iter().flat_map(|doc| doc.nodes());
+    for child in child_iter {
         let key = child.name().value();
         if key == "rule" {
             let Some(name) = child.get(0).and_then(kdl::KdlValue::as_string) else {
@@ -221,7 +222,8 @@ pub(crate) fn parse(node: &KdlNode) -> Result<Value, Error> {
             }
             let mut value = Map::new();
             value.insert("name".into(), json!(name));
-            for property in child.children().into_iter().flat_map(|doc| doc.nodes()) {
+            let property_iter = child.children().into_iter().flat_map(|doc| doc.nodes());
+            for property in property_iter {
                 let name = property.name().value();
                 if !matches!(
                     name,

@@ -2,20 +2,20 @@ use cosmic::iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, re
 use cosmic::iced::{Event, Length, Rectangle, Size, Vector};
 use cosmic::{Element, Theme};
 
-pub(super) fn hover<'a, M: 'a>(
-    content: Element<'a, M>,
-    hover: Option<HoverTarget<'a, M>>,
-) -> Element<'a, M> {
+pub(super) fn hover<'content, M: 'content>(
+    content: Element<'content, M>,
+    hover: Option<HoverTarget<'content, M>>,
+) -> Element<'content, M> {
     Element::new(Hover { content, hover })
 }
 
-pub(super) struct HoverTarget<'a, M> {
+pub(super) struct HoverTarget<'content, M> {
     pub(super) id: widget::Id,
-    pub(super) exited: Box<dyn Fn() -> M + 'a>,
+    pub(super) exited: Box<dyn Fn() -> M + 'content>,
 }
 
-struct HoverBounds<'a> {
-    target: &'a widget::Id,
+struct HoverBounds<'content> {
+    target: &'content widget::Id,
     bounds: Option<Rectangle>,
 }
 
@@ -31,9 +31,9 @@ impl widget::Operation for HoverBounds<'_> {
     }
 }
 
-struct Hover<'a, M> {
-    content: Element<'a, M>,
-    hover: Option<HoverTarget<'a, M>>,
+struct Hover<'content, M> {
+    content: Element<'content, M>,
+    hover: Option<HoverTarget<'content, M>>,
 }
 
 impl<M> Widget<M, Theme, cosmic::Renderer> for Hover<'_, M> {
@@ -173,14 +173,15 @@ impl<M> Widget<M, Theme, cosmic::Renderer> for Hover<'_, M> {
             .operate(&mut tree.children[0], layout, renderer, operation);
     }
 
-    fn overlay<'a>(
-        &'a mut self,
-        tree: &'a mut widget::Tree,
-        layout: Layout<'a>,
+    fn overlay<'content>(
+        &'content mut self,
+        tree: &'content mut widget::Tree,
+        layout: Layout<'content>,
         renderer: &cosmic::Renderer,
         viewport: &Rectangle,
         translation: Vector,
-    ) -> Option<cosmic::iced::advanced::overlay::Element<'a, M, Theme, cosmic::Renderer>> {
+    ) -> Option<cosmic::iced::advanced::overlay::Element<'content, M, Theme, cosmic::Renderer>>
+    {
         self.content.as_widget_mut().overlay(
             &mut tree.children[0],
             layout,

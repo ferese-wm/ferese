@@ -1037,11 +1037,11 @@ impl FereseShell {
                     }
                     if kind == status_ui::Menu::Activities {
                         // Activities follows both the main tabs and optional shortcuts.
-                        for shortcut in shortcuts
+                        let shortcut_iter = shortcuts
                             .iter()
                             .copied()
-                            .filter(|kind| *kind != ItemKind::Overview)
-                        {
+                            .filter(|kind| *kind != ItemKind::Overview);
+                        for shortcut in shortcut_iter {
                             tabs = tabs.push(self.hub_shortcut_button(id, shortcut, menu, opacity));
                         }
                         if !self.activities_configured(id) {
@@ -1324,12 +1324,12 @@ impl FereseShell {
         };
         let capacity = ((width - 28. - tabs * 32. - battery - 8.).max(0.) / 32.).floor() as usize;
         let mut shortcuts = Vec::new();
-        for item in [&panel.start, &panel.center, &panel.end]
+        let item_iter = [&panel.start, &panel.center, &panel.end]
             .into_iter()
             .flat_map(|zone| &zone.groups)
             .flat_map(|group| &group.items)
-            .filter(|item| item.visible && item.overflow != ferese_panel::OverflowPolicy::Always)
-        {
+            .filter(|item| item.visible && item.overflow != ferese_panel::OverflowPolicy::Always);
+        for item in item_iter {
             if shortcuts.len() == capacity {
                 break;
             }
@@ -1358,12 +1358,12 @@ impl FereseShell {
         let mut tiles = Vec::new();
         let panel = self.panel_for_bar(id);
         let shortcuts = self.hub_shortcuts(id);
-        for item in [&panel.start, &panel.center, &panel.end]
+        let item_iter = [&panel.start, &panel.center, &panel.end]
             .into_iter()
             .flat_map(|zone| &zone.groups)
             .flat_map(|group| &group.items)
-            .filter(|item| item.visible)
-        {
+            .filter(|item| item.visible);
+        for item in item_iter {
             if shortcuts.contains(&item.kind) || matches!(item.kind, ItemKind::Battery { .. }) {
                 continue;
             }
@@ -1535,11 +1535,11 @@ mod tests {
         ] {
             let mut config = app.config.clone();
             let panel = &mut config.panels[0];
-            for item in [&mut panel.start, &mut panel.center, &mut panel.end]
+            let item_iter = [&mut panel.start, &mut panel.center, &mut panel.end]
                 .into_iter()
                 .flat_map(|zone| &mut zone.groups)
-                .flat_map(|group| &mut group.items)
-            {
+                .flat_map(|group| &mut group.items);
+            for item in item_iter {
                 if item.kind == ItemKind::Activities {
                     item.overflow = policy;
                 }
@@ -1609,7 +1609,8 @@ mod tests {
                         let runtime = app.outputs[0].runtime.hub.as_ref().unwrap().borrow();
                         let available = available_size(&app.config.panels[0], app.outputs[0].size);
                         assert_eq!(runtime.hub.mode(), mode);
-                        for (i, limit) in available.into_iter().enumerate() {
+                        let limit_iter = available.into_iter().enumerate();
+                        for (i, limit) in limit_iter {
                             assert!(f64::from(runtime.allocation[i]) <= limit.ceil());
                             assert!(runtime.hub.target_size()[i] <= limit);
                         }
@@ -2164,7 +2165,8 @@ mod tests {
                 .visible
                 .contains(&completed)
         );
-        for (index, id) in expected.iter().enumerate() {
+        let id_iter = expected.iter().enumerate();
+        for (index, id) in id_iter {
             let key = if index == 0 {
                 Named::Home
             } else {
@@ -3456,7 +3458,8 @@ mod tests {
                     status,
                     ..Default::default()
                 });
-            for (width, count) in [240., 340., 400.].into_iter().zip(counts) {
+            let width_iter = [240., 340., 400.].into_iter().zip(counts);
+            for (width, count) in width_iter {
                 shell.config.panels[0].morph.expanded_width = width;
                 let shortcuts = shell.hub_shortcuts(id);
                 assert_eq!(shortcuts.len(), count);
@@ -3480,11 +3483,11 @@ mod tests {
             "shortcuts must not shuffle during the spring"
         );
         let panel = &mut shell.config.panels[0];
-        for item in [&mut panel.start, &mut panel.center, &mut panel.end]
+        let item_iter = [&mut panel.start, &mut panel.center, &mut panel.end]
             .into_iter()
             .flat_map(|zone| &mut zone.groups)
-            .flat_map(|group| &mut group.items)
-        {
+            .flat_map(|group| &mut group.items);
+        for item in item_iter {
             if item.kind == ItemKind::Overview {
                 item.visible = false;
             }
@@ -4407,9 +4410,8 @@ mod tests {
                         if let Some(baseline) = &baseline {
                             close(bounds.content.unwrap(), baseline.content.unwrap());
                             assert_eq!(bounds.text.len(), baseline.text.len());
-                            for ((text, rect), (expected_text, expected_rect)) in
-                                bounds.text.iter().zip(&baseline.text)
-                            {
+                            let text_iter = bounds.text.iter().zip(&baseline.text);
+                            for ((text, rect), (expected_text, expected_rect)) in text_iter {
                                 assert_eq!(text, expected_text);
                                 close(*rect, *expected_rect);
                             }

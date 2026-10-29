@@ -97,7 +97,8 @@ impl ScrollGeometry {
             )
         };
         let mut best: Option<ScrollTarget> = None;
-        for (index, column) in self.columns.iter().enumerate() {
+        let index_iter = self.columns.iter().enumerate();
+        for (index, column) in index_iter {
             for right in [false, true] {
                 let request = match self.strategy {
                     ViewportFocusStrategy::Center => ViewportRequest::Center(index, None),
@@ -162,7 +163,8 @@ impl ScrollingLayout {
         let mut page = 0;
         let mut page_start = 0.0;
         let mut columns = Vec::with_capacity(self.columns.len());
-        for (index, column) in self.columns.iter().enumerate() {
+        let index_iter = self.columns.iter().enumerate();
+        for (index, column) in index_iter {
             let window = *column.windows.get(column.active)?;
             let width = self
                 .allocated_widths
@@ -220,7 +222,8 @@ mod tests {
 
     fn layout(widths: &[f64], strategy: ViewportFocusStrategy) -> ScrollingLayout {
         let mut layout = ScrollingLayout::default();
-        for (index, width) in widths.iter().enumerate() {
+        let width_iter = widths.iter().enumerate();
+        for (index, width) in width_iter {
             let id = WindowId(index as u64 + 1);
             layout.insert(id, None).unwrap();
             layout

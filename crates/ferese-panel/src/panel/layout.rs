@@ -216,7 +216,8 @@ pub fn resolve_with_gap(
         let Some(measured) = measurements.get(&item.id) else {
             continue;
         };
-        for &(representation, width) in measured.alternatives.iter().skip(1) {
+        let representation_iter = measured.alternatives.iter().skip(1);
+        for &(representation, width) in representation_iter {
             if let Some(Placement::Visible {
                 width: previous, ..
             }) = result.items.get(&item.id)
@@ -258,7 +259,8 @@ pub fn resolve_with_gap(
     // Removing the larger side may make an earlier eviction unnecessary. Give
     // mandatory items first refusal, then restore by descending priority.
     for mandatory in [true, false] {
-        for (_, item) in candidates.iter().rev() {
+        let item_iter = candidates.iter().rev();
+        for (_, item) in item_iter {
             if item.overflow == OverflowPolicy::Always
                 || (item.overflow == OverflowPolicy::Never) != mandatory
                 || !matches!(result.items.get(&item.id), Some(Placement::Overflow))
@@ -297,7 +299,8 @@ pub fn resolve_with_gap(
     });
     // A reduction on the shorter side can leave unused room after the other
     // side shrinks. Restore preferred representations before expanding titles.
-    for (_, item) in candidates.iter().rev() {
+    let item_iter = candidates.iter().rev();
+    for (_, item) in item_iter {
         let Some(measured) = measurements.get(&item.id) else {
             continue;
         };
@@ -306,11 +309,11 @@ pub fn resolve_with_gap(
         else {
             continue;
         };
-        for &(candidate, width) in measured
+        let candidate_iter = measured
             .alternatives
             .iter()
-            .take_while(|(candidate, _)| *candidate != representation)
-        {
+            .take_while(|(candidate, _)| *candidate != representation);
+        for &(candidate, width) in candidate_iter {
             result.items.insert(
                 item.id.clone(),
                 Placement::Visible {
@@ -327,7 +330,8 @@ pub fn resolve_with_gap(
     }
     result.update_widths(panel, overflow_width);
     // Restore the most protected flexible items first, reversing the yield order.
-    for (_, item) in candidates.iter().rev() {
+    let item_iter = candidates.iter().rev();
+    for (_, item) in item_iter {
         let Some(measured) = measurements
             .get(&item.id)
             .filter(|measured| measured.minimum.is_some())
@@ -898,10 +902,10 @@ mod tests {
         let initial = resolve(&panel, &measured, 2400., 32.);
         panel.style = crate::PanelStyle::Flat;
         let plain = resolve(&panel, &measured, 2400., 32.);
-        for (i, zone) in [&panel.start, &panel.center, &panel.end]
+        let zone_iter = [&panel.start, &panel.center, &panel.end]
             .into_iter()
-            .enumerate()
-        {
+            .enumerate();
+        for (i, zone) in zone_iter {
             let padding: f32 = zone
                 .groups
                 .iter()

@@ -35,7 +35,8 @@ impl Registration {
 
     fn release_all(&mut self) {
         let timestamp = self.timestamp();
-        for id in self.held.drain().map(|(_, id)| id) {
+        let id_iter = self.held.drain().map(|(_, id)| id);
+        for id in id_iter {
             self.events
                 .push_back(json!({"id":id,"active":false,"timestamp":timestamp}));
         }

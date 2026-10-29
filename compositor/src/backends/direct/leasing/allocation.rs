@@ -48,7 +48,8 @@ fn augment(graph: &mut [Vec<Edge>], source: usize, sink: usize) -> bool {
     let mut queue = VecDeque::from([source]);
     path[source] = Some((source, 0));
     while let Some(from) = queue.pop_front() {
-        for (edge_index, edge) in graph[from].iter().enumerate() {
+        let edge_iter = graph[from].iter().enumerate();
+        for (edge_index, edge) in edge_iter {
             if edge.available && path[edge.destination].is_none() {
                 path[edge.destination] = Some((from, edge_index));
                 queue.push_back(edge.destination);
@@ -105,20 +106,24 @@ pub(super) fn allocate(
     let mut graph = (0..=sink).map(|_| Vec::new()).collect::<Vec<_>>();
     let mut connector_edges = Vec::new();
     let mut plane_edges = Vec::new();
-    for (index, request) in requests.iter().enumerate() {
+    let request_iter = requests.iter().enumerate();
+    for (index, request) in request_iter {
         connect(&mut graph, source, index);
-        for (crtc_index, crtc) in crtcs.iter().enumerate() {
+        let crtc_iter = crtcs.iter().enumerate();
+        for (crtc_index, crtc) in crtc_iter {
             if request.crtcs.contains(crtc) {
                 let edge = connect(&mut graph, index, crtc_start + 2 * crtc_index);
                 connector_edges.push((index, *crtc, edge));
             }
         }
     }
-    for (index, crtc) in crtcs.iter().enumerate() {
+    let crtc_iter = crtcs.iter().enumerate();
+    for (index, crtc) in crtc_iter {
         let input = crtc_start + 2 * index;
         let output = input + 1;
         connect(&mut graph, input, output);
-        for (plane_index, plane) in planes.iter().enumerate() {
+        let plane_iter = planes.iter().enumerate();
+        for (plane_index, plane) in plane_iter {
             if primary_planes
                 .iter()
                 .any(|entry| entry.crtc == *crtc && entry.planes.contains(plane))

@@ -419,7 +419,8 @@ fn lock_scene_draws_the_pointer_and_delivers_client_cursor_frames() {
         return;
     }
     use smithay::backend::renderer::damage::OutputDamageTracker;
-    use smithay::input::{SeatHandler, pointer::CursorImageStatus};
+    use smithay::input::SeatHandler;
+    use smithay::input::pointer::CursorImageStatus;
     use smithay::reexports::wayland_protocols::ext::session_lock::v1::server::ext_session_lock_manager_v1::ExtSessionLockManagerV1;
     use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 
@@ -617,7 +618,7 @@ fn capture_privacy_pixels_and_policy_transitions() {
     .unwrap()
     .runtime_config()
     .unwrap();
-    let mut state = Ferese::new(&mut events, Display::new().unwrap(), config).unwrap();
+    let mut state = Ferese::try_new(&mut events, Display::new().unwrap(), config).unwrap();
     let output = Output::new(
         "privacy".into(),
         PhysicalProperties {
@@ -1138,7 +1139,7 @@ fn resize_dependencies_protocol_and_pixels() {
     use ferese_layout::{ColumnWidth, Direction, Rect, ViewportFocusStrategy};
     let mut events = EventLoop::try_new().unwrap();
     let config = crate::config::Config::parse_source("animations { enabled #false; }\nlayout { inner-gap 0; outer-gap 0; }\ntheme { geometry { window-radius 0; border-width 0; focus-ring-width 0; }; }\nwindow-rule app-id=\"resize.secret\" block-out-from-screencasts=#true\n").unwrap().runtime_config().unwrap();
-    let mut state = Ferese::new(&mut events, Display::new().unwrap(), config).unwrap();
+    let mut state = Ferese::try_new(&mut events, Display::new().unwrap(), config).unwrap();
     state.animation_test_time = Some(Duration::ZERO);
     let output = Output::new(
         "resize".into(),

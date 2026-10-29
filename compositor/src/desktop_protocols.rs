@@ -5,10 +5,12 @@ use std::collections::{HashMap, HashSet};
 use ferese_core::{OutputId, WorkspaceId};
 use ferese_layout::WindowId;
 use smithay::output::Output;
-use smithay::reexports::wayland_protocols::ext::workspace::v1::server::{
-    ext_workspace_group_handle_v1::{self, ExtWorkspaceGroupHandleV1},
-    ext_workspace_handle_v1::{self, ExtWorkspaceHandleV1},
-    ext_workspace_manager_v1::{self, ExtWorkspaceManagerV1},
+use smithay::reexports::wayland_protocols::ext::workspace::v1::server::ext_workspace_group_handle_v1::{self, ExtWorkspaceGroupHandleV1};
+use smithay::reexports::wayland_protocols::ext::workspace::v1::server::ext_workspace_handle_v1::{
+    self, ExtWorkspaceHandleV1,
+};
+use smithay::reexports::wayland_protocols::ext::workspace::v1::server::ext_workspace_manager_v1::{
+    self, ExtWorkspaceManagerV1,
 };
 use smithay::reexports::wayland_server::backend::ClientId;
 use smithay::reexports::wayland_server::protocol::wl_output::WlOutput;

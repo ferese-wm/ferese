@@ -198,7 +198,7 @@ pub(crate) fn prepare_window_readback(
     admission.prepare(renderer, bytes)?;
     let (mapping, size, bytes) = window_mapping(renderer, window, geometry, scale, cursor)?;
     Ok(WindowReadback {
-        readback: crate::handlers::readback::Readback::new(renderer, mapping, bytes)?,
+        readback: crate::handlers::readback::Readback::try_new(renderer, mapping, bytes)?,
         width: size.w,
         height: size.h,
         stride: size.w as usize * 4,
@@ -582,9 +582,9 @@ mod tests {
         // The pinned Smithay applies place_above/below without a parent commit.
         // Exercise overlapping child buffers so stale ordering changes pixels.
         use crate::state::{dispatch_test_client, test_client_request as request};
-        use smithay::reexports::wayland_server::protocol::{
-            wl_compositor::WlCompositor, wl_shm::WlShm, wl_subcompositor::WlSubcompositor,
-        };
+        use smithay::reexports::wayland_server::protocol::wl_compositor::WlCompositor;
+        use smithay::reexports::wayland_server::protocol::wl_shm::WlShm;
+        use smithay::reexports::wayland_server::protocol::wl_subcompositor::WlSubcompositor;
         use std::os::fd::AsRawFd;
         use std::os::unix::fs::FileExt;
         let client = info
@@ -683,12 +683,10 @@ mod tests {
             return;
         }
         use crate::state::{dispatch_test_client, test_client_request as request};
-        use smithay::reexports::wayland_server::{
-            Resource,
-            protocol::{
-                wl_compositor::WlCompositor, wl_shm::WlShm, wl_subcompositor::WlSubcompositor,
-            },
-        };
+        use smithay::reexports::wayland_server::Resource;
+        use smithay::reexports::wayland_server::protocol::wl_compositor::WlCompositor;
+        use smithay::reexports::wayland_server::protocol::wl_shm::WlShm;
+        use smithay::reexports::wayland_server::protocol::wl_subcompositor::WlSubcompositor;
         use std::os::fd::AsRawFd;
         use std::os::unix::fs::FileExt;
         let mut renderer = super::super::corner_tests::renderer();
@@ -827,15 +825,14 @@ mod tests {
     #[test]
     #[ignore = "manual release benchmark for window-capture pixel conversion"]
     fn profile_window_conversion() {
-        use std::{
-            hint::black_box,
-            time::{Duration, Instant},
-        };
+        use std::hint::black_box;
+        use std::time::{Duration, Instant};
 
         for (width, height) in [(1920usize, 1080usize), (3840, 2160)] {
             for workload in ["opaque", "edges", "translucent", "mixed"] {
                 let mut source = vec![0u8; width * height * 4];
-                for (i, pixel) in source.chunks_exact_mut(4).enumerate() {
+                let pixel_iter = source.chunks_exact_mut(4).enumerate();
+                for (i, pixel) in pixel_iter {
                     let alpha: u8 = if workload == "mixed" {
                         i.wrapping_mul(37) as u8
                     } else if workload == "translucent"
@@ -1378,7 +1375,7 @@ pub(crate) fn capture_stream_texture(
             Fourcc::Argb8888,
         )
         .map_err(|error| error.to_string())?;
-    let readback = crate::handlers::readback::Readback::new(renderer, mapping, bytes)?;
+    let readback = crate::handlers::readback::Readback::try_new(renderer, mapping, bytes)?;
     cache.put_texture(texture);
     Ok(StreamCopy::Shm {
         readback,
@@ -1507,11 +1504,11 @@ mod stream_gpu_tests {
             .unwrap();
         let actual = renderer.map_texture(&mapping).unwrap();
         convert_window_pixels(&mut pixels);
-        for (index, (actual, expected)) in actual
+        let actual_iter = actual
             .chunks_exact(4)
             .zip(pixels.chunks_exact(4))
-            .enumerate()
-        {
+            .enumerate();
+        for (index, (actual, expected)) in actual_iter {
             assert_eq!(
                 &actual[..3],
                 &expected[..3],
@@ -1640,7 +1637,8 @@ mod stream_gpu_tests {
         let sizes = [Size::from((64, 48)), Size::from((96, 64))];
         let mut allocations = [None, None];
         for _ in 0..100 {
-            for (index, size) in sizes.into_iter().enumerate() {
+            let size_iter = sizes.into_iter().enumerate();
+            for (index, size) in size_iter {
                 let texture = cache.take_texture(size).unwrap_or_else(|| {
                     Offscreen::<GlesTexture>::create_buffer(&mut renderer, Fourcc::Abgr8888, size)
                         .unwrap()

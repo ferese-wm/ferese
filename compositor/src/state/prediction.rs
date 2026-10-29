@@ -628,7 +628,7 @@ mod tests {
         let mut event_loop = EventLoop::try_new().unwrap();
         let display = Display::new().unwrap();
         let config = crate::config::Config::default().runtime_config().unwrap();
-        let mut state = Ferese::new(&mut event_loop, display, config).unwrap();
+        let mut state = Ferese::try_new(&mut event_loop, display, config).unwrap();
         let output = Output::new(
             "resize-idle".into(),
             smithay::output::PhysicalProperties {
@@ -746,7 +746,7 @@ mod tests {
         let runtime = std::path::PathBuf::from(std::env::var_os("XDG_RUNTIME_DIR").unwrap());
         assert!(runtime.starts_with(std::env::temp_dir()));
         let mut event_loop = EventLoop::try_new().unwrap();
-        let mut state = Ferese::new(
+        let mut state = Ferese::try_new(
             &mut event_loop,
             Display::new().unwrap(),
             crate::config::Config::default().runtime_config().unwrap(),
@@ -882,7 +882,7 @@ mod tests {
         let runtime = std::path::PathBuf::from(std::env::var_os("XDG_RUNTIME_DIR").unwrap());
         assert!(runtime.starts_with(std::env::temp_dir()));
         let mut event_loop = EventLoop::try_new().unwrap();
-        let mut state = Ferese::new(
+        let mut state = Ferese::try_new(
             &mut event_loop,
             Display::new().unwrap(),
             crate::config::Config::default().runtime_config().unwrap(),
@@ -987,7 +987,8 @@ mod tests {
         // established, slide prediction must not translate the strip or previews.
         let current_cards = state.overview_workspace_cards(&output);
         let predicted_cards = state.overview_workspace_cards_for_frame(&output, Some(&predicted));
-        for (before, after) in current_cards.iter().zip(predicted_cards) {
+        let before_iter = current_cards.iter().zip(predicted_cards);
+        for (before, after) in before_iter {
             assert_eq!(before.rect, after.rect);
             assert_eq!(before.windows, after.windows);
         }
@@ -1043,7 +1044,7 @@ mod tests {
         let mut event_loop = EventLoop::try_new().unwrap();
         let display = Display::new().unwrap();
         let config = crate::config::Config::default().runtime_config().unwrap();
-        let mut state = Ferese::new(&mut event_loop, display, config).unwrap();
+        let mut state = Ferese::try_new(&mut event_loop, display, config).unwrap();
         let output = Output::new(
             "forecast-test".into(),
             smithay::output::PhysicalProperties {

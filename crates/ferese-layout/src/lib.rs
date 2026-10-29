@@ -1,22 +1,14 @@
 //! Tree and scrolling layouts share window identities, constraints and geometry.
+mod drop_placement;
 mod layout_tree;
 mod scrolling;
 
+pub use drop_placement::DropPlacement;
 pub use layout_tree::*;
 pub use scrolling::{
     Column, ColumnDisplay, ColumnWidth, ScrollGeometry, ScrollingLayout, ViewportFocusStrategy,
     ViewportTarget,
 };
-
-/// The destination of an interactive tiled-window drop.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum DropPlacement {
-    Left,
-    Right,
-    Above,
-    Below,
-    Tab,
-}
 
 #[cfg(test)]
 mod pointer_tests {

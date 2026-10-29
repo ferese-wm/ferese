@@ -6,19 +6,19 @@ use cosmic::{Element, Renderer, Theme};
 /// Leave the compositor's material visible beneath the popup. Painting the
 /// source list, a scrim, and another material fill there would stack their alpha
 /// and make a translucent dialog look opaque.
-pub(super) fn backdrop<'a, Message: 'a>(
-    content: Element<'a, Message>,
-    popup_measure: Element<'a, Message>,
-) -> Element<'a, Message> {
+pub(super) fn backdrop<'content, Message: 'content>(
+    content: Element<'content, Message>,
+    popup_measure: Element<'content, Message>,
+) -> Element<'content, Message> {
     Element::new(Backdrop {
         content,
         popup_measure,
     })
 }
 
-struct Backdrop<'a, Message> {
-    content: Element<'a, Message>,
-    popup_measure: Element<'a, Message>,
+struct Backdrop<'content, Message> {
+    content: Element<'content, Message>,
+    popup_measure: Element<'content, Message>,
 }
 
 impl<Message> Widget<Message, Theme, Renderer> for Backdrop<'_, Message> {

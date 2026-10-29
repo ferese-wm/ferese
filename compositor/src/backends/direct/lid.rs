@@ -2,7 +2,6 @@
 use std::sync::mpsc;
 
 use super::lid_policy::LidPolicy;
-
 use super::{
     Duration, Error, Ferese, RegistrationToken, TimeoutAction, Timer, cancel_output_timers,
     reconcile_outputs,
@@ -93,7 +92,8 @@ pub(super) fn read_logind(connection: &zbus::blocking::Connection) -> zbus::Resu
 
 fn read_acpi() -> Option<bool> {
     let mut state = None;
-    for entry in std::fs::read_dir("/proc/acpi/button/lid").ok()?.flatten() {
+    let entry_iter = std::fs::read_dir("/proc/acpi/button/lid").ok()?.flatten();
+    for entry in entry_iter {
         let Ok(text) = std::fs::read_to_string(entry.path().join("state")) else {
             continue;
         };

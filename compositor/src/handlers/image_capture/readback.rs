@@ -179,7 +179,8 @@ impl Ferese {
                     if !valid {
                         return false;
                     }
-                    for (y, source) in pixels[..bytes].chunks_exact(row).enumerate() {
+                    let y_iter = pixels[..bytes].chunks_exact(row).enumerate();
+                    for (y, source) in y_iter {
                         // SAFETY: offset, dimensions, stride and mapped bounds were
                         // rechecked above. Client SHM cannot alias the renderer PBO.
                         unsafe {

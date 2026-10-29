@@ -45,7 +45,7 @@ pub(super) enum State {
 impl State {
     fn probe(&mut self, drm: &DrmDevice, crtc: crtc::Handle) -> Option<&mut Gamma> {
         if matches!(self, Self::Unprobed) {
-            *self = match Gamma::new(drm, crtc) {
+            *self = match Gamma::try_new(drm, crtc) {
                 Ok(gamma) => Self::Ready(Box::new(gamma)),
                 Err(error) => {
                     tracing::debug!(%error, ?crtc, "output gamma unavailable");
@@ -96,7 +96,7 @@ pub(super) struct Gamma {
 }
 
 impl Gamma {
-    fn new(drm: &DrmDevice, crtc: crtc::Handle) -> io::Result<Self> {
+    fn try_new(drm: &DrmDevice, crtc: crtc::Handle) -> io::Result<Self> {
         let mut original = Ramp::zeroed(drm.get_crtc(crtc)?.gamma_length() as usize)?;
         let (red, green, blue) = original.channels_mut();
         drm.get_gamma(crtc, red, green, blue)?;
@@ -249,11 +249,11 @@ pub(crate) fn acquire(
         .direct_backend
         .as_mut()
         .filter(|backend| backend.active)?;
-    for device in backend
+    let device_iter = backend
         .devices
         .values_mut()
-        .filter(|device| device.drm.is_active())
-    {
+        .filter(|device| device.drm.is_active());
+    for device in device_iter {
         for (crtc, output) in &mut device.outputs {
             if &output.output != target || output.global.is_none() {
                 continue;
@@ -303,16 +303,16 @@ pub(crate) fn sync_night_light(state: &mut Ferese) {
             Err(error) => {
                 tracing::warn!(%error, "could not schedule night-light transition");
                 if let Some(backend) = &mut state.direct_backend {
-                    for device in backend
+                    let device_iter = backend
                         .devices
                         .values_mut()
-                        .filter(|device| device.drm.is_active())
-                    {
-                        for output in device
+                        .filter(|device| device.drm.is_active());
+                    for device in device_iter {
+                        let output_iter = device
                             .outputs
                             .values_mut()
-                            .filter(|output| !output.power.needs_wake())
-                        {
+                            .filter(|output| !output.power.needs_wake());
+                        for output in output_iter {
                             if let Some(gamma) = output.gamma.controller_mut() {
                                 gamma.transition = None;
                                 gamma.resume(Instant::now());
@@ -336,11 +336,11 @@ fn advance_night_light(state: &mut Ferese, force: bool) -> bool {
         return false;
     };
     let mut pending = false;
-    for device in backend
+    let device_iter = backend
         .devices
         .values_mut()
-        .filter(|device| device.drm.is_active())
-    {
+        .filter(|device| device.drm.is_active());
+    for device in device_iter {
         for (crtc, output) in &mut device.outputs {
             let ready = !output.power.needs_wake();
             let gamma = if ready {

@@ -3,6 +3,9 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 /// Resolve an IPC target: explicit path, FERESE_SOCKET, then the runtime default.
+///
+/// # Errors
+/// Rejects an empty explicit path or a missing runtime directory when no target is supplied.
 pub fn resolve(explicit: Option<&Path>) -> io::Result<PathBuf> {
     resolve_with(
         explicit,
@@ -12,6 +15,9 @@ pub fn resolve(explicit: Option<&Path>) -> io::Result<PathBuf> {
 }
 
 /// The DRM session's listening address, independent of a client's IPC target.
+///
+/// # Errors
+/// Fails if `XDG_RUNTIME_DIR` is unset or empty.
 pub fn runtime_default() -> io::Result<PathBuf> {
     resolve_with(None, None, std::env::var_os("XDG_RUNTIME_DIR").as_deref())
 }

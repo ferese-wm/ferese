@@ -145,11 +145,11 @@ impl DirectBackendState {
             return;
         }
 
-        for device in self
+        let device_iter = self
             .devices
             .values_mut()
-            .filter(|device| device.drm.is_active())
-        {
+            .filter(|device| device.drm.is_active());
+        for device in device_iter {
             imports.process(
                 device.dmabuf_global,
                 &mut device.renderer,
@@ -1342,11 +1342,11 @@ fn apply_output_power(state: &mut Ferese) {
         return;
     };
 
-    for device in backend
+    let device_iter = backend
         .devices
         .values_mut()
-        .filter(|device| device.drm.is_active())
-    {
+        .filter(|device| device.drm.is_active());
+    for device in device_iter {
         for output in device.outputs.values_mut() {
             if !output.power.needs_power_off() || output.frame_pending {
                 continue;
@@ -1566,7 +1566,8 @@ fn redraw(
         .collect::<Vec<_>>();
     state.advance_animations(Instant::now());
     let mut requested = 0;
-    for ((node, crtc, output), affected) in outputs.iter().zip(affected) {
+    let node_iter = outputs.iter().zip(affected);
+    for ((node, crtc, output), affected) in node_iter {
         if affected || state.output_has_animations(output) {
             request_frame(state, *node, *crtc);
             requested += 1;
@@ -2183,7 +2184,8 @@ fn validate_selected_outputs<'a>(
     outputs: impl IntoIterator<Item = &'a crate::output_policy::DesiredOutput>,
     selected: &[String],
 ) -> Result<(), String> {
-    for output in outputs.into_iter().filter(|output| output.settings.enabled) {
+    let output_iter = outputs.into_iter().filter(|output| output.settings.enabled);
+    for output in output_iter {
         if !selected.contains(&output.key) {
             return Err(format!(
                 "enabled output {} has no usable CRTC assignment",
@@ -2581,11 +2583,11 @@ fn select_outputs(
     let mut candidates = Vec::new();
     let mut requests = Vec::new();
 
-    for detected in inventory
+    let detected_iter = inventory
         .connectors
         .iter()
-        .filter(|connector| connector.desktop)
-    {
+        .filter(|connector| connector.desktop);
+    for detected in detected_iter {
         let connector = detected.info.clone();
         let key = format!("{device_key}/{}", connector);
         let monitor = monitors
@@ -2715,10 +2717,10 @@ fn select_outputs(
         ));
     }
 
-    for ((connector, mode, settings, identity, mirror_source), crtc) in candidates
+    let connector_iter = candidates
         .into_iter()
-        .zip(crtc_assignment::assign(&requests))
-    {
+        .zip(crtc_assignment::assign(&requests));
+    for ((connector, mode, settings, identity, mirror_source), crtc) in connector_iter {
         if let Some(crtc) = crtc {
             let supported = presentation_mode::capable(drm, connector.handle(), crtc)?;
             let mirrored = mirror_source.is_some()
@@ -2968,7 +2970,8 @@ fn create_output(
     let output_mode = OutputMode::from(mode);
 
     let global = publish.then(|| output.create_global::<Ferese>(&state.display_handle));
-    for mode in connector.modes().iter().copied().map(OutputMode::from) {
+    let modes = connector.modes().iter().copied().map(OutputMode::from);
+    for mode in modes {
         output.add_mode(mode);
     }
     output.set_preferred(output_mode);
@@ -3084,11 +3087,11 @@ fn refresh_monitor_policy(state: &mut Ferese) -> Result<(), String> {
         let drm = &device.drm;
         let key = drm_device_key(drm);
         if let Some(inventory) = &device.inventory {
-            for detected in inventory
+            let detected_iter = inventory
                 .connectors
                 .iter()
-                .filter(|connector| connector.desktop)
-            {
+                .filter(|connector| connector.desktop);
+            for detected in detected_iter {
                 discovered.push((
                     format!("{key}/{}", detected.info),
                     detected.info.clone(),

@@ -7,10 +7,8 @@ use std::io::Write;
 use std::os::fd::OwnedFd;
 use std::os::unix::net::UnixStream;
 use std::rc::Rc;
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
-};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 #[derive(Debug)]
 struct MockFence {
@@ -42,7 +40,7 @@ fn setup(name: &str) -> Option<(Ferese, EventLoop<'static, Ferese>)> {
     let mut events = EventLoop::try_new().unwrap();
     let mut config = crate::config::Config::default().runtime_config().unwrap();
     config.wallpaper.path = None;
-    let state = Ferese::new(&mut events, Display::new().unwrap(), config).unwrap();
+    let state = Ferese::try_new(&mut events, Display::new().unwrap(), config).unwrap();
     Some((state, events))
 }
 fn new_fence(exportable: bool) -> (SyncPoint, Arc<AtomicBool>, UnixStream) {
@@ -288,7 +286,7 @@ fn real_pbo_mapping_rejects_another_context_and_preserves_pixels_after_readiness
             Fourcc::Abgr8888,
         )
         .unwrap();
-    let mut readback = Readback::new(&mut owner, mapping, expected.len()).unwrap();
+    let mut readback = Readback::try_new(&mut owner, mapping, expected.len()).unwrap();
     assert!(readback.map(&mut other).unwrap_err().contains("replaced"));
     let deadline = Instant::now() + Duration::from_secs(2);
     while readback

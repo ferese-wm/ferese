@@ -176,7 +176,8 @@ unsafe fn assign_planes(
     let Some(datas) = (unsafe { plane_datas(buffer, planes.len()) }) else {
         return false;
     };
-    for (target, plane) in datas.iter_mut().zip(planes) {
+    let target_iter = datas.iter_mut().zip(planes);
+    for (target, plane) in target_iter {
         target.type_ = if dma {
             spa::sys::SPA_DATA_DmaBuf
         } else {
@@ -206,7 +207,8 @@ unsafe fn finish_planes(
     let Some(datas) = (unsafe { plane_datas(buffer, planes.len()) }) else {
         return false;
     };
-    for (target, plane) in datas.iter_mut().zip(planes) {
+    let target_iter = datas.iter_mut().zip(planes);
+    for (target, plane) in target_iter {
         // SAFETY: plane_datas checked the caller-owned chunk pointer.
         let chunk = unsafe { &mut *target.chunk };
         chunk.offset = plane.offset;
@@ -389,7 +391,7 @@ pub fn run(
     workspace_quality: crate::workspace::Quality,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let configured_rate = std::env::var("FERESE_CAPTURE_MAX_FPS").ok();
-    let rate = Arc::new(FrameRate::new(configured_rate.as_deref())?);
+    let rate = Arc::new(FrameRate::try_new(configured_rate.as_deref())?);
     let stop = Arc::new(AtomicBool::new(false));
     let (cancel_read, mut cancel_write) = std::os::unix::net::UnixStream::pair()?;
     cancel_read.set_nonblocking(true)?;
@@ -842,7 +844,8 @@ mod tests {
         // SAFETY: this test owns every data/chunk allocation for the full call.
         unsafe {
             assert!(assign_planes(&mut buffer, &planes, true));
-            for (index, plane) in planes.iter().enumerate() {
+            let plane_iter = planes.iter().enumerate();
+            for (index, plane) in plane_iter {
                 assert_eq!(datas[index].fd, i64::from(plane.fd.as_raw_fd()));
                 assert_eq!(datas[index].type_, spa::sys::SPA_DATA_DmaBuf);
                 assert_eq!(datas[index].maxsize, plane.bytes);
@@ -866,7 +869,7 @@ mod tests {
 
     #[test]
     fn non_linear_modifier_intersection_keeps_the_probed_plane_count() {
-        let rate = FrameRate::new(None).unwrap();
+        let rate = FrameRate::try_new(None).unwrap();
         let tiled = DmaFormat {
             modifier: 0x0100000000000004,
             planes: 2,
@@ -1083,7 +1086,7 @@ mod tests {
 
     #[test]
     fn dma_is_an_explicit_format_with_a_shared_memory_alternative() {
-        let rate = FrameRate::new(None).unwrap();
+        let rate = FrameRate::try_new(None).unwrap();
         let offers = formats(
             (640, 480),
             &rate,
@@ -1093,7 +1096,8 @@ mod tests {
             }],
         );
         assert_eq!(offers.len(), 2);
-        for (index, offer) in offers.iter().enumerate() {
+        let offer_iter = offers.iter().enumerate();
+        for (index, offer) in offer_iter {
             let (_, value) =
                 spa::pod::deserialize::PodDeserializer::deserialize_any_from(offer).unwrap();
             let spa::pod::Value::Object(object) = value else {

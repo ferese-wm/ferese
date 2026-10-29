@@ -1242,7 +1242,8 @@ mod tests {
             &queue,
             ferese_shell_v1::Event::SnapshotBegin { serial: 1 },
         );
-        for (index, (bits, _)) in cases.iter().enumerate() {
+        let bits_iter = cases.iter().enumerate();
+        for (index, (bits, _)) in bits_iter {
             dispatch_event(
                 &control,
                 &mut state,
@@ -1257,7 +1258,8 @@ mod tests {
             ferese_shell_v1::Event::SnapshotEnd { serial: 1 },
         );
         let snapshot = control.poll().snapshot.unwrap();
-        for (window, (_, expected)) in snapshot.windows.iter().zip(cases) {
+        let window_iter = snapshot.windows.iter().zip(cases);
+        for (window, (_, expected)) in window_iter {
             assert_eq!(
                 [
                     window.focused,

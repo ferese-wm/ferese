@@ -61,7 +61,7 @@ impl Default for Engine {
             timer: None,
             revision: 1,
             cached_snapshot: None,
-            publisher: publication::Publisher::new()
+            publisher: publication::Publisher::try_new()
                 .map_err(|error| tracing::warn!(%error, "activity snapshot worker unavailable"))
                 .ok(),
             watchers: BTreeMap::new(),

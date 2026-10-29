@@ -443,7 +443,7 @@ mod tests {
         let mut config = crate::config::Config::default().runtime_config().unwrap();
         config.wallpaper.path = None;
         let mut state =
-            crate::Ferese::new(&mut event_loop, Display::new().unwrap(), config).unwrap();
+            crate::Ferese::try_new(&mut event_loop, Display::new().unwrap(), config).unwrap();
         let output = |name: &str, x| DesktopOutput {
             output: Output::new(
                 name.into(),

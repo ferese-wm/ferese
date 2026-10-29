@@ -61,7 +61,7 @@ fn watch(send: tokio::sync::mpsc::Sender<String>, cancel: UnixStream) -> io::Res
         libc::timerfd_create(libc::CLOCK_REALTIME, libc::TFD_CLOEXEC | libc::TFD_NONBLOCK)
     })?;
     let (mut system, mut paths) = zones();
-    let mut timezone = ZoneWatch::new(&paths)?;
+    let mut timezone = ZoneWatch::try_new(&paths)?;
     let mut previous = None;
     loop {
         let now = Timestamp::now();
@@ -112,7 +112,7 @@ fn watch(send: tokio::sync::mpsc::Sender<String>, cancel: UnixStream) -> io::Res
         if fds[1].revents != 0 && timezone.changed()? {
             jiff::tz::db().reset();
             (system, paths) = zones();
-            timezone = ZoneWatch::new(&paths)?;
+            timezone = ZoneWatch::try_new(&paths)?;
         }
     }
 }
@@ -250,7 +250,7 @@ struct ZoneWatch {
 }
 
 impl ZoneWatch {
-    fn new(paths: &[PathBuf]) -> io::Result<Self> {
+    fn try_new(paths: &[PathBuf]) -> io::Result<Self> {
         // SAFETY: inotify_init1 takes scalar flags; owned_fd checks the result before adopting
         // the descriptor.
         let fd = owned_fd(unsafe { libc::inotify_init1(libc::IN_CLOEXEC | libc::IN_NONBLOCK) })?;
@@ -359,7 +359,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("localtime");
         std::fs::write(&path, eastern).unwrap();
-        let watcher = ZoneWatch::new(std::slice::from_ref(&path)).unwrap();
+        let watcher = ZoneWatch::try_new(std::slice::from_ref(&path)).unwrap();
         let now: Timestamp = "2026-10-04T12:34:56Z".parse().unwrap();
         let first = file_zone(&path, &mut Vec::new()).unwrap();
         let replacement = dir.path().join("replacement");
@@ -444,7 +444,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("localtime");
         std::fs::write(&path, b"old").unwrap();
-        let watcher = ZoneWatch::new(std::slice::from_ref(&path)).unwrap();
+        let watcher = ZoneWatch::try_new(std::slice::from_ref(&path)).unwrap();
         std::fs::write(dir.path().join("unrelated"), b"data").unwrap();
         assert!(!watcher.changed().unwrap());
         let replacement = dir.path().join("replacement");

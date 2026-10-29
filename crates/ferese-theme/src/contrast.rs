@@ -154,9 +154,12 @@ mod tests {
 
     #[test]
     fn all_accent_hues_and_opacities_have_readable_text() {
-        for r in (0..=255).step_by(17) {
-            for g in (0..=255).step_by(17) {
-                for b in (0..=255).step_by(17) {
+        let r_iter = (0..=255).step_by(17);
+        for r in r_iter {
+            let g_iter = (0..=255).step_by(17);
+            for g in g_iter {
+                let b_iter = (0..=255).step_by(17);
+                for b in b_iter {
                     for surface in [Color::BLACK, Color::WHITE] {
                         for alpha in [0., 0.2, 0.5, 1.] {
                             let fill = composite(Color::from_rgba8(r, g, b, alpha), surface);

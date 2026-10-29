@@ -19,12 +19,12 @@ pub struct Options {
     pub native: bool,
 }
 
-pub fn frame<'a, M: 'a>(
-    content: Element<'a, M>,
+pub fn frame<'content, M: 'content>(
+    content: Element<'content, M>,
     options: Options,
-    present: impl Fn(&Scene) + 'a,
-    changed: Option<Changed<'a, M>>,
-) -> Element<'a, M> {
+    present: impl Fn(&Scene) + 'content,
+    changed: Option<Changed<'content, M>>,
+) -> Element<'content, M> {
     Element::new(Surface {
         content,
         options,
@@ -33,14 +33,14 @@ pub fn frame<'a, M: 'a>(
     })
 }
 
-type Present<'a> = Box<dyn Fn(&Scene) + 'a>;
-type Changed<'a, M> = Box<dyn Fn(&Scene) -> M + 'a>;
+type Present<'content> = Box<dyn Fn(&Scene) + 'content>;
+type Changed<'content, M> = Box<dyn Fn(&Scene) -> M + 'content>;
 
-struct Surface<'a, M> {
-    content: Element<'a, M>,
+struct Surface<'content, M> {
+    content: Element<'content, M>,
     options: Options,
-    present: Present<'a>,
-    changed: Option<Changed<'a, M>>,
+    present: Present<'content>,
+    changed: Option<Changed<'content, M>>,
 }
 
 #[derive(Default)]
@@ -51,11 +51,11 @@ struct State {
     published: Option<Scene>,
 }
 
-struct Collect<'a> {
-    targets: &'a [(widget::Id, ZonePosition)],
+struct Collect<'content> {
+    targets: &'content [(widget::Id, ZonePosition)],
     origin: Point,
     groups: Vec<GroupBounds>,
-    bounds_id: Option<&'a widget::Id>,
+    bounds_id: Option<&'content widget::Id>,
     bounds: Option<ferese_layout::Rect>,
 }
 
@@ -369,14 +369,15 @@ impl<M> Widget<M, Theme, cosmic::Renderer> for Surface<'_, M> {
             .as_widget_mut()
             .operate(&mut tree.children[0], layout, renderer, operation);
     }
-    fn overlay<'a>(
-        &'a mut self,
-        tree: &'a mut widget::Tree,
-        layout: Layout<'a>,
+    fn overlay<'content>(
+        &'content mut self,
+        tree: &'content mut widget::Tree,
+        layout: Layout<'content>,
         renderer: &cosmic::Renderer,
         viewport: &Rectangle,
         translation: Vector,
-    ) -> Option<cosmic::iced::advanced::overlay::Element<'a, M, Theme, cosmic::Renderer>> {
+    ) -> Option<cosmic::iced::advanced::overlay::Element<'content, M, Theme, cosmic::Renderer>>
+    {
         self.content.as_widget_mut().overlay(
             &mut tree.children[0],
             layout,

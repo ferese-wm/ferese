@@ -90,7 +90,8 @@ fn foreground_redraws_reuse_filtered_pixels_until_backdrop_or_radius_changes() {
                 "foreground damage recaptured the background"
             );
         } else {
-            for (actual, expected) in rendered[(32 * 64 + 32) * 4..][..3].iter().zip(color) {
+            let actual_iter = rendered[(32 * 64 + 32) * 4..][..3].iter().zip(color);
+            for (actual, expected) in actual_iter {
                 assert!(
                     (f32::from(*actual) - expected * 255.0).abs() <= 2.0,
                     "stale filtered pixels after step {step}"
@@ -227,10 +228,10 @@ fn opaque_window_above_blur_does_not_contaminate_visible_edges() {
     use smithay::backend::renderer::damage::OutputDamageTracker;
     use smithay::backend::renderer::element::solid::SolidColorBuffer;
 
-    for (scale, offscreen) in [1.0, 1.25, 1.5]
+    let scale_iter = [1.0, 1.25, 1.5]
         .into_iter()
-        .flat_map(|scale| [false, true].map(|offscreen| (scale, offscreen)))
-    {
+        .flat_map(|scale| [false, true].map(|offscreen| (scale, offscreen)));
+    for (scale, offscreen) in scale_iter {
         // Finish and release the EGL framebuffer before checking pixels so a
         // failed assertion cannot poison its context lock during unwinding.
         let pixel = {

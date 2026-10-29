@@ -497,7 +497,7 @@ pub(crate) fn init(
         })?;
     let worker = Worker::spawn(encoded);
 
-    let activity_timer = crate::activities::deadline::Deadline::new(event_loop.handle())?;
+    let activity_timer = crate::activities::deadline::Deadline::try_new(event_loop.handle())?;
     let (rules_send, rules_receive) = sync_channel(1);
     let monitor = activity_owner::Monitor::new(sender.clone());
     let state_monitor = monitor.clone();
@@ -1461,7 +1461,8 @@ impl Ferese {
             }
         };
 
-        for (position, part) in planned.iter().enumerate() {
+        let part_iter = planned.iter().enumerate();
+        for (position, part) in part_iter {
             let (output, _) = &targets[part.index];
             self.pending_screencopies.push(
                 crate::handlers::screencopy::PendingScreencopy::owned(

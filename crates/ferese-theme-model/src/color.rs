@@ -1,5 +1,10 @@
 use crate::{Gradient, Paint, PaintStyle, ResolvedTheme};
 
+/// Parse `#RRGGBB` or `#RRGGBBAA` into channels in the range `0..=1`.
+/// Six-digit colors have full opacity.
+///
+/// # Errors
+/// Returns an error if the prefix, length or hexadecimal digits are invalid.
 pub fn rgba(s: &str) -> Result<[f64; 4], String> {
     let hex = s
         .strip_prefix('#')
@@ -8,7 +13,8 @@ pub fn rgba(s: &str) -> Result<[f64; 4], String> {
         return Err(format!("Invalid color: {s}"));
     }
     let mut out = [1.; 4];
-    for (i, c) in out.iter_mut().enumerate().take(hex.len() / 2) {
+    let c_iter = out.iter_mut().enumerate().take(hex.len() / 2);
+    for (i, c) in c_iter {
         *c = f64::from(
             u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16)
                 .map_err(|_| format!("Invalid color: {s}"))?,

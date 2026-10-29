@@ -75,10 +75,6 @@ impl Row {
         matches!(self.target, Target::Action(action) if action.destructive())
     }
 }
-pub(super) trait Source {
-    fn query(&self, query: &str) -> Vec<Row>;
-}
-
 // Normalize the query once, and reuse normalized catalog names across keystrokes.
 pub(super) struct Matcher(String);
 impl Matcher {
@@ -151,7 +147,6 @@ struct WindowEntry {
     workspace: u64,
     workspace_name: String,
     result: Option<Row>,
-    icon: Option<cosmic::widget::icon::Handle>,
     seen: bool,
 }
 impl Windows {
@@ -212,7 +207,7 @@ impl Windows {
             let result = score.map(|score| Row {
                 id: ResultId::Window(window.id),
                 title: title.clone(),
-                icon: icon.clone(),
+                icon,
                 subtitle: format!("Window · Workspace {name}"),
                 target: Target::Window(window.id),
                 score,
@@ -225,7 +220,6 @@ impl Windows {
                     workspace: window.workspace,
                     workspace_name: name.into(),
                     result,
-                    icon,
                     seen: true,
                 },
             );
@@ -245,40 +239,9 @@ impl Windows {
             .filter_map(|entry| entry.result.as_ref())
     }
 }
-impl Source for Windows {
-    fn query(&self, query: &str) -> Vec<Row> {
-        if self.query == query {
-            return self.rows().cloned().collect();
-        }
-        let matcher = Matcher::new(query);
-        self.entries
-            .iter()
-            .filter_map(|(id, entry)| {
-                let title = if entry.title.is_empty() {
-                    &entry.app_id
-                } else {
-                    &entry.title
-                };
-                let score = matcher
-                    .score(title)
-                    .into_iter()
-                    .chain(matcher.score(&entry.app_id))
-                    .max_by(f64::total_cmp)?;
-                Some(Row {
-                    id: ResultId::Window(*id),
-                    title: title.clone(),
-                    icon: entry.icon.clone(),
-                    subtitle: format!("Window · Workspace {}", entry.workspace_name),
-                    target: Target::Window(*id),
-                    score,
-                })
-            })
-            .collect()
-    }
-}
 pub(super) struct Actions;
-impl Source for Actions {
-    fn query(&self, query: &str) -> Vec<Row> {
+impl Actions {
+    pub(super) fn query(&self, query: &str) -> Vec<Row> {
         let matcher = Matcher::new(query);
         [
             ("Light theme", Action::Light),

@@ -1213,7 +1213,8 @@ async fn supervise(mut children: Vec<Child>, cancel: Arc<Cancel>) {
         .filter_map(|child| child.stdin.take())
         .collect();
     {
-        use futures_util::{StreamExt, stream::FuturesUnordered};
+        use futures_util::StreamExt;
+        use futures_util::stream::FuturesUnordered;
         let mut exits: FuturesUnordered<_> = children.iter_mut().map(Child::wait).collect();
         tokio::select! {
             _ = cancel.wait() => (),

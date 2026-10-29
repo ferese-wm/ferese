@@ -22,8 +22,8 @@ pub(super) fn view(
     })
 }
 
-struct ContentFrame<'a> {
-    content: Element<'a, Action>,
+struct ContentFrame<'content> {
+    content: Element<'content, Action>,
     target: Size,
     edge: ferese_panel::Edge,
 }
@@ -157,14 +157,15 @@ impl Widget<Action, Theme, cosmic::Renderer> for ContentFrame<'_> {
             operation,
         );
     }
-    fn overlay<'a>(
-        &'a mut self,
-        tree: &'a mut widget::Tree,
-        layout: Layout<'a>,
+    fn overlay<'content>(
+        &'content mut self,
+        tree: &'content mut widget::Tree,
+        layout: Layout<'content>,
         renderer: &cosmic::Renderer,
         viewport: &Rectangle,
         translation: Vector,
-    ) -> Option<cosmic::iced::advanced::overlay::Element<'a, Action, Theme, cosmic::Renderer>> {
+    ) -> Option<cosmic::iced::advanced::overlay::Element<'content, Action, Theme, cosmic::Renderer>>
+    {
         self.content.as_widget_mut().overlay(
             &mut tree.children[0],
             layout.children().next().expect("content layout"),

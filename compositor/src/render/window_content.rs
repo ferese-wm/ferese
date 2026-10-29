@@ -129,10 +129,10 @@ mod tests {
         let mut resources = RenderResources::default();
         let programs =
             corner_program(&mut resources, &mut renderer, CornerShape::Continuous).unwrap();
-        for (scale, window_alpha) in [1.0, 1.25, 1.5, 2.0]
+        let scale_iter = [1.0, 1.25, 1.5, 2.0]
             .into_iter()
-            .flat_map(|scale| [1.0, 0.8].map(|alpha| (scale, alpha)))
-        {
+            .flat_map(|scale| [1.0, 0.8].map(|alpha| (scale, alpha)));
+        for (scale, window_alpha) in scale_iter {
             let live = crate::presentation::WindowPresentation {
                 window_alpha,
                 dim: 0.0,

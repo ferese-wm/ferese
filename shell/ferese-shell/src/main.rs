@@ -1260,11 +1260,11 @@ impl FereseShell {
             tasks.push(cosmic::command::set_theme(theme.palette().native_theme()));
         }
 
-        for entry in self
+        let entry_iter = self
             .outputs
             .iter()
-            .filter(|_| geometry_changed || composition_changed)
-        {
+            .filter(|_| geometry_changed || composition_changed);
+        for entry in entry_iter {
             let panel = entry.runtime.panel(&self.config.panels[0]);
             let geometry = panel.resolved_geometry();
             let (anchor, _) =
@@ -1630,8 +1630,9 @@ mod tests {
     #[test]
     fn reading_notifications_does_not_reallocate_and_dismiss_the_popover() {
         use cosmic::Application;
+        use cosmic::iced::advanced::layout;
         use cosmic::iced::advanced::renderer::Headless;
-        use cosmic::iced::advanced::{layout, widget::Tree};
+        use cosmic::iced::advanced::widget::Tree;
         use cosmic::iced::{Font, Pixels, Size};
         use panel_layout::{Placement, Resolution};
 

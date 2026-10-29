@@ -231,7 +231,8 @@ impl Ferese {
             .elements()
             .filter(|_| frame.is_none())
             .filter_map(|window| self.windows.ids().get(window).copied());
-        for id in captured.chain(displayed) {
+        let id_iter = captured.chain(displayed);
+        for id in id_iter {
             if id == bar.group.active
                 || self.workspaces.workspace_for_window(id) != Some(workspace)
                 || !self.workspaces.workspace(workspace)?.layout.contains(id)
@@ -281,7 +282,8 @@ impl Ferese {
         }
         // Match the renderer's per-window stacking. An overlay can cover its
         // own client and lower windows, never floating windows/popups above it.
-        for window in self.space.elements().rev() {
+        let window_iter = self.space.elements().rev();
+        for window in window_iter {
             let Some(id) = self.windows.ids().get(window).copied() else {
                 continue;
             };

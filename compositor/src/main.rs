@@ -110,7 +110,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         backends::BackendKind::Drm => ipc::Endpoint::desktop()?,
         backends::BackendKind::Nested => ipc::Endpoint::instance()?,
     };
-    let mut state = Ferese::new_with_session(
+    let mut state = Ferese::try_new_with_session(
         &mut event_loop,
         display,
         startup.runtime,
@@ -199,10 +199,10 @@ fn check_config(path: &std::path::Path) -> Result<(), String> {
 }
 
 #[derive(Debug)]
-enum RedrawRequest<'a> {
+enum RedrawRequest<'outputs> {
     Global,
     Cursor,
-    Outputs(&'a [smithay::output::Output]),
+    Outputs(&'outputs [smithay::output::Output]),
 }
 
 fn after_dispatch(state: &mut Ferese) {

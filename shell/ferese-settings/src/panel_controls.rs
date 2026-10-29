@@ -276,7 +276,7 @@ impl App {
                     )
                     .padding([4, 10]),
                 );
-                for field in crate::schema::fields(Page::Bar)
+                let field_iter = crate::schema::fields(Page::Bar)
                     .into_iter()
                     .filter(|field| field.path.starts_with("panels.0.geometry."))
                     .filter(|field| {
@@ -293,8 +293,8 @@ impl App {
                             field.path.rsplit('.').next(),
                             Some("edge_margin" | "side_margins")
                         )
-                    })
-                {
+                    });
+                for field in field_iter {
                     let mut field = field;
                     if preset == Some(ferese_panel::PanelStyle::Morph) {
                         if matches!(
@@ -662,7 +662,8 @@ impl App {
         let palette = crate::visuals::Palette::from_resolved(&self.resolved.presented);
         let mut inspector = None;
         for placement in Zone::ALL {
-            for (group_index, group) in placement.definition(panel).groups.iter().enumerate() {
+            let group_index_iter = placement.definition(panel).groups.iter().enumerate();
+            for (group_index, group) in group_index_iter {
                 if self.panel_group_selection.as_ref() == Some(&group.id) {
                     inspector = Some(self.group_inspector(panel, group, placement));
                 }

@@ -100,7 +100,8 @@ fn pump(state: &mut Ferese) {
 }
 
 fn fail_pending(state: &mut Ferese) {
-    for output in state.space.outputs().cloned().collect::<Vec<_>>() {
+    let output_iter = state.space.outputs().cloned().collect::<Vec<_>>();
+    for output in output_iter {
         state.fail_screencopies(&output, false);
         state.fail_screencopies(&output, true);
     }
@@ -133,14 +134,15 @@ fn callbacks(
                     output.clone()
                 })
         };
-    for window in state.space.elements().filter(|window| {
+    let window_iter = state.space.elements().filter(|window| {
         !state.capture_protected(window)
             && state
                 .windows
                 .ids()
                 .get(*window)
                 .is_some_and(|id| state.window_belongs_to_output(*id, output))
-    }) {
+    });
+    for window in window_iter {
         window.send_frame(output, time, None, |surface, _| visible(surface));
     }
     for layer in super::layer_surfaces(output) {

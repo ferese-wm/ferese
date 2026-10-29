@@ -173,11 +173,11 @@ pub fn notch_border(
     let close = |a: [f64; 2], b: [f64; 2]| (a[0] - b[0]).abs() < 1e-6 && (a[1] - b[1]).abs() < 1e-6;
     let mut segments: Vec<([f64; 2], [f64; 2])> = Vec::new();
     for contour in &contours {
-        for (&a, &b) in contour
+        let a_iter = contour
             .iter()
             .zip(contour.iter().cycle().skip(1))
-            .take(contour.len())
-        {
+            .take(contour.len());
+        for (&a, &b) in a_iter {
             if close(a, b)
                 || ((a[1] - screen_edge).abs() < 1e-6 && (b[1] - screen_edge).abs() < 1e-6)
             {
@@ -239,11 +239,11 @@ mod tests {
     fn winding(contours: &[Contour], point: [f64; 2]) -> i32 {
         let mut winding = 0;
         for points in contours {
-            for (a, b) in points
+            let a_iter = points
                 .iter()
                 .zip(points.iter().cycle().skip(1))
-                .take(points.len())
-            {
+                .take(points.len());
+            for (a, b) in a_iter {
                 let cross = (b[0] - a[0]) * (point[1] - a[1]) - (point[0] - a[0]) * (b[1] - a[1]);
                 if a[1] <= point[1] && b[1] > point[1] && cross > 0. {
                     winding += 1;

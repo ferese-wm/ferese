@@ -9,20 +9,20 @@ use super::{
 };
 use std::time::Instant;
 
-pub(crate) struct ContentMeasurement<'a, M> {
-    pub content: Element<'a, M>,
+pub(crate) struct ContentMeasurement<'content, M> {
+    pub content: Element<'content, M>,
     pub width: f32,
-    pub measured: Box<dyn Fn(Size) + 'a>,
+    pub measured: Box<dyn Fn(Size) + 'content>,
 }
 
-pub(crate) fn geometry_driven<'a, M: 'a>(
+pub(crate) fn geometry_driven<'content, M: 'content>(
     revision: Option<Instant>,
-    build: impl Fn(Instant) -> Element<'a, M> + 'a,
-    active: impl Fn(Instant) -> bool + 'a,
-    after_frame: impl Fn(Instant) + 'a,
-    completion: impl Fn(Instant) -> Option<M> + 'a,
-    measurement: Option<ContentMeasurement<'a, M>>,
-) -> Element<'a, M> {
+    build: impl Fn(Instant) -> Element<'content, M> + 'content,
+    active: impl Fn(Instant) -> bool + 'content,
+    after_frame: impl Fn(Instant) + 'content,
+    completion: impl Fn(Instant) -> Option<M> + 'content,
+    measurement: Option<ContentMeasurement<'content, M>>,
+) -> Element<'content, M> {
     driven(
         revision,
         build,
@@ -34,13 +34,13 @@ pub(crate) fn geometry_driven<'a, M: 'a>(
     )
 }
 
-pub(crate) fn frame_driven<'a, M: 'a>(
+pub(crate) fn frame_driven<'content, M: 'content>(
     revision: Option<Instant>,
-    build: impl Fn(Instant) -> Element<'a, M> + 'a,
-    active: impl Fn(Instant) -> bool + 'a,
-    after_frame: impl Fn(Instant) + 'a,
-    completion: impl Fn(Instant) -> Option<M> + 'a,
-) -> Element<'a, M> {
+    build: impl Fn(Instant) -> Element<'content, M> + 'content,
+    active: impl Fn(Instant) -> bool + 'content,
+    after_frame: impl Fn(Instant) + 'content,
+    completion: impl Fn(Instant) -> Option<M> + 'content,
+) -> Element<'content, M> {
     driven(
         revision,
         build,
@@ -52,15 +52,15 @@ pub(crate) fn frame_driven<'a, M: 'a>(
     )
 }
 
-fn driven<'a, M: 'a>(
+fn driven<'content, M: 'content>(
     revision: Option<Instant>,
-    build: impl Fn(Instant) -> Element<'a, M> + 'a,
-    active: impl Fn(Instant) -> bool + 'a,
-    after_frame: impl Fn(Instant) + 'a,
-    completion: impl Fn(Instant) -> Option<M> + 'a,
+    build: impl Fn(Instant) -> Element<'content, M> + 'content,
+    active: impl Fn(Instant) -> bool + 'content,
+    after_frame: impl Fn(Instant) + 'content,
+    completion: impl Fn(Instant) -> Option<M> + 'content,
     geometry_changes: bool,
-    measurement: Option<ContentMeasurement<'a, M>>,
-) -> Element<'a, M> {
+    measurement: Option<ContentMeasurement<'content, M>>,
+) -> Element<'content, M> {
     let now = Instant::now();
     let content = build(now);
     let content_active = active(now);
@@ -112,20 +112,20 @@ impl FrameState {
     }
 }
 
-struct FrameDriven<'a, M> {
-    content: Element<'a, M>,
-    measurement: Option<ContentMeasurement<'a, M>>,
+struct FrameDriven<'content, M> {
+    content: Element<'content, M>,
+    measurement: Option<ContentMeasurement<'content, M>>,
     measured: bool,
     content_active: bool,
     geometry_changes: bool,
     revision: Option<Instant>,
-    build: Box<dyn Fn(Instant) -> Element<'a, M> + 'a>,
-    active: Box<dyn Fn(Instant) -> bool + 'a>,
-    after_frame: Box<dyn Fn(Instant) + 'a>,
-    completion: Box<dyn Fn(Instant) -> Option<M> + 'a>,
+    build: Box<dyn Fn(Instant) -> Element<'content, M> + 'content>,
+    active: Box<dyn Fn(Instant) -> bool + 'content>,
+    after_frame: Box<dyn Fn(Instant) + 'content>,
+    completion: Box<dyn Fn(Instant) -> Option<M> + 'content>,
 }
 
-impl<'a, M: 'a> Widget<M, Theme, cosmic::Renderer> for FrameDriven<'a, M> {
+impl<'content, M: 'content> Widget<M, Theme, cosmic::Renderer> for FrameDriven<'content, M> {
     fn tag(&self) -> widget::tree::Tag {
         widget::tree::Tag::of::<FrameState>()
     }

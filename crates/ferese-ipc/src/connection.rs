@@ -8,20 +8,33 @@ use std::time::Duration;
 
 const FRAME_TIMEOUT: Duration = Duration::from_secs(2);
 
+/// Resolve the client socket using the explicit environment target or runtime directory.
+///
+/// # Errors
+/// Fails if no socket override or runtime directory is configured.
 pub fn socket_path() -> io::Result<PathBuf> {
     crate::socket::resolve(None)
 }
 
+/// A synchronous command connection with matching request and response identities.
 pub struct Connection {
     stream: UnixStream,
     id: u64,
 }
 
 impl Connection {
+    /// Connect to the socket selected by [`socket_path`].
+    ///
+    /// # Errors
+    /// Fails if socket resolution, connection or timeout setup fails.
     pub fn connect() -> io::Result<Self> {
         Self::connect_to(socket_path()?)
     }
 
+    /// Connect to a socket with bounded reads and writes for command frames.
+    ///
+    /// # Errors
+    /// Fails if the socket cannot be connected or its timeouts cannot be configured.
     pub fn connect_to(path: impl AsRef<std::path::Path>) -> io::Result<Self> {
         let stream = UnixStream::connect(path)?;
         stream.set_write_timeout(Some(FRAME_TIMEOUT))?;
@@ -29,10 +42,19 @@ impl Connection {
         Ok(Self { stream, id: 0 })
     }
 
+    /// Create a handle whose drop shuts down this connection, including pending I/O.
+    ///
+    /// # Errors
+    /// Fails if the underlying socket descriptor cannot be duplicated.
     pub fn cancellation(&self) -> io::Result<Cancellation> {
         self.stream.try_clone().map(Cancellation)
     }
 
+    /// Send one command and return its matching successful response payload.
+    ///
+    /// # Errors
+    /// Fails for transport errors, invalid response frames or server-reported errors.
+    /// Transport and protocol errors shut down the connection.
     pub fn call(&mut self, command: &str, args: Value) -> Result<Value, String> {
         self.call_with_budget(command, args, FRAME_TIMEOUT)
     }
@@ -74,6 +96,9 @@ impl Connection {
     }
 
     /// Wait for a server-side change; dropping the cancellation handle interrupts it.
+    ///
+    /// # Errors
+    /// Fails if timeout configuration or the command exchange fails, including cancellation.
     pub fn wait(&mut self, command: &str, args: Value) -> Result<Value, String> {
         self.stream
             .set_read_timeout(None)
@@ -86,6 +111,8 @@ impl Connection {
     }
 }
 
+/// Shuts down the associated connection when dropped; retain it while a watch is active.
+#[must_use = "retain the cancellation handle until the connection should be shut down"]
 pub struct Cancellation(UnixStream);
 
 impl Drop for Cancellation {

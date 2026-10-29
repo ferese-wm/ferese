@@ -414,7 +414,8 @@ pub fn resolve_with_context(
             .filter(|end| *end != authored_accent);
         let mut explicit_surfaces = std::collections::HashSet::new();
         let mut value = token_value(&tokens)?;
-        for file in [&policy.file, &selection.file].into_iter().flatten() {
+        let file_iter = [&policy.file, &selection.file].into_iter().flatten();
+        for file in file_iter {
             let path = theme_path(directory, file);
             if !all_files.contains(&path) {
                 all_files.push(path.clone());
@@ -481,13 +482,13 @@ pub fn resolve_with_context(
         if let Some(accent) = &policy.accent {
             tokens.colors.accent = accent.clone();
         }
-        for path in [
+        let path_iter = [
             &mut tokens.background.path,
             &mut tokens.background.lock_path,
         ]
         .into_iter()
-        .flatten()
-        {
+        .flatten();
+        for path in path_iter {
             *path = theme_path(directory, path);
         }
         validate(&tokens)?;
@@ -1014,10 +1015,10 @@ pub fn import_family(id: &str, source: &str) -> Result<ImportedFamily, String> {
         .to_owned();
     let mut variants = [None, None];
     let mut warnings = vec![];
-    for (index, (key, appearance)) in [("light", Appearance::Light), ("dark", Appearance::Dark)]
+    let key_iter = [("light", Appearance::Light), ("dark", Appearance::Dark)]
         .into_iter()
-        .enumerate()
-    {
+        .enumerate();
+    for (index, (key, appearance)) in key_iter {
         if let Some(layer) = root.get(key) {
             let base = preset(
                 if appearance == Appearance::Light {
@@ -1358,7 +1359,8 @@ mod tests {
             .collect();
         assert_eq!(dark.len(), 6);
         assert_eq!(light.len(), 6);
-        for (dark, light) in dark.iter().zip(light) {
+        let dark_iter = dark.iter().zip(light);
+        for (dark, light) in dark_iter {
             assert_eq!(dark.name, light.name);
             assert_ne!(dark.base, light.base);
             assert_ne!(dark.opacity, light.opacity);
@@ -1782,7 +1784,8 @@ mod tests {
         let lights = PRESETS
             .iter()
             .filter(|entry| entry.appearance == Appearance::Light);
-        for (dark_entry, light_entry) in darks.zip(lights) {
+        let dark_entry_iter = darks.zip(lights);
+        for (dark_entry, light_entry) in dark_entry_iter {
             let dark = candidate(&format!(
                 r#"theme {{ mode "dark"; dark {{ preset "{}"; }}; material {{ style "translucent"; }}; }}"#,
                 dark_entry.id

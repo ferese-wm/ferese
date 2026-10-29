@@ -293,7 +293,7 @@ mod tests {
 
         let mut event_loop = EventLoop::try_new().unwrap();
         let config = crate::config::Config::default().runtime_config().unwrap();
-        let mut state = Ferese::new(&mut event_loop, Display::new().unwrap(), config).unwrap();
+        let mut state = Ferese::try_new(&mut event_loop, Display::new().unwrap(), config).unwrap();
         let mut outputs = Vec::new();
 
         for name in ["first", "second"] {

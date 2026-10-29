@@ -49,10 +49,10 @@ impl Mode {
 }
 
 #[derive(Clone, Copy)]
-struct AppWindow<'a> {
+struct AppWindow<'window> {
     id: WindowId,
     pid: Option<u32>,
-    app_id: &'a str,
+    app_id: &'window str,
 }
 
 /// MPRIS reports application playback, not which of its windows owns a video.

@@ -66,7 +66,8 @@ impl NamedCursor {
 
         let period: Duration = self.frames.iter().map(|frame| frame.delay).sum();
         let mut offset = elapsed.as_nanos() % period.as_nanos();
-        for (index, frame) in self.frames.iter().enumerate() {
+        let frame_iter = self.frames.iter().enumerate();
+        for (index, frame) in frame_iter {
             if offset < frame.delay.as_nanos() {
                 return (
                     index,
@@ -98,7 +99,7 @@ pub(crate) struct Loader {
 }
 
 impl Loader {
-    pub(crate) fn new(signal: LoopSignal) -> std::io::Result<Self> {
+    pub(crate) fn try_new(signal: LoopSignal) -> std::io::Result<Self> {
         Self::with_loader(signal, {
             // Theme discovery and inherited-theme reads belong to the worker too.
             let mut theme = None;
@@ -466,9 +467,8 @@ fn parse_cursor(bytes: &[u8], requested: u32, scale: i32) -> Option<NamedCursor>
         .min_by_key(|size| (size.abs_diff(desired), *size))?;
     let mut frames = Vec::new();
     let mut asset_bytes = 0usize;
-    for (_, width, height, xhot, yhot, delay, rgba) in
-        images.into_iter().filter(|image| image.0 == nominal)
-    {
+    let width_iter = images.into_iter().filter(|image| image.0 == nominal);
+    for (_, width, height, xhot, yhot, delay, rgba) in width_iter {
         let ratio = f64::from(desired) / f64::from(nominal);
         let w = (f64::from(width) * ratio).round().max(1.0) as u32;
         let h = (f64::from(height) * ratio).round().max(1.0) as u32;

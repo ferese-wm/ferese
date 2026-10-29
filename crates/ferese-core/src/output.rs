@@ -127,6 +127,13 @@ pub struct DesktopPlan {
 impl OutputWorkspaceMap {
     /// Plan against the final usable inventory, never a per-device intermediate.
     /// An empty inventory is a valid headless desktop after physical loss.
+    ///
+    /// # Errors
+    /// Rejects invalid output geometry, duplicate output identities and conflicting
+    /// workspace ownership in the proposed inventory.
+    ///
+    /// # Panics
+    /// Panics if creating fallback workspaces exhausts the workspace identity counter.
     pub fn plan_desktop(
         &self,
         usable: &[(OutputId, OutputGeometry)],
@@ -215,7 +222,8 @@ impl OutputWorkspaceMap {
         }
         debug_assert!(outputs.validate());
         let mut affected_outputs = BTreeSet::new();
-        for id in self.connected_outputs().chain(outputs.connected_outputs()) {
+        let id_iter = self.connected_outputs().chain(outputs.connected_outputs());
+        for id in id_iter {
             if self.outputs.get(&id) != outputs.outputs.get(&id) {
                 affected_outputs.insert(id);
             }
@@ -951,7 +959,8 @@ mod tests {
                 actual.into_iter().collect::<std::collections::HashSet<_>>(),
                 windows
             );
-            for workspace in workspaces.iter().filter(|workspace| !workspace.is_empty()) {
+            let workspace_iter = workspaces.iter().filter(|workspace| !workspace.is_empty());
+            for workspace in workspace_iter {
                 assert_eq!(
                     outputs.output_for_workspace(workspace.id).is_some(),
                     !inventory.is_empty()

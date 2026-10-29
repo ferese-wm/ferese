@@ -7,13 +7,13 @@ use serde::de::DeserializeOwned;
 
 use crate::{FrameError, read_frame, write_frame};
 
-struct DeadlineIo<'a> {
-    stream: &'a UnixStream,
+struct DeadlineIo<'socket> {
+    stream: &'socket UnixStream,
     deadline: Instant,
 }
 
-impl<'a> DeadlineIo<'a> {
-    fn try_new(stream: &'a UnixStream, budget: Duration) -> io::Result<Self> {
+impl<'socket> DeadlineIo<'socket> {
+    fn try_new(stream: &'socket UnixStream, budget: Duration) -> io::Result<Self> {
         let deadline = Instant::now().checked_add(budget).ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -56,6 +56,10 @@ impl Write for DeadlineIo<'_> {
 /// `budget` then bounds the rest of that frame. Original timeouts are restored.
 /// Callers must serialize access to shared socket clones, validate response
 /// identity/outcome, and discard a connection after a framing or I/O error.
+///
+/// # Errors
+/// Fails for invalid timeout budgets, expired deadlines, framing errors or socket I/O
+/// errors, including failure to restore the original timeout configuration.
 pub fn exchange_frames<T: Serialize, R: DeserializeOwned>(
     stream: &UnixStream,
     request: &T,
@@ -88,6 +92,10 @@ pub fn exchange_frames<T: Serialize, R: DeserializeOwned>(
 /// no read timeout, an event subscription may idle indefinitely; once its first
 /// byte arrives, the remaining frame must complete within `budget`. Discard the
 /// connection on error, since a partial frame cannot be resumed safely.
+///
+/// # Errors
+/// Fails for invalid timeout budgets, expired deadlines, framing errors or socket I/O
+/// errors, including failure to restore the original read timeout.
 pub fn read_socket_frame<R: DeserializeOwned>(
     stream: &UnixStream,
     budget: Duration,

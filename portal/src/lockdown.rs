@@ -207,7 +207,8 @@ fn values(document: &ferese_config::Document) -> Option<[bool; 7]> {
         }
     }
     let mut values = [false; 7];
-    for (index, key) in KEYS.iter().enumerate() {
+    let key_iter = KEYS.iter().enumerate();
+    for (index, key) in key_iter {
         if let Some(value) = document.get(&format!("portals.lockdown.{}", key.replace('-', "_"))) {
             values[index] = value.as_bool()?;
         }

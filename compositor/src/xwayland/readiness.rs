@@ -240,7 +240,8 @@ mod tests {
                 libc::close(fd);
                 return -1;
             }
-            for (slot, byte) in address.sun_path.iter_mut().zip(bytes) {
+            let slot_iter = address.sun_path.iter_mut().zip(bytes);
+            for (slot, byte) in slot_iter {
                 *slot = *byte as libc::c_char;
             }
             if libc::connect(

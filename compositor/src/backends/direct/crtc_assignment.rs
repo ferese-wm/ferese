@@ -26,9 +26,11 @@ pub(super) fn assign(requests: &[Candidates]) -> Vec<Option<crtc::Handle>> {
     let mut edges = Vec::new();
     let mut assignments = Vec::new();
     let applied_weight = requests.len() as i64 + 1;
-    for (index, request) in requests.iter().enumerate() {
+    let request_iter = requests.iter().enumerate();
+    for (index, request) in request_iter {
         add_edge(&mut edges, source, index, 0);
-        for (crtc_index, crtc) in crtcs.iter().enumerate() {
+        let crtc_iter = crtcs.iter().enumerate();
+        for (crtc_index, crtc) in crtc_iter {
             if request.compatible.contains(crtc) {
                 let cost = -applied_weight * i64::from(request.applied == Some(*crtc))
                     - i64::from(request.kernel == Some(*crtc));
@@ -83,7 +85,8 @@ fn augment(edges: &mut [Edge], source: usize, sink: usize) -> bool {
     distances[source] = Some(0);
     for _ in 0..sink {
         let mut changed = false;
-        for (index, edge) in edges.iter().enumerate() {
+        let edge_iter = edges.iter().enumerate();
+        for (index, edge) in edge_iter {
             if edge.available
                 && let Some(distance) = distances[edge.from]
                 && distances[edge.to].is_none_or(|current| distance + edge.cost < current)

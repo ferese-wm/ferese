@@ -78,7 +78,8 @@ impl Presentation {
             velocity_tolerance: 0.002,
             ..Default::default()
         };
-        for value in self.divider.iter_mut().chain(self.tints.values_mut()) {
+        let value_iter = self.divider.iter_mut().chain(self.tints.values_mut());
+        for value in value_iter {
             if reduced {
                 value.snap();
             } else {
@@ -194,7 +195,8 @@ fn label(activity: &Activity) -> String {
 }
 fn native_text(text: &str) -> String {
     let mut bounded = String::new();
-    for character in text.chars().filter(|character| !character.is_control()) {
+    let character_iter = text.chars().filter(|character| !character.is_control());
+    for character in character_iter {
         if bounded.len() + character.len_utf8() > ferese_activities::MAX_TEXT {
             break;
         }
@@ -246,13 +248,13 @@ impl FereseShell {
             && self.config.notifications.show_popups
             && !self.notifications.dnd
         {
-            for notice in self
+            let notice_iter = self
                 .notifications
                 .entries
                 .iter()
                 .filter(|notice| notice.live && notice.unread)
-                .take(16)
-            {
+                .take(16);
+            for notice in notice_iter {
                 observed.push((
                     format!("notification:{}", notice.id),
                     u64::from(notice.id),
@@ -394,10 +396,10 @@ impl FereseShell {
             presentation
                 .tints
                 .retain(|id, _| presentation.selection.visible.contains(id));
-            for entry in entries
+            let entry_iter = entries
                 .iter()
-                .filter(|entry| presentation.selection.visible.contains(&entry.id))
-            {
+                .filter(|entry| presentation.selection.visible.contains(&entry.id));
+            for entry in entry_iter {
                 if entry.state != State::Running {
                     let age = now.saturating_sub(
                         entry
@@ -928,7 +930,8 @@ impl FereseShell {
             .spacing(compact::ITEM_GAP)
             .align_y(Alignment::Center);
         let mut descriptions = Vec::with_capacity(2);
-        for (index, identity) in presentation.selection.visible.iter().enumerate() {
+        let identity_iter = presentation.selection.visible.iter().enumerate();
+        for (index, identity) in identity_iter {
             let Some(activity) = self
                 .activities
                 .snapshot

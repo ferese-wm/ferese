@@ -639,12 +639,12 @@ pub struct RuntimeConfig {
 
 impl Ferese {
     #[cfg(test)]
-    pub fn new(
+    pub fn try_new(
         event_loop: &mut EventLoop<'static, Self>,
         display: Display<Self>,
         config: RuntimeConfig,
     ) -> Result<Self, Box<dyn Error>> {
-        Self::new_with_session(
+        Self::try_new_with_session(
             event_loop,
             display,
             config,
@@ -653,7 +653,7 @@ impl Ferese {
         )
     }
 
-    pub(crate) fn new_with_session(
+    pub(crate) fn try_new_with_session(
         event_loop: &mut EventLoop<'static, Self>,
         display: Display<Self>,
         config: RuntimeConfig,
@@ -754,7 +754,7 @@ impl Ferese {
         let socket_name = Self::init_wayland_listener(display, event_loop)?;
 
         let start_time = Instant::now();
-        let cursor_loader = crate::cursor::Loader::new(event_loop.get_signal())?;
+        let cursor_loader = crate::cursor::Loader::try_new(event_loop.get_signal())?;
         let default_cursor = crate::cursor::fallback_cursor();
         let named_cursors = HashMap::from([(CursorIcon::Default, default_cursor)]);
 
@@ -946,7 +946,7 @@ impl Ferese {
             xdg_shell_state,
             xdg_toplevel_icon_manager,
         };
-        state.config_worker = Some(crate::reload::Worker::new(event_loop)?);
+        state.config_worker = Some(crate::reload::Worker::try_new(event_loop)?);
         let screenshot = crate::ipc::init(event_loop, ipc_endpoint)?;
         state
             .screenshot
@@ -1410,7 +1410,8 @@ mod tests {
         ] {
             let mut advanced = slide.clone();
             advanced.advance(delta);
-            for (item, after) in slide.items.iter().zip(&advanced.items) {
+            let item_iter = slide.items.iter().zip(&advanced.items);
+            for (item, after) in item_iter {
                 let (position, velocity) = slide.sample(item, delta);
                 assert_eq!(position, after.start);
                 assert_eq!(velocity.x, after.velocity.x * slide.speed);
@@ -1434,7 +1435,8 @@ mod tests {
                 let before = (slide.items[0].start, slide.items[0].velocity);
                 let mut reference = slide.clone();
                 reference.advance(delta);
-                for (item, advanced) in slide.items.iter().zip(&reference.items) {
+                let item_iter = slide.items.iter().zip(&reference.items);
+                for (item, advanced) in item_iter {
                     let (position, velocity) = slide.sample(item, delta);
                     let expected = held.map_or(advanced.start, |p| {
                         advanced.start.between(advanced.target, p)
@@ -1508,7 +1510,8 @@ mod tests {
         ] {
             let mut advanced = slide.clone();
             advanced.advance(delta);
-            for (before, after) in slide.items.iter().zip(&advanced.items) {
+            let before_iter = slide.items.iter().zip(&advanced.items);
+            for (before, after) in before_iter {
                 assert_eq!(slide.position(before, delta), after.start);
             }
         }

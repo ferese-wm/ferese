@@ -1219,7 +1219,8 @@ impl ScrollingLayout {
         }
 
         let mut result = LayoutResult::default();
-        for (column_index, column) in self.columns.iter().enumerate() {
+        let column_index_iter = self.columns.iter().enumerate();
+        for (column_index, column) in column_index_iter {
             let (column_x, column_width) = column_positions[column_index];
             if column.display == ColumnDisplay::Tabbed {
                 let window = column.windows[column.active];
@@ -1260,7 +1261,8 @@ impl ScrollingLayout {
             let row_heights = constrained_row_heights(column, available_height, &row_constraints);
             let mut y = bounds.y + outer;
 
-            for (window_index, window) in column.windows.iter().enumerate() {
+            let window_index_iter = column.windows.iter().enumerate();
+            for (window_index, window) in window_index_iter {
                 let mut rect = Rect::new(
                     bounds.x + outer + column_x - self.viewport_x,
                     y,
@@ -1524,7 +1526,8 @@ fn constrained_row_heights(
             .filter(|(row, _)| *row != column.active)
             .map(|(_, weight)| weight)
             .sum::<f64>();
-        for (row, height) in heights.iter_mut().enumerate() {
+        let height_iter = heights.iter_mut().enumerate();
+        for (row, height) in height_iter {
             if row != column.active {
                 *height = remaining * column.heights[row] / weight;
             }
@@ -2604,7 +2607,8 @@ mod tests {
                     .insert(window(id), Some(window(id.saturating_sub(1))))
                     .unwrap();
             }
-            for (focused, offset) in [1, 3, 2, 1].into_iter().zip(offsets) {
+            let focused_iter = [1, 3, 2, 1].into_iter().zip(offsets);
+            for (focused, offset) in focused_iter {
                 layout.focus_and_reveal(window(focused)).unwrap();
                 let result = layout
                     .resolve_geometry_with_constraints(
@@ -2893,7 +2897,8 @@ mod tests {
     fn paged_focus_packs_mixed_widths_by_actual_fit() {
         let (mut layout, bounds, gaps) = paged_layout(5);
         let widths = [0.6, 0.4, 0.25, 0.5, 0.25];
-        for (column, width) in layout.columns.iter_mut().zip(widths) {
+        let width_iter = layout.columns.iter_mut().zip(widths);
+        for (column, width) in width_iter {
             column.width = ColumnWidth::Proportion(width);
         }
         for (focused, first) in [(1, 1), (2, 1), (3, 3), (4, 3), (5, 3), (2, 1)] {

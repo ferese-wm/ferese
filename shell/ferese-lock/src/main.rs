@@ -288,7 +288,8 @@ impl cosmic::Application for Locker {
                     text,
                     ..
                 }) => {
-                    use iced::keyboard::{Key, key::Named};
+                    use iced::keyboard::Key;
+                    use iced::keyboard::key::Named;
                     match key {
                         Key::Named(Named::Enter) => Some(Message::Submit),
                         Key::Named(Named::Escape) => Some(Message::ClearPassword),

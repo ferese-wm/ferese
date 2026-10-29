@@ -193,7 +193,8 @@ impl cosmic::Application for Consent {
     fn view(&self) -> Element<'_, Message> {
         let text = |value: String| text(value, self.font);
         let mut details = column![text(self.prompt.description.clone())].spacing(12);
-        for (index, shortcut) in self.prompt.shortcuts.iter().enumerate() {
+        let shortcut_iter = self.prompt.shortcuts.iter().enumerate();
+        for (index, shortcut) in shortcut_iter {
             details = details.push(
                 column![
                     text(shortcut.description.clone()),

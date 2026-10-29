@@ -9,14 +9,15 @@ use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
 use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::State as ToplevelState;
 use smithay::reexports::wayland_server::protocol::wl_seat;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
-use smithay::reexports::wayland_server::{Client, DataInit, Dispatch, DisplayHandle, Resource, backend::ClientId};
+use smithay::reexports::wayland_server::{Client, DataInit, Dispatch, DisplayHandle, Resource};
+use smithay::reexports::wayland_server::backend::ClientId;
 use smithay::utils::{Logical, Point, Rectangle, Serial};
 use smithay::wayland::compositor::with_states;
 use smithay::wayland::input_method::InputMethodSeat;
 use smithay::wayland::shell::xdg::decoration::XdgDecorationHandler;
 use smithay::wayland::shell::xdg::{
-    PopupSurface, PositionerState, SurfaceCachedState, ToplevelSurface, XdgShellHandler, XdgShellState,
-    XdgShellSurfaceUserData, XdgToplevelSurfaceData,
+    PopupSurface, PositionerState, SurfaceCachedState, ToplevelSurface, XdgShellHandler,
+    XdgShellState, XdgShellSurfaceUserData, XdgToplevelSurfaceData,
 };
 
 use crate::Ferese;

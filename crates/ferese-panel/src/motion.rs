@@ -145,7 +145,8 @@ impl Motion {
 
     pub fn retarget(&mut self, geometry: Geometry) -> Result<(), &'static str> {
         let target = geometry.validate()?.values();
-        for (value, target) in self.values.iter_mut().zip(target) {
+        let value_iter = self.values.iter_mut().zip(target);
+        for (value, target) in value_iter {
             value.retarget_preserving_motion(target);
         }
         Ok(())

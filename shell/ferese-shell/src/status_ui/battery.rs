@@ -40,7 +40,7 @@ pub(super) fn view<'a>(
     ));
     if let Some(profiles) = &shell.status.power_profiles {
         let mut modes = row::with_capacity(3).spacing(6).width(Length::Fill);
-        for (index, (label, icon, profile)) in [
+        let label_iter = [
             (
                 "Power saver",
                 ferese_theme::icons::POWER_SAVER,
@@ -54,8 +54,8 @@ pub(super) fn view<'a>(
             ),
         ]
         .into_iter()
-        .enumerate()
-        {
+        .enumerate();
+        for (index, (label, icon, profile)) in label_iter {
             if profiles.available[index] {
                 modes = modes.push(power_tile(
                     shell.render,

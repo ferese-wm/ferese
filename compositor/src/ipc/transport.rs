@@ -9,8 +9,8 @@ pub(super) const FRAME_TIMEOUT: Duration = Duration::from_secs(5);
 pub(super) const IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 const WRITE_TIMEOUT: Duration = Duration::from_secs(2);
 
-struct DeadlineIo<'a> {
-    stream: &'a UnixStream,
+struct DeadlineIo<'socket> {
+    stream: &'socket UnixStream,
     deadline: Instant,
 }
 

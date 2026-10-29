@@ -223,7 +223,8 @@ pub(crate) fn node_value(node: &KdlNode, key: &str, parent: &str) -> Result<Valu
             if args.len() > positional.len() {
                 return Err(Error(format!("Too many arguments for {}", node.name())));
             }
-            for (name, value) in positional.iter().zip(args) {
+            let name_iter = positional.iter().zip(args);
+            for (name, value) in name_iter {
                 insert(&mut map, (*name).into(), value)?;
             }
         }
@@ -610,7 +611,8 @@ fn collect_node_formats(doc: &KdlDocument, formats: &mut Vec<NodeFormat>) {
 fn restore_node_formats(doc: &mut KdlDocument, formats: &mut impl Iterator<Item = NodeFormat>) {
     for node in doc.nodes_mut() {
         if let Some((entries, terminator)) = formats.next() {
-            for (entry, format) in node.entries_mut().iter_mut().zip(entries) {
+            let entry_iter = node.entries_mut().iter_mut().zip(entries);
+            for (entry, format) in entry_iter {
                 if let Some(format) = format {
                     entry.set_format(format);
                 }
@@ -757,11 +759,11 @@ fn set_in(doc: &mut KdlDocument, parts: &[&str], parent: &str, value: Value) -> 
             .position(|node| field(node.name().value(), parent) == key)
             .unwrap_or(doc.nodes().len());
         let mut comments = String::new();
-        for node in doc
+        let node_iter = doc
             .nodes()
             .iter()
-            .filter(|node| field(node.name().value(), parent) == key)
-        {
+            .filter(|node| field(node.name().value(), parent) == key);
+        for node in node_iter {
             collect_comments(node, &mut comments);
         }
         doc.nodes_mut()

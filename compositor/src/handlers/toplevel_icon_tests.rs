@@ -7,7 +7,8 @@ use smithay::reexports::calloop::EventLoop;
 use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_wm_base::XdgWmBase;
 use smithay::reexports::wayland_protocols::xdg::toplevel_icon::v1::server::xdg_toplevel_icon_manager_v1::XdgToplevelIconManagerV1;
 use smithay::reexports::wayland_server::Resource;
-use smithay::reexports::wayland_server::protocol::{wl_compositor::WlCompositor, wl_shm::WlShm};
+use smithay::reexports::wayland_server::protocol::wl_compositor::WlCompositor;
+use smithay::reexports::wayland_server::protocol::wl_shm::WlShm;
 use smithay::wayland::GlobalData;
 use smithay::wayland::shell::xdg::XdgWmBaseUserData;
 

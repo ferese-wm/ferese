@@ -19,7 +19,7 @@ use super::{
 };
 use cosmic::iced::keyboard::Key;
 use cosmic::iced::keyboard::key::Named;
-use sources::{Category, Row, Source, Target};
+use sources::{Category, Row, Target};
 use std::cell::RefCell;
 use std::sync::Arc;
 

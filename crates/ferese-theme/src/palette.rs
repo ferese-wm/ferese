@@ -19,6 +19,11 @@ pub struct Palette {
 }
 
 impl Palette {
+    /// Convert validated theme tokens to toolkit colors and geometry.
+    ///
+    /// # Panics
+    /// Panics if a used color or focus-ring gradient endpoint is not a valid
+    /// hexadecimal RGB or RGBA color. Resolve and validate the theme first.
     #[must_use]
     pub fn from_resolved(theme: &ferese_theme_model::ResolvedTheme) -> Self {
         let color = |value: &str| parse_color(value).expect("validated resolved theme color");
@@ -69,7 +74,8 @@ impl Palette {
             return Background::Color(fallback);
         };
 
-        for stop in gradient.stops.iter_mut().flatten() {
+        let stop_iter = gradient.stops.iter_mut().flatten();
+        for stop in stop_iter {
             stop.color = mix(
                 self.sidebar,
                 crate::composite(stop.color, self.sidebar),
@@ -89,7 +95,8 @@ impl Palette {
         };
         for step in 0..=20 {
             let mut candidate = gradient;
-            for stop in candidate.stops.iter_mut().flatten() {
+            let stop_iter = candidate.stops.iter_mut().flatten();
+            for stop in stop_iter {
                 stop.color = mix(stop.color, shade, step as f32 / 20.);
                 stop.color.a = opacity;
             }

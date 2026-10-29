@@ -20,7 +20,7 @@ binding-mode launch { binding h binding-mode default; }
 fn state(events: &mut EventLoop<'static, Ferese>) -> Ferese {
     let (_, mut config, _) = crate::config::prepare(SOURCE, std::path::Path::new(".")).unwrap();
     config.wallpaper.path = None;
-    Ferese::new(events, Display::new().unwrap(), config).unwrap()
+    Ferese::try_new(events, Display::new().unwrap(), config).unwrap()
 }
 
 type KeyEvents = Rc<RefCell<Vec<(u32, KeyState)>>>;

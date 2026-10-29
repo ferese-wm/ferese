@@ -174,6 +174,10 @@ thread_local! {
     static TINT_CACHE: std::cell::RefCell<TintCache> = std::cell::RefCell::new(TintCache::default());
 }
 
+/// Tint embedded SVG artwork and retain its handle in the bounded icon cache.
+///
+/// # Panics
+/// Panics if `source` is not UTF-8.
 pub fn accented(source: &'static [u8], size: u16, foreground: Color, accent: Color) -> icon::Icon {
     let svg = std::str::from_utf8(source).expect("embedded SVG must be UTF-8");
     // Battery canvases are wider; reserve that space instead of stretching
@@ -194,6 +198,10 @@ pub fn accented(source: &'static [u8], size: u16, foreground: Color, accent: Col
         }))
 }
 
+/// Replace the artwork's `currentColor` and blue accent swatches with theme colors.
+///
+/// # Panics
+/// Panics if `source` is not UTF-8.
 #[must_use]
 pub fn tint_svg(source: &[u8], foreground: Color, accent: Color) -> Vec<u8> {
     let rgba = |foreground: Color| {

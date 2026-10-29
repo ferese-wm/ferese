@@ -4,7 +4,8 @@ use super::{
 };
 use crate::frame_scheduler::FramePlan;
 use smithay::backend::renderer::sync::SyncPoint;
-use smithay::reexports::calloop::{Interest, Mode, PostAction, generic::Generic};
+use smithay::reexports::calloop::generic::Generic;
+use smithay::reexports::calloop::{Interest, Mode, PostAction};
 
 pub(super) fn monotonic_now() -> Duration {
     smithay::utils::Clock::<Monotonic>::new().now().into()
@@ -15,15 +16,15 @@ pub(super) fn cancel_output_timers(
     output: &mut DirectOutput,
 ) {
     output.completion.retired();
-    for token in [
+    let token_iter = [
         output.render_timer.take(),
         output.callback_timer.take(),
         output.completion_timer.take(),
         output.render_fence.take(),
     ]
     .into_iter()
-    .flatten()
-    {
+    .flatten();
+    for token in token_iter {
         handle.remove(token);
     }
 

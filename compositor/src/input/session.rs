@@ -112,10 +112,10 @@ impl Ferese {
             touch.unset_grab(self);
             // Mark every delivered contact in this cancellation batch even if
             // its last hardware frame has already been flushed.
-            for contact in devices
+            let contact_iter = devices
                 .into_iter()
-                .flat_map(|device| device.contacts.into_values())
-            {
+                .flat_map(|device| device.contacts.into_values());
+            for contact in contact_iter {
                 if !self.consumed_touch_slots.contains(&contact.slot) {
                     touch.motion(
                         self,

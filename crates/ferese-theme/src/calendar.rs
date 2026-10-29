@@ -21,6 +21,11 @@ pub fn format_bar_time(now: &Zoned) -> String {
         if hour < 12 { "am" } else { "pm" }
     )
 }
+/// Return the first day, Monday-based weekday offset and length of a relative month.
+///
+/// # Panics
+/// Panics if the computed first day is outside Jiff's supported date range, or if
+/// adding it to the month index overflows in a build with overflow checks.
 #[must_use]
 pub fn month(today: jiff::civil::Date, offset: i32) -> (jiff::civil::Date, usize, usize) {
     let month_index = i32::from(today.year()) * 12 + i32::from(today.month()) - 1 + offset;
@@ -32,6 +37,10 @@ pub fn month(today: jiff::civil::Date, offset: i32) -> (jiff::civil::Date, usize
     (first, start, days)
 }
 
+/// Build a calendar with navigation controls supplied by the caller.
+///
+/// # Panics
+/// Panics for offsets outside the range accepted by [`month`].
 #[must_use]
 pub fn grid<'a, M: Clone + 'a>(
     today: jiff::civil::Date,
@@ -44,6 +53,10 @@ pub fn grid<'a, M: Clone + 'a>(
     grid_with_density(today, offset, palette, font, opacity, navigation, false)
 }
 
+/// Build a calendar that shares its available width between smaller day cells.
+///
+/// # Panics
+/// Panics for offsets outside the range accepted by [`month`].
 #[must_use]
 pub fn compact_grid<'a, M: Clone + 'a>(
     today: jiff::civil::Date,

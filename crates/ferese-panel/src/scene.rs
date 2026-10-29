@@ -444,10 +444,10 @@ pub fn derive(
             }
         }
         style => {
-            for (zone_index, zone) in [ZonePosition::Start, ZonePosition::Center, ZonePosition::End]
+            let zone_iter = [ZonePosition::Start, ZonePosition::Center, ZonePosition::End]
                 .into_iter()
-                .enumerate()
-            {
+                .enumerate();
+            for (zone_index, zone) in zone_iter {
                 let occupied: Vec<_> = groups
                     .iter()
                     .filter(|g| g.zone == zone && g.bounds.width > 0. && g.bounds.height > 0.)
@@ -491,7 +491,8 @@ pub fn derive(
                         },
                     )?;
                     add(&mut scene, grid, body, radii, true, 0)?;
-                    for group in occupied.iter().take(occupied.len() - 1) {
+                    let group_iter = occupied.iter().take(occupied.len() - 1);
+                    for group in group_iter {
                         let seam = grid.snap(group.bounds.x + group.bounds.width);
                         scene.dividers.push([
                             seam,
@@ -691,7 +692,8 @@ mod tests {
         .unwrap();
         assert!(scene.contains([18., 200.]));
         assert!(!scene.contains([38., 38.])); // the decorative elbow is not input
-        for (i, a) in scene.damage.iter().enumerate() {
+        let a_iter = scene.damage.iter().enumerate();
+        for (i, a) in a_iter {
             for b in &scene.damage[i + 1..] {
                 assert!(
                     a.x + a.width <= b.x
@@ -701,8 +703,10 @@ mod tests {
                 );
             }
         }
-        for x in (0..800).step_by(3) {
-            for y in (0..600).step_by(3) {
+        let x_iter = (0..800).step_by(3);
+        for x in x_iter {
+            let y_iter = (0..600).step_by(3);
+            for y in y_iter {
                 let point = [x as f64 + 0.5, y as f64 + 0.5];
                 if scene.distance(point) < 0. {
                     assert!(scene.damage.iter().any(|r| point[0] >= r.x
@@ -777,8 +781,10 @@ mod tests {
                 grid,
             )
             .unwrap();
-            for x in (0..800).step_by(13) {
-                for y in (0..bounds.height as usize).step_by(11) {
+            let x_iter = (0..800).step_by(13);
+            for x in x_iter {
+                let y_iter = (0..bounds.height as usize).step_by(11);
+                for y in y_iter {
                     let a = top.distance([x as f64 + 0.5, y as f64 + 0.5]);
                     let b = bottom.distance([x as f64 + 0.5, bounds.height - y as f64 - 0.5]);
                     assert!((a - b).abs() < 1e-6, "{style:?}: {x},{y}: {a} != {b}");

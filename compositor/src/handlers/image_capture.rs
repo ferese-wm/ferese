@@ -1289,8 +1289,9 @@ impl Ferese {
                     self.fail_stream_submission(frame, session, generation, FailureReason::Unknown);
                     return;
                 };
+                use smithay::reexports::calloop::generic::Generic;
                 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
-                use smithay::reexports::calloop::{Interest, Mode, PostAction, generic::Generic};
+                use smithay::reexports::calloop::{Interest, Mode, PostAction};
                 self.image_capture.next_fence = self.image_capture.next_fence.wrapping_add(1);
                 let id = self.image_capture.next_fence;
                 let deadline = Instant::now() + Duration::from_secs(5);

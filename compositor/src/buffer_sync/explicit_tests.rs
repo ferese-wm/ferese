@@ -219,9 +219,8 @@ fn destroyed_synchronized_children_release_points_and_reclaim_budgets_before_par
         return;
     }
     use smithay::reexports::drm::control::Device;
-    use smithay::reexports::wayland_server::protocol::{
-        wl_compositor::WlCompositor, wl_subcompositor::WlSubcompositor,
-    };
+    use smithay::reexports::wayland_server::protocol::wl_compositor::WlCompositor;
+    use smithay::reexports::wayland_server::protocol::wl_subcompositor::WlSubcompositor;
     let path =
         std::env::var("FERESE_TEST_RENDER_NODE").unwrap_or_else(|_| "/dev/dri/renderD128".into());
     let fd = DrmDeviceFd::new(DeviceFd::from(std::os::fd::OwnedFd::from(

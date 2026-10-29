@@ -109,10 +109,10 @@ impl Config {
             }
             modes.maps.insert(mode.name.clone(), bindings.into());
         }
-        for binding in default
+        let binding_iter = default
             .iter()
-            .chain(modes.maps.values().flat_map(|map| map.iter()))
-        {
+            .chain(modes.maps.values().flat_map(|map| map.iter()));
+        for binding in binding_iter {
             if let BindingAction::BindingMode(name) = &binding.action
                 && name != "default"
                 && !modes.maps.contains_key(name)

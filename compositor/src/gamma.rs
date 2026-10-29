@@ -30,11 +30,11 @@ impl Ramp {
 
     pub(crate) fn at_temperature(&self, temperature: u16) -> Self {
         let mut ramp = self.clone();
-        for (channel, gain) in ramp
+        let channel_iter = ramp
             .0
             .chunks_exact_mut(self.size())
-            .zip(temperature_gains(temperature))
-        {
+            .zip(temperature_gains(temperature));
+        for (channel, gain) in channel_iter {
             for value in channel {
                 *value = (f64::from(*value) * gain).round() as u16;
             }

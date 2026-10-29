@@ -43,7 +43,8 @@ pub(crate) fn run() -> Result<(), Box<dyn std::error::Error>> {
         let Ok(files) = fs::read_dir(directory.join("autostart")) else {
             continue;
         };
-        for file in files.flatten() {
+        let file_iter = files.flatten();
+        for file in file_iter {
             if file
                 .path()
                 .extension()
@@ -118,7 +119,8 @@ fn read_entry(path: &Path) -> Option<BTreeMap<String, String>> {
     }
     let mut in_entry = false;
     let mut fields = BTreeMap::new();
-    for line in source.lines().map(str::trim) {
+    let line_iter = source.lines().map(str::trim);
+    for line in line_iter {
         if line.starts_with('[') {
             in_entry = line == "[Desktop Entry]";
             continue;

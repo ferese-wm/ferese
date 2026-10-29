@@ -262,7 +262,8 @@ impl Engine {
         if let Some(path) = crate::config::config_path() {
             targets.insert(path);
         }
-        for path in self.active_files.iter().chain(files) {
+        let path_iter = self.active_files.iter().chain(files);
+        for path in path_iter {
             let path = if let (Some(parent), Some(name)) = (path.parent(), path.file_name()) {
                 parent
                     .canonicalize()
@@ -315,9 +316,16 @@ impl Engine {
 
     pub(crate) fn arm_clock(&self, next: Option<Timestamp>) -> io::Result<()> {
         let Some(fd) = &self.clock else { return Ok(()) };
-        // SAFETY: itimerspec contains only integer timespec fields, for which zero is a valid
-        // disarmed timer.
-        let mut timer: libc::itimerspec = unsafe { std::mem::zeroed() };
+        let mut timer = libc::itimerspec {
+            it_interval: libc::timespec {
+                tv_sec: 0,
+                tv_nsec: 0,
+            },
+            it_value: libc::timespec {
+                tv_sec: 0,
+                tv_nsec: 0,
+            },
+        };
         if let Some(next) = next {
             timer.it_value.tv_sec = next.as_second();
             timer.it_value.tv_nsec = i64::from(next.subsec_nanosecond());
@@ -422,10 +430,10 @@ pub(crate) fn init(
                     system_wakeup.wakeup();
                 }
                 if let Some(output) = monitor.stdout.take() {
-                    for line in std::io::BufReader::new(output)
+                    let line_iter = std::io::BufReader::new(output)
                         .lines()
-                        .map_while(Result::ok)
-                    {
+                        .map_while(Result::ok);
+                    for line in line_iter {
                         let value = system_appearance_value(&line);
                         if let Some(state) = SYSTEM_APPEARANCE.get() {
                             *state.lock().expect(

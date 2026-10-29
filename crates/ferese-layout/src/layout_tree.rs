@@ -372,7 +372,8 @@ impl LayoutTree {
                     node = ancestor;
                 }
                 let mut area = bounds;
-                for (ancestor, descendant) in path.into_iter().rev() {
+                let ancestor_iter = path.into_iter().rev();
+                for (ancestor, descendant) in ancestor_iter {
                     if let Some(Node::Split {
                         axis, ratio, first, ..
                     }) = self.nodes.get(&ancestor)
@@ -963,7 +964,8 @@ impl LayoutTree {
             child = parent;
         }
         let mut area = bounds;
-        for (parent, child) in path.into_iter().rev() {
+        let parent_iter = path.into_iter().rev();
+        for (parent, child) in parent_iter {
             match self.nodes.get(&parent) {
                 Some(Node::Split {
                     axis,
@@ -1191,7 +1193,8 @@ impl LayoutTree {
 
         let mut summaries: HashMap<NodeId, SubtreeConstraints> =
             HashMap::with_capacity(order.len());
-        for node in order.into_iter().rev() {
+        let node_iter = order.into_iter().rev();
+        for node in node_iter {
             let summary = match self.nodes.get(&node) {
                 Some(Node::Window(window)) => {
                     let constraint = constraints.get(window).copied().unwrap_or_default();

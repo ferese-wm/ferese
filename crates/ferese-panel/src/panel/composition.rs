@@ -7,6 +7,12 @@ use std::collections::{BTreeMap, HashSet};
 /// The effects protocol accepts 32 regions; reserve one for the overflow group.
 pub const MAX_GROUPS: usize = 31;
 
+/// Space inside an island before its configured group padding is applied.
+#[must_use]
+pub const fn default_island_padding() -> f32 {
+    4.0
+}
+
 fn yes() -> bool {
     true
 }
@@ -386,7 +392,7 @@ pub struct Group {
     pub spacing: f32,
     #[serde(default = "padding")]
     pub padding: [u16; 2],
-    #[serde(default = "crate::default_island_padding")]
+    #[serde(default = "default_island_padding")]
     pub island_padding: f32,
 }
 
@@ -667,9 +673,7 @@ impl Panel {
                 .end
                 .groups
                 .first()
-                .map_or(crate::default_island_padding(), |group| {
-                    group.island_padding
-                }),
+                .map_or(default_island_padding(), |group| group.island_padding),
         }
     }
 
@@ -688,7 +692,7 @@ impl Panel {
         use ItemKind::*;
 
         let item = Item::new;
-        let padding = crate::default_island_padding();
+        let padding = default_island_padding();
         let overview = item("overview", Overview);
         let workspaces = item(
             "workspaces",
@@ -892,10 +896,10 @@ mod tests {
             .find(|item| item.id.0 == "battery")
             .unwrap();
         battery.kind = ItemKind::Battery { percentage: false };
-        for group in [&mut panel.start, &mut panel.center, &mut panel.end]
+        let group_iter = [&mut panel.start, &mut panel.center, &mut panel.end]
             .into_iter()
-            .flat_map(|zone| &mut zone.groups)
-        {
+            .flat_map(|zone| &mut zone.groups);
+        for group in group_iter {
             group.island_padding = 13.;
         }
         assert_eq!(

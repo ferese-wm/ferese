@@ -12,7 +12,7 @@ pub(crate) struct Deadline {
     token: RegistrationToken,
 }
 impl Deadline {
-    pub fn new(
+    pub fn try_new(
         handle: LoopHandle<'static, crate::Ferese>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         // SAFETY: timerfd_create returns a new owned descriptor or -1.
@@ -93,7 +93,7 @@ mod tests {
     #[test]
     fn deadline_uses_boottime_and_disarming_leaves_no_periodic_wakeups() {
         let events = smithay::reexports::calloop::EventLoop::<crate::Ferese>::try_new().unwrap();
-        let deadline = Deadline::new(events.handle()).unwrap();
+        let deadline = Deadline::try_new(events.handle()).unwrap();
         let info =
             std::fs::read_to_string(format!("/proc/self/fdinfo/{}", deadline.fd.as_raw_fd()))
                 .unwrap();

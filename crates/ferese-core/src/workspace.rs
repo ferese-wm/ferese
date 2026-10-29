@@ -369,7 +369,8 @@ impl WorkspaceLayout {
                 let mut previous = None;
 
                 for column in columns {
-                    for (row, window) in column.windows.into_iter().enumerate() {
+                    let window_iter = column.windows.into_iter().enumerate();
+                    for (row, window) in window_iter {
                         let axis = if row == 0 {
                             Axis::Horizontal
                         } else {
@@ -870,6 +871,9 @@ impl WorkspaceSet {
     }
 
     /// Creates an identity; display positions are assigned by the output owner.
+    ///
+    /// # Panics
+    /// Panics when the workspace identity counter is exhausted.
     pub fn create_workspace(&mut self) -> WorkspaceId {
         let id = WorkspaceId(self.next_id);
         self.next_id = self

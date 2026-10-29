@@ -121,13 +121,14 @@ pub(crate) fn take_output_feedback(
         flags | surface_presentation_feedback_flags_from_states(surface, None, rendered)
     };
 
-    for window in state.space.elements().filter(|window| {
+    let window_iter = state.space.elements().filter(|window| {
         state
             .windows
             .ids()
             .get(*window)
             .is_some_and(|id| state.window_belongs_to_output(*id, output))
-    }) {
+    });
+    for window in window_iter {
         window.take_presentation_feedback(&mut feedback, visible_output, surface_flags);
     }
 

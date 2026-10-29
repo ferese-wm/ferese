@@ -277,9 +277,8 @@ fn synchronized_child_acquire_also_bounds_its_parent_commit_tail() {
     ) {
         return;
     }
-    use smithay::reexports::wayland_server::protocol::{
-        wl_compositor::WlCompositor, wl_subcompositor::WlSubcompositor,
-    };
+    use smithay::reexports::wayland_server::protocol::wl_compositor::WlCompositor;
+    use smithay::reexports::wayland_server::protocol::wl_subcompositor::WlSubcompositor;
     use smithay::wayland::GlobalData;
     let (mut state, mut events, surface, mut wire) = fixture();
     let client = surface.client().unwrap();

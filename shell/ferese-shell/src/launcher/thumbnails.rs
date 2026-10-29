@@ -37,7 +37,8 @@ impl Thumbnails {
         });
         self.images
             .retain(|id, _| self.visible.contains(&Some(*id)));
-        for id in self.visible.into_iter().flatten() {
+        let id_iter = self.visible.into_iter().flatten();
+        for id in id_iter {
             if self.pending.len() < 3 && self.pending.insert(id) {
                 control.thumbnail(self.token, id);
             }

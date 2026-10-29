@@ -1,9 +1,7 @@
 # Rust style
 
-Ferese follows the [Rust Style Guide](https://google.github.io/styleguide/rustguide.html)
-with the stable toolchain pinned in `rust-toolchain.toml`. Rules marked for Chromium
-or Fuchsia belong to those projects, so they do not change Ferese's Cargo layout,
-async runtimes, threading or test framework.
+Ferese uses the stable toolchain pinned in `rust-toolchain.toml`. The rules below
+cover module organization, API design, ownership, safety and formatting.
 
 Keep each change focused enough to review and test on its own. Formatting, module
 moves and behavioral fixes should have separate commits, and a refactor should
@@ -22,6 +20,10 @@ module. Avoid glob imports, with the guide's exceptions for inline tests, local 
 matches and re-exports. The Wayland scanner's generated namespaces also need glob
 imports, and GStreamer's prelude supplies its extension traits.
 
+Import traits inside the functions that use them unless their methods are used
+throughout the file. Use inherent implementations for a type's own methods; define
+traits for generic constraints, dynamic dispatch or extension methods.
+
 ## APIs and ownership
 
 Borrow the data a function needs: use `&str` and slices instead of references to
@@ -34,6 +36,15 @@ and mark pure return values with `#[must_use]`. Prefer named fields when tuple
 positions would conceal meaning. Document constraints, failure conditions and
 ownership that callers cannot infer from the signature, without repeating obvious
 method names in comments.
+
+Give type lifetimes names that describe the borrowed resource, such as `'socket`,
+`'window` or `'content`. Short lifetimes remain appropriate for simple relationships
+between a function's inputs and outputs.
+
+Build iterator chains in a named binding before a `for` loop. Retain borrowed
+temporary values and lock guards in explicit bindings, preserving their original
+scope and drop order. Keep simple iteration direct, and use ordinary loops when a
+combinator chain would obscure control flow.
 
 Ferese's workspace crates evolve together. Their shared enums can remain exhaustive
 so adding a state makes every affected consumer visible to the compiler. Apply
@@ -49,6 +60,9 @@ unwrapping it. If an invariant requires a panic, use `expect` to explain it.
 Keep unsafe operations at their system or library boundary. Every unsafe block needs
 a `SAFETY:` comment explaining its actual pointer bounds, ownership, lifetime or ABI
 requirements, and unsafe functions must document what their callers guarantee.
+Explain why the operation requires unsafe code, and use initialized fields or safe
+library operations when they provide the same behavior. Document public panic cases
+caused by invalid inputs, alongside recoverable error conditions.
 Never recover the contents of a poisoned mutex. A disposable cache may be skipped;
 state needed for correctness must fail or stop being used.
 

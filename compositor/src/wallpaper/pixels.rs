@@ -53,7 +53,8 @@ fn decode(path: &Path) -> Result<Pixels, String> {
                 .read_image(&mut rgb)
                 .map_err(|error| error.to_string())?;
             let mut rgba = MmapMut::map_anon(bytes).map_err(|error| error.to_string())?;
-            for (source, target) in rgb.chunks_exact(3).zip(rgba.chunks_exact_mut(4)) {
+            let source_iter = rgb.chunks_exact(3).zip(rgba.chunks_exact_mut(4));
+            for (source, target) in source_iter {
                 target[..3].copy_from_slice(source);
                 target[3] = 255;
             }
@@ -110,7 +111,8 @@ mod tests {
                 Rgba([8000, 21000, 41000, 32000]),
             )),
         ];
-        for (index, image) in images.iter().enumerate() {
+        let image_iter = images.iter().enumerate();
+        for (index, image) in image_iter {
             let path = directory.path().join(format!("image-{index}.png"));
             image.save(&path).unwrap();
             let expected = image::open(&path).unwrap().into_rgba8();

@@ -10,7 +10,7 @@ pub(super) struct FrameRate {
 }
 
 impl FrameRate {
-    pub(super) fn new(value: Option<&str>) -> Result<Self, String> {
+    pub(super) fn try_new(value: Option<&str>) -> Result<Self, String> {
         let maximum = match value {
             None => 60,
             Some(value) => value
@@ -59,18 +59,18 @@ mod tests {
 
     #[test]
     fn configuration_bounds_and_default_clock() {
-        let rate = FrameRate::new(None).unwrap();
+        let rate = FrameRate::try_new(None).unwrap();
         assert_eq!(rate.maximum, 60);
         assert_eq!(rate.interval(), Duration::from_nanos(33_333_333));
-        assert_eq!(FrameRate::new(Some("15")).unwrap().fraction().num, 15);
+        assert_eq!(FrameRate::try_new(Some("15")).unwrap().fraction().num, 15);
         for invalid in ["", "0", "241", "-1", "60.0", " 60"] {
-            assert!(FrameRate::new(Some(invalid)).is_err(), "{invalid}");
+            assert!(FrameRate::try_new(Some(invalid)).is_err(), "{invalid}");
         }
     }
 
     #[test]
     fn consumer_negotiation_preserves_fractional_rates() {
-        let rate = FrameRate::new(None).unwrap();
+        let rate = FrameRate::try_new(None).unwrap();
         rate.negotiate(Fraction {
             num: 60_000,
             denom: 1001,

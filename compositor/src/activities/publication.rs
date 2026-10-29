@@ -10,9 +10,12 @@ struct Job {
     snapshot: Arc<Snapshot>,
     recipients: Vec<Recipient>,
 }
-pub(super) struct Publisher(SyncSender<Job>, Arc<RwLock<u64>>);
+pub(super) struct Publisher {
+    jobs: SyncSender<Job>,
+    epoch: Arc<RwLock<u64>>,
+}
 impl Publisher {
-    pub fn new() -> std::io::Result<Self> {
+    pub fn try_new() -> std::io::Result<Self> {
         let (send, receive) = mpsc::sync_channel::<Job>(8);
         let epoch = Arc::new(RwLock::new(0));
         let worker_epoch = epoch.clone();
@@ -39,17 +42,17 @@ impl Publisher {
                     deliver(job.epoch, &worker_epoch, job.recipients, value);
                 }
             })?;
-        Ok(Self(send, epoch))
+        Ok(Self { jobs: send, epoch })
     }
 
     pub fn revoke(&self) {
-        let mut epoch = self.1.write().expect("activity publication epoch");
+        let mut epoch = self.epoch.write().expect("activity publication epoch");
         *epoch = epoch.wrapping_add(1);
     }
 
     pub fn send(&self, snapshot: Arc<Snapshot>, recipients: Vec<Recipient>) {
-        let epoch = *self.1.read().expect("activity publication epoch");
-        if let Err(error) = self.0.try_send(Job {
+        let epoch = *self.epoch.read().expect("activity publication epoch");
+        if let Err(error) = self.jobs.try_send(Job {
             epoch,
             snapshot,
             recipients,
@@ -98,13 +101,16 @@ mod tests {
     #[test]
     fn lock_revokes_serialized_jobs_even_after_unlock() {
         let (send, _receive) = mpsc::sync_channel(1);
-        let publisher = Publisher(send, Arc::new(RwLock::new(0)));
-        let job_epoch = *publisher.1.read().unwrap();
+        let publisher = Publisher {
+            jobs: send,
+            epoch: Arc::new(RwLock::new(0)),
+        };
+        let job_epoch = *publisher.epoch.read().unwrap();
         publisher.revoke();
         let (reply, receive) = mpsc::sync_channel(1);
         deliver(
             job_epoch,
-            &publisher.1,
+            &publisher.epoch,
             vec![(9, reply)],
             &serde_json::json!({"title": "private"}),
         );
@@ -117,14 +123,17 @@ mod tests {
     #[test]
     fn saturated_queue_rejects_without_blocking_and_slow_clients_do_not_block_others() {
         let (send, _receive) = mpsc::sync_channel(0);
-        let publisher = Publisher(send, Arc::new(RwLock::new(0)));
+        let publisher = Publisher {
+            jobs: send,
+            epoch: Arc::new(RwLock::new(0)),
+        };
         let (reply, receive) = mpsc::sync_channel(1);
         publisher.send(Arc::new(Snapshot::default()), vec![(7, reply)]);
         let response = receive.recv_timeout(Duration::from_secs(1)).unwrap();
         assert_eq!(response.id, 7);
         assert_eq!(response.error.unwrap().code, "activity_busy");
 
-        let publisher = Publisher::new().unwrap();
+        let publisher = Publisher::try_new().unwrap();
         let (slow, _slow_receive) = mpsc::sync_channel(1);
         slow.send(Response::success(1, serde_json::json!({})))
             .unwrap();

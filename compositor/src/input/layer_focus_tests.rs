@@ -152,7 +152,7 @@ fn on_demand_layer_focus_follows_opening_and_outside_clicks() {
     let mut config = crate::config::Config::default().runtime_config().unwrap();
     config.wallpaper.path = None;
     config.animations_enabled = false;
-    let mut state = Ferese::new(
+    let mut state = Ferese::try_new(
         &mut events,
         smithay::reexports::wayland_server::Display::new().unwrap(),
         config,
@@ -296,7 +296,7 @@ fn fixture_with_animations(animations: bool) -> (Ferese, EventLoop<'static, Fere
     let mut config = crate::config::Config::default().runtime_config().unwrap();
     config.wallpaper.path = None;
     config.animations_enabled = animations;
-    let mut state = Ferese::new(
+    let mut state = Ferese::try_new(
         &mut events,
         smithay::reexports::wayland_server::Display::new().unwrap(),
         config,

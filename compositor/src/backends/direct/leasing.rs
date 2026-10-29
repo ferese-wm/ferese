@@ -312,12 +312,12 @@ pub(super) fn suspend(backend: &mut DirectBackendState) {
     for device in backend.devices.values_mut() {
         device.active_leases.clear();
     }
-    for entry in backend
+    let entry_iter = backend
         .leasing
         .devices
         .values_mut()
-        .filter(|entry| !entry.retired)
-    {
+        .filter(|entry| !entry.retired);
+    for entry in entry_iter {
         if !entry.suspended {
             entry.protocol.suspend();
             entry.suspended = true;

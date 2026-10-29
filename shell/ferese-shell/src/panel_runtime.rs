@@ -101,11 +101,11 @@ fn window_state(snapshot: &ShellSnapshot, name: Option<&str>) -> WindowState {
         return WindowState::default();
     };
     let mut state = WindowState::default();
-    for window in snapshot
+    let window_iter = snapshot
         .windows
         .iter()
-        .filter(|window| window.workspace == output.active_workspace)
-    {
+        .filter(|window| window.workspace == output.active_workspace);
+    for window in window_iter {
         state.maximized |= window.maximized;
         state.fullscreen |= window.fullscreen;
     }
