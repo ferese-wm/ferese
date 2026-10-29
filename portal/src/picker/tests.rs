@@ -649,7 +649,14 @@ fn selection_and_configure_events_keep_the_fitted_layout() {
     assert!(node.size().height <= 400.5);
     let footer = |node: &layout::Node| node.children()[0].children().last().unwrap().bounds();
     let original = footer(&node);
-    for message in [Message::Select(0), Message::Measure, Message::Select(0)] {
+    for message in [
+        Message::Select(0),
+        Message::Measure,
+        Message::MonitorSize(Some(Size::new(800., 424.))),
+        Message::Select(0),
+        Message::Group(SourceGroup::Workspaces),
+        Message::Search(String::new()),
+    ] {
         drop(picker.update(message));
         node = layout(&picker, &mut tree);
         assert!(
@@ -662,4 +669,20 @@ fn selection_and_configure_events_keep_the_fitted_layout() {
             "source clicks must not move the Share button"
         );
     }
+}
+
+#[test]
+fn native_popups_do_not_replace_the_dialog_attachment_or_layout() {
+    let mut picker = picker(prompt());
+    picker.content_limited = true;
+    let popup = cosmic::iced::window::Id::unique();
+    assert_ne!(Some(popup), picker.core.main_window_id());
+    let task = picker.update(Message::WindowOpened(popup));
+    assert_eq!(
+        task.units(),
+        0,
+        "a popup must not get parent and material attachments meant for the main window"
+    );
+    assert!(picker.content_limited);
+    assert!(picker.material.is_none());
 }

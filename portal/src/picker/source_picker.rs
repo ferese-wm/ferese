@@ -347,10 +347,13 @@ impl cosmic::Application for SourcePicker {
                 }
             }
             Message::ThemeChanged(snapshot) => {
-                self.content_limited = false;
                 self.palette = ferese_theme::Palette::from_resolved(&snapshot.presented).flat();
-                self.font =
+                let font =
                     ferese_theme::font(Some(&snapshot.presented.tokens.typography.font_family));
+                if font != self.font {
+                    self.font = font;
+                    self.content_limited = false;
+                }
                 self.background = cosmic::iced::Color {
                     a: ferese_theme::material_opacity(&snapshot.presented),
                     ..self.palette.sidebar
@@ -428,7 +431,8 @@ impl cosmic::Application for SourcePicker {
                 self.query = query;
             }
             Message::OpenOptions(index)
-                if self.source_has_options(index)
+                if self.options_source != Some(index)
+                    && self.source_has_options(index)
                     && self.visible_sources().any(|(visible, _)| visible == index) =>
             {
                 self.content_limited = false;
