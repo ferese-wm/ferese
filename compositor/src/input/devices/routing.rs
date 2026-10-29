@@ -31,6 +31,15 @@ impl Ferese {
             .copied()
             .filter(|button| !self.physical_input.button_held(*button))
             .collect::<Vec<_>>();
+        if self.pointer_drag_active()
+            && self
+                .seat
+                .get_pointer()
+                .and_then(|pointer| pointer.grab_start_data())
+                .is_some_and(|start| buttons.contains(&start.button))
+        {
+            self.cancel_drag();
+        }
         if self
             .seat
             .get_pointer()
@@ -120,6 +129,13 @@ impl Ferese {
         let Some(touch) = self.seat.get_touch() else {
             return;
         };
+        if self.touch_drag_active()
+            && touch
+                .grab_start_data()
+                .is_some_and(|start| contacts.values().any(|contact| contact.slot == start.slot))
+        {
+            self.cancel_drag();
+        }
         // wl_touch.cancel cancels a client's entire sequence. Retire only this
         // device's delivered contacts so another touchscreen remains usable.
         for contact in contacts.into_values() {

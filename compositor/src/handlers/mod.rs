@@ -37,7 +37,7 @@ use smithay::wayland::pointer_constraints::{
 };
 use smithay::wayland::selection::SelectionHandler;
 use smithay::wayland::selection::data_device::{
-    DataDeviceHandler, DataDeviceState, WaylandDndGrabHandler, set_data_device_focus,
+    DataDeviceHandler, DataDeviceState, set_data_device_focus,
 };
 use smithay::wayland::selection::primary_selection::{
     PrimarySelectionHandler, PrimarySelectionState, set_primary_focus,
@@ -315,41 +315,6 @@ impl SelectionHandler for Ferese {
     type SelectionUserData = ();
 }
 
-impl smithay::input::dnd::DndGrabHandler for Ferese {}
-
-impl WaylandDndGrabHandler for Ferese {
-    fn dnd_requested<S: smithay::input::dnd::Source>(
-        &mut self,
-        source: S,
-        _icon: Option<WlSurface>,
-        seat: Seat<Self>,
-        serial: smithay::utils::Serial,
-        type_: smithay::input::dnd::GrabType,
-    ) {
-        use smithay::input::dnd::{DnDGrab, GrabType};
-        match type_ {
-            GrabType::Pointer => {
-                let pointer = seat.get_pointer().expect("validated pointer drag");
-                let start = pointer.grab_start_data().expect("validated pointer grab");
-                pointer.set_grab(
-                    self,
-                    DnDGrab::new_pointer(&self.display_handle, start, source, seat),
-                    serial,
-                    smithay::input::pointer::Focus::Keep,
-                );
-            }
-            GrabType::Touch => {
-                let touch = seat.get_touch().expect("validated touch drag");
-                let start = touch.grab_start_data().expect("validated touch grab");
-                touch.set_grab(
-                    self,
-                    DnDGrab::new_touch(&self.display_handle, start, source, seat),
-                    serial,
-                );
-            }
-        }
-    }
-}
 impl TabletSeatHandler for Ferese {
     type ToolFocus = WlSurface;
 }

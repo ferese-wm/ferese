@@ -16,8 +16,8 @@ use crate::{
         pointer::{
             AxisFrame, ButtonEvent, GestureHoldBeginEvent, GestureHoldEndEvent, GesturePinchBeginEvent,
             GesturePinchEndEvent, GesturePinchUpdateEvent, GestureSwipeBeginEvent, GestureSwipeEndEvent,
-            GestureSwipeUpdateEvent, GrabStartData as PointerGrabStartData,
-            MotionEvent as PointerMotionEvent, PointerGrab, PointerInnerHandle, RelativeMotionEvent,
+            GestureSwipeUpdateEvent, GrabStartData as PointerGrabStartData, MotionEvent as PointerMotionEvent,
+            PointerGrab, PointerInnerHandle, RelativeMotionEvent,
         },
         touch::{
             DownEvent, GrabStartData as TouchGrabStartData, MotionEvent as TouchMotionEvent, TouchGrab,
@@ -50,6 +50,13 @@ pub struct DnDGrab<D: SeatHandler, S: Source, F: DndFocus<D> + 'static> {
     offer_data: Option<F::OfferData<S>>,
     seat: Seat<D>,
     should_drop: bool,
+}
+
+impl<D: SeatHandler, S: Source, F: DndFocus<D> + 'static> DnDGrab<D, S, F> {
+    /// The source whose lifetime owns this drag.
+    pub fn source(&self) -> &S {
+        &self.data_source
+    }
 }
 
 impl<D, S, F> fmt::Debug for DnDGrab<D, S, F>
@@ -299,6 +306,10 @@ where
     }
 
     fn drop<'a>(&'a mut self, data: &mut D, into_target: impl Fn(&'a F) -> DndTarget<'a, D>) {
+        if !self.data_source.alive() {
+            self.cancel(data);
+            return;
+        }
         // the user dropped, proceed to the drop
         let validated = self.offer_data.as_ref().is_some_and(|data| data.validated());
         if let Some(ref focus) = self.current_focus {
@@ -448,12 +459,7 @@ where
         handle.gesture_hold_begin(data, event);
     }
 
-    fn gesture_hold_end(
-        &mut self,
-        data: &mut D,
-        handle: &mut PointerInnerHandle<'_, D>,
-        event: &GestureHoldEndEvent,
-    ) {
+    fn gesture_hold_end(&mut self, data: &mut D, handle: &mut PointerInnerHandle<'_, D>, event: &GestureHoldEndEvent) {
         handle.gesture_hold_end(data, event);
     }
 
@@ -513,13 +519,7 @@ where
 
         self.last_position = event.location;
 
-        self.update_focus(
-            data,
-            focus,
-            event.location,
-            SERIAL_COUNTER.next_serial(),
-            event.time,
-        );
+        self.update_focus(data, focus, event.location, SERIAL_COUNTER.next_serial(), event.time);
     }
 
     fn frame(&mut self, data: &mut D, handle: &mut TouchInnerHandle<'_, D>) {
@@ -598,16 +598,11 @@ where
 {
     fn ptr_focus(&self) -> Option<(<D as SeatHandler>::PointerFocus, Point<f64, Logical>)> {
         // While the grab is active, we don't want any focus except for xwayland
-        self.pointer_start_data
-            .as_ref()?
-            .focus
-            .clone()
-            .filter(|(focus, _)| {
-                focus.wl_surface().is_some_and(|s| {
-                    s.client()
-                        .is_some_and(|c| c.get_data::<XWaylandClientData>().is_some())
-                })
-            })
+        self.pointer_start_data.as_ref()?.focus.clone().filter(|(focus, _)| {
+            focus
+                .wl_surface()
+                .is_some_and(|s| s.client().is_some_and(|c| c.get_data::<XWaylandClientData>().is_some()))
+        })
     }
 }
 
@@ -622,15 +617,10 @@ where
 {
     fn touch_focus(&self) -> Option<(<D as SeatHandler>::TouchFocus, Point<f64, Logical>)> {
         // While the grab is active, we don't want any focus except for xwayland
-        self.touch_start_data
-            .as_ref()?
-            .focus
-            .clone()
-            .filter(|(focus, _)| {
-                focus.wl_surface().is_some_and(|s| {
-                    s.client()
-                        .is_some_and(|c| c.get_data::<XWaylandClientData>().is_some())
-                })
-            })
+        self.touch_start_data.as_ref()?.focus.clone().filter(|(focus, _)| {
+            focus
+                .wl_surface()
+                .is_some_and(|s| s.client().is_some_and(|c| c.get_data::<XWaylandClientData>().is_some()))
+        })
     }
 }

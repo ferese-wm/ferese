@@ -482,6 +482,10 @@ impl Ferese {
                             };
                         }
                         let symbol = keysym.modified_sym().raw();
+                        if state == KeyState::Pressed && symbol == keysyms::KEY_Escape && data.cancel_drag() {
+                            data.intercepted_keys.insert(keycode);
+                            return FilterResult::Intercept(());
+                        }
                         if state == KeyState::Pressed && symbol == keysyms::KEY_Escape && let Some(operation) = data.pointer_operation.as_mut() {
                             operation.cancelled = true;
                             data.intercepted_keys.insert(keycode);

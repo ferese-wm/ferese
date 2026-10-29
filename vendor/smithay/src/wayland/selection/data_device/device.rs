@@ -40,8 +40,8 @@ impl<D> Dispatch2<WlDataDevice, D> for DataDeviceUserData
 where
     D: DataDeviceHandler,
     D: SeatHandler,
-    <D as SeatHandler>::PointerFocus: DndFocus<D>,
-    <D as SeatHandler>::TouchFocus: DndFocus<D>,
+    <D as SeatHandler>::PointerFocus: DndFocus<D> + WaylandFocus,
+    <D as SeatHandler>::TouchFocus: DndFocus<D> + WaylandFocus,
     <D as SeatHandler>::KeyboardFocus: WaylandFocus,
     D: 'static,
 {
@@ -66,83 +66,52 @@ where
                 icon,
                 serial,
             } => {
-                // NOTE: While protocol states that selection shouldn't be used more than once,
-                // no-one enforces it, thus we have clients around that do so and crashing them
-                // doesn't worth it at this point.
-                if let Some(source) = source.as_ref() {
+                let serial = Serial::from(serial);
+                // A serial identifies an interaction, not its owner. Require the
+                // drag origin to be the surface that received the implicit grab.
+                let pointer = seat.get_pointer().filter(|pointer| {
+                    pointer.has_grab(serial)
+                        && pointer
+                            .grab_start_data()
+                            .and_then(|start| start.focus)
+                            .and_then(|(focus, _)| focus.wl_surface().map(|surface| surface.into_owned()))
+                            .as_ref()
+                            == Some(&origin)
+                });
+                let touch = seat.get_touch().filter(|touch| {
+                    touch.has_grab(serial)
+                        && touch
+                            .grab_start_data()
+                            .and_then(|start| start.focus)
+                            .and_then(|(focus, _)| focus.wl_surface().map(|surface| surface.into_owned()))
+                            .as_ref()
+                            == Some(&origin)
+                });
+                let type_ = if pointer.is_some() {
+                    GrabType::Pointer
+                } else if touch.is_some() {
+                    GrabType::Touch
+                } else {
+                    debug!(?serial, ?client, "denying drag without an origin-owned implicit grab");
+                    return;
+                };
+                if let Some(ref icon) = icon {
+                    if compositor::give_role(icon, DND_ICON_ROLE).is_err() {
+                        resource.post_error(wl_data_device::Error::Role, "Given surface already has another role");
+                        return;
+                    }
+                }
+                // Some clients reuse sources; retain the existing compatibility
+                // policy, but only track a source after the request is admitted.
+                if let Some(source) = source {
                     handler
                         .data_device_state()
                         .used_sources
                         .insert(source.clone(), self.wl_seat.clone());
+                    handler.dnd_requested(source, icon, seat, serial, type_);
+                } else {
+                    handler.dnd_requested(origin, icon, seat, serial, type_);
                 }
-
-                let serial = Serial::from(serial);
-                if let Some(pointer) = seat.get_pointer() {
-                    if pointer.has_grab(serial) {
-                        if let Some(ref icon) = icon {
-                            if compositor::give_role(icon, DND_ICON_ROLE).is_err() {
-                                resource.post_error(
-                                    wl_data_device::Error::Role,
-                                    "Given surface already has an other role",
-                                );
-                                return;
-                            }
-                        }
-                        // The StartDrag is in response to a pointer implicit grab, all is good
-                        if let Some(source) = source {
-                            handler.dnd_requested(
-                                source,
-                                icon.clone(),
-                                seat.clone(),
-                                serial,
-                                GrabType::Pointer,
-                            );
-                        } else {
-                            handler.dnd_requested(
-                                origin,
-                                icon.clone(),
-                                seat.clone(),
-                                serial,
-                                GrabType::Pointer,
-                            );
-                        }
-
-                        return;
-                    }
-                }
-                if let Some(touch) = seat.get_touch() {
-                    if touch.has_grab(serial) {
-                        if let Some(ref icon) = icon {
-                            if compositor::give_role(icon, DND_ICON_ROLE).is_err() {
-                                resource.post_error(
-                                    wl_data_device::Error::Role,
-                                    "Given surface already has an other role",
-                                );
-                                return;
-                            }
-                        }
-                        // The StartDrag is in response to a touch implicit grab, all is good
-                        if let Some(source) = source {
-                            handler.dnd_requested(
-                                source,
-                                icon.clone(),
-                                seat.clone(),
-                                serial,
-                                GrabType::Touch,
-                            );
-                        } else {
-                            handler.dnd_requested(
-                                origin,
-                                icon.clone(),
-                                seat.clone(),
-                                serial,
-                                GrabType::Touch,
-                            );
-                        }
-                        return;
-                    }
-                }
-                debug!(serial = ?serial, client = ?client, "denying drag from client without implicit grab");
             }
             wl_data_device::Request::SetSelection { source, .. } => {
                 let seat_data = match seat.get_keyboard() {

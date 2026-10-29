@@ -27,6 +27,7 @@ impl Ferese {
 
     pub(crate) fn reset_session_input(&mut self) {
         let time = InputTime::now();
+        self.cancel_drag();
         let mut devices = self.take_physical_holds();
         self.cancel_window_interaction();
         self.set_binding_mode("default");

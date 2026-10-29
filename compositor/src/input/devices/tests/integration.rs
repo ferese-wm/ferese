@@ -1,4 +1,5 @@
 use super::*;
+mod drag;
 use crate::Ferese;
 use crate::input::gesture_tests::{fixture, messages};
 use smithay::backend::input::{

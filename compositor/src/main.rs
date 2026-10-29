@@ -9,6 +9,7 @@ mod desktop_protocols;
 mod display_presentation;
 mod dmabuf_feedback;
 mod dmabuf_imports;
+mod dnd;
 mod effects;
 mod floating;
 mod frame_scheduler;
@@ -222,6 +223,7 @@ fn after_dispatch_with_redraw(
     crate::backends::direct::leasing::poll_lock(state);
     crate::backends::direct::gamma::sync_night_light(state);
     state.poll_window_interaction();
+    state.poll_drag();
     state.process_pending_dmabuf_imports();
     state.prune_screencopies();
     state.refresh_capture_sessions();
