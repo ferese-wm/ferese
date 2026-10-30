@@ -34,10 +34,10 @@ class TextBarTest(unittest.TestCase):
             config = root / "config/ferese/config.kdl"
             config.parent.mkdir(parents=True)
 
-            def configure(presentation, family="ferese-blue"):
+            def configure(presentation, family="ferese-blue", clearance=0):
                 config.write_text('layout-mode "scrolling"\nstatus { keybinding-guide #false; }\n'
                                   f'theme {{ mode "dark"; family "{family}"; }}\n'
-                                  f'panel main {{ style "flat"; presentation "{presentation}"; }}\n')
+                                  f'panel main {{ style "flat"; presentation "{presentation}"; geometry {{ window-clearance {clearance}; }}; }}\n')
 
             configure("text")
             display = Path(os.environ["WAYLAND_DISPLAY"])
@@ -133,6 +133,11 @@ class TextBarTest(unittest.TestCase):
                         self.assertNotEqual(expected, previous, "fixture families must have distinct colors")
                         wait_for_colors(expected)
                         previous = expected
+                    for clearance in (7, 0, 24):
+                        offset = len(log_path.read_text())
+                        configure("text", "gruvbox", clearance)
+                        control("reload-config")
+                        wait_for(lambda: f'.set_exclusive_zone({24 + clearance})' in log_path.read_text()[offset:])
                     configure("standard")
                     control("reload-config")
                     wait_for(lambda: '.set_panel_presentation(' in log_path.read_text())

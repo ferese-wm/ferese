@@ -507,6 +507,32 @@ mod tests {
     }
 
     #[test]
+    fn text_bar_clearance_edits_and_reset_preserve_the_height_pin() {
+        let mut snapshot = Snapshot::parse(
+            "panel main { style flat; presentation text; geometry { height 54; }; }".into(),
+        )
+        .expect("parse text bar fixture");
+        apply(
+            &mut snapshot,
+            Action::SetGeometry("window_clearance".into(), 7.into()),
+        );
+        let panels: Vec<Panel> =
+            serde_json::from_value(snapshot.item("panels").expect("panel exists").clone())
+                .expect("decode edited panels");
+        assert_eq!(panels[0].exclusive_zone(false), 31);
+        apply(
+            &mut snapshot,
+            Action::ClearGeometry("panels.0.geometry.window_clearance".into()),
+        );
+        let panels: Vec<Panel> =
+            serde_json::from_value(snapshot.item("panels").expect("panel exists").clone())
+                .expect("decode reset panels");
+        assert_eq!(panels[0].exclusive_zone(false), 24);
+        assert_eq!(panels[0].geometry.height, Some(54.));
+        assert_eq!(panels[0].presentation, ferese_panel::Presentation::Text);
+    }
+
+    #[test]
     fn first_geometry_edit_materializes_the_panel_atomically() {
         let mut snapshot = Snapshot::parse("// keep\nanimations { speed 0.8; }".into()).unwrap();
         let edits = plan(

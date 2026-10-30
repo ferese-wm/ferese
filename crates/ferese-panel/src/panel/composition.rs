@@ -620,6 +620,7 @@ impl Panel {
             return PanelGeometry {
                 height: 24.,
                 inner_padding: 0.,
+                window_clearance: self.geometry.window_clearance.unwrap_or(0),
                 ..PanelGeometry::default()
             };
         }
@@ -807,12 +808,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn text_bar_reserves_24_pixels_and_preserves_standard_geometry() {
+    fn text_bar_reserves_24_pixels_plus_clearance_and_preserves_standard_geometry() {
         let mut panel = Panel::default();
         panel.geometry.height = Some(54.);
         panel.geometry.window_clearance = Some(7);
         panel.presentation = Presentation::Text;
-        assert_eq!(panel.exclusive_zone(false), 24);
+        assert_eq!(panel.exclusive_zone(false), 31);
         assert_eq!(panel.exclusive_zone(true), 0);
         assert_eq!(panel.resolved_geometry().inner_padding, 0.);
         let restored: Panel =
@@ -823,6 +824,40 @@ mod tests {
         panel.presentation = Presentation::Text;
         panel.style = PanelStyle::Morph;
         assert!(validate(&[panel]).is_err());
+    }
+
+    #[test]
+    fn text_bar_clearance_handles_both_edges_limits_and_reset() {
+        for edge in [crate::Edge::Top, crate::Edge::Bottom] {
+            let mut panel = Panel {
+                edge,
+                presentation: Presentation::Text,
+                geometry: crate::GeometryIntent {
+                    height: Some(54.),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            for clearance in [0, 7, 4096] {
+                panel.geometry.window_clearance = Some(clearance);
+                assert_eq!(panel.resolved_geometry().height, 24.);
+                assert_eq!(panel.exclusive_zone(false), 24 + clearance);
+                assert_eq!(
+                    panel.exclusive_zone(true),
+                    0,
+                    "fullscreen releases clearance too"
+                );
+                assert!(validate(std::slice::from_ref(&panel)).is_ok());
+            }
+            for clearance in [-1, 4097] {
+                panel.geometry.window_clearance = Some(clearance);
+                assert!(validate(std::slice::from_ref(&panel)).is_err());
+            }
+            panel.geometry.window_clearance = None;
+            assert_eq!(panel.exclusive_zone(false), 24);
+            panel.presentation = Presentation::Standard;
+            assert_eq!(panel.resolved_geometry().height, 54.);
+        }
     }
 
     #[test]

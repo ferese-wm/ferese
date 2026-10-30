@@ -19,7 +19,7 @@ CPU usage, Wi-Fi signal, network transfer rates and root filesystem usage are sh
 
 On narrow outputs, the title yields space first, the date becomes time-only, then optional status labels disappear. Control Center still provides the existing sound, battery and appearance controls. At smaller widths, a `workspaces` menu replaces the full strip and lists this monitor's real workspaces. On exceptionally narrow surfaces, the remaining controls can scroll horizontally with no visible scrollbar. No pictorial icons are introduced into the bar.
 
-Turning the presentation off restores the standard Flat panel with its saved items and geometry. Choosing another shape preset also exits text mode. Existing groups and geometry pins are preserved while text mode is enabled; the text presentation itself has fixed geometry. Popup content retains Ferese's existing UI.
+Turning the presentation off restores the standard Flat panel with its saved items and geometry. Choosing another shape preset also exits text mode. Existing groups and geometry pins are preserved while text mode is enabled; the text presentation keeps its 24px height and zero inner padding, and honors the saved window clearance. Adjust **Window clearance** in Settings → Panel to change the gap between the bar and application windows. The reserved area is 24px plus that clearance, and fullscreen releases the entire reservation. Popup content retains Ferese's existing UI.
 
 ## Verification
 

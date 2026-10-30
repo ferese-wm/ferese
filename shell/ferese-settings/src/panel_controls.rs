@@ -72,13 +72,18 @@ impl App {
             .preview_panel()
             .is_ok_and(|panel| panel.presentation == ferese_panel::Presentation::Text)
         {
+            let clearance = crate::schema::fields(Page::Bar)
+                .into_iter()
+                .find(|field| field.path == "panels.0.geometry.window_clearance")
+                .expect("panel schema defines window clearance");
             return widget::column![
                 widget::container(widget::column![
                     self.panel_heading("Text-only bar", 15.),
                     self.panel_appearance_row("Enabled", "24px, opaque, square, using the active shell font.",
                         ferese_theme::controls::switch(true, palette).name("Text-only bar")
                             .on_press(Message::PanelEdit(Action::SetTextBar(false))).into()),
-                    self.note("Dynamic workspaces stay unchanged. Only existing workspaces are shown. Standard panel items and geometry are preserved while this presentation is enabled."),
+                    self.note("Only existing workspaces are shown. The bar stays 24px tall; window clearance sets the gap to application windows."),
+                    self.panel_geometry_control(clearance),
                 ].spacing(12)).padding(16).class(crate::visuals::surface(palette.card, 14.)),
             ].spacing(12).into();
         }
@@ -332,37 +337,7 @@ impl App {
                             field.label = "Collapsed height".into();
                         }
                     }
-                    if let crate::schema::Kind::Range { default, .. } = &mut field.kind {
-                        let geometry = serde_json::to_value(
-                            self.preview_panel()
-                                .map(|panel| panel.resolved_geometry())
-                                .unwrap_or_default(),
-                        )
-                        .expect("typed configuration and IPC values must serialize to JSON");
-                        *default =
-                            geometry[field.path.rsplit('.').next().expect(
-                                "splitting a field path always yields its final component",
-                            )]
-                            .as_f64()
-                            .expect("splitting a field path always yields its final component");
-                    }
-                    let pinned = self.draft.item(&field.path).is_some();
-                    let reset = pinned.then_some(Message::PanelEdit(Action::ClearGeometry(
-                        field.path.clone(),
-                    )));
-                    let reset_label = format!("Reset {}", field.label);
-                    settings = settings.push(
-                        widget::row![
-                            self.field(field),
-                            self.settings_icon_button(
-                                &reset_label,
-                                "M3 12a9 9 0 1 0 3-6 M3 3v6h6",
-                                reset
-                            )
-                        ]
-                        .spacing(8)
-                        .align_y(cosmic::iced::Alignment::Center),
-                    );
+                    settings = settings.push(self.panel_geometry_control(field));
                 }
                 rows = rows.push(
                     widget::container(settings)
@@ -384,6 +359,36 @@ impl App {
             PanelPage::Arrange => return self.panel_workspace(),
         }
         rows.into()
+    }
+
+    fn panel_geometry_control(&self, mut field: crate::schema::Field) -> Element<'_, Message> {
+        if let crate::schema::Kind::Range { default, .. } = &mut field.kind {
+            let geometry = serde_json::to_value(
+                self.preview_panel()
+                    .map(|panel| panel.resolved_geometry())
+                    .unwrap_or_default(),
+            )
+            .expect("typed configuration and IPC values must serialize to JSON");
+            *default = geometry[field
+                .path
+                .rsplit('.')
+                .next()
+                .expect("splitting a field path always yields its final component")]
+            .as_f64()
+            .expect("splitting a field path always yields its final component");
+        }
+        let pinned = self.draft.item(&field.path).is_some();
+        let reset = pinned.then_some(Message::PanelEdit(Action::ClearGeometry(
+            field.path.clone(),
+        )));
+        let reset_label = format!("Reset {}", field.label);
+        widget::row![
+            self.field(field),
+            self.settings_icon_button(&reset_label, "M3 12a9 9 0 1 0 3-6 M3 3v6h6", reset)
+        ]
+        .spacing(8)
+        .align_y(cosmic::iced::Alignment::Center)
+        .into()
     }
 
     pub(super) fn panel_side_margin_limit(&self) -> Option<i32> {
@@ -986,6 +991,55 @@ pub(super) fn item_icon(kind: ItemKind, tint: cosmic::iced::Color) -> widget::ic
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn text_bar_settings_show_window_clearance_without_editable_height() {
+        use cosmic::Application;
+        use cosmic::iced::advanced::renderer::Headless;
+        use cosmic::iced::advanced::{Layout, layout, widget as advanced_widget};
+        use cosmic::iced::{Font, Pixels, Rectangle, Size};
+
+        #[derive(Default)]
+        struct Labels(Vec<String>);
+        impl advanced_widget::Operation for Labels {
+            fn traverse(&mut self, visit: &mut dyn FnMut(&mut dyn advanced_widget::Operation)) {
+                visit(self);
+            }
+            fn text(&mut self, _: Option<&advanced_widget::Id>, _: Rectangle, text: &str) {
+                self.0.push(text.into());
+            }
+        }
+        let renderer = cosmic::iced::futures::executor::block_on(cosmic::Renderer::new(
+            Font::default(),
+            Pixels(14.),
+            Some("tiny-skia"),
+        ))
+        .expect("create settings test renderer");
+        let app = App::init(
+            cosmic::app::Core::default(),
+            ("/unused/text-panel.kdl".into(), store::Snapshot::parse(
+                "panel main { style flat; presentation text; geometry { window-clearance 7; height 54; }; }".into()
+            ), None),
+        ).0;
+        let mut view = app.panel_controls();
+        let mut tree = advanced_widget::Tree::new(&view);
+        let node = view.as_widget_mut().layout(
+            &mut tree,
+            &renderer,
+            &layout::Limits::new(Size::ZERO, Size::new(800., 600.)),
+        );
+        let mut labels = Labels::default();
+        view.as_widget_mut()
+            .operate(&mut tree, Layout::new(&node), &renderer, &mut labels);
+        assert!(
+            labels.0.iter().any(|text| text == "Window clearance"),
+            "text mode must expose the clearance input"
+        );
+        assert!(
+            !labels.0.iter().any(|text| text == "Height"),
+            "text bar height remains fixed"
+        );
+    }
 
     #[test]
     fn side_margin_range_tracks_logical_display_width_and_measured_content() {
