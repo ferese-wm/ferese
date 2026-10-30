@@ -30,6 +30,141 @@ fn prompt() -> Prompt {
 }
 
 #[test]
+fn source_options_replace_the_picker_page_without_resizing_or_losing_selection() {
+    use cosmic::iced::advanced::renderer::Headless;
+    use cosmic::iced::advanced::{Layout, Shell, clipboard, layout, mouse, widget};
+    use cosmic::iced::{Event, Font, Pixels, Point, Rectangle, Size};
+
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let renderer = runtime
+        .block_on(<cosmic::Renderer as Headless>::new(
+            Font::default(),
+            Pixels(14.),
+            Some("tiny-skia"),
+        ))
+        .unwrap();
+    let mut prompt = prompt();
+    prompt
+        .sources
+        .retain(|source| source.workspace_id().is_some());
+    let mut picker = picker(prompt);
+    drop(picker.update(Message::Select(0)));
+    let size = {
+        let mut view = picker.view();
+        let mut tree = widget::Tree::new(&view);
+        view.as_widget_mut()
+            .layout(
+                &mut tree,
+                &renderer,
+                &layout::Limits::new(Size::ZERO, Size::new(560., 600.)),
+            )
+            .size()
+    };
+    let size = Size::new(size.width.ceil(), size.height.ceil());
+    assert!(
+        size.height < 400.,
+        "a single source should have a compact picker"
+    );
+    drop(picker.update(Message::ContentSize(Some(size))));
+    let limited = picker.content_limited;
+    drop(picker.update(Message::OpenOptions(0)));
+    drop(picker.update(Message::IncludeShell));
+    let bounds = Rectangle::with_size(size);
+    let mut messages = Vec::new();
+    {
+        let mut view = picker.view();
+        let mut tree = widget::Tree::new(&view);
+        let node = view.as_widget_mut().layout(
+            &mut tree,
+            &renderer,
+            &layout::Limits::new(Size::ZERO, size),
+        );
+        assert!(
+            view.as_widget_mut()
+                .overlay(
+                    &mut tree,
+                    Layout::new(&node),
+                    &renderer,
+                    &bounds,
+                    cosmic::iced::Vector::ZERO,
+                )
+                .is_none(),
+            "source settings must be a page, not a modal inside the picker"
+        );
+        assert_eq!(
+            node.size(),
+            size,
+            "opening options must use the configured window size"
+        );
+        let content = Layout::new(&node).children().next().unwrap();
+        let body = content.children().nth(1).unwrap();
+        assert!(
+            body.children().next().unwrap().bounds().height <= body.bounds().height + 0.5,
+            "both workspace settings and their descriptions must fit without scrolling"
+        );
+        let footer = content.children().last().unwrap();
+        let done = footer.children().last().unwrap().bounds();
+        assert!(done.y >= 0. && done.y + done.height <= size.height);
+        let a11y =
+            view.as_widget()
+                .a11y_nodes(Layout::new(&node), &tree, mouse::Cursor::Unavailable);
+        let switch = a11y
+            .root()
+            .iter()
+            .chain(a11y.children())
+            .find(|node| node.node().label() == Some("Include shell"))
+            .expect("workspace options expose a named shell switch")
+            .node()
+            .bounds()
+            .unwrap();
+        assert!(
+            switch.y1 <= f64::from(footer.bounds().y),
+            "both workspace settings must fit in a short picker"
+        );
+        let point = Point::new(done.center_x(), done.center_y());
+        for event in [
+            Event::Mouse(mouse::Event::CursorMoved { position: point }),
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+        ] {
+            view.as_widget_mut().update(
+                &mut tree,
+                &event,
+                Layout::new(&node),
+                mouse::Cursor::Available(point),
+                &renderer,
+                &mut clipboard::Null,
+                &mut Shell::new(&mut messages),
+                &bounds,
+            );
+        }
+    }
+    drop(picker.update(Message::WorkspaceQuality(crate::workspace::Quality::High)));
+    assert!(
+        messages
+            .iter()
+            .any(|message| matches!(message, Message::CloseOptions))
+    );
+    drop(picker.update(Message::ContentSize(Some(Size::new(560., 500.)))));
+    assert_eq!(
+        picker.last_size,
+        Some(size),
+        "stale source measurements cannot resize options"
+    );
+    for message in messages {
+        drop(picker.update(message));
+    }
+    assert!(picker.options_source.is_none());
+    assert_eq!(picker.selected, [0]);
+    assert_eq!(picker.workspace_quality, crate::workspace::Quality::High);
+    assert!(picker.include_shell);
+    assert_eq!(
+        picker.content_limited, limited,
+        "returning must preserve the source list's layout"
+    );
+}
+
+#[test]
 fn shell_requires_a_selected_workspace_and_compositor_support() {
     let mut prompt = prompt();
     assert!(!prompt.allows_shell([]));
@@ -114,7 +249,7 @@ fn changing_single_source_tabs_clears_consent_and_ignores_stale_rows() {
     assert_eq!(
         picker.group,
         SourceGroup::Workspaces,
-        "modal blocks the source tabs"
+        "the options page ignores source-tab clicks"
     );
     drop(picker.update(Message::Escape));
     assert_eq!(picker.selected, [0]);
@@ -242,14 +377,13 @@ fn actions_stay_visible_with_many_sources_and_expanded_options() {
                 node.size().height <= height + 0.5,
                 "picker exceeds the available height"
             );
-            let base = if expanded { &node.children()[0] } else { &node };
-            let content = &base.children()[0];
+            let content = &node.children()[0];
             let footer = content.children().last().expect("picker has a footer");
             assert!(
                 footer.bounds().y + footer.size().height <= content.size().height + 0.5,
                 "actions overflow at {width}×{height}, expanded={expanded}"
             );
-            assert_eq!(footer.children().len(), 3);
+            assert_eq!(footer.children().len(), if expanded { 2 } else { 3 });
             for action in &footer.children()[1..] {
                 assert!(action.size().width >= 48.);
                 assert!(
@@ -260,33 +394,21 @@ fn actions_stay_visible_with_many_sources_and_expanded_options() {
             }
             if expanded {
                 let bounds = cosmic::iced::Rectangle::with_size(Size::new(width, height));
-                let mut popup = view
-                    .as_widget_mut()
-                    .overlay(
-                        &mut tree,
-                        cosmic::iced::advanced::Layout::new(&node),
-                        &renderer,
-                        &bounds,
-                        cosmic::iced::Vector::ZERO,
-                    )
-                    .expect("options overlay");
-                let popup_node = popup.as_overlay_mut().layout(&renderer, bounds.size());
-                assert!(popup_node.bounds().y >= 0.);
-                assert!(popup_node.bounds().y + popup_node.size().height <= height + 0.5);
-                let fields = &popup_node.children()[0];
                 assert!(
-                    fields.size().height + 40. <= popup_node.size().height + 0.5,
-                    "mini modal content must fit without scrolling"
+                    view.as_widget_mut()
+                        .overlay(
+                            &mut tree,
+                            cosmic::iced::advanced::Layout::new(&node),
+                            &renderer,
+                            &bounds,
+                            cosmic::iced::Vector::ZERO,
+                        )
+                        .is_none(),
+                    "options must stay in the picker page"
                 );
-                let done = fields
-                    .children()
-                    .last()
-                    .expect("options have a footer")
-                    .children()
-                    .last()
-                    .expect("options footer has a Done button");
-                assert!(done.size().width <= 160.);
-                assert!(done.size().height >= 24.);
+                let body = &content.children()[1];
+                assert!(body.bounds().y >= 0.);
+                assert!(body.bounds().y + body.size().height <= footer.bounds().y);
             }
         }
     }
@@ -379,7 +501,7 @@ fn short_lists_and_search_results_fit_content_and_keep_actions_adjacent() {
 }
 
 #[test]
-fn options_leave_native_material_visible_without_background_text_or_double_tint() {
+fn options_page_leaves_native_material_visible_without_a_second_background() {
     use cosmic::iced::advanced::renderer::{self, Headless, Renderer as _};
     use cosmic::iced::advanced::widget::Tree;
     use cosmic::iced::advanced::{Layout, layout, mouse};
@@ -422,9 +544,8 @@ fn options_leave_native_material_visible_without_background_text_or_double_tint(
         mouse::Cursor::Unavailable,
         &bounds,
     );
-    let popup_bounds = {
-        let mut overlay = view
-            .as_widget_mut()
+    assert!(
+        view.as_widget_mut()
             .overlay(
                 &mut tree,
                 Layout::new(&node),
@@ -432,35 +553,18 @@ fn options_leave_native_material_visible_without_background_text_or_double_tint(
                 &bounds,
                 cosmic::iced::Vector::ZERO,
             )
-            .expect("selected source has an options overlay");
-        let popup = overlay.as_overlay_mut().layout(&renderer, bounds.size());
-        renderer.with_layer(popup.bounds(), |renderer| {
-            overlay.as_overlay().draw(
-                renderer,
-                &theme,
-                &style,
-                Layout::new(&popup),
-                mouse::Cursor::Unavailable,
-            );
-        });
-        popup.bounds()
-    };
+            .is_none()
+    );
     let pixels = Headless::screenshot(&mut renderer, size, 1., Color::TRANSPARENT);
     let alpha = |x: f32, y: f32| pixels[((y as usize * size.width as usize + x as usize) * 4) + 3];
-    // The left padding crosses the source row behind the popup. Neither that
-    // row nor the dimming scrim should be drawn here: Ferese supplies the glass.
-    for y in
-        (popup_bounds.y as usize + 8)..(popup_bounds.y as usize + popup_bounds.height as usize - 8)
-    {
-        assert_eq!(
-            alpha(popup_bounds.x + 8., y as f32),
-            0,
-            "material covered at row {y}"
-        );
+    // The page must leave Ferese's surface material visible in its padding.
+    // There is no source list, scrim, or nested material behind the controls.
+    for y in 0..size.height {
+        assert_eq!(alpha(8., y as f32), 0, "material covered at row {y}");
     }
     assert!(
-        alpha(8., 8.) >= 80,
-        "the picker outside the popup remains dimmed"
+        pixels.chunks_exact(4).any(|pixel| pixel[3] > 0),
+        "options must still draw their text and controls"
     );
 }
 

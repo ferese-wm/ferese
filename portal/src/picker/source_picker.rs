@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use crate::capture::Source;
 use crate::recording::Audio;
 
-use super::{backdrop, content_size};
+use super::content_size;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SourceGroup {
@@ -315,6 +315,9 @@ impl cosmic::Application for SourcePicker {
 
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
+            // The options page uses the configured viewport. A measurement
+            // queued by the source list must not resize it after navigation.
+            Message::ContentSize(_) if self.options_source.is_some() => return Task::none(),
             Message::ContentSize(Some(size)) => {
                 if !self.content_limited && size.height > self.max_height + 0.5 {
                     self.content_limited = true;
@@ -431,15 +434,13 @@ impl cosmic::Application for SourcePicker {
                 self.query = query;
             }
             Message::OpenOptions(index)
-                if self.options_source != Some(index)
+                if self.options_source.is_none()
                     && self.source_has_options(index)
                     && self.visible_sources().any(|(visible, _)| visible == index) =>
             {
-                self.content_limited = false;
                 self.options_source = Some(index);
             }
             Message::CloseOptions | Message::Escape if self.options_source.is_some() => {
-                self.content_limited = false;
                 self.options_source = None;
             }
             Message::Remember if self.options_monitor() && self.can_remember() => {
@@ -512,8 +513,14 @@ impl cosmic::Application for SourcePicker {
     }
 
     fn view(&self) -> Element<'_, Message> {
+        if let Some(source) = self
+            .options_source
+            .and_then(|index| self.prompt.sources.get(index))
+        {
+            return self.options_page(source);
+        }
         content_size::fit(
-            self.view_dialog(),
+            self.view_contents(),
             self.content_limited.then_some(self.max_height),
             |size| Message::ContentSize(Some(size)),
         )
@@ -616,24 +623,6 @@ pub(crate) fn appearance() -> (
 mod tests;
 
 impl SourcePicker {
-    fn view_dialog(&self) -> Element<'_, Message> {
-        let content = self.view_contents();
-        if let Some(source) = self
-            .options_source
-            .and_then(|index| self.prompt.sources.get(index))
-        {
-            cosmic::widget::popover::popover(backdrop::backdrop(
-                content,
-                self.options_dialog(source),
-            ))
-            .modal(true)
-            .popup(self.options_dialog(source))
-            .into()
-        } else {
-            content
-        }
-    }
-
     fn view_contents(&self) -> Element<'_, Message> {
         let app = if self.prompt.app.is_empty() {
             "this application"
@@ -869,33 +858,33 @@ impl SourcePicker {
         title.split_whitespace().collect::<Vec<_>>().join(" ")
     }
 
-    fn options_dialog(&self, source: &Source) -> Element<'_, Message> {
+    fn options_page(&self, source: &Source) -> Element<'_, Message> {
         let title = if self.prompt.recording {
             "Recording options"
         } else {
             "Sharing options"
         };
         let header = row![
-            self.text(title.into()).size(20).width(Length::Fill),
-            button::custom(icons::symbolic(icons::CLOSE, 16))
+            button::custom(icons::symbolic(icons::CHEVRON_LEFT, 16))
                 .class(self.control_style(false))
-                .name("Close options")
-                .padding(7)
-                .on_press(Message::CloseOptions)
+                .name("Back to sources")
+                .padding(8)
+                .on_press(Message::CloseOptions),
+            column![
+                self.text(title.into()).size(20),
+                self.muted(self.source_title(source).into())
+                    .size(12)
+                    .width(Length::Fill)
+                    .ellipsize(cosmic::iced::widget::text::Ellipsize::End(
+                        cosmic::iced::advanced::text::EllipsizeHeightLimit::Lines(1)
+                    )),
+            ]
+            .spacing(2)
+            .width(Length::Fill),
         ]
         .spacing(12)
         .align_y(Alignment::Center);
-        let mut content = column![
-            header,
-            self.muted(self.source_title(source).into())
-                .size(12)
-                .width(Length::Fill)
-                .ellipsize(cosmic::iced::widget::text::Ellipsize::End(
-                    cosmic::iced::advanced::text::EllipsizeHeightLimit::Lines(1)
-                )),
-            self.options()
-        ]
-        .spacing(14);
+        let mut content = column![self.options()].spacing(14).width(Length::Fill);
         let workspaces = self
             .selected
             .iter()
@@ -907,36 +896,29 @@ impl SourcePicker {
                     .size(12),
             );
         }
-        content = content.push(row![
+        let content = widget::scrollable(content)
+            .width(Length::Fill)
+            .height(Length::Fill);
+        let footer = row![
             cosmic::iced::widget::Space::new().width(Length::Fill),
             ferese_theme::controls::text_button("Done", self.font, self.palette, true)
                 .class(ferese_theme::accent_button())
+                .name("Done")
                 .on_press(Message::CloseOptions),
-        ]);
-        let palette = self.palette;
-        widget::container(content)
-            .padding(20)
-            .width(440)
-            .class(theme::Container::custom(move |_| {
-                cosmic::widget::container::Style {
-                    text_color: Some(palette.text),
-                    border: cosmic::iced::Border {
-                        radius: palette.radius.min(12.).into(),
-                        ..Default::default()
-                    },
-                    shadow: cosmic::iced::Shadow {
-                        color: cosmic::iced::Color::from_rgba(0., 0., 0., 0.25),
-                        offset: cosmic::iced::Vector::new(0., 8.),
-                        blur_radius: 24.,
-                    },
-                    ..Default::default()
-                }
-            }))
-            .into()
+        ];
+        widget::container(
+            column![header, content, footer]
+                .spacing(12)
+                .height(Length::Fill),
+        )
+        .padding([20, 24])
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
     }
 
     fn options(&self) -> Element<'_, Message> {
-        let mut options = widget::column([]).spacing(16).width(Length::Fill);
+        let mut options = widget::column([]).spacing(10).width(Length::Fill);
         if self.options_workspace() && self.can_choose_quality() {
             let mut choices = widget::row([]).spacing(6);
             for quality in [
@@ -963,7 +945,7 @@ impl SourcePicker {
                     self.muted(self.workspace_quality.description().into())
                         .size(12)
                 ]
-                .spacing(6),
+                .spacing(4),
             );
         }
         if self.options_workspace() && self.can_include_shell() {
@@ -1016,7 +998,7 @@ impl SourcePicker {
                 Message::Remember,
             ));
         }
-        widget::container(options).padding([4, 0]).into()
+        options.into()
     }
 
     fn option_switch<'a>(
@@ -1033,7 +1015,9 @@ impl SourcePicker {
             ]
             .spacing(4)
             .width(Length::Fill),
-            ferese_theme::controls::switch(enabled, self.palette).on_press(message)
+            ferese_theme::controls::switch(enabled, self.palette)
+                .name(label)
+                .on_press(message)
         ]
         .spacing(16)
         .align_y(Alignment::Center)
